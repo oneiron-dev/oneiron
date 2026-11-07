@@ -2797,11 +2797,11 @@ export class Oneiron {
       manifest: {
         /** Reads the owner-pinned v2 model manifest, or none when no manifest is configured. */
         read: (input: Facade.EmptyRequest): Facade.ModelManifest | null => this.#call(() => this.#client.vaultModelsManifestRead(input) as Facade.ModelManifest | null),
-        /** Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically clearing resident route overrides. */
+        /** Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically retaining resident route overrides that remain admitted. */
         replace: (input: Facade.ModelManifestReplace): Facade.ModelManifest => this.#call(() => this.#client.vaultModelsManifestReplace(input) as Facade.ModelManifest),
       },
       oneironer: {
-        /** Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and clearing resident route overrides. */
+        /** Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and retaining resident route overrides that remain admitted. */
         bind: (input: Facade.OneironerBind): Facade.ModelManifest => this.#call(() => this.#client.vaultModelsOneironerBind(input) as Facade.ModelManifest),
       },
       routes: {
@@ -3771,7 +3771,7 @@ export class Oneiron {
   /** Waits on an ask, or on a world-privacy request its caller opened, at a step with no other work: pending, changed, ready with its result or the request's applied or declined state, or a park for code mode. */
   wait(handle: TaskAskHandle, stepKey = "sdk.wait"): Facade.TaskAskWait { return this.#call(() => this.#client.wait({handle, step_key: stepKey}) as Facade.TaskAskWait) }
   readonly connector = {
-    /** Every live catalogued connector whose name or summary matches the query. */
+    /** Every matching live catalogued connector and first-party web interface, distinguished by source. */
     list: (input: Facade.ConnectorListRequest): Facade.ConnectorEntry[] => this.#call(() => this.#client.connectorList(input) as Facade.ConnectorEntry[]),
     /** One catalogued connector by name, removed ones included. */
     status: (input: Facade.ConnectorNameRequest): Facade.ConnectorView | null => this.#call(() => this.#client.connectorStatus(input) as Facade.ConnectorView | null),

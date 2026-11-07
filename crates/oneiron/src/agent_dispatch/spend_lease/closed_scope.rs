@@ -42,7 +42,7 @@ impl AgentDispatcher<'_> {
             .boundaries
             .iter()
             .fold(available, |available, boundary| {
-                available.min(boundary.local_available())
+                available.min(boundary.boundary_available())
             }))
     }
 }
@@ -53,7 +53,7 @@ pub(super) fn refusing_scope(booking: &Host, units: u64) -> SpendScopeId {
     booking
         .boundaries
         .iter()
-        .find(|boundary| boundary.local_available() < units)
+        .find(|boundary| boundary.boundary_available() < units)
         .map_or_else(
             || booking.host.scope.clone(),
             |boundary| boundary.scope.clone(),
@@ -65,10 +65,10 @@ pub(super) fn refusing_scope(booking: &Host, units: u64) -> SpendScopeId {
 pub(super) fn boundary_refusal(boundaries: &[SpendScope], units: u64) -> Option<SpendRefused> {
     boundaries
         .iter()
-        .find(|boundary| boundary.local_available() < units)
+        .find(|boundary| boundary.boundary_available() < units)
         .map(|boundary| SpendRefused::OverCap {
             scope: boundary.scope.clone(),
-            available_units: boundary.local_available(),
+            available_units: boundary.boundary_available(),
             asked_units: units,
         })
 }
