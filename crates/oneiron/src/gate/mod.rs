@@ -31,6 +31,7 @@ mod default_manifest;
 pub(crate) mod experiment_selection_policy;
 pub(crate) mod failure_signal_policy;
 pub(crate) mod team_review;
+mod value_encoding;
 /// A policy manifest's bytes as the owner's install door stores them, its
 /// optional notification table made explicit. A vault-shape manifest row
 /// (ARCH-0070) reads as landed against these.
@@ -162,6 +163,8 @@ pub(crate) use self::definition_ceiling::first_party_connector_actor_ref;
 pub(crate) use self::definition_ceiling::{
     agent_definition_ceiling_for_actor, definition_only_ceiling_for_actor,
 };
+// An off-record room's claim decision, captured for the room (FIX 9967).
+pub(crate) use self::doors::capture_claim_policy_for_write;
 #[cfg(feature = "sync")]
 pub(crate) use self::doors::check_federated_claim_admission;
 pub(crate) use self::doors::{
@@ -249,11 +252,14 @@ pub(crate) use self::skill_tradeoff_policy::{SkillTradeoffLimits, skill_tradeoff
 pub(crate) use self::voice_serving::VoiceServingPolicyReceipt;
 #[cfg(test)]
 pub(crate) use self::witness_message::canonical_witness_message_body_for_test;
+#[cfg(feature = "sync")]
+pub(crate) use self::witness_message::companion_author_pending;
 pub(crate) use self::witness_message::{
     WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WITNESS_AUTHOR_USER,
     WitnessMessageAuthorization, WitnessMessageBodyAuthor, WitnessMessageEnvelope,
-    check_witness_message_ceiling, check_witness_message_ceiling_with_permit,
-    validate_canonical_witness_message_body, validate_own_device_witness_message_body,
+    check_source_bound_witness_message_ceiling, check_witness_message_ceiling,
+    check_witness_message_ceiling_with_permit, validate_canonical_witness_message_body,
+    validate_own_device_witness_message_body,
 };
 
 // gate.rs was one flat module: its private `use` header and every item in it

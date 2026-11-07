@@ -7,11 +7,14 @@ mod tests;
 mod admission;
 mod authority_parts;
 mod authority_tail;
+mod base_projection;
 mod bundle;
 mod bundle_access;
 mod bundle_payload;
 mod bundle_stage;
 mod bundle_turn;
+pub(crate) mod cache_worlds;
+pub use cache_worlds::CachedItemWorlds;
 mod content_world;
 mod custody;
 mod directives;
@@ -22,10 +25,12 @@ mod machine_history;
 mod pad_custody;
 mod policy;
 mod prune;
+mod publication_access;
 mod recall_scope;
 mod sealed_updates;
 mod search;
 mod window_index;
+mod world_base_rows;
 mod world_eviction;
 pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
 pub use authority_parts::{
@@ -113,11 +118,16 @@ pub use policy::{
     DeviceSyncPreference, effective_residence_mode, load_device_sync_preference,
     local_is_elected_home, resolve_residence_mode, set_device_sync_preference, synced_as_replica,
 };
+pub(crate) use prune::checkpoint_read_cache_keys;
 pub(crate) use prune::demote_resident_window;
 pub(crate) use prune::erase_item_caches_in_txn;
 pub(crate) use prune::prune_thin_items_in_txn;
 pub(crate) use prune::record_item_touch_in_txn;
 pub use prune::{WindowDemotion, prune_thin_items, record_item_touch};
+pub use publication_access::{
+    PendingPublicationGrant, invalidate_publication_grant, offer_publication_grant,
+    pending_publication_grants, publication_grant,
+};
 pub use recall_scope::{ResolvedRecallSelection, ResolvedRecallWorlds, recall_scope_transcript};
 pub use sealed_updates::{
     OutboxSealedUpdate, SEALED_UPDATE_KEEP_SECS, SEALED_UPDATE_PAGE_BYTES,
@@ -134,8 +144,11 @@ pub use window_index::{
     IndexPage, WindowIndexEntry, index_selection_revision, window_index_page,
     window_index_projection, window_index_projection_with,
 };
+pub(crate) use world_base_rows::{discarded_rows_in, discarded_world_in, forget_discarded_in_txn};
 pub use world_eviction::{WorldEviction, discard_world_copy_as, evict_worlds_placed_elsewhere};
-pub(crate) use world_eviction::{put_home_window_vv, world_placed_elsewhere};
+pub(crate) use world_eviction::{
+    home_window_vv_in_txn, put_home_window_vv, world_placed_elsewhere, world_placed_elsewhere_in,
+};
 
 #[cfg(test)]
 use loro::ExportMode;
@@ -549,6 +562,7 @@ pub fn promotion_covers_full_window_for(
             super::repo_manifests::REPO_MANIFESTS_MAP,
             super::withdrawn_cutoffs::WITHDRAWN_CUTOFFS_MAP,
             super::ingest::PEER_ORIGIN_MAP,
+            super::ingest::MESSAGE_WRITER_MAP,
         ] {
             super::loro_support::copy_binary_root_map(source, &selected, name)?;
         }
@@ -556,6 +570,9 @@ pub fn promotion_covers_full_window_for(
     }
     // A body reference stands beside each owner the grant kept (FIX 5532).
     super::asset_body::references::copy_refs_within(source, &selected)?;
+    if own_machine {
+        super::origin_positions::copy_for_own_machines(source, &selected)?;
+    }
     if !same_nonempty_roots(&selected, source) {
         return Ok(false);
     }

@@ -50,8 +50,10 @@ impl ScopedRead<'_> {
             .map_err(|_| Error::InvariantViolation("recall authority lock"))? = Some(fold);
         let result = (|| {
             // One relationship authority for every row this filter checks in
-            // its snapshot, not one per row (FIX 11648).
-            let held = HeldAuthority::default();
+            // its snapshot, not one per row (FIX 11648). Its filter resolved
+            // with no request, so A judges a row B refuses under each of the
+            // reader's own live Grants' floors alone (FIX 7528).
+            let held = HeldAuthority::for_request(None);
             let had_l2_base = pack.l2_base.is_some();
             let mut auxiliary_suppressed = 0;
             if let Some(summary) = pack.l2_base.as_ref() {
@@ -156,7 +158,10 @@ impl ScopedRead<'_> {
                 });
             }
             crate::disclosure::project_model_pack_in(self.vault, &rtxn, &self.actor_key, pack)?;
-            Ok(self.receipt_for(None, &policy, &filter, suppressed))
+            // The pack's receipt reports the candidates its search ranked,
+            // the key's own rows and its own live Grants' (FIX 7528).
+            let candidates = self.candidate_filter_in(&rtxn, &policy, &filter, None);
+            Ok(self.receipt_for(None, &policy, &candidates, suppressed))
         })();
         self.end_recall_plan()?;
         result
@@ -271,17 +276,38 @@ impl ScopedRead<'_> {
     /// session's.
     ///
     /// Composes through the same session-aware edge port as reachability.
+    /// Every facet is read: a long list raises the advisory edge-scan check,
+    /// never a refusal (FIX 8665). Only a base read raises it: a room's
+    /// staged rows have no name in the vault's checks (FIX 4280).
     pub(crate) fn claim_facet_refs_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Vec<EntityId>> {
+        let mut count = if self.reads_room() {
+            None
+        } else {
+            Some(crate::scan_check::ScanCount::start(
+                &self.vault.store,
+                rtxn,
+                crate::store::EngineScan::EdgePeerRows,
+                &[
+                    &[crate::ports::EdgeDirection::Out as u8][..],
+                    id.as_bytes(),
+                    &[EdgeKind::FacetOf as u8][..],
+                ]
+                .concat(),
+            )?)
+        };
         let mut facets = Vec::new();
         for entry in self.out_edges_in(rtxn, id, Some(EdgeKind::FacetOf))? {
-            if facets.len() >= crate::vault::MAX_EDGE_QUERY_RESULTS {
-                return Err(Error::IndexOverflow("claim_facet_refs"));
+            if let Some(count) = count.as_mut() {
+                count.row();
             }
             facets.push(entry?.target);
+        }
+        if let Some(count) = count {
+            count.defer(&self.vault.store);
         }
         Ok(facets)
     }

@@ -173,6 +173,46 @@ impl DiskFloor {
         }
     }
 
+    /// A dedicated scratch filesystem's floor, sharing pending claims across
+    /// servers that select the same actual filesystem. Each keeps its own
+    /// configured reserve; existing vault floors are not replaced.
+    pub(crate) fn on_shared_disk_of(&self, dir: PathBuf) -> std::io::Result<Self> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            use std::sync::{OnceLock, Weak};
+
+            type Claims = Mutex<u64>;
+            static FLOORS: OnceLock<Mutex<std::collections::BTreeMap<u64, Weak<Claims>>>> =
+                OnceLock::new();
+            let device = std::fs::metadata(&dir)?.dev();
+            let vault_device = std::fs::metadata(&self.dir)?.dev();
+            if device == vault_device {
+                return Err(std::io::Error::other(
+                    "configured renderer scratch must be a separate filesystem from the vault",
+                ));
+            }
+            let mut floors = lock(FLOORS.get_or_init(Mutex::default));
+            floors.retain(|_, claims| claims.strong_count() > 0);
+            let claimed = match floors.get(&device).and_then(Weak::upgrade) {
+                Some(claimed) => claimed,
+                None => {
+                    let claimed = Arc::new(Mutex::new(0));
+                    floors.insert(device, Arc::downgrade(&claimed));
+                    claimed
+                }
+            };
+            let mut floor = self.on_disk_of(dir);
+            floor.claimed = claimed;
+            Ok(floor)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = dir;
+            Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
+        }
+    }
+
     /// A disk that cannot be read is taken as full: a floor that cannot be
     /// checked holds.
     fn room(&self, claimed: u64, bytes: u64) -> bool {

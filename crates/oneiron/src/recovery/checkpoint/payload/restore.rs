@@ -167,6 +167,113 @@ fn join_windows(
     }
 }
 
+/// A payload's selected owners as their compartments opened for a legal
+/// read of one checkpoint (LEGAL-HOLD-USE = B as a clone): each content
+/// bundle of a selected owner, with the parts of the opened actor groups
+/// that name one of its parts, and the owners that did not open.
+pub(in crate::recovery::checkpoint) struct SelectedPayload {
+    bundles: Vec<(BundleRole, OpenedOwnerRows)>,
+    opened: BTreeSet<OwnerRef>,
+}
+
+impl SelectedPayload {
+    /// Each opened content bundle `getter` framed for `owner`.
+    pub(in crate::recovery::checkpoint) fn contents(
+        &self,
+        owner: OwnerRef,
+        getter: Getter,
+    ) -> impl Iterator<Item = &OpenedOwnerRows> {
+        self.bundles.iter().filter_map(move |(role, opened)| {
+            (*role == BundleRole::Content(getter)
+                && opened.subtype == owner.subtype
+                && opened.owner32 == owner.owner32)
+                .then_some(opened)
+        })
+    }
+
+    /// Whether the payload holds `owner`'s compartment and it opened: live
+    /// custody still holds its leaf, so no erase or purge retired it since
+    /// the cut.
+    pub(in crate::recovery::checkpoint) fn opened(&self, owner: OwnerRef) -> bool {
+        self.opened.contains(&owner)
+    }
+}
+
+/// [`open_image_payload`] for a legal read of the owners `selected` admits:
+/// every compartment the payload names is required through `plan` and
+/// opens or stays shut exactly as there, and the image's rows that hold an
+/// id link to an owner that did not open are taken out the same way. Only
+/// the selected owners' content bundles open, beside every actor bundle (an
+/// actor-keyed part names its actor in its actor's group alone). Nothing is
+/// restored or written, and no other owner's content is read.
+///
+/// # Errors
+///
+/// As [`open_image_payload`].
+pub(in crate::recovery::checkpoint) fn open_selected_payload(
+    sealed: Option<SealedPayload<'_>>,
+    plan: &mut CustodyPlan,
+    image: &mut CheckpointImage,
+    selected: impl Fn(&OwnerRef) -> bool,
+) -> std::result::Result<Option<SelectedPayload>, Rejected> {
+    let Some(mut sealed) = sealed else {
+        return Ok(None);
+    };
+    let required = sealed.section.required()?;
+    let access = compartment_access(plan, &required)?;
+    let owner = |index: usize| {
+        required.get(index).map(|(item, _)| OwnerRef {
+            subtype: item.subtype(),
+            owner32: *item.owner(),
+        })
+    };
+    let held: BTreeSet<OwnerRef> = (0..required.len()).filter_map(owner).collect();
+    let opened: BTreeSet<OwnerRef> = access
+        .iter()
+        .enumerate()
+        .filter(|(_, answer)| matches!(answer, CompartmentAccess::Open(_)))
+        .filter_map(|(index, _)| owner(index))
+        .collect();
+    let unopened = unavailable(&held, &opened);
+    let vault = sealed.vault_id();
+    let mut contents = Vec::new();
+    let mut actor_parts = Vec::new();
+    for (index, (compartment, role, stream)) in sealed.section.bundles().into_iter().enumerate() {
+        let Some(CompartmentAccess::Open(key)) = access.get(compartment) else {
+            continue;
+        };
+        // A window bundle holds an owner's copies of sync window values,
+        // which no legal read of messages names (FIX 10277).
+        let wanted = match role {
+            BundleRole::Actors => true,
+            BundleRole::Content(_) | BundleRole::Carrier(_) => {
+                owner(compartment).is_some_and(|owner| selected(&owner))
+            }
+            BundleRole::Window => false,
+        };
+        if !wanted {
+            continue;
+        }
+        let bytes = sealed.stream(stream)?;
+        let plain = open_bundle(&vault, &sealed.section, index, &bytes, key)?;
+        match role {
+            BundleRole::Actors => actor_parts.extend(read_actor_parts(&plain)?),
+            BundleRole::Content(_) | BundleRole::Carrier(_) | BundleRole::Window => {
+                contents.push((role, plain));
+            }
+        }
+    }
+    let mut bundles = Vec::with_capacity(contents.len());
+    for (role, plain) in contents {
+        bundles.push((
+            role,
+            opened_content(&plain, &actor_parts, unopened.clone())?,
+        ));
+    }
+    structure::prune(&mut image.databases, &unopened);
+    Ok(Some(SelectedPayload { bundles, opened }))
+}
+
 /// Takes the image's unavailable-call rows (FIX 6260) and call accounting
 /// rows (FIX 12117) out of its rows, to land through the ledger's own sinks.
 fn take_call_rows(image: &mut CheckpointImage) -> Vec<(RowLocator, Vec<u8>)> {
@@ -222,26 +329,38 @@ impl OpenedPayload {
     }
 
     /// The entity rows the opened entity bundles land, in key order, that
-    /// no unopened owner holds up: a restore checks each as it checks the
-    /// image's, and stages its type index.
-    pub(in crate::recovery::checkpoint) fn entity_rows(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
-        let mut rows: Vec<(Vec<u8>, Vec<u8>)> = self
+    /// no unopened owner holds up: each exact row, and each actor-keyed one
+    /// (an author carrier, FIX 17143) whose actor opened. A restore checks
+    /// each as it checks the image's, and stages its type index.
+    ///
+    /// # Errors
+    ///
+    /// An actor part that does not read as the row it names.
+    pub(in crate::recovery::checkpoint) fn entity_rows(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+        let mut rows = Vec::new();
+        let entities = self
             .bundles
             .iter()
-            .filter(|(role, _)| *role == BundleRole::Content(Getter::Entities))
-            .flat_map(|(_, opened)| {
-                opened.rows.iter().filter_map(|part| match part {
-                    RowPart::Exact { at, value }
-                        if at.db == RowDb::Entities && !held_up(opened, at) =>
-                    {
-                        Some((at.key.clone(), value.clone()))
+            .filter(|(role, _)| *role == BundleRole::Content(Getter::Entities));
+        for (_, opened) in entities {
+            for part in &opened.rows {
+                let at = part.at();
+                if at.db != RowDb::Entities || held_up(opened, at) {
+                    continue;
+                }
+                match part {
+                    RowPart::Exact { value, .. } => rows.push((at.key.clone(), value.clone())),
+                    RowPart::ActorKeyed { .. } => {
+                        if let Some((row, value)) = opened.actor_keyed_row(at)? {
+                            rows.push((row.key, value));
+                        }
                     }
-                    _ => None,
-                })
-            })
-            .collect();
+                    RowPart::NoActor { .. } => {}
+                }
+            }
+        }
         rows.sort();
-        rows
+        Ok(rows)
     }
 
     /// `erased`, the ids a restore's source erased, with every entity

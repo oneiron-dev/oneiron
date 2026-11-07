@@ -6,6 +6,7 @@ use std::sync::Arc;
 use oneiron_container::HostNetFloor;
 use sha2::{Digest, Sha256};
 
+use super::guest_error::{GuestErrorMask, GuestProgramError};
 use super::microvm::{
     CredentialAllowlist, CredentialDestination, CredentialResolver, ExecutionBudget, GuestImage,
     MicroVmBackend, MicroVmSandboxAdapter, select_backend_for_tier,
@@ -39,7 +40,13 @@ pub struct ForeignCodeOutcome {
 /// runs as the JavaScript Oxc printed for it; JavaScript runs as written
 /// (FIX 8276). `prepared` is the admitting door's one preparation of it,
 /// whose original that door keeps and checks (FIX 10389): nothing here
-/// prepares or checks it again.
+/// prepares or checks it again. A failed program's own error comes back
+/// with each value `mask` knows replaced, then the shape sanitizer, the
+/// existing cut and its TypeScript position (FIX 9209).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is a separate authority the admitting door lends"
+)]
 pub fn execute_foreign_code(
     prepared: &PreparedSource<'_>,
     mounts: SandboxMountTable,
@@ -48,6 +55,7 @@ pub fn execute_foreign_code(
     spool: Arc<dyn ProposalSpoolFloor>,
     floor: Arc<dyn HostNetFloor>,
     output: &mut dyn super::microvm::MicroVmOutputSink,
+    mask: &dyn GuestErrorMask,
 ) -> Result<ForeignCodeOutcome> {
     if !artifact.component.starts_with(b"\0asm\x0d\0\x01\0")
         || <[u8; 32]>::from(Sha256::digest(artifact.component)) != artifact.sha256
@@ -69,13 +77,16 @@ pub fn execute_foreign_code(
         budget,
         &StepCancellation::never(),
         output,
-    )
+    )?
+    .map_err(|failed| failed.into_error(prepared, 0, |body| mask.mask_known_values(body)))
 }
 
 /// The finite foreign runtime and the public admission share one launch,
 /// cancellation, manifest and proposal path. Only their host-owned workspace,
 /// egress authority and proposal spool differ: a host that lent no spool
-/// spools proposed files as before (FIX 7650).
+/// spools proposed files as before (FIX 7650). A failed program's own error
+/// comes back unmasked as the inner `Err`, for the caller to mask and place
+/// with its own preparation (FIX 9209).
 #[expect(
     clippy::too_many_arguments,
     reason = "the host supplies each isolated execution axis"
@@ -91,7 +102,7 @@ pub(crate) fn execute_foreign_code_on(
     budget: ExecutionBudget,
     cancel: &StepCancellation,
     output: &mut dyn super::microvm::MicroVmOutputSink,
-) -> Result<ForeignCodeOutcome> {
+) -> Result<std::result::Result<ForeignCodeOutcome, GuestProgramError>> {
     cancel.check()?;
     backend.set_egress(Arc::clone(&relay));
     if let Some(spool) = spool {
@@ -124,17 +135,20 @@ pub(crate) fn execute_foreign_code_on(
     recorded?;
     let exit = result?;
     if exit.status != 0 {
-        return Err(invalid("foreign program failed in isolated backend"));
+        return match exit.guest_error {
+            Some(message) => Ok(Err(GuestProgramError::new(message))),
+            None => Err(invalid("foreign program failed in isolated backend")),
+        };
     }
     let proposals = adapter.collect_overlay_proposals()?;
     cancel.check()?;
-    Ok(ForeignCodeOutcome {
+    Ok(Ok(ForeignCodeOutcome {
         result_json: exit
             .result_json
             .ok_or_else(|| invalid("foreign execution returned no step result"))?,
         proposals,
         manifest,
-    })
+    }))
 }
 
 struct NoCredentials;
