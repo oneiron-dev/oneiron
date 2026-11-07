@@ -17,11 +17,17 @@
 //! A capsule keeps its request as pieces its run holds once for the actor
 //! (FIX 4192, [`pieces`]): the config, each message and one sequence node
 //! per message. Its own request body is the manifest that names them.
+//!
+//! A capsule also names the folds whose accepted summaries each of its
+//! bodies copies (FIX 18924). A read of a body whose folds' words are
+//! withdrawn reads none, and a fork writer meets such a request as erased.
+//! The withdrawal retires each such body in its own writer ([`fold_words`]).
 
 mod admit;
 mod context;
 mod erase;
 mod execution;
+mod fold_words;
 mod fork_erase;
 mod owner_pair;
 mod pieces;
@@ -38,6 +44,7 @@ use super::super::contribution::{
 };
 use super::super::replay::{CodeRunRawOutput, ResultOccurrence};
 use super::super::replay_capsule::{CapsuleHost, CapsuleRequest, StepReplayCapsule};
+use super::fold_answers::words_withdrawn;
 use super::records::body_drifted;
 use crate::compaction::output::OutputRef;
 use crate::provenance::body::owned_body_in_txn;
@@ -52,6 +59,7 @@ pub(crate) use self::erase::erase_capsule_actor_in_txn;
 pub(crate) use self::erase::{actor_gone_in_store, actor_gone_in_txn};
 pub(super) use self::erase::{capsule_bodies_in_txn, names_no_actor};
 pub(crate) use self::execution::{fork_execution_outputs, store_fork_execution};
+pub(super) use self::fold_words::retire_fold_word_capsules_in_txn;
 pub(crate) use self::fork_erase::ForkProvenance;
 pub(crate) use self::fork_erase::{
     contribution_pair_erase_candidates_in_txn, erase_contribution_forks_in_txn,
@@ -142,7 +150,9 @@ type ForkWrite<T> = std::result::Result<T, ContributionReplayUnavailable>;
 
 /// The capsule at `key` and its actor, as a fork writer reads it in `txn`
 /// (FIX 6256). A capsule row that is gone is `Unreadable`. A capsule whose
-/// actor's erase took its content is `Erased`: its custody is retired.
+/// actor's erase took its content is `Erased`: its custody is retired. So is
+/// one whose request copies fold words a withdrawal took (FIX 18924): no
+/// fork answer is published from it.
 fn fork_capsule_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -154,6 +164,9 @@ fn fork_capsule_in_txn(
     let Some(actor) = capsule.content.actor() else {
         return Ok(Err(ContributionReplayUnavailable::Erased));
     };
+    if words_withdrawn(&vault.store, txn, &capsule.fold_words.request)? {
+        return Ok(Err(ContributionReplayUnavailable::Erased));
+    }
     Ok(Ok((capsule, actor)))
 }
 
@@ -261,7 +274,7 @@ pub(crate) fn undecodable_step_capsule_in_txn(
 /// stored: masked, its prefix row the run's row as the wall admitted it.
 /// `None` when the capsule has no start, holds its content no longer (its
 /// actor was erased), or its body is released, gone, withheld or no longer
-/// its digest.
+/// its digest, and when its prefix records withdrawn fold words (FIX 18924).
 pub(crate) fn capsule_start_body(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -273,7 +286,7 @@ pub(crate) fn capsule_start_body(
     let Some(start) = &capsule.start else {
         return Ok(None);
     };
-    if start.erased {
+    if start.erased || words_withdrawn(&vault.store, rtxn, &capsule.fold_words.start)? {
         return Ok(None);
     }
     let held = match held_body_in_txn(vault, rtxn, capsule.run, &start.path, start.body) {
@@ -288,13 +301,36 @@ pub(crate) fn capsule_start_body(
     Ok((*blake3::hash(&bytes).as_bytes() == start.digest).then_some(bytes))
 }
 
+/// Whether a withdrawal took the words of a fold one of `capsule`'s bodies
+/// copies (FIX 18924), its request, its start or its context, as the
+/// vault reads now: a frozen replay source refuses such a capsule.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn capsule_fold_words_withdrawn(
+    vault: &Vault,
+    capsule: &StepReplayCapsule,
+) -> Result<bool> {
+    let rtxn = vault.store.env.read_txn()?;
+    let words = &capsule.fold_words;
+    for named in [&words.request, &words.start, &words.context] {
+        if words_withdrawn(&vault.store, &rtxn, named)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// The capsule's request as stored: the request it captured, each secret in
 /// it its custody handle. `None` when the capsule holds its content no
 /// longer (its actor was erased), when the wall withheld the request at its
 /// capture (FIX 6254), or its body is released, gone, withheld, not its
 /// stored hash or not a request; never an empty or rebuilt one. FIX 4192:
 /// the whole request is put together from the pieces its manifest names,
-/// each as the capsule's run holds it for the capsule's actor.
+/// each as the capsule's run holds it for the capsule's actor. FIX 18924: a
+/// request that copies withdrawn fold words reads as none, in the snapshot
+/// its pieces are read in.
 pub(crate) fn capsule_request(
     vault: &Vault,
     capsule: &StepReplayCapsule,
@@ -311,12 +347,14 @@ pub(crate) fn capsule_request(
     let key = capsule_key(capsule);
     let still = |rtxn: &heed::RoTxn<'_>| -> Result<Option<PieceScope>> {
         let row = kept_in_txn(vault, rtxn, &key)?;
-        Ok(row
-            .filter(|row| row.request == capsule.request)
-            .and_then(|row| {
-                let run = row.run;
-                row.content.actor().map(|actor| PieceScope { run, actor })
-            }))
+        let Some(row) = row.filter(|row| row.request == capsule.request) else {
+            return Ok(None);
+        };
+        if words_withdrawn(&vault.store, rtxn, &row.fold_words.request)? {
+            return Ok(None);
+        }
+        let run = row.run;
+        Ok(row.content.actor().map(|actor| PieceScope { run, actor }))
     };
     let Some(bytes) = held_request_bytes(vault, *body, path, still)? else {
         return Ok(None);

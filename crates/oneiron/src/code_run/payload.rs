@@ -33,6 +33,7 @@ use super::{SelfLeaderCall, SummarizeEffort, coordination_codec};
 use crate::error::GateError;
 
 pub(super) use self::fold_words::{answer_fold_words, keep_erased_fold_words};
+pub(crate) use self::fold_words::{push_fold_word, recorded_fold_words};
 pub(crate) use self::observations::agent_verb_observations_of;
 pub(super) use self::request::{agent_verb_call_identity, self_call_request_value};
 

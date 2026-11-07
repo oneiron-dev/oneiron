@@ -32,14 +32,29 @@ use super::replay_bodies::{CODE_RUN_OUTPUT_PREVIEW_ERASED, RESPONSE_ERASED};
 use super::response_erase::release_occurrence_in_txn;
 use super::routing::SessionBinding;
 use crate::code_run::payload::{
-    answer_fold_words, keep_erased_fold_words, keep_row_receipt, row_receipt,
+    answer_fold_words, keep_erased_fold_words, keep_row_receipt, push_fold_word, row_receipt,
     self_dispatch_outcome_value,
 };
-use crate::code_run::{FoldWordRef, SelfDispatchOutcome, SelfEffect, SelfFailedResult};
+use crate::code_run::{FoldAnswer, FoldWordRef, SelfDispatchOutcome, SelfEffect, SelfFailedResult};
 use crate::engine_executor::bridge_result_output_path;
 use crate::side_table::{Erased, SideKey};
 use crate::store::{ManifestDbs, Store};
-use crate::{EntityId, Result};
+use crate::{EntityId, Result, Vault};
+
+/// Whether a withdrawal took the words of a fold `answer` copies, as the
+/// vault reads now (FIX 18924): a cached action's replay fails such an
+/// answer with `response_erased` rather than return it.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn fold_answer_withdrawn(vault: &Vault, answer: &FoldAnswer) -> Result<bool> {
+    if answer.words.is_empty() {
+        return Ok(false);
+    }
+    let rtxn = vault.store.env.read_txn()?;
+    words_withdrawn(&vault.store, &rtxn, &answer.words)
+}
 
 /// One recorded fold answer whose words are withdrawn: its call's place in
 /// the record, and the folds it named.
@@ -49,8 +64,13 @@ pub(crate) struct WithdrawnFoldAnswer {
 }
 
 /// Whether the words of any fold `words` names are withdrawn as read
-/// through `dbs`, by the ledger fence's own test.
-fn words_withdrawn(dbs: &impl ManifestDbs, txn: &RoTxn<'_>, words: &[FoldWordRef]) -> Result<bool> {
+/// through `dbs`, by the ledger fence's own test. A capsule's bodies take
+/// the same test (FIX 18924).
+pub(super) fn words_withdrawn(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    words: &[FoldWordRef],
+) -> Result<bool> {
     for word in words {
         if crate::compaction::fold_words_withdrawn_in(
             dbs,
@@ -161,7 +181,10 @@ pub(crate) fn redact_fold_answers(
 /// side-row wall. The body each answer spilled to is withdrawn as its run's
 /// occurrence, released with its own marks, and its instance retired, or
 /// owed to another holder's release. A record that does not decode is left
-/// as it is.
+/// as it is. Each capsule body that copies the words retires first, in the
+/// same writer (`replay_capsule::fold_words`), and every checkpoint image
+/// whose owners name a withdrawn fold that a reached copy named retires
+/// beside them ([`retire_fold_word_images_in_txn`]).
 ///
 /// # Errors
 ///
@@ -171,6 +194,8 @@ pub(crate) fn retire_fold_answers_in_txn(
     wtxn: &mut RwTxn<'_>,
     source_run: Option<EntityId>,
 ) -> Result<()> {
+    let mut reached =
+        super::replay_capsule::retire_fold_word_capsules_in_txn(store, wtxn, source_run)?;
     let mut records = Vec::new();
     let txn: &RoTxn<'_> = wtxn;
     for row in REPLAY_RECORDS.iter_raw_from(store, txn, &[])? {
@@ -186,6 +211,11 @@ pub(crate) fn retire_fold_answers_in_txn(
             records.push((id, record, answers));
         }
     }
+    let named = records.iter().flat_map(|(_, _, answers)| answers);
+    for word in named.flat_map(|answer| answer.words.iter()) {
+        push_fold_word(&mut reached, word.clone());
+    }
+    retire_fold_word_images_in_txn(store, wtxn, &reached)?;
     if records.is_empty() {
         return Ok(());
     }
@@ -220,6 +250,32 @@ pub(crate) fn retire_fold_answers_in_txn(
     for (owner, digests) in released {
         let digests: Vec<[u8; 32]> = digests.into_iter().collect();
         crate::store::erase_bodies_in_txn(store, wtxn, &owner, &digests)?;
+    }
+    Ok(())
+}
+
+/// Retires every checkpoint image whose owners name the words of a fold
+/// among `words` that a withdrawal took here (FIX 18924), a historical one
+/// too: each instance retires, or is owed to another holder, as an erase of
+/// that owner leaves it, and a row still bound to one is carried again
+/// under a fresh instance. A fold whose words stand is left as it is.
+///
+/// # Errors
+///
+/// Storage and custody errors.
+fn retire_fold_word_images_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    words: &[FoldWordRef],
+) -> Result<()> {
+    let mut retired = BTreeSet::new();
+    for word in words {
+        let owner = crate::compaction::fold_words_id(word.source_run, word.fold);
+        if retired.contains(&owner) || !words_withdrawn(store, wtxn, std::slice::from_ref(word))? {
+            continue;
+        }
+        crate::store::erase_response_owner_in_txn(store, wtxn, &owner)?;
+        retired.insert(owner);
     }
     Ok(())
 }

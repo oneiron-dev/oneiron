@@ -110,8 +110,8 @@ pub(crate) use epoch_floor::{
 };
 pub use epoch_vector::{EpochEmbedder, TurnVector, room_turn_vector};
 pub(crate) use fold_words::{
-    FOLD_LEDGERS, fence_withdrawn_folds_in, fold_words_withdrawn_in, land_folds_in_base,
-    land_folds_in_overlay, scrub_withdrawn_fold_summary_in_txn,
+    FOLD_LEDGERS, fence_withdrawn_folds_in, fold_words_id, fold_words_withdrawn_in,
+    land_folds_in_base, land_folds_in_overlay, scrub_withdrawn_fold_summary_in_txn,
 };
 pub(crate) use folds::escape_compacted_text;
 pub use gate::{

@@ -158,8 +158,9 @@ fn kept_start_in_txn(
 /// Who owns a kept start's rest (CALLS "step start rest owners"): the actor
 /// whose step it is and its run, whose erases retire the whole start body
 /// today, and every owner its prefix row's replies name, as a replay row's
-/// reply. The start's captured folds keep no words (FIX 18694), so they
-/// name no owner here.
+/// reply: each fold answer the prefix records names its fold's words id and
+/// sources there (FIX 18924). The start's captured folds keep no words (FIX
+/// 18694), so they name no owner here.
 ///
 /// # Errors
 ///

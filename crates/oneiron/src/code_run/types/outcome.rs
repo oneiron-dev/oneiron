@@ -84,8 +84,9 @@ pub struct FoldAnswer {
 
 /// One fold whose accepted summary a fold answer copies (FIX 18924): the
 /// run whose ledger holds the fold, the fold's number, and the records the
-/// summary was written from. It holds no words.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// summary was written from. It holds no words. A capsule keeps the same
+/// references for the bodies it holds (FIX 18924).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct FoldWordRef {
     pub(crate) source_run: EntityId,
     pub(crate) fold: u64,
