@@ -185,25 +185,71 @@ fn span_in_sight(
             quote_hash: blake3::hash(live.as_bytes()).to_hex().to_string(),
         }));
     }
-    // The reader reads each lifted key as its handle. The span projects
-    // cleanly when no key straddles its edges: masking the text before it,
-    // the span and the text after it apart reads as masking them together.
     let whole: String = text.iter().collect();
     let keys = LiftedKeys::of_in_txn(store, txn, [whole.as_str()])?;
-    let before: String = text[..live_from].iter().collect();
-    let after: String = text[live_to..].iter().collect();
-    let (before, shown, after) = (
-        keys.masked_text(&before).text(),
-        keys.masked_text(&live).text(),
-        keys.masked_text(&after).text(),
-    );
-    if format!("{before}{shown}{after}") != keys.masked_text(&whole).text() {
+    let Some((shown_from, shown)) = span_in_masked_sight(&keys, &text, live_from, live_to) else {
         return Ok(None);
-    }
-    let shown_from = before.chars().count();
+    };
     Ok(Some(SpanInSight {
         stored: live_from..live_to,
         shown: shown_from..shown_from + shown.chars().count(),
         quote_hash: blake3::hash(shown.as_bytes()).to_hex().to_string(),
     }))
+}
+
+/// What a reader who reads each of `keys` as its handle reads of the stored
+/// characters `from..to` of `text` (Unicode scalar positions): where they
+/// start in that reader's text, and the words shown there. The span projects
+/// cleanly when no key straddles its edges: masking the text before it, the
+/// span and the text after it apart reads as masking them together. `None`
+/// when a key splits it.
+pub(crate) fn span_in_masked_sight(
+    keys: &LiftedKeys,
+    text: &[char],
+    from: usize,
+    to: usize,
+) -> Option<(usize, String)> {
+    let whole: String = text.iter().collect();
+    let before: String = text[..from].iter().collect();
+    let span: String = text[from..to].iter().collect();
+    let after: String = text[to..].iter().collect();
+    let (before, shown, after) = (
+        keys.masked_text(&before).text(),
+        keys.masked_text(&span).text(),
+        keys.masked_text(&after).text(),
+    );
+    if format!("{before}{shown}{after}") != keys.masked_text(&whole).text() {
+        return None;
+    }
+    Some((before.chars().count(), shown))
+}
+
+/// The text of `entity`'s record document at `qualified`, an
+/// incarnation-qualified frontier as [`super::source_frontier_in_txn`]
+/// names one, with the live document's text beside it, read in `txn` (FIX
+/// 11766). `None` when `entity` has no document, the frontier names another
+/// incarnation of it, or that state is no longer retained: the words it
+/// named are gone. Never the live document in place of the state named.
+pub(crate) fn source_texts_at_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    entity: &EntityId,
+    qualified: &[u8],
+) -> Result<Option<(String, String)>> {
+    if !storage::has_record_head(store, txn, entity)? {
+        return Ok(None);
+    }
+    let h = storage::head(store, txn, entity)?;
+    let Some(frontier) = qualified.strip_prefix(h.incarnation.as_bytes()) else {
+        return Ok(None);
+    };
+    let doc = storage::load(store, txn, &h)?;
+    if frontier == doc.frontier().as_slice() {
+        let text = doc.text();
+        return Ok(Some((text.clone(), text)));
+    }
+    let Ok(origin) = doc.fork(frontier) else {
+        return Ok(None);
+    };
+    Ok(Some((origin.text(), doc.text())))
 }

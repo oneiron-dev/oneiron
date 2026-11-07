@@ -10,6 +10,8 @@
 //! Every time here is unix milliseconds on one clock: the parent's cutoff,
 //! fixed in its parent row at its first spawn.
 
+mod origins;
+
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -20,6 +22,9 @@ use crate::agent_dispatch::SpendScopeId;
 use crate::attempt_queue::{AttemptId, BorrowedAttemptLease};
 use crate::vault::VaultId;
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
+
+pub(crate) use self::origins::OriginsUnion;
+pub use self::origins::{DelegatedSource, ReaderFindingRef, ResultOrigins};
 
 /// What the parent keeps back of its own window for the fold that reads its
 /// children's findings: the fold's code-first dedupe plus two staged
@@ -174,12 +179,13 @@ impl SummarizeEffort {
     }
 }
 
-/// What one summary is made by: its prompt's version and its effort. Two
-/// summaries of the same members by the same recipe are one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// What one summary is made by: its prompt's version, effort and frozen
+/// words. Two summaries of the same members by the same recipe are one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SummarizeRecipe {
     pub version: u32,
     pub effort: SummarizeEffort,
+    pub prompt: String,
 }
 
 impl SummarizeRecipe {
@@ -187,11 +193,36 @@ impl SummarizeRecipe {
     pub const VERSION: u32 = 1;
 
     #[must_use]
-    pub const fn new(effort: SummarizeEffort) -> Self {
+    pub fn new(effort: SummarizeEffort) -> Self {
         Self {
             version: Self::VERSION,
             effort,
+            prompt: super::reader_fold::default_summarize_prompt(Self::VERSION, effort),
         }
+    }
+
+    /// Freezes the package's optional summary block, or the shipped default
+    /// when the package does not override it. Includes resolve before the
+    /// version, effort and length placeholders are filled.
+    pub fn from_prompt_package(
+        effort: SummarizeEffort,
+        package_root: impl AsRef<std::path::Path>,
+    ) -> std::io::Result<Self> {
+        let package_root = package_root.as_ref();
+        let path = package_root.join(super::reader_fold::SUMMARIZE_PROMPT_RELATIVE_PATH);
+        if !path.try_exists()? {
+            return Ok(Self::new(effort));
+        }
+        let resolved = crate::prompt::resolve_prompt(&path, package_root)?;
+        Ok(Self {
+            version: Self::VERSION,
+            effort,
+            prompt: super::reader_fold::render_summarize_prompt(
+                Self::VERSION,
+                effort,
+                &resolved.text,
+            ),
+        })
     }
 
     /// The recipe's bytes, as its memo key hashes them: its version, its
@@ -239,6 +270,8 @@ pub struct SelfSummarizeCall {
     pub group: Option<Vec<String>>,
     pub defer: bool,
     pub bound: Option<Vec<DelegatedSource>>,
+    /// The recording host's frozen prompt, never decoded from guest input.
+    pub recipe: Option<SummarizeRecipe>,
 }
 
 impl SelfSummarizeCall {
@@ -317,39 +350,6 @@ pub(crate) fn summary_task_id(parent_run: EntityId, memo: &[u8; 32]) -> Result<E
         b"oneiron:code-reader-summary:v1",
         &[parent_run.as_bytes().as_slice(), memo.as_slice()],
     )
-}
-
-/// The result one child reads, as its parent's spawn resolved it: the
-/// parent's occurrence of it (`owner` and `path`), its handle, the range of
-/// its body the child may read, in the parent's offsets, and the rows the
-/// parent's results were served from (`None` when one answer kept no set).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DelegatedSource {
-    pub owner: EntityId,
-    pub path: String,
-    pub handle: String,
-    pub range: (u64, u64),
-    pub rows: Option<Vec<EntityId>>,
-}
-
-/// A child's finding: one of its own stored JSON results, by its occurrence
-/// in the child run and its handle, its size, and the rows the child's
-/// results were served from.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReaderFindingRef {
-    pub owner: EntityId,
-    pub path: String,
-    pub handle: String,
-    pub bytes: u64,
-    pub rows: Option<Vec<EntityId>>,
-}
-
-impl ReaderFindingRef {
-    /// The exact child occurrence the parent reads, independent of shared bytes.
-    pub(crate) fn reference(&self) -> Result<String> {
-        let occurrence = super::ResultOccurrence::owned(self.owner, &self.path)?;
-        Ok(format!("occurrence:{}", occurrence.id().to_hex()))
-    }
 }
 
 /// `self.spawn(...)`: the guest's source, ask and key. `bound` is the source
