@@ -22,6 +22,12 @@ pub(super) const OCCURRENCES: SideTable<(EntityId, [u8; 32]), MailOccurrence, Na
 /// and the BLAKE3 of the provider's id. The value is the provider's id.
 pub(super) const BODY_QUEUE: SideTable<(EntityId, u64, [u8; 32]), String, Named> =
     SideTable::new(&side_table::MAIL_PACK_BODY_QUEUE);
+/// The header-only revisions a later body superseded, each owed its delete
+/// (FIX 15413): by the source, the BLAKE3 of the provider's id and the
+/// revision's MESSAGE. The value is when it was owed. A row leaves once the
+/// MESSAGE's delete returns.
+pub(super) const HEADER_RETIREMENTS: SideTable<(EntityId, [u8; 32], EntityId), u64, Named> =
+    SideTable::new(&side_table::MAIL_PACK_HEADER_RETIREMENT);
 /// The rows each provider message landed as, so an erase of any of them
 /// reaches the message: by the row (its CONVERSATION, TURN or a MESSAGE
 /// revision), the source and the BLAKE3 of the provider's id. The value is
@@ -164,6 +170,24 @@ pub(super) fn record_occurrence_rows_in_txn(
 ) -> Result<()> {
     for row in rows {
         OCCURRENCE_ROWS.put(&vault.store, txn, &(*row, key.0, key.1), &at)?;
+    }
+    Ok(())
+}
+
+/// Owes each of `headers`, the header-only revisions of the provider
+/// message keyed `key` its body superseded, a delete, and takes them out of
+/// the message's erase reach, so that delete leaves the message as it
+/// stands (FIX 15413).
+pub(super) fn owe_header_retirements_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    key: &(EntityId, [u8; 32]),
+    headers: &[EntityId],
+    at: u64,
+) -> Result<()> {
+    for header in headers {
+        OCCURRENCE_ROWS.delete(&vault.store, txn, &(*header, key.0, key.1))?;
+        HEADER_RETIREMENTS.put(&vault.store, txn, &(key.0, key.1, *header), &at)?;
     }
     Ok(())
 }

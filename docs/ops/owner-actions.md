@@ -77,14 +77,49 @@ An explicit owner backup (`oneiron backup` or `POST /v1/owner/backups`) keeps th
 canonical selection, including private worlds. Scheduled, managed-hourly and pre-idle backups
 use a separate automatic selection. When an entity's known world dependencies are all resolved
 to sealed copies **Off**, that selection leaves out its core row, text/phonetic index sources,
-and the document rows the native checkpoint getter assigns wholly to it. It also leaves out
-known Off worlds' window snapshots and durable window updates. Shared document proposals keep
-their other owners' fragments. Authority-log rows and non-payload links stay intact.
+and the document rows the native checkpoint getter assigns wholly to it. The same native ownership
+check covers NOTE heads, head-document indexes and overrides, typed-body heads and head snapshots,
+office source pointers, blob artifact current heads, media vectors with their device provenance,
+and committed codebase snapshot rows, and entity revision state, documents, retained frontiers and
+reverse identity rows, as well as row birth envelopes and born-from indexes. Staged index inputs,
+staged phonetic codes and vector-refill markers keep
+their existing treatment. Forks, proposal snapshots, receipts, bundles, pins, exports,
+blob version histories, code revisions and media refusals keep their existing treatment, as do codebase
+indexes and custody reports. Attachment occurrence
+rows whose native body getter binds every part to that record are also left out, including
+their body descriptors and digest-holder rows, before body files are counted. A shared body
+file still travels when another included row names it; its digest is never a world identity.
+The selection also leaves out known Off worlds' window snapshots and durable window updates.
+It leaves out valid queued updates for those windows only when their exact sequence has no
+delete-bearing sidecar. Any matching sidecar, including an undecodable one, keeps the update
+and marker unchanged so pending deletes can still replay after restore. Pending document
+edit journals (`qd:e:`) and semantic NOTE requests (`qn:e:`) also stay intact: they are durable
+unacknowledged work, not disposable cache rows. Their world projection must preserve replay,
+not just drop a queued payload. Shared document proposals keep their other owners' fragments.
+Authority-log rows and non-payload links stay intact.
+
+An unpromoted residence read cache also leaves the automatic image when its blob exactly
+matches a core row already proved all-Off and its native opened window, document frame and
+touch row are valid. A cache can also qualify without a core row when the home's original
+document export recorded its complete source-world set, that nonempty set is now all sealed
+Off, and the recorded hashes match both cached payloads. Projected copies and unknown source
+worlds provide no such evidence. The home records the complete set only when its live grant
+and selector cover every world. A reply also requires the original credential and destination
+to cover the complete set; it never trims a partial set into a completeness claim. This
+provenance is not read authority. Missing, unauthorized, malformed or mismatched evidence
+never refuses the working document read.
+
+The two payload rows, source provenance, opened marker and touch row leave together, so a
+later open can refetch rather than fail on a marker with no bytes. Unknown or mixed placement,
+stale or malformed cache bytes, and promoted windows stay unchanged. Fetch writes provenance
+with the cache in one transaction; prune, erase and promotion remove it with those bytes.
+The thin index, live cache, pending journals and promotion markers are not pruned by a backup.
 
 This is partial world selection, not a guarantee that an Off world's every byte is absent.
-Unknown or mixed world placement keeps its existing behavior. Digest-keyed body families,
-queued or mixed carriers and exterior custody publication still need their own world
-projection. The read setting **One machine** alone does not exclude a sealed backup.
+Unknown or mixed world placement keeps its existing behavior. Other body or response references,
+delete-bearing or unclassified queued updates, other mixed carriers and exterior custody
+publication still need their own world projection. The read setting **One machine** alone
+does not exclude a sealed backup.
 
 Backup watermark markers use schema 2 and record `whole_vault` or `automatic` selection.
 Content and custody positions must match exactly. A whole-vault artifact can satisfy an
@@ -428,9 +463,11 @@ members disagree with it. It is plaintext and re-imports into a fresh vault
 Credentials inside records are nulled by the serializer. Result bodies go through the release
 scan: a text or binary body that passes is a file under `files/<blake3>`; tainted, secret-marked
 and credential-bearing bodies are withheld and named in `result_body.jsonl`.
-`epoch_floor.jsonl` has a row `{session, epoch, turn_end}` for each session whose epoch summary a
-purge removed: where that summary left the count, and nothing it said. An import only raises a
-session's floor to its row, so a re-imported vault never numbers an epoch under a removed one.
+`epoch_floor.jsonl` has a row `{session, conversation, epoch, turn_end}` for each epoch lineage
+whose summary a purge removed: a conversation's lineage inside its session, or the session's own
+when `conversation` is absent. The row says where that summary left the count, and nothing it
+said. An import only raises a lineage's floor to its row, so a re-imported vault never numbers an
+epoch under a removed one.
 
 Your own archive also carries your keys, by default: each active secret-custody record's value,
 in `records/secret_custody.jsonl` (the custody codec, base64), so a re-import keeps them. Keep

@@ -298,12 +298,7 @@ impl Custody {
     /// socket parks, and it waits in the floor's line, looking again after
     /// each wait as the accept loop does, until the floor admits it. From
     /// then on the connection holds a floor permit for the rest of its life.
-    async fn park_for_floor(
-        &self,
-        floor: &Admission<()>,
-        pressure: Option<&PoolPressure>,
-        bound: usize,
-    ) {
+    async fn park_for_floor(&self, floor: &Admission<()>) {
         {
             let mut held = lock(&self.held);
             match held.take() {
@@ -321,7 +316,7 @@ impl Custody {
         self.observe(SocketHold::Parked);
         self.parked.notify_waiters();
         let permit = loop {
-            if let Ok(permit) = super::admit_observed(floor, pressure, bound).await {
+            if let Ok(permit) = floor.admit(()).await {
                 break permit;
             }
         };
@@ -336,29 +331,18 @@ impl Custody {
     }
 }
 
-/// What the API listener judges a request on the owner's reserve with.
+/// What the API listener judges a request on the owner's reserve with. A
+/// parked socket that has to wait for the floor raises the pool's pressure
+/// check through the floor's own crossing, as every waiting socket does.
 #[derive(Clone)]
 pub(super) struct OwnerGate {
     server: Arc<SyncServer>,
     floor: Admission<()>,
-    pressure: Option<Arc<PoolPressure>>,
-    /// The floor's bound, as its pressure check names it.
-    bound: usize,
 }
 
 impl OwnerGate {
-    pub(super) fn new(
-        server: Arc<SyncServer>,
-        floor: Admission<()>,
-        pressure: Option<Arc<PoolPressure>>,
-        bound: usize,
-    ) -> Self {
-        Self {
-            server,
-            floor,
-            pressure,
-            bound,
-        }
+    pub(super) fn new(server: Arc<SyncServer>, floor: Admission<()>) -> Self {
+        Self { server, floor }
     }
 
     /// Judges one request on a connection that holds the reserve, and
@@ -395,9 +379,7 @@ impl OwnerGate {
             );
             return Err(ProbeShed);
         }
-        custody
-            .park_for_floor(&self.floor, self.pressure.as_deref(), self.bound)
-            .await;
+        custody.park_for_floor(&self.floor).await;
         Ok(custody.count_body(ended))
     }
 }
