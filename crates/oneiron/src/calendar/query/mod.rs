@@ -26,6 +26,12 @@
 mod facts;
 mod occurrences;
 pub(in crate::calendar) use occurrences::occurrences;
+mod pages;
+pub(in crate::calendar) use pages::Slices;
+pub use pages::{
+    CalendarFreebusyPage, CalendarFreebusyPageRequest, CalendarOccurrencesPage,
+    CalendarOccurrencesPageRequest, CalendarSearchPage, CalendarSearchPageRequest,
+};
 pub mod passport;
 mod requests;
 mod service;
