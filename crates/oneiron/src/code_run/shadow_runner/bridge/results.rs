@@ -7,9 +7,12 @@
 //! read did (FIX 6352): a reader child's delegated input, inside its range
 //! and while its job was live, else a settled finding of the run's
 //! children, each from the step's read context and for its owner, with the
-//! taint it was frozen with. A whole result's card carries the fold receipt
-//! its live card carried. What the read context cannot establish stops the
-//! arm; it is never answered as `unknown_handle`.
+//! taint it was frozen with. Such a read is admitted, withheld or refused as
+//! the door's row check answered the live read by the same reference, under
+//! the same gate, at the same bridge position. A whole result's card carries
+//! the fold receipt its live card carried. What the read context cannot
+//! establish stops the arm; it is never answered as `unknown_handle`, and no
+//! read it cannot establish is admitted.
 //!
 //! A read of a result frozen from the step's source, the arm's run's or
 //! another run's, reads under the taint its source occurrence reads under
@@ -26,9 +29,11 @@ use super::taint::{exported_mark, stored_taint};
 use super::{ArmResult, ShadowBridgeHost, Taint};
 use crate::code_run::{
     CodeRunRawOutput, CodeRunResultBinding, ResultFacet, ResultOccurrence, ResultRead, ResultReply,
-    resolve_result, result_cannot, result_refusal, unknown_handle,
+    RetainedReadVerdict, resolve_result, result_cannot, result_refusal, unknown_handle,
 };
-use crate::engine_executor::{JsResultTarget, parse_result_read_path, store_result_output_path};
+use crate::engine_executor::{
+    ACT_GATES_COUNT_CALLABLE_ROWS, JsResultTarget, parse_result_read_path, store_result_output_path,
+};
 use crate::secret_rotation::ArtifactTaintState;
 use crate::store::BodySink;
 use crate::{Error, Result};
@@ -99,11 +104,13 @@ impl ShadowBridgeHost<'_> {
 
     /// The result `target` names, read as a run's read is, with the taint it
     /// reads under, or the refusal the guest gets: one of the arm's own, else
-    /// one of another run the step's read context names (FIX 6352). A read
-    /// the context cannot answer stops the arm.
+    /// one of another run the step's read context names (FIX 6352), under
+    /// the gate that counts the run's callable rows when `callable`, as the
+    /// live gate does. A read the context cannot answer stops the arm.
     fn checked(
         &mut self,
         target: &JsResultTarget,
+        callable: bool,
     ) -> Result<std::result::Result<(ResultRead, Taint), Value>> {
         self.admit_read()?;
         let live = self.live_bindings();
@@ -139,6 +146,14 @@ impl ShadowBridgeHost<'_> {
                 Ok(false) => return Ok(Err(result_refusal("reader_task_settled"))),
                 Err(missing) => return Err(self.stop(missing)),
             }
+        }
+        // The rows another run's result was served from reach the door's
+        // caller only as the live row check answered (FIX 6352).
+        match step.retained_read_verdict(&target.reference, callable, self.next_seq) {
+            Ok(RetainedReadVerdict::Admitted) => {}
+            Ok(RetainedReadVerdict::Withheld) => return Ok(Err(result_refusal("result_withheld"))),
+            Ok(RetainedReadVerdict::Refused(code)) => return Ok(Err(result_refusal(code))),
+            Err(missing) => return Err(self.stop(missing)),
         }
         let output = found.body.output.clone();
         let whole = found
@@ -279,7 +294,8 @@ impl ShadowBridgeHost<'_> {
         }
         let mut inherit = Vec::with_capacity(sources.len());
         for source in sources {
-            match self.checked(&JsResultTarget::parse(source))? {
+            let target = JsResultTarget::parse(source);
+            match self.checked(&target, ACT_GATES_COUNT_CALLABLE_ROWS)? {
                 Ok((_, taint)) => inherit.push(taint),
                 Err(refused) => return Ok(refused),
             }
@@ -293,7 +309,7 @@ impl ShadowBridgeHost<'_> {
     /// card of it carried (FIX 6352). A result the arm stored, and one at a
     /// path no `store` writes, is no fold's.
     pub(super) fn describe_result(&mut self, target: &JsResultTarget) -> Result<Value> {
-        let read = match self.checked(target)? {
+        let read = match self.checked(target, true)? {
             Ok((read, _)) => read,
             Err(refused) => return Ok(refused),
         };
@@ -321,7 +337,7 @@ impl ShadowBridgeHost<'_> {
         target: &JsResultTarget,
         child: bool,
     ) -> Result<Value> {
-        let verdict = match self.checked(target)? {
+        let verdict = match self.checked(target, true)? {
             Ok((read, _)) => read.preflight(),
             Err(refused) => result_cannot(refused),
         };
@@ -340,7 +356,7 @@ impl ShadowBridgeHost<'_> {
         facet: ResultFacet,
         input: Value,
     ) -> Result<Value> {
-        let read = match self.checked(target)? {
+        let read = match self.checked(target, true)? {
             Ok((read, _)) => read,
             Err(refused) => return Ok(refused),
         };

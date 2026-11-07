@@ -119,6 +119,7 @@ pub(super) struct RecordingJsHost<'a, 's> {
     /// The run's executor, `provider/name@revision`, as the callable skills
     /// its program calls are credited to (OF-353).
     skill_executor: Option<String>,
+    summary_prompt_package: Option<std::path::PathBuf>,
     /// Callable skills this host is running now, each nested in the one
     /// before: a callable that calls another runs its step inside its own.
     callable_depth: u32,
@@ -140,8 +141,9 @@ pub(super) struct RecordingJsHost<'a, 's> {
 /// Whether the gate an act takes over the run's results (a store, a fold, a
 /// summary, a spawn) counts the stored skills its callables loaded and the
 /// other runs' results they read, as each read's gate does (FIX 5460). Off:
-/// such an act runs as it did before those rows were counted.
-const ACT_GATES_COUNT_CALLABLE_ROWS: bool = false;
+/// such an act runs as it did before those rows were counted. A shadow arm's
+/// store reads its sources under the same gate (FIX 6352).
+pub(crate) const ACT_GATES_COUNT_CALLABLE_ROWS: bool = false;
 
 /// A result a reference names for this run: one of its own, the source a
 /// reader child reads in its parent's record, or a finding of one of the
@@ -154,6 +156,10 @@ struct ResolvedResult {
     /// The rows a read of it is withheld by beside the run's own, when it is
     /// not the run's: `Some(None)` when they are not known.
     rows: Option<Option<Vec<EntityId>>>,
+    /// The origins its descriptor froze when it is another run's, which a
+    /// read of it notes in this run's ledger (FIX 7084): `None` when they
+    /// are unknown, and for the run's own result.
+    origins: Option<crate::code_run::ResultOrigins>,
     /// The range of its body a read of it must stay inside, and reads by
     /// default, in the owner's offsets.
     within: Option<(u64, u64)>,
@@ -199,6 +205,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             left_a_gap: false,
             declined: None,
             skill_executor: None,
+            summary_prompt_package: None,
             callable_depth: 0,
             admitted_skill_seq: None,
             callable_rows: (Vec::new(), Some(Vec::new())),
@@ -217,6 +224,11 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
     /// are credited to (OF-353).
     pub(super) fn with_skill_executor(mut self, executor: &crate::ModelId) -> Self {
         self.skill_executor = Some(executor.as_str().to_owned());
+        self
+    }
+
+    pub(super) fn with_summary_prompt_package(mut self, root: &std::path::Path) -> Self {
+        self.summary_prompt_package = Some(root.to_owned());
         self
     }
 

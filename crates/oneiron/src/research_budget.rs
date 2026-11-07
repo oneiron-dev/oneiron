@@ -160,6 +160,9 @@ fn hex_bytes(text: &str) -> Option<Vec<u8>> {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum RsiSettlement {
     Spent(u64),
+    /// Token work ended without a token-denominated native spend total. Its
+    /// reservation remains committed, without being reported as spent.
+    Unknown,
     Exposure(u64),
     Refunded,
 }
