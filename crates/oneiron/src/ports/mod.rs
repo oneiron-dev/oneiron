@@ -48,8 +48,10 @@ pub use dependent_walk::{
 pub(crate) use dependent_walk::{
     DependentWalkDoor, any_pending_walk, withdraw_before_rewrite_in_txn,
 };
+mod compaction_home_revisions;
 mod dependency_registration;
 mod integrity;
+pub(crate) use compaction_home_revisions::withdraw_changed_home_dependents_in_txn;
 pub(crate) use dependency_registration::{
     record_fork_dependency_in_txn, remove_fork_dependencies_in_txn,
 };

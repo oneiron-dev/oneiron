@@ -31,7 +31,9 @@ mod type_diagnostics;
 mod wait_delivery;
 mod wait_holders;
 
-pub(crate) use self::compaction::{CodeRunCompactionCoverage, ExecutorOutputSpan};
+pub(crate) use self::compaction::{
+    CodeRunCompactionCoverage, ExecutorOutputSpan, epoch_execution_in,
+};
 pub(crate) use self::continuation::{
     StoredRunContinuation, continuation_seed_body_in_txn, publish_continuation_output_in_txn,
     put_run_continuation_row_in_txn, run_continuation_in_txn, seed_continuation_run,

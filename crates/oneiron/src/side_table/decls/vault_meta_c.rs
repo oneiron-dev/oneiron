@@ -503,10 +503,20 @@ side_tables! {
     COMMITMENT_SERIES_INSTANCE: VaultMeta b"commitment_series_instance:v1:" Raw;
     /// Pending Project due row of a series. Key: id16.
     COMMITMENT_SERIES_PROJECT: VaultMeta b"commitment_series_project:v1:" Raw;
+    /// A conversation summary's check material (FIX 5040): the sealed gate request, the
+    /// backend's whole reply and the gate policy of the accepted try, owned by the SUMMARY and
+    /// every source of its window. The reply is a model's words: the side-row wall admits the
+    /// material before its ref binds the receipt. An erase leaves the refs and digest only.
+    /// Key: id16(summary).
+    COMPACTION_CHECK_MATERIAL: VaultMeta b"compaction:check_material:v1:" Named Authored [accepts: crate::compaction::compaction_check_material_accepts_masked];
     /// A conversation's landed self-written summary (FIX 4465 D): its epoch, the SESSION's turn
     /// range and the host's record of what wrote it, conversation evidence included; no words.
     /// Key: id16(summary).
     COMPACTION_CONVERSATION_RECEIPT: VaultMeta b"compaction:conversation_receipt:v1:" Named Engine;
+    /// Each landing receipt under its conversation (FIX 5032), written with the receipt in its
+    /// mint's own writer. Ids only: the receipt is the evidence, and this row names it and grants
+    /// nothing. Key: id16(conversation) + id16(summary).
+    COMPACTION_CONVERSATION_RECEIPT_BY_CONVERSATION: VaultMeta b"compaction:conversation_receipt_by_conversation:v1:" Raw Engine;
     /// The place a removed epoch summary held in its session's count: the highest removed epoch
     /// and the turn it ended at, no words (OF-013). Key: id16(session).
     COMPACTION_EPOCH_FLOOR: VaultMeta b"compaction:epoch_floor:v1:" Named;
