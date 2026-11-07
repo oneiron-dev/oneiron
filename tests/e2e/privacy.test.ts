@@ -1035,6 +1035,9 @@ suite.test(test, "PRIVACY-05", "Legal hold narrows delete should work", async ()
     const lifted = (await engine.client.call("vault.legal_holds.list", {}))
       .find(row => row.hold_id === hold.hold_id);
     expect(lifted?.lifted_at).toBeGreaterThanOrEqual(hold.placed_at);
+    // G-ERASE-DRIVER (FIX21914): force the existing historical sweep before
+    // polling completion; status polling alone never triggers it.
+    await finishHistoricalSweep(engine);
     const sweep = await awaitPublic(
       () => engine.client.call("vault.records.erase_sweep", { receipt_ref: receiptRef }),
       value => value != null && value.erase_complete_at != null && value.final_ref != null,
@@ -1170,11 +1173,12 @@ enabled = false
     const first = await chat(spec.input);
     if (first.type !== "reply") throw new Error("Ordinary anonymous turn was blocked");
     expect(first.content).toBe(spec.modelReplies[0]);
-    expect(first.skipped_checks).toEqual([]);
+    // G-ANONYMOUS (FIX21914): document-free fixture correctly skips input+output.
+    expect(first.skipped_checks).toEqual([{input:true,reason:"no-document"},{input:false,reason:"no-document"}]);
     const second = await chat(spec.followUp);
     if (second.type !== "reply") throw new Error("Independent anonymous turn was blocked");
     expect(second.content).toBe(spec.modelReplies[1]);
-    expect(second.skipped_checks).toEqual([]);
+    expect(second.skipped_checks).toEqual([{input:true,reason:"no-document"},{input:false,reason:"no-document"}]);
     const calls = providers.seenFixtureCalls;
     expect(calls).toHaveLength(2);
     expect(JSON.stringify(calls[0]!.body)).toContain(spec.input);
