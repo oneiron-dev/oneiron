@@ -201,6 +201,7 @@ pub(super) fn scrub_local_only_carriers(
     }
     if removed {
         crate::sync::row_birth::drop_orphan_births(doc)?;
+        crate::sync::origin_positions::drop_unbound(doc)?;
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
     Ok(removed)
@@ -336,6 +337,7 @@ pub(super) fn scrub_local_claim_carriers(
     removed |= delete_edges_touching_entities(&edges, &ids)?;
     if removed {
         crate::sync::row_birth::drop_orphan_births(doc)?;
+        crate::sync::origin_positions::drop_unbound(doc)?;
         crate::sync::ingest::forget_stale_peer_origins(doc, ids)?;
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
@@ -439,6 +441,7 @@ pub(super) fn scrub_withdrawn_delete_carriers(
         map_delete(&entities, raw_key)?;
     }
     crate::sync::row_birth::drop_orphan_births(doc)?;
+    crate::sync::origin_positions::drop_unbound(doc)?;
     crate::sync::ingest::forget_stale_peer_origins(doc, withdrawn.into_iter().map(|(_, id)| id))?;
     doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     Ok(pin)
@@ -484,6 +487,7 @@ pub(super) fn scrub_redacted_attribution_carriers(
     }
     if !keys.is_empty() {
         crate::sync::row_birth::drop_orphan_births(doc)?;
+        crate::sync::origin_positions::drop_unbound(doc)?;
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
     Ok(!keys.is_empty())
@@ -530,6 +534,7 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
     crate::sync::origin_claims::scrub_section_fit_receipts(vault, doc, Some(key))?;
     // FIX 6279: and a birth carrier whose maker this vault erased.
     crate::sync::row_birth::actor_erase::scrub_erased_actor_births(vault, doc, Some(key))?;
+    crate::sync::origin_positions::scrub_stale(vault, doc, key)?;
     crate::workspace_roster::scrub_audience_edits(vault, doc, Some(key))?;
     // And a removed session's epoch floor.
     crate::sync::withdrawn_cutoffs::scrub_removed_epoch_floors(vault, doc, Some(key))?;
@@ -538,6 +543,19 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
     if super::project_history::carry_project_history(vault, doc)? {
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
+    persisted_window_snapshot(vault, key, doc)
+}
+
+/// The snapshot a scrubbed window state is stored as: a window pinned history-free keeps only the
+/// history [`super::history_free::HistoryCheck`] ships where a root allows it, else the strict cut
+/// at its newest operation ([`super::history_free::persisted_history_free_snapshot`]); every
+/// other window all it holds. Window persist stores it, and so does the sealed mirror of a private
+/// world's window once the erased-actor scrubs ran over it (FIX 19525).
+pub(crate) fn persisted_window_snapshot(
+    vault: &Vault,
+    key: &WindowKey,
+    doc: &LoroDoc,
+) -> Result<Vec<u8>> {
     if history_free_window_required(vault, key)? {
         let check = super::history_free::HistoryCheck::read(vault, key, doc)?;
         super::history_free::persisted_history_free_snapshot(vault, key, doc, &check)
