@@ -6974,7 +6974,7 @@
      "path": "src/batch/builder/claims.rs",
      "purpose": "Claim-candidate builder doors plus the gap-decay op constructor",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 5
      }
     },
@@ -38378,7 +38378,7 @@
      "path": "src/federation/record_scope.rs",
      "purpose": "Birth-facet-bound record-position stamps and scoped read/delete/export doors",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 21,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -38402,6 +38402,16 @@
      "purpose": "Facet rule C (arch-0022:139): an ASSET_TEXT written from source ASSETs is born under their facet, and is…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/record_scope/birth_placement.rs",
+     "purpose": "The birth placement a replicated TASK or SUMMARY carries on a copy to another vault (FIX 3656, Engine ruling…",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -38473,7 +38483,7 @@
      "path": "src/federation/record_scope/stamping.rs",
      "purpose": "The birth-position stamp doors: put, stage, settle and restamp a record's position",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -52121,6 +52131,16 @@
      "surface": {
       "fn": 2,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/signal_extraction/attachments.rs",
+     "purpose": "Stored support citations projected with the extraction result's own reader",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -80316,7 +80336,7 @@
      "path": "src/sync/ingest/mod.rs",
      "purpose": "One ingest entry per replicated container: every entities-map value and every tombstone takes the same…",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "re-export": 1
      }
     },
@@ -80349,6 +80369,16 @@
      "purpose": "Which rows of a window a federation peer's import brought (Docs Q04)",
      "surface": {
       "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/ingest/placement.rs",
+     "purpose": "The birth placements a guest's admitted update carries for its TASK and SUMMARY rows (FIX 3656), landed…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -81785,7 +81815,7 @@
      "path": "src/sync/selector/admission/routing.rs",
      "purpose": "Routing and world-edge planning of admitted rows",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -81795,7 +81825,7 @@
      "path": "src/sync/selector/admission/state.rs",
      "purpose": "Admitted-update state for one federation import",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -81827,6 +81857,16 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/selector/birth_placements.rs",
+     "purpose": "Birth placements on a copy to another vault (FIX 3656, Engine ruling A)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -94555,7 +94595,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 73,
+     "files": 74,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94807,7 +94847,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 378,
+     "files": 379,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -95311,7 +95351,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 396,
+     "files": 398,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -95523,7 +95563,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6764,
+   "source_files": 6768,
    "test_files": 895
   },
   "oneiron-android": {
@@ -123687,6 +123727,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/commands/mcp_bridge/wake.rs",
+     "purpose": "The bridge's wake pump (OF-385): it polls `oneiron/wakes` for one host instance on its own cadence and hands…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/commands/model_workers.rs",
      "purpose": "—",
      "surface": {
@@ -128018,7 +128068,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/managed/state_serve/carrier_watch.rs",
-     "purpose": "A vault VM's live look at its outbox carrier (FIX 6683, FIX 6684)",
+     "purpose": "Live looks at a vault VM's outbox carrier and a process host's argv recipients (FIX 6683, FIX 6684, FIX 11852)",
      "surface": {
       "crate-vis": 3
      }
@@ -128045,7 +128095,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/managed/state_serve/coordinator.rs",
@@ -133521,7 +133571,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/wake_adapters/delivery.rs",
@@ -134166,7 +134216,7 @@
      "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…"
     },
     "commands": {
-     "files": 70,
+     "files": 71,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -134427,7 +134477,7 @@
     "managed": {
      "files": 112,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Managed serve mode: the vault engine as a supervised child process"
     },
@@ -134581,7 +134631,7 @@
     "wake_adapters": {
      "files": 4,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Host-side, per-config-directory wake delivery (OF-385)"
     },
@@ -134621,9 +134671,9 @@
      "purpose": "The host's precision recalculator (ARCH-0075 xlsx row; FIX 2462, OF-505 = A): LibreOffice Calc headless…"
     }
    },
-   "over_bar": 61,
+   "over_bar": 62,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1736,
+   "source_files": 1737,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
