@@ -4265,7 +4265,7 @@ class Oneiron:
             """One mail thread's messages, oldest first, to a reader of its source or someone it was shared with."""
     class _VaultMailReplyVerbs:
         def draft(self, spec: Facade.MailReplyDraftRequest) -> Facade.MailReplyDraftView:
-            """Drafts a reply, or its next revision, to a mail thread the caller reads, in text with optional simple HTML, to its sender (reply_all adds To and Cc; cc adds more); a Google mailbox's may carry exact artifact versions. The owner approves it."""
+            """Drafts a reply, or its next revision, to a mail thread the caller reads, in text with optional simple HTML, to its sender (reply_all adds To and Cc; cc adds more), with artifact versions on Google or Microsoft 365. The owner approves it."""
         def drafts(self, spec: Facade.MailReplyDraftsRequest) -> Facade.MailReplyDraftPage:
             """The drafted replies on the mail threads the caller reads, newest first, each with its words, every To and Cc recipient, each file's name, type, size and digest, the exact message's size and digest, frozen plan and state."""
         def discard(self, spec: Facade.MailReplyDraftRef) -> Facade.MailReplyDraftView:

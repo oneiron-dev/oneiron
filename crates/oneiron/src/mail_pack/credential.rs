@@ -4,6 +4,7 @@
 use super::rest::refused;
 use super::source::{MailSourceKind, MailSourceRow, MailSourceStatus, SOURCES};
 use super::wire::MailSyncSource;
+use crate::channel_identity_provider::mail_attachments::RetainedMailMessage;
 use crate::error::Result;
 use crate::secret_lease::DoorInjectionReceipt;
 use crate::{EntityId, Vault};
@@ -102,6 +103,24 @@ impl Vault {
         effector: &str,
         apply: &mut dyn FnMut(&[u8]) -> Result<()>,
     ) -> Result<DoorInjectionReceipt> {
+        self.with_source_token_at_door_admitting(source, reads, effector, None, apply)
+    }
+
+    /// [`Self::with_source_token_at_door`] for a send that may carry files
+    /// (fix list row 17645): `retained`, the holder of a frozen reply with
+    /// files, judges that send once more in the door's own writer, after the
+    /// source checks and before the credential is copied out, so an erase or
+    /// a clearance revocation that commits first stops it here. The writer is
+    /// released before `apply` runs; an erase that commits after it finds the
+    /// send already under way.
+    pub(super) fn with_source_token_at_door_admitting(
+        &self,
+        source: &MailSyncSource,
+        reads: WireReads,
+        effector: &str,
+        retained: Option<&dyn RetainedMailMessage>,
+        apply: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<DoorInjectionReceipt> {
         let wtxn = self.store.env.write_txn()?;
         if super::pack::require_pack_active_in(self, &wtxn).is_err() {
             return Err(refused("mail_source_pack_not_installed"));
@@ -135,6 +154,9 @@ impl Vault {
             if holder == CredentialHolder::Nobody || CredentialHolder::of(&other) != holder {
                 return Err(refused("mail_source_credential_backs_another_person"));
             }
+        }
+        if let Some(retained) = retained {
+            retained.admit_in(&wtxn)?;
         }
         let custody_ref = row.custody_ref;
         self.inject_secret_at_door_in_txn(wtxn, &custody_ref, effector, apply)

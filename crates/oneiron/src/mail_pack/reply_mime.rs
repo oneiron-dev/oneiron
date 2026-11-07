@@ -4,15 +4,25 @@
 //! approves is frozen when the draft is written and hashed into its content
 //! ref, and the bytes sent are rendered from exactly those fields, with the
 //! dispatch's frozen hygiene headers. One recipient or, for a reply to
-//! several, every To and Cc in its role (fix list row 17645), no
-//! attachments, UTF-8 text in base64 and, when drafted, an HTML alternative
-//! beside it, threaded by `In-Reply-To` and `References` (RFC 5322).
+//! several, every To and Cc in its role (fix list row 17645), UTF-8 text in
+//! base64 and, when drafted, an HTML alternative beside it, threaded by
+//! `In-Reply-To` and `References` (RFC 5322).
+//!
+//! A Microsoft 365 reply may carry files (fix list row 17645): its message
+//! is then written once, when it is frozen, with no hygiene header, the
+//! shared `multipart/mixed` writer putting its body first and each file
+//! after it, and kept sealed beside the draft (`reply_custody`). Its content
+//! ref seals under its own domain and prefix, after every field a reply
+//! without files seals, the digest of its manifest, which seals each file in
+//! its slot and the exact message's length and BLAKE3; it is never rendered
+//! again.
 
 use std::collections::BTreeMap;
 
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
+use crate::channel_identity_provider::mail_attachments::{MailAttachment, push_mixed_body};
 use crate::channel_identity_provider::mail_html::{push_mail_body, sanitize_mail_html};
 use crate::channel_identity_provider::native_mail::canonical_recipient;
 use crate::error::{Error, Result};
@@ -21,6 +31,11 @@ use crate::write_envelope::thread_claim::{canonical_message_id, canonical_messag
 
 /// The prefix of a frozen reply's content ref.
 pub(super) const REPLY_MESSAGE_REF_PREFIX: &str = "mail-reply:message:v1:";
+/// The prefix of the content ref of a frozen reply with files (fix list row
+/// 17645): it seals under its own domain, its files' manifest, and with it
+/// the exact message they send in, after every field a reply without files
+/// seals.
+pub(super) const ATTACHED_REPLY_MESSAGE_REF_PREFIX: &str = "mail-reply:message:v2:";
 /// The longest Subject a reply carries, in bytes.
 const MAX_SUBJECT_BYTES: usize = 900;
 /// The longest body a reply carries, in bytes.
@@ -63,6 +78,25 @@ pub(super) struct ReplyMessage {
     /// The thread's `References`, the answered message last, without angle
     /// brackets.
     pub(super) references: Vec<String>,
+    /// What a reply with files was frozen with (fix list row 17645); `None`
+    /// for a reply without, which renders at egress.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) files: Option<ReplyMessageFiles>,
+}
+
+/// What a frozen reply with files names of them (fix list row 17645): the
+/// digest of their manifest, which seals each file in its slot and the
+/// exact message written once with them, its length and BLAKE3, and the ref
+/// of the carrier that message is held in. Never a file's name, ref or hash,
+/// nor the message's: the draft's row carries this record, as a Gmail
+/// reply's row its manifest's digest, and the manifest itself is sealed
+/// beside the draft (`reply_custody`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct ReplyMessageFiles {
+    /// The manifest's digest (`MailManifest::digest`).
+    pub(super) manifest: [u8; 32],
+    /// The ref of the carrier the message is held in.
+    pub(super) carrier: String,
 }
 
 /// What a reply is written from.
@@ -162,14 +196,22 @@ impl ReplyMessage {
             message_id,
             in_reply_to: in_reply_to.as_str().to_owned(),
             references,
+            files: None,
         })
     }
 
     /// The content ref the owner's approval names: every field the message
-    /// is rendered from, hashed.
+    /// is rendered from, hashed. A reply with files seals under its own
+    /// domain and prefix (fix list row 17645); a reply without seals as
+    /// before.
     pub(super) fn content_ref(&self) -> String {
+        let domain: &[u8] = if self.files.is_some() {
+            b"oneiron.mail_pack.reply.message.v2"
+        } else {
+            b"oneiron.mail_pack.reply.message.v1"
+        };
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"oneiron.mail_pack.reply.message.v1");
+        hasher.update(domain);
         for part in [
             self.from.as_str(),
             self.to.as_str(),
@@ -201,7 +243,29 @@ impl ReplyMessage {
                 hash_part(&mut hasher, &named.address);
             }
         }
-        format!("{REPLY_MESSAGE_REF_PREFIX}{}", hasher.finalize().to_hex())
+        // Then its files, by their manifest's digest, which seals each in
+        // its slot and the exact message's length and BLAKE3.
+        let prefix = match &self.files {
+            Some(files) => {
+                hasher.update(b"attachments");
+                hasher.update(&files.manifest);
+                ATTACHED_REPLY_MESSAGE_REF_PREFIX
+            }
+            None => REPLY_MESSAGE_REF_PREFIX,
+        };
+        format!("{prefix}{}", hasher.finalize().to_hex())
+    }
+
+    /// Binds this reply to the files it was frozen with (fix list row
+    /// 17645): `manifest`, the digest of their manifest, which names the
+    /// length and BLAKE3 of the exact bytes [`Self::render_with_files`]
+    /// wrote, and `carrier`, the ref of the carrier that holds those bytes.
+    /// Its content ref then names exactly those bytes, so the one press is
+    /// for them.
+    #[must_use]
+    pub(super) fn with_files(mut self, manifest: [u8; 32], carrier: String) -> Self {
+        self.files = Some(ReplyMessageFiles { manifest, carrier });
+        self
     }
 
     /// Every address the reply is delivered to, in its place: `to` alone,
@@ -225,15 +289,62 @@ impl ReplyMessage {
     ///
     /// [`Error::InvalidConfig`] for too many hygiene headers, a name that is
     /// no plain token or restates a header the message owns, or a value with
-    /// a control character.
+    /// a control character; and for a reply with files, which sends the
+    /// message it was frozen with and is never rendered again.
     pub(super) fn render(&self, hygiene_headers: &BTreeMap<String, String>) -> Result<Vec<u8>> {
+        if self.files.is_some() {
+            return Err(invalid(
+                "a reply with files sends the message it was frozen with",
+            ));
+        }
+        let mut out = String::new();
+        self.push_headers(&mut out, hygiene_headers)?;
+        push_mail_body(&mut out, &self.body, self.html.as_deref());
+        Ok(out.into_bytes())
+    }
+
+    /// The exact RFC 5322 bytes this reply sends with `attachments`, the
+    /// files it was admitted with in their order, and `files`, each one's
+    /// exact copy in the same order (fix list row 17645): its headers with no
+    /// hygiene header, then its body and each file under `multipart/mixed`,
+    /// written once, when it is frozen.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidConfig`] for a reply already bound to its files, no
+    /// file, copies that are not exactly the files' own, or a name or a type
+    /// a part header may not carry.
+    pub(super) fn render_with_files(
+        &self,
+        attachments: &[MailAttachment],
+        files: &[&[u8]],
+    ) -> Result<Vec<u8>> {
+        if self.files.is_some() || attachments.is_empty() || files.len() != attachments.len() {
+            return Err(invalid("the reply's files are not its own"));
+        }
+        let mut out = String::new();
+        self.push_headers(&mut out, &BTreeMap::new())?;
+        let paired = attachments
+            .iter()
+            .zip(files.iter().copied())
+            .collect::<Vec<_>>();
+        push_mixed_body(&mut out, &self.body, self.html.as_deref(), &paired)?;
+        Ok(out.into_bytes())
+    }
+
+    /// Writes the reply's header block, through its MIME-Version, with the
+    /// hygiene headers `hygiene_headers` names.
+    fn push_headers(
+        &self,
+        out: &mut String,
+        hygiene_headers: &BTreeMap<String, String>,
+    ) -> Result<()> {
         if hygiene_headers.len() > MAX_HYGIENE_HEADERS {
             return Err(invalid("too many hygiene headers"));
         }
-        let mut out = String::new();
-        push_header(&mut out, "From", &self.from);
+        push_header(out, "From", &self.from);
         if self.recipients.is_empty() {
-            push_header(&mut out, "To", &self.to);
+            push_header(out, "To", &self.to);
         } else {
             for (role, name) in [
                 (OutboundRecipientRole::To, "To"),
@@ -246,21 +357,21 @@ impl ReplyMessage {
                     .map(|named| named.address.as_str())
                     .collect::<Vec<_>>();
                 if !addresses.is_empty() {
-                    push_header(&mut out, name, &addresses.join(",\r\n "));
+                    push_header(out, name, &addresses.join(",\r\n "));
                 }
             }
         }
-        push_header(&mut out, "Subject", &encode_word(&self.subject));
-        push_header(&mut out, "Date", &self.date);
-        push_header(&mut out, "Message-ID", &format!("<{}>", self.message_id));
-        push_header(&mut out, "In-Reply-To", &format!("<{}>", self.in_reply_to));
+        push_header(out, "Subject", &encode_word(&self.subject));
+        push_header(out, "Date", &self.date);
+        push_header(out, "Message-ID", &format!("<{}>", self.message_id));
+        push_header(out, "In-Reply-To", &format!("<{}>", self.in_reply_to));
         let references = self
             .references
             .iter()
             .map(|reference| format!("<{reference}>"))
             .collect::<Vec<_>>()
             .join("\r\n ");
-        push_header(&mut out, "References", &references);
+        push_header(out, "References", &references);
         for (name, value) in hygiene_headers {
             if name.is_empty()
                 || !name
@@ -271,11 +382,10 @@ impl ReplyMessage {
                 return Err(invalid("a hygiene header name is not a plain token"));
             }
             header_text(value, MAX_HYGIENE_VALUE_BYTES)?;
-            push_header(&mut out, name, value);
+            push_header(out, name, value);
         }
-        push_header(&mut out, "MIME-Version", "1.0");
-        push_mail_body(&mut out, &self.body, self.html.as_deref());
-        Ok(out.into_bytes())
+        push_header(out, "MIME-Version", "1.0");
+        Ok(())
     }
 }
 
@@ -291,8 +401,16 @@ fn push_header(out: &mut String, name: &str, value: &str) {
     out.push_str("\r\n");
 }
 
-/// A header the message writes itself; a hygiene header may not restate it.
+/// A header the message writes itself, or any `Content-*` field, whose
+/// MIME part semantics the message owns (fix list row 17645); a hygiene
+/// header may not restate one.
 fn owned_header(name: &str) -> bool {
+    if name
+        .get(..8)
+        .is_some_and(|head| head.eq_ignore_ascii_case("content-"))
+    {
+        return true;
+    }
     [
         "from",
         "sender",

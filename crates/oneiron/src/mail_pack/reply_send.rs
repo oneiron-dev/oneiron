@@ -16,6 +16,14 @@
 //!   shows the token is the mailbox's. A `202` is the send taken; a token
 //!   without `Mail.Send` is refused there.
 //!
+//! A Microsoft 365 reply with files (fix list row 17645) sends the exact
+//! message it was frozen with: its holder (`reply_attachments`) judges the
+//! send again in the writer that admits it, opens the message at egress
+//! once its send still stands, checked against its frozen length and BLAKE3,
+//! and judges it once more in the credential door's writer. The POST body is
+//! that message's base64, refused above Graph's one-shot limit; nothing is
+//! read, masked or rendered again.
+//!
 //! A send that may have been taken (the data's final dot written, or the
 //! POST sent, and no answer) is uncertain, never refused: email has no
 //! idempotency, and nothing sends it again by itself.
@@ -24,15 +32,19 @@ use std::collections::BTreeMap;
 
 use base64::Engine as _;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
+use zeroize::Zeroizing;
 
 use super::credential::WireReads;
 use super::imap::submission_account;
 use super::microsoft365::{GRAPH_ME_URL, MICROSOFT365_CONNECTOR_EFFECTOR, reads_mailbox};
-use super::reply_mime::ReplyMessage;
+use super::reply_attachments::MAX_GRAPH_SEND_BODY_BYTES;
+use super::reply_mime::{ReplyMessage, ReplyMessageFiles};
 use super::rest::{self, bearer_header, refused};
 use super::smtp_client::{SmtpAuth, SmtpSession, Submitted};
 use super::wire::MailSyncSource;
 use crate::Vault;
+use crate::channel_identity_provider::mail_attachments::RetainedMailMessage;
+use crate::error::{Error, Result};
 use crate::outbound::{OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink};
 
 /// The custody effector a mailbox's credential is bound to for sending
@@ -65,6 +77,11 @@ pub(super) struct ReplySink<'v> {
     source: MailSyncSource,
     message: ReplyMessage,
     transport: ReplyTransport,
+    /// The holder of the message a reply with files was frozen with (fix
+    /// list row 17645): it judges the send again in the writer that admits
+    /// it, at egress and in the credential door's writer, and opens the
+    /// message; `None` for a reply without files.
+    retained: Option<&'v dyn RetainedMailMessage>,
 }
 
 impl<'v> ReplySink<'v> {
@@ -79,7 +96,57 @@ impl<'v> ReplySink<'v> {
             source,
             message,
             transport,
+            retained: None,
         }
+    }
+
+    /// Binds the sink to the one send with files it may make (fix list row
+    /// 17645): `retained` judges that send again in the writer that admits
+    /// it and opens its exact message at egress. A reply with files sends
+    /// nothing without it.
+    #[must_use]
+    pub(super) fn with_retained_message(mut self, retained: &'v dyn RetainedMailMessage) -> Self {
+        self.retained = Some(retained);
+        self
+    }
+
+    /// The exact message `files`, what the reply with files was frozen with,
+    /// names: opened by the holder bound to this sink, after its send is
+    /// judged once more, once that holder still keeps the carrier and the
+    /// manifest the reply's content ref `message_ref` names by its digest,
+    /// and checked against the length and BLAKE3 that manifest froze. Graph
+    /// alone sends a reply with files, and the dispatch carries no hygiene
+    /// header for it: the message was frozen with none.
+    fn retained_message(
+        &self,
+        files: &ReplyMessageFiles,
+        message_ref: &str,
+        hygiene_headers: &BTreeMap<String, String>,
+    ) -> std::result::Result<Zeroizing<Vec<u8>>, &'static str> {
+        if self.transport != ReplyTransport::Graph {
+            return Err("mail_reply_files_unsupported");
+        }
+        if !hygiene_headers.is_empty() {
+            return Err("mail_reply_headers_invalid");
+        }
+        let Some(retained) = self.retained else {
+            return Err("mail_reply_message_missing");
+        };
+        if retained.content_ref() != message_ref || retained.carrier_ref() != files.carrier {
+            return Err("mail_reply_message_missing");
+        }
+        let frozen = match retained.manifest() {
+            Ok(Some(manifest)) if manifest.digest() == files.manifest => manifest.message,
+            Ok(_) => return Err("mail_reply_message_missing"),
+            Err(_) => return Err("mail_reply_message_refused"),
+        };
+        let raw = retained
+            .open_for_egress()
+            .map_err(|_| "mail_reply_message_refused")?;
+        if !frozen.matches(&raw) {
+            return Err("mail_reply_message_mismatch");
+        }
+        Ok(raw)
     }
 
     /// Submits `raw` over SMTP with the mailbox's credential.
@@ -125,18 +192,25 @@ impl<'v> ReplySink<'v> {
         }
     }
 
-    /// Sends `raw` through Graph with the mailbox's own token.
+    /// Sends `raw` through Graph with the mailbox's own token. A reply with
+    /// files is refused above Graph's one-shot limit, its exact body counted,
+    /// and judged once more in the credential door's writer by the holder of
+    /// its message (fix list row 17645).
     fn send_graph(&self, raw: &[u8]) -> Submitted {
         let client = match rest::https_client() {
             Ok(client) => client,
             Err(_) => return Submitted::NotSent("graph_client_unavailable"),
         };
         let body = base64::engine::general_purpose::STANDARD.encode(raw);
+        if self.message.files.is_some() && body.len() as u64 > MAX_GRAPH_SEND_BODY_BYTES {
+            return Submitted::NotSent("graph_send_too_large");
+        }
         let mut outcome = None;
-        let door = self.vault.with_source_token_at_door(
+        let door = self.vault.with_source_token_at_door_admitting(
             &self.source,
             WireReads::Mailbox,
             MICROSOFT365_CONNECTOR_EFFECTOR,
+            self.retained,
             &mut |token: &[u8]| {
                 let auth = bearer_header(token)?;
                 // The token sends as the mailbox it reads, and no other.
@@ -214,8 +288,21 @@ impl OutboundExecutionSink for ReplySink<'_> {
         if self.message.recipients != request.intent.recipients {
             return OutboundExecutionOutcome::failed("mail_reply_recipients_mismatch");
         }
-        let Ok(raw) = self.message.render(&request.hygiene_headers) else {
-            return OutboundExecutionOutcome::failed("mail_reply_headers_invalid");
+        // A reply with files sends the message it was frozen with, as its
+        // holder opens it; nothing is rendered again (fix list row 17645).
+        let raw = match &self.message.files {
+            None => {
+                let Ok(raw) = self.message.render(&request.hygiene_headers) else {
+                    return OutboundExecutionOutcome::failed("mail_reply_headers_invalid");
+                };
+                Zeroizing::new(raw)
+            }
+            Some(files) => {
+                match self.retained_message(files, &message_ref, &request.hygiene_headers) {
+                    Ok(raw) => raw,
+                    Err(reason) => return OutboundExecutionOutcome::failed(reason),
+                }
+            }
         };
         let mut fields = BTreeMap::new();
         fields.insert(RECEIPT_REPLY_MESSAGE_REF.to_owned(), message_ref);
@@ -259,6 +346,19 @@ impl OutboundExecutionSink for ReplySink<'_> {
                     .with_receipt_fields(fields)
                     .with_possible_delivery()
             }
+        }
+    }
+
+    /// A reply with files is judged again by the holder of its message, in
+    /// the writer that admits it, before any decision is recorded; without
+    /// that holder it is refused there (fix list row 17645).
+    fn admit_in(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
+        match (self.retained, &self.message.files) {
+            (Some(retained), _) => retained.admit_in(txn),
+            (None, Some(_)) => Err(Error::InvalidConfig(
+                "a reply with files sends only beside the holder of its message".to_owned(),
+            )),
+            (None, None) => Ok(()),
         }
     }
 

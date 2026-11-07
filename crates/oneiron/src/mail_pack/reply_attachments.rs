@@ -1,6 +1,8 @@
-//! The files a drafted Gmail reply carries (fix list row 17645): each one
-//! exact version of an artifact, never its head, an ASSET id, a path, a URL,
-//! a provider part or inline bytes.
+//! The files a drafted reply carries (fix list row 17645), from a Google
+//! mailbox through its delegated Gmail identity or from a Microsoft 365
+//! mailbox as its own account through Graph: each one exact version of an
+//! artifact, never its head, an ASSET id, a path, a URL, a provider part or
+//! inline bytes. An IMAP mailbox's reply carries none.
 //!
 //! - **Admission.** The drafter's own read lane reads the artifact and that
 //!   version's rows, and any source the version quotes, in one snapshot with
@@ -9,11 +11,13 @@
 //!   be cleared for each file and each source it quotes, and one who is not
 //!   refuses the whole draft. Then the drafter's sighted copy of each version
 //!   is exported once, no `why` with it, so nothing is revealed.
-//! - **Freeze.** The plan seals each file's description and the exact
-//!   message's length and BLAKE3; the message is written once, here, and
-//!   kept sealed beside the draft (`reply_custody`) with the kept plan and
-//!   the files' manifest. The draft's own row and the kept plan name the
-//!   files only by that manifest's digest; the draft's readers open it.
+//! - **Freeze.** A Gmail plan seals each file's description and the exact
+//!   message's length and BLAKE3, a Graph reply's frozen message the digest
+//!   of the manifest that names them all; the message is written once, here,
+//!   and kept sealed beside the draft (`reply_custody`) with the files'
+//!   manifest and a Gmail reply's kept plan. The draft's own row and the
+//!   kept plan name the files only by that manifest's digest; the draft's
+//!   readers open it.
 //! - **Lifetime.** Each revision registers every row it depends on, each
 //!   source its files quote among them, so the erase of any of them ends the
 //!   draft whole (`reply_erase`).
@@ -22,8 +26,9 @@
 //!   the mailbox still sends, the thread, the answered TURN and its MESSAGE
 //!   rows are still live, each file is still its pinned version quoting its
 //!   source as it did, each recipient is still cleared, the message is still
-//!   held and within Gmail's raw limit. Policy and liveness only: nothing is
-//!   exported, masked or written again.
+//!   held and within its rail's limit (Gmail's raw message, Graph's one-shot
+//!   POST body). Policy and liveness only: nothing is exported, masked or
+//!   written again.
 //! - **Completion.** A press whose send the ledger already completed
 //!   replays that outcome and settles the draft before it asks for today's
 //!   route or identity; it judges none of this again, and needs no live
@@ -40,7 +45,8 @@ use super::reply_custody::{
     seal_reply_message_in_txn, seal_reply_plan_stub_in_txn,
 };
 use super::reply_erase::{raise_reply_revision_floor_in_txn, register_reply_dependencies_in_txn};
-use super::source::{MailProvider, MailSourceKind, MailSourceStatus, SOURCES};
+use super::reply_mime::ReplyMessage;
+use super::source::{MailProvider, MailSourceKind, MailSourceRow, MailSourceStatus, SOURCES};
 use super::state::{MailOccurrence, MailPresence, OCCURRENCES};
 use crate::Vault;
 use crate::channel_identity_provider::gmail::GmailSendPlan;
@@ -64,6 +70,81 @@ use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 /// not the files' own sizes. A reply above it is refused before its Ask,
 /// again at the press and again at egress.
 pub(super) const MAX_GMAIL_RAW_MESSAGE_OCTETS: u64 = 35 * 1024 * 1024;
+
+/// Graph's limit on one MIME `sendMail` request body, as this rail takes it:
+/// 4,000,000 bytes of the POST body, the standard padded base64 of the exact
+/// RFC 5322 message, every header, boundary and base64 line of that message
+/// counted (so at most 3,000,000 octets of message, not of files). A reply
+/// above it is refused before its Ask, again at the press and again at
+/// egress; no upload session or remote draft takes a larger one.
+pub(super) const MAX_GRAPH_SEND_BODY_BYTES: u64 = 4_000_000;
+
+/// The rail a drafted reply with files sends by (fix list row 17645).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum AttachedRail {
+    /// Gmail `users.messages.send`, through a Google mailbox's delegated
+    /// identity.
+    Gmail,
+    /// Graph's MIME `sendMail`, as a Microsoft 365 mailbox's own account.
+    Graph,
+}
+
+impl AttachedRail {
+    /// The rail revision `row` froze its files for: a Graph reply's frozen
+    /// message rides in its row; a Gmail reply's plan is kept beside it.
+    pub(super) const fn of(row: &MailReplyDraftRow) -> Self {
+        if row.message.is_some() {
+            Self::Graph
+        } else {
+            Self::Gmail
+        }
+    }
+
+    /// Whether `source` still sends this rail's replies: an active personal
+    /// mailbox of the rail's provider.
+    fn sends_from(self, source: &MailSourceRow) -> bool {
+        source.status == MailSourceStatus::Active
+            && source.kind == MailSourceKind::PersonalMailbox
+            && match self {
+                Self::Gmail => matches!(
+                    source.provider,
+                    MailProvider::GoogleWorkspace | MailProvider::Google
+                ),
+                Self::Graph => source.provider == MailProvider::Microsoft365,
+            }
+    }
+
+    /// Why a message of `octets` octets is too large for this rail; `None`
+    /// while it fits: Gmail counts the message itself, Graph the base64 POST
+    /// body it sends as.
+    pub(super) fn size_refusal(self, octets: u64) -> Option<String> {
+        match self {
+            Self::Gmail => (octets > MAX_GMAIL_RAW_MESSAGE_OCTETS).then(|| {
+                format!(
+                    "the reply with its files is {octets} octets; Gmail sends at most \
+                     {MAX_GMAIL_RAW_MESSAGE_OCTETS}"
+                )
+            }),
+            Self::Graph => {
+                let body = graph_send_body_bytes(octets).unwrap_or(u64::MAX);
+                (body > MAX_GRAPH_SEND_BODY_BYTES).then(|| {
+                    format!(
+                        "the reply with its files is {octets} octets, {body} bytes as Graph \
+                         sends it; Graph sends at most {MAX_GRAPH_SEND_BODY_BYTES}"
+                    )
+                })
+            }
+        }
+    }
+}
+
+/// The length of Graph's MIME `sendMail` body for a message of `octets`
+/// octets: its standard padded base64, the whole POST body; `None` past what
+/// this host addresses.
+fn graph_send_body_bytes(octets: u64) -> Option<u64> {
+    let octets = usize::try_from(octets).ok()?;
+    u64::try_from(base64::encoded_len(octets, true)?).ok()
+}
 
 /// One file a drafted reply carries: one exact version of an artifact the
 /// caller reads (fix list row 17645).
@@ -196,6 +277,11 @@ pub(super) struct AdmittedFiles {
 }
 
 impl AdmittedFiles {
+    /// Each file's exact copy, in their order.
+    fn copy_slices(&self) -> Vec<&[u8]> {
+        self.copies.iter().map(Vec::as_slice).collect()
+    }
+
     /// Every row the files are (each artifact, its version's CLAIM and
     /// ASSET, and each source the version quotes), then each of `also`, each
     /// once, in order: the revision's dependencies.
@@ -375,13 +461,6 @@ pub(super) fn frozen_addresses(to: &str, recipients: &[OutboundRecipient]) -> Ve
     }
 }
 
-fn too_large(octets: u64) -> String {
-    format!(
-        "the reply with its files is {octets} octets; Gmail sends at most \
-         {MAX_GMAIL_RAW_MESSAGE_OCTETS}"
-    )
-}
-
 /// The refusal a standing check's [`Error::InvalidConfig`] is, as the
 /// caller's error; any other error as it stands.
 fn refusal_error(error: Error) -> MemoryError {
@@ -393,15 +472,17 @@ fn refusal_error(error: Error) -> MemoryError {
 
 impl Memory<'_> {
     /// Admits the files `requested` names for a reply to `recipients`, its
-    /// canonical To and Cc in their places (fix list row 17645): each an
-    /// exact version of a live artifact the caller's own read lane `lane`
-    /// reads, its rows with it, and every recipient cleared for it, judged in
-    /// one snapshot before any byte is read; then the caller's sighted copy
-    /// of each version, exported once with no `why`. A refusal names only
+    /// canonical To and Cc in their places, sent by `rail` (fix list row
+    /// 17645): each an exact version of a live artifact the caller's own read
+    /// lane `lane` reads, its rows with it, and every recipient cleared for
+    /// it, judged in one snapshot before any byte is read; then the caller's
+    /// sighted copy of each version, exported once with no `why`, refused as
+    /// soon as the copies alone pass the rail's limit. A refusal names only
     /// the file's slot and the recipient's address.
     pub(super) fn reply_attachments_admitted(
         &self,
         lane: &ScopedRead<'_>,
+        rail: AttachedRail,
         requested: &[MailReplyAttachment],
         recipients: &[String],
     ) -> MemoryResult<AdmittedFiles> {
@@ -468,8 +549,8 @@ impl Memory<'_> {
                 MemoryError::bad_request(format!("attachment {}: {error}", slot + 1))
             })?;
             octets = octets.saturating_add(file.octets);
-            if octets > MAX_GMAIL_RAW_MESSAGE_OCTETS {
-                return Err(MemoryError::bad_request(too_large(octets)));
+            if let Some(refusal) = rail.size_refusal(octets) {
+                return Err(MemoryError::bad_request(refusal));
             }
             attachments.push(file);
             copies.push(copy.export.bytes);
@@ -495,7 +576,7 @@ pub(super) fn readmit_reply_attachments_in(
     vault: &Vault,
     lane: &ScopedRead<'_>,
     txn: &RoTxn<'_>,
-    frozen: &FrozenGmailReply,
+    frozen: &FrozenReply,
     recipients: &[String],
 ) -> MemoryResult<()> {
     let rows = match pinned_rows_in(vault, Some(lane), txn, &frozen.attached.attachments)? {
@@ -517,14 +598,17 @@ pub(super) fn readmit_reply_attachments_in(
     }
 }
 
-/// One revision of a drafted Gmail reply, frozen with its files: its plan,
-/// the exact message it sends, its manifest, what the draft's own row keeps
-/// of it, and every row it depends on.
-pub(super) struct FrozenGmailReply {
-    pub(super) plan: GmailSendPlan,
+/// One revision of a drafted reply, frozen with its files: the exact message
+/// it sends, its manifest, what the draft's own row keeps of it, a Gmail
+/// reply's kept plan, and every row it depends on.
+pub(super) struct FrozenReply {
     pub(super) message: Zeroizing<Vec<u8>>,
     pub(super) attached: ReplyAttached,
     pub(super) held: ReplyManifestRef,
+    /// The kept Gmail plan a Gmail reply dispatches, as its stub
+    /// (`GmailSendPlan::stub`); `None` for a Graph reply, whose frozen
+    /// message rides in its draft's row.
+    plan_stub: Option<Zeroizing<Vec<u8>>>,
     /// The files' artifacts, their versions' CLAIM and ASSET rows and each
     /// source a version quotes, the thread, the answered TURN and its
     /// MESSAGE rows, and the mailbox source, each once: the erase or
@@ -532,12 +616,13 @@ pub(super) struct FrozenGmailReply {
     pub(super) dependencies: Vec<EntityId>,
 }
 
-impl FrozenGmailReply {
+impl FrozenReply {
     /// Lands revision `revision` of the draft `draft` with its files in
     /// `wtxn`, the writer that lands its row, after the revision it replaces
-    /// was retired there: its message, its kept plan and its manifest, each
-    /// sealed under the revision's own key, derived from the nonce its row
-    /// keeps, its index rows, and the draft's revision floor, raised to it.
+    /// was retired there: its message, a Gmail reply's kept plan and its
+    /// manifest, each sealed under the revision's own key, derived from the
+    /// nonce its row keeps, its index rows, and the draft's revision floor,
+    /// raised to it.
     ///
     /// # Errors
     ///
@@ -555,22 +640,62 @@ impl FrozenGmailReply {
         );
         let nonce = &self.held.custody_nonce;
         seal_reply_message_in_txn(store, wtxn, draft, revision, nonce, &self.message)?;
-        seal_reply_plan_stub_in_txn(store, wtxn, draft, revision, nonce, &self.plan.stub()?)?;
+        if let Some(stub) = &self.plan_stub {
+            seal_reply_plan_stub_in_txn(store, wtxn, draft, revision, nonce, stub)?;
+        }
         seal_reply_manifest_in_txn(store, wtxn, draft, revision, nonce, &manifest)?;
         raise_reply_revision_floor_in_txn(store, wtxn, draft, revision)?;
         register_reply_dependencies_in_txn(store, wtxn, draft, &self.dependencies)
     }
 }
 
+/// What `admitted`'s files freeze into as revision `revision` of the draft
+/// `draft`, once `message`, the exact bytes their send writes, is written:
+/// refused above `rail`'s limit; its length and BLAKE3, the manifest, and the
+/// nonce this landing draws here, once, with the carrier ref derived from
+/// it, the kept plan's and the manifest's derive from it too. `answered` is
+/// the message the reply answers and `dependencies` every row the revision
+/// depends on. The caller binds its send to the message and the carrier.
+fn frozen_reply(
+    rail: AttachedRail,
+    message: Vec<u8>,
+    admitted: AdmittedFiles,
+    draft: &EntityId,
+    revision: u64,
+    answered: AnsweredMessage,
+    dependencies: Vec<EntityId>,
+) -> MemoryResult<FrozenReply> {
+    let message = Zeroizing::new(message);
+    let identity = MailMessageIdentity::of(&message);
+    if let Some(refusal) = rail.size_refusal(identity.octets) {
+        return Err(MemoryError::bad_request(refusal));
+    }
+    let attached = ReplyAttached {
+        attachments: admitted.attachments,
+        message: identity,
+        answered: Some(answered),
+    };
+    let custody_nonce = draw_reply_custody_nonce();
+    let carrier = reply_carrier_ref(draft, revision, &custody_nonce)?;
+    Ok(FrozenReply {
+        message,
+        held: ReplyManifestRef {
+            digest: attached.manifest().digest(),
+            carrier,
+            custody_nonce,
+        },
+        attached,
+        plan_stub: None,
+        dependencies,
+    })
+}
+
 /// Freezes `admitted`'s files into `plan` as revision `revision` of the
 /// draft `draft` (fix list row 17645): the plan seals their descriptions,
-/// its exact message is written once, refused above
-/// [`MAX_GMAIL_RAW_MESSAGE_OCTETS`], and its length and BLAKE3 seal into the
-/// plan's content ref, so the owner's one press is for exactly that message,
-/// held in the carrier its ref names. This landing draws its own nonce here,
-/// once: the carrier's ref, and the kept plan's and the manifest's, derive
-/// from it. `answered` is the message the reply answers and `dependencies`
-/// every row the revision depends on.
+/// its exact message is written once, refused above Gmail's raw limit, and
+/// its length and BLAKE3 seal into the plan's content ref, so the owner's
+/// one press is for exactly that message, held in the carrier its ref
+/// names; the plan is kept as its stub beside it ([`frozen_reply`]).
 ///
 /// # Errors
 ///
@@ -583,39 +708,63 @@ pub(super) fn freeze_gmail_reply(
     revision: u64,
     answered: AnsweredMessage,
     dependencies: Vec<EntityId>,
-) -> MemoryResult<FrozenGmailReply> {
+) -> MemoryResult<(GmailSendPlan, FrozenReply)> {
     let refuse = |error: Error| MemoryError::bad_request(error.to_string());
     let plan = plan
         .with_attachments(admitted.attachments.clone())
         .map_err(refuse)?;
-    let files = admitted
-        .copies
-        .iter()
-        .map(Vec::as_slice)
-        .collect::<Vec<_>>();
-    let message = Zeroizing::new(plan.render_with_files(&files).map_err(refuse)?);
-    let identity = MailMessageIdentity::of(&message);
-    if identity.octets > MAX_GMAIL_RAW_MESSAGE_OCTETS {
-        return Err(MemoryError::bad_request(too_large(identity.octets)));
-    }
-    let attached = ReplyAttached {
-        attachments: admitted.attachments,
-        message: identity,
-        answered: Some(answered),
-    };
-    let custody_nonce = draw_reply_custody_nonce();
-    let carrier = reply_carrier_ref(draft, revision, &custody_nonce)?;
-    Ok(FrozenGmailReply {
-        plan: plan.with_message(identity, carrier.clone()),
+    let message = plan
+        .render_with_files(&admitted.copy_slices())
+        .map_err(refuse)?;
+    let mut frozen = frozen_reply(
+        AttachedRail::Gmail,
         message,
-        held: ReplyManifestRef {
-            digest: attached.manifest().digest(),
-            carrier,
-            custody_nonce,
-        },
-        attached,
+        admitted,
+        draft,
+        revision,
+        answered,
         dependencies,
-    })
+    )?;
+    let plan = plan.with_message(frozen.attached.message, frozen.held.carrier.clone());
+    frozen.plan_stub = Some(plan.stub()?);
+    Ok((plan, frozen))
+}
+
+/// Freezes `admitted`'s files into `reply`, a Microsoft 365 mailbox's
+/// frozen message, as revision `revision` of the draft `draft` (fix list row
+/// 17645): its exact message is written once, refused above Graph's one-shot
+/// limit, and the manifest's digest, which seals each file in its slot and
+/// the message's length and BLAKE3, seals into the reply's content ref, so
+/// the owner's one press is for exactly that message, held in the carrier
+/// the reply names ([`frozen_reply`]). The reply rides in its draft's row, as
+/// one without files does.
+///
+/// # Errors
+///
+/// A file a part header may not carry, a message above Graph's limit, or
+/// the carrier ref's invariant failure.
+pub(super) fn freeze_graph_reply(
+    reply: ReplyMessage,
+    admitted: AdmittedFiles,
+    draft: &EntityId,
+    revision: u64,
+    answered: AnsweredMessage,
+    dependencies: Vec<EntityId>,
+) -> MemoryResult<(ReplyMessage, FrozenReply)> {
+    let message = reply
+        .render_with_files(&admitted.attachments, &admitted.copy_slices())
+        .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+    let frozen = frozen_reply(
+        AttachedRail::Graph,
+        message,
+        admitted,
+        draft,
+        revision,
+        answered,
+        dependencies,
+    )?;
+    let reply = reply.with_files(frozen.held.digest, frozen.held.carrier.clone());
+    Ok((reply, frozen))
 }
 
 /// The manifest revision `row` of the draft `draft` froze, opened in `txn`
@@ -728,11 +877,12 @@ enum Standing {
 /// Why revision `row` of the drafted reply `draft` no longer sends as it
 /// was frozen with its files, read in `txn`; `None` while it does, and for a
 /// reply without files (fix list row 17645): its mailbox still an active
-/// Google personal mailbox, its manifest still held as the row names it, its
-/// message within Gmail's raw limit, the thread and the message it answers
-/// still live as it froze them ([`answered_refusal_in`]), each file still
-/// its pinned version quoting its source as it did, with every recipient
-/// cleared for each file and each source, and its message still held.
+/// personal mailbox of its rail's provider, Google's or Microsoft 365's, its
+/// manifest still held as the row names it, its message within its rail's
+/// limit, the thread and the message it answers still live as it froze them
+/// ([`answered_refusal_in`]), each file still its pinned version quoting its
+/// source as it did, with every recipient cleared for each file and each
+/// source, and its message still held.
 /// Policy and liveness only. `txn` is a writer, or a snapshot under the
 /// custody read guard: the manifest opens in it.
 ///
@@ -762,16 +912,10 @@ fn standing_in(
     let Some(held) = &row.attached else {
         return Ok(Standing::Stands(None));
     };
+    let rail = AttachedRail::of(row);
     let sends = SOURCES
         .get(&vault.store, txn, &row.source)?
-        .is_some_and(|source| {
-            source.status == MailSourceStatus::Active
-                && source.kind == MailSourceKind::PersonalMailbox
-                && matches!(
-                    source.provider,
-                    MailProvider::GoogleWorkspace | MailProvider::Google
-                )
-        });
+        .is_some_and(|source| rail.sends_from(&source));
     if !sends {
         return Ok(Standing::Refused(
             "the mailbox does not send now; its reply with files waits".to_owned(),
@@ -782,8 +926,8 @@ fn standing_in(
             "the reply's files are no longer held; draft it again".to_owned(),
         ));
     };
-    if attached.message.octets > MAX_GMAIL_RAW_MESSAGE_OCTETS {
-        return Ok(Standing::Refused(too_large(attached.message.octets)));
+    if let Some(refusal) = rail.size_refusal(attached.message.octets) {
+        return Ok(Standing::Refused(refusal));
     }
     if let Some(refusal) = answered_refusal_in(vault, txn, row, &attached)? {
         return Ok(Standing::Refused(refusal));
@@ -822,13 +966,15 @@ pub(super) fn reader_reads_attachments_in(
 }
 
 /// The sender of the send the ledger already completed under `intent_ref`,
-/// of the plan `plan_ref` through the identity `identity` (fix list row
-/// 17645): that exact attempt stands Done for an email send, its frozen
-/// request naming that plan and that identity, and the actor it froze is
-/// the sender. Read under the custody read guard, as the dispatch reads it.
-/// A press for such a send replays the recorded outcome, its whole frozen
-/// request validated again by the dispatch door, and settles its draft,
-/// judging none of today's mailbox, identity, files, recipients or message.
+/// of the plan or frozen message `plan_ref`, through the identity `identity`
+/// for a Gmail reply, or through none for a Graph reply, sent as the
+/// mailbox's own account (fix list row 17645): that exact attempt stands
+/// Done for an email send, its frozen request naming that content and that
+/// identity, or none, and the actor it froze is the sender. Read under the
+/// custody read guard, as the dispatch reads it. A press for such a send
+/// replays the recorded outcome, its whole frozen request validated again
+/// by the dispatch door, and settles its draft, judging none of today's
+/// mailbox, identity, files, recipients or message.
 ///
 /// # Errors
 ///
@@ -837,7 +983,7 @@ pub(super) fn reply_send_completed(
     vault: &Vault,
     intent_ref: &str,
     plan_ref: &str,
-    identity: EntityId,
+    identity: Option<EntityId>,
 ) -> Result<Option<EntityId>> {
     #[derive(Deserialize)]
     struct Frozen {
@@ -866,7 +1012,7 @@ pub(super) fn reply_send_completed(
         return Ok(None);
     };
     if frozen.content_ref.as_deref() != Some(plan_ref)
-        || frozen.channel_identity_ref != Some(identity.to_hex())
+        || frozen.channel_identity_ref != identity.map(|identity| identity.to_hex())
     {
         return Ok(None);
     }
@@ -876,19 +1022,22 @@ pub(super) fn reply_send_completed(
         .and_then(|actor| EntityId::from_hex(actor).ok()))
 }
 
-/// The one send with files a Gmail reply's approval dispatches, bound to
-/// its revision and plan (fix list row 17645): it judges the send again in
-/// the Gate's writer, at egress and in the credential door's writer, opens
-/// the revision's retained message, checked against its frozen length and
-/// BLAKE3, and hands the plan store the kept plan and its manifest, each
-/// opened from its sealed row.
+/// The one send with files a reply's approval dispatches, bound to its
+/// revision and its plan or frozen message (fix list row 17645): it judges
+/// the send again in the Gate's writer, at egress and in the credential
+/// door's writer, opens the revision's retained message, checked against
+/// its frozen length and BLAKE3, and hands its sink the manifest, and the
+/// Gmail plan store the kept plan, each opened from its sealed row.
 pub(super) struct ReplyRetainedMessage<'v> {
     vault: &'v Vault,
     draft: EntityId,
     revision: u64,
     plan_ref: String,
-    /// The ref of the revision's carrier, as its kept plan names it.
+    /// The ref of the revision's carrier, as its kept plan or its frozen
+    /// message names it.
     carrier: String,
+    /// The rail it sends by, whose limit its message stays within.
+    rail: AttachedRail,
 }
 
 impl<'v> ReplyRetainedMessage<'v> {
@@ -914,12 +1063,23 @@ impl<'v> ReplyRetainedMessage<'v> {
         if held.carrier != carrier {
             return Err(refused());
         }
+        // A Graph reply's frozen message names the manifest and the carrier
+        // its row does.
+        if let Some(message) = &row.message
+            && !message
+                .files
+                .as_ref()
+                .is_some_and(|files| files.manifest == held.digest && files.carrier == held.carrier)
+        {
+            return Err(refused());
+        }
         let bound = Self {
             vault,
             draft,
             revision: row.revision,
             plan_ref: row.plan_ref.clone(),
             carrier,
+            rail: AttachedRail::of(row),
         };
         bound
             .opened(&[MailReplyDraftState::Proposed, MailReplyDraftState::Approved])
@@ -978,8 +1138,8 @@ impl<'v> ReplyRetainedMessage<'v> {
         .ok_or_else(|| {
             Error::InvalidConfig("the reply's message is no longer held; draft it again".to_owned())
         })?;
-        if opened.len() as u64 > MAX_GMAIL_RAW_MESSAGE_OCTETS {
-            return Err(Error::InvalidConfig(too_large(opened.len() as u64)));
+        if let Some(refusal) = self.rail.size_refusal(opened.len() as u64) {
+            return Err(Error::InvalidConfig(refusal));
         }
         Ok(opened)
     }

@@ -20989,7 +20989,7 @@
     },
     {
       "name": "vault.mail.reply.draft",
-      "description": "Drafts a reply, or its next revision, to a mail thread the caller reads, in text with optional simple HTML, to its sender (reply_all adds To and Cc; cc adds more); a Google mailbox's may carry exact artifact versions. The owner approves it.",
+      "description": "Drafts a reply, or its next revision, to a mail thread the caller reads, in text with optional simple HTML, to its sender (reply_all adds To and Cc; cc adds more), with artifact versions on Google or Microsoft 365. The owner approves it.",
       "input": "crate::mail_pack::MailReplyDraftRequest",
       "output": "crate::mail_pack::MailReplyDraftView",
       "call": "memory.mail_reply_draft(&input)?",
