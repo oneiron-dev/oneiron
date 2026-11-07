@@ -2441,6 +2441,11 @@ export_facade! {
     let output = client.vault_coach_training_offers_sources(&input)?;
     crate::codec::lift_record("vault.coach.training_offers.sources", &output)
 };
+"vault.coach.training_runs.cancel" => fn vault_coach_training_runs_cancel(&self, input: TrainingRunRef) -> PendingEmbedderBinding = |client| {
+    let input: oneiron::skill_optimize::offer_doors::TrainingRunRef = crate::codec::lower_record("vault.coach.training_runs.cancel", input)?;
+    let output = client.vault_coach_training_runs_cancel(&input)?;
+    crate::codec::lift_record("vault.coach.training_runs.cancel", &output)
+};
 "vault.drafters.list" => fn vault_drafters_list(&self, input: DrafterListRequest) -> Vec<DrafterVersionView> = |client| {
     let input: oneiron::drafter::DrafterListRequest = crate::codec::lower_record("vault.drafters.list", input)?;
     let output = client.vault_drafters_list(&input)?;
@@ -3216,6 +3221,11 @@ export_facade! {
     let output = client.host_budget_hit(&input)?;
     crate::codec::lift_record("host.budget.hit", &output)
 };
+"vault.hooks.checks" => fn vault_hooks_checks(&self) -> Vec<HookCheck> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.hooks.checks")?;
+    let output = client.vault_hooks_checks(&input)?;
+    crate::codec::lift_record("vault.hooks.checks", &output)
+};
 "vault.hooks.replay" => fn vault_hooks_replay(&self, input: HooksReplayRequest) -> HooksReplayPage = |client| {
     let input: oneiron::task_verb::sdk::HooksReplayRequest = crate::codec::lower_record("vault.hooks.replay", input)?;
     let output = client.vault_hooks_replay(&input)?;
@@ -3475,6 +3485,11 @@ export_facade! {
     let input: oneiron::memory::code_run_doors::CodeRunModelHealCountRequest = crate::codec::lower_record("vault.code.model_heal_count", input)?;
     let output = client.vault_code_model_heal_count(&input)?;
     crate::codec::lift_record("vault.code.model_heal_count", &output)
+};
+"vault.code.corrections" => fn vault_code_corrections(&self, input: CodeRunCorrectionsRequest) -> CodeRunCorrectionsView = |client| {
+    let input: oneiron::memory::code_run_doors::CodeRunCorrectionsRequest = crate::codec::lower_record("vault.code.corrections", input)?;
+    let output = client.vault_code_corrections(&input)?;
+    crate::codec::lift_record("vault.code.corrections", &output)
 };
 "vault.code.type_diagnostics" => fn vault_code_type_diagnostics(&self, input: CodeRunTypeDiagnosticsRequest) -> Option<ProgramStepFeedbackRelease> = |client| {
     let input: oneiron::memory::code_run_doors::CodeRunTypeDiagnosticsRequest = crate::codec::lower_record("vault.code.type_diagnostics", input)?;
@@ -4205,6 +4220,21 @@ export_facade! {
     let input: oneiron::task_verb::sdk::TaskAnswerRequest = crate::codec::lower_record("tasks.answer", input)?;
     let output = client.tasks_answer(&input)?;
     crate::codec::lift_record("tasks.answer", &output)
+};
+"tasks.answer.forward.challenge" => fn tasks_answer_forward_challenge(&self, input: TaskAnswerForwardChallengeRequest) -> TaskAnswerForwardChallenge = |client| {
+    let input: oneiron::task_verb::sdk::TaskAnswerForwardChallengeRequest = crate::codec::lower_record("tasks.answer.forward.challenge", input)?;
+    let output = client.tasks_answer_forward_challenge(&input)?;
+    crate::codec::lift_record("tasks.answer.forward.challenge", &output)
+};
+"tasks.answer.forward" => fn tasks_answer_forward(&self, input: TaskAnswerForwardRequest) -> AskForwardReceipt = |client| {
+    let input: oneiron::task_verb::sdk::TaskAnswerForwardRequest = crate::codec::lower_record("tasks.answer.forward", input)?;
+    let output = client.tasks_answer_forward(&input)?;
+    crate::codec::lift_record("tasks.answer.forward", &output)
+};
+"tasks.answer.forward.status" => fn tasks_answer_forward_status(&self, input: TaskAnswerForwardStatusRequest) -> AskForwardReceipt = |client| {
+    let input: oneiron::task_verb::sdk::TaskAnswerForwardStatusRequest = crate::codec::lower_record("tasks.answer.forward.status", input)?;
+    let output = client.tasks_answer_forward_status(&input)?;
+    crate::codec::lift_record("tasks.answer.forward.status", &output)
 };
 "tasks.outcomes" => fn tasks_outcomes(&self, input: TaskAskHandle) -> Vec<CalibrationPair> = |client| {
     let input: oneiron::task_verb::TaskAskHandle = crate::codec::lower_record("tasks.outcomes", input)?;
@@ -6180,6 +6210,11 @@ export_facade! {
     let input: oneiron::mail_pack::MailComplianceSearchRequest = crate::codec::lower_record("vault.mail.compliance.search", input)?;
     let output = client.vault_mail_compliance_search(&input)?;
     crate::codec::lift_record("vault.mail.compliance.search", &output)
+};
+"vault.files.sources.convert" => fn vault_files_sources_convert(&self, input: FilesSourceConvertRequest) -> FilesSourceAttachAnswer = |client| {
+    let input: oneiron::task_verb::sdk::FilesSourceConvertRequest = crate::codec::lower_record("vault.files.sources.convert", input)?;
+    let output = client.vault_files_sources_convert(&input)?;
+    crate::codec::lift_record("vault.files.sources.convert", &output)
 };
 "connector.answer" => fn connector_answer(&self, input: ConnectorAnswerRequest) -> ConnectorCallReply = |client| {
     let input: oneiron::task_verb::sdk::ConnectorAnswerRequest = crate::codec::lower_record("connector.answer", input)?;
