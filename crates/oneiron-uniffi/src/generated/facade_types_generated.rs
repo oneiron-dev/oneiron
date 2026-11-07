@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1274 facade rows, 4614 generated types.
+// UniFFI census: 1274 facade rows, 4615 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1226.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -34063,6 +34063,17 @@ pub struct ConsentRevokeAction {
     pub grant_ref: String,
 }
 
+/// `oneiron::consent::registry::ConsentRegrantAction`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConsentRegrantAction {
+    #[serde(rename = "command")]
+    pub command: String,
+    #[serde(rename = "agent")]
+    pub agent: String,
+    #[serde(rename = "conversation")]
+    pub conversation: String,
+}
+
 /// `oneiron::consent::bypass::BypassScope`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum BypassScope {
@@ -34162,6 +34173,12 @@ pub struct ConsentRegistryRow {
     pub created_at: u64,
     #[serde(rename = "revoke_action")]
     pub revoke_action: ConsentRevokeAction,
+    #[serde(
+        rename = "regrant_action",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub regrant_action: Option<ConsentRegrantAction>,
     #[serde(rename = "bypass", default, skip_serializing_if = "Option::is_none")]
     pub bypass: Option<BypassExtent>,
     #[serde(
