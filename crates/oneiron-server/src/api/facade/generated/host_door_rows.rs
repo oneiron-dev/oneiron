@@ -27,6 +27,12 @@
 //! - `vault.weave.lens`
 //! - `vault.weave.link.wrong`
 //! - `vault.weave.item.wrong`
+//! - `vault.weave.admin.report`
+//! - `vault.weave.admin.lens`
+//! - `vault.weave.admin.digest`
+//! - `vault.weave.admin.link.wrong`
+//! - `vault.weave.admin.item.wrong`
+//! - `vault.step_up.totp.reset`
 //! - `vault.inbox.groups.resolve`
 //! - `vault.skills.optimize.tradeoff_asks.resolve`
 //! - `vault.packs.sections.propose`
@@ -263,6 +269,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     SelfSavedQueryEvaluate,
     VaultWeaveOwnerLinkWrong,
     VaultWeaveOwnerItemWrong,
+    VaultStepUpPasskeysReset,
     VaultWeaveEnqueue,
     VaultWeaveSchedulesList,
     VaultWeaveSchedulesPut,
@@ -993,6 +1000,7 @@ impl HostDoorRow {
             "self.saved_query.evaluate" => Self::SelfSavedQueryEvaluate,
             "vault.weave.owner.link.wrong" => Self::VaultWeaveOwnerLinkWrong,
             "vault.weave.owner.item.wrong" => Self::VaultWeaveOwnerItemWrong,
+            "vault.step_up.passkeys.reset" => Self::VaultStepUpPasskeysReset,
             "vault.weave.enqueue" => Self::VaultWeaveEnqueue,
             "vault.weave.schedules.list" => Self::VaultWeaveSchedulesList,
             "vault.weave.schedules.put" => Self::VaultWeaveSchedulesPut,
@@ -1689,6 +1697,12 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.weave.lens"
                 | "vault.weave.link.wrong"
                 | "vault.weave.item.wrong"
+                | "vault.weave.admin.report"
+                | "vault.weave.admin.lens"
+                | "vault.weave.admin.digest"
+                | "vault.weave.admin.link.wrong"
+                | "vault.weave.admin.item.wrong"
+                | "vault.step_up.totp.reset"
                 | "vault.inbox.groups.resolve"
                 | "vault.skills.optimize.tradeoff_asks.resolve"
                 | "vault.packs.sections.propose"
