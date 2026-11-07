@@ -976,6 +976,9 @@ class Oneiron:
         def get(self, spec):
             """Reads a commitment with its schedule, birth provenance, separate occurrence and learning times, and lifecycle receipt."""
             return json.loads(_translate(lambda: self._client.vault_commitments_get(json.dumps(spec))))
+        def ledger(self, spec):
+            """Reads due-sorted open obligations owed by and to one counterparty contact, with their current commitment views."""
+            return json.loads(_translate(lambda: self._client.vault_commitments_ledger(json.dumps(spec))))
         def instances(self, spec):
             """Lists the materialized occurrences of a commitment series, including closed obligations."""
             return json.loads(_translate(lambda: self._client.vault_commitments_instances(json.dumps(spec))))

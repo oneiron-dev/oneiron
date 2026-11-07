@@ -3,6 +3,7 @@
 pub enum AgentVerb {
     VaultCommitmentsCreate,
     VaultCommitmentsGet,
+    VaultCommitmentsLedger,
     VaultCommitmentsInstances,
     VaultCommitmentsProposals,
     VaultCommitmentsFulfill,
@@ -1312,6 +1313,7 @@ impl AgentVerb {
     pub const ALL: &[Self] = &[
         Self::VaultCommitmentsCreate,
         Self::VaultCommitmentsGet,
+        Self::VaultCommitmentsLedger,
         Self::VaultCommitmentsInstances,
         Self::VaultCommitmentsProposals,
         Self::VaultCommitmentsFulfill,
@@ -2624,6 +2626,7 @@ impl AgentVerb {
         match self {
             Self::VaultCommitmentsCreate => "vault.commitments.create",
             Self::VaultCommitmentsGet => "vault.commitments.get",
+            Self::VaultCommitmentsLedger => "vault.commitments.ledger",
             Self::VaultCommitmentsInstances => "vault.commitments.instances",
             Self::VaultCommitmentsProposals => "vault.commitments.proposals",
             Self::VaultCommitmentsFulfill => "vault.commitments.fulfill",
@@ -3973,6 +3976,7 @@ impl AgentVerb {
             self,
             Self::VaultCommitmentsCreate
                 | Self::VaultCommitmentsGet
+                | Self::VaultCommitmentsLedger
                 | Self::VaultCommitmentsInstances
                 | Self::VaultCommitmentsProposals
                 | Self::VaultCommitmentsFulfill
@@ -5311,6 +5315,7 @@ impl AgentVerb {
             self,
             Self::VaultCommitmentsCreate
                 | Self::VaultCommitmentsGet
+                | Self::VaultCommitmentsLedger
                 | Self::VaultCommitmentsInstances
                 | Self::VaultCommitmentsProposals
                 | Self::VaultCommitmentsFulfill
@@ -6828,6 +6833,7 @@ impl AgentVerb {
             self,
             Self::VaultCommitmentsCreate
                 | Self::VaultCommitmentsGet
+                | Self::VaultCommitmentsLedger
                 | Self::VaultCommitmentsInstances
                 | Self::VaultCommitmentsProposals
                 | Self::VaultCommitmentsFulfill
@@ -8837,6 +8843,7 @@ impl AgentVerb {
         match self {
             Self::VaultCommitmentsCreate => &["spec"],
             Self::VaultCommitmentsGet => &["spec"],
+            Self::VaultCommitmentsLedger => &["spec"],
             Self::VaultCommitmentsInstances => &["spec"],
             Self::VaultCommitmentsProposals => &["spec"],
             Self::VaultCommitmentsFulfill => &["spec"],
@@ -10164,6 +10171,7 @@ impl AgentVerb {
         match self {
             Self::VaultCommitmentsCreate => &["spec"],
             Self::VaultCommitmentsGet => &["spec"],
+            Self::VaultCommitmentsLedger => &["spec"],
             Self::VaultCommitmentsInstances => &["spec"],
             Self::VaultCommitmentsProposals => &["spec"],
             Self::VaultCommitmentsFulfill => &["spec"],
@@ -11478,6 +11486,9 @@ impl AgentVerb {
             }
             Self::VaultCommitmentsGet => {
                 "Reads a commitment with its schedule, birth provenance, separate occurrence and learning times, and lifecycle receipt."
+            }
+            Self::VaultCommitmentsLedger => {
+                "Reads due-sorted open obligations owed by and to one counterparty contact, with their current commitment views."
             }
             Self::VaultCommitmentsInstances => {
                 "Lists the materialized occurrences of a commitment series, including closed obligations."

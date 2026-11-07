@@ -25,6 +25,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_commitments_ledger(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.commitments.ledger", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_commitments_instances(
         &self,
         input: serde_json::Value,

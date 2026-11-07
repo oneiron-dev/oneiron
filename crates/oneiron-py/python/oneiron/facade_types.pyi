@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1284 facade rows, 4650 declarations.
-Inputs: 1213 of 1284 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1113 of 1284 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1285 facade rows, 4653 declarations.
+Inputs: 1214 of 1285 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1114 of 1285 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -110,6 +110,20 @@ class CommitmentCreateReceipt(TypedDict):
     index: CommitmentIndexOutcome
 class CommitmentRefRequest(TypedDict):
     commitment_ref: str
+class CommitmentLedgerRequest(TypedDict):
+    contact_ref: str
+class CommitmentLedgerItem(TypedDict):
+    valid_from: int
+    valid_to: int
+    commitment: CommitmentView
+class CommitmentLedgerView(TypedDict):
+    contact_ref: str
+    identity_ref: str
+    counterparty: str
+    channel: str
+    address_or_handle: str
+    owed_by_them: list[CommitmentLedgerItem]
+    owed_to_them: list[CommitmentLedgerItem]
 CommitmentWakePhase = Literal["lead", "due"]
 class CommitmentWakeProposal(TypedDict):
     proposal_ref: str
