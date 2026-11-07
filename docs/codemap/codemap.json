@@ -38569,7 +38569,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/federation/shared_act/execute.rs",
-     "purpose": "Executing a matured delete-the-vault, ownership-transfer or owner-removal act",
+     "purpose": "Executing a matured delete-the-vault or Owner-change act",
      "surface": {
       "crate-vis": 1,
       "fn": 1
@@ -38591,9 +38591,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/federation/shared_act/membership.rs",
-     "purpose": "Membership effects: the Owner handover the two Owner acts apply, and the ordinary member changes an Admin's…",
+     "purpose": "Membership effects: Owner additions and handovers, and the ordinary member changes an Admin's named power…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 5,
       "re-export": 2
      }
@@ -38664,8 +38664,22 @@
       "crate-vis": 4,
       "enum": 2,
       "fn": 6,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AddOwnerPlan"
+     ],
+     "path": "src/federation/shared_act/owner_add.rs",
+     "purpose": "Add a co-owner while retaining every existing Owner",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -94595,7 +94609,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 74,
+     "files": 75,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -95563,7 +95577,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6768,
+   "source_files": 6769,
    "test_files": 895
   },
   "oneiron-android": {
@@ -96041,7 +96055,7 @@
       "OwnerHandoverCause"
      ],
      "path": "src/authority/owner_handover.rs",
-     "purpose": "An Owner handover in a shared vault as a signed AUTHORITY_LOG Owner action (ARCH-0043, \"Last-Owner successor…",
+     "purpose": "An Owner addition or handover in a shared vault as a signed AUTHORITY_LOG Owner action (ARCH-0043…",
      "surface": {
       "const": 3,
       "crate-vis": 2,
