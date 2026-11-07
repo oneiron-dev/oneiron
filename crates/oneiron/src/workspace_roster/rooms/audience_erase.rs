@@ -315,8 +315,8 @@ impl Vault {
     /// asked, nothing holding it now (FIX 5906, 1465): under an explicit
     /// lift-and-erase or a privacy erasure, an audience edit its live root
     /// keeps is erased as [`Memory::owner_confirmed_erase`] erases it, a
-    /// hold placed since refusing it; any other record, and any owner's
-    /// plain delete, is deleted under the request's own reason. Either
+    /// hold placed since refusing it; any other record is deleted under the
+    /// request's own reason. Either
     /// arm's writer re-proves that this request still waits, and a hold's
     /// refusal there names the owner its row records as confirming it (FIX
     /// 6099). None waiting, or a newer request, cancels it, and a cancelled
