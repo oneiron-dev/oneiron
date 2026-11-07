@@ -199,6 +199,53 @@ impl AdmissionTracker {
         Ok(Self { vault, key })
     }
 
+    /// [`Self::start`] for the drain's run of a held call (FIX 8753) on a
+    /// transport whose drain names no session: it reopens the intent the
+    /// call kept, and keeps no new one, so a call that kept none (an
+    /// off-record sitting's) stays without one. `None` when none is kept.
+    ///
+    /// # Errors
+    ///
+    /// [`Self::start`]'s fences, and storage errors as they occur.
+    pub fn reopen(
+        vault: Arc<Vault>,
+        actor: EntityId,
+        class: EdgeActorClass,
+        invocation: InvocationId,
+        verb: &str,
+        request_digest: String,
+        fingerprint: String,
+    ) -> MemoryResult<Option<Self>> {
+        let kept = {
+            let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+            ADMISSIONS
+                .get(&vault.store, &txn, &key(actor, class, invocation))?
+                .is_some()
+        };
+        if !kept {
+            return Ok(None);
+        }
+        Self::start(
+            vault,
+            actor,
+            class,
+            invocation,
+            verb,
+            request_digest,
+            fingerprint,
+            true,
+        )
+        .map(Some)
+    }
+
+    /// Whether `actor` binds as `class` in `vault` now: the binding
+    /// [`Self::start`] checks before it keeps an intent. A call whose actor
+    /// binds no actor-owned ledger runs as it would, untracked (FIX 4735).
+    #[must_use]
+    pub fn binds(vault: &Vault, actor: EntityId, class: EdgeActorClass) -> bool {
+        crate::memory::verify_actor_binding(vault, actor, class).is_ok()
+    }
+
     fn update(&self, state: AdmissionStatus, active: bool) -> crate::Result<()> {
         self.vault.with_write_txn_grouped(|txn| {
             let Some(mut stored) = ADMISSIONS.get(&self.vault.store, txn, &self.key)? else {

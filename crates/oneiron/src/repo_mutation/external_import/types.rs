@@ -95,6 +95,11 @@ pub struct ExternalImportReceipt {
     pub receive_provenance: Option<EntityId>,
     /// That update's Published publication.
     pub publication: Option<EntityId>,
+    /// Whether this vault's own process fetched, or set out to fetch, the
+    /// source's Git-LFS objects: a labelled daemon residual of the
+    /// credential broker, which carries no LFS exchange yet (OSH-3, FIX
+    /// 19084). Not whether the objects arrived; the door judges that.
+    pub lfs_daemon_residual: bool,
 }
 
 /// Where an import stands, derived from its saved facts and the door's

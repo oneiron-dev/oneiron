@@ -328,6 +328,7 @@ pub(super) fn apply(
                         StepSequence::Name => native_patch::Target::Name,
                         StepSequence::Categories => native_patch::Target::Categories,
                         StepSequence::Values => native_patch::Target::Values,
+                        StepSequence::Size => native_patch::Target::Size,
                     },
                     values: &values,
                 },
