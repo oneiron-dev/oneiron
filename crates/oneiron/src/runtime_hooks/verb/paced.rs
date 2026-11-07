@@ -641,7 +641,9 @@ impl Vault {
         };
         let _draining = DrainScope::enter(invocation);
         let _turn = PacedTurnScope::enter(invocation);
-        Ok(check.resume(call, VerbAskDrainPermit::paced(invocation)))
+        let drain =
+            VerbAskDrainPermit::paced(invocation).with_credential_door(call.reference.door.clone());
+        Ok(check.resume(call, drain))
     }
 
     /// Saves how turn `work` left its call, unless the verb's own effect

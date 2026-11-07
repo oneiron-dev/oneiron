@@ -43,6 +43,7 @@ use crate::scope_summary::{
     ChildMode, MemberKind, ScopeSummaryPlan, arc_member_kinds, check_manifest,
 };
 use std::collections::BTreeSet;
+use std::ops::ControlFlow;
 
 /// The identity an Arc composed in parts is known by: its parts' contract.
 const ARC_PARTS_DOMAIN: &str = "oneiron:arc-summary-parts:v1";
@@ -214,7 +215,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         plan: &ScopeSummaryPlan,
         evidence: &ScopeSummaryEvidence,
         instruction: &str,
-        (window, charges): (u64, StepChargeTally),
+        (window, charges, calls): (u64, StepChargeTally, u32),
     ) -> Result<DreamerAttemptExecution> {
         let attempt_id = attempt.status.attempt.id;
         let (Some(arc), Some(view), Some(scope), Some(first)) = (
@@ -352,7 +353,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             frame,
             covers: evidence.covers.iter().copied().collect(),
             charges,
-            calls: 0,
+            calls,
             limit,
             reset: BTreeSet::new(),
         };
@@ -558,6 +559,37 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             // (FIX 8286): one the summed estimate let past it splits.
             if framed_tokens(run.instruction, &user, &run.schema)? > run.manifest.pins.window {
                 return self.split(run, ctx, position, row);
+            }
+            if row.mode == ChildMode::Single {
+                let candidates: Vec<_> = context
+                    .shown
+                    .keys()
+                    .copied()
+                    .filter(|turn| !opened.contains(turn))
+                    .collect();
+                let ask = match self
+                    .arc_open_turns(
+                        ctx,
+                        step_ctx,
+                        run.evidence,
+                        &user,
+                        &context.labels,
+                        &candidates,
+                        &mut run.calls,
+                        Some(run.limit),
+                        &mut run.charges,
+                    )
+                    .await?
+                {
+                    ControlFlow::Continue(ask) => ask,
+                    ControlFlow::Break(exit) => return Ok(ChildStep::Exit(exit)),
+                };
+                if super::arc_open_apply::open_advised(run, ctx, row, &group, &shape, &ask) {
+                    if let Some(exit) = run.save(ctx, id, row, true) {
+                        return Ok(ChildStep::Exit(exit));
+                    }
+                    continue;
+                }
             }
             let (reply, step) = match self
                 .child_call(run, ctx, step_ctx, user, context, opened)

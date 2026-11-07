@@ -111,6 +111,7 @@ sha2 = "0.10"
 # OF-468: vetted seeded FastCDC; anonymous bounded staging spool.
 fastcdc = "=3.2.1"
 tempfile = "3"
+memmap2 = "0.9"
 tree-sitter = "0.26.10"
 tree-sitter-rust = "0.24.2"
 tree-sitter-python = "=0.25.0"
@@ -143,7 +144,7 @@ whichlang = "0.1.1"
 kamadak-exif = "0.5"
 ocrs = { version = "0.10", optional = true }
 rten = { version = "0.21", optional = true }
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "tiff", "bmp", "ico"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "tiff", "bmp", "ico", "pnm"] }
 
 # CAL-01's UTC/IANA border uses embedded 2026c TZif data, including the
 # BC permanent-UTC-7 rule. The parser and database stay private to calendar/tz.
