@@ -92,8 +92,9 @@ impl<'a> IngestCtx<'a> {
     }
 
     /// The window document the entries come from, whose birth map carries
-    /// each row's Rule A envelope.
-    fn carrier_doc(&self) -> Option<&'a loro::LoroDoc> {
+    /// each row's Rule A envelope and whose writer map each MESSAGE row's
+    /// writer proof.
+    pub(super) fn carrier_doc(&self) -> Option<&'a loro::LoroDoc> {
         match self.residence? {
             Residence::Quarantine(doc) | Residence::Forward { doc, .. } => Some(doc),
         }
@@ -111,6 +112,10 @@ pub(in crate::sync) enum EntityStep {
     Skip,
     /// The replicated row was written.
     Materialized(EntityId),
+    /// The local row already holds the bytes the remote value carries, byte
+    /// for byte or as one of their echo forms: nothing is written, and the
+    /// row stands here as delivered (FIX 4312).
+    Unchanged(EntityId),
     /// A carrier whose body moves by reference and is not here yet (FIX 5489): nothing is
     /// written, and nothing its landing discharges is discharged, until the body comes.
     Pending,
@@ -157,6 +162,9 @@ pub(in crate::sync) enum RefusalRetry {
 impl RefusalRetry {
     fn of(err: &Error) -> Self {
         if crate::subject_model::subject_model_dependency_pending(err)
+            // An own machine's companion row that waits for its author
+            // (FIX 21271).
+            || crate::gate::companion_author_pending(err)
             || matches!(
                 err.kind(),
                 ErrorKind::ProjectDependencyPending
@@ -439,7 +447,7 @@ fn admit(
             if let Some(doc) = ctx.carrier_doc() {
                 super::carried_origin_in_txn(vault, wtxn, doc, ctx.window_key, &id, blob)?;
             }
-            return Ok(EntityStep::Skip);
+            return Ok(EntityStep::Unchanged(id));
         }
         // SoftErase shell guard: `user_delete` truncates the local record to the 25 B header
         // shell and writes NO CRDT record (contracts.ts deleteReasons user_delete; cross-device
