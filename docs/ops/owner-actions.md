@@ -425,6 +425,11 @@ The export is one ZIP archive (OF-222): `manifest.json`, one JSONL file per reco
 record file and attached file with its length and BLAKE3, and an import refuses an archive whose
 members disagree with it. It is plaintext and re-imports into a fresh vault
 (`Vault::import_whole_vault_archive`, or `oneiron import archive vault.zip` with `serve` stopped).
+Its conversations come back as your own words. An archive of words you and your companion did not
+speak imports with `--speakers foreign` (`ArchiveSpeakers::Foreign`): each user, companion or
+assistant message and turn lands as a counterparty's, its original author kept beside it, and
+system notices stay. An archive imported again takes the choice it was imported with; the other
+is refused.
 Credentials inside records are nulled by the serializer. Result bodies go through the release
 scan: a text or binary body that passes is a file under `files/<blake3>`; tainted, secret-marked
 and credential-bearing bodies are withheld and named in `result_body.jsonl`.

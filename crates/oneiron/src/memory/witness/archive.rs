@@ -11,6 +11,15 @@
 //! already marked stays as it is, so a restored vault exported and
 //! imported again is unchanged.
 //!
+//! The import door names whose words the archive holds ([`ArchiveSpeakers`],
+//! FIX 15412). With [`ArchiveSpeakers::Own`] every author and speaker stays
+//! as above. With [`ArchiveSpeakers::Foreign`] a `user` or `companion`
+//! MESSAGE speaks as a `counterparty`, its original author kept inert as
+//! `metadata.import.source_author`, and its TURN, with every conversational
+//! TURN the archive carries without a MESSAGE, speaks as one too
+//! (`foreign_speech`); a `system` row stays one. An import's own marked rows
+//! take the same change before they are kept as they are.
+//!
 //! [`ArchivedMessageAdmission`] is the archive put's capability, as
 //! `gate::WitnessMessageAuthorization` is the witness put's: its one
 //! constructor proves the bytes are a canonical envelope an import marked.
@@ -21,14 +30,22 @@ use oneiron_contracts::affect::Vad;
 use rmpv::Value;
 
 use super::codec::{IMPORTED_SOURCE_KEY, ImportStamp, import_stamp};
+use super::foreign_speech::{
+    ForeignTurn, TURN_KEY_ACTOR, TURN_KEY_IMPORT_ACTOR, speak_as_counterparty,
+};
 use crate::Vault;
+use crate::batch::export::ArchiveSpeakers;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
+use crate::gate::WitnessMessageBodyAuthor;
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use crate::store::Store;
-use crate::store::witness_message_body::{IMPORT_KEY_SOURCE_IMPORT, METADATA_KEY_IMPORT};
+use crate::store::witness_message_body::{
+    IMPORT_KEY_SOURCE_IMPORT, METADATA_KEY_IMPORT, WITNESS_AUTHOR_COMPANION,
+    WITNESS_AUTHOR_COUNTERPARTY, WITNESS_AUTHOR_USER,
+};
 use crate::temporal::TimeRange;
 
 /// The import source an archive restore stamps on the MESSAGE rows and
@@ -42,6 +59,7 @@ const ARCHIVE_MESSAGE_TYPE: &str = "import.archive";
 /// The prefix every imported MESSAGE type carries.
 const IMPORTED_MESSAGE_TYPE_PREFIX: &str = "import.";
 
+const BODY_KEY_AUTHOR: &str = "author";
 const BODY_KEY_TYPE: &str = "type";
 const BODY_KEY_CONTENT: &str = "content";
 const BODY_KEY_METADATA: &str = "metadata";
@@ -50,14 +68,12 @@ const BODY_KEY_IS_VISIBLE: &str = "is_visible";
 const IMPORT_KEY_SOURCE: &str = "source";
 /// The type the source vault gave the row.
 const IMPORT_KEY_SOURCE_TYPE: &str = "source_type";
+/// The author a foreign archive's row had before it spoke as a
+/// counterparty (FIX 15412): provenance only, never a local author.
+const IMPORT_KEY_SOURCE_AUTHOR: &str = "source_author";
 /// The `AuthoredBy` targets the source vault linked the row to, as hex
 /// ids: provenance only, never a local author.
 const IMPORT_KEY_AUTHORED_BY: &str = "authored_by";
-
-/// A native TURN's PERSON byline, and the inert key an archive restore
-/// keeps it under.
-const TURN_KEY_ACTOR: &str = "actor";
-const TURN_KEY_IMPORT_ACTOR: &str = "import_actor";
 
 /// One archived MESSAGE body the archive put may stage.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,14 +167,44 @@ fn import_marked(entries: &[(Value, Value)]) -> bool {
 /// moves to `metadata.import.source_import`; its other metadata stays. A
 /// body an import already marked comes back unchanged.
 ///
+/// With [`ArchiveSpeakers::Foreign`] (FIX 15412) a `user` or `companion`
+/// row speaks as a `counterparty` first, its original author kept as
+/// `metadata.import.source_author`; a marked row takes that change too,
+/// keeping a source author it already names. A `counterparty` or `system`
+/// row keeps its author.
+///
 /// # Errors
 /// [`RecordError::InvalidWitnessMessageBody`] when `source` is not a
 /// canonical envelope, or the marked body is not one (a metadata bound).
-pub(crate) fn archived_message_body(source: &[u8], bylines: &[EntityId]) -> Result<Vec<u8>> {
-    crate::gate::validate_canonical_witness_message_body(source)?;
+pub(crate) fn archived_message_body(
+    source: &[u8],
+    bylines: &[EntityId],
+    speakers: ArchiveSpeakers,
+) -> Result<Vec<u8>> {
+    let author = crate::gate::validate_canonical_witness_message_body(source)?;
     let mut entries = decode(source).ok_or_else(|| malformed("an archived MESSAGE body"))?;
+    let source_author = match (speakers, author) {
+        (ArchiveSpeakers::Foreign, WitnessMessageBodyAuthor::User) => Some(WITNESS_AUTHOR_USER),
+        (ArchiveSpeakers::Foreign, WitnessMessageBodyAuthor::Companion) => {
+            Some(WITNESS_AUTHOR_COMPANION)
+        }
+        _ => None,
+    };
+    if source_author.is_some() {
+        for (name, value) in &mut entries {
+            if name.as_str() == Some(BODY_KEY_AUTHOR) {
+                *value = Value::from(WITNESS_AUTHOR_COUNTERPARTY);
+            }
+        }
+    }
     if import_marked(&entries) {
-        return Ok(source.to_vec());
+        let Some(source_author) = source_author else {
+            return Ok(source.to_vec());
+        };
+        keep_source_author(&mut entries, source_author)?;
+        let body = encode(entries)?;
+        crate::gate::validate_canonical_witness_message_body(&body)?;
+        return Ok(body);
     }
     let source_type = entry(&entries, BODY_KEY_TYPE)
         .and_then(Value::as_str)
@@ -174,6 +220,12 @@ pub(crate) fn archived_message_body(source: &[u8], bylines: &[EntityId]) -> Resu
             Value::from(source_type),
         ),
     ];
+    if let Some(source_author) = source_author {
+        provenance.push((
+            Value::from(IMPORT_KEY_SOURCE_AUTHOR),
+            Value::from(source_author),
+        ));
+    }
     if !bylines.is_empty() {
         provenance.push((
             Value::from(IMPORT_KEY_AUTHORED_BY),
@@ -219,6 +271,34 @@ pub(crate) fn archived_message_body(source: &[u8], bylines: &[EntityId]) -> Resu
     Ok(body)
 }
 
+/// Keeps `author`, the author a marked MESSAGE had before it spoke as a
+/// counterparty, in its `metadata.import`, unless that already names one:
+/// a row brought in twice keeps the first source's author, never a second.
+fn keep_source_author(entries: &mut [(Value, Value)], author: &str) -> Result<()> {
+    let refused = || malformed("a marked MESSAGE's import provenance is not a map");
+    let Some(Value::Map(metadata)) = entries
+        .iter_mut()
+        .find(|(name, _)| name.as_str() == Some(BODY_KEY_METADATA))
+        .map(|(_, metadata)| metadata)
+    else {
+        return Err(refused());
+    };
+    let Some(Value::Map(import)) = metadata
+        .iter_mut()
+        .find(|(name, _)| name.as_str() == Some(METADATA_KEY_IMPORT))
+        .map(|(_, import)| import)
+    else {
+        return Err(refused());
+    };
+    if !import
+        .iter()
+        .any(|(name, _)| name.as_str() == Some(IMPORT_KEY_SOURCE_AUTHOR))
+    {
+        import.push((Value::from(IMPORT_KEY_SOURCE_AUTHOR), Value::from(author)));
+    }
+    Ok(())
+}
+
 /// The archive put's capability for `body`: a canonical envelope an import
 /// marked.
 fn admit_archived_message(body: &[u8]) -> Result<ArchivedMessageAdmission> {
@@ -239,35 +319,98 @@ fn admit_archived_message(body: &[u8]) -> Result<ArchivedMessageAdmission> {
 /// `actor` byline kept as `import_actor`. A container an import already
 /// stamped comes back unchanged.
 ///
+/// With [`ArchiveSpeakers::Foreign`] (FIX 15412) a TURN speaks as a
+/// counterparty first, as its MESSAGE rows do ([`speak_as_counterparty`]
+/// with the host's `assistant_display_names`), a stamped one too; a
+/// CONVERSATION has no speaker and comes back as with
+/// [`ArchiveSpeakers::Own`].
+///
 /// # Errors
 /// [`RecordError::InvalidConversationBody`] when `source` is not a map, or
 /// its import stamp is malformed.
-pub(crate) fn archived_container_body(entity_type: u8, source: &[u8]) -> Result<Vec<u8>> {
-    match import_stamp(source) {
-        ImportStamp::Imported(_) => return Ok(source.to_vec()),
+pub(crate) fn archived_container_body(
+    entity_type: u8,
+    source: &[u8],
+    speakers: ArchiveSpeakers,
+    assistant_display_names: &[String],
+) -> Result<Vec<u8>> {
+    let foreign = speakers == ArchiveSpeakers::Foreign && entity_type == ENTITY_TYPE_TURN;
+    let stamped = match import_stamp(source) {
+        ImportStamp::Imported(_) if !foreign => return Ok(source.to_vec()),
+        ImportStamp::Imported(_) => true,
         ImportStamp::Malformed => {
             return Err(container_refused(
                 "an import source must be one non-empty string",
             ));
         }
-        ImportStamp::Live => {}
-    }
+        ImportStamp::Live => false,
+    };
     let mut entries = decode(source)
         .ok_or_else(|| container_refused("an archived MESSAGE container is not a map"))?;
-    if entity_type == ENTITY_TYPE_TURN {
-        for (name, _) in &mut entries {
-            if name.as_str() == Some(TURN_KEY_ACTOR) {
-                *name = Value::from(TURN_KEY_IMPORT_ACTOR);
+    let relabelled = foreign
+        && speak_as_counterparty(&mut entries, assistant_display_names) == ForeignTurn::Relabelled;
+    if stamped {
+        if !relabelled {
+            return Ok(source.to_vec());
+        }
+    } else {
+        if entity_type == ENTITY_TYPE_TURN {
+            for (name, _) in &mut entries {
+                if name.as_str() == Some(TURN_KEY_ACTOR) {
+                    *name = Value::from(TURN_KEY_IMPORT_ACTOR);
+                }
             }
         }
+        entries.push((
+            Value::from(IMPORTED_SOURCE_KEY),
+            Value::from(ARCHIVE_IMPORT_SOURCE),
+        ));
     }
-    entries.push((
-        Value::from(IMPORTED_SOURCE_KEY),
-        Value::from(ARCHIVE_IMPORT_SOURCE),
-    ));
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &Value::Map(entries))
         .map_err(|_| container_refused("an archived MESSAGE container is not encodable"))?;
+    Ok(out)
+}
+
+/// The body an archived TURN no MESSAGE row joins comes back with under
+/// [`ArchiveSpeakers::Foreign`] (FIX 15412): a conversational TURN, its
+/// words inline, speaks as a counterparty ([`speak_as_counterparty`] with
+/// the host's `assistant_display_names`) and is stamped
+/// `import_source = "archive"` unless an import already stamped it. A TURN
+/// that does not speak (a system notice, a tool row, a task artifact with
+/// no speaker) or whose body is not a map comes back as it is. Under
+/// [`ArchiveSpeakers::Own`] the archive brings every such TURN back as it is.
+///
+/// # Errors
+/// [`RecordError::InvalidConversationBody`] when its import stamp is
+/// malformed.
+pub(crate) fn archived_inline_turn_body(
+    source: &[u8],
+    assistant_display_names: &[String],
+) -> Result<Vec<u8>> {
+    let stamp = import_stamp(source);
+    if stamp == ImportStamp::Malformed {
+        return Err(container_refused(
+            "an import source must be one non-empty string",
+        ));
+    }
+    let Some(mut entries) = decode(source) else {
+        return Ok(source.to_vec());
+    };
+    match speak_as_counterparty(&mut entries, assistant_display_names) {
+        ForeignTurn::NotSpeech => return Ok(source.to_vec()),
+        ForeignTurn::Unchanged if stamp != ImportStamp::Live => return Ok(source.to_vec()),
+        ForeignTurn::Unchanged | ForeignTurn::Relabelled => {}
+    }
+    if stamp == ImportStamp::Live {
+        entries.push((
+            Value::from(IMPORTED_SOURCE_KEY),
+            Value::from(ARCHIVE_IMPORT_SOURCE),
+        ));
+    }
+    let mut out = Vec::new();
+    rmpv::encode::write_value(&mut out, &Value::Map(entries))
+        .map_err(|_| container_refused("an archived TURN is not encodable"))?;
     Ok(out)
 }
 

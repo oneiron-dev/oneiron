@@ -811,8 +811,25 @@ pub struct ImportArchiveArgs {
     /// The archive (a ZIP).
     pub path: PathBuf,
 
+    /// Whose words the archive's conversations hold. An archive imported
+    /// again takes the choice it was imported with; the other is refused.
+    #[arg(long, value_enum, default_value_t = ArchiveSpeakers::Own)]
+    pub speakers: ArchiveSpeakers,
+
     #[command(flatten)]
     pub serve: ServeArgs,
+}
+
+/// Whose words an imported archive's conversations hold (FIX 15412).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum ArchiveSpeakers {
+    /// This vault's own person and companion spoke them: every author and
+    /// speaker stays as the archive has it.
+    Own,
+    /// They came from outside: each user, companion or assistant message and
+    /// turn lands as a counterparty's, its original author kept inert beside
+    /// it; system notices stay.
+    Foreign,
 }
 
 #[derive(Args, Clone, Debug)]

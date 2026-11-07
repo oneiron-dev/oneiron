@@ -378,9 +378,28 @@ pub struct ExportDerivationEnvelope {
     pub receipts: Vec<super::ExportReceiptSource>,
 }
 
+/// Whose words a whole-vault archive's conversations hold (FIX 15412). The
+/// import door names it; nothing in the archive (its source vault, its
+/// entity ids) and not the importer decides it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArchiveSpeakers {
+    /// This vault's own person and companion spoke them: every MESSAGE keeps
+    /// its author and every TURN its speaker.
+    Own,
+    /// They came from outside, and neither this vault's own person nor its
+    /// own companion spoke them: each `user` or `companion` MESSAGE, its
+    /// TURN and each conversational TURN with no MESSAGE speak as a
+    /// `counterparty`, the original author and speaker kept inert; a
+    /// `system` row stays one. No PERSON is minted and no author linked.
+    Foreign,
+}
+
 #[derive(Debug, Clone)]
 pub struct WholeVaultImportReceipt {
     pub authority: VaultImportReceipt,
+    /// Whose words the import took the archive's conversations to hold
+    /// (FIX 15412), beside the manifest verdict it ran with.
+    pub speakers: ArchiveSpeakers,
     pub inserted_entities: usize,
     pub unchanged_entities: usize,
     /// New inert source ASSETs; these never count as native terminal receipts.
