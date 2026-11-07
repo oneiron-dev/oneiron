@@ -14625,7 +14625,7 @@
      "path": "src/claim/mod.rs",
      "purpose": "CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18)",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "mod": 13,
       "re-export": 14
      }
@@ -14823,7 +14823,7 @@
      "path": "src/claim/scoped_read/admission.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "fn": 8
      }
     },
@@ -15017,7 +15017,7 @@
      "path": "src/claim/scoped_read/mod.rs",
      "purpose": "The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 15,
       "struct": 1
      }
@@ -15111,13 +15111,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/claim/scoped_read/profile_sources.rs",
-     "purpose": "Whether a companion profile reader's own credential keeps out the world its read names or one of the…",
+     "purpose": "Whether a companion profile reader's own credential keeps out the world its read names or the exact words…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -15271,7 +15271,7 @@
      "path": "src/claim/scoped_read/versions.rs",
      "purpose": "Explicit read frontiers keep the scoped lane's current and historic gates",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -36361,7 +36361,7 @@
      "path": "src/entity_doc/mod.rs",
      "purpose": "Durable, bounded entity text documents, anchored edits, fork sets and owner purge",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "mod": 2,
       "re-export": 11
      }
@@ -36446,7 +36446,7 @@
      "path": "src/entity_doc/quote_citation.rs",
      "purpose": "Engine-issued span quotes as citation pins (FIX 9894, 9895)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -61092,7 +61092,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/psych_profile/placement.rs",
-     "purpose": "Where a snapshot's sources live, stamped as it is written (FIX 11149, 8141)",
+     "purpose": "Where a snapshot's sources live, supplemented as it is written (FIX 11149, 8141, 11766)",
      "surface": {
       "crate-vis": 1
      }
@@ -140763,11 +140763,14 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "PsychProfileBodyEnvelope"
+     ],
      "path": "src/write_envelope/profile_snapshot/codec.rs",
      "purpose": "Canonical MessagePack encode/decode and field validation helpers",
      "surface": {
-      "fn": 11,
+      "enum": 1,
+      "fn": 12,
       "re-export": 1
      }
     },
@@ -140807,24 +140810,28 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "PsychProfile",
+      "PsychProfileByteRange",
       "PsychProfileConfidence",
       "PsychProfileSnapshotStatus",
       "PsychProfileSource",
+      "PsychProfileSourceWords",
+      "PsychProfileSpanText",
       "PsychProfileStaleReason",
-      "PsychProfileState"
+      "PsychProfileState",
+      "PsychProfileWordsPin"
      ],
      "path": "src/write_envelope/profile_snapshot/record.rs",
      "purpose": "Snapshot record types, projections, and constructors/validators",
      "surface": {
-      "const": 18,
+      "const": 19,
       "crate-vis": 2,
-      "enum": 3,
-      "fn": 6,
-      "struct": 3
+      "enum": 6,
+      "fn": 8,
+      "struct": 4
      }
     },
     {
