@@ -215,6 +215,15 @@ impl SyncServer {
                 Arc::clone(wire_telemetry.limit_questions()),
             )),
         );
+        // Guests' network work charges the process's descriptor line, which
+        // this server's listeners share, sized and asked as its `[limits]`
+        // row is, before any worker or guest starts (FIX 6299, FIX 6304).
+        crate::http_listener::attach_host_floor(
+            &vault,
+            &config.limits,
+            &retained,
+            wire_telemetry.limit_questions(),
+        );
         let decisions = crate::decision_host::DecisionHost::new(&vault);
         let run_receipts = Arc::new(crate::models::ServerReceipts::hooked(vault.clone()));
         let feedback_flood = crate::api::FloodCap::new(
@@ -339,6 +348,7 @@ impl SyncServer {
             browser_guest: None,
             browser_readiness: Default::default(),
             desktop_guest: None,
+            artifact_backend: None,
             desktop_seats: Arc::default(),
             browser_seats: Arc::default(),
             web_fetcher: std::sync::OnceLock::new(),
@@ -346,6 +356,7 @@ impl SyncServer {
             self_brief_sessions,
             deep_retrieval: None,
             model_slots: Arc::new(Default::default()),
+            trained_embedders: Default::default(),
             model_setup: None,
             model_setup_runtime: std::sync::OnceLock::new(),
             gpu_pool: std::sync::OnceLock::new(),

@@ -439,6 +439,19 @@ impl MemoryLease {
         other.bytes = 0;
     }
 
+    /// Returns physically freed allocations to this lease's pending room.
+    /// The lease keeps its whole charge for later allocations without a new
+    /// admission. `free` must only free those allocations, never allocate or
+    /// re-enter the memory line. It runs under the line's lock so another
+    /// waiter cannot take the freed room before it is pending again.
+    pub fn reclaimed_after(&mut self, bytes: u64, free: impl FnOnce()) {
+        let bytes = bytes.min(self.bytes.saturating_sub(self.pending));
+        let mut line = lock(&self.shared.line);
+        free();
+        self.pending = self.pending.saturating_add(bytes);
+        line.pending = line.pending.saturating_add(bytes);
+    }
+
     /// Names `reserved` of this lease's pending bytes allocated, as `actual`
     /// bytes now held (FIX 8240): the lease then holds `actual` in their
     /// place, and the live reading, which shows them as used, is no longer

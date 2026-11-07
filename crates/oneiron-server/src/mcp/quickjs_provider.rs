@@ -2,14 +2,14 @@
 
 use super::{
     McpCodeModeProvider, ModelCallBackend, ModelListBackend, PlannedMeter, PlannedModel,
-    PlannedRoute, ReaderMeter, RunCompactionSeat,
+    PlannedRoute, ReaderMeter, RunCompactionSeat, RunProfiledCompactionSeat,
 };
 use crate::ai_host::live_lease::LiveLeaseState;
 use oneiron::agent_def::AgentModel;
 use oneiron::agent_dispatch::SpendScopeId;
 use oneiron::code_run::{
     CodeRunDeterminism, CompactionHostBinding, GatedActorWrite, ReaderJob, ScopedChildHosts,
-    ScopedChildPorts,
+    ScopedChildPorts, ScopedChildProfile,
 };
 use oneiron::code_sandbox::quickjs::QuickJsRuntimeFactory;
 use oneiron::code_sandbox::wasmtime_runtime::{ComponentBudget, WasmtimeComponentRuntime};
@@ -131,6 +131,8 @@ pub struct McpQuickJsProvider {
     /// Builds each pinned child's compaction seat, its live admission bound
     /// to the pick as its calls are (Engine C5); none takes `compaction`.
     pinned_compaction: Option<RunCompactionSeat>,
+    /// Builds a scoped child's compaction on its actual parent generation.
+    profiled_compaction: Option<RunProfiledCompactionSeat>,
     /// The runs' browser planner states (CUA E5) this provider's backend
     /// routes each step's call by; none routes every call as before.
     browser_planner: Option<Arc<BrowserPlannerRuns>>,
@@ -245,6 +247,7 @@ impl McpQuickJsProvider {
             planned_route: None,
             planned_meter: None,
             pinned_compaction: None,
+            profiled_compaction: None,
             browser_planner: None,
             scoped_hosts: ScopedChildHosts::default(),
         })
@@ -301,6 +304,13 @@ impl McpQuickJsProvider {
     #[must_use]
     pub(crate) fn with_pinned_compaction(mut self, seat: RunCompactionSeat) -> Self {
         self.pinned_compaction = Some(seat);
+        self
+    }
+
+    /// A scoped child's compaction keeps the generation its host supplied.
+    #[must_use]
+    pub(crate) fn with_profiled_compaction(mut self, seat: RunProfiledCompactionSeat) -> Self {
+        self.profiled_compaction = Some(seat);
         self
     }
 
@@ -465,6 +475,16 @@ impl McpCodeModeProvider for McpQuickJsProvider {
         self.compaction
             .as_ref()
             .map(|seat| seat(host, credential, spend))
+    }
+    fn profiled_compaction(
+        &self,
+        host: CompactionHostBinding,
+        credential: &str,
+        profile: &ScopedChildProfile,
+    ) -> Option<RunCompaction> {
+        self.profiled_compaction
+            .as_ref()
+            .and_then(|seat| seat(host, credential, profile))
     }
     fn lease(&self) -> &BudgetLease {
         &self.lease
