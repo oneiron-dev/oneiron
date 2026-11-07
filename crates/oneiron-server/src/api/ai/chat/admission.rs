@@ -374,6 +374,7 @@ pub(in crate::api::ai::chat) async fn start_turn(
         }),
     });
     let board_rows = read_board.map(|board| board.rows.clone());
+    let board_rows_complete = read_board.is_some_and(|board| board.rows_complete);
     let rider_ack = board
         .as_mut()
         .ok()
@@ -399,6 +400,9 @@ pub(in crate::api::ai::chat) async fn start_turn(
     // A board the call goes without is no row it read.
     if recalled {
         sources.add(board_rows.as_deref());
+        if !board_rows_complete {
+            sources.add(None);
+        }
     }
     // The board's place holds the board, or the note of its omission, which
     // the call's segments name as one unnamed board section; a call its
