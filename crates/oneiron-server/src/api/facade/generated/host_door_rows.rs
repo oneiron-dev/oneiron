@@ -5,6 +5,7 @@
 //! new host door fails to compile until it names its check there. A row
 //! whose table entry says `"host_door_precheck": false` checks nothing
 //! before its hooks; those rows:
+//! - `vault.commitments.ledger`
 //! - `self.focus.wakes`
 //! - `vault.shape.apply`
 //! - `vault.shape.groups`
@@ -27,7 +28,14 @@
 //! - `vault.weave.lens`
 //! - `vault.weave.link.wrong`
 //! - `vault.weave.item.wrong`
+//! - `vault.weave.admin.report`
+//! - `vault.weave.admin.lens`
+//! - `vault.weave.admin.digest`
+//! - `vault.weave.admin.link.wrong`
+//! - `vault.weave.admin.item.wrong`
+//! - `vault.step_up.totp.reset`
 //! - `vault.inbox.groups.resolve`
+//! - `vault.skills.proposal.settle`
 //! - `vault.skills.optimize.tradeoff_asks.resolve`
 //! - `vault.packs.sections.propose`
 //! - `vault.packs.sections.list`
@@ -89,6 +97,7 @@
 //! - `vault.settings.web_connector`
 //! - `vault.settings.web_connector.replace`
 //! - `vault.connectors.web.usage`
+//! - `ai.streams.release`
 //! - `ai.anonymous_chat`
 //! - `vault.models.trials.resend_arm`
 //! - `ai.options`
@@ -98,6 +107,8 @@
 //! - `vault.questions.create`
 //! - `vault.questions.edit`
 //! - `vault.questions.pause`
+//! - `vault.questions.prepare`
+//! - `vault.questions.admit`
 //! - `vault.questions.backfill`
 //! - `vault.questions.read`
 //! - `vault.questions.outcome_windows`
@@ -133,6 +144,8 @@
 //! - `self.run.attach`
 //! - `self.folds.describe`
 //! - `self.history`
+//! - `vault.sync.repo_manifests.conflict.review`
+//! - `vault.sync.repo_manifests.conflict.discard`
 //! - `connector.answer`
 //! - `self.browser.open`
 //! - `self.browser.observe`
@@ -262,6 +275,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     SelfSavedQueryEvaluate,
     VaultWeaveOwnerLinkWrong,
     VaultWeaveOwnerItemWrong,
+    VaultStepUpPasskeysReset,
     VaultWeaveEnqueue,
     VaultWeaveSchedulesList,
     VaultWeaveSchedulesPut,
@@ -505,6 +519,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultCoachTrainingOffersPilotsComplete,
     VaultCoachTrainingOffersPilotsGet,
     VaultCoachTrainingOffersSources,
+    VaultCoachTrainingRunsCancel,
     VaultDraftersList,
     VaultDraftersStatus,
     VaultDraftersPolicySet,
@@ -611,6 +626,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     HostCompact,
     HostWake,
     HostBudgetHit,
+    VaultHooksChecks,
     VaultHooksReplay,
     VaultHooksRegenDue,
     VaultHooksRegenGet,
@@ -638,8 +654,11 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultCodeProposalSettle,
     VaultCodeProposalSettlement,
     VaultCodeOplog,
+    VaultCodeSecretsGet,
+    VaultCodeSecretsPropose,
     ExecuteCode,
     VaultCodeModelHealCount,
+    VaultCodeCorrections,
     VaultCodeTypeDiagnostics,
     VaultCodeWaitsResolve,
     VaultCodeWaitsReceipt,
@@ -675,6 +694,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultCodeSecretsPurgeRequest,
     VaultCodeSecretsPurgeGet,
     VaultCodeSecretsPurgeExecute,
+    VaultCodeCheckoutHolderBind,
     VaultCodeCheckoutBind,
     VaultCodeViewsMaterialize,
     VaultCodeViewsGet,
@@ -902,6 +922,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultCustodyMembersDrainCommit,
     VaultCustodyMembersDrainFolder,
     VaultCustodyMembersReenrol,
+    VaultFilesSourcesConvert,
 }
 impl HostDoorRow {
     /// The row `verb` names, when it is one.
@@ -995,6 +1016,7 @@ impl HostDoorRow {
             "self.saved_query.evaluate" => Self::SelfSavedQueryEvaluate,
             "vault.weave.owner.link.wrong" => Self::VaultWeaveOwnerLinkWrong,
             "vault.weave.owner.item.wrong" => Self::VaultWeaveOwnerItemWrong,
+            "vault.step_up.passkeys.reset" => Self::VaultStepUpPasskeysReset,
             "vault.weave.enqueue" => Self::VaultWeaveEnqueue,
             "vault.weave.schedules.list" => Self::VaultWeaveSchedulesList,
             "vault.weave.schedules.put" => Self::VaultWeaveSchedulesPut,
@@ -1252,6 +1274,7 @@ impl HostDoorRow {
             }
             "vault.coach.training_offers.pilots.get" => Self::VaultCoachTrainingOffersPilotsGet,
             "vault.coach.training_offers.sources" => Self::VaultCoachTrainingOffersSources,
+            "vault.coach.training_runs.cancel" => Self::VaultCoachTrainingRunsCancel,
             "vault.drafters.list" => Self::VaultDraftersList,
             "vault.drafters.status" => Self::VaultDraftersStatus,
             "vault.drafters.policy.set" => Self::VaultDraftersPolicySet,
@@ -1360,6 +1383,7 @@ impl HostDoorRow {
             "host.compact" => Self::HostCompact,
             "host.wake" => Self::HostWake,
             "host.budget.hit" => Self::HostBudgetHit,
+            "vault.hooks.checks" => Self::VaultHooksChecks,
             "vault.hooks.replay" => Self::VaultHooksReplay,
             "vault.hooks.regen.due" => Self::VaultHooksRegenDue,
             "vault.hooks.regen.get" => Self::VaultHooksRegenGet,
@@ -1391,8 +1415,11 @@ impl HostDoorRow {
             "vault.code.proposal_settle" => Self::VaultCodeProposalSettle,
             "vault.code.proposal_settlement" => Self::VaultCodeProposalSettlement,
             "vault.code.oplog" => Self::VaultCodeOplog,
+            "vault.code.secrets.get" => Self::VaultCodeSecretsGet,
+            "vault.code.secrets.propose" => Self::VaultCodeSecretsPropose,
             "execute_code" => Self::ExecuteCode,
             "vault.code.model_heal_count" => Self::VaultCodeModelHealCount,
+            "vault.code.corrections" => Self::VaultCodeCorrections,
             "vault.code.type_diagnostics" => Self::VaultCodeTypeDiagnostics,
             "vault.code.waits.resolve" => Self::VaultCodeWaitsResolve,
             "vault.code.waits.receipt" => Self::VaultCodeWaitsReceipt,
@@ -1428,6 +1455,7 @@ impl HostDoorRow {
             "vault.code.secrets.purge.request" => Self::VaultCodeSecretsPurgeRequest,
             "vault.code.secrets.purge.get" => Self::VaultCodeSecretsPurgeGet,
             "vault.code.secrets.purge.execute" => Self::VaultCodeSecretsPurgeExecute,
+            "vault.code.checkout.holder.bind" => Self::VaultCodeCheckoutHolderBind,
             "vault.code.checkout.bind" => Self::VaultCodeCheckoutBind,
             "vault.code.views.materialize" => Self::VaultCodeViewsMaterialize,
             "vault.code.views.get" => Self::VaultCodeViewsGet,
@@ -1659,7 +1687,194 @@ impl HostDoorRow {
             "vault.custody.members.drain.commit" => Self::VaultCustodyMembersDrainCommit,
             "vault.custody.members.drain.folder" => Self::VaultCustodyMembersDrainFolder,
             "vault.custody.members.reenrol" => Self::VaultCustodyMembersReenrol,
+            "vault.files.sources.convert" => Self::VaultFilesSourcesConvert,
             _ => return None,
         })
     }
+}
+/// Whether `verb` is an MCP row whose handler takes the caller's credential
+/// before it runs: every host door and every owner-grade row. A call that
+/// carries none is refused before the row's pre hooks (FIX 4794).
+#[must_use]
+pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
+    HostDoorRow::from_verb(verb).is_some()
+        || matches!(
+            verb,
+            "vault.commitments.ledger"
+                | "self.focus.wakes"
+                | "vault.shape.apply"
+                | "vault.shape.groups"
+                | "vault.shape.groups.resolve"
+                | "tasks.wave"
+                | "vault.fanout.spawn"
+                | "vault.budgets.resident_shares"
+                | "vault.budgets.resident_shares.set"
+                | "vault.cluster.propose"
+                | "vault.cluster.merge"
+                | "vault.cluster.split"
+                | "vault.cluster.resolve_proposal"
+                | "vault.export"
+                | "vault.export.transfer.read"
+                | "vault.export.transfer.release"
+                | "self.actor"
+                | "vault.explain.memory"
+                | "vault.explain.gate"
+                | "vault.campaign.stage.evidence"
+                | "vault.weave.digest"
+                | "vault.weave.lens"
+                | "vault.weave.link.wrong"
+                | "vault.weave.item.wrong"
+                | "vault.weave.admin.report"
+                | "vault.weave.admin.lens"
+                | "vault.weave.admin.digest"
+                | "vault.weave.admin.link.wrong"
+                | "vault.weave.admin.item.wrong"
+                | "vault.step_up.totp.reset"
+                | "vault.inbox.groups.resolve"
+                | "vault.skills.proposal.settle"
+                | "vault.skills.optimize.tradeoff_asks.resolve"
+                | "vault.packs.sections.propose"
+                | "vault.packs.sections.list"
+                | "vault.packs.sections.suggest"
+                | "ai.chat.completions"
+                | "vault.connectors.slates.narrow"
+                | "vault.outbox.diverged.list"
+                | "vault.outbox.diverged.answer"
+                | "vault.shared.deletion"
+                | "vault.org_admin.powers"
+                | "vault.trusted_contacts.concern.deliver"
+                | "vault.drafters.list_as"
+                | "vault.drafters.revert_as"
+                | "vault.roots.requests.cancel"
+                | "vault.policy.outbound.decide"
+                | "vault.policy.relay.decide"
+                | "vault.secrets.lift_history"
+                | "vault.settings.inference_defaults"
+                | "vault.settings.inference_defaults.replace"
+                | "vault.lenses.select"
+                | "vault.lenses.resolve"
+                | "vault.lenses.result_set.action"
+                | "vault.lenses.default"
+                | "self.use"
+                | "self.secrets.materialize"
+                | "self.secrets.renew"
+                | "self.secrets.teardown"
+                | "self.secrets.use"
+                | "vault.shares.revoke"
+                | "vault.shares.view"
+                | "vault.artifacts.live_preview.read"
+                | "vault.code.checkout.claim"
+                | "vault.code.checkout.get"
+                | "vault.code.checkout.renew"
+                | "vault.code.checkout.reclaim"
+                | "vault.code.checkout.takeover"
+                | "vault.code.checkout.publish"
+                | "vault.code.checkout.settle"
+                | "vault.code.checkout.teardown"
+                | "vault.connectors.read_grants.grant"
+                | "vault.connectors.read_grants.revoke"
+                | "vault.repo.snapshots.get"
+                | "vault.repo.snapshots.read"
+                | "vault.repo.symbols.definitions"
+                | "vault.repo.views.get"
+                | "vault.repo.views.read"
+                | "vault.repo.merge_queue.observe"
+                | "vault.repo.snapshots.ingest"
+                | "vault.repo.work.open"
+                | "vault.repo.symbols.declare"
+                | "vault.repo.symbols.renew"
+                | "vault.repo.symbols.release"
+                | "vault.repo.proposal_submit"
+                | "vault.repo.merge_queue.enqueue"
+                | "vault.repo.checkout.bind"
+                | "vault.repo.export"
+                | "vault.critic.review"
+                | "vault.messages.react"
+                | "vault.settings.web_connector"
+                | "vault.settings.web_connector.replace"
+                | "vault.connectors.web.usage"
+                | "ai.streams.release"
+                | "vault.models.trials.resend_arm"
+                | "ai.options"
+                | "ai.ask_image"
+                | "vault.graph.ask"
+                | "vault.graph.admit"
+                | "vault.questions.create"
+                | "vault.questions.edit"
+                | "vault.questions.pause"
+                | "vault.questions.prepare"
+                | "vault.questions.admit"
+                | "vault.questions.backfill"
+                | "vault.questions.read"
+                | "vault.questions.outcome_windows"
+                | "vault.questions.answers"
+                | "vault.questions.refresh"
+                | "vault.questions.outcomes"
+                | "vault.questions.outcomes.project"
+                | "vault.questions.schedule"
+                | "vault.decisions.asks.confirm_grant"
+                | "connector.call"
+                | "vault.conversations.turns.create"
+                | "vault.conversations.records.append"
+                | "vault.batch"
+                | "vault.artifacts.body.deck.preview"
+                | "vault.turn_programs.admission"
+                | "vault.runs.program"
+                | "vault.runs.program_step"
+                | "vault.runs.program_checkpoint"
+                | "vault.free_time.policy.set_as"
+                | "vault.channel_identities.selection.update"
+                | "vault.summaries.create"
+                | "vault.summaries.keep"
+                | "vault.summaries.edit"
+                | "vault.summaries.patch"
+                | "vault.summaries.regenerate"
+                | "vault.summaries.proposals.merge"
+                | "vault.summaries.proposals.switch"
+                | "vault.summaries.proposals.reject"
+                | "vault.notes.follow_citation"
+                | "vault.notes.editor.bind"
+                | "vault.notes.editor.close"
+                | "vault.tasks.linear.mapping.edit"
+                | "self.run.attach"
+                | "self.folds.describe"
+                | "self.history"
+                | "vault.sync.repo_manifests.conflict.review"
+                | "vault.sync.repo_manifests.conflict.discard"
+                | "connector.answer"
+                | "self.browser.open"
+                | "self.browser.observe"
+                | "self.browser.find"
+                | "self.browser.click"
+                | "self.browser.click_at"
+                | "self.browser.type"
+                | "self.browser.select"
+                | "self.browser.wait_for"
+                | "self.browser.expect"
+                | "self.browser.screenshot"
+                | "self.browser.view"
+                | "self.browser.crop"
+                | "self.browser.zoom"
+                | "self.browser.batch"
+                | "self.browser.library.find"
+                | "self.browser.library.draft"
+                | "self.browser.demonstration.start"
+                | "self.browser.demonstration.stop"
+                | "self.browser.library.propose"
+                | "self.browser.library.retire"
+                | "self.browser.library.retired"
+                | "self.browser.library.run"
+                | "self.browser.handover"
+                | "self.browser.switch_engine"
+                | "vault.claims.supersede"
+                | "self.fold"
+                | "self.compact"
+                | "self.unfold"
+                | "self.folds"
+                | "tasks.refuse"
+                | "self.report_blocked"
+                | "self.agents.spawn"
+                | "self.leader.split"
+                | "self.skills.call"
+        )
 }

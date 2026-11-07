@@ -91,7 +91,9 @@ async fn serve_with_handles(
     // So is the custody anchor door's credential, on its own pipe when the
     // supervisor hands one: never the environment (FIX 5788, FIX 6517).
     let anchor = host.custody_anchor_credentials(config.backup.custody_anchor_url.as_deref())?;
-    let mut vault_config = config.base_vault_config();
+    let mut vault_config = config
+        .base_vault_config()
+        .with_checkpoint_host_holds_recipient(host.checkpoint_host_holds_recipient());
     // The supervisor delivered this vault's data key at boot (FIX 4531).
     vault_config.privacy.data_key_custody = oneiron::VaultDataKeyCustody::SupervisorDelivered;
     // Our cloud hosts this vault. The owner's "Help improve Oneiron" and
@@ -185,8 +187,10 @@ async fn serve_with_handles(
     // The one credential-broker context, built from the opened vault: the
     // `[models]` providers, the System One seat, the embedder and the GPU
     // pods read their `key_secret` keys at its custody door, call by call.
-    // Its broker is the same-user child beside this binary; a missing broker
-    // or secret leaves those calls refused before they start, as on any host.
+    // Its default broker is the same-user child beside this binary. Explicit
+    // trusted bindings may name a separate-user socket or custom program/roots.
+    // A missing broker or secret leaves those calls refused before they start,
+    // as on any host.
     let broker = crate::models::BrokerContext::for_serve(&vault, &config);
     // The embedder slot and the pods' health poller, as plain serve builds
     // them; the worker that fills the slot starts under the write admission.
@@ -229,6 +233,7 @@ async fn serve_with_handles(
                 .as_ref()
                 .map(crate::config::DesktopConfig::guest),
         )
+        .with_artifact_backend(config.artifact_backend.clone())?
         .with_feedback(config.feedback.delivery().map(|delivery| {
             crate::feedback_delivery::FeedbackHost {
                 config: delivery,

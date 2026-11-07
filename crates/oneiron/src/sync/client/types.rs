@@ -399,6 +399,11 @@ pub enum SyncEvent {
     /// machine's own profile among them) may read differently now. It does not
     /// say every row of history is here.
     AuthorityCaughtUp,
+    /// The home answered this device's sync upgrade with HTTP 401: it did
+    /// not accept the credential. A removed membership is one cause; the
+    /// event never proves it. A host holding a shared membership asks the
+    /// home through its signed leave check (FIX 12442).
+    UpgradeUnauthorized,
     Error(String),
 }
 

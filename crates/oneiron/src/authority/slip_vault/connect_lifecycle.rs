@@ -304,6 +304,7 @@ impl HostSlipIssuer {
             envelope,
             signer: crate::entity_id::bytes_to_hex_lower(&self.signing.verifying_key().to_bytes()),
             signature,
+            travel_receipt: None,
         })
     }
 }
@@ -353,6 +354,8 @@ pub struct GuestDocumentEnvelope {
     pub envelope: GuestShareEnvelope,
     pub signer: String,
     pub signature: Vec<u8>,
+    /// Unsigned export-preparation metadata, never recipient authority or delivery proof.
+    pub travel_receipt: Option<crate::share_travel::GuestWindowTravelNote>,
 }
 
 impl GuestDocumentContext {

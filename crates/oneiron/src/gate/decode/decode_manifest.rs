@@ -179,6 +179,8 @@ pub(in crate::gate) struct DecodedPolicyManifest {
         Vec<crate::gate::retry_source_policy::RetrySourcePolicyRow>,
     pub(in crate::gate) compilation_policy: Option<crate::edit_distance::miner::CompilationPolicy>,
     pub(in crate::gate) teacher_probe: Option<TeacherProbeRow>,
+    pub(in crate::gate) code_consent_settlement:
+        Option<crate::gate::code_consent_settlement::CodeConsentSettlementRow>,
     pub(in crate::gate) experiment_selection: Vec<SelectionPolicyRow>,
     pub(in crate::gate) entity_resolution_bands:
         Option<crate::gate::entity_resolution_bands::EntityResolutionBands>,

@@ -387,6 +387,19 @@ pub(crate) fn erase_review_scope_in_txn(
             *principal = rmpv::Value::from(scope.to_hex());
             named_here = true;
         }
+        // The receipts a review keeps (FIX 9780) name its caller as theirs:
+        // each takes the same opaque id as the review's own principal.
+        if let Some(rmpv::Value::Array(receipts)) = field_mut(&mut review, "receipts") {
+            for receipt in receipts {
+                if let Some(principal) =
+                    field_mut(receipt, "principal").filter(|p| p.as_str() == Some(named.as_str()))
+                {
+                    let (scope, _) = minted_pair(vault, &mut fresh)?;
+                    *principal = rmpv::Value::from(scope.to_hex());
+                    named_here = true;
+                }
+            }
+        }
         if !named_here && !critic_touched {
             continue;
         }

@@ -17,6 +17,7 @@ mod document_admission;
 mod epoch_egress;
 pub(in crate::sync) use document_admission::{
     admit_document_read_in_txn, admit_document_write_in_txn, admit_promoted_entity_write_in_txn,
+    cache_worlds_admitted_in_txn,
 };
 #[cfg(feature = "sync")]
 mod edge;
@@ -85,6 +86,7 @@ pub(crate) fn keep_carried_born_with(
     born_with::keep_carried(vault, carried)
 }
 pub(in crate::sync) use self::codec::granted_window_doc;
+pub(crate) use self::codec::guest_share_envelope_body_listing;
 pub use self::codec::{
     RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector,
     SyncSelectorWorld, decode_selector_vv_request, decode_sync_selector,
