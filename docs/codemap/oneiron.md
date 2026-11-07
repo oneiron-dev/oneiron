@@ -1738,7 +1738,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commitment/types.rs` | src | m | 4 struct · 5 enum · 16 fn · 4 const · 17 crate-vis | CommitmentBirthKind, CommitmentBirthProvenance, CommitmentContent, CommitmentObligor, CommitmentObligorKind, CommitmentRecord, CommitmentStatus, CommitmentStrength +1 | Pinned commitment schema consts, key sets, bounds, and domain types |
 | `src/commitment/verbs_tests.rs` | test | s | — | — | Commitment vault-verb, stale-target, rejection and dispatch tests |
 | `src/commitment/write.rs` | src | m | 6 fn · 4 crate-vis | — | Vault commitment write verbs over the gated claim path |
-| `src/commitment_ledger.rs` | src | s | 3 struct · 1 fn | CommitmentLedger, CommitmentLedgerCounterparty, CommitmentLedgerEntry | Counterparty commitment ledger projection (CMT-5) |
+| `src/commitment_ledger.rs` | src | s | 3 struct · 1 fn · 1 crate-vis | CommitmentLedger, CommitmentLedgerCounterparty, CommitmentLedgerEntry | Counterparty commitment ledger projection (CMT-5) |
 | `src/commitment_lifecycle.rs` | src | m | 3 struct · 7 fn · 2 const · 2 crate-vis | BriefFulfillmentReport, CommitmentCloseResult, LapseSweepReport | Commitment fulfillment and gap-decay lifecycle (CMT-4, ONE-1541) |
 | `src/commitment_lifecycle/tests.rs` | test | L | — | — | Acceptance tests for CMT-4 (ONE-1541): explicit fulfillment dispatch, the validated brief-fulfillment link… |
 | `src/commitment_schedule.rs` | src | m | 2 struct · 2 enum · 1 trait · 13 fn · 1 type · 5 const · 5 re-export · 3 crate-vis | CommitmentInstanceOutcome, CommitmentOccurrenceSchedule, CommitmentSchedulePayload, ScheduleError, ScheduleHistoryEntry | Commitment schedule evaluation and durable projection (CMT-2, ONE-1539) |
@@ -2111,7 +2111,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/counterparty_contact/codec.rs` | src | m | 3 fn · 11 crate-vis | — | Counterparty contact MessagePack codecs, claim validators, and normalize helpers |
 | `src/counterparty_contact/doors.rs` | src | m | 6 fn · 5 crate-vis | — | Counterparty contact Vault doors: create, opt-out, revoke, reads, and claim apply |
 | `src/counterparty_contact/identity_index.rs` | src | s | 3 crate-vis | — | The identity-value index over live `counterparty_contact.identity_ref` heads (FIX 1855): the disclosure… |
-| `src/counterparty_contact/lifecycle.rs` | src | m | 2 fn · 14 crate-vis | — | Counterparty contact cache rematerialization, claim supersession, and opt-out folding |
+| `src/counterparty_contact/lifecycle.rs` | src | m | 2 fn · 15 crate-vis | — | Counterparty contact cache rematerialization, claim supersession, and opt-out folding |
 | `src/counterparty_contact/mod.rs` | src | s | 6 re-export · 10 crate-vis | — | Counterparty contact record substrate (OF-347 CID-7) |
 | `src/counterparty_contact/storage.rs` | src | m | 1 fn · 1 re-export · 16 crate-vis | — | Counterparty contact lookup and party-channel index keys and helpers |
 | `src/counterparty_contact/tests.rs` | test | L | — | — | — |
@@ -4000,7 +4000,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/codebase_doors/snapshots.rs` | src | s | 5 fn | — | Codebase snapshot doors: ingest a pinned folder and read or project its snapshot |
 | `src/memory/codebase_doors/symbols.rs` | src | s | 1 fn | — | The codebase snapshot definitions read |
 | `src/memory/codebase_doors/types.rs` | src | s | 10 struct · 1 re-export | CodeRepoPointer, CodeSnapshotDefinition, CodeSnapshotDefinitionsRequest, CodeSnapshotDefinitionsView, CodeSnapshotFile, CodeSnapshotIngestRequest, CodeSnapshotPinnedFile, CodeSnapshotReadRequest +2 | Codebase snapshot request, file, view and definition records |
-| `src/memory/commitment_doors/mod.rs` | src | m | 7 fn · 2 re-export | — | Typed indexed commitment birth, observation and explicit lifecycle effects |
+| `src/memory/commitment_doors/ledger.rs` | src | s | 3 struct · 1 fn | CommitmentLedgerItem, CommitmentLedgerRequest, CommitmentLedgerView | Scoped, owner-bound counterparty commitment ledger |
+| `src/memory/commitment_doors/mod.rs` | src | m | 7 fn · 3 re-export | — | Typed indexed commitment birth, observation and explicit lifecycle effects |
 | `src/memory/commitment_doors/reminder.rs` | src | s | 2 struct · 2 fn | CommitmentReminderRouteReply, CommitmentReminderRouteSetRequest | The owner's commitment reminder route as SDK verbs (OF-187): read it, or set and clear it |
 | `src/memory/commitment_doors/types.rs` | src | s | 12 struct · 9 enum | CommitmentBirthKind, CommitmentBirthProvenance, CommitmentCloseRequest, CommitmentContent, CommitmentCreateReceipt, CommitmentCreateRequest, CommitmentFulfillRequest, CommitmentFulfillmentSource +13 | Public commitment shapes |
 | `src/memory/conflict_settle.rs` | src | L | 8 fn · 1 re-export | — | The authorised responder's door to a parked contradiction (OF-023) |
@@ -7192,7 +7193,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/verbs/free_time_policy.rs` | src | s | 1 fn | — | `vault.free_time.policy.set_as` (FIX 11424): an agent sets or clears one agent's free-time policy under its… |
 | `src/verbs/generated/catalog_fragment_revision.rs` | src | generated | 1 const | — | — |
 | `src/verbs/generated/run_verb_catalog.rs` | src | generated | 1 enum · 4 fn · 1 const | RunVerb | — |
-| `src/verbs/generated/sdk_generated.rs` | src | generated | 1316 fn · 4 const | — | — |
+| `src/verbs/generated/sdk_generated.rs` | src | generated | 1317 fn · 4 const | — | — |
 | `src/verbs/generated/verb_catalog.rs` | src | generated | 1 enum · 17 fn · 1 const | AgentVerb | — |
 | `src/verbs/git_push_grant.rs` | src | s | 7 struct · 3 fn | GitPushGrantMintInput, GitPushGrantMintOutput, GitPushGrantRevokeInput, GitPushGrantRevokeOutput, GitPushGrantView, RepoAnchorBindInput, RepoAnchorBindOutput | The inputs and answers of the owner's `git_push` Grant rows (FIX 6867, G1-PUSH): `vault.repo.git_push.mint`… |
 | `src/verbs/goal_optimize.rs` | src | m | 16 struct · 1 enum · 16 fn | ProjectGoalIntakeCompleteRequest, ProjectGoalIntakeReceipt, ProjectGoalView, SkillOptimizeGoalBindRequest, SkillOptimizeGoalRequest, SkillOptimizeGoalRevision, SkillOptimizeGoalView, SkillOptimizeMeasureRequest +9 | Full witnessed goal intake and explicit optimizer proposal/admission doors |
