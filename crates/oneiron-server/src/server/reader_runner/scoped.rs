@@ -13,6 +13,7 @@
 use std::sync::Arc;
 
 use oneiron::Vault;
+use oneiron::claim::CallerLocality;
 use oneiron::code_run::{
     AgentVerbDoor, HostSelfDispatcher, ReaderRunEnd, ScopedCallControl, ScopedChildPorts,
     ScopedChildProfile,
@@ -92,6 +93,7 @@ impl Child {
         session: Option<&OffRecordSession<'_>>,
         door: Arc<dyn AgentVerbDoor>,
         profile: &ScopedChildProfile,
+        caller: CallerLocality,
     ) -> ReaderRunEnd {
         let end = match scoped_child_service(vault, self.provider.as_ref(), &self.job) {
             Ok(ports) => self.run(
@@ -102,6 +104,7 @@ impl Child {
                 door,
                 ports,
                 Some(profile),
+                Some(Self::profiled_compaction_binding(caller)),
             ),
             Err(end) => end,
         };

@@ -37,10 +37,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/code_fix/shadow.rs` | src | s | 2 crate-vis | — | The Coach's shadow runner for a code fix's engine candidates (FIX 1661, 2144): the host's… |
 | `src/ai_host/code_mode.rs` | src | m | 1 crate-vis | — | MCP `execute_code` on the served vault: the checked-in QuickJS component, run by the engine executor on the… |
 | `src/ai_host/commitment_reminder_wording.rs` | src | m | 1 crate-vis | — | Native model wording for the durable commitment-reminder queue |
-| `src/ai_host/compaction.rs` | src | m | 10 crate-vis | — | Compaction for code mode's runs (agent-runtime-v1 §d7) |
+| `src/ai_host/compaction.rs` | src | m | 11 crate-vis | — | Compaction for code mode's runs (agent-runtime-v1 §d7) |
 | `src/ai_host/compaction/chat.rs` | src | s | 7 crate-vis | — | A self agent's chat compaction (FIX 4465 D, Engine D4): the conversation constructor of the shared writer… |
 | `src/ai_host/compaction/chat_flights.rs` | src | s | 3 crate-vis | — | One chat compaction flight per conversation at a time (FIX 5030) |
 | `src/ai_host/compaction/live_fork.rs` | src | s | 3 crate-vis | — | The agent's own compaction from its live context (FIX 4465 C) |
+| `src/ai_host/compaction/profiled.rs` | src | s | 1 crate-vis | — | A compaction seat on a host-profiled child's original generation |
 | `src/ai_host/compaction/self_writer.rs` | src | m | 3 crate-vis | — | The agent's own compaction writer (FIX 4465, owner 10-19: "the toggle sets WHO writes, not which model") |
 | `src/ai_host/compaction/serve.rs` | src | m | 12 crate-vis | — | The house compaction route's call (moved from `compaction.rs`): one pass's request, admitted on the role's… |
 | `src/ai_host/compaction/tests.rs` | test | s | 1 crate-vis | — | A compaction pass is bounded work: it outlives the call that started it, so its thread holds a permit of its… |
@@ -65,6 +66,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/dreamer/task_lend.rs` | src | s | 3 crate-vis | — | The host's loan to a Dreamer-lane TASK's realization and its weave lens render |
 | `src/ai_host/dreamer/urgent_digest.rs` | src | s | 2 crate-vis | — | The host's half of the digest's urgent breakthrough (OF-194 L3; ARCH-0026: "urgent breakthrough only when… |
 | `src/ai_host/dreamer_thing.rs` | src | s | 3 crate-vis | — | The served thing-child host (FIX 7508): what this server lends a thing branch's scoped code-mode agent |
+| `src/ai_host/dreamer_thing/compaction.rs` | src | s | 2 crate-vis | — | Compaction calls on the thing child's original generation count |
 | `src/ai_host/dreamer_thing/generation.rs` | src | s | 6 crate-vis | — | The served agent's generation count (FIX 7508, 9015, 11449): what its calls spent on its parent's guard… |
 | `src/ai_host/dreamer_thing/ports.rs` | src | s | 2 crate-vis | — | A thing agent's two lent ports (FIX 7508, FIX 7733): the adapter its host registers for exactly… |
 | `src/ai_host/dreamer_thing/profile.rs` | src | m | 5 crate-vis | — | The served agent's own generation and the session its parent waits on (FIX 7508, 11449) |
@@ -328,7 +330,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/coach_offer_doors.rs` | src | s | 12 crate-vis | — | Typed owner doors for Coach offers and counted pilot evidence |
 | `src/api/facade/code_doors.rs` | src | s | 11 crate-vis | — | Credential-bound host projections of the typed symbol lease, proposal submit and oplog doors (DOOR-137) |
 | `src/api/facade/code_import_doors.rs` | src | s | 3 crate-vis | — | Credential-bound host projections of the outside import doors (FIX 6871, G7 PR1)… |
-| `src/api/facade/code_run_doors.rs` | src | s | 2 crate-vis | — | The credential-bound host projection of the typed per-model code-run heal count door (DOOR-093) |
+| `src/api/facade/code_run_doors.rs` | src | s | 3 crate-vis | — | The credential-bound host projection of the typed per-model code-run heal count door (DOOR-093) |
 | `src/api/facade/code_run_secret_lift_doors.rs` | src | s | 2 crate-vis | — | The owner's code-result secret lift list and proposal-only dismissal |
 | `src/api/facade/code_view_doors.rs` | src | s | 7 crate-vis | — | Typed owner projections of linked working views and account-local cache use |
 | `src/api/facade/code_wait_doors.rs` | src | s | 2 crate-vis | — | Credential-bound host projections of the typed code consent wait doors (DOOR-079): answer one exact sealed… |
@@ -1412,7 +1414,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/mcp/codec.rs` | src | m | 1 struct · 1 fn · 5 crate-vis | McpToolArguments | MCP argument codecs: parsed-value and raw-JSON integer normalization |
 | `src/mcp/endpoint_args.rs` | src | m | 9 struct · 1 enum · 4 fn · 3 crate-vis | McpCacheHint, McpExecuteCodeToolArgs, McpInvokeActionToolArgs, McpPageRequest, McpReadResultToolArgs, McpResultFacet, McpSetupToolArgs, McpVerbArguments +2 | Endpoint tool argument envelopes: setup, execute-code, paging, and verbs |
 | `src/mcp/endpoint_schema.rs` | src | m | 5 const · 8 crate-vis | — | JSON schemas for endpoint tools: setup, execute-code, paging, and verbs |
-| `src/mcp/exec_host.rs` | src | L | 4 struct · 1 enum · 3 trait · 7 fn · 4 type · 20 crate-vis | CodeRunLimits, McpCodeExecutionError, McpCodeExecutionHost, McpCodeExecutionRequest, McpCodeModeProvider, McpCodeRunSelfBrief, McpEngineNativeCodeHost, PlannedModel | MCP code-execution host seam and the engine-native host binding |
+| `src/mcp/exec_host.rs` | src | L | 4 struct · 1 enum · 3 trait · 7 fn · 5 type · 20 crate-vis | CodeRunLimits, McpCodeExecutionError, McpCodeExecutionHost, McpCodeExecutionRequest, McpCodeModeProvider, McpCodeRunSelfBrief, McpEngineNativeCodeHost, PlannedModel | MCP code-execution host seam and the engine-native host binding |
 | `src/mcp/exec_host/active_run.rs` | src | s | 4 crate-vis | — | Single flight for each durable code-mode run (FIX 9505): an entry of a run whose earlier entry still runs… |
 | `src/mcp/exec_host/description_route.rs` | src | s | 1 crate-vis | — | Description routing for an agent run's typed seat (FIX 11307) |
 | `src/mcp/exec_host/off_record_run.rs` | src | m | 3 crate-vis | — | Durable code-mode runs bound to an off-record session (DOOR-127): one entry of a run whose every row stays… |
@@ -1422,7 +1424,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/mcp/oauth_client/tests.rs` | test | s | — | — | — |
 | `src/mcp/paging.rs` | src | m | 3 struct · 3 enum · 24 fn · 1 const · 4 crate-vis | McpPageBudget, McpPageCursorError, McpPageResume, McpPageSource, McpResultEnd, McpRetrievalHealth | MCP page budgets, cursors, snapshots, and canonical-JSON digests |
 | `src/mcp/qualification.rs` | src | s | 1 re-export | — | Public MCP qualification API, implemented at the vault boundary |
-| `src/mcp/quickjs_provider.rs` | src | m | 1 struct · 8 fn · 11 crate-vis | McpQuickJsProvider | Production MCP provider over the hash-pinned engine QuickJS component |
+| `src/mcp/quickjs_provider.rs` | src | m | 1 struct · 8 fn · 12 crate-vis | McpQuickJsProvider | Production MCP provider over the hash-pinned engine QuickJS component |
 | `src/mcp/registry.rs` | src | L | 1 struct · 24 fn · 13 crate-vis | McpConnectorActorRegistry | MCP connector actor registry: cursors, board epochs, and stream proxy |
 | `src/mcp/results.rs` | src | m | 4 struct · 1 enum · 9 fn · 1 crate-vis | McpBoardKeyframe, McpResultMetadata, McpSetupPayload, McpSetupPayloadError, McpSetupSelfBrief | MCP result envelopes: metadata, board keyframes, and setup payloads |
 | `src/mcp/run_seats.rs` | src | s | 3 crate-vis | — | Each durable run's compaction seat, kept by the host across `execute_code` calls: a pass in flight, its… |
@@ -1758,7 +1760,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/presence.rs` | src | s | 6 crate-vis | — | The presence hub's charge on the server's retained-memory line (rule 5, census row 19) |
 | `src/server/read_shape.rs` | src | s | 1 struct · 1 fn · 1 const · 7 crate-vis | RetrievalQueryCheck | One retrieval request's shape (F21(a)): its query against its byte row, and the OF-520 question a crossing… |
 | `src/server/reader_runner.rs` | src | m | 9 crate-vis | — | The reader runner (ARCH-0079 #reader-forks): runs the reader children a code run's `self.spawn` queues, each… |
-| `src/server/reader_runner/child.rs` | src | m | 4 crate-vis | — | Execution and settlement of claimed reader children and summary jobs |
+| `src/server/reader_runner/child.rs` | src | L | 4 crate-vis | — | Execution and settlement of claimed reader children and summary jobs |
+| `src/server/reader_runner/child/compaction.rs` | src | s | 4 crate-vis | — | The child's ordinary host-metered compaction, on its own spend scope |
 | `src/server/reader_runner/nested.rs` | src | s | 3 crate-vis | — | Native reader nesting: the child's own seat and durable peer wait |
 | `src/server/reader_runner/scoped.rs` | src | s | 5 crate-vis | — | A host-profiled scoped child at the runner (FIX 7508): a child its own host registered a profile for runs on… |
 | `src/server/recall.rs` | src | m | 5 crate-vis | — | The recall verb as every server transport runs it |
