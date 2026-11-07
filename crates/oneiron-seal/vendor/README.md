@@ -115,3 +115,11 @@
     targets into the map instead of cloning them. Grammar, entry points, error
     behavior, returned mappings and the reverse map are unchanged; no new API,
     and no admission/heap/lifecycle claim.
+
+  - Header copies (FIX 12746/12780, narrow slice): `src/parser/mod.rs`
+    admits the version String and binary-marker Vec before copying through
+    the reader's existing `DecodeAdmission`. Both metadata and full-document
+    readers propagate a refusal as `Error::DecodeAdmission`, not an invalid
+    header or an absent marker. Without admission, the same grammar, strict
+    header handling and binary-marker selection remain unchanged. This does
+    not cover all parser allocations or retained-document ownership.
