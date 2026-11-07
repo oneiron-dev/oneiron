@@ -214,6 +214,13 @@ both bindings and their export-census tests in one change.
 - `vault.weave.owner.link.wrong`
 - `vault.weave.item.wrong`
 - `vault.weave.owner.item.wrong`
+- `vault.weave.admin.report`
+- `vault.weave.admin.lens`
+- `vault.weave.admin.digest`
+- `vault.weave.admin.link.wrong`
+- `vault.weave.admin.item.wrong`
+- `vault.step_up.passkeys.reset`
+- `vault.step_up.totp.reset`
 - `vault.weave.enqueue`
 - `vault.weave.schedules.list`
 - `vault.weave.schedules.put`
@@ -224,6 +231,7 @@ both bindings and their export-census tests in one change.
 - `vault.weave.digest_feedback.put`
 - `vault.weave.owner.digest.render`
 - `vault.inbox.concerns.review`
+- `vault.proactivity.digest`
 - `vault.inbox.lens`
 - `vault.inbox.groups`
 - `vault.inbox.groups.resolve`
@@ -349,6 +357,7 @@ both bindings and their export-census tests in one change.
 - `vault.members.projection`
 - `vault.members.add`
 - `vault.members.invitation_slip`
+- `vault.members.invitation_code`
 - `vault.members.change`
 - `vault.members.remove`
 - `vault.members.leave`
@@ -590,6 +599,7 @@ both bindings and their export-census tests in one change.
 - `vault.settings.learning.put`
 - `vault.settings.learning.clear`
 - `vault.secrets.code_run_lifts`
+- `vault.secrets.code_run_room_lifts`
 - `vault.secrets.lift_history`
 - `vault.secrets.register`
 - `vault.secrets.rotate`

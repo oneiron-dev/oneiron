@@ -119,7 +119,9 @@ impl Memory<'_> {
         input.validate()?;
         let limit = input.limit;
         let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
-        let mut receipt = lane.read_receipt(None, 0)?;
+        // The receipt of a search: the candidates it ranks, the key's own
+        // rows and those its own live Grants read (FIX 7528).
+        let mut receipt = lane.search_receipt(None, 0)?;
         let mut seeds = Vec::new();
         if let Some(ppr) = &input.ppr {
             let reads = ppr
@@ -135,7 +137,11 @@ impl Memory<'_> {
             seeds.extend(admitted.value.into_iter().flatten().map(|row| row.id));
         }
         self.produced_from(seeds.iter().copied());
-        let (filter, policy) = lane.recall_plan()?;
+        let crate::claim::SearchPlan {
+            filter,
+            candidates,
+            policy,
+        } = lane.recall_plan()?;
         // Every candidate goes to the actor gate, under one authority per
         // snapshot (FIX 11648).
         let gate = lane.recall_candidate_gate(&policy, &filter);
@@ -147,7 +153,7 @@ impl Memory<'_> {
             .vault
             .query()
             .reading(lane.store_read())
-            .authority_filter(filter.clone())
+            .authority_filter(candidates)
             .scoped_note_reader(lane.actor_key().clone())
             .for_destination(lane.actor_key().destination())
             .filter_candidates(&admitted)

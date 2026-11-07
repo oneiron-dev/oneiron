@@ -30,6 +30,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SECRET_CUSTODY_INPUT, LIVE),
     (&t::SECRET_CUSTODY_NAME_INDEX, SECRET_CUSTODY),
     (&t::SECRET_CUSTODY_OUTPUT, LIVE),
+    // An owed import mark stands with the custody whose relay it ends (FIX 12291).
+    (&t::SECRET_CUSTODY_PENDING_IMPORT_MARK, LIVE),
     (&t::SECRET_CUSTODY_PENDING_REVOKE, LIVE),
     (&t::SECRET_CUSTODY_REBIND, LIVE),
     // A restore's pending credentials stand with the custody they wait on (FIX-LIST 10671).
@@ -109,6 +111,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SHARED_ACT_ERASE_ASK, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_ACT_EVENT, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_ACT_MATURED, SHARED_VAULT_MEMBERSHIP),
+    // A membership record still owed stands as the live vault owes it: a
+    // restore neither drops one nor revives one already signed (FIX 12335).
+    (&t::SHARED_ACT_MEMBERSHIP_PENDING, LIVE),
     (&t::SHARED_ACT_OUTCOME, SHARED_VAULT_MEMBERSHIP),
     // A proposed policy change binds the digest of the rows it was proposed
     // against, so a restore that moves the policy manifest leaves it stale:
@@ -131,6 +136,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SHARED_ACT_REMOVAL_IMPORT, LIVE),
     (&t::SHARED_VAULT_CREATION, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_VAULT_DELETION, SHARED_VAULT_MEMBERSHIP),
+    (&t::SHARED_VAULT_INVITATION_KEY, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_VAULT_INVITATION, SHARED_VAULT_MEMBERSHIP),
     (&t::SHORT_ID_ALIAS, CONTENT),
     (&t::SHORT_ID_GRAMMAR_VERSION, CONTENT),
@@ -253,6 +259,13 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SPAWN_PLANNED_INTENT_ASKER_ERASED, LIVE),
     (&t::STANDING_BLOCK, STANDING_BLOCKS),
     (&t::AFFECT_STATE_COMPOSITE_PRODUCER, CONTENT),
+    // A person's passkeys, open ceremonies and step-ups stand with the live credentials they
+    // protect (FIX 11694).
+    (&t::STEP_UP_CHALLENGE, LIVE),
+    (&t::STEP_UP_PASSKEY, LIVE),
+    (&t::STEP_UP_RECORD, LIVE),
+    (&t::STEP_UP_TOTP, LIVE),
+    (&t::STEP_UP_TOTP_PENDING, LIVE),
     (&t::STORAGE_ABI_VERSION, CONTENT),
     (&t::MESSAGE_STREAM_RECEIPT_BY_REF, CONTENT),
     (&t::SYNC_BORN_WITH_CARRIED, CONTENT),
@@ -298,6 +311,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::TASK_FANOUT_LAUNCH, LIVE),
     (&t::TASK_FANOUT_RUN, CONTENT),
     (&t::TASK_FANOUT_POLICY, CONTENT),
+    (&t::TEAM_BALLOT, CONTENT),
     (&t::TEAM_DELIVERABLE, CONTENT),
     (&t::TEAM_MARKET, CONTENT),
     (&t::TEAM_PATTERN_SKILL, CONTENT),
@@ -339,6 +353,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::AFFECT_VAD_ANNOTATION_META, CONTENT),
     (&t::VAULT_CLEANUP_ATTEMPT_ARCHIVE, CONTENT),
     (&t::VAULT_CLEANUP_DIGEST, CONTENT),
+    (&t::VAULT_CLEANUP_ENTITY_ROW, CONTENT),
     (&t::VAULT_CLEANUP_EXTRACTION_PERSON, CONTENT),
     (&t::VAULT_CLEANUP_POSTURE, LIVE),
     (&t::VAULT_CLEANUP_PROPOSAL, CONTENT),

@@ -76,7 +76,7 @@ mod self_writer;
 mod stored_epoch;
 mod withdrawn;
 
-pub use fold_kinds::{FoldKind, FoldedOutput};
+pub use fold_kinds::{FoldKind, FoldedOutput, FoldedSpeech};
 pub use folds::{
     FoldCompactAsk, FoldCompactAsked, FoldCompactInput, FoldDescription, FoldLedger, FoldList,
     FoldMark, FoldMarkInput, FoldMarked, FoldPending, FoldRecord, FoldReply, FoldSpan, FoldUnfold,
@@ -95,9 +95,8 @@ pub use driver::{
     CompactionWatermark, CompactionWindowMessage, MarginLaw, SwapPlan,
 };
 pub use epoch::{
-    EPOCH_SUMMARY_BODY_KEYS, EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL,
-    EPOCH_SUMMARY_MAX_SOURCES, EpochSummaryBody, decode_epoch_summary_body,
-    encode_epoch_summary_body,
+    EPOCH_SUMMARY_BODY_KEYS, EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL, EpochSummaryBody,
+    decode_epoch_summary_body, encode_epoch_summary_body,
 };
 pub(crate) use epoch::{
     EpochMint, EpochPlacement, PriorEpoch, epoch_disclosable_in, epoch_exportable_in,
