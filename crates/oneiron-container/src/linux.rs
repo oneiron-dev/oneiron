@@ -86,8 +86,9 @@ pub(crate) fn respond(
 pub(crate) fn inject(listener: RawFd, id: u64, fd: RawFd, cloexec: bool) -> io::Result<i32> {
     // SEND atomically adds the fd and completes the call with it as the
     // result: socket(), and accept() of a virtual loopback connection. The
-    // fence never swaps an occupied fd (SETFD could, but dup aliases and
-    // epoll registrations would keep the old socket).
+    // fence never swaps a descriptor the guest knows (SETFD could, but dup
+    // aliases and epoll registrations would keep the old socket); only a
+    // failed brokered receive swaps the ones it installed ([`replace_fd`]).
     let add = AddFd {
         id,
         flags: 2,
@@ -102,6 +103,43 @@ pub(crate) fn inject(listener: RawFd, id: u64, fd: RawFd, cloexec: bool) -> io::
     } else {
         Ok(result)
     }
+}
+/// Adds `fd` to the notifying task's table without completing its call,
+/// and returns its number there: a brokered receive installs what a
+/// message carried this way, then answers the call itself (FIX 6185).
+pub(crate) fn add_fd(listener: RawFd, id: u64, fd: RawFd, cloexec: bool) -> io::Result<i32> {
+    let add = AddFd {
+        id,
+        flags: 0,
+        srcfd: fd as u32,
+        newfd: 0,
+        newfd_flags: if cloexec { libc::O_CLOEXEC as u32 } else { 0 },
+    };
+    // SAFETY: add has the exact seccomp_notif_addfd layout.
+    let result = unsafe { libc::ioctl(listener, NOTIF_ADDFD, &add) };
+    if result < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(result)
+    }
+}
+/// Replaces the notifying task's descriptor `number` with a copy of `fd`,
+/// without completing its call (ADDFD with SECCOMP_ADDFD_FLAG_SETFD): a
+/// brokered receive whose call then fails takes back what it installed
+/// this way (FIX 6185).
+pub(crate) fn replace_fd(listener: RawFd, id: u64, fd: RawFd, number: i32) -> io::Result<()> {
+    let add = AddFd {
+        id,
+        flags: libc::SECCOMP_ADDFD_FLAG_SETFD as u32,
+        srcfd: fd as u32,
+        newfd: number as u32,
+        newfd_flags: libc::O_CLOEXEC as u32,
+    };
+    // SAFETY: add has the exact seccomp_notif_addfd layout.
+    if unsafe { libc::ioctl(listener, NOTIF_ADDFD, &add) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 const READ: u64 = (1 << 0) | (1 << 2) | (1 << 3);
