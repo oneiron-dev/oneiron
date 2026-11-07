@@ -176,8 +176,8 @@ fn step_wait_head_in_txn(
 }
 
 /// Private binding proving a detached step's actor/subject/step hash. Key: id16(attempt);
-/// value: actor id16 + subject id16 + step hash32, a hand-rolled 64-byte concat compared as
-/// opaque bytes, never decoded field-by-field.
+/// value: actor id16 + subject id16 + step hash32, a hand-rolled 64-byte concat.
+/// Authentication compares the whole value; erase reads its actor and subject fields.
 const DETACHED_STEP: SideTable<AttemptId, Vec<u8>, Raw> =
     SideTable::new(&side_table::DREAMER_DETACHED_STEP);
 
@@ -218,6 +218,40 @@ pub(crate) fn register_detached_step_in_txn(
         }
     } else {
         DETACHED_STEP.put(&vault.store, txn, &ctx.attempt_id, &value)?;
+    }
+    Ok(())
+}
+
+/// Removes an erased actor's detached identities and their private step waits.
+/// The erase may already have removed the claims, so retirement uses only the
+/// original local binding. It never signals a wait or records an answer.
+pub(crate) fn erase_detached_step_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    let mut erased = std::collections::BTreeMap::new();
+    for (attempt, value) in DETACHED_STEP.scan(&vault.store, wtxn)? {
+        if value.len() == 64
+            && (value.get(..16) == Some(actor.as_bytes().as_slice())
+                || value.get(16..32) == Some(actor.as_bytes().as_slice()))
+        {
+            DETACHED_STEP.delete(&vault.store, wtxn, &attempt)?;
+            erased.insert(attempt, value);
+        }
+    }
+    if erased.is_empty() {
+        return Ok(());
+    }
+    for (anchor, binding) in super::trap_binding::trap_binding_rows_in_txn(vault, wtxn)? {
+        let Some(value) = erased.get(&binding.attempt_id) else {
+            continue;
+        };
+        if binding.park_owner == super::trap_binding::TrapBindingScope::StepOnly.owner(&anchor)
+            && &value[32..] == binding.step_hash.as_slice()
+        {
+            super::trap_binding::trap_binding_delete_in_txn(vault, wtxn, &anchor)?;
+        }
     }
     Ok(())
 }
