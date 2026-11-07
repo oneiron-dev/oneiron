@@ -622,17 +622,21 @@ impl CodeModeBackend {
             } else if let Some(planned) = &self.planned {
                 // FIX 2310: the model that answered, marked when it is not
                 // the child's pick.
-                let (response, binding) = call
-                    .ladder
+                call.ladder
                     .generate_recorded_while(&run, call.request, None, &may_send)
-                    .await?;
-                planned.answered(&run, binding.rung.model.clone());
-                Ok((response, binding))
+                    .await
+                    .map(|(response, binding)| {
+                        planned.answered(&run, binding.rung.model.clone());
+                        (response, binding)
+                    })
             } else {
                 call.ladder
                     .generate_recorded_while(&run, call.request, None, &may_send)
                     .await
             };
+            if let Some(live) = &live {
+                live.book_and_revise();
+            }
             if answered.is_ok() {
                 handoff.answered();
             }

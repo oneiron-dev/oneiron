@@ -292,14 +292,18 @@ pub(crate) fn project_model_pack_in(
     if let Some(summary) = pack.l2_base.as_mut() {
         let mut rows: Vec<serde_json::Value> = serde_json::from_str(&summary.body)
             .map_err(|_| Error::InvariantViolation("model disclosure L2 JSON"))?;
+        if rows.len() != summary.evidence_ids().len() {
+            return Err(Error::InvariantViolation(
+                "model disclosure L2 evidence rows",
+            ));
+        }
         let mut changed = false;
-        for row in &mut rows {
-            let id = row
-                .get("id")
-                .and_then(serde_json::Value::as_str)
-                .and_then(|id| EntityId::from_hex(id).ok())
-                .ok_or(Error::EntityNotFound)?;
-            if let Some(body) = vault.get_claim_in_txn(txn, &id)?
+        // A row's `id` is its display handle (a short id where one is
+        // stored), never a storage key: each row is read by the typed
+        // evidence id the producer paired with it, in the same order
+        // (FIX 21913).
+        for (row, id) in rows.iter_mut().zip(summary.evidence_ids()) {
+            if let Some(body) = vault.get_claim_in_txn(txn, id)?
                 && let Some(handle) = claim_handle_in(vault, txn, reader, &body)?
             {
                 row["val"] = serde_json::Value::String(handle);

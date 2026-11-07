@@ -62,7 +62,8 @@ pub(in crate::api::ai::chat) fn enter(
 /// The seed a chat turn's reply keeps: its call exactly as `answering`, the
 /// rung that answered it, sent it (FIX 4933), that rung by ref, the log's
 /// sources, and the craft rows the host's snapshot read for it (FIX 9439).
-/// None for a log whose turns were not all pinned.
+/// None for a log whose turns were not all pinned or that a room's
+/// projection read (FIX 5031: a reuse checks its seed on its own reader).
 fn capture_seed(
     agent: EntityId,
     reader: WriteActor,
@@ -71,7 +72,7 @@ fn capture_seed(
     craft: Vec<ManifestEntry>,
     answering: &AnsweringRung,
 ) -> Option<ChatBreakpoint> {
-    if !log.pinned {
+    if !log.pinned || log.room_projection {
         return None;
     }
     let AnsweringRung { rung, request } = answering;
