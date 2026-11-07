@@ -5,8 +5,8 @@ use ed25519_dalek::{Signer, SigningKey};
 
 use super::{RecoveryRootId, RecoveryRootSeed};
 use crate::authority::{
-    AUTHORITY_TRANSCRIPT_DOMAIN, AuthorityKey, AuthorityVaultId, OwnerKeyEnrollment,
-    invalid_authority, owner_key_enrollment_challenge,
+    AUTHORITY_TRANSCRIPT_DOMAIN, AuthorityKey, AuthorityVaultId, LEAVE_NOTICE_DELEGATION_DOMAIN,
+    OwnerKeyEnrollment, invalid_authority, owner_key_enrollment_challenge,
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -102,9 +102,13 @@ impl RecoveryAuthoritySigner {
     }
 
     /// For the same-vault ReRoot writer's callback. The caller supplies this
-    /// vault's generated transcripts; this is not an arbitrary signing surface.
+    /// vault's generated transcripts; this is not an arbitrary signing surface:
+    /// an authority entry's, or the move's leave-notice delegation's (FIX
+    /// 7932), and nothing under another domain.
     pub(crate) fn sign_authority_transcript(&self, transcript: &[u8]) -> Result<Vec<u8>> {
-        if !transcript.starts_with(AUTHORITY_TRANSCRIPT_DOMAIN) {
+        if !transcript.starts_with(AUTHORITY_TRANSCRIPT_DOMAIN)
+            && !transcript.starts_with(LEAVE_NOTICE_DELEGATION_DOMAIN)
+        {
             return Err(invalid_authority());
         }
         Ok(self.signing.sign(transcript).to_bytes().to_vec())
