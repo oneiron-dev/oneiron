@@ -9,12 +9,14 @@ use std::sync::Arc;
 /// actual caller proof and captured route, not the Vault or a borrowed Memory.
 /// Each use binds the exact original session instance again and runs the same
 /// caller and independent author checks as the one-shot witness context.
+#[derive(Clone)]
 pub struct SessionWitnessBinding {
     caller: Caller,
     session_ref: String,
     route: SessionWriteRoute,
 }
 
+#[derive(Clone)]
 struct Caller {
     actor: EntityId,
     actor_class: crate::edge::EdgeActorClass,
@@ -22,6 +24,7 @@ struct Caller {
 }
 
 /// The same priority as verify_caller_in_txn, captured only after admission.
+#[derive(Clone)]
 enum CallerAuthority {
     Slip(crate::authority::VerifiedSlip),
     HostAction(crate::authority::HostActionAuthority),
@@ -120,7 +123,88 @@ impl SessionWitnessBinding {
         vault: &crate::Vault,
         text: &str,
     ) -> MemoryResult<String> {
-        self.context(vault)?.project_stream_text(text)
+        self.context(vault)?.project_stream_text(text, false)
+    }
+
+    /// Resolves a reply's thread through this captured session's content view.
+    /// Join consent and payer authority remain the base funding door's work.
+    pub fn reply_place(
+        &self,
+        vault: &crate::Vault,
+        room: EntityId,
+        turn: Option<EntityId>,
+    ) -> MemoryResult<crate::workspace_roster::RoomWork> {
+        let context = self.context(vault)?;
+        let view = (context.route.target() == RouteTarget::Overlay)
+            .then(|| context.session.read_view())
+            .transpose()?;
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        context.admit_in_txn(&txn)?;
+        let read = match &view {
+            Some(view) => view.read(),
+            None => vault.store.read(),
+        };
+        let mut place = crate::workspace_roster::RoomWork { room, branch: None };
+        if let Some(turn) = turn
+            && let crate::vault::LiveEntityRow::Live {
+                entity_type: crate::registry::ENTITY_TYPE_TURN,
+                body,
+            } = crate::vault::live_entity_row_in_txn(&read, &txn, &turn)?
+            && let Some(binding) = crate::workspace_roster::thread_binding(&body)?
+            && binding.room == room
+        {
+            place.branch = Some(binding.root);
+        }
+        context.route.revalidate()?;
+        Ok(place)
+    }
+
+    /// Admits session-only replay rows in the caller's current composed view.
+    /// Base rows remain for the transport's original source and release checks.
+    pub fn base_replay_rows(
+        &self,
+        vault: &crate::Vault,
+        rows: &[EntityId],
+        destination: &crate::settings::ReadDestination,
+    ) -> MemoryResult<Option<Vec<EntityId>>> {
+        let context = self.context(vault)?;
+        context.revalidate()?;
+        if context.route.target() != RouteTarget::Overlay {
+            return Ok(Some(rows.to_vec()));
+        }
+        let key = context
+            .caller
+            .clone()
+            .for_destination(destination)
+            .read_key()?;
+        let view = context.session.read_view()?;
+        let lane = vault.scoped_read_in_session(key, &view);
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        context.admit_in_txn(&txn)?;
+        let mut base_rows = Vec::new();
+        for row in rows {
+            if vault.store.entities.get(&txn, row.as_bytes())?.is_some() {
+                base_rows.push(*row);
+            } else if !lane.is_entity_readable_in(&txn, row)? {
+                return Ok(None);
+            }
+        }
+        context.route.revalidate()?;
+        Ok(Some(base_rows))
+    }
+
+    /// Projects host-held completed text for this original caller now. This
+    /// grants no record read and never turns a cached reply into authority.
+    pub fn project_completed_text(&self, vault: &crate::Vault, text: &str) -> MemoryResult<String> {
+        self.context(vault)?.project_stream_text(text, true)
+    }
+
+    pub(in crate::memory::witness) fn project_finished_stream_text(
+        &self,
+        vault: &crate::Vault,
+        text: &str,
+    ) -> MemoryResult<String> {
+        self.project_completed_text(vault, text)
     }
 
     pub(in crate::memory::witness) fn witness_stream_terminal(

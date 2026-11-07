@@ -3,7 +3,8 @@
 use super::base::SyncClient;
 use crate::authority::PeerMachine;
 use crate::batch::export::{
-    StagedVaultImport, VaultImportConfirmation, VaultImportStageReceipt, VaultImportStageStatus,
+    OwedBody, StagedImportBodyWork, StagedVaultImport, VaultImportConfirmation,
+    VaultImportStageReceipt, VaultImportStageStatus,
 };
 use crate::error::SyncProtocolValidation;
 use crate::federation::PactDelivery;
@@ -321,9 +322,12 @@ impl SyncClient {
     /// body landing door; successful births release their staged facet stamps.
     ///
     /// Missing bodies and failed or withheld landings keep today's pending-row
-    /// behavior and do not fail confirmation. This door fetches no body over a
-    /// socket. An already-confirmed receipt returns its existing result without
-    /// attempting later body delivery.
+    /// behavior and do not fail confirmation. Each body still owed afterwards
+    /// stays owed under the receipt (FIX 12408): the confirmation keeps the
+    /// admitted content and staged stamps for
+    /// [`Self::deliver_staged_vault_import_bodies`]. This door fetches no body
+    /// over a socket. An already-confirmed receipt returns its existing
+    /// result, delivering any supplied bodies it still owes.
     pub fn confirm_staged_vault_import_with_bodies(
         &mut self,
         staged: StagedVaultImport,
@@ -358,6 +362,11 @@ impl SyncClient {
                 if durable.confirmed_by == Some(confirmation.actor)
                     && durable.confirmed_at_secs == Some(confirmation.confirmed_at_secs)
                 {
+                    // The same confirmation again imports nothing; bodies it
+                    // brings land where the receipt still owes them.
+                    if !bodies.is_empty() {
+                        self.deliver_staged_bodies_locked(&durable, bodies)?;
+                    }
                     return Ok(durable);
                 }
                 return Err(TransportError::InvalidPayload("conflicting confirmation"));
@@ -427,28 +436,36 @@ impl SyncClient {
         // operator installs the missing permit. Leaving the receipt Pending lets a
         // re-stage under the same receipt id re-evaluate once policy relaxes.
         let mut carried = Vec::with_capacity(parts.len());
+        // Each part's by-ref bodies, and every row the parts carry: the
+        // bodies left unlanded stay owed under the receipt (FIX 12408).
+        let mut part_refs = Vec::with_capacity(parts.len());
+        let mut carried_rows = Vec::new();
         for part in &parts {
             let (admission_key, update) = (&part.key, &part.update);
             revalidate_admitted_federated_claims(&self.vault, admission_key, update, durable.role)
                 .map_err(map_federated_admission_err)?;
             revalidate_admitted_facet_stamps(admission_key, update)
                 .map_err(map_federated_admission_err)?;
-            let carried_bodies = if bodies.is_empty() {
-                Vec::new()
-            } else {
-                let admitted = crate::sync::schema::create_window_doc(
-                    "federation-staged-bodies",
-                    admission_key,
-                );
-                admitted.import(update).map_err(|_| {
-                    TransportError::InvalidPayload("admitted body references unreadable")
-                })?;
-                bound_refs(&admitted)
-                    .into_iter()
-                    .filter_map(|body| bodies.get(&body.id).map(|bytes| (body, bytes.as_slice())))
-                    .collect()
-            };
+            let admitted =
+                crate::sync::schema::create_window_doc("federation-staged-bodies", admission_key);
+            admitted.import(update).map_err(|_| {
+                TransportError::InvalidPayload("admitted body references unreadable")
+            })?;
+            crate::sync::loro_support::map_for_each_value_bytes(
+                &admitted.get_map("entities"),
+                |key, _| carried_rows.extend(crate::EntityId::from_hex(key).ok()),
+            );
+            let refs = bound_refs(&admitted);
+            let carried_bodies: Vec<_> = refs
+                .iter()
+                .filter_map(|body| {
+                    bodies
+                        .get(&body.id)
+                        .map(|bytes| (body.clone(), bytes.as_slice()))
+                })
+                .collect();
             carried.push(carried_bodies);
+            part_refs.push(refs);
         }
         let births = staged_births(
             &self.vault,
@@ -489,6 +506,25 @@ impl SyncClient {
                 .map_err(map_federated_admission_err)?;
             self.import_released_stamps(admission_key.as_str(), released)?;
         }
+        // Every by-ref body whose row is still absent is owed: a later
+        // delivery under this receipt lands it (FIX 12408).
+        let mut owed = Vec::new();
+        for (part, refs) in parts.iter().zip(&part_refs) {
+            for body in refs {
+                if self
+                    .vault
+                    .get_raw(&body.id)
+                    .map_err(map_federated_admission_err)?
+                    .is_none()
+                {
+                    owed.push(OwedBody {
+                        window: part.key.as_str().to_owned(),
+                        entity: *body.id.as_bytes(),
+                    });
+                }
+            }
+        }
+        let work = StagedImportBodyWork::new(owed, carried_rows);
         let expected_receipt = durable;
         let mut receipt = expected_receipt.clone();
         receipt.status = VaultImportStageStatus::Confirmed;
@@ -498,6 +534,7 @@ impl SyncClient {
             &self.vault,
             &expected_receipt,
             &receipt,
+            Some(&work),
         )
         .map_err(|e| TransportError::Storage(e.to_string()))?
         {
@@ -666,7 +703,7 @@ impl SyncClient {
     /// copies. A failure in between leaves them held, so they never count.
     /// The release is this vault's own update, not the peer's: one the window
     /// refuses drops its stamps, and the peer learns nothing from it.
-    fn import_released_stamps(
+    pub(super) fn import_released_stamps(
         &mut self,
         window_key: &str,
         released: Option<crate::sync::selector::ReleasedStamps>,

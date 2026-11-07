@@ -84,6 +84,9 @@ mod segments;
 mod session_invocation;
 pub(crate) use segments::ActionSession;
 mod sitting;
+mod stream;
+mod terminal;
+pub(crate) use stream::AnswerStream;
 mod sources;
 pub(crate) use sources::TurnSources;
 
@@ -167,13 +170,18 @@ enum HistoryRole {
 enum ChatLine {
     Accepted {
         user_turn: String,
-        message_id: String,
+        message_id: Option<String>,
+        stream_id: String,
         /// Why the call goes without the context board the turn read (FIX
         /// 8136).
         #[serde(skip_serializing_if = "Option::is_none")]
         board_omitted: Option<recall::BoardOmission>,
     },
     Delta {
+        text: String,
+    },
+    /// A caller-projected full prefix, replacing the previously shown prefix.
+    Replace {
         text: String,
     },
     Done {
@@ -183,6 +191,10 @@ enum ChatLine {
     },
     Saved {
         receipt: MessageStreamReceipt,
+    },
+    Unretained {
+        incomplete: bool,
+        finish_reason: Option<oneiron::FinishReason>,
     },
     Error {
         code: &'static str,
@@ -195,8 +207,8 @@ enum ChatLine {
 struct ChatReply {
     conversation_ref: String,
     /// The assistant TURN, which Continue and Retry name.
-    turn_id: String,
-    message_id: String,
+    turn_id: Option<String>,
+    message_id: Option<String>,
     text: String,
     incomplete: bool,
     finish_reason: Option<oneiron::FinishReason>,
@@ -227,6 +239,12 @@ pub(crate) enum TurnCredential {
 }
 
 impl TurnCredential {
+    fn vault(&self) -> &Vault {
+        match self {
+            Self::Request { vault, .. } | Self::Action { vault, .. } => vault,
+        }
+    }
+
     fn live(&self) -> bool {
         match self {
             Self::Request { auth, vault } => auth.credential_is_live(vault),
@@ -673,6 +691,12 @@ pub(crate) enum AnswerOpen {
         turn: WitnessTurn,
         conversation: Option<EntityId>,
     },
+    /// A fresh reply under the actual requester's captured caller/session route.
+    Session {
+        turn: WitnessTurn,
+        conversation: Option<EntityId>,
+        binding: oneiron::memory::SessionWitnessBinding,
+    },
     /// A Retry's new MESSAGE, answering `action`'s reply again in a new
     /// TURN that its terminal lands with it (FIX 3152), linked to the old
     /// reply by a `regenerates` edge.
@@ -693,19 +717,22 @@ pub(crate) enum AnswerRefused {
 
 /// A reply being generated.
 pub(crate) struct Answering {
-    pub(crate) handle: MessageStreamHandle,
+    pub(crate) handle: AnswerStream,
     /// The live events; dropping it costs the producer nothing.
     pub(crate) subscription: StreamSubscription,
     pub(crate) outcome: tokio::sync::oneshot::Receiver<AnswerOutcome>,
 }
 
 /// How a reply's producer ended.
+#[derive(Clone)]
 pub(crate) struct AnswerOutcome {
     /// Whether it reached its terminal.
     pub(crate) result: Result<(), String>,
     /// The receipt its MESSAGE was saved under: by the terminal, or by the
     /// cancel a failure made.
     pub(crate) saved: Option<MessageStreamReceipt>,
+    /// Native terminal facts, including honest unretained success.
+    pub(crate) native: Option<oneiron::memory::SessionStreamFinished>,
     /// The text the stream accepted, which is what was saved.
     pub(crate) text: String,
     /// Whether a reused prefix's captured rung gave way to the call a turn
@@ -752,7 +779,7 @@ struct AssistantMessage {
     vault: Arc<Vault>,
     agent: EntityId,
     session_key: Option<SessionKey>,
-    handle: MessageStreamHandle,
+    handle: AnswerStream,
     credential: TurnCredential,
     /// What the producer appended to the presence plane so far.
     streamed: Arc<Mutex<String>>,
@@ -783,8 +810,8 @@ impl TerminalSink for AssistantMessage {
             && let Some(rest) = text.strip_prefix(streamed.as_str())
             && !rest.is_empty()
         {
-            memory
-                .append_to_stream(self.handle, rest)
+            self.handle
+                .append(&memory, &self.vault, rest)
                 .map_err(|_| oneiron::FatalLlmError::InvalidRequest)?;
             if let Ok(mut so_far) = self.streamed.lock() {
                 so_far.push_str(rest);
@@ -796,16 +823,12 @@ impl TerminalSink for AssistantMessage {
         // An answer commits only while the credential is live in its own
         // write transaction. The records the producer stamped on its
         // terminal are judged and kept with it (FIX 3416).
-        let credential = &self.credential;
-        let asserted = assertions::witness_assertions(&terminal.reply_assertions);
-        let finish_reason = terminal.finish_reason.clone();
-        let receipt = memory
-            .finalize_model_stream_if(self.handle, finish_reason, &asserted, |txn| {
-                credential.live_in(txn)
-            })
+        let receipt = self
+            .handle
+            .finalize_model(&self.vault, &memory, terminal, &self.credential)
             .map_err(|_| oneiron::FatalLlmError::InvalidRequest)?;
         if let Ok(mut slot) = self.saved.lock() {
-            *slot = Some(receipt);
+            *slot = receipt;
         }
         Ok(())
     }
@@ -818,7 +841,7 @@ struct Producer {
     vault: Arc<Vault>,
     agent: EntityId,
     session_key: Option<SessionKey>,
-    handle: MessageStreamHandle,
+    handle: AnswerStream,
     credential: TurnCredential,
     streamed: Arc<Mutex<String>>,
     /// Where a failure's cancel leaves the receipt it saved.
