@@ -701,6 +701,8 @@ both bindings and their export-census tests in one change.
 - `vault.code.proposal_settle`
 - `vault.code.proposal_settlement`
 - `vault.code.oplog`
+- `vault.code.secrets.get`
+- `vault.code.secrets.propose`
 - `execute_code`
 - `vault.code.model_heal_count`
 - `vault.code.corrections`
