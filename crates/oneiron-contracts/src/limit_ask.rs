@@ -62,6 +62,25 @@ pub enum EngineLimit {
     /// element is read. Past it every entity is written in the same one
     /// atomic transaction.
     LegacyBatchEntities,
+    /// Raw bytes of one blob artifact version or asset an engine door
+    /// stores (`vault.artifacts.append`, asset ingest), decoded. Past it the
+    /// content is stored whole, as one version.
+    BlobContentBytes,
+    /// Availability listings one authenticated booking actor asks for in one
+    /// minute (the owner's slot-list windows govern anonymous visitors only).
+    /// Past it every listing is served.
+    BookingAvailabilityCallsPerMinute,
+    /// Holds one authenticated booking actor requests in one minute (the
+    /// owner's hold windows govern anonymous visitors only). Past it every
+    /// hold is served.
+    BookingHoldCallsPerMinute,
+    /// Confirms and amendments (cancel, reschedule) one authenticated booking
+    /// actor sends in one minute, counted together (the owner's book windows
+    /// govern anonymous visitors only). Past it every write is served.
+    BookingWriteCallsPerMinute,
+    /// Quarantined confirms one authenticated booking actor submits in one
+    /// minute. Past it every submission is kept for the owner's review.
+    BookingQuarantineCallsPerMinute,
     /// Bytes of one code-mode result kept inline in its LMDB row. A body past
     /// it is written to the vault's file-backed body store instead; the row
     /// picks where a result lives and never refuses one.

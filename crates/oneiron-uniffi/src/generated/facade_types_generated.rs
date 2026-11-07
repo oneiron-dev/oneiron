@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1265 facade rows, 4596 generated types.
+// UniFFI census: 1265 facade rows, 4600 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1217.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -32256,43 +32256,6 @@ pub enum ErasePendingReason {
     VetoWindow,
 }
 
-/// `oneiron_contracts::error::legal_hold::LegalHoldBoundKind`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum LegalHoldBoundKind {
-    #[serde(rename = "law")]
-    Law,
-}
-
-/// `oneiron_contracts::error::legal_hold::LegalHoldBound`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct LegalHoldBound {
-    #[serde(rename = "kind")]
-    pub kind: LegalHoldBoundKind,
-    #[serde(rename = "order_ref", default, skip_serializing_if = "Option::is_none")]
-    pub order_ref: Option<String>,
-    #[serde(
-        rename = "legal_basis_ref",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub legal_basis_ref: Option<String>,
-    #[serde(
-        rename = "jurisdiction",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub jurisdiction: Option<String>,
-    #[serde(
-        rename = "issuing_authority_ref",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub issuing_authority_ref: Option<String>,
-    #[serde(rename = "ends_at", default, skip_serializing_if = "Option::is_none")]
-    pub ends_at: Option<u64>,
-}
-
 /// `oneiron::verbs::legal_hold::LegalHoldEraseState`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "state")]
@@ -32316,15 +32279,6 @@ pub enum LegalHoldEraseState {
         receipt_ref: Option<String>,
         #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
         reason: Option<ErasePendingReason>,
-    },
-    #[serde(rename = "retained_for_law")]
-    RetainedForLaw {
-        #[serde(rename = "bound")]
-        bound: LegalHoldBound,
-        #[serde(rename = "works_self_hosted")]
-        works_self_hosted: bool,
-        #[serde(rename = "self_hosted_note")]
-        self_hosted_note: String,
     },
     #[serde(rename = "failed")]
     Failed {
@@ -42654,6 +42608,15 @@ pub struct OriginPublishRefusal {
     pub detail: Option<String>,
 }
 
+/// `oneiron_model::llm::backend::BrokerIsolation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum BrokerIsolation {
+    #[serde(rename = "separate_user")]
+    SeparateUser,
+    #[serde(rename = "same_user")]
+    SameUser,
+}
+
 /// `oneiron::origin::publish::types::OriginPublishRequestView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OriginPublishRequestView {
@@ -42711,6 +42674,12 @@ pub struct OriginPublishRequestView {
         skip_serializing_if = "Option::is_none"
     )]
     pub finished_at: Option<u64>,
+    #[serde(
+        rename = "broker_isolation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub broker_isolation: Option<BrokerIsolation>,
 }
 
 /// `oneiron_store::origin::publish::inputs::OriginPublishReviewRequest`.
@@ -57768,6 +57737,43 @@ pub enum LegalHoldState {
     UseRestricted,
 }
 
+/// `oneiron_contracts::error::legal_hold::LegalHoldBoundKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum LegalHoldBoundKind {
+    #[serde(rename = "law")]
+    Law,
+}
+
+/// `oneiron_contracts::error::legal_hold::LegalHoldBound`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LegalHoldBound {
+    #[serde(rename = "kind")]
+    pub kind: LegalHoldBoundKind,
+    #[serde(rename = "order_ref", default, skip_serializing_if = "Option::is_none")]
+    pub order_ref: Option<String>,
+    #[serde(
+        rename = "legal_basis_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub legal_basis_ref: Option<String>,
+    #[serde(
+        rename = "jurisdiction",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub jurisdiction: Option<String>,
+    #[serde(
+        rename = "issuing_authority_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub issuing_authority_ref: Option<String>,
+    #[serde(rename = "ends_at", default, skip_serializing_if = "Option::is_none")]
+    pub ends_at: Option<u64>,
+}
+
 /// `oneiron_contracts::error::legal_hold::LegalHoldNotice`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -58742,14 +58748,26 @@ pub struct CalendarIcsImportReceipt {
     pub screen_verdict: String,
 }
 
-/// `oneiron::calendar::query::window::CalendarOccurrencesRequest`.
+/// `oneiron::calendar::query::pages::CalendarOccurrencesPageRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
-pub struct CalendarOccurrencesRequest {
+pub struct CalendarOccurrencesPageRequest {
     #[serde(rename = "master_ref")]
     pub master_ref: String,
     #[serde(rename = "range")]
     pub range: CalendarRangeDto,
+    #[serde(
+        rename = "deadline_ms",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub deadline_ms: Option<u64>,
+    #[serde(
+        rename = "resume_from",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub resume_from: Option<u64>,
 }
 
 /// `oneiron::calendar::query::window::CalendarOccurrenceView`.
@@ -58769,11 +58787,26 @@ pub struct CalendarOccurrenceView {
     pub end_utc: u64,
 }
 
-/// `oneiron_store::ports::read_result::ScopedReadResult` with `T` = `CalendarOccurrenceViewList`.
+/// `oneiron::calendar::query::pages::CalendarOccurrencesPage`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct ScopedReadResultCalendarOccurrenceViewList {
+pub struct CalendarOccurrencesPage {
+    #[serde(rename = "occurrences")]
+    pub occurrences: Vec<CalendarOccurrenceView>,
+    #[serde(rename = "complete")]
+    pub complete: bool,
+    #[serde(
+        rename = "resume_from",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub resume_from: Option<u64>,
+}
+
+/// `oneiron_store::ports::read_result::ScopedReadResult` with `T` = `CalendarOccurrencesPage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultCalendarOccurrencesPage {
     #[serde(rename = "value")]
-    pub value: Vec<CalendarOccurrenceView>,
+    pub value: CalendarOccurrencesPage,
     #[serde(rename = "narrowing")]
     pub narrowing: ScopedReadReceipt,
 }
@@ -58842,10 +58875,10 @@ pub struct CalendarSel {
     pub system: Option<String>,
 }
 
-/// `oneiron::calendar::query::requests::CalendarSearchRequest`.
+/// `oneiron::calendar::query::pages::CalendarSearchPageRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
-pub struct CalendarSearchRequest {
+pub struct CalendarSearchPageRequest {
     #[serde(rename = "calendars")]
     pub calendars: Vec<CalendarSel>,
     #[serde(rename = "range", default, skip_serializing_if = "Option::is_none")]
@@ -58854,25 +58887,64 @@ pub struct CalendarSearchRequest {
     pub text: Option<String>,
     #[serde(rename = "limit")]
     pub limit: u32,
+    #[serde(
+        rename = "deadline_ms",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub deadline_ms: Option<u64>,
+    #[serde(
+        rename = "resume_from",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub resume_from: Option<u64>,
 }
 
-/// `oneiron_store::ports::read_result::ScopedReadResult` with `T` = `CalendarEventViewList`.
+/// `oneiron::calendar::query::pages::CalendarSearchPage`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct ScopedReadResultCalendarEventViewList {
+pub struct CalendarSearchPage {
+    #[serde(rename = "events")]
+    pub events: Vec<CalendarEventView>,
+    #[serde(rename = "complete")]
+    pub complete: bool,
+    #[serde(
+        rename = "resume_from",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub resume_from: Option<u64>,
+}
+
+/// `oneiron_store::ports::read_result::ScopedReadResult` with `T` = `CalendarSearchPage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultCalendarSearchPage {
     #[serde(rename = "value")]
-    pub value: Vec<CalendarEventView>,
+    pub value: CalendarSearchPage,
     #[serde(rename = "narrowing")]
     pub narrowing: ScopedReadReceipt,
 }
 
-/// `oneiron::verbs::calendar::CalendarFreebusyRequest`.
+/// `oneiron::calendar::query::pages::CalendarFreebusyPageRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
-pub struct CalendarFreebusyRequest {
+pub struct CalendarFreebusyPageRequest {
     #[serde(rename = "calendars")]
     pub calendars: Vec<CalendarSel>,
     #[serde(rename = "range")]
     pub range: CalendarRangeDto,
+    #[serde(
+        rename = "deadline_ms",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub deadline_ms: Option<u64>,
+    #[serde(
+        rename = "resume_from",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub resume_from: Option<u64>,
 }
 
 /// `oneiron::memory::outbound::calendar::CalendarFreebusyIntervalDto`.
@@ -58884,11 +58956,26 @@ pub struct CalendarFreebusyIntervalDto {
     pub end_utc: u64,
 }
 
-/// `oneiron_store::ports::read_result::ScopedReadResult` with `T` = `CalendarFreebusyDto`.
+/// `oneiron::calendar::query::pages::CalendarFreebusyPage`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct ScopedReadResultCalendarFreebusyDto {
+pub struct CalendarFreebusyPage {
+    #[serde(rename = "intervals")]
+    pub intervals: Vec<CalendarFreebusyIntervalDto>,
+    #[serde(rename = "complete")]
+    pub complete: bool,
+    #[serde(
+        rename = "resume_from",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub resume_from: Option<u64>,
+}
+
+/// `oneiron_store::ports::read_result::ScopedReadResult` with `T` = `CalendarFreebusyPage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultCalendarFreebusyPage {
     #[serde(rename = "value")]
-    pub value: Vec<CalendarFreebusyIntervalDto>,
+    pub value: CalendarFreebusyPage,
     #[serde(rename = "narrowing")]
     pub narrowing: ScopedReadReceipt,
 }
