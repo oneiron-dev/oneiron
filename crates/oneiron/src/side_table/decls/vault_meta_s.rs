@@ -720,6 +720,12 @@ side_tables! {
     /// 12559). An actor's scrub takes it out of every policy and event. Key: id16(policy).
     SOURCE_AUDIENCE_POLICY: VaultMeta b"source_audience:policy:v1:" Named
         => crate::source_audience::erase_actor_in_txn;
+    /// A changed source audience's pending wake of the windows it rides (fix list row 17203):
+    /// its generation and the last window the live mirror's drain took. Key: id16(policy).
+    SOURCE_AUDIENCE_POLICY_WAKE: VaultMeta b"source_audience:policy_wake:v1:" Named;
+    /// A window that carries a source audience policy, as its last export or persist found it
+    /// (fix list row 17203): the window's label. Key: id16(policy) + blake3 (32) of the label.
+    SOURCE_AUDIENCE_POLICY_WINDOW: VaultMeta b"source_audience:policy_window:v1:" Named;
     /// The source audience a row was born under; it never moves (FIX 12559). Key: id16(row).
     SOURCE_AUDIENCE_RECORD: VaultMeta b"source_audience:record:v1:" Named;
     /// One source thread's audience policy (FIX 12559). Key: id16(source policy) + blake3 (32)
