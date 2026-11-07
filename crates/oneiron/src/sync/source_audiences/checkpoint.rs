@@ -35,10 +35,12 @@ pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
         Ok(Carrier::Event { .. }) => {
             Placement::unclassified(None, SyncUnclassified::ActorSplit(RECEIPT_ACTORS))
         }
-        Ok(Carrier::Withheld { row, .. }) => Placement::unclassified(
-            Some(OwnerRef::entity(&row)),
-            SyncUnclassified::ActorSplit(MARKER_UNSPLIT),
-        ),
+        Ok(Carrier::Withheld { row, .. } | Carrier::Derived { row, .. }) => {
+            Placement::unclassified(
+                Some(OwnerRef::entity(&row)),
+                SyncUnclassified::ActorSplit(MARKER_UNSPLIT),
+            )
+        }
         Err(_) => Placement::unclassified(None, SyncUnclassified::Undecodable),
     }
 }

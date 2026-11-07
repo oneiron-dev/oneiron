@@ -1,6 +1,6 @@
 //! Full-window UPDATE locality admission without live document side effects.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use loro::json::{JsonOpContent, MapOp};
 use loro::{ContainerID, ContainerType, LoroDoc, LoroValue};
@@ -133,6 +133,11 @@ fn validate_window_update(
     {
         crate::sync::window::require_history_free_window(vault, key)?;
     }
+    // Every policy set a derived row's carriers name in any part of the
+    // update binds the row before the update lands (fix list row 17207).
+    if let Some(vault) = vault {
+        crate::sync::source_audiences::stage_derived_floors(vault, &admitted.derived_floors)?;
+    }
     Ok(())
 }
 
@@ -143,6 +148,9 @@ struct AdmittedWrites {
     /// A source-audience carrier in the update names an actor erased here
     /// (fix list row 17238), so its window is pinned history-free.
     history_free: bool,
+    /// The policies a derived row's carriers name, by row (fix list row
+    /// 17207).
+    derived_floors: BTreeMap<EntityId, BTreeSet<EntityId>>,
 }
 
 /// Every refusal of [`validate_window_update`]; returns what the caller
@@ -252,9 +260,14 @@ fn check_window_update(
     if metadata.mode.is_snapshot() {
         let mut refused = None;
         let mut misplaced = false;
-        map_for_each_value_bytes(&candidate.get_map("entities"), |_, blob| {
+        map_for_each_value_bytes(&candidate.get_map("entities"), |raw, blob| {
             if refused.is_none() {
                 refused = blob.and_then(carrier_refusal);
+            }
+            // Fix list row 16256: what each live row says of its
+            // source-audience obligation.
+            if let Some(blob) = blob {
+                audiences.note_row(raw, blob);
             }
             misplaced |= key.is_some_and(|key| {
                 blob.is_none_or(|blob| {
@@ -348,9 +361,13 @@ fn check_window_update(
             let root = root_as_latest_state(update, sections).ok_or_else(corrupt)?;
             let root = LoroDoc::from_snapshot(&root).map_err(decode_error)?;
             let mut at_root = None;
-            map_for_each_value_bytes(&root.get_map("entities"), |_, blob| {
+            map_for_each_value_bytes(&root.get_map("entities"), |raw, blob| {
                 if at_root.is_none() {
                     at_root = blob.and_then(carrier_refusal);
+                }
+                // Fix list row 16256: and each root row's.
+                if let Some(blob) = blob {
+                    audiences.note_row(raw, blob);
                 }
             });
             if let Some(error) = at_root {
@@ -550,6 +567,8 @@ fn check_window_update(
                     if let Some(error) = carrier_refusal(&blob) {
                         return Err(error);
                     }
+                    // Fix list row 16256: and each retained insert's.
+                    audiences.note_row(&map_key, &blob);
                     // FIX 5850: a fault reading the shell's history is the
                     // server's, returned as one, never read as "outside".
                     if let Some(key) = key
@@ -594,9 +613,14 @@ fn check_window_update(
             }
         }
     }
+    // Fix list row 16256: a row any version of which, or whose held row or
+    // binding, states the source-audience obligation refuses every version
+    // that drops or changes it, wherever it comes in the range.
+    audiences.refuse_dropped_obligations(vault, doc)?;
     Ok(AdmittedWrites {
         cutoffs,
         history_free: audiences.names_erased(),
+        derived_floors: audiences.into_derived_floors(),
     })
 }
 
@@ -743,7 +767,7 @@ fn snapshot_sections(snapshot: &[u8]) -> Option<[&[u8]; 3]> {
 /// (FIX 10165). A full snapshot can keep a root as well as a shallow one.
 /// `None` when the bytes are no fast snapshot whose state sections read one
 /// way, or the root does not load; `Some(None)` when it encodes no root.
-pub(super) fn encoded_root_state(snapshot: &[u8]) -> Option<Option<LoroDoc>> {
+pub(in crate::sync) fn encoded_root_state(snapshot: &[u8]) -> Option<Option<LoroDoc>> {
     let sections = snapshot_sections(snapshot)?;
     let [_, latest, root] = sections;
     if !(latest == EMPTY_STATE || state_section_is_canonical(latest))
