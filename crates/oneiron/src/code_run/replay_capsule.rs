@@ -36,11 +36,14 @@
 //! Each body a capsule names is written as the side-row wall admits it, each
 //! secret in it its custody handle, and the capsule names the actor whose
 //! step it was, so an erase of that actor releases them (FIX 6144, KEY STORE
-//! = A; `storage::replay_capsule`). Staged captures are kept and measured,
-//! never capped (FIX 6143). A request the wall refuses outright (a recovery
-//! phrase, a key split over members, an opaque codec) is withheld: no copy
-//! of it is kept, and the capsule keeps the step's start when that admits,
-//! so a continuation still forks from it (FIX 6254, [`CapsuleRequest`]).
+//! = A; `storage::replay_capsule`). The request is kept as pieces: each
+//! message and the rest of the request are held once per run and actor,
+//! and the capsule's own body is the manifest that names them (FIX 4192).
+//! Staged captures are kept and measured, never capped (FIX 6143). A
+//! request the wall refuses outright (a recovery phrase, a key split over
+//! members, an opaque codec) is withheld: no copy of it is kept, and the
+//! capsule keeps the step's start when that admits, so a continuation still
+//! forks from it (FIX 6254, [`CapsuleRequest`]).
 //!
 //! The answering rung also names the route it went out on
 //! ([`note_answering_route_pin`], PR-S1): its route, offer, catalog
@@ -140,6 +143,8 @@ pub(crate) struct CapsuleDraft<'a> {
     pub(crate) actor: EntityId,
     /// The request's canonical bytes as sent.
     pub(crate) request: Vec<u8>,
+    /// Where the run keeps the capsule's own request body: the manifest of
+    /// the request's shared pieces (FIX 4192).
     pub(crate) request_path: String,
     pub(crate) start_path: String,
     pub(crate) messages_digest: [u8; 32],
@@ -547,7 +552,7 @@ fn stage(vault: &Vault, capture: &StepCapture<'_>) -> Result<Option<Awaiting>> {
         attempt: EntityId::from_bytes(*capture.attempt.as_bytes())?,
         actor: capsule_actor(capture.actor),
         request_path: format!(
-            "replay/capsule/{}/{:06}.request.json",
+            "replay/capsule/{}/{:06}.request.msgpack",
             capture.lease_generation, capture.step
         ),
         start_path: format!(
