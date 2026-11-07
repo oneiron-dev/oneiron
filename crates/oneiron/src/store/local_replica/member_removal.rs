@@ -34,7 +34,9 @@ use crate::temporal::TimeRange;
 /// Unattached comments keep of their spots, an ASSET's hold on
 /// the blob it names, a CLAIM's Gate decisions (left as their retention
 /// skeletons) and pending Gate tray row, the bodies each one owns (a last
-/// holder's file goes to the local collector) and its fetched read caches.
+/// holder's file goes to the local collector) and its fetched read caches;
+/// a TASK's report journal entries, lifecycle receipts and mirror events
+/// lose their words and stay identifier-only history, its mirror link kept.
 /// Local only: no receipt, marker, fence or operation. Custody and other
 /// lifecycle sidecars stay for now.
 pub(super) fn discard_owned_payload(
@@ -46,6 +48,7 @@ pub(super) fn discard_owned_payload(
     let mut claims = BTreeSet::new();
     let mut artifacts = Vec::new();
     let mut assets = Vec::new();
+    let mut tasks = Vec::new();
     for id in ids {
         let kind = store
             .port_entity_raw(txn, id)?
@@ -59,6 +62,7 @@ pub(super) fn discard_owned_payload(
             }
             Some(registry::ENTITY_TYPE_BLOB_ARTIFACT) => artifacts.push(*id),
             Some(registry::ENTITY_TYPE_ASSET) => assets.push(*id),
+            Some(registry::ENTITY_TYPE_TASK) => tasks.push(*id),
             _ => {}
         }
     }
@@ -98,6 +102,13 @@ pub(super) fn discard_owned_payload(
     store.discard_claim_gate_payload_in_txn(txn, &claims, store.clock.now_recorded_at())?;
     for claim in &claims {
         store.discard_pending_gate_consent_in_txn(txn, claim)?;
+    }
+    // A TASK's report journal, lifecycle receipts and mirror events stay
+    // identifier-only history, rewritten in place; its mirror link stays.
+    for task in &tasks {
+        crate::task_verb::discard_report_journal_payload_in_txn(store, txn, task)?;
+        crate::task_verb::discard_lifecycle_receipt_payload_in_txn(store, txn, task)?;
+        crate::linear_sync::discard_task_event_payload_in_txn(store, txn, *task)?;
     }
     crate::sync::residence::erase_item_caches_in_txn(store, txn, ids)
 }

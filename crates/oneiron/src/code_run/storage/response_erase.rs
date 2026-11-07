@@ -39,6 +39,7 @@ use super::response_owners::{
 use super::spawn_erase::fence_spawn_targets_in_txn;
 use super::wait_holders::{erase_actor_wait_holds_in_txn, wait_holder_runs_in_txn};
 use crate::engine_executor::holds_reply_content;
+use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::provenance::body::{
     owned_bodies_in_txn, owned_body_in_txn, release_body_in_txn, release_owner_bodies_in_txn,
 };
@@ -192,6 +193,7 @@ pub(crate) fn retire_actor_responses_in_txn(
     for (record_id, run) in actor_records_in_txn(store, wtxn, actor, &runs)? {
         if let Some(record) = REPLAY_RECORDS.get_lenient(store, wtxn, &record_id)? {
             held.extend(reply_occurrences(&record));
+            release_unpublished_outputs_in_txn(store, wtxn, record.run_id)?;
         } else if unreadable_record_in_txn(store, wtxn, &record_id)? {
             // Its bodies are held by its owner row's run (a decoded
             // record's `run_id`), which need not be the replay key.
@@ -297,6 +299,7 @@ fn release_reply_outputs_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     record: &CodeRunReplayRecord,
 ) -> Result<()> {
+    release_unpublished_outputs_in_txn(store, wtxn, record.run_id)?;
     for (owner, path, handle) in reply_occurrences(record) {
         release_occurrence_in_txn(store, wtxn, owner, path, handle)?;
     }
@@ -385,12 +388,20 @@ pub(crate) fn retire_sourced_code_outputs_in_txn(
 
 /// A later replay write cannot republish a retired occurrence's preview or
 /// hold. The marker belongs to the occurrence, not its shared content hash.
+///
+/// FIX 9348: an occurrence can be captured after a source in its frozen
+/// input rows took the hard-delete marker. That erase's writer never saw
+/// it, so it has no stale mark yet. Here it gets that mark, and it retires on the same
+/// path as an occurrence the erase did see. Other outputs, and other
+/// holders of the same bytes, are unchanged.
 fn fence_sourced_outputs_in_txn<'r>(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     mut record: Cow<'r, CodeRunReplayRecord>,
 ) -> Result<Cow<'r, CodeRunReplayRecord>> {
     let mut withdrawn = Vec::new();
+    let mut late = Vec::new();
+    let mut sources = BTreeMap::new();
     for (index, output) in record.outputs.iter().enumerate() {
         let occurrence = ResultOccurrence::owned(record.run_id, &output.path)?;
         if !crate::ports::body_readable_in_txn(
@@ -401,10 +412,19 @@ fn fence_sourced_outputs_in_txn<'r>(
             crate::ports::BodyStale::Withdrawn,
         )? {
             withdrawn.push(index);
+        } else if source_hard_delete_marked_in_txn(store, wtxn, output, &mut sources)? {
+            late.push(occurrence.id());
+            withdrawn.push(index);
         }
     }
     if withdrawn.is_empty() {
         return Ok(record);
+    }
+    if !late.is_empty() {
+        let at = crate::ports::recorded_at_in_txn(store, wtxn)?;
+        for occurrence in &late {
+            crate::ports::stage_stale_mark_in_txn(store, wtxn, occurrence, at)?;
+        }
     }
     let record_mut = record.to_mut();
     let mut released: BTreeMap<EntityId, BTreeSet<[u8; 32]>> = BTreeMap::new();
@@ -428,6 +448,35 @@ fn fence_sourced_outputs_in_txn<'r>(
     Ok(record)
 }
 
+/// Whether a row in `output`'s frozen input rows carries the native
+/// hard-delete marker (FIX 9348). Only that marker counts, and only its
+/// presence is read. It marks the hard delete, not that every purge step
+/// has finished. A soft delete, a missing row and a pending erasure
+/// prove nothing; the pending erasure meets this output in its own writer.
+/// Unknown input rows name no source. `sources` keeps each row's answer
+/// for the rest of the record.
+fn source_hard_delete_marked_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    output: &CodeRunRawOutput,
+    sources: &mut BTreeMap<EntityId, bool>,
+) -> Result<bool> {
+    for row in output.input_rows.iter().flatten() {
+        let erased = match sources.get(row) {
+            Some(&erased) => erased,
+            None => {
+                let erased = store.port_deletion_marked(txn, DeletionMarker::HardDelete, row)?;
+                sources.insert(*row, erased);
+                erased
+            }
+        };
+        if erased {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn retire_released_outputs_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -436,6 +485,23 @@ fn retire_released_outputs_in_txn(
     for (owner, digests) in released {
         let digests: Vec<_> = digests.into_iter().collect();
         crate::store::erase_bodies_in_txn(store, wtxn, &owner, &digests)?;
+    }
+    Ok(())
+}
+
+/// Removes byte-free, unpublished occurrences when the run's replies are erased.
+fn release_unpublished_outputs_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    owner: EntityId,
+) -> Result<()> {
+    for body in crate::provenance::body::owned_bodies_in_txn(store, wtxn, &owner)? {
+        if matches!(
+            body.state,
+            crate::store::body_descriptor::BodyState::Incomplete { retained: None }
+        ) {
+            release_body_in_txn(store, wtxn, &owner, &body.occurrence)?;
+        }
     }
     Ok(())
 }
