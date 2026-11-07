@@ -31,6 +31,13 @@ interface PrivacyFixtures {
       refusalReason: "held_record";
       confirmEvent: "lift_and_erase_confirmed";
       unprivilegedLiftStatus: 403;
+      // Final completion via vault.records.erase_sweep (erase_complete_at +
+      // final_ref), not the immediate lift_and_erase state. Immediate may be
+      // erased (completed at once) or completion_pending (confirmed, sweep or
+      // custody still retiring). verbs/legal_hold.rs LegalHoldEraseState.
+      // Read via catalog.readJson("privacy-scenarios") ->
+      // tests/e2e/fixtures/privacy/scenarios.json (manifest map), not a
+      // guessed filename. JSON value "erased" is the completed state.
       ownerEraseState: "erased";
     };
   };
@@ -114,7 +121,9 @@ async function eraseRecord(client: PublicHttpClient, record: string): Promise<De
   expect(outcome.first_act ?? null).toBeNull(); // Personal vault: no shared-owner veto.
   expect(outcome.same_bytes).toEqual([]); // Same-bytes fan-out was not requested.
   expect(outcome.first.existed).toBe(true);
-  expect(outcome.first.reason).toBe("user_hard_delete");
+  // The owner erase_confirm door records OwnerErase (byte 6, rendered
+  // owner_erase), distinct from an ordinary restorable user_hard_delete.
+  expect(outcome.first.reason).toBe("owner_erase");
   return outcome.first;
 }
 
@@ -617,6 +626,51 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
         confidence: 0.95, evidence_refs: [{ source: "T1", quote: spec.sourceText }] }],
     }), { inputTokens: 128, outputTokens: 96 }),
   }, {
+    // G6 exact source contract (FIX21902 closure, Engine 12:03). P02 authors
+    // one TURN via a single vault.witness with one visible text message
+    // (sourceText); ownerRoom/claims/summaries create no TURNs. sourceText =
+    // "privacyeraseaurelium: Mira keeps the cobalt notebook at the north
+    // observatory." Sieve over it (RULES_VERSION 1, no saved oneiroNER tags
+    // in a fresh vault): leading marker lowercase so no capitalized run;
+    // ':' never opens a sentence (words.rs:90-92 opens_next only .!? newline
+    // and JP); "Mira" is the sole capitalized non-stop word (words.rs:17-70
+    // NOT_NAMES, 222-229 capitalized), mid-sentence (opens false) so
+    // RuleClass::Name (words.rs:268-272), not InitialName; no numbers/months
+    // /weekdays/phrases so no Absolute/Relative/VagueDate; no katakana
+    // U+30A1-30FA runs (words.rs:283-317); no backticks/fences so no code
+    // exclusion. Exactly one RuleSpan. read.rs:273-287 maps non-date
+    // RuleClass without saved tags to SpanKind::Name (snake_case date|name,
+    // sieve/mod.rs); policy sieve_policy_defaults.json gives name_confidence
+    // 70, uncertain [35,75), so band Uncertain, owed [Novelty, Typing]
+    // (read.rs:371-374), score 7000. Caller is the batched follower on the
+    // extraction route, not a per-span novelty rung: follower_enabled
+    // defaults true (recipe_policy_defaults.json); follower_attempt/mod.rs:
+    // 165-172 resolves DREAMER_EXTRACTION_ROLE (roles.rs:30
+    // ExtractionTeacher) and factory.rs:492-507 lends that model's window;
+    // narrative DreamerCurrent stays separate (factory.rs:480-487,
+    // roles.rs:34). dreamerConfig binds extraction_teacher to
+    // privacy:privacy-extract (origin extraction) and dreamer_current to
+    // summary:privacy-summary (origin summary), so origin extraction + role
+    // extraction_teacher + model privacy-extract is exact; no remap. Suffix
+    // numbers owed readable spans from 1 (request.rs:70-76 span index+1), so
+    // the real question asks exactly span 1. WireReadings
+    // (follower_attempt/output.rs:18-35 deny_unknown_fields) requires exactly
+    // one reading per asked span in order; decode rejects omissions, repeats,
+    // unknown spans, out-of-candidate entities and confidence>100 (:40-81).
+    // Response readings [{span:1,kind:"name",novel:true,confidence:50}] is
+    // lawful: span exists, kind matches Name, novel true = new info worth
+    // retaining (follower_instruction), confidence 50 in 0..100, entity
+    // omitted (optional; P-labels runtime-assigned per request.rs:49-59,
+    // inventing one would be speculative). Strict errors preserved; observed
+    // second failed send is the same digest retried (durable step), not two
+    // independent responses. No source contract changed.
+    id: "source-follower", origin: "extraction", role: "extraction_teacher",
+    purpose: "consolidation follower span readings",
+    request: { method: "POST", path: "/v1/chat/completions", model: "privacy-extract" },
+    response: openaiText("source-follower", "privacy-extract", JSON.stringify({
+      readings: [{ span: 1, kind: "name", novel: true, confidence: 50 }],
+    }), { inputTokens: 128, outputTokens: 32 }),
+  }, {
     id: "source-summary", origin: "summary", role: "dreamer_current", purpose: "summarize declared source",
     request: { method: "POST", path: "/v1/chat/completions", model: "privacy-summary" },
     response: openaiText("source-summary", "privacy-summary", JSON.stringify({ text: spec.summaryText, keep: "" }),
@@ -956,7 +1010,21 @@ suite.test(test, "PRIVACY-05", "Legal hold narrows delete should work", async ()
     expect(erased.holds).toContain(hold.hold_id);
     expect(erased.records).toHaveLength(1);
     expect(erased.records[0]?.record).toBe(record.id_hex);
-    expect(erased.records[0]?.status.state).toBe(spec.expected.ownerEraseState);
+    // Confirmation is not completion (G5 FIX21902 closure): immediate may be
+    // erased (completed at once, fixture ownerEraseState via
+    // readJson("privacy-scenarios")) or completion_pending (confirmed, sweep
+    // or custody still retiring). Typed in verbs/legal_hold.rs:63-82;
+    // pending reasons exhaustive in deletion/legal_hold/types.rs:295-306.
+    // Accept confirmed, fail fast on failed, then observe final completion
+    // through erase_sweep. 10s poll + instant asserts below unchanged.
+    const status = erased.records[0]!.status;
+    if (status.state === "failed") throw new Error(`Owner confirm failed: ${status.message}`);
+    expect(status.state === spec.expected.ownerEraseState || status.state === "completion_pending").toBe(true);
+    if (status.state === "completion_pending" && status.reason != null) {
+      expect(["historical_sweep", "custody_retirement", "veto_window"]).toContain(status.reason);
+    }
+    const receiptRef = status.receipt_ref;
+    if (!receiptRef) throw new Error("Confirmed erase has no redaction receipt");
     expect((await engine.client.call("vault.get", { entity_ref: record.id_hex })).value).toBeNull();
     await expectBlobGone(engine.client, record.id_hex, 1);
     const after = await engine.client.call("vault.legal_holds.log", {});
@@ -967,9 +1035,16 @@ suite.test(test, "PRIVACY-05", "Legal hold narrows delete should work", async ()
     const lifted = (await engine.client.call("vault.legal_holds.list", {}))
       .find(row => row.hold_id === hold.hold_id);
     expect(lifted?.lifted_at).toBeGreaterThanOrEqual(hold.placed_at);
-    const status = erased.records[0]!.status;
-    if (status.state !== "erased") throw new Error("Owner confirm did not erase the held record");
-    await readAudit(engine.client, status.receipt_ref, record.id_hex,
+    const sweep = await awaitPublic(
+      () => engine.client.call("vault.records.erase_sweep", { receipt_ref: receiptRef }),
+      value => value != null && value.erase_complete_at != null && value.final_ref != null,
+      { label: "held-record erase completion" },
+    );
+    if (!sweep || sweep.erase_complete_at == null || sweep.final_ref == null) {
+      throw new Error("Held-record erase did not reach final completion");
+    }
+    expect(sweep.custody?.pending ?? []).toEqual([]);
+    await readAudit(engine.client, receiptRef, record.id_hex,
       [spec.name, new TextDecoder().decode(bytes)]);
   } catch (error) {
     primaryFailed = true;

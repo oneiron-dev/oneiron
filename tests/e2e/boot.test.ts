@@ -315,8 +315,13 @@ suite.test(test, "BOOT-04", "Native addon memory persistence should work", async
   const row = claimReceipt(sdkValue<Facade.VaultReceiptsPage>(reopened, 1).receipts, committed);
   expect(row.actor_class).toBe("human");
   expect(row.actor_ref).toMatch(/^[0-9a-f]{32}$/);
-  expect(row.actor_ref).not.toBe(engine.pairedActor.principalRef);
-  expect((await engine.client.call("vault.recall", { query: journey.marker, effort: "light" })).items).toEqual([]);
+  // The embedded owner PERSON id is pinned (identical in every embedded vault),
+  // so cross-vault principal inequality is never asserted; isolation is proven
+  // by the foreign-claim/marker absence below plus the receipt checks above.
+  const serverRecall = await engine.client.call("vault.recall", { query: journey.marker, effort: "light" });
+  expect(serverRecall.items.some(item => item.short_id === committed.claim_short_id)).toBe(false);
+  expect(serverRecall.items.some(item => item.value_text.includes(journey.marker))).toBe(false);
+  expect(serverRecall.items.some(item => item.value_text.includes(journey.value.seat))).toBe(false);
 });
 
 suite.test(test, "BOOT-05", "CLI memory access should work", async () => {
@@ -365,7 +370,13 @@ suite.test(test, "BOOT-05", "CLI memory access should work", async () => {
   expect(error.error.message.length).toBeGreaterThan(0);
   expect(error.error.suggestions.length).toBeGreaterThan(0);
   expect((await engine.client.call("vault.get", { entity_ref: data.deniedMessageId })).value).toBeNull();
-  expect((await engine.client.call("vault.recall", { query: data.deniedText, effort: "light" })).items).toEqual([]);
+  // Owner recall is ranked, not an exact-match negative lookup: unrelated
+  // authorized rows may appear. What must hold is that the denied record
+  // itself (ids and text) is absent.
+  const deniedRecall = await engine.client.call("vault.recall", { query: data.deniedText, effort: "light" });
+  expect(JSON.stringify(deniedRecall.items)).not.toContain(data.deniedMessageId);
+  expect(JSON.stringify(deniedRecall.items)).not.toContain(data.deniedTurnId);
+  expect(deniedRecall.items.some(item => item.value_text.includes(data.deniedText))).toBe(false);
 });
 
 // Canon: ARCH-0044 #part-a and ARCH-0040 #mcp-actor-ceilings, OF-205/246/223.
@@ -437,7 +448,10 @@ suite.test(test, "BOOT-07", "MCP tool-first operator registration should work", 
   const unapproved = await engine.client.call("vault.recall", {
     query: journey.marker, effort: "light", scope: { kinds: ["CLAIM"] },
   });
-  expect(unapproved.items).toEqual([]);
+  // Ranked owner recall may return unrelated authorized CLAIMs; the proposed
+  // (unapproved) journey claim and its marker must be absent.
+  expect(unapproved.items.some(item => item.short_id === proposed.output.claim_short_id)).toBe(false);
+  expect(unapproved.items.some(item => item.value_text.includes(journey.marker))).toBe(false);
   mcpRefusal(await reader!.mcp.rpc("tools/call", { name: "vault.claims.upsert",
     arguments: toolArguments(tools, "vault.claims.upsert", { arguments: { spec: proposal } }),
   }), "mcp_auth_required");
@@ -506,7 +520,9 @@ suite.test(test, "BOOT-08", "Vault and client isolation should work", async () =
   // not EngineFixture sync peers; both processes stay inside that slot's containment budget.
   const a = await EngineFixture.start({ id: "BOOT-08-a", profile });
   const b = await EngineFixture.start({ id: "BOOT-08-b", profile });
-  expect(a.pairedActor.principalRef).not.toBe(b.pairedActor.principalRef);
+  // Both vaults pin the same embedded owner PERSON id by canon, so principal
+  // inequality is never asserted; isolation is proven by the cross-vault
+  // recall/receipt/get/401 checks below.
   redactor.add(a.pairedActor.credential, b.pairedActor.credential);
   const processResult = await runProcess([
     requireAsset(a.build, "node"), "--input-type=module", "-e", ISOLATION_CLIENTS,

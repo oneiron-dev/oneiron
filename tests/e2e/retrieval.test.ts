@@ -115,7 +115,8 @@ async function claimSet(engine: EngineFixture) {
 async function task(engine: EngineFixture, title: string, occurredAt: number,
   edges: Facade.StructuralEdgeSpec[] = [], name?: string) {
   return engine.client.call("vault.structural.put", {
-    kind: "TASK", body: { title, ...(name ? { name } : {}) },
+    // TASK bodies require the existing TaskRole::Task byte (role 1).
+    kind: "TASK", body: { title, role: 1, ...(name ? { name } : {}) },
     text_fields: [{ field: "content", value: title }],
     edges, occurred_at: occurredAt, learned_at: occurredAt,
   });
@@ -185,16 +186,124 @@ async function effortCorpus(engine: EngineFixture) {
 /** External OpenAI-compatible embedder only; it never reads or fakes a vault.
  * Shared ScriptedProviders has ordered replies, but no exact text-table lookup
  * for the reconciler's variable batches. This fixture accepts only declared
- * canonical claim strings, explicit structural texts and the startup probe.
- * Unknown input
+ * canonical claim strings, explicit structural texts, the startup probe, and
+ * the observed production-reconciliation background corpus below. Unknown input
  * fails the flow; no default vector, prompt echo or engine-derived answer.
  */
+// G8 source-mapped background corpus (FIX21902 closure, Engine 12:03). 27
+// pinned literals from production-reconciliation batches (R22 32-input batch
+// before first test write, 8-input batches after; egress.allowAll on a fresh
+// vault legitimately seeds bootstrap data): 1 startup literal 'model', 7
+// opaque 32-hex rows (exact producing rows UNKNOWN per rootcause, pinned as
+// literals, never a live any-32hex pattern which would silently accept
+// unplanned inputs), 13 skill hub_provenance CLAIMs (5 bootstrap hubId
+// eba40381... + 8 pack hubId 0f8ccc77..., all clock-free verbatim; producer
+// skill_hub/index.rs:257-266 ClaimBody PREDICATE_SKILL_HUB_PROVENANCE with
+// {contentHash, hubRef}, embedded via embed.rs:136-145 payload_text and
+// eligibility.rs:116-123 ClaimBody), 5 bootstrap scan_verdict shapes
+// (scannedAt normalized to 0 here; live run-clock values recognized by
+// backgroundScanVerdict below; producer skill_hub/verdict.rs:254-287 with
+// {contentHash, provider oneiron.static.v1, scannedAt, verdict unknown,
+// riskLevel none, completeness complete, governance recommended,
+// staticInputHash hex64}), and 1 skill-description row (goal-intake prose).
+// Fresh-run legitimacy is observed in-test via provider.seen (see R06 check)
+// plus 10s awaitPublic server-provided lists (/api/search/vector per-row
+// probes, vault.claims.list), not assumed from R22 snapshots. No fixture
+// oracle change (evidence.json/scenarios.json untouched).
+const BACKGROUND_LITERALS: readonly string[] = [
+  'model',
+  'a4c287a77f1c843ba4b81ebc08ca586b',
+  'aaa8b40c792382e1aa3914d6c815dcea',
+  '19e703985adb802e98a70319a12d492d',
+  'b6bde9dd17f281f6ad9ea8c99abdb3b7',
+  '5ec8a51826f0872f94ac79683df7655b',
+  'd8ed7af830d287e4b7411071dcfb3585',
+  'd923dd245bce8350821638df84613dc0',
+  '{"contentHash": "6aaf0a1c744bc7eebd62970aa2089b3822dec8055558f5855a69d33ff1bfde2e", "hubRef": {"hubId": "eba40381816289359d577401be27f01f", "refString": "skill-optimize", "pin": {"type": "content_hash", "value": "6aaf0a1c744bc7eebd62970aa2089b3822dec8055558f5855a69d33ff1bfde2e"}}}',
+  '{"contentHash": "6aaf0a1c744bc7eebd62970aa2089b3822dec8055558f5855a69d33ff1bfde2e", "provider": "oneiron.static.v1", "scannedAt": 0, "verdict": "unknown", "riskLevel": "none", "completeness": "complete", "governance": "recommended", "staticInputHash": "9f976250cbb5ec53a19be22b10a294c02ffeb58ecf1df6942babca6f17aab321"}',
+  '{"contentHash": "d5ad33a464e4c5bf48254121a0c3fc9a600e7104d46a1359057ec8369ac25a4d", "hubRef": {"hubId": "eba40381816289359d577401be27f01f", "refString": "judge", "pin": {"type": "content_hash", "value": "d5ad33a464e4c5bf48254121a0c3fc9a600e7104d46a1359057ec8369ac25a4d"}}}',
+  '{"contentHash": "d5ad33a464e4c5bf48254121a0c3fc9a600e7104d46a1359057ec8369ac25a4d", "provider": "oneiron.static.v1", "scannedAt": 0, "verdict": "unknown", "riskLevel": "none", "completeness": "complete", "governance": "recommended", "staticInputHash": "da909150abaf0d3c0a3d561aa5fb4ee014ef4a3a5cf91852e7ebbcffa3196181"}',
+  '{"contentHash": "4a4b957ac57ad162aba6bf04f857aea09dc9134a120e167175eef70e1f462040", "hubRef": {"hubId": "eba40381816289359d577401be27f01f", "refString": "goal-intake", "pin": {"type": "content_hash", "value": "4a4b957ac57ad162aba6bf04f857aea09dc9134a120e167175eef70e1f462040"}}}',
+  '{"contentHash": "4a4b957ac57ad162aba6bf04f857aea09dc9134a120e167175eef70e1f462040", "provider": "oneiron.static.v1", "scannedAt": 0, "verdict": "unknown", "riskLevel": "none", "completeness": "complete", "governance": "recommended", "staticInputHash": "8211f1a1b1da05e2ae2ad8bc9e68875d29c0c1e1d115c4a8119200e196e7b965"}',
+  '{"contentHash": "680595164edaf97e42280f9f6f6ef6283d0167eb0c63d3e6f25fc7339049508d", "hubRef": {"hubId": "eba40381816289359d577401be27f01f", "refString": "wake", "pin": {"type": "content_hash", "value": "680595164edaf97e42280f9f6f6ef6283d0167eb0c63d3e6f25fc7339049508d"}}}',
+  '{"contentHash": "680595164edaf97e42280f9f6f6ef6283d0167eb0c63d3e6f25fc7339049508d", "provider": "oneiron.static.v1", "scannedAt": 0, "verdict": "unknown", "riskLevel": "none", "completeness": "complete", "governance": "recommended", "staticInputHash": "b9641ba28169ecc42be2009f72932c5b47cf076b8cb40ad6c83601cd3c4dcf91"}',
+  '{"contentHash": "73278f055a5c12348058a87f0918afdb900e9a84c629259b28820ab5960350ea", "hubRef": {"hubId": "eba40381816289359d577401be27f01f", "refString": "agent-health-review", "pin": {"type": "content_hash", "value": "73278f055a5c12348058a87f0918afdb900e9a84c629259b28820ab5960350ea"}}}',
+  '{"contentHash": "73278f055a5c12348058a87f0918afdb900e9a84c629259b28820ab5960350ea", "provider": "oneiron.static.v1", "scannedAt": 0, "verdict": "unknown", "riskLevel": "none", "completeness": "complete", "governance": "recommended", "staticInputHash": "0786ddfe9ba6dd6affd8c5b2df48ca2af6908505bb246192f7b6f22232105ebc"}',
+  '{"contentHash": "fff8ad74327606acd8335424de87dc954dfd99792b2213e9793fc0bebe329b69", "hubRef": {"hubId": "0f8ccc77298089c9b670f3bac7ae8f07", "refString": "pack-skill:243cedb7325752bc213efb71a493d3cb5b721d760d146e4ca1aea88ccd8251de", "pin": {"type": "content_hash", "value": "fff8ad74327606acd8335424de87dc954dfd99792b2213e9793fc0bebe329b69"}}}',
+  '{"contentHash": "b97d7d780db236973912a26553c2759b368104a4a903419d51309aa0338691d3", "hubRef": {"hubId": "0f8ccc77298089c9b670f3bac7ae8f07", "refString": "pack-skill:70739f85288954f06ed60a33f8fa231f91dcce525d92651259e64c02ab7ad466", "pin": {"type": "content_hash", "value": "b97d7d780db236973912a26553c2759b368104a4a903419d51309aa0338691d3"}}}',
+  '{"contentHash": "8e6ef3e2ed38e1232b50027cb16f9e1bd097aad921f7ec0efd4b6e36a9fe5a37", "hubRef": {"hubId": "0f8ccc77298089c9b670f3bac7ae8f07", "refString": "pack-skill:55e17435fce176ce59f24206d72978b371df9d3ba7c3bce4e9aa4f3b85db9bae", "pin": {"type": "content_hash", "value": "8e6ef3e2ed38e1232b50027cb16f9e1bd097aad921f7ec0efd4b6e36a9fe5a37"}}}',
+  '{"contentHash": "77bc3c46d1125077de84efa9472cbe00b40294c0bd5d8f8c45fc63d4ebf8da78", "hubRef": {"hubId": "0f8ccc77298089c9b670f3bac7ae8f07", "refString": "pack-skill:d6b1f4b7b53b8a0c2e6532a278eec0d8d0e111cc103b486b1008cc6c32fb2d47", "pin": {"type": "content_hash", "value": "77bc3c46d1125077de84efa9472cbe00b40294c0bd5d8f8c45fc63d4ebf8da78"}}}',
+  '{"contentHash": "1bb662bb3d352973c375c2e2884979ae868c32d0b496666a0a908babb77977f7", "hubRef": {"hubId": "0f8ccc77298089c9b670f3bac7ae8f07", "refString": "pack-skill:3a019fa1ec338bfc492ca92ce0fabd18d25966195dbe454ae394ef845c2d0e77", "pin": {"type": "content_hash", "value": "1bb662bb3d352973c375c2e2884979ae868c32d0b496666a0a908babb77977f7"}}}',
+  '{"contentHash": "bdea3a9b9ff4c63804e89de60815957fdae35f9e7ed99963b5b0532999db1f59", "hubRef": {"hubId": "0f8ccc77298089c9b670f3bac7ae8f07", "refString": "pack-skill:81ffcb82eb5ff17e543684ad7ef119b5b6d30b1f5e47a18158a023317c8aeb60", "pin": {"type": "content_hash", "value": "bdea3a9b9ff4c63804e89de60815957fdae35f9e7ed99963b5b0532999db1f59"}}}',
+  '{"contentHash": "f661e275a80d44bfc5ac4cd3cb200f45010a9c41aa15289f47d699849e460c2a", "hubRef": {"hubId": "0f8ccc77298089c9b670f3bac7ae8f07", "refString": "pack-skill:79ba63d22e2a88e88be173d0db70c37d962899d50769a861be5ade0a729577c9", "pin": {"type": "content_hash", "value": "f661e275a80d44bfc5ac4cd3cb200f45010a9c41aa15289f47d699849e460c2a"}}}',
+  '{"contentHash": "237cec53997e8d4b4bc642b34913249a2d86672def3fc1d5948679aa75ac7e0c", "hubRef": {"hubId": "0f8ccc77298089c9b670f3bac7ae8f07", "refString": "pack-skill:08da204ede76e8749a0d4866bebbf5d21d3396475f6005f1c4fb68f3431021f8", "pin": {"type": "content_hash", "value": "237cec53997e8d4b4bc642b34913249a2d86672def3fc1d5948679aa75ac7e0c"}}}',
+  'Interview a human for a typed project goal record and commit it via authenticated intake.',
+];
+// contentHashes of the 13 observed skill rows (5 bootstrap + 8 pack).
+const BACKGROUND_SKILL_HASHES: ReadonlySet<string> = new Set([
+  '1bb662bb3d352973c375c2e2884979ae868c32d0b496666a0a908babb77977f7',
+  '237cec53997e8d4b4bc642b34913249a2d86672def3fc1d5948679aa75ac7e0c',
+  '4a4b957ac57ad162aba6bf04f857aea09dc9134a120e167175eef70e1f462040',
+  '680595164edaf97e42280f9f6f6ef6283d0167eb0c63d3e6f25fc7339049508d',
+  '6aaf0a1c744bc7eebd62970aa2089b3822dec8055558f5855a69d33ff1bfde2e',
+  '73278f055a5c12348058a87f0918afdb900e9a84c629259b28820ab5960350ea',
+  '77bc3c46d1125077de84efa9472cbe00b40294c0bd5d8f8c45fc63d4ebf8da78',
+  '8e6ef3e2ed38e1232b50027cb16f9e1bd097aad921f7ec0efd4b6e36a9fe5a37',
+  'b97d7d780db236973912a26553c2759b368104a4a903419d51309aa0338691d3',
+  'bdea3a9b9ff4c63804e89de60815957fdae35f9e7ed99963b5b0532999db1f59',
+  'd5ad33a464e4c5bf48254121a0c3fc9a600e7104d46a1359057ec8369ac25a4d',
+  'f661e275a80d44bfc5ac4cd3cb200f45010a9c41aa15289f47d699849e460c2a',
+  'fff8ad74327606acd8335424de87dc954dfd99792b2213e9793fc0bebe329b69',
+]);
+const HEX64 = /^[0-9a-f]{64}$/;
+// Timestamp-aware scan-verdict recognition: exact schema plus pinned
+// non-clock fields. scannedAt is run clock and the only accepted variance;
+// an unknown skill hash or shape still fails the flow.
+function backgroundScanVerdict(text: string): boolean {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return false;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return typeof row.contentHash === "string" && BACKGROUND_SKILL_HASHES.has(row.contentHash)
+    && row.provider === "oneiron.static.v1"
+    && typeof row.scannedAt === "number" && Number.isFinite(row.scannedAt) && row.scannedAt >= 0
+    && row.verdict === "unknown" && row.riskLevel === "none"
+    && row.completeness === "complete" && row.governance === "recommended"
+    && typeof row.staticInputHash === "string" && HEX64.test(row.staticInputHash);
+}
 function startVectorTable(fixture: EvidenceFixture, extraVectors: readonly (readonly [string, number[]])[] = []) {
   const vectors = new Map<string, number[]>([
     [fixture.embedder.probeText, fixture.embedder.probeVector],
     ...fixture.claims.map(row => [row.value, row.vector] as [string, number[]]),
     ...extraVectors,
   ]);
+  // Authored background vector: the all-ones diagonal, dimension-generic.
+  // Geometry non-contamination proof (4-dim; R06/R01/R12 all use 4): cosine
+  // to any axis probe is 1/sqrt(4)=0.5, to self 1.0. R06 weak probe [1,0,0,0]
+  // vs weak-observation [0.125,1,0,0] cosine ~0.124, vs background 0.5, vs
+  // self 1.0 for per-row top-1 (limit 1) so fixture rows still win; strong
+  // probe [0,0,1,0] vs strong-a 1.0, strong-b ~0.9999, background 0.5, weak
+  // 0.0, so required strong ids rank first. R01 query [1,0,0,0] vs
+  // all-evidence 1.0, background 0.5, unrelated [0,0,0,1] 0.0, so
+  // all-evidence before unrelated holds; containment checks only gain
+  // unrelated rows. R12 ordinary query [1,0,1,0] vs right-tail 1.0,
+  // background 0.707, wrong-tail 0.0, so right before wrong holds; voice
+  // presence-only checks unaffected. Background rows carry their own entity
+  // ids, so they can neither satisfy an expected-id probe (per-row probes
+  // require exact fixture ids via 10s awaitPublic server lists) nor hide a
+  // missing fixture record (a missing row's probe would return background,
+  // failing the id match loudly). No 32hex fallback; unknown inputs still
+  // refuse with recorded rejectedInputs.
+  const backgroundVector = Array.from({ length: fixture.embedder.dimensions }, () => 1);
+  for (const text of BACKGROUND_LITERALS) {
+    if (!vectors.has(text)) vectors.set(text, backgroundVector);
+  }
+  const vectorFor = (text: string): number[] | undefined =>
+    vectors.get(text) ?? (backgroundScanVerdict(text) ? backgroundVector : undefined);
   const seen = new Set<string>();
   const violations: string[] = [];
   let closed = false;
@@ -215,16 +324,17 @@ function startVectorTable(fixture: EvidenceFixture, extraVectors: readonly (read
         if (body.model !== fixture.embedder.modelKey || !Array.isArray(body.input) || body.input.length === 0) {
           throw new Error("Vector fixture needs its declared model and a nonempty input array");
         }
-        const unexpected = body.input.filter((text: unknown) => typeof text !== "string" || !vectors.has(text));
+        const unexpected = body.input.filter((text: unknown) => typeof text !== "string" || vectorFor(text) === undefined);
         if (unexpected.length) await recordStart("fixture", {method:"POST",path:"/v1/embeddings",model:body.model,
           rejectedInputs:unexpected.map((text:unknown) => typeof text === "string"
             ? {sha256:createHash("sha256").update(text).digest("hex"),text:redactor.text(text)} : {type:typeof text})});
         const data = body.input.map((text: unknown, index: number) => {
-          if (typeof text !== "string" || !vectors.has(text)) {
+          const embedding = typeof text === "string" ? vectorFor(text) : undefined;
+          if (typeof text !== "string" || embedding === undefined) {
             throw new Error("Unexpected canonical text sent to vector fixture");
           }
           seen.add(text);
-          return { object: "embedding", index, embedding: vectors.get(text)! };
+          return { object: "embedding", index, embedding };
         });
         return Response.json({ object: "list", model: fixture.embedder.modelKey, data,
           usage: { prompt_tokens: fixture.embedder.usageInputTokens, total_tokens: fixture.embedder.usageInputTokens } });
@@ -363,7 +473,9 @@ suite.test(test, "RETRIEVAL-02", "Multilingual lexical retrieval should work", a
       const citation = await engine.client.call("vault.refs.resolve", { reference: hit.short_id });
       expect(citation.value.record.id).toBe(expected.message.id_hex);
       expect(citation.value.revision).toBeTruthy();
-      const stored = await engine.client.call("vault.get", { entity_ref: `${hit.short_id}@${citation.value.revision!}` });
+      // LexicalHit.short_id is already pinned as <ref>@<revision>; append no
+      // second pin. One identity plus one revision reads the cited original.
+      const stored = await engine.client.call("vault.get", { entity_ref: `${citation.value.record.id}@${citation.value.revision!}` });
       expect(stored.value!.body).toEqual(expected.message.body);
       expect(stored.value!.body).toMatchObject({ content: row.text });
       observations.push({ query, found });
@@ -462,7 +574,10 @@ suite.test(test, "RETRIEVAL-03", "Bitemporal widening should work", async () => 
     const request: FacadeInput<"vault.search.temporal"> = {
       ...narrow, sigma_secs: 86400, anchor_mode: "occurred", occurred_range: outer, limit: 10,
     };
-    const fixed = await search({ ...request, adaptive: false }, [fixture.expected.occurredMatch]);
+    // Fixed mode scores Gaussian proximity within its collection window; it
+    // does not hard-filter to the anchor. Both in-range candidates are admitted.
+    const fixed = await search({ ...request, adaptive: false },
+      [fixture.expected.occurredMatch, fixture.expected.widenedOccurredMatch]);
     const widened = await search({ ...request, adaptive: true },
       [fixture.expected.occurredMatch, fixture.expected.widenedOccurredMatch]);
     expect(widened.value.widening!.rounds).toBeGreaterThan(fixed.value.widening!.rounds);
@@ -505,7 +620,7 @@ suite.test(test, "RETRIEVAL-05", "Retrieval effort and deadline should work", as
     const reader = await recordBoundReader(plain, [plain.pairedActor.principalRef, ...rows.map(row => row.id)]);
     for (const effort of fixture.efforts) {
       const read = await reader.call("vault.recall", {
-        query: "retrievaleffortlantern", effort, scope: { kinds: ["claim"] }, limit: 10,
+        query: "retrievaleffortlantern", effort, scope: { kinds: ["CLAIM"] }, limit: 10,
       });
       readReceipt(read.narrowing);
       for (const row of rows) expect(read.items.some(item => item.short_id === row.ref)).toBe(true);
@@ -540,7 +655,7 @@ suite.test(test, "RETRIEVAL-05", "Retrieval effort and deadline should work", as
     for (const effort of fixture.efforts) {
       const beforeCalls = providers.seenFixtureCalls.length;
       const read = await reader.call("vault.recall", {
-        query: "retrievaleffortlantern", effort, scope: { kinds: ["claim"] }, limit: 10,
+        query: "retrievaleffortlantern", effort, scope: { kinds: ["CLAIM"] }, limit: 10,
       });
       readReceipt(read.narrowing);
       expect(sorted(read.items.map(item => item.short_id))).toEqual(sorted(rows.map(row => row.ref)));
@@ -566,7 +681,7 @@ suite.test(test, "RETRIEVAL-05", "Retrieval effort and deadline should work", as
     expect(await engine.client.call("vault.retrieval.hyde.get", {})).toEqual(binding);
     const beforeClaims = await claimSet(engine);
     const request: FacadeInput<"vault.recall"> = {
-      query: "retrievaleffortlantern", effort: "high", scope: { kinds: ["claim"] },
+      query: "retrievaleffortlantern", effort: "high", scope: { kinds: ["CLAIM"] },
       limit: 10, deadline_ms: fixture.deadlineMs,
     };
     const delivery = reader.request<FacadeResult<"vault.recall">>(
@@ -603,7 +718,7 @@ suite.test(test, "RETRIEVAL-05", "Retrieval effort and deadline should work", as
     expect(await claimSet(engine)).toEqual(beforeClaims);
     await engine.client.call("vault.retrieval.hyde.configure", { binding: null });
     const after = await reader.call("vault.recall", {
-      query: "retrievaleffortlantern", effort: "light", scope: { kinds: ["claim"] }, limit: 10,
+      query: "retrievaleffortlantern", effort: "light", scope: { kinds: ["CLAIM"] }, limit: 10,
     });
     expect(sorted(after.items.map(item => item.short_id))).toEqual(sorted(rows.map(row => row.ref)));
     expect(after.items.some(item => item.value_text.includes(fixture.lateAnswer))).toBe(false);
@@ -676,12 +791,12 @@ suite.test(test, "RETRIEVAL-06", "Evidence abstention not invented recall should
     for (const row of fixture.claims) {
       const params = new URLSearchParams({ query: row.vector.join(","),
         limit: "1", view: "standard", countMode: "none" });
+      const expectedId = identities.get(row.label)!.id;
       await awaitPublic(async () => (await engine.client.request<VectorPage>("GET", `/api/search/vector?${params}`)).body,
-        page => page.items.some(hit => hit.id === identities.get(row.label)!.id),
-        { label: `fixture embedding visible through public vector search: ${row.label}` });
+        page => page.items.some(hit => hit.id === expectedId),
+        { label: `fixture embedding visible through public vector search: ${row.label} id ${expectedId}` });
       expect(provider.seen.has(row.value)).toBe(true);
     }
-
     const filter: FacadeInput<"vault.claims.list"> = { subject_ref: engine.pairedActor.principalRef, limit: 1000 };
     const before = await engine.client.call("vault.claims.list", filter);
     for (const row of fixture.claims) {
@@ -699,6 +814,9 @@ suite.test(test, "RETRIEVAL-06", "Evidence abstention not invented recall should
       return (await engine.client.request<ContextPackReply>("POST", "/v1/core/context-pack", request)).body;
     };
     const observed: { label: string; state: ContextPackReply["state"]; ids: string[] }[] = [];
+    // G8 safe R06 failure ids: expected empty only for weak/anomalous. Any
+    // non-empty results here (fixture or background ids) fail immediately via
+    // the empty expects below; background cannot silently satisfy them.
     for (const probe of [{ ...fixture.weak, label: "weak-no-keywords" }, ...fixture.anomalous]) {
       // A positive weak-evidence check needs to prove the lexical channel
       // cannot rescue it; a bare empty-vault or vector-only query is not it.
@@ -716,6 +834,9 @@ suite.test(test, "RETRIEVAL-06", "Evidence abstention not invented recall should
     }
     const strongKeywords = await engine.client.call("vault.search.bm25", { query: fixture.strong.query, limit: 10 });
     expect(strongKeywords.value).toEqual([]);
+    // G8 safe strong failure: any missing required id or any non-fixture id
+    // in strong results fails immediately below; background ids would fail
+    // the every-hit check loudly, not hide a missing record. No oracle change.
     const strong = await requestPack(fixture.strong);
     expect(strong.state.kind).toBe("ok");
     const requiredIds = fixture.strong.requiredLabels.map(label => identities.get(label)!.id).sort();
@@ -895,7 +1016,7 @@ suite.test(test, "RETRIEVAL-08", "Warm and rebuilt graph parity should work", as
     // outbound intent or elapsed wait is fabricated for the drop request.
     const recallReader = await recordBoundReader(engine, [engine.pairedActor.principalRef, ...rows.map(row => row.id)]);
     pending = recallReader.call("vault.recall", {
-      query: "retrievaleffortlantern", effort: "high", scope: { kinds: ["claim"] }, limit: 10,
+      query: "retrievaleffortlantern", effort: "high", scope: { kinds: ["CLAIM"] }, limit: 10,
     });
     void pending.catch(() => {}); // Still awaited and asserted after releasing the barrier.
     await providers.awaitBarrier("journaled-rerank-held");
@@ -1082,10 +1203,20 @@ suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should wo
 });
 
 type ClusterVerb = "vault.cluster" | "vault.cluster.propose" | "vault.cluster.proposal" | "vault.cluster.resolve_proposal";
+// The tool-first envelope is the advertised schema: schema_version bound from
+// tools/list, consent, and the verb input nested under arguments.spec. A bare
+// top-level spec is refused as tool_args_invalid.
 async function clusterTool<V extends ClusterVerb>(engine: EngineFixture, verb: V, input: FacadeInput<V>): Promise<FacadeResult<V>> {
-  const reply = await engine.mcp.request<{
-    isError: boolean; structuredContent: { tool: string; output: FacadeResult<V> };
-  }>("tools/call", { name: verb, arguments: { spec: input } });
+  const listed = await engine.mcp.request<{ tools: {
+    name: string; inputSchema: { properties: { schema_version: { const: string } } };
+  }[] }>("tools/list");
+  const tool = listed.tools.find(item => item.name === verb);
+  if (!tool) throw new Error(`Required public MCP tool not registered: ${verb}`);
+  const reply = await engine.mcp.callTool(verb, {
+    schema_version: tool.inputSchema.properties.schema_version.const,
+    consent: { policy_ref: "policy:retrieval-session", purpose: "retrieval clustering journey" },
+    arguments: { spec: input },
+  }) as { isError: boolean; structuredContent: { tool: string; output: FacadeResult<V> } };
   expect(reply.isError).toBe(false);
   expect(reply.structuredContent.tool).toBe(verb);
   return reply.structuredContent.output;

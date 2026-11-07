@@ -3,7 +3,7 @@ import { createServer } from "node:net";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { createHash } from "node:crypto";
-import { Artifacts, BlockedDoor, LIMITS, ManagedProcess, isolatedEnv, ownResource, redactor, secretHex, tempRoot, withDeadline, recordStart, assertFlowActive } from "./run.ts";
+import { Artifacts, BlockedDoor, DeadlineError, LIMITS, ManagedProcess, isolatedEnv, ownResource, redactor, secretHex, tempRoot, withDeadline, recordStart, assertFlowActive } from "./run.ts";
 import { loadBuildManifest, requireAsset } from "./fixtures.ts";
 import type { BuildManifest, Profile } from "./fixtures.ts";
 import { CliClient, CliError, PublicHttpClient, McpClient, SdkProcessDriver, WsClient, credentialParts } from "./clients.ts";
@@ -54,16 +54,25 @@ async function reservePort():Promise<{port:number;release:()=>Promise<void>}> {
 }
 /** Observes public state; only readiness transport failures are repeatable, never mutations. */
 export async function awaitPublic<T>(read:()=>Promise<T>,ready:(value:T)=>boolean,options:{readonly timeoutMs?:number;readonly label:string;readonly readiness?:boolean}):Promise<T> {
-  const end=performance.now()+(options.timeoutMs??LIMITS.requestMs);
+  const budgetMs=options.timeoutMs??LIMITS.requestMs;
+  const end=performance.now()+budgetMs;
   let last:unknown;
+  let lastValue:unknown;
+  const describe=(value:unknown)=>redactor.text((JSON.stringify(value instanceof Error?{name:value.name,message:value.message}:value)??"undefined"));
   while(performance.now()<end) {
     assertFlowActive();
-    try {const value=await withDeadline(read(),Math.max(1,end-performance.now()),options.label);assertFlowActive();last=value;if(ready(value)) return value}
-    catch(error) {last=error;if(!options.readiness) throw error}
+    try {const value=await withDeadline(read(),Math.max(1,end-performance.now()),options.label);assertFlowActive();last=value;lastValue=value;if(ready(value)) return value}
+    catch(error) {last=error;if(!options.readiness) {
+      // A final-slice DeadlineError prints only its remainder; report the
+      // original poll budget and the last real public state instead. Other
+      // errors are immediate failures, not budget exhaustion, and pass through.
+      if(error instanceof DeadlineError) throw new DeadlineError(`${options.label} deadline after ${budgetMs}ms poll budget; last public observation: ${describe(lastValue===undefined?error:lastValue)}`);
+      throw error;
+    }}
     const left=end-performance.now();
     if(left>0) await new Promise<void>(resolve=>setTimeout(resolve,Math.min(25,left)));
   }
-  throw new Error(`${options.label} deadline; last public observation: ${redactor.text((JSON.stringify(last instanceof Error?{name:last.name,message:last.message}:last)??"undefined"))}`);
+  throw new Error(`${options.label} deadline after ${budgetMs}ms poll budget; last public observation: ${describe(lastValue===undefined?last:lastValue)}`);
 }
 export class EngineFixture {
   readonly artifacts:Artifacts;
