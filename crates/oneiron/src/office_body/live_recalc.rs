@@ -15,9 +15,10 @@
 //! so NOW() and TODAY() alone never set two live reads apart; the
 //! export-frontier side of a compare against the newest export recalculates
 //! at that export's own recorded clock instead (FIX 12183). When a read
-//! does not recalculate (the engine refuses the workbook, or it does not
-//! project), every read of the call keeps the values the body holds, as
-//! before, and the artifact is logged once.
+//! does not recalculate (the engine refuses the workbook and no precision
+//! fallback computes it, or it does not project), every read of the call
+//! keeps the values the body holds, as before, and the artifact is logged
+//! once.
 //!
 //! Cost: a read of a sheet that holds a formula projects the whole body onto
 //! the imported package and recalculates the whole workbook; a compare does
@@ -79,7 +80,9 @@ impl Vault {
                 "the body could not be projected onto its package",
             )
         })?;
-        let (bytes, recalc, recalc_failure) = recalc_xlsx(&projected.bytes, limits, at, zone)?;
+        let precision = self.xlsx_precision_recalc();
+        let (bytes, recalc, recalc_failure) =
+            recalc_xlsx(&projected.bytes, limits, at, zone, precision.as_deref())?;
         Ok(Some((
             bytes,
             changes.len(),
@@ -193,14 +196,20 @@ impl Vault {
             xlsx::read(&doc)?
         };
         let limits = self.docedit_package_limits()?;
+        let precision = self.xlsx_precision_recalc();
         let mut books = Vec::with_capacity(bodies.len());
         for (body, &(at, zone)) in bodies.iter().zip(clocks) {
             let (bytes, recalc) =
                 match self.project_xlsx_body(artifact, &head, &base, body, at, zone)? {
                     Some((bytes, _, recalc, _, _)) => (bytes, recalc),
                     None => {
-                        let (bytes, recalc, _) =
-                            recalc_xlsx(&self.body_source(artifact, &head)?, limits, at, zone)?;
+                        let (bytes, recalc, _) = recalc_xlsx(
+                            &self.body_source(artifact, &head)?,
+                            limits,
+                            at,
+                            zone,
+                            precision.as_deref(),
+                        )?;
                         (bytes, recalc)
                     }
                 };
