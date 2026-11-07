@@ -23,6 +23,9 @@ mod compaction_home;
 mod consent_wait;
 mod contribution;
 mod coordination_codec;
+// CODE-RUNTIME-02 slice 1 (FIX 4411, 4412, 4413): one durable record per
+// model response the live REPL normalized, and the policy it ran under.
+mod correction;
 mod dispatcher;
 pub mod model_call;
 mod payload;
@@ -42,6 +45,8 @@ mod run_verbs;
 mod scoped_call_control;
 mod scoped_child;
 mod scoped_child_io;
+mod scoped_generation;
+pub use self::scoped_generation::{ScopedChildGeneration, ScopedChildGenerationCall};
 pub mod shadow_runner;
 mod spawn_replay;
 pub(crate) use self::spawn_replay::barrier_spawn_call;
@@ -104,6 +109,12 @@ pub use self::contribution::{
 pub(crate) use self::contribution::{
     OwnerPair, OwnerPairAnswer, OwnerPairChoice, OwnerPairRoute, OwnerPairTexts,
     settle_owner_pair_in_txn,
+};
+pub(crate) use self::correction::CodeRunCorrectionDraft;
+pub use self::correction::{
+    CODE_RUN_CORRECTION_POLICY, CODE_RUN_CORRECTION_SCHEMA, CodeRunCorrection,
+    CodeRunCorrectionCheckpoint, CodeRunCorrectionOutcome, CodeRunCorrectionPolicy,
+    ExecutorWireRepairs,
 };
 pub(crate) use self::dispatcher::{
     ExecutorCallSite, check_write_gate_against_vault, recorded_verb_call,

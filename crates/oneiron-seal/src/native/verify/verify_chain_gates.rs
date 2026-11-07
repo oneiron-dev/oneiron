@@ -222,7 +222,7 @@ fn classify_missing_material_root(
         return Ok(());
     }
     let mut probe = Checks::new(limits);
-    verify_dss(doc, covered, covered, at, memory, &mut probe)?;
+    verify_dss(doc, covered, covered, at, memory, &mut probe, limits)?;
     if probe.passed(VerifyCheckKind::ValidationMaterial)
         && let Some(check) = checks
             .list
@@ -277,10 +277,17 @@ pub(crate) fn verify_document(
     let mut checks = Checks::new(limits);
     // The refuse-to-seal gate and output verifier share this object/security
     // scan. An output may have signatures; neither path accepts active content.
+    // A memory refusal is the verification's typed error, never a revision
+    // verdict (FIX 7654): only ordinary invalid input fails the check below.
+    let security_ok = match pdf::analyze_security(&doc, false, limits, SealStage::Verification) {
+        Ok(()) => true,
+        Err(SealError::InputInvalid { .. }) => false,
+        Err(refused) => return Err(refused),
+    };
     checks
         .record(
             VerifyCheckKind::PdfRevision,
-            pdf::analyze_security(&doc, false).is_ok(),
+            security_ok,
             VerifyFindingCode::InvalidPdfRevision,
         )
         .map_err(memory_refused)?;
@@ -320,7 +327,7 @@ pub(crate) fn verify_document(
                 bytes,
                 entry,
                 index,
-                revision_ends.as_deref(),
+                revision_ends.as_deref().map(Vec::as_slice),
                 ctx,
                 &anchors,
                 index + 1 == sigs.len(),
@@ -345,6 +352,7 @@ pub(crate) fn verify_document(
         material_validation_time(&envelopes, dss_end, ctx.clock_ms / 1000),
         &memory,
         &mut checks,
+        limits,
     )
     .map_err(memory_refused)?;
     limits.observed.note(Counter::DssDecodeBytes, decoded);
@@ -430,6 +438,7 @@ pub(crate) fn verify_document(
                 .map_or(ctx.clock_ms / 1000, |proof| proof.at),
             &memory,
             &mut material_checks,
+            limits,
         )
         .map_err(memory_refused)?;
         limits.observed.note(Counter::DssDecodeBytes, decoded);
@@ -485,7 +494,7 @@ pub(crate) fn verify_document(
     let (revisions, modifications, anomalies) = verify_revisions::classify(
         bytes,
         &envelopes,
-        revision_ends.as_deref(),
+        revision_ends.as_deref().map(Vec::as_slice),
         facts.as_ref(),
         limits,
     )
