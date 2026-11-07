@@ -9,6 +9,7 @@
 
 use crate::wasm::{self, Abi, Host, WasmCheck};
 use crate::{BackendId, CheckFailure, CheckInput, CheckReport, CodeCheck, TscRsBudget};
+use std::time::{Duration, Instant};
 use wasmtime::Linker;
 
 const ARTIFACT: &[u8] = include_bytes!("../vendor/tsrs/tsrs.wasm");
@@ -65,6 +66,22 @@ impl CodeCheck for TsrsWasm {
             Ok((exited, peak)) => exited.report(self.backend(), Some(peak)),
             Err(stopped) => stopped.report(self.backend(), None),
         }
+    }
+
+    fn wall_time(&self) -> Option<Duration> {
+        Some(self.0.wall_time())
+    }
+
+    fn check_attributed_before(
+        &self,
+        input: &CheckInput<'_>,
+        deadline: Instant,
+    ) -> (BackendId, Result<CheckReport, CheckFailure>) {
+        let report = match self.0.check_before(input, deadline) {
+            Ok((exited, peak)) => exited.report(self.backend(), Some(peak)),
+            Err(stopped) => stopped.report(self.backend(), None),
+        };
+        (self.backend(), report)
     }
 }
 
