@@ -18920,7 +18920,7 @@
      "path": "src/code_run/storage/wait_delivery.rs",
      "purpose": "Replies to parked code runs: a run whose step parked on a durable wait resumes from the reply delivered to it",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 10,
       "re-export": 1,
       "struct": 2
@@ -31891,13 +31891,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_runner/maintenance/identity/hints.rs",
      "purpose": "Saved context hints, one contribution per answered mention (FIX 8707)",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -60137,7 +60137,7 @@
      "path": "src/policy_model/notice.rs",
      "purpose": "The one notice a policy verdict emits — and the one audit row it files",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 25
      }
     },
     {
@@ -60404,8 +60404,11 @@
      "kind": "src",
      "notable": [
       "HostedLegalAction",
+      "HostedLegalBasis",
+      "HostedLegalBasisKind",
       "HostedLegalPolicy",
       "HostedLegalRow",
+      "HostedLegalRowBound",
       "PolicyPlane",
       "PolicyRubricRow"
      ],
@@ -60414,9 +60417,9 @@
      "surface": {
       "const": 2,
       "crate-vis": 7,
-      "enum": 2,
-      "fn": 3,
-      "struct": 3
+      "enum": 3,
+      "fn": 5,
+      "struct": 5
      }
     },
     {
@@ -82409,7 +82412,7 @@
      "path": "src/tagging/held.rs",
      "purpose": "An importer completes a turn's marker with tags it already holds: no tagger call",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 1
      }
@@ -82596,7 +82599,7 @@
      "path": "src/tagging/save.rs",
      "purpose": "Save mode: a checked answer becomes the turn's tag set (ARCH-0036, serving the tagger)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -146807,6 +146810,9 @@
       "HostWakeKind",
       "HostWakeRequest",
       "HostWakeResult",
+      "HostedLegalBasis",
+      "HostedLegalBasisKind",
+      "HostedLegalRowBound",
       "HostedOutagePolicy",
       "HostedPassEvidence",
       "HostedPlaneAttestation",
@@ -149551,8 +149557,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1142,
-      "struct": 3495
+      "enum": 1143,
+      "struct": 3497
      }
     },
     {
