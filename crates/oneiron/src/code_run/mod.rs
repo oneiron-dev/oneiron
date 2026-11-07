@@ -159,7 +159,6 @@ pub(crate) use self::result_read::{
 };
 pub use self::storage::ReadWorldUnknown;
 pub(crate) use self::storage::SessionCheckpointBody;
-pub(crate) use self::storage::{retire_replay_bodies_in_rows, settle_evaporated_reader_spend};
 pub use self::storage::step_replay_capsules;
 pub(crate) use self::storage::undecodable_step_capsule_in_txn;
 pub(crate) use self::storage::{
@@ -194,10 +193,10 @@ pub(crate) use self::storage::{
     ReadWorldSeal, ReadWorldSnapshot, captured_step_read_scopes_in_txn, read_world_snapshot_in_txn,
 };
 pub(crate) use self::storage::{
-    StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn, code_run_body_row_key,
-    code_run_inline_body_of_row, deliver_wait_in_txn, deliver_wait_listing_in_txn,
-    lift_code_run_file_hold_in_txn, retire_unlanded_inline_body_keys_in_txn,
-    settled_wait_reply_in_txn,
+    StagedSinks, clear_parked_wait_in_txn, code_run_body_file_of_row, code_run_body_held_in_txn,
+    code_run_body_row_key, code_run_inline_body_of_row, deliver_wait_in_txn,
+    deliver_wait_listing_in_txn, lift_code_run_file_hold_in_txn,
+    retire_unlanded_inline_body_keys_in_txn, settled_wait_reply_in_txn,
 };
 pub(crate) use self::storage::{
     StepKey, StoredStepFeedback, erase_spawn_targets_in_txn, erase_type_diagnostics_actor_in_txn,
@@ -219,6 +218,7 @@ pub(crate) use self::storage::{
 pub(crate) use self::storage::{
     drop_code_run_result_marks_in_txn, erase_retained_result_marks_in_txn,
 };
+pub(crate) use self::storage::{retire_replay_bodies_in_rows, settle_evaporated_reader_spend};
 // FIX 9180 (coord-b slice d): a replay row's and a step start's parts in
 // checkpoint images, as row-held responses.
 pub(crate) use self::replay_parts::{
