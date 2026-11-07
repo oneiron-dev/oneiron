@@ -13,6 +13,8 @@ mod agent_grant;
 pub(crate) use agent_grant::{
     AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, agent_grants_for_store_in_txn,
 };
+// The self brief's GRANT producer (FIX 17594).
+mod agent_grant_brief;
 // Who may delete one record the cleanup archived (OF-449 L4).
 mod archive_delete;
 pub(crate) use archive_delete::{
@@ -89,6 +91,7 @@ pub use shared_act::{
     SharedVaultDeletion, SignedSharedActOutcome, TransferOwnershipPlan,
     shared_act_outcome_transcript,
 };
+pub(crate) use shared_act::{removal_archive_bindings_in_rows, removal_archive_owners_in_rows};
 pub(crate) use shared_creation::shared_vault_creation_for_store_in_txn;
 pub use shared_creation::{
     InitialSharedMember, SharedTrainingSetup, SharedTrainingSetupAnswer,

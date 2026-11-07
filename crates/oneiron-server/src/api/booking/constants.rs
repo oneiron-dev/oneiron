@@ -59,26 +59,24 @@ pub(super) const PAGE_TOKEN_BYTES: usize = 16;
 /// `EntityId` and an `EntityId` cannot be presented as a page token.
 pub(super) const PAGE_TOKEN_PREFIX: &str = "bkp_";
 
-/// Bound on the opaque per-session reference a caller may supply. It matches
-/// the bound ONE-1816's front applies to the same field, so a reference this
-/// surface admits is one the constraint front could also carry.
-pub(super) const MAX_SESSION_REF_BYTES: usize = 120;
-
-/// Bound on the booker email a confirm may carry.
+/// Bound on the booker email an anonymous visitor's confirm may carry:
+/// pre-auth work stays sheddable. An authenticated caller's email is measured
+/// on `booking_email_bytes` and served whole (ABC row 69).
 pub(super) const MAX_BOOKER_EMAIL_BYTES: usize = 254;
 
-/// Bound on one intake answer's field key.
+/// Bound on one intake answer's field key in an anonymous visitor's confirm.
+/// An authenticated caller's keys are any length (ABC row 71).
 pub(super) const MAX_INTAKE_FIELD_KEY_BYTES: usize = 64;
 
-/// Bound on one intake answer's value.
+/// Bound on one intake answer's value in an anonymous visitor's confirm. An
+/// authenticated caller's values are measured on `booking_intake_value_bytes`
+/// and kept whole (ABC row 72).
 pub(super) const MAX_INTAKE_VALUE_BYTES: usize = 4096;
 
-/// Bound on how many intake answers one confirm may carry.
+/// Bound on how many intake answers an anonymous visitor's confirm may carry.
+/// An authenticated caller's are measured on `booking_intake_answers` (ABC
+/// row 70).
 pub(super) const MAX_INTAKE_ANSWERS: usize = 32;
-
-/// Bound on a caller-supplied idempotency key. The lifecycle applies its own
-/// bound too; this one fails the request before a verb is ever built.
-pub(super) const MAX_IDEMPOTENCY_KEY_BYTES: usize = 128;
 
 /// The intake field key of the public booking form's hidden honeypot input.
 /// A person never sees the field, so an anonymous confirm whose answer under
