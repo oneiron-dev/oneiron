@@ -210,7 +210,9 @@ pub(crate) fn ceiling_holds(saved: &[u8; 32], now: &[u8; 32]) -> bool {
 /// (OF-580 defaults, each terminal): its mint gone, it or an ancestor
 /// revoked, its lifetime past. Anything else is a changed credential, never
 /// called revoked; a fold that does not read is unavailable (fail closed).
-fn standing(vault: &oneiron::Vault, slip: &[u8; 32]) -> VerbAskRefusal {
+/// A self-hosted root's recorded host action reads its root's the same way
+/// (FIX 4744).
+pub(crate) fn standing(vault: &oneiron::Vault, slip: &[u8; 32]) -> VerbAskRefusal {
     let (Ok(fold), Ok(now)) = (vault.authority_fold(), vault.capability_slip_now()) else {
         return VerbAskRefusal::CredentialUnavailable;
     };

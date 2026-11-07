@@ -76,6 +76,7 @@ fn failure(code: &str, message: String, suggestion: &str) -> OneironError {
         resets_at: Vec::new(),
         reason_codes: Vec::new(),
         legal_hold: None,
+        room_join_hold: None,
     }
 }
 
@@ -95,6 +96,12 @@ pub(crate) fn lift_legal_hold_notice(
     notice: oneiron::error::LegalHoldNotice,
 ) -> Result<crate::facade_types_generated::LegalHoldNotice, OneironError> {
     lift_record("legal_hold", &notice)
+}
+
+pub(crate) fn lift_room_join_hold(
+    hold: oneiron::workspace_roster::RoomJoinHold,
+) -> Result<crate::facade_types_generated::RoomJoinHold, OneironError> {
+    lift_record("room_join_hold", &hold)
 }
 
 // ── the WireJson leaf ───────────────────────────────────────────────────
@@ -500,6 +507,7 @@ impl Lower<oneiron::conversation_dag::QuoteSpan> for QuoteSpan {
 impl Lift<engine::WitnessReceipt> for WitnessReceipt {
     fn lift(value: engine::WitnessReceipt) -> Result<Self, OneironError> {
         Ok(Self {
+            turn_id: value.turn_id.to_hex(),
             turn_short_id: value.turn_short_id,
             message_short_ids: value.message_short_ids,
             receipt_ref: value.receipt_ref,

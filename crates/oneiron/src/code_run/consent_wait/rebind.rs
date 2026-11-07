@@ -114,7 +114,7 @@ impl Vault {
             let mut next = current.clone();
             next.original.credential = Some(successor.clone());
             next.original.opener_slip = Some(proof.successor);
-            let next_binding = binding_digest(&next);
+            let next_binding = binding_digest(&next)?;
             let (previous, _) =
                 effects_in_txn(self, txn, &row, &current.binding_digest, &next_binding)?;
             if row
@@ -254,7 +254,7 @@ impl Vault {
             let mut next = current.clone();
             next.original.credential = Some(proposal.credential.clone());
             next.original.opener_slip = Some(proof.successor);
-            let next_binding = binding_digest(&next);
+            let next_binding = binding_digest(&next)?;
             let (previous, successor) =
                 effects_in_txn(self, txn, &row, &current.binding_digest, &next_binding)?;
             let (_, previous_decision) = row.consumed_approval().ok_or(Error::EntityNotFound)?;
@@ -320,11 +320,11 @@ fn eligible(row: &CodeConsentWaitRow) -> Result<()> {
             "only an admitted, unsettled code consent wait can rebind".to_owned(),
         ));
     }
-    if binding_digest(&row.binding) != row.binding.binding_digest {
+    if binding_digest(&row.binding)? != row.binding.binding_digest {
         return Err(Error::CorruptedIndex("code consent original binding"));
     }
     let active = row.active_binding();
-    if binding_digest(&active) != active.binding_digest {
+    if binding_digest(&active)? != active.binding_digest {
         return Err(Error::CorruptedIndex("code consent active binding"));
     }
     Ok(())

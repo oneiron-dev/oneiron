@@ -28,9 +28,9 @@ fn wait_unavailable() -> MemoryError {
 
 impl Memory<'_> {
     /// `vault.code.waits.resolve`: answers one exact sealed code consent
-    /// wait through the unchanged `Vault::settle_code_consent_wait_as`,
-    /// which revalidates the owner in its writer, checks the target, the
-    /// opener's lineage and the owner's word, keeps the first answer, and
+    /// wait through `Vault::settle_code_consent_wait_as`, which revalidates
+    /// the Owner or holder's policy and power in its writer, checks the target,
+    /// the opener's lineage and the person's word, keeps the first answer, and
     /// lets the held effect meet its own current gate once. A later answer
     /// gets the first one back with `already_answered`.
     pub fn code_wait_resolve_as(
@@ -38,12 +38,12 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         input: CodeWaitResolveRequest,
     ) -> MemoryResult<CodeWaitReceiptView> {
-        self.code_wait_owner(owner)?;
+        self.code_wait_person(owner)?;
         if self.writes_generated() {
             return Err(MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,
                 CODE_WAIT_GENERATED_ANSWER,
-                &["Ask the owner to answer through their own client."],
+                &["Ask an eligible person to answer through their own client."],
             ));
         }
         let target = input.target;
@@ -79,7 +79,7 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         input: CodeWaitReceiptRequest,
     ) -> MemoryResult<Option<CodeWaitReceiptView>> {
-        self.code_wait_owner(owner)?;
+        self.code_wait_person(owner)?;
         match self
             .code_wait_view(owner, input.wait_id)?
             .filter(|view| view.run_id == input.run_id)
