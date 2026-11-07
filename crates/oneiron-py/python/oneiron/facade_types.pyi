@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1289 facade rows, 4672 declarations.
+Census: 1289 facade rows, 4679 declarations.
 Inputs: 1218 of 1289 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1118 of 1289 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -20007,8 +20007,48 @@ class DocxBlockView(TypedDict):
     text: str
     runs: list[DocxRun]
     cells: list[DocxCellView]
+DocxHeaderFooterBand = Literal["default", "first", "even"]
+class DocxStoryScopeHeader(TypedDict):
+    kind: Literal["header"]
+    part_name: str
+    band: DocxHeaderFooterBand
+class DocxStoryScopeFooter(TypedDict):
+    kind: Literal["footer"]
+    part_name: str
+    band: DocxHeaderFooterBand
+class DocxStoryScopeFootnote(TypedDict):
+    kind: Literal["footnote"]
+    id: str
+class DocxStoryScopeEndnote(TypedDict):
+    kind: Literal["endnote"]
+    id: str
+class DocxStoryScopeComment(TypedDict):
+    kind: Literal["comment"]
+    id: str
+DocxStoryScope = DocxStoryScopeHeader | DocxStoryScopeFooter | DocxStoryScopeFootnote | DocxStoryScopeEndnote | DocxStoryScopeComment
+class DocxStoryParagraphView(TypedDict):
+    id: str
+    locked: bool
+    text: str
+    runs: list[DocxRun]
+class DocxStoryCellParagraphView(TypedDict):
+    id: str
+    locked: bool
+    text: str
+class DocxStoryCellView(TypedDict):
+    row: int
+    col: int
+    paragraphs: list[DocxStoryCellParagraphView]
+class DocxStoryTableView(TypedDict):
+    id: str
+    cells: list[DocxStoryCellView]
+class DocxStoryView(TypedDict):
+    scope: DocxStoryScope
+    paragraphs: list[DocxStoryParagraphView]
+    tables: list[DocxStoryTableView]
 class DocxBodyView(TypedDict):
     blocks: list[DocxBlockView]
+    stories: list[DocxStoryView]
 class XlsxValueNumber(TypedDict):
     number: float
 class XlsxValueText(TypedDict):
@@ -20420,7 +20460,45 @@ class DocxBodyOpMark(TypedDict):
     len: int
     mark: DocxMark
     on: bool
-DocxBodyOp = DocxBodyOpSetText | DocxBodyOpSplice | DocxBodyOpSetCell | DocxBodyOpInsertParagraph | DocxBodyOpDelete | DocxBodyOpMove | DocxBodyOpMark
+class DocxBodyOpSetStoryCellParagraph(TypedDict):
+    op: Literal["set_story_cell_paragraph"]
+    scope: DocxStoryScope
+    block: str
+    row: int
+    col: int
+    paragraph: str
+    text: str
+class DocxBodyOpSpliceStoryCellParagraph(TypedDict):
+    op: Literal["splice_story_cell_paragraph"]
+    scope: DocxStoryScope
+    block: str
+    row: int
+    col: int
+    paragraph: str
+    at: int
+    delete: int
+    insert: str
+class DocxBodyOpSetStoryText(TypedDict):
+    op: Literal["set_story_text"]
+    scope: DocxStoryScope
+    block: str
+    text: str
+class DocxBodyOpSpliceStory(TypedDict):
+    op: Literal["splice_story"]
+    scope: DocxStoryScope
+    block: str
+    at: int
+    delete: int
+    insert: str
+class DocxBodyOpMarkStory(TypedDict):
+    op: Literal["mark_story"]
+    scope: DocxStoryScope
+    block: str
+    at: int
+    len: int
+    mark: DocxMark
+    on: bool
+DocxBodyOp = DocxBodyOpSetText | DocxBodyOpSplice | DocxBodyOpSetCell | DocxBodyOpInsertParagraph | DocxBodyOpDelete | DocxBodyOpMove | DocxBodyOpMark | DocxBodyOpSetStoryCellParagraph | DocxBodyOpSpliceStoryCellParagraph | DocxBodyOpSetStoryText | DocxBodyOpSpliceStory | DocxBodyOpMarkStory
 class XlsxBodyOpSetValue(TypedDict):
     op: Literal["set_value"]
     sheet: str
@@ -20785,10 +20863,12 @@ ChangeKind = Literal["added", "deleted", "moved", "text", "cells"]
 class BlockChange(TypedDict):
     block: str
     kind: ChangeKind
+    scope: NotRequired[DocxStoryScope | None]
 ConflictKind = Literal["delete_edit", "competing_move", "both_edited", "both_set"]
 class BodyConflict(TypedDict):
     block: str
     kind: ConflictKind
+    scope: NotRequired[DocxStoryScope | None]
 class OfficeBodyDiff(TypedDict):
     base: list[int]
     head: list[int]

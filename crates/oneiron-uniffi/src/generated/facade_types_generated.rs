@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1289 facade rows, 4668 generated types.
+// UniFFI census: 1289 facade rows, 4675 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1241.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -62673,11 +62673,115 @@ pub struct DocxBlockView {
     pub cells: Vec<DocxCellView>,
 }
 
+/// `oneiron_docedit::docx_body::stories::DocxHeaderFooterBand`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DocxHeaderFooterBand {
+    #[serde(rename = "default")]
+    Default,
+    #[serde(rename = "first")]
+    First,
+    #[serde(rename = "even")]
+    Even,
+}
+
+/// `oneiron_docedit::docx_body::stories::DocxStoryScope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum DocxStoryScope {
+    #[serde(rename = "header")]
+    Header {
+        #[serde(rename = "part_name")]
+        part_name: String,
+        #[serde(rename = "band")]
+        band: DocxHeaderFooterBand,
+    },
+    #[serde(rename = "footer")]
+    Footer {
+        #[serde(rename = "part_name")]
+        part_name: String,
+        #[serde(rename = "band")]
+        band: DocxHeaderFooterBand,
+    },
+    #[serde(rename = "footnote")]
+    Footnote {
+        #[serde(rename = "id")]
+        id: String,
+    },
+    #[serde(rename = "endnote")]
+    Endnote {
+        #[serde(rename = "id")]
+        id: String,
+    },
+    #[serde(rename = "comment")]
+    Comment {
+        #[serde(rename = "id")]
+        id: String,
+    },
+}
+
+/// `oneiron::office_body::verbs::DocxStoryParagraphView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DocxStoryParagraphView {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "locked")]
+    pub locked: bool,
+    #[serde(rename = "text")]
+    pub text: String,
+    #[serde(rename = "runs")]
+    pub runs: Vec<DocxRun>,
+}
+
+/// `oneiron::office_body::verbs::DocxStoryCellParagraphView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DocxStoryCellParagraphView {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "locked")]
+    pub locked: bool,
+    #[serde(rename = "text")]
+    pub text: String,
+}
+
+/// `oneiron::office_body::verbs::DocxStoryCellView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DocxStoryCellView {
+    #[serde(rename = "row")]
+    pub row: u64,
+    #[serde(rename = "col")]
+    pub col: u64,
+    #[serde(rename = "paragraphs")]
+    pub paragraphs: Vec<DocxStoryCellParagraphView>,
+}
+
+/// `oneiron::office_body::verbs::DocxStoryTableView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DocxStoryTableView {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "cells")]
+    pub cells: Vec<DocxStoryCellView>,
+}
+
+/// `oneiron::office_body::verbs::DocxStoryView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DocxStoryView {
+    #[serde(rename = "scope")]
+    pub scope: DocxStoryScope,
+    #[serde(rename = "paragraphs")]
+    pub paragraphs: Vec<DocxStoryParagraphView>,
+    #[serde(rename = "tables")]
+    pub tables: Vec<DocxStoryTableView>,
+}
+
 /// `oneiron::office_body::verbs::DocxBodyView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct DocxBodyView {
     #[serde(rename = "blocks")]
     pub blocks: Vec<DocxBlockView>,
+    #[serde(rename = "stories")]
+    pub stories: Vec<DocxStoryView>,
 }
 
 /// `oneiron_docedit::xlsx_body::model::XlsxValue`.
@@ -63973,6 +64077,77 @@ pub enum DocxBodyOp {
         #[serde(rename = "on")]
         on: bool,
     },
+    #[serde(rename = "set_story_cell_paragraph")]
+    SetStoryCellParagraph {
+        #[serde(rename = "scope")]
+        scope: DocxStoryScope,
+        #[serde(rename = "block")]
+        block: String,
+        #[serde(rename = "row")]
+        row: u64,
+        #[serde(rename = "col")]
+        col: u64,
+        #[serde(rename = "paragraph")]
+        paragraph: String,
+        #[serde(rename = "text")]
+        text: String,
+    },
+    #[serde(rename = "splice_story_cell_paragraph")]
+    SpliceStoryCellParagraph {
+        #[serde(rename = "scope")]
+        scope: DocxStoryScope,
+        #[serde(rename = "block")]
+        block: String,
+        #[serde(rename = "row")]
+        row: u64,
+        #[serde(rename = "col")]
+        col: u64,
+        #[serde(rename = "paragraph")]
+        paragraph: String,
+        #[serde(rename = "at")]
+        at: u64,
+        #[serde(rename = "delete")]
+        delete: u64,
+        #[serde(rename = "insert")]
+        insert: String,
+    },
+    #[serde(rename = "set_story_text")]
+    SetStoryText {
+        #[serde(rename = "scope")]
+        scope: DocxStoryScope,
+        #[serde(rename = "block")]
+        block: String,
+        #[serde(rename = "text")]
+        text: String,
+    },
+    #[serde(rename = "splice_story")]
+    SpliceStory {
+        #[serde(rename = "scope")]
+        scope: DocxStoryScope,
+        #[serde(rename = "block")]
+        block: String,
+        #[serde(rename = "at")]
+        at: u64,
+        #[serde(rename = "delete")]
+        delete: u64,
+        #[serde(rename = "insert")]
+        insert: String,
+    },
+    #[serde(rename = "mark_story")]
+    MarkStory {
+        #[serde(rename = "scope")]
+        scope: DocxStoryScope,
+        #[serde(rename = "block")]
+        block: String,
+        #[serde(rename = "at")]
+        at: u64,
+        #[serde(rename = "len")]
+        len: u64,
+        #[serde(rename = "mark")]
+        mark: DocxMark,
+        #[serde(rename = "on")]
+        on: bool,
+    },
 }
 
 /// `oneiron::office_body::xlsx::XlsxBodyOp`.
@@ -64628,6 +64803,8 @@ pub struct BlockChange {
     pub block: String,
     #[serde(rename = "kind")]
     pub kind: ChangeKind,
+    #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<DocxStoryScope>,
 }
 
 /// `oneiron::office_body::fork::ConflictKind`.
@@ -64650,6 +64827,8 @@ pub struct BodyConflict {
     pub block: String,
     #[serde(rename = "kind")]
     pub kind: ConflictKind,
+    #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<DocxStoryScope>,
 }
 
 /// `oneiron::office_body::fork::OfficeBodyDiff`.
