@@ -256,10 +256,18 @@ side_tables! {
     /// Format-version marker gating the attempt index; a non-empty unindexed ledger fails closed.
     /// Key: ().
     OUTBOUND_INTENT_ATTEMPT_FORMAT: VaultMeta b"outbound:intent_attempt_format" Raw;
+    /// A send linked to a deleted PERSON its party names, for that person's erase (FIX 11030).
+    /// Key: id16(person) + hash32 (intent id).
+    OUTBOUND_INTENT_LATE_RECIPIENT: VaultMeta b"outbound:intent_late_recipient:v1:" Named;
     /// Durable outbound-send intent ledger row: state machine, endpoint binding, and accounting. Key:
     /// hash32. An actor's erase takes the request of each row it admitted (FIX 9283).
     OUTBOUND_INTENT_LEDGER_RECORD: VaultMeta b"outbound:intent_ledger:v2:" Raw Authored [accepts: crate::outbound_intent_ledger::outbound_intent_ledger_record_accepts_masked]
         => crate::outbound_intent_ledger::erase_outbound_intent_actor_in_txn;
+    /// A send whose counterparty resolved to no PERSON at admission, by the BLAKE3 digest of its
+    /// exact party key (FIX 11030). Key: hash32 (party digest) + hash32 (intent id).
+    OUTBOUND_INTENT_PARTY: VaultMeta b"outbound:intent_party:v1:" Named;
+    /// That send's party digest, by its intent id (FIX 11030). Key: hash32 (intent id).
+    OUTBOUND_INTENT_PARTY_OF: VaultMeta b"outbound:intent_party_of:v1:" Named;
     /// What one ledger row's send came to beside its state, written with the ledger change it
     /// records: its remote task handle (FIX 7960), its provider wait (FIX 8818) and its reserved
     /// budget (FIX 7964), `rmp_serde::to_vec_named`. Key: hash32 (intent id).
