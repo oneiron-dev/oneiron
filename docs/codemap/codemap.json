@@ -4337,7 +4337,7 @@
      "path": "src/authority/home_candidacy.rs",
      "purpose": "Folds each machine's signed MACRO home candidacy (FIX 4898; Engine 10-19 rulings on ARCH-0026: \"Election…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 1
      }
     },
@@ -4778,7 +4778,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 51,
+      "crate-vis": 52,
       "mod": 2,
       "re-export": 73
      }
@@ -15871,7 +15871,7 @@
      "path": "src/claim/supersession_provenance.rs",
      "purpose": "Runner-owned companion claims; structural taint mirrors also run on replay",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -30587,7 +30587,7 @@
      "path": "src/dreamer_runner/home.rs",
      "purpose": "The single MACRO home-node election (ARCH-0026; DOOR-101 PR2a; FIX 4898): which node of the vault runs its…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 4
      }
     },
@@ -78576,14 +78576,15 @@
      "notable": [
       "SyncDialer",
       "SyncIo",
+      "SyncPeerDialer",
       "SyncStream"
      ],
      "path": "src/sync/carrier.rs",
      "purpose": "What a sync socket rides on (OF-535): TCP to the home's URL, or a stream a [`SyncDialer`] opens, such as a…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 1,
-      "trait": 2,
+      "trait": 3,
       "type": 1
      }
     },
@@ -78852,7 +78853,7 @@
      "path": "src/sync/client/documents.rs",
      "purpose": "Document import and durable local-journal confirmation on the one socket",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -79474,7 +79475,7 @@
      "path": "src/sync/connection/converge.rs",
      "purpose": "Convergence: run_convergence, re_bootstrap, server-frame pump",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -79488,7 +79489,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/sync/connection/handshake.rs",
@@ -79569,6 +79570,16 @@
      "purpose": "Typed reads of a residence open, using the named connection's own vault",
      "surface": {
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/connection/peer_session.rs",
+     "purpose": "FIX 4748: a device's sessions while its home is down (owner RULING B, 2026-10-19; ARCH-0023b `#home-down`…",
+     "surface": {
+      "crate-vis": 12
      }
     },
     {
@@ -80532,7 +80543,7 @@
      "path": "src/sync/mesh_path.rs",
      "purpose": "Path receipts for paired-machine mesh connections (OF-535)",
      "surface": {
-      "const": 2,
+      "const": 3,
       "enum": 3,
       "fn": 4,
       "struct": 1
@@ -80566,7 +80577,7 @@
      "purpose": "CRDT sync layer for Oneiron",
      "surface": {
       "crate-vis": 25,
-      "mod": 26,
+      "mod": 27,
       "re-export": 20
      }
     },
@@ -80702,6 +80713,22 @@
      "path": "src/sync/pack_sync/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PeerSyncPart",
+      "PeerSyncReceipt"
+     ],
+     "path": "src/sync/peer_route.rs",
+     "purpose": "FIX 4748 (owner RULING B, 2026-10-19): while the home node is off, linked devices sync device to device over…",
+     "surface": {
+      "const": 3,
+      "enum": 1,
+      "fn": 7,
+      "struct": 1
+     }
     },
     {
      "bucket": "m",
@@ -82534,7 +82561,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "WindowExport"
@@ -82544,7 +82571,7 @@
      "surface": {
       "crate-vis": 9,
       "enum": 1,
-      "fn": 9
+      "fn": 10
      }
     },
     {
@@ -82641,7 +82668,7 @@
      "path": "src/sync/window/replacement.rs",
      "purpose": "Installing a window replacement: a peer's history-free snapshot takes the place of this vault's window, and…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1,
       "struct": 2
      }
@@ -95284,7 +95311,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 394,
+     "files": 396,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -95494,9 +95521,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 194,
+   "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6762,
+   "source_files": 6764,
    "test_files": 895
   },
   "oneiron-android": {
@@ -109195,11 +109222,10 @@
      "path": "src/lib.rs",
      "purpose": "Vault-scoped mesh transport",
      "surface": {
-      "const": 1,
       "enum": 1,
       "fn": 2,
       "mod": 3,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 5,
       "trait": 8,
       "type": 2
@@ -109209,13 +109235,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "MeshPeerDialer",
       "MeshSyncDialer"
      ],
      "path": "src/sync_dialer.rs",
      "purpose": "The sync client's carrier to its home machine over the mesh (OF-535)",
      "surface": {
-      "fn": 4,
-      "struct": 1,
+      "fn": 5,
+      "struct": 2,
       "type": 1
      }
     },
@@ -126506,6 +126533,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/handler/peer_serve.rs",
+     "purpose": "FIX 4748: this machine serving another machine of its vault while their home is down (owner RULING B…",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/handler/protocol_close.rs",
      "purpose": "A socket the server closes on a protocol rejection (FIX 3303, OF-538): a hello it refused, a frame it would…",
      "surface": {
@@ -126875,7 +126912,7 @@
      "path": "src/livequery.rs",
      "purpose": "App-tier framing and coarse live-query state, separate from WindowSync",
      "surface": {
-      "crate-vis": 37
+      "crate-vis": 38
      }
     },
     {
@@ -134271,7 +134308,7 @@
      "purpose": "The host's intake of local folders (OF-554, FIX 6942): the confined walk, the notes reader, a Files source's…"
     },
     "handler": {
-     "files": 39,
+     "files": 40,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -134574,7 +134611,7 @@
    },
    "over_bar": 61,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1734,
+   "source_files": 1735,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
