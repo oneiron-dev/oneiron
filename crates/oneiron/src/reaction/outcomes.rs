@@ -210,6 +210,11 @@ impl ScopedRead<'_> {
         {
             return Ok(None);
         }
+        // An imported MESSAGE's AuthoredBy names who its source says spoke:
+        // never the principal's own authored message (FIX 15412).
+        if crate::memory::imported_message_in_txn(&vault.store, &txn, &message)? {
+            return Ok(None);
+        }
         let mut authored = false;
         for edge in vault.store.port_edges(
             &txn,
