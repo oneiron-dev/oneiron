@@ -10,7 +10,7 @@ use base64::Engine as _;
 use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
 
 use super::rest::html_text;
-use super::wire::MailAttachmentRef;
+use super::wire::{MailAddressHeaders, MailAttachmentRef};
 
 /// The deepest part nesting read.
 const MAX_PART_DEPTH: usize = 32;
@@ -145,14 +145,82 @@ pub(super) fn decode_words(raw: &[u8]) -> String {
     out
 }
 
+/// The address fields a reply reads, lowercased, in the order of
+/// [`MailAddressHeaders`]'s fields.
+const ADDRESS_FIELDS: [&str; 4] = ["from", "reply-to", "to", "cc"];
+
+/// The address headers of the raw message `bytes`: From, Reply-To, To and
+/// Cc, each the first field of its name, read as
+/// [`MimeMessage::address_header`] reads it. The header block is read to its
+/// end and only these four fields are kept, so a message with more fields
+/// than a parse keeps ([`MAX_FIELDS`]) still names each address field it
+/// carries, however late (fix list row 20520). Values are unfolded as
+/// [`split_header`] unfolds them.
+pub(super) fn raw_address_headers(bytes: &[u8]) -> MailAddressHeaders {
+    let mut fields: [Option<Vec<u8>>; 4] = Default::default();
+    // The kept field a continuation line goes on: the one on the line above.
+    let mut continued: Option<usize> = None;
+    for line in lines(bytes) {
+        let text = &bytes[line.start..line.end];
+        if text.is_empty() {
+            break;
+        }
+        if matches!(text[0], b' ' | b'\t') {
+            if let Some(slot) = continued
+                && let Some(value) = fields[slot].as_mut()
+            {
+                value.extend_from_slice(text);
+            }
+            continue;
+        }
+        continued = None;
+        let Some(colon) = text.iter().position(|&byte| byte == b':') else {
+            continue;
+        };
+        let name = String::from_utf8_lossy(&text[..colon])
+            .trim()
+            .to_ascii_lowercase();
+        if let Some(slot) = ADDRESS_FIELDS.iter().position(|field| *field == name)
+            && fields[slot].is_none()
+        {
+            fields[slot] = Some(text[colon + 1..].trim_ascii_start().to_vec());
+            continued = Some(slot);
+        }
+    }
+    let [from, reply_to, to, cc] =
+        fields.map(|value| value.as_deref().map(address_values).unwrap_or_default());
+    MailAddressHeaders {
+        from,
+        reply_to,
+        to,
+        cc,
+    }
+}
+
+/// The mailboxes of one raw address field value, one entry each, split at
+/// its top-level commas BEFORE any encoded word is decoded
+/// ([`MimeMessage::address_header`]).
+fn address_values(value: &[u8]) -> Vec<String> {
+    super::gmail::address_list(&decode_charset(value, None))
+        .iter()
+        .map(|mailbox| decoded_mailbox(mailbox))
+        .collect()
+}
+
 /// One mailbox of a raw address header (`phrase <address>` or an address):
 /// a phrase with encoded words decoded and written as a display name again
 /// (a quoted phrase read without its quotes first), the angle address as
-/// the sender wrote it. A mailbox with no encoded word, no angle address,
-/// or a `:` in its phrase (a group's opening) is left as it is.
+/// the sender wrote it. The angle address is the one outside quoted strings
+/// and comments; a mailbox with no encoded word, not exactly one such angle
+/// address ending it, or a `:` in its phrase (a group's opening) is left
+/// as it is.
 fn decoded_mailbox(mailbox: &str) -> String {
     let mailbox = mailbox.trim();
-    let Some(open) = mailbox.rfind('<') else {
+    let (places, unclosed) = super::gmail::address_places(mailbox);
+    let mut angles = places.iter().filter(|(_, character, place)| {
+        *character == '<' && *place == super::gmail::AddressPlace::Top
+    });
+    let (Some(&(open, _, _)), None, false) = (angles.next(), angles.next(), unclosed) else {
         return mailbox.to_owned();
     };
     let (phrase, address) = (mailbox[..open].trim(), &mailbox[open..]);
@@ -620,10 +688,7 @@ impl<'m> MimeMessage<'m> {
         let Some((_, value)) = self.root.fields.iter().find(|(held, _)| *held == name) else {
             return Vec::new();
         };
-        super::gmail::address_list(&decode_charset(value, None))
-            .iter()
-            .map(|mailbox| decoded_mailbox(mailbox))
-            .collect()
+        address_values(value)
     }
 
     /// Its plain text (or its HTML's text) and its attachments, the way the

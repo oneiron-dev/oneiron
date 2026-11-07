@@ -21410,6 +21410,7 @@
       "input": "crate::mail_pack::MailReplyDraftRequest",
       "output": "crate::mail_pack::MailReplyDraftView",
       "call": "memory.mail_reply_draft(&input)?",
+      "mcp_off_runtime": true,
       "scope": "Write",
       "mcp_fields": {
         "spec": "$"
