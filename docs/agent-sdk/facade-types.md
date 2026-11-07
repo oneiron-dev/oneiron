@@ -828,7 +828,7 @@ export type SpendCalibrationSample = { before?: AgentSpendCalibration | null }
 /** `oneiron::agent_dispatch::spend_record::SpendPayer` */
 export type SpendPayer = { party: EntityId; granted_by?: EntityId | null; at_ms: number }
 /** `oneiron::agent_dispatch::spend_record::SpendScope` */
-export type SpendScope = { scope: SpendScopeId; parent?: SpendScopeId | null; unit: LeaseUnit; cap_units: number; hard: boolean; spent_units: number; held_units: number; state: SpendState; shown_at_ms?: number | null; opened_at: number; closed_at?: number | null; agent?: EntityId | null; calibration_sample?: SpendCalibrationSample | null; exploration_attempt?: AttemptId | null; payer?: SpendPayer | null }
+export type SpendScope = { scope: SpendScopeId; parent?: SpendScopeId | null; unit: LeaseUnit; cap_units: number; ceiling_units?: number | null; hard: boolean; spent_units: number; held_units: number; state: SpendState; shown_at_ms?: number | null; opened_at: number; closed_at?: number | null; agent?: EntityId | null; calibration_sample?: SpendCalibrationSample | null; exploration_attempt?: AttemptId | null; payer?: SpendPayer | null }
 /** `oneiron::agent_dispatch::spend_record::SpendSignal` */
 export type SpendSignal = { signal: "wrap_up"; available_units: number; cap_units: number } | { signal: "at_cap"; cap_units: number }
 /** `oneiron::agent_dispatch::spend_record::SpendRead` */
