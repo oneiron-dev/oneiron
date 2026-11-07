@@ -287,15 +287,32 @@ fn erase_scrubbed_family(
 }
 
 /// Each carrier is in its canonical form, and the keys sort strictly: a
-/// binding, a revision or a derived row's set is never carried twice.
+/// binding, a revision or a derived row's set is never carried twice. A
+/// binding stands only on a carried row whose own bytes carry the
+/// source-audience obligation, or on its bodiless erase shell (fix list row
+/// 16256); a stamped row the artifact binds to nothing stays unresolved,
+/// and nothing here binds it.
 pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
     let mut previous: Option<&str> = None;
     for row in &snapshot.source_audiences {
         if previous.is_some_and(|previous| previous >= row.key.as_str()) {
             return Err(super::invalid("source audiences out of key order"));
         }
-        crate::source_audience::carried::carrier(&row.key, &row.value)
+        let entry = crate::source_audience::carried::carrier(&row.key, &row.value)
             .map_err(|_| super::invalid("source audience carrier"))?;
+        if let Carrier::Record { row: bound, .. } = entry
+            && !source_audience::binding_stands_on(
+                snapshot
+                    .entity_blobs
+                    .binary_search_by_key(bound.as_bytes(), |entity| entity.id)
+                    .ok()
+                    .map(|at| snapshot.entity_blobs[at].blob.as_slice()),
+            )
+        {
+            return Err(super::invalid(
+                "a source audience binds a row that carries no source_audience_required",
+            ));
+        }
         previous = Some(&row.key);
     }
     Ok(())
