@@ -518,7 +518,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/session_overlay/overlay/retire.rs` | src | s | 1 fn | — | Promoted-closure retirement reusing the store's index-key builders |
 | `src/session_overlay/overlay/retire_selected.rs` | src | m | 1 fn | — | Selected-artifact retirement for a natively saved subset (FIX 13687) |
 | `src/session_overlay/overlay/retrieval_erase.rs` | src | m | 1 struct · 1 fn | RecordMetaRows | A room's copies of a deleted or erased record's own retrieval rows (FIX 17382) |
-| `src/session_overlay/overlay/rows.rs` | src | m | 13 fn · 1 crate-vis | — | Row staging, preflight, budget checks, read probes |
+| `src/session_overlay/overlay/rows.rs` | src | m | 14 fn · 2 crate-vis | — | Row staging, preflight, budget checks, read probes |
 | `src/session_overlay/overlay/segment.rs` | src | m | 1 struct · 2 fn · 1 re-export · 3 crate-vis | TxnSegmentGuard | Txn segment install, leases, commit/apply guards |
 | `src/session_overlay/overlay/segment/base_retirement.rs` | src | s | 1 struct · 1 fn · 2 crate-vis | BaseRowRetirementGuard | Canonical reader-ledger writes that supersede rows in a sealed overlay |
 | `src/session_overlay/route.rs` | src | s | 1 struct · 1 enum · 7 fn | RouteTarget, SessionWriteRoute | Session write routing: which store a session write lands in per mode |
