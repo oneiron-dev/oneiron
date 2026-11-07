@@ -3626,7 +3626,7 @@ export type OfferOption = { label: string; model: OfferModelPin; cost: OfferCost
 /** `oneiron::skill_optimize::offer::snapshot::SeatWorkload` */
 export type SeatWorkload = { from: number; until: number; calls?: number | null; input_tokens?: number | null; output_tokens?: number | null; complete: boolean; receipt_refs: string[] }
 /** `oneiron::skill_optimize::offer::snapshot::OfferEvidence` */
-export type OfferEvidence = { cohort?: EntityId | null; exposures: EntityId[]; rubric_revision?: string | null; card?: SufficiencyCard | null; losses: string[]; risk?: string | null }
+export type OfferEvidence = { cohort?: EntityId | null; exposures: EntityId[]; rubric_revision?: string | null; card?: SufficiencyCard | null; paired_measurement?: number[] | null; losses: string[]; risk?: string | null }
 /** `oneiron::skill_optimize::offer::snapshot::ComputeDestination` */
 export type ComputeDestination = "on_device" | { self_hosted: { host: string } } | { hosted: { provider: string; rows_leaving: number } }
 /** `oneiron::skill_optimize::offer::snapshot::TrainingOffer` */
