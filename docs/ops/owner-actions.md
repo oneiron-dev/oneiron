@@ -1512,6 +1512,25 @@ recall is `memory_miss`, a consolidation error `task_failure`, a consent storm o
 diagnostic does not say which agent failed, so these counts carry the agent `unattributed`.
 Counts wait in the vault, across restarts, until the publisher takes them.
 
+## Coach prompt repair drafts
+
+When a case is routed to `prompt_inject`, the served Coach author can now draft prompt text
+using its configured Coach model and the pass's existing draft budget. It receives the recorded
+case, agent, pre-failure checkpoint, diagnosis and cause context as data. The existing engine
+writer binds those references again and files a `coach.prompt_repair` Proposed artifact with
+the heal. This draft does not inject text, resume a run, grant authority or prove a replay passed.
+
+The shipped instruction lives in `prompts/coach-prompt-repair.md`. Override it through
+`[models.dreamer.wording]` with `coach_prompt_repair_prompt` or
+`coach_prompt_repair_prompt_file`, using the same inline/file resolution as the other Coach
+wording. A relative file path resolves from the config directory.
+
+The answer is `{"prompt":"<exact text>","rationale":"<why>"}`. A null `prompt` declines.
+The engine still handles an empty draft, unavailable model, author error, stale case or missing
+binding as a route-only heal. Custom `CoachHealAuthor` implementations keep the default `None`
+unless they implement this method. Skill edits, producer fixes and environment repairs keep
+their existing behavior.
+
 ## Model-graded self-heal detectors
 
 Canon ships no detector wording, so no model-graded detector runs until you write one. Each
@@ -2013,6 +2032,14 @@ bundle upkeep last did on this install, each part with its time:
 - `pending`: `pending_pad_access` and `pending_erases`, from the last relay whose erase sweep
   counted them.
 - `relay_failure`: the last relay that failed, and its error.
+- `unmerged_uploads`: for each home, the last upload this install assembled for it, by the slot
+  or by a publication you asked for, when that upload carries a world section this install may
+  read unchanged because it did not open, decode or merge here. Each names the home, the
+  generation, and per section the world, the window whose merge failed, the stage and the
+  error's kind. The erased-actor cleanup did not run on that section. The upload keeps the
+  section and still publishes; the section is yours to repair. A tick that uploads nothing leaves
+  this part; only a later upload for the same home replaces it. Left out when no upload carries
+  such a section.
 - `grant`: the last kit grant answered here.
 
 A part with no observation yet says `unobserved`, which is not zero. The counts are what the
@@ -2407,16 +2434,16 @@ Routes take targets as `{"record": "<hex>"}`, `{"gate_partition": "<hex>"}` or
   before you `POST` it with `{"records": ["<hex>", ...]}`. Each record answers `erased` with its
   receipt once the receipt is complete, `completion_pending` with the receipt and
   `"reason": "historical_sweep"` while its history sweep is queued (the same rule self-hosted and
-  hosted), `retained_for_law` with the order's `bound` (the law, jurisdiction, issuing authority
-  and end) and what self-hosting changes, or `failed` (the hold is lifted; a plain delete retries).
+  hosted), or `failed` (the hold is lifted; a plain delete retries).
 
 The SDK verbs `vault.legal_holds.place`, `.widen`, `.list`, `.log` and `.lift_and_erase` do the
 same under the owner's credential. Where Oneiron hosts the bytes, a legal order Oneiron must obey
-can also hold records. You cannot lift it, and an erase you confirm waits until it ends. You see
-the order whole, with its reference and terms, unless the order itself requires silence; then you
-see nothing of it until that silence ends, and an erase it keeps reads only `completion_pending`.
+can also cover records. It keeps nothing in your vault: what it covers is copied, sealed, into the
+host's separate legal-hold store, and your deletes and erases run as usual. You cannot lift it. You
+see the order whole, with its reference and terms, unless the order itself requires silence; then
+you see nothing of it until that silence ends.
 
-An erase that still waits, on such an order or on a shared vault's veto window, is yours to
+An erase that still waits on a shared vault's veto window is yours to
 withdraw: the SDK verb `vault.legal_holds.withdraw_erase` with `{"records": ["<hex>", ...]}`
 answers each record `withdrawn`, `not_waiting`, `confirmed_by_another_owner` (only the Owner who
 confirmed it withdraws it; yours is the objection to its `erase` act), or `under_way` when its
