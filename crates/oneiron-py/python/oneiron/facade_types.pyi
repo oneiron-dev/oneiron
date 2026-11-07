@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1275 facade rows, 4616 declarations.
+Census: 1275 facade rows, 4617 declarations.
 Inputs: 1204 of 1275 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1104 of 1275 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -6795,6 +6795,8 @@ class AuthorityAuditRow(TypedDict):
     vault_ref: NotRequired[str | None]
     subject_ref: NotRequired[str | None]
     grant_ref: NotRequired[str | None]
+    receipt_ref: NotRequired[str | None]
+    affected_grants: NotRequired[list[str]]
     claim_ref: NotRequired[str | None]
     holder_ref: NotRequired[str | None]
     parent_ref: NotRequired[str | None]
@@ -12710,12 +12712,13 @@ class ForeignCodeOutput(TypedDict):
     bytes: list[int]
 ForeignCodeSource = Literal["generated"]
 ForeignCodeApproval = Literal["proposed"]
-class CodeFileEdit(TypedDict):
+SandboxProposalText = str
+class SandboxFileEdit(TypedDict):
     path: str
     start: int
     end: int
-    expected: str
-    replacement: str
+    expected: SandboxProposalText
+    replacement: SandboxProposalText
     new_path: NotRequired[str | None]
 class ConfidenceDetails(TypedDict):
     band: ConfidenceBand
@@ -12744,7 +12747,7 @@ class ForeignCodeEffectFileEdit(TypedDict):
     kind: Literal["file_edit"]
     path: str
     base_content_hash: str
-    edit: CodeFileEdit
+    edit: SandboxFileEdit
 class ForeignCodeEffectFileDelete(TypedDict):
     kind: Literal["file_delete"]
     path: str
