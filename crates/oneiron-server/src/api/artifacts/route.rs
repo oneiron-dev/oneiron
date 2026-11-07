@@ -134,6 +134,10 @@ impl ArtifactRoute {
         &self.file.decoded
     }
 
+    pub(super) fn encoded_path(&self) -> &str {
+        &self.file.encoded
+    }
+
     pub(super) fn redirect(&self) -> Option<String> {
         match self.form {
             AddressForm::Canonical { needs_slash: false } => return None,
@@ -201,6 +205,34 @@ impl ArtifactServeQuery {
                 })?;
         Ok(ArtifactSnapshotSelector::Channel(channel))
     }
+}
+
+pub(super) fn backend_redirect_path(encoded: &str) -> Result<String, EnvelopedApiError> {
+    let mut segments = Vec::new();
+    for segment in encoded.split('/') {
+        match decode_component(segment)?.as_str() {
+            "" | "." => {}
+            ".." => {
+                segments.pop();
+            }
+            _ => segments.push(segment),
+        }
+    }
+    let mut path = segments.join("/");
+    let directory = encoded.ends_with('/')
+        || encoded.rsplit('/').next().is_some_and(|last| {
+            decode_component(last).is_ok_and(|last| matches!(last.as_str(), "." | ".."))
+        });
+    if directory && !path.is_empty() {
+        path.push('/');
+    }
+    Ok(path)
+}
+
+pub(super) fn selector_query_pair(raw: &str) -> bool {
+    decode_component(raw.split('=').next().unwrap_or_default()).is_ok_and(|key| {
+        matches!(key.as_str(), "channel" | "forkHash" | "blobVersion")
+    })
 }
 
 fn missing() -> EnvelopedApiError {
