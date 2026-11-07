@@ -1,5 +1,5 @@
-//! FIX 5629, 6505, 4747: the taps a delivered notification offers, read when
-//! its row is read, from the refs its producer already wrote. Nothing here is
+//! FIX 5629, 6505, 4747, 5369: the taps a delivered notification offers, read
+//! when its row is read, from the refs its producer already wrote. Nothing here is
 //! stored: there is no action ledger, a settled or stale target offers no
 //! tap, and the door each tap names judges its target again when called.
 
@@ -9,6 +9,7 @@ use super::list::NotificationRow;
 use super::notification::NotificationKind;
 use crate::claim::{WEAVE_DIGEST_SETTINGS_NOTIFICATION_PRODUCER, WeaveDigestSettingChangeStatus};
 use crate::entity_id::EntityId;
+use crate::llm::model_pack::{MODEL_PACK_CHANGE_NOTIFICATION_PRODUCER, MODEL_PACK_REVERT_VERB};
 use crate::memory::Memory;
 use crate::outbound::{UNCERTAIN_SEND_ANSWER_VERB, UNCERTAIN_SEND_NOTIFICATION_PRODUCER};
 use crate::store::conversation_body::{THREAD_NOTICE_PRODUCER, ThreadJoinRequestsRequest};
@@ -52,9 +53,9 @@ impl Memory<'_> {
     /// The taps `row` offers this caller now: a pending digest settings ask
     /// is accepted or declined and an applied change undone (FIX 5629), a
     /// pending request to join a private thread is approved or denied
-    /// (FIX 6505), and a send that may have gone out is sent again or left
-    /// (FIX 4747). Any other row, and a target that no longer reads or has
-    /// settled, offers none.
+    /// (FIX 6505), a send that may have gone out is sent again or left (FIX
+    /// 4747), and a model pack change is reverted (FIX 5369). Any other row,
+    /// and a target that no longer reads or has settled, offers none.
     fn notification_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
         let producer = row.source.producer.as_str();
         match row.kind {
@@ -68,6 +69,11 @@ impl Memory<'_> {
             }
             NotificationKind::Ask if producer == UNCERTAIN_SEND_NOTIFICATION_PRODUCER => {
                 self.uncertain_send_actions(row)
+            }
+            NotificationKind::ModelPackChanged
+                if producer == MODEL_PACK_CHANGE_NOTIFICATION_PRODUCER =>
+            {
+                self.model_pack_revert_actions(row)
             }
             _ => Vec::new(),
         }
@@ -184,5 +190,28 @@ impl Memory<'_> {
             NotificationAction::new(THREAD_JOIN_APPROVE_VERB, args.clone()),
             NotificationAction::new(THREAD_JOIN_DENY_VERB, args),
         ]
+    }
+
+    /// The producer names the change in `source.result`; the notice is an
+    /// owner's own. Its revert is offered while the change is the vault's
+    /// last and the pack before it is installed at its bytes and served.
+    fn model_pack_revert_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
+        let Some(change_ref) = row.source.result.as_deref() else {
+            return Vec::new();
+        };
+        let vault = self.vault();
+        let runs = vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::error::Error::from)
+            .and_then(|txn| vault.model_pack_revert_runs_in_txn(&txn, change_ref));
+        if !matches!(runs, Ok(true)) {
+            return Vec::new();
+        }
+        vec![NotificationAction::new(
+            MODEL_PACK_REVERT_VERB,
+            serde_json::json!({ "change_ref": change_ref }),
+        )]
     }
 }

@@ -10,6 +10,7 @@
 //! splits through the shared Loro projection (`loro`), its join writing the
 //! same history back with every actor that did not open erased. A NOTE's
 //! document rows split the same through NOTE's own codec. A shallow history
+//! that names no one is kept as stored (FIX 6442); one that names an actor
 //! stays under the vault-wide seal, named with the owner it joins, and so
 //! does a pending fork's snapshot whose record did not split beside it.
 //! Nothing calls this until KS7-5, and only once CHECKPOINT_PAYLOADS_ENABLED
