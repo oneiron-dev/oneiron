@@ -149,21 +149,71 @@ pub(crate) async fn ai_voice_tool(
                 Some(invocation) => memory.with_invocation(invocation),
                 None => memory,
             };
-            super::connector_call_doors::connector_call_listing_as(server, &memory, input.call)
+            super::live_voice_settlement::call(server, memory, input.call)
         },
     )
     .await;
-    let (reply, picked) = match answer {
+    let ((reply, picked), interest) = match answer {
         Ok(answer) => answer,
         Err(refusal) => return (Err(refusal), Some(listed)),
     };
     // The session reads what it read before: the rows the call's reads
     // listed.
+    let wait_for_delivery = matches!(
+        &reply,
+        ConnectorCallReply::Held { .. }
+            | ConnectorCallReply::PendingDelivery {
+                call_ref: Some(_),
+                ..
+            }
+    );
     let result = match &reply {
         ConnectorCallReply::Delivered {
             result: Some(result),
             ..
         } => session.tool(result.clone(), listed.clone()).await,
+        ConnectorCallReply::Held { call_ref, .. }
+        | ConnectorCallReply::PendingDelivery {
+            call_ref: Some(call_ref),
+            ..
+        }
+        | ConnectorCallReply::AwaitingInput { call_ref, .. } => {
+            super::live_voice_settlement::follow(
+                server,
+                auth,
+                caller,
+                &session,
+                call_ref.clone(),
+                listed.clone(),
+                interest,
+                wait_for_delivery,
+            )
+            .and_then(|()| session.processed())
+        }
+        ConnectorCallReply::Delivered { result: None, .. }
+            if interest
+                .as_ref()
+                .is_some_and(|interest| interest.result().is_some()) =>
+        {
+            // A concurrent answer may settle an existing invocation while
+            // this call reads its row. The early watch already owns its body.
+            let call_ref = interest
+                .as_ref()
+                .expect("watched live result")
+                .call_ref()
+                .to_hex();
+            super::live_voice_settlement::follow(
+                server,
+                auth,
+                caller,
+                &session,
+                call_ref,
+                listed.clone(),
+                interest,
+                false,
+            )
+            .and_then(|()| session.processed())
+        }
         _ => session.processed(),
     };
     // The rows the call's passes picked ride beside them in the answer, as
