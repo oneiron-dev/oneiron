@@ -36,16 +36,19 @@ use crate::{EdgeActorClass, EntityId, Result, Vault};
 
 use super::block::HookTurnTarget;
 pub(crate) use ask::VERB_HOOK_INTENT;
-pub use ask::{HOOK_RESULT_NOT_RETAINED, VerbHookWaitStatus};
+pub use ask::{HOOK_OUTCOME_UNCERTAIN, HOOK_RESULT_NOT_RETAINED, VerbHookWaitStatus};
 pub use call_scope::VerbCallScope;
+pub(super) use chain::admit_verb_outcome;
+pub(super) use chain::projection::merge_withheld;
 pub use credential::{
     VerbAskCredential, VerbAskCredentialCheck, VerbAskCredentialRef, VerbAskCredentialSource,
     VerbAskCredentialWitness, VerbAskDoor, VerbAskDrainPermit, VerbAskDrainScope,
-    VerbAskInstrument, VerbAskRefusal, VerbAskResumed, VerbAskSavedCall,
+    VerbAskInstrument, VerbAskMcpCeiling, VerbAskRefusal, VerbAskResumed, VerbAskSavedCall,
 };
 pub use paced::PACED_VERB_WAIT_DEFAULT_SECS;
 pub(crate) use paced::{
-    hold_paced_verb_call, land_paced_verb_call_in_txn, paced_verb_reply, runs_paced_turn,
+    hold_paced_verb_call, land_paced_verb_call_in_txn, paced_turn_again, paced_verb_reply,
+    runs_paced_turn,
 };
 pub(crate) use plain_resume::PlainRowResume;
 pub(super) use record::{HookVerbRunRecord, VERB_RUNS};
@@ -245,6 +248,21 @@ impl Vault {
         ask: EntityId,
     ) -> Result<VerbHookWaitStatus> {
         ask::wait_status(self, invocation, verb, actor, class, ask)
+    }
+
+    /// The rows the result settlement's drain saved under `invocation` was
+    /// derived from, as its door listed them (FIX 1435). The door that
+    /// answers the caller's retry with that result releases it by them.
+    /// `None` when no result is saved there, or its door listed none.
+    ///
+    /// # Errors
+    ///
+    /// Reading the saved call.
+    pub fn verb_hook_saved_producers(
+        &self,
+        invocation: InvocationId,
+    ) -> Result<Option<Vec<EntityId>>> {
+        ask::saved_producers(self, invocation)
     }
 
     /// Runs the pre chain of `call` over `args`: the matching pre-hooks in
