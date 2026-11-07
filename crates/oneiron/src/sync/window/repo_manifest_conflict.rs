@@ -14,7 +14,7 @@ use super::{
 };
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
-use crate::error::Result;
+use crate::error::{Error, Result, SyncError};
 use crate::origin::{RepoManifest, RepoPortableId};
 use crate::ports::{WindowAddress, WindowDeletionRows};
 use crate::sync::repo_manifests::conflicts::{
@@ -62,6 +62,46 @@ impl RepoManifestConflictReview {
     pub fn carried(&self) -> &RepoManifest {
         &self.carried
     }
+
+    /// Encodes the exact reviewed state for a caller to return unchanged.
+    /// The binding describes a revision; it grants no authority.
+    pub fn encode_binding(&self) -> Result<Vec<u8>> {
+        rmp_serde::to_vec(&(
+            self.window.as_str(),
+            self.portable,
+            self.held.encode()?,
+            self.carried.encode()?,
+            self.version.encode(),
+        ))
+        .map_err(|_| invalid_review_binding())
+    }
+
+    /// Decodes a complete current binding without resolving newer state.
+    /// The discard door still checks its owner and all reviewed facts.
+    pub fn decode_binding(bytes: &[u8]) -> Result<Self> {
+        let binding: (String, RepoPortableId, Vec<u8>, Vec<u8>, Vec<u8>) =
+            rmp_serde::from_slice(bytes).map_err(|_| invalid_review_binding())?;
+        if rmp_serde::to_vec(&binding).map_err(|_| invalid_review_binding())? != bytes {
+            return Err(invalid_review_binding());
+        }
+        let (window, portable, held, carried, version) = binding;
+        Ok(Self {
+            window: WindowKey::try_new(window).ok_or_else(invalid_review_binding)?,
+            portable,
+            held: RepoManifest::decode(&held).ok_or_else(invalid_review_binding)?,
+            carried: RepoManifest::decode(&carried).ok_or_else(invalid_review_binding)?,
+            version: VersionVector::decode(&version).map_err(|source| {
+                Error::Sync(SyncError::CrdtDecodeError {
+                    context: "decode repo manifest review version vector",
+                    source,
+                })
+            })?,
+        })
+    }
+}
+
+fn invalid_review_binding() -> Error {
+    Error::InvalidConfig("invalid repo manifest conflict review binding".to_owned())
 }
 
 /// What discarding one reviewed carrier did.
