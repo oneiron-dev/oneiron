@@ -5,6 +5,8 @@
 mod auth;
 mod collector;
 mod live;
+mod messages;
+mod outbox;
 
 pub use auth::{HostLegalChannel, HostLegalConnection};
 pub(crate) use live::HostLegalCaptures;
@@ -68,6 +70,14 @@ impl HostLegalConnection {
         if matches!(&request.scope, CaptureScope::LiveSession(_)) {
             return self.run_live(vault, request, public);
         }
+        if matches!(&request.scope, CaptureScope::ProspectiveMessages(_)) {
+            return self.run_prospective(vault, request, public, cancelled);
+        }
+        if let CaptureScope::Messages(ids) = &request.scope {
+            return messages::capture(&mut self.stream, vault, &request, &public, ids, || {
+                check(vault, &request, cancelled)
+            });
+        }
         let check = || check(vault, &request, cancelled);
         // Gate custody BEFORE its source writer. Neither guard is reused for
         // LIVE: K lends its final overlay/spill source at the close boundary.
@@ -115,7 +125,7 @@ impl HostLegalConnection {
             )
             .into());
         }
-        collector.finish(decisions, 0, 0, CaptureExtent::GateDecisions, check)?;
+        collector.finish(decisions, 0, 0, 0, CaptureExtent::GateDecisions, check)?;
         // Read-only abort, after the exact durable HOST acknowledgement.
         drop(txn);
         Ok(())
