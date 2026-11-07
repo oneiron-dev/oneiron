@@ -65,11 +65,6 @@ impl WriteKind {
             Self::BackgroundTagging | Self::Dreamer | Self::BackgroundOther
         )
     }
-
-    /// Whether a reap waits for it to end once frozen.
-    fn waited_for(self) -> bool {
-        self.background() || self == Self::DeviceSync
-    }
 }
 
 /// The admitted writes in flight, by kind.
@@ -185,11 +180,9 @@ impl Drop for Admitted {
         let count = gate.in_flight.of(self.kind);
         *count = count.saturating_sub(1);
         drop(gate);
-        if self.kind.waited_for() {
-            self.admission
-                .ended
-                .send_modify(|ended| *ended = ended.wrapping_add(1));
-        }
+        self.admission
+            .ended
+            .send_modify(|ended| *ended = ended.wrapping_add(1));
     }
 }
 
@@ -254,7 +247,8 @@ impl Admission {
         self.gate().in_flight
     }
 
-    /// Changes as each background pass's admission drops.
+    /// Changes as each admitted write's admission drops; a waiter reads the
+    /// counts it waits for again.
     pub(super) fn ended(&self) -> watch::Receiver<u64> {
         self.ended.subscribe()
     }
@@ -409,6 +403,23 @@ impl ManagedState {
             }),
             self.admission.frozen(),
         )
+    }
+
+    /// Resolves once no admitted write of any kind is in flight. Called after
+    /// the freeze, so nothing new is admitted: a run whose driver teardown
+    /// stopped may still hold its admission on its own thread until it
+    /// settles. No deadline: the supervisor's kill bounds it.
+    pub(super) async fn admitted_writes_ended(&self) {
+        let mut ended = self.admission.ended();
+        loop {
+            let in_flight = self.admission.in_flight();
+            if in_flight.total() == 0 && in_flight.device_sync == 0 {
+                return;
+            }
+            if ended.changed().await.is_err() {
+                return;
+            }
+        }
     }
 
     /// Waits until no device sync run or refresh is in flight, or until

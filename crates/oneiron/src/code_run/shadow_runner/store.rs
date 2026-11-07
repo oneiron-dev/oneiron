@@ -14,6 +14,11 @@
 //! A store its host binds to the source's vault masks each write at write
 //! (FIX 5718 part 3, `admit`): a body streams into a raw spool, and only
 //! the bytes the side-row wall admits are published, named by their digest.
+//!
+//! A mark on a body is storage, not a model release (FIX 6649):
+//! [`ShadowBodyStore::read`] is the raw byte read of the arm's owner, and a
+//! model reads a body of the arm only through the model release (`release`,
+//! FIX 9468).
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -121,6 +126,13 @@ impl ShadowBodyStore {
             ShadowUnavailableReason::SourceWithheld,
             crate::code_run::RESPONSE_ERASED,
         ))
+    }
+
+    /// The source vault and run the store's writes are admitted under:
+    /// what the release of its reads reads the source's taint in again (FIX
+    /// 9468). `None` for a store no source binds.
+    pub(super) fn binding(&self) -> Option<&ShadowAdmission> {
+        self.admit.as_ref()
     }
 
     /// Keeps `latest`, the type feedback of the program the arm runs, for
@@ -300,7 +312,9 @@ impl ShadowBodyStore {
     }
 
     /// The whole body `body` names, checked against its digest; `None` when
-    /// the store does not hold it.
+    /// the store does not hold it. This is the raw byte read, which checks no
+    /// mark and no source: a model reads a body of the arm through
+    /// [`super::read_for_model`] (FIX 9468).
     ///
     /// # Errors
     ///

@@ -147,7 +147,19 @@ impl Vault {
     /// Checks if a directed edge exists in the LMDB vault.
     pub fn edge_exists(&self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
-        Ok(self.store.port_edge_get(&rtxn, src, kind, tgt)?.is_some())
+        self.edge_exists_in_txn(&rtxn, src, kind, tgt)
+    }
+
+    /// [`Self::edge_exists`] in `txn`, so a door proves an edge in the
+    /// snapshot it serves from (FIX 10782).
+    pub fn edge_exists_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        src: &EntityId,
+        kind: EdgeKind,
+        tgt: &EntityId,
+    ) -> Result<bool> {
+        Ok(self.store.port_edge_get(txn, src, kind, tgt)?.is_some())
     }
 
     /// Returns the `learned_at` timestamp from an entity's header (bytes 17-24).

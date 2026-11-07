@@ -199,6 +199,7 @@ fn deliver_queued_event(vault: &Vault, exec: &mut EventConsumer) -> Result<()> {
             reserve_units: 10,
             now: crate::unix_seconds_now() + 1,
             host_scope: None,
+            destination_bound: None,
         },
         exec,
         &cancel,
