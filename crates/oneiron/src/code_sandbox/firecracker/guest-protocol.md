@@ -109,8 +109,9 @@ then that many UTF-8 bytes (maximum 8 MiB). Unknown fields are refused.
    its existing priority. There is no new timer, quota or success path.
 
 Frames stay bounded to 8 MiB. Snapshot and proposed files stream without a
-whole-file wire size cap; source text and step-result JSON retain their 1 MiB
-bounds. Guest workspace files are read to EOF. Random-byte outputs use
+whole-file wire size cap; source text retains its 1 MiB bound. Step-result JSON
+has no separate whole-result size check; its encoded frame must still fit.
+Guest workspace files are read to EOF. Random-byte outputs use
 fallible native allocation with no separate per-call byte ceiling, without a
 cumulative read/random-output byte ceiling. Source and outbound
 request budgets remain 16384; file chunks and source file closes do not spend source
