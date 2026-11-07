@@ -247,6 +247,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_RELIABILITY_PAIRED_IMPORTED_BASE, CONTENT),
     (&t::SKILL_RELIABILITY_OUTCOME, CONTENT),
     (&t::SKILL_RELIABILITY_PAIRED_OUTCOME, CONTENT),
+    // A source landing's birth mark lives inside its own write and never
+    // commits (fix list row 16256): a restore keeps the live vault's.
+    (&t::SOURCE_AUDIENCE_BIRTH, LIVE),
     // A change to a source's readers is history, restored with the rows it
     // admitted; the policy itself is live authority: a restore never gives
     // back a reader removed since, or takes away one added (FIX 12559).
