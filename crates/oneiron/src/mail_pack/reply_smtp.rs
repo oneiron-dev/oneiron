@@ -13,10 +13,14 @@
 //!   its dot-stuffed data, nor the final `.<CRLF>`.
 //! - **The check.** Through the mailbox's own submission credential, at its
 //!   door: TLS, `EHLO`, `AUTH` as its send authenticates, the limit read,
-//!   `QUIT`. Never `MAIL`, `RCPT` or `DATA`. A check that cannot be made
-//!   refuses the draft, or the press; nothing is asked for or pressed on a
-//!   limit nobody read. The draft keeps the limit and when it was read for
-//!   its reviewer, never as a lasting permission: each press asks again.
+//!   `QUIT`. Never `MAIL`, `RCPT` or `DATA`. Each step ends by the SMTP
+//!   client's deadlines: the name's resolution, the connection, TLS and
+//!   `EHLO` by its connect deadline, `AUTH` and `QUIT` each by its command
+//!   deadline, and `QUIT` must be answered. A check that cannot be made, a
+//!   step past its deadline included, refuses the draft, or the press;
+//!   nothing is asked for or pressed on a limit nobody read. The draft keeps
+//!   the limit and when it was read for its reviewer, never as a lasting
+//!   permission: each press asks again.
 //! - **What it binds to.** A check records what it was read from: the
 //!   mailbox source, the custody record its credential is held under and
 //!   that record's value generation, the submission server (host and port)
@@ -27,13 +31,18 @@
 //!   and to the setting the host applies now; then the exact frozen message
 //!   is judged against it. A reconnect to another credential, a rotated
 //!   credential or a changed setting refuses that write, and the next call
-//!   asks the server again outside it.
+//!   asks the server again outside it. The press's writer also takes its
+//!   check only over the one the draft held when that press read it: a
+//!   press that kept another check in between refuses this one, and the
+//!   next press asks again. No clock orders two checks.
 //! - **Where it runs.** The check waits on the network inside the drafter's
 //!   own call, with the drafter's own handle and the mailbox's own
-//!   credential. It runs on the blocking runner its host installs
-//!   ([`MailBlockingRunner`]), so no async runtime worker is held while it
-//!   waits; where the host installs none, the call is a blocking one already
-//!   and the check runs in place.
+//!   credential, and with no store transaction open. It runs on the
+//!   blocking runner its host installs ([`MailBlockingRunner`]), so no async
+//!   runtime worker is held while it waits. A host that installs none (an
+//!   embedded vault, a CLI, a test) never runs it: a reply with files from
+//!   an IMAP mailbox is refused there before anything is asked, read or
+//!   published.
 
 use std::sync::{Arc, PoisonError, RwLock};
 
@@ -43,7 +52,7 @@ use super::credential::WireReads;
 use super::reply_send::{SMTP_SUBMISSION_CONNECTOR_EFFECTOR, open_submission};
 use super::source::{MailProvider, MailSourceRow};
 use super::wire::MailSyncSource;
-use crate::memory::{MemoryError, MemoryResult};
+use crate::memory::{MEMORY_CODE_INVALID_STATE, MemoryError, MemoryResult};
 use crate::secret_record::read_secret_custody_admission_in_txn;
 use crate::store::secret_name_index::resolve_secret_ref_in_txn;
 use crate::{EntityId, Result, Vault};
@@ -98,8 +107,8 @@ struct MailHost {
 impl Vault {
     /// Installs the host operator's mail settings on this vault, and the
     /// runner its blocking mail work runs on, in place of any before them
-    /// (fix list row 17645). With no runner, that work runs in place, on the
-    /// calling thread.
+    /// (fix list row 17645). With no runner, that work never runs: a reply
+    /// with files from an IMAP mailbox is refused.
     pub fn install_mail_host(
         &self,
         settings: MailHostSettings,
@@ -123,8 +132,14 @@ impl Vault {
             .settings
     }
 
-    /// Runs `work` on the runner the host installed, else in place.
-    fn run_mail_blocking(&self, work: &mut (dyn FnMut() + Send)) {
+    /// Runs `work` on the runner the host installed (fix list row 17645).
+    ///
+    /// # Errors
+    ///
+    /// No runner installed: `work` does not run, on this thread or any
+    /// other, and the caller is refused before it asks, reads or publishes
+    /// anything.
+    fn run_mail_blocking(&self, work: &mut (dyn FnMut() + Send)) -> MemoryResult<()> {
         let runner = self
             .store
             .mail_host
@@ -133,10 +148,18 @@ impl Vault {
             .unwrap_or_else(PoisonError::into_inner)
             .runner
             .clone();
-        match runner {
-            Some(runner) => runner.run(work),
-            None => work(),
-        }
+        let Some(runner) = runner else {
+            return Err(MemoryError::new(
+                MEMORY_CODE_INVALID_STATE,
+                "this host installs no runner for blocking mail work \
+                 (mail_blocking_runner_missing), so the mailbox's submission server \
+                 cannot be asked the size it takes; a reply with files from an IMAP \
+                 mailbox is drafted and approved only on a host that installs one",
+                &["draft and approve the reply through the Oneiron server"],
+            ));
+        };
+        runner.run(work);
+        Ok(())
     }
 }
 
@@ -254,17 +277,20 @@ impl SmtpSizeCheck {
 /// Asks the submission server of the IMAP mailbox `source` the size it
 /// takes now (fix list row 17645), through the mailbox's own credential at
 /// its door: TLS, `EHLO` naming the domain of `from`, the mailbox's address,
-/// `AUTH` as its send authenticates, the limit read, `QUIT`; never `MAIL`,
-/// `RCPT` or `DATA`. It runs on the host's blocking runner, within the
-/// caller's own call. The check names what it was read from: the source,
-/// the custody record its credential is held under and the value generation
-/// the door read, the server that value names and the setting it applied
-/// ([`SmtpSizeBinding`]).
+/// `AUTH` as its send authenticates, the limit read, `QUIT`, answered; never
+/// `MAIL`, `RCPT` or `DATA`. Each step ends by the SMTP client's deadlines.
+/// It runs on the host's blocking runner, within the caller's own call; the
+/// caller holds no store transaction open. The check names when the limit
+/// was read and what it was read from: the source, the custody record its
+/// credential is held under and the value generation the door read, the
+/// server that value names and the setting it applied ([`SmtpSizeBinding`]).
 ///
 /// # Errors
 ///
-/// A check that could not be made: the mailbox's credential, its server or
-/// its session refused it or did not answer. Nothing may be asked for or
+/// No blocking runner installed on this host, before anything is asked
+/// (`Vault::run_mail_blocking`). A check that could not be made: the
+/// mailbox's credential, its server or its session refused it or did not
+/// answer by its deadline, its `QUIT` included. Nothing may be asked for or
 /// pressed on it.
 pub(super) fn check_smtp_size(
     vault: &Vault,
@@ -283,26 +309,30 @@ pub(super) fn check_smtp_size(
             SMTP_SUBMISSION_CONNECTOR_EFFECTOR,
             &mut |secret: &[u8]| {
                 let (session, endpoint) = open_submission(source, secret, from)?;
-                read = Some((session.advertised_size(), endpoint));
-                session.quit();
-                Ok(())
+                // When the limit was read, not when the session ended.
+                read = Some((
+                    session.advertised_size(),
+                    endpoint,
+                    crate::unix_seconds_now(),
+                ));
+                session.quit_answered()
             },
         );
         outcome = Some(match (read, door) {
-            (Some((advertised, endpoint)), Ok(receipt)) => {
-                Ok((advertised, endpoint, receipt.value_generation))
+            (Some((advertised, endpoint, read_at)), Ok(receipt)) => {
+                Ok((advertised, endpoint, read_at, receipt.value_generation))
             }
             (_, Err(error)) => Err(error.to_string()),
             (None, Ok(_)) => Err("smtp_credential_door_refused".to_owned()),
         });
-    });
+    })?;
     let refused = |reason: &str| {
         MemoryError::bad_request(format!(
             "the mailbox's submission server could not be asked the size it takes \
              ({reason}); a reply with files waits until it can"
         ))
     };
-    let (advertised, endpoint, credential_generation) = match outcome {
+    let (advertised, endpoint, read_at, credential_generation) = match outcome {
         Some(Ok(read)) => read,
         Some(Err(reason)) => return Err(refused(&reason)),
         None => return Err(refused("smtp_size_check_not_run")),
@@ -311,7 +341,7 @@ pub(super) fn check_smtp_size(
     Ok(SmtpSizeCheck {
         limit: advertised.unwrap_or(unadvertised),
         advertised: advertised.is_some(),
-        read_at: crate::unix_seconds_now(),
+        read_at,
         bound: Some(SmtpSizeBinding {
             source: source.source_ref,
             custody_ref: source.custody_ref.clone(),

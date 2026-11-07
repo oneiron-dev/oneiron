@@ -9,11 +9,12 @@
 //! - **IMAP.** Submitted over SMTP (RFC 6409) to the server the mailbox's
 //!   credential names, read at the source's door with effector
 //!   `connector:smtp`: a credential bound for reading only sends nothing.
-//!   The session's own `SIZE` limit, else the host's setting
-//!   `mail.smtp.max_message_octets_unadvertised`, refuses a larger message
-//!   before `MAIL` (`reply_smtp`). One `RCPT` per recipient; a refused one
-//!   is `smtp_envelope_refused`, as for a send to one, and a reply to
-//!   several resets before the data goes.
+//!   For a reply with files, the session's own `SIZE` limit, else the
+//!   host's setting `mail.smtp.max_message_octets_unadvertised`, refuses a
+//!   larger message before `MAIL` (`reply_smtp`); a reply without files is
+//!   submitted as before. One `RCPT` per recipient; a refused one is
+//!   `smtp_envelope_refused`, as for a send to one, and a reply to several
+//!   resets before the data goes.
 //! - **Microsoft 365.** One MIME `POST /me/sendMail` on Graph with the
 //!   mailbox's own token (effector `connector:microsoft365`), once `/me`
 //!   shows the token is the mailbox's. A `202` is the send taken; a token
@@ -187,16 +188,19 @@ impl<'v> ReplySink<'v> {
         Ok(raw)
     }
 
-    /// Submits `raw` over SMTP with the mailbox's credential, refused before
-    /// `MAIL` above the session's own `SIZE` limit, else above the host's
-    /// setting for a server that names none. A reply with files is judged
-    /// once more in the credential door's writer by the holder of its
-    /// message (fix list row 17645).
+    /// Submits `raw` over SMTP with the mailbox's credential. A reply with
+    /// files (fix list row 17645) is refused before `MAIL` above the
+    /// session's own `SIZE` limit, else above the host's setting for a
+    /// server that names none, declares its octets where the server offers
+    /// `SIZE`, and is judged once more in the credential door's writer by
+    /// the holder of its message. A reply without files is submitted as it
+    /// always was.
     fn submit_smtp(&self, raw: &[u8]) -> Submitted {
-        let unadvertised = self
-            .vault
-            .mail_host_settings()
-            .smtp_max_message_octets_unadvertised;
+        let unadvertised = self.message.files.is_some().then(|| {
+            self.vault
+                .mail_host_settings()
+                .smtp_max_message_octets_unadvertised
+        });
         let mut outcome = None;
         let door = self.vault.with_source_token_at_door_admitting(
             &self.source,

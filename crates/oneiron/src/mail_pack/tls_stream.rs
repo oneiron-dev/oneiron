@@ -1,12 +1,13 @@
 //! The TLS client stack the pack's mail protocols share: IMAP reads and
-//! SMTP submission (fix list row 17872). A TCP stream whose every read and
-//! write ends by a deadline, the platform's trust roots, and a rustls client
-//! that verifies the server's name. Each protocol keeps its own exchange and
-//! its own refusal words.
+//! SMTP submission (fix list row 17872). A TCP stream whose host name is
+//! resolved, and whose every read and write ends, by a deadline, the
+//! platform's trust roots, and a rustls client that verifies the server's
+//! name. Each protocol keeps its own exchange and its own refusal words.
 
 use std::io::{Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::Arc;
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
 use super::rest::refused;
@@ -65,6 +66,8 @@ pub(super) struct TlsRefusals {
     pub(super) host: &'static str,
     /// The host does not resolve.
     pub(super) unresolved: &'static str,
+    /// The host's name did not resolve before the connect deadline.
+    pub(super) resolution_timed_out: &'static str,
     /// No address of the host answers.
     pub(super) connect: &'static str,
 }
@@ -95,17 +98,18 @@ pub(super) fn tls_client(host: &str, refusals: &TlsRefusals) -> Result<rustls::C
 }
 
 /// A TCP connection to `host:port`, the first of its addresses that
-/// answers, every read and write of it bounded by `deadline`.
+/// answers, every read and write of it bounded by `deadline`. The name is
+/// resolved within `deadline` too ([`resolve_by`]), then each address is
+/// tried within what remains of it.
 pub(super) fn connect_tcp(
     host: &str,
     port: u16,
     deadline: Instant,
     refusals: &TlsRefusals,
 ) -> Result<DeadlineStream> {
-    let mut addresses = (host, port)
-        .to_socket_addrs()
-        .map_err(|_| refused(refusals.unresolved))?;
+    let addresses = resolve_by(host, port, deadline, refusals)?;
     let tcp = addresses
+        .into_iter()
         .find_map(|address| {
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() {
@@ -115,4 +119,38 @@ pub(super) fn connect_tcp(
         })
         .ok_or_else(|| refused(refusals.connect))?;
     Ok(DeadlineStream { tcp, deadline })
+}
+
+/// The addresses of `host:port`, resolved before `deadline` (fix list row
+/// 17645). The system's lookup cannot be cancelled, so it runs on a thread
+/// of its own, and this call waits for its answer only until `deadline`:
+/// past it, the call is refused with `resolution_timed_out`, and an answer
+/// that comes later is dropped on that thread.
+fn resolve_by(
+    host: &str,
+    port: u16,
+    deadline: Instant,
+    refusals: &TlsRefusals,
+) -> Result<Vec<SocketAddr>> {
+    let left = deadline.saturating_duration_since(Instant::now());
+    if left.is_zero() {
+        return Err(refused(refusals.resolution_timed_out));
+    }
+    let name = host.to_owned();
+    let (send, receive) = mpsc::sync_channel(1);
+    std::thread::Builder::new()
+        .name("mail-resolve".to_owned())
+        .spawn(move || {
+            let answer = (name.as_str(), port)
+                .to_socket_addrs()
+                .map(|addresses| addresses.collect::<Vec<_>>());
+            // The caller may have stopped waiting; then the answer goes.
+            let _ = send.send(answer);
+        })
+        .map_err(|_| refused(refusals.unresolved))?;
+    match receive.recv_timeout(left) {
+        Ok(Ok(addresses)) => Ok(addresses),
+        Ok(Err(_)) | Err(RecvTimeoutError::Disconnected) => Err(refused(refusals.unresolved)),
+        Err(RecvTimeoutError::Timeout) => Err(refused(refusals.resolution_timed_out)),
+    }
 }
