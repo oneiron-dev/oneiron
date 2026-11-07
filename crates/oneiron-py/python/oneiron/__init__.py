@@ -4181,6 +4181,9 @@ class Oneiron:
         def model_heal_count(self, spec):
             """Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy."""
             return json.loads(_translate(lambda: self._client.vault_code_model_heal_count(json.dumps(spec))))
+        def corrections(self, spec):
+            """Read one code run's durable correction records as the owner, oldest first: per model response its model, repairs, outcome and committed checkpoint, with the repair policy. Canonical runs only."""
+            return json.loads(_translate(lambda: self._client.vault_code_corrections(json.dumps(spec))))
         def type_diagnostics(self, spec):
             """Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref."""
             return json.loads(_translate(lambda: self._client.vault_code_type_diagnostics(json.dumps(spec))))
