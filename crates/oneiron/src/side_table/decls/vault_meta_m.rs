@@ -34,6 +34,9 @@ side_tables! {
     /// rows of each forgotten message not yet deleted and its thread's CONVERSATION, recorded
     /// before the first row goes. Key: id16(source) + blake3 (32) of the provider id.
     MAIL_PACK_FORGET_OWED: VaultMeta b"mail_pack:forget_owed:v1:" Named;
+    /// A mail message's header-only revision its body superseded, owed its delete (FIX 15413).
+    /// Key: id16(source) + blake3 (32) of the provider id + id16(MESSAGE).
+    MAIL_PACK_HEADER_RETIREMENT: VaultMeta b"mail_pack:header_retirement:v1:" Named;
     /// Which message each UID of an IMAP folder the mail pack read holds (fix list row 17871),
     /// with the folder's UIDVALIDITY. Key: id16(source) + blake3 (32) of the folder digest +
     /// u64be UID.
