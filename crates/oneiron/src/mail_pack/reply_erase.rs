@@ -5,10 +5,10 @@
 //! mailbox source when it is retired. Each revision registers every such row
 //! in a declared index as it lands, so an erase finds exactly the drafts that
 //! name the erased row and no other. In the eraser's own writer the draft's
-//! retained message, its kept Gmail plan and its manifest, each with its
-//! key's retirement, its Ask and the draft itself go: nothing of it stays to
-//! send, and nothing is written again. A send already pressed finds its
-//! message gone at egress and fails there, as any refused send does.
+//! retained message, a Gmail reply's kept plan and its manifest, each with
+//! its key's retirement, its Ask and the draft itself go: nothing of it
+//! stays to send, and nothing is written again. A send already pressed finds
+//! its message gone at egress and fails there, as any refused send does.
 //!
 //! A revision's own end (a redraft, a discard, a settled send) retires its
 //! message and plan in its own writer; the draft, its manifest and its index

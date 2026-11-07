@@ -30,14 +30,16 @@
 //! minted for exactly that send's digest. A group sender is refused, not
 //! dropped.
 //!
-//! A Google mailbox's reply may carry files (fix list row 17645,
-//! `reply_attachments`): each one exact version of an artifact the drafter
-//! reads, every recipient cleared for each. Its message is written once at
-//! draft, kept sealed beside the draft with its kept plan and its files'
-//! manifest (`reply_custody`) and sent exactly as it was frozen; the draft's
-//! own row names the files only by the manifest's digest. An erase of a row
-//! it depends on ends the draft whole (`reply_erase`). An IMAP or Microsoft
-//! 365 reply with files is refused before anything is read.
+//! A Google or a Microsoft 365 mailbox's reply may carry files (fix list
+//! row 17645, `reply_attachments`): each one exact version of an artifact
+//! the drafter reads, every recipient cleared for each. Its message is
+//! written once at draft, kept sealed beside the draft with its files'
+//! manifest, and a Gmail reply's kept plan (`reply_custody`), and sent
+//! exactly as it was frozen, through Gmail or through Graph's one MIME
+//! `sendMail`; the draft's own row names the files only by the manifest's
+//! digest. An erase of a row it depends on ends the draft whole
+//! (`reply_erase`). An IMAP reply with files is refused before anything is
+//! read.
 //!
 //! Each new revision asks the mailbox's person in their inbox (fix list
 //! row 17644, `reply_ask`); the Ask clears when that revision is
@@ -48,15 +50,18 @@ use serde::{Deserialize, Serialize};
 use super::inbox::sources_by_audience_in;
 use super::reply_ask::{clear_reply_ask_in_txn, raise_reply_ask_in_txn};
 use super::reply_attachments::{
-    AnsweredMessage, MailReplyAttachment, MailReplyAttachmentView, ReplyAttached, ReplyManifestRef,
-    ReplyRetainedMessage, answered_refusal_in, freeze_gmail_reply, frozen_addresses, held_manifest,
-    held_manifest_in, reader_reads_attachments_in, readmit_reply_attachments_in,
-    reply_send_completed, standing_refusal_in,
+    AnsweredMessage, AttachedRail, MailReplyAttachment, MailReplyAttachmentView, ReplyAttached,
+    ReplyManifestRef, ReplyRetainedMessage, answered_refusal_in, freeze_gmail_reply,
+    freeze_graph_reply, frozen_addresses, held_manifest, held_manifest_in,
+    reader_reads_attachments_in, readmit_reply_attachments_in, reply_send_completed,
+    standing_refusal_in,
 };
 use super::reply_erase::{
     reply_revision_floor_in, retire_reply_revision_in_txn, retire_reply_send_in_txn,
 };
-use super::reply_mime::{REPLY_MESSAGE_REF_PREFIX, ReplyDraft, ReplyMessage};
+use super::reply_mime::{
+    ATTACHED_REPLY_MESSAGE_REF_PREFIX, REPLY_MESSAGE_REF_PREFIX, ReplyDraft, ReplyMessage,
+};
 use super::reply_recipients::{addresses_in, reply_recipients};
 use super::reply_send::{ReplySink, ReplyTransport};
 use super::source::{MailProvider, MailSourceKind, MailSourceRow, MailSourceStatus, SOURCES};
@@ -64,6 +69,7 @@ use super::state::{MailOccurrence, MailPresence, MailReplyHeaders, OCCURRENCES};
 use crate::channel_identity_provider::gmail::{
     GmailDelegatedAdapter, GmailReplyThread, GmailSendPlan, GmailSendSink, HttpGmailSendWire,
 };
+use crate::channel_identity_provider::mail_attachments::CompletedSendSink;
 use crate::claim::ClaimReadStatus;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::derived_domains;
@@ -120,7 +126,8 @@ pub(super) struct MailReplyDraftRow {
     pub(super) revision: u64,
     /// The frozen send's content ref: a Gmail send plan's
     /// (`gmail:plan:v1:...`, or `gmail:plan:v2:...` for one with files),
-    /// or the frozen message's (`mail-reply:message:v1:...`).
+    /// or the frozen message's (`mail-reply:message:v1:...`, or
+    /// `mail-reply:message:v2:...` for one with files).
     pub(super) plan_ref: String,
     /// The logical send this revision is: one per revision.
     send_ref: String,
@@ -146,11 +153,13 @@ pub(super) struct MailReplyDraftRow {
     drafted_at: u64,
     updated_at: u64,
     /// The frozen message an IMAP or Microsoft 365 reply sends; `None` for a
-    /// Gmail reply, whose plan the Gmail plan store keeps.
+    /// Gmail reply, whose plan the Gmail plan store keeps. A Microsoft 365
+    /// reply with files names them here only by their manifest's digest
+    /// (fix list row 17645).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    message: Option<ReplyMessage>,
-    /// The digest of the manifest a Gmail reply with files froze, the ref of
-    /// its message's carrier and the nonce its landing drew (fix list row
+    pub(super) message: Option<ReplyMessage>,
+    /// The digest of the manifest a reply with files froze, the ref of its
+    /// message's carrier and the nonce its landing drew (fix list row
     /// 17645): the manifest itself, its files, its exact message and the
     /// message it answers, is sealed beside the draft under the revision's
     /// own key, which derives from that nonce (`reply_custody`); `None` for a
@@ -188,11 +197,13 @@ pub struct MailReplyDraftRequest {
     /// these together name at most 50 recipients; more is refused, not cut.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cc: Vec<String>,
-    /// Files the reply carries, in their order, from a Google mailbox only:
-    /// each one exact version of an artifact the caller reads, sent as the
-    /// caller's own copy of it. Every recipient must be cleared to see every
-    /// file; one who is not refuses the whole draft, never dropped. The
-    /// whole message, files included, is at most Gmail's 35 MiB.
+    /// Files the reply carries, in their order, from a Google or a Microsoft
+    /// 365 mailbox only, not an IMAP one: each one exact version of an
+    /// artifact the caller reads, sent as the caller's own copy of it. Every
+    /// recipient must be cleared to see every file; one who is not refuses
+    /// the whole draft, never dropped. The whole message, files included, is
+    /// at most Gmail's 35 MiB, or for Microsoft 365 at most 4,000,000 bytes
+    /// as Graph's one sendMail body carries it in base64 (3,000,000 octets).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<MailReplyAttachment>,
     /// The caller's key for this draft: the same key with the same body,
@@ -228,7 +239,8 @@ pub struct MailReplyDraftView {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<MailReplyAttachmentView>,
     /// The length in octets of the exact message a reply with files sends,
-    /// as Gmail receives it before its own transport encoding.
+    /// as its provider receives it before its own transport encoding
+    /// (Gmail's base64url, Graph's base64).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_octets: Option<u64>,
     /// BLAKE3 of that exact message, 64 lower-hex.
@@ -451,6 +463,17 @@ fn reply_route(row: &MailSourceRow) -> MemoryResult<ReplyRoute> {
     }
 }
 
+/// The rail a reply leaving by `route` carries files on (fix list row
+/// 17645): Gmail's, or Graph's for a Microsoft 365 mailbox; `None` for an
+/// IMAP mailbox's, which carries none.
+const fn files_rail(route: ReplyRoute) -> Option<AttachedRail> {
+    match route {
+        ReplyRoute::Gmail(_) => Some(AttachedRail::Gmail),
+        ReplyRoute::Account(ReplyTransport::Graph) => Some(AttachedRail::Graph),
+        ReplyRoute::Account(ReplyTransport::Smtp) => None,
+    }
+}
+
 /// The actor a delegated identity is bound to: its sends go out as that
 /// actor, whoever approved them.
 fn bound_sender(vault: &Vault, identity: EntityId) -> MemoryResult<EntityId> {
@@ -649,8 +672,10 @@ fn human_actor(person: EntityId) -> OutboundDispatchActor {
 /// that revision and send, to exactly its recipients (each of a reply to
 /// several, fix list row 17645, the Gate judging each as the counterparty),
 /// from an active IMAP or Microsoft 365 personal mailbox whose owner is that
-/// actor. The gate takes the owner's one press for exactly that send's
-/// digest as its authority, as it takes a member-mail press.
+/// actor; one with files (fix list row 17645) from a Microsoft 365 mailbox
+/// only, its draft naming them. The gate takes the owner's one press for
+/// exactly that send's digest as its authority, as it takes a member-mail
+/// press.
 ///
 /// # Errors
 ///
@@ -674,10 +699,14 @@ pub(crate) fn approved_source_reply_in_txn(
         .provenance
         .mail_content_ref
         .as_deref()
-        .filter(|content_ref| content_ref.starts_with(REPLY_MESSAGE_REF_PREFIX))
+        .filter(|content_ref| {
+            content_ref.starts_with(REPLY_MESSAGE_REF_PREFIX)
+                || content_ref.starts_with(ATTACHED_REPLY_MESSAGE_REF_PREFIX)
+        })
     else {
         return Ok(false);
     };
+    let attached = content_ref.starts_with(ATTACHED_REPLY_MESSAGE_REF_PREFIX);
     let Some(send_ref) = effect.send_ref.as_deref() else {
         return Ok(false);
     };
@@ -707,6 +736,7 @@ pub(crate) fn approved_source_reply_in_txn(
         || send_ref != format!("outbound:{}", row.send_ref)
         || effect.provenance.mail_recipients != row.recipients
         || !addressed
+        || row.attached.is_some() != attached
     {
         return Ok(false);
     }
@@ -716,10 +746,11 @@ pub(crate) fn approved_source_reply_in_txn(
     Ok(source.owner == Some(actor)
         && source.status == MailSourceStatus::Active
         && source.kind == MailSourceKind::PersonalMailbox
-        && matches!(
-            source.provider,
-            MailProvider::Imap | MailProvider::Microsoft365
-        ))
+        && match source.provider {
+            MailProvider::Imap => !attached,
+            MailProvider::Microsoft365 => true,
+            _ => false,
+        })
 }
 
 /// The ref of the one dispatch a draft's revision `row` is: its logical
@@ -805,14 +836,19 @@ impl Memory<'_> {
             (source, row, messages, prior, floor)
         };
         let route = reply_route(&row)?;
-        // Files ride a Google mailbox's reply alone: an IMAP or Microsoft 365
+        // Files ride a Google or a Microsoft 365 mailbox's reply: an IMAP
         // reply with files is refused before any file is read (fix list row
         // 17645).
-        if !input.attachments.is_empty() && !matches!(route, ReplyRoute::Gmail(_)) {
-            return Err(MemoryError::bad_request(
-                "a reply carries files from a Google mailbox only; draft it without them",
-            ));
-        }
+        let rail = match (input.attachments.is_empty(), files_rail(route)) {
+            (true, _) => None,
+            (false, Some(rail)) => Some(rail),
+            (false, None) => {
+                return Err(MemoryError::bad_request(
+                    "a reply carries files from a Google or a Microsoft 365 mailbox only; \
+                     draft it without them",
+                ));
+            }
+        };
         // The mailbox's own person approves it, so they are asked.
         let mailbox_owner = row.owner;
         let asked = mailbox_owner.filter(|person| *person != actor);
@@ -839,9 +875,7 @@ impl Memory<'_> {
         // under the caller's own read lane, then its copy exported once, so
         // a redraft with the same copies is the same revision (fix list row
         // 17645). The lane judges them again in the writer.
-        let (lane, mut admitted) = if input.attachments.is_empty() {
-            (None, None)
-        } else {
+        let (lane, admitted) = if let Some(rail) = rail {
             let lane = self.read_lane(ClaimReadStatus::Recorded)?;
             let (to, listed) = split_recipients(&recipients)?;
             let addresses = frozen_addresses(to, listed)
@@ -851,8 +885,10 @@ impl Memory<'_> {
                 .collect::<crate::Result<Vec<_>>>()
                 .map_err(|error| MemoryError::bad_request(error.to_string()))?;
             let admitted =
-                self.reply_attachments_admitted(&lane, &input.attachments, &addresses)?;
+                self.reply_attachments_admitted(&lane, rail, &input.attachments, &addresses)?;
             (Some(lane), Some(admitted))
+        } else {
+            (None, None)
         };
         if let Some(prior) = &prior {
             if prior.state != MailReplyDraftState::Proposed {
@@ -893,6 +929,32 @@ impl Memory<'_> {
         let send_ref = format!("mail-reply:{}:{revision}", id.to_hex());
         let now = crate::unix_seconds_now();
         let raw_html = input.body_html.as_deref();
+        // A reply with files freezes its exact message once, below, beside
+        // the message it answers and every row it depends on; it lands with
+        // its draft (fix list row 17645).
+        let attaching = match admitted {
+            None => None,
+            Some(admitted) => {
+                let answered = messages
+                    .iter()
+                    .find(|occurrence| occurrence.turn == parent_turn)
+                    .map(|occurrence| AnsweredMessage::of(source, occurrence))
+                    .ok_or_else(|| {
+                        MemoryError::not_found("no message on the thread to reply to")
+                    })?;
+                let answered_rows = messages
+                    .iter()
+                    .filter(|occurrence| occurrence.turn == parent_turn)
+                    .flat_map(|occurrence| occurrence.messages.iter().copied());
+                let dependencies = admitted.dependencies(
+                    [conversation, parent_turn]
+                        .into_iter()
+                        .chain(answered_rows)
+                        .chain([source]),
+                );
+                Some((admitted, answered, dependencies))
+            }
+        };
         let mut frozen = None;
         let (identity, plan_ref, to, frozen_recipients, body_html, message) = match route {
             ReplyRoute::Gmail(identity) => {
@@ -906,32 +968,13 @@ impl Memory<'_> {
                     raw_html,
                     now,
                 )?;
-                match admitted.take() {
+                match attaching {
                     None => plan.keep(vault)?,
-                    // A reply with files freezes its exact message here,
-                    // once, beside the message it answers; its plan lands
-                    // with its draft (fix list row 17645).
-                    Some(admitted) => {
-                        let answered = messages
-                            .iter()
-                            .find(|occurrence| occurrence.turn == parent_turn)
-                            .map(|occurrence| AnsweredMessage::of(source, occurrence))
-                            .ok_or_else(|| {
-                                MemoryError::not_found("no message on the thread to reply to")
-                            })?;
-                        let answered_rows = messages
-                            .iter()
-                            .filter(|occurrence| occurrence.turn == parent_turn)
-                            .flat_map(|occurrence| occurrence.messages.iter().copied());
-                        let dependencies = admitted.dependencies(
-                            [conversation, parent_turn]
-                                .into_iter()
-                                .chain(answered_rows)
-                                .chain([source]),
-                        );
-                        // Its custody refs derive from the nonce this
-                        // landing draws, so no landing meets a retired ref.
-                        let reply = freeze_gmail_reply(
+                    // Its custody refs derive from the nonce this landing
+                    // draws, so no landing meets a retired ref; its plan is
+                    // kept beside its message.
+                    Some((admitted, answered, dependencies)) => {
+                        let (bound, reply) = freeze_gmail_reply(
                             plan,
                             admitted,
                             &id,
@@ -939,7 +982,7 @@ impl Memory<'_> {
                             answered,
                             dependencies,
                         )?;
-                        plan = reply.plan.clone();
+                        plan = bound;
                         frozen = Some(reply);
                     }
                 }
@@ -953,7 +996,7 @@ impl Memory<'_> {
                 )
             }
             ReplyRoute::Account(_) => {
-                let message = message_for(
+                let mut message = message_for(
                     &row.address,
                     &send_ref,
                     &parent,
@@ -962,6 +1005,21 @@ impl Memory<'_> {
                     raw_html,
                     now,
                 )?;
+                // A Microsoft 365 reply with files names them by their
+                // manifest's digest in its frozen message, which rides in
+                // its draft's row as one without files does.
+                if let Some((admitted, answered, dependencies)) = attaching {
+                    let (bound, reply) = freeze_graph_reply(
+                        message,
+                        admitted,
+                        &id,
+                        revision,
+                        answered,
+                        dependencies,
+                    )?;
+                    message = bound;
+                    frozen = Some(reply);
+                }
                 (
                     None,
                     message.content_ref(),
@@ -1250,10 +1308,11 @@ impl Vault {
         // settles before today's route or identity is asked for: a paused
         // mailbox or a withdrawn identity holds none of it back, and nothing
         // of today's files, recipients or message is judged (fix list row
-        // 17645).
-        if let (Some(_), Some(identity), None) = (&row.attached, row.identity, &row.message)
+        // 17645). A Gmail reply's send went through its identity; a Graph
+        // reply's through none.
+        if row.attached.is_some()
             && let Some(sender) =
-                reply_send_completed(self, &reply_intent_ref(&row), &row.plan_ref, identity)?
+                reply_send_completed(self, &reply_intent_ref(&row), &row.plan_ref, row.identity)?
         {
             return self.settle_completed_reply(owner, actor, id, &row, sender, now);
         }
@@ -1361,8 +1420,14 @@ impl Vault {
                 }
                 adapter.dispatch_send_recorded(self, request, &mut sink)
             }
-            ReplyDispatcher::Account(mut sink) => {
-                self.dispatch_outbound_intent_recorded(request, sink.as_mut())
+            ReplyDispatcher::Account(sink) => {
+                // A reply with files sends only beside the holder of its
+                // message (fix list row 17645).
+                let mut sink = match &retained {
+                    Some(retained) => (*sink).with_retained_message(retained),
+                    None => *sink,
+                };
+                self.dispatch_outbound_intent_recorded(request, &mut sink)
             }
         };
         let (state, outcome) = reply_outcome(&answer);
@@ -1382,13 +1447,14 @@ impl Vault {
         Ok(held_view(self, id, &row)?)
     }
 
-    /// Settles revision `row` of the draft `id`, a Gmail reply with files
-    /// whose send the ledger already completed as `sender` (fix list row
-    /// 17645), approved by `owner`, the mailbox's own person `actor`: the
-    /// revision's frozen request, rebuilt from the draft as it was
-    /// dispatched, is replayed through the recorded dispatch door, which
-    /// validates it whole against the ledger's frozen request and answers
-    /// with the recorded outcome; nothing is sent, and no live route,
+    /// Settles revision `row` of the draft `id`, a reply with files whose
+    /// send the ledger already completed as `sender` (fix list row 17645),
+    /// approved by `owner`, the mailbox's own person `actor`: the revision's
+    /// frozen request, rebuilt from the draft as it was dispatched (a Gmail
+    /// reply's as its identity's bound sender, a Graph reply's as the
+    /// mailbox's owner), is replayed through the recorded dispatch door,
+    /// which validates it whole against the ledger's frozen request and
+    /// answers with the recorded outcome; nothing is sent, and no live route,
     /// identity, grant or send capability is needed. In one writer that
     /// proves the owner again, the draft settles as that outcome says and
     /// its message and its plan go, whatever the replay answers: a completed
@@ -1403,9 +1469,17 @@ impl Vault {
         sender: EntityId,
         now: u64,
     ) -> MemoryResult<MailReplyDraftView> {
-        let request = request_for(id, row, OutboundDispatchActor::agent(sender), now);
-        let answer =
-            crate::channel_identity_provider::gmail::replay_completed_send_recorded(self, request);
+        let answer = match row.identity {
+            // A Gmail reply's replay projects its delivered thread again.
+            Some(_) => crate::channel_identity_provider::gmail::replay_completed_send_recorded(
+                self,
+                request_for(id, row, OutboundDispatchActor::agent(sender), now),
+            ),
+            None => self.dispatch_outbound_intent_recorded(
+                request_for(id, row, human_actor(sender), now),
+                &mut CompletedSendSink,
+            ),
+        };
         let (state, outcome) = reply_outcome(&answer);
         let row = self.record_reply_outcome(id, row, state, outcome, true, Some((owner, actor)))?;
         if let Err(error) = answer {

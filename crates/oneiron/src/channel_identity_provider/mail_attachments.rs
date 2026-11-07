@@ -8,7 +8,9 @@
 //! drafter's door admits each one and hands its exact copy in, and the
 //! message is written once, when it is frozen. A kept plan names its files
 //! and message only by their manifest's digest; their holder keeps them,
-//! and the plan, sealed beside the message.
+//! and the plan, sealed beside the message. A send with files the ledger
+//! already completed replays through [`CompletedSendSink`], on Gmail and on
+//! Graph alike.
 
 use std::fmt::Write as _;
 
@@ -17,6 +19,7 @@ use zeroize::Zeroizing;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::outbound::{OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink};
 
 /// The one disposition a file part takes: a file never shows inline.
 pub(crate) const ATTACHMENT_DISPOSITION: &str = "attachment";
@@ -110,31 +113,33 @@ impl MailManifest {
     }
 }
 
-/// The one message a send plan with files sends, kept by its holder where
-/// it was frozen (fix list row 17645): the plan names its length and BLAKE3,
-/// and only its holder opens it. The holder judges the send again in the
-/// writer that admits it, at egress, and in the credential door's writer,
-/// and never renders, exports or masks anything again.
+/// The one message a send with files sends, a Gmail plan's or a Graph
+/// reply's, kept by its holder where it was frozen (fix list row 17645): the
+/// send names its length and BLAKE3, and only its holder opens it. The
+/// holder judges the send again in the writer that admits it, at egress, and
+/// in the credential door's writer, and never renders, exports or masks
+/// anything again.
 pub(crate) trait RetainedMailMessage {
-    /// The content ref of the plan this message is.
+    /// The content ref of the plan or the frozen message this message is.
     fn content_ref(&self) -> &str;
 
     /// The ref of the carrier that holds the message: one per draft and
-    /// revision, as the kept plan names it.
+    /// revision, as the kept plan or the frozen message names it.
     fn carrier_ref(&self) -> &str;
 
-    /// The files and the exact message the plan was frozen with, opened
+    /// The files and the exact message the send was frozen with, opened
     /// from the holder's own sealed row; `None` once the holder no longer
-    /// keeps them, and the kept plan is then no plan.
+    /// keeps them, and the send then sends nothing.
     ///
     /// # Errors
     ///
     /// The failure of its read.
     fn manifest(&self) -> Result<Option<MailManifest>>;
 
-    /// The kept plan itself, as its holder keeps it sealed beside the
-    /// message: the bytes the plan's own store wrote; `None` once the holder
-    /// no longer keeps it, and there is then no plan.
+    /// A Gmail send's kept plan itself, as its holder keeps it sealed beside
+    /// the message: the bytes the plan's own store wrote; `None` once the
+    /// holder no longer keeps it, and there is then no plan, and for a Graph
+    /// reply, which keeps none.
     ///
     /// # Errors
     ///
@@ -156,6 +161,29 @@ pub(crate) trait RetainedMailMessage {
     ///
     /// The refusal, a message no longer held, or the failure of its read.
     fn open_for_egress(&self) -> Result<Zeroizing<Vec<u8>>>;
+}
+
+/// The sink a completed send with files replays through (fix list row
+/// 17645), a Gmail member send's or a Microsoft 365 mailbox's own: the
+/// ledger's completed record answers the dispatch, so nothing asks it to
+/// send. It admits no new call, so a call the ledger has not completed is
+/// refused before any decision is recorded, and it sends nothing.
+pub(crate) struct CompletedSendSink;
+
+impl OutboundExecutionSink for CompletedSendSink {
+    fn execute(&mut self, _request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
+        OutboundExecutionOutcome::failed("mail_send_replay_only")
+    }
+
+    fn admit_in(&self, _txn: &heed::RoTxn<'_>) -> Result<()> {
+        Err(Error::InvalidConfig(
+            "a completed mail send only replays; it never sends".to_owned(),
+        ))
+    }
+
+    fn delivers_recipient_lists(&self) -> bool {
+        true
+    }
 }
 
 /// Feeds one file's description into a content ref: every field in its

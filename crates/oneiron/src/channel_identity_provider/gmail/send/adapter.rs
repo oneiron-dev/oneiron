@@ -3,6 +3,7 @@
 //! Entry: `GmailDelegatedAdapter::dispatch_send_recorded`. Defines its own items.
 
 use super::*;
+use crate::channel_identity_provider::mail_attachments::CompletedSendSink;
 
 impl GmailDelegatedAdapter {
     /// The SEND credential door: runs `apply` with the grant's token for a
@@ -236,28 +237,6 @@ impl GmailDelegatedAdapter {
             return Err(invalid());
         }
         Ok((identity_ref, actor))
-    }
-}
-
-/// The sink a completed member send replays through (fix list row 17645):
-/// the ledger's completed record answers the dispatch, so nothing asks it to
-/// send. It admits no new call, so a call the ledger has not completed is
-/// refused before any decision is recorded, and it sends nothing.
-struct CompletedSendSink;
-
-impl OutboundExecutionSink for CompletedSendSink {
-    fn execute(&mut self, _request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
-        OutboundExecutionOutcome::failed("gmail_send_replay_only")
-    }
-
-    fn admit_in(&self, _txn: &heed::RoTxn<'_>) -> Result<()> {
-        Err(Error::InvalidConfig(
-            "a completed gmail send only replays; it never sends".to_owned(),
-        ))
-    }
-
-    fn delivers_recipient_lists(&self) -> bool {
-        true
     }
 }
 
