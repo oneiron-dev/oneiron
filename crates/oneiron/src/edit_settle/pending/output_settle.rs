@@ -42,5 +42,6 @@ pub(super) fn output_record(
         reason: None,
         sheet_answers: None,
         deck: None,
+        discarded_words: None,
     }
 }

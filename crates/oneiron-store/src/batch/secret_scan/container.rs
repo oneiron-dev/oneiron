@@ -1,7 +1,7 @@
 //! Containers the secret mask reads into (OF-067 C, owner ruling G04 binary
 //! = C2): a ZIP archive (Office, OpenDocument and the other ZIP-family
-//! files), a gzip file, a tar archive, an xz file (FIX 2471) and a PDF's
-//! streams and text strings. The write door
+//! files), a gzip file, a tar archive, an xz file (FIX 2471), a 7z archive
+//! (FIX 11575) and a PDF's streams and text strings. The write door
 //! reads each member as it reads a body, and a member's keys are placed at
 //! their spans in the decoded member. A reader the owner has not granted gets
 //! a copy rebuilt around the overwritten keys, each key in a text member
@@ -28,7 +28,7 @@
 //!
 //! A container is known by its leading bytes, never by its name, and text
 //! with a container's leading bytes is one only when it parses as one (FIX
-//! 2474). A 7z or RAR file is read as plain bytes (FIX 2471); a ZIP that
+//! 2474). A RAR file is read as plain bytes (FIX 2471, 11575); a ZIP that
 //! starts past a file's first byte opens through the zip crate's own offset
 //! handling.
 
@@ -39,6 +39,7 @@ pub mod pdf;
 pub use pacing::{ReadCancelled, ReadPacer, ReadPacing, ReadProgress};
 pub mod projection_edit;
 pub mod retained_iterative;
+pub mod sevenz;
 pub mod tar;
 pub mod xz;
 
@@ -100,6 +101,8 @@ pub enum Kind {
     // FIX 2471: a tar archive and an xz file.
     Tar,
     Xz,
+    // FIX 11575: a 7z archive.
+    SevenZip,
     Pdf,
 }
 
@@ -121,6 +124,9 @@ pub fn kind(bytes: &[u8]) -> Option<Kind> {
     } else if bytes.starts_with(&[0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]) {
         // FIX 2471: an xz stream.
         Some(Kind::Xz)
+    } else if bytes.starts_with(&sevenz::SIGNATURE) {
+        // FIX 11575: a 7z signature header.
+        Some(Kind::SevenZip)
     } else {
         None
     }
@@ -151,6 +157,8 @@ pub fn classify_with_pacing(bytes: &[u8], pacing: &ReadPacing) -> Option<Kind> {
     let parses = match head {
         Kind::Zip => archive::opens(bytes),
         Kind::Gzip => true,
+        // FIX 11575: a 7z signature's third byte is no UTF-8.
+        Kind::SevenZip => true,
         Kind::Tar => tar::opens(bytes),
         Kind::Xz => true,
         Kind::Pdf => pdf::opens_with_pacing(bytes, pacing),
@@ -167,19 +175,19 @@ pub fn is_container(bytes: &[u8]) -> bool {
 }
 
 /// Whether a key's span is placed in `bytes` as they are: plain bytes, and a
-/// PDF, whose own bytes hold its uncompressed objects. A ZIP, gzip, tar or
-/// xz file is rebuilt from its members, so a key in one is placed in the
-/// member (FIX 2471).
+/// PDF, whose own bytes hold its uncompressed objects. A ZIP, gzip, tar, xz
+/// or 7z file is rebuilt from its members, so a key in one is placed in the
+/// member (FIX 2471, 11575).
 pub fn holds_spans(bytes: &[u8]) -> bool {
     !matches!(
         classify(bytes),
-        Some(Kind::Zip | Kind::Gzip | Kind::Tar | Kind::Xz)
+        Some(Kind::Zip | Kind::Gzip | Kind::Tar | Kind::Xz | Kind::SevenZip)
     )
 }
 
 /// Whether a key at `path` in the member `bytes` stands as its handle text
 /// in a masked copy (FIX 7944): the UTF-8 text of a ZIP entry, a gzip
-/// payload, a tar entry, an xz payload (FIX 2471), a PDF content stream
+/// payload, a tar entry, an xz payload, a 7z entry (FIX 2471, 11575), a PDF content stream
 /// (FIX 11550) or a PDF object's strings, each encoded again around its new
 /// length. The stored bytes' own spans, a binary member's, a PDF object
 /// stream's (it names its objects by byte offset) and a PDF's own bytes
@@ -196,6 +204,7 @@ pub fn writes_handles_with_pacing(path: &[MemberStep], bytes: &[u8], pacing: &Re
                 | MemberStep::Gzip
                 | MemberStep::Tar { .. }
                 | MemberStep::Xz
+                | MemberStep::SevenZip { .. }
                 | MemberStep::PdfStream { .. }
                 | MemberStep::PdfStrings { .. }
         )

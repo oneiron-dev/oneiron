@@ -23,8 +23,11 @@ Text strings split on LF into the same paragraphs the slide writer emits, includ
 empty and trailing segments. Each emitted paragraph gets its own first-line indent,
 line count and paragraph spacing in the estimate. Adjacent wide characters keep
 zero gap between their measured pieces. Inter-word runs consisting only of literal
-ASCII spaces use the width of that exact run. Other whitespace keeps the existing
-single-space estimate; leading and trailing whitespace are not newly measured.
+ASCII spaces use the width of that exact run. Complete leading and trailing runs
+of ASCII spaces also use their measured widths through the same greedy line
+estimate. A line containing only ASCII spaces measures that run once. Mixed or
+non-ASCII whitespace keeps the existing treatment: a single-space estimate
+between words, and no added boundary width.
 
 Template font references use the same theme resolver as deck run inspection.
 The raw `a:latin/@typeface` stays available in `TextStyle.typeface`;
@@ -54,3 +57,19 @@ references do; this is not a claim of full erasure or checkpoint closure.
 
 Deploy matching engine, server and generated clients when using the new response
 shape. No new setting, threshold, dependency, format migration or organ is needed.
+
+## Graphic ceilings for native creation
+
+`vault.artifacts.create_deck` accepts optional `graphics` on its
+`DeckEmissionRequest`. The fields are `svg_bytes`, `raster_bytes` and
+`raster_pixels`, using the same `GraphicLimits` as deck transactions. The native
+creation request passes the supplied values to the existing deck emitter.
+
+When `graphics` is absent or null, creation uses the existing engine defaults:
+1 MiB for SVG bytes, 50 MiB for raster bytes and 64,000,000 pixels. Supplying it
+changes those ceilings for this creation only. It does not select a global
+owner policy or change the live deck export settings, package limits, input
+bindings, rights checks or creation receipts.
+
+Use matching engine, server and generated clients for the optional request
+field. This setting does not establish an Office export-gate result.

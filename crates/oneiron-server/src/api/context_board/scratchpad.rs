@@ -330,7 +330,7 @@ pub(super) fn served_readers(
 
 /// The pad belongs to the authenticated entity principal under its declared
 /// class; the engine re-checks both on every write.
-fn scratchpad_memory<'a>(
+pub(super) fn scratchpad_memory<'a>(
     server: &'a SyncServer,
     auth: &CoreAuth,
 ) -> Result<oneiron::memory::Memory<'a>, ApiError> {

@@ -440,8 +440,10 @@ pub(super) fn run(
     touch_stage: &mut Option<ResidenceTouchStage>,
 ) -> Result<super::RpcReply, crate::protocol::ProtocolError> {
     let call = super::RpcCall::of(&request);
-    // A forwarded search's verified caller, whom its receipt names (FIX 3550).
+    // A forwarded search's verified caller, whom its receipt names (FIX 3550),
+    // and whether it sits off the carrying device (FIX 11991).
     let mut attribution = None;
+    let mut off_carrier = false;
     let result = (|| {
         auth.require(CoreScope::Read)?;
         if !auth.credential_is_live(server.vault.as_ref()) {
@@ -461,6 +463,7 @@ pub(super) fn run(
                 request.params,
                 budgets,
                 &mut attribution,
+                &mut off_carrier,
             ),
             "residence.media_vectors" => {
                 media_vectors::media_vectors(server, auth, peer, request.params)
@@ -522,6 +525,7 @@ pub(super) fn run(
         request.request_id,
         result,
     )
+    .map(|reply| reply.released_off_carrier(off_carrier))
 }
 
 fn operation_budgets(server: &SyncServer) -> Result<ResidenceOperationBudgets, AppError> {

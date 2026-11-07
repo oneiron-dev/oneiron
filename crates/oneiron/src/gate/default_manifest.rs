@@ -5,6 +5,7 @@ use crate::channel_identity::{
     DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS, SUBJECT_CLASS_SELF_HELD,
     WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE,
 };
+use crate::claim::learning_predicate::LearningPredicate;
 use crate::claim::{ClaimSource, UNSTAMPED_CLAIM_SENSITIVITY_BAND};
 use crate::commitment_schedule::commitment_projection_actor;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
@@ -324,6 +325,13 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                         ]),
                     ),
                 ]),
+                // The four learning predicates are measured state, normal
+                // class, never the unknown-predicate critical fallback (FIX
+                // 7759).
+                learning_predicate_rule(LearningPredicate::Reliability),
+                learning_predicate_rule(LearningPredicate::EditCost),
+                learning_predicate_rule(LearningPredicate::RetestNoise),
+                learning_predicate_rule(LearningPredicate::Setting),
                 // A goal-intake candidate still needs a human-authenticated
                 // write door; the ordinary claim gate must not strand that
                 // confirmed interview at the unrelated critical-consent floor.
@@ -1415,4 +1423,23 @@ pub(crate) fn default_consult_fanout_policy()
         peer_rate: shipped.controls.peer_rate.clone(),
         create_rate: shipped.controls.create_rate,
     }
+}
+
+/// The shipped rule of one learning predicate (FIX 7759): exact, criticality
+/// and sensitivity normal, as its measured-state family declares.
+fn learning_predicate_rule(predicate: LearningPredicate) -> Value {
+    Value::Map(vec![
+        (
+            Value::from(RULE_PREFIX_KEY),
+            Value::from(predicate.as_str()),
+        ),
+        (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
+        (
+            Value::from(RULE_AXES_KEY),
+            Value::Map(vec![
+                (Value::from(AXIS_CRITICALITY_KEY), Value::from("normal")),
+                (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+            ]),
+        ),
+    ])
 }
