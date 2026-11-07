@@ -27,6 +27,10 @@ struct Start {
     tmpfs_mib: u32,
     reconnect_ms: u64,
     bridge_token: String,
+    uid: u32,
+    gid: u32,
+    mounts_bytes: u64,
+    mounts_digest: [u8; 32],
 }
 
 pub(crate) fn run() -> Result<()> {
@@ -46,6 +50,8 @@ pub(crate) fn run() -> Result<()> {
         || start.pids == 0
         || start.tmpfs_mib == 0
         || start.reconnect_ms == 0
+        || start.uid == 0
+        || start.gid == 0
     {
         return Err(Error::Protocol("native session bounds"));
     }
@@ -70,6 +76,7 @@ pub(crate) fn run() -> Result<()> {
     }
     super::boot::prepare_pids(start.pids)?;
     let control = connect_control(&start.bridge_token)?;
+    super::native_mounts::prepare(&mut channel, start.mounts_bytes, start.mounts_digest)?;
     use std::os::unix::fs::PermissionsExt;
     let directory = std::path::Path::new("/run/oneiron-native");
     std::fs::create_dir(directory)?;
@@ -97,11 +104,14 @@ pub(crate) fn run() -> Result<()> {
     // SAFETY: pre_exec only applies the existing syscall-only privilege drop.
     unsafe {
         command.pre_exec(move || {
-            super::boot::restrict_native_child(start.pids, start.tmpfs_mib)
+            super::boot::restrict_native_child(start.pids, start.tmpfs_mib, start.uid, start.gid)
                 .map_err(std::io::Error::other)
         });
     }
     let mut child = command.spawn()?;
+    // The child keeps its normal signal mask. All later PID-1 worker threads
+    // inherit blocked SIGCHLD so the final host-custody loop can reap orphans.
+    let shutdown_signals = super::boot::block_sigchld()?;
     let _fence = oneiron_container::serve_native_fence(
         listener,
         child.id() as i32,
@@ -114,8 +124,17 @@ pub(crate) fn run() -> Result<()> {
     let mut input = child.stdin.take().ok_or(Error::Runtime("native stdin"))?;
     let mut output = child.stdout.take().ok_or(Error::Runtime("native stdout"))?;
     let mut writer = channel.try_clone()?;
-    std::thread::spawn(move || {
-        let _ = std::io::copy(&mut output, &mut writer);
+    let output_thread = std::thread::spawn(move || -> std::io::Result<()> {
+        use std::os::fd::AsRawFd;
+        let copied = std::io::copy(&mut output, &mut writer).map(|_| ());
+        // SAFETY: writer owns this connected vsock descriptor. Half-close only
+        // output; the independent input/control paths retain their custody.
+        let finished = if unsafe { libc::shutdown(writer.as_raw_fd(), libc::SHUT_WR) } == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        };
+        copied.and(finished)
     });
     let alive = Arc::new(AtomicBool::new(true));
     let cdp_lost = Arc::new(AtomicBool::new(false));
@@ -137,12 +156,15 @@ pub(crate) fn run() -> Result<()> {
         )
     });
     let status = child.wait()?;
-    alive.store(false, Ordering::Release);
-    if status.success() {
-        Ok(())
-    } else {
-        Err(Error::Runtime("native session abandoned or failed"))
+    output_thread
+        .join()
+        .map_err(|_| Error::Runtime("native stdout copier panicked"))??;
+    if !status.success() {
+        eprintln!("{}", Error::Runtime("native session abandoned or failed"));
     }
+    // Keep the VM, fence and control heartbeats alive until the host's lease
+    // stops them. Output EOF is not permission for PID 1 to kill buffered data.
+    super::boot::await_host_shutdown(&shutdown_signals)
 }
 fn connect_control(token: &str) -> Result<std::fs::File> {
     if token.len() != 32 {
