@@ -420,6 +420,18 @@ side_tables! {
     /// The host-only legal-hold log (OF-470 C2). Runtime-tier: no checkpoint image carries it.
     /// Key: id16 (hold) + u64be (sequence).
     LEGAL_HOLD_HOST_EVENT: VaultMeta b"legal_hold:host:event:v1:" Named;
+    /// A HOST order's standing explicit prospective capture (LEGAL-HOLD-USE = B as a clone,
+    /// FIX 13866): its capture binding, term, public recipient key and next outbox ordinal.
+    /// Host-only, runtime-tier, carried with the host-order family. Key: id16 (order) + u64be
+    /// (generation).
+    LEGAL_HOLD_HOST_PROSPECTIVE: VaultMeta b"legal_hold:host:prospective:v1:" Named;
+    /// A new MESSAGE row sealed to its prospective order when it landed, until the HOST
+    /// acknowledges its batch or the order ends: clone custody, never vault data. Host-only,
+    /// runtime-tier. Key: id16 (order) + u64be (generation) + u64be (ordinal).
+    LEGAL_HOLD_HOST_PROSPECTIVE_OUTBOX: VaultMeta b"legal_hold:host:prospective_outbox:v1:" Named;
+    /// A released prospective order generation, so a late reconnect never stands it again.
+    /// Content-free. Key: id16 (order) + u64be (generation).
+    LEGAL_HOLD_HOST_PROSPECTIVE_RELEASED: VaultMeta b"legal_hold:host:prospective_released:v1:" Raw;
     /// A host-order legal hold Oneiron placed on an authority order (OF-470 C1). Runtime-tier: no
     /// checkpoint image carries it. Key: id16 (hold).
     LEGAL_HOLD_HOST_ROW: VaultMeta b"legal_hold:host:row:v1:" Named;

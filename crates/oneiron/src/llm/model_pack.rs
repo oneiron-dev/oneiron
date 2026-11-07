@@ -62,10 +62,12 @@ impl AccessSnapshot {
     }
 
     /// The access each of `offers` runs on, with the model it serves.
-    pub fn from_offers(offers: impl IntoIterator<Item = &OfferBinding>) -> Self {
+    pub fn from_offers<O: std::borrow::Borrow<OfferBinding>>(
+        offers: impl IntoIterator<Item = O>,
+    ) -> Self {
         let mut snapshot = Self::new();
         for offer in offers {
-            snapshot.insert_offer(offer);
+            snapshot.insert_offer(offer.borrow());
         }
         snapshot
     }

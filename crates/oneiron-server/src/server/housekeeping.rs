@@ -219,6 +219,11 @@ impl SyncServer {
                     }
                 }
             }
+            let copies = Arc::clone(server.vault());
+            let budget = server.housekeeping_passes.budget(HOUSEKEEPING_PASS_BUDGET);
+            if let Err(error) = copies.reuse_pending_home_claim_vectors(budget).await {
+                tracing::warn!(kind = ?error.kind(), "home CLAIM vector catch-up failed");
+            }
             server
                 .cleanup_residence_work(HOUSEKEEPING_PASS_BUDGET)
                 .await;
