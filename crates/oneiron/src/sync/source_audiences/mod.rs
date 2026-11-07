@@ -52,7 +52,7 @@ use crate::source_audience::{
     self, HeldBack, ReplicaMerge, SourceAudienceKind, SourceAudiencePolicy,
 };
 
-pub(crate) use erased::erase_carriers_in_txn;
+pub(crate) use erased::{erase_carriers_in_txn, history_names_erased_actor_in};
 
 /// The window map that carries source audiences.
 pub(crate) const SOURCE_AUDIENCES_MAP: &str = "source_audiences";

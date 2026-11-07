@@ -415,6 +415,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // Sealing mirrors follow the live vault: an image never brings back a mirror
     // an erase purged.
     (&t::WORLD_KEY_SEALED_MIRROR, LIVE),
+    // The count of actor erases over the mirrors goes with the live mirrors
+    // (FIX 17210).
+    (&t::WORLD_KEY_SEALED_MIRROR_ERASES, LIVE),
     // What landed from a mirror describes rows: it comes back with the image's
     // rows, never left from rows the restore replaced (FIX 5506).
     (&t::WORLD_KEY_SEALED_MIRROR_LANDED, CONTENT),
