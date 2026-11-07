@@ -258,12 +258,13 @@ pub(super) fn mint_reconciliation_task_in_txn(
         assignee: Some(TaskAssignee::Dreamer),
         consult: None,
         ttl: None,
+        // FIX685: engine-internal minters carry no due annotation.
+        due_at: None,
         spec,
         type_ref: crate::task_type::TaskTypeRef::seed(
             crate::task_type::SeedTaskType::Solve,
             crate::task_type::SEEDED_TREE_VERSION,
         ),
-        due_at: None,
     };
     let provenance = Value::Map(vec![
         (Value::from("source"), Value::from("repo.conflict")),

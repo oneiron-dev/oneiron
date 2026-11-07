@@ -22,7 +22,7 @@ use super::wire_encode::{consult_payload_value, task_assignee_value};
 use crate::error::RecordError;
 
 pub(super) fn task_create_proposal_value(spec: &TaskCreateSpec, now: u64) -> Value {
-    let mut entries = vec![
+    Value::Map(vec![
         (Value::from("spec"), spec.spec.clone()),
         (
             Value::from("label"),
@@ -59,6 +59,12 @@ pub(super) fn task_create_proposal_value(spec: &TaskCreateSpec, now: u64) -> Val
                 )])
             }),
         ),
+        // FIX685: the due annotation travels with the proposal too, so an
+        // approved hook create lands carrying the stamp it asked for.
+        (
+            Value::from("due_at"),
+            spec.due_at.map_or(Value::Nil, Value::from),
+        ),
         (
             Value::from("type_ref"),
             spec.type_ref
@@ -73,14 +79,7 @@ pub(super) fn task_create_proposal_value(spec: &TaskCreateSpec, now: u64) -> Val
                 .map_or(Value::Nil, |parent| Value::from(parent.to_hex())),
         ),
         (Value::from("created_at"), Value::from(now)),
-    ];
-    // FIX 4749: the due time travels with the proposal, so an approved
-    // watcher still ticks. Elided when absent, so a create with no due time
-    // keeps its proposal bytes and its dedupe identity.
-    if let Some(due_at) = spec.due_at {
-        entries.push((Value::from("due_at"), Value::from(due_at)));
-    }
-    Value::Map(entries)
+    ])
 }
 
 pub(crate) use crate::store::task_body_checks::{
@@ -94,11 +93,13 @@ pub(super) struct ValidatedTaskCreate {
     pub(super) assignee: Option<TaskAssignee>,
     pub(super) consult: Option<ConsultPayload>,
     pub(super) ttl: Option<TaskTtl>,
+    /// FIX685: the hook-chosen due/deadline stamp, Unix seconds. Carried
+    /// through validation unchanged: a past stamp is an overdue display,
+    /// never a born-expired refusal (that rule is `ttl`'s alone).
+    pub(super) due_at: Option<u64>,
     pub(super) spec: Value,
     /// OF-543: the one placed type stamp; always settled before the write.
     pub(super) type_ref: crate::task_type::TaskTypeRef,
-    /// FIX 4749: when a standard TASK falls due, Unix seconds.
-    pub(super) due_at: Option<u64>,
 }
 
 /// Refuses a blank TASK label: a present label must carry a non-whitespace
@@ -156,13 +157,6 @@ pub(super) fn validate_task_create_in(
     let tree = crate::agent_dispatch::load_team_type_tree_in_txn(vault, txn, project)?;
     let type_ref =
         crate::task_type::ensure_type_ref(&tree, spec.type_ref.as_ref(), &placement_request, None);
-    // FIX 4749: a due time makes a standard TASK a watcher. A consult has
-    // its deadline and its own expiry; it never ticks.
-    if spec.due_at.is_some() && spec.kind.unwrap_or(TaskKind::Standard) != TaskKind::Standard {
-        return Err(MemoryError::bad_request(
-            "only a standard task carries a due time",
-        ));
-    }
     match (
         spec.kind.unwrap_or(TaskKind::Standard),
         &spec.consult,
@@ -197,9 +191,9 @@ pub(super) fn validate_task_create_in(
                 assignee: Some(*assignee),
                 consult: Some(payload.clone()),
                 ttl: Some(*ttl),
+                due_at: spec.due_at,
                 spec: Value::Nil,
                 type_ref,
-                due_at: None,
             })
         }
         (TaskKind::Standard, None, assignee, ttl) => {
@@ -208,14 +202,6 @@ pub(super) fn validate_task_create_in(
             if ttl.is_some_and(|ttl| ttl.deadline_at <= now) {
                 return Err(MemoryError::bad_request(
                     "a task deadline must be in the future",
-                ));
-            }
-            // A tick at or past the deadline would land on an expired TASK.
-            if let (Some(due_at), Some(ttl)) = (spec.due_at, ttl)
-                && due_at >= ttl.deadline_at
-            {
-                return Err(MemoryError::bad_request(
-                    "a task's due time must fall before its deadline",
                 ));
             }
             if let Some(assignee) = assignee {
@@ -231,9 +217,9 @@ pub(super) fn validate_task_create_in(
                 assignee: *assignee,
                 consult: None,
                 ttl: *ttl,
+                due_at: spec.due_at,
                 spec: spec.spec.clone(),
                 type_ref,
-                due_at: spec.due_at,
             })
         }
         _ => Err(MemoryError::bad_request("invalid typed task shape")),
@@ -481,24 +467,6 @@ pub(crate) fn task_is_terminal(vault: &Vault, task_ref: EntityId) -> Result<bool
         .is_some_and(|state| state.terminal().is_some()))
 }
 
-/// The due time of an open TASK (FIX 4749): `None` when the row is gone, is
-/// no typed TASK, has settled or carries no due time. A body no reader can
-/// decode reads as no due time, so one bad row never holds the tick feed.
-pub(crate) fn open_task_due_at_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    task_ref: EntityId,
-) -> Result<Option<u64>> {
-    let body = match task_verb_body_in(vault, txn, task_ref) {
-        Ok(body) => body,
-        Err(Error::Record(_)) => return Ok(None),
-        Err(error) => return Err(error),
-    };
-    Ok(body
-        .filter(|body| body.terminal().is_none())
-        .and_then(|body| body.due_at))
-}
-
 /// The ONE-1709 PACKET_AMEND carve-out: a READ-ONLY settled-result query the
 /// `contextFrom` validator in `context_projection.rs` consumes. This is the
 /// reverse of the pre-settlement window: `land_task_result` /
@@ -543,4 +511,22 @@ pub(crate) fn completed_task_at_in_txn(
         .and_then(|body| body.terminal().cloned())
         .filter(|terminal| terminal.disposition == TaskTerminalDisposition::Completed)
         .map(|terminal| terminal.finished_at))
+}
+
+/// The due time of an open TASK (FIX 4749): `None` when the row is gone, is
+/// no typed TASK, has settled or carries no due time. A body no reader can
+/// decode reads as no due time, so one bad row never holds the tick feed.
+pub(crate) fn open_task_due_at_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+) -> Result<Option<u64>> {
+    let body = match task_verb_body_in(vault, txn, task_ref) {
+        Ok(body) => body,
+        Err(Error::Record(_)) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    Ok(body
+        .filter(|body| body.terminal().is_none())
+        .and_then(|body| body.due_at))
 }

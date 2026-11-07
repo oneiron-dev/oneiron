@@ -380,6 +380,7 @@ impl Memory<'_> {
             spec: validated.spec.clone(),
             consult: validated.consult.clone(),
             ttl: validated.ttl,
+            due_at: validated.due_at,
             state: Some(TaskExecutionState::Queued),
             provenance: provenance.clone(),
             created_at: now,
@@ -388,12 +389,14 @@ impl Memory<'_> {
             brief,
             subproject_ref: None,
             team: None,
-            due_at: validated.due_at,
         });
         self.put_task_body_in_txn(wtxn, task_ref, &body, now)?;
-        // FIX 4749: a due TASK commits with its row in the due index, which
-        // the hook runner releases as its `schedule.tick`.
-        if let Some(due_at) = validated.due_at {
+        // FIX 4749: a standard TASK with a due time commits with its row in
+        // the due index, which the hook runner releases as its
+        // `schedule.tick`. A consult carries the stamp but never ticks.
+        if let Some(due_at) = validated.due_at
+            && validated.kind == TaskKind::Standard
+        {
             crate::runtime_hooks::index_task_due_in_txn(self.vault(), wtxn, task_ref, due_at)?;
         }
         // A TASK is born in its writer's world and facet (ARCH-0067 §5).
