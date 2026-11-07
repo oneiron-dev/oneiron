@@ -31,6 +31,7 @@ pub mod export;
 mod export_input;
 mod export_parent;
 pub mod export_preview;
+pub mod git_transport;
 pub mod mirror;
 pub mod mirror_auto;
 mod mirror_census;
