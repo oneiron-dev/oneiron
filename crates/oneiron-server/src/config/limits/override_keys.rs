@@ -34,6 +34,7 @@ pub(in crate::config) struct LimitsConfigOverride {
     pub(in crate::config) media_reply_bytes: Option<u64>,
     pub(in crate::config) chat_reply_bytes: Option<u64>,
     pub(in crate::config) feedback_inbox_bytes: Option<u64>,
+    pub(in crate::config) request_body_bytes: Option<u64>,
     pub(in crate::config) pairing_redeem_free_failures: Option<u32>,
     pub(in crate::config) pairing_redeem_wait_ceiling_ms: Option<u64>,
     pub(in crate::config) pairing_redeem_quiet_ms: Option<u64>,

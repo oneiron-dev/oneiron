@@ -275,6 +275,7 @@ lfs_quota_bytes = 68719476736     # LFS bytes stored plus uploads in flight; pas
 transfer_idle_timeout_ms = 300000 # a git or LFS transfer moving no byte this long ends
 retrieval_query_bytes = 1048576   # one retrieval query, as sent (413 past it)
 projection_body_bytes = 4194304   # body bytes one multi-row read decodes
+request_body_bytes = 67108864     # one request body a route reads whole (default: memory / 1024, at least 64 MiB; 413 naming the row past it)
 git_scan_blob_bytes = 1073741824  # one pushed blob the push door scans (default: RAM / 64)
 git_scan_disk_floor_bytes = 1073741824 # free disk the door's hook leaves while it frames a push
 queue_wait_timeout_ms = 300000    # how long queued work waits for its turn
