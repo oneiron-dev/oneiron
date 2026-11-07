@@ -28,7 +28,8 @@ pub use lifecycle::MessageStreamPump;
 pub use refused::StreamRecoveryRefusal;
 pub(in crate::memory::witness) use session::SessionStreamTerminal;
 pub use session::{
-    SessionMessageStream, SessionStreamEnd, SessionStreamOutcome, SessionStreamPartial,
+    SessionMessageStream, SessionStreamEnd, SessionStreamFinished, SessionStreamOutcome,
+    SessionStreamPartial,
 };
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
