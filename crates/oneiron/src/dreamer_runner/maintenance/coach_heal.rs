@@ -445,6 +445,10 @@ impl Vault {
                 value["repair"] =
                     coach_prompt_repair::land_in_txn(self, txn, repair, &evidence, &envelope, now)?;
             }
+            if route == HealRoute::Person {
+                value["repair"] = super::coach_person::repair_in_txn(self, txn, &case)
+                    .unwrap_or(serde_json::Value::Null);
+            }
             let proposal = proposals::emit_in_txn(
                 self,
                 txn,
