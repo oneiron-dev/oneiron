@@ -34,7 +34,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/remote/pairing.rs` | src | s | 3 crate-vis | — | — |
 | `src/remote/renewal.rs` | src | s | 1 fn | — | FIX 3377: a paired owner device renews its own credential over the server route `POST /v1/core/slips/renew` |
 | `src/remote/request.rs` | src | s | 6 crate-vis | — | Serialized facade requests, spillable before their HTTP body is read |
-| `src/remote/response.rs` | src | s | 11 crate-vis | — | — |
+| `src/remote/response.rs` | src | s | 10 crate-vis | — | — |
 | `src/remote/tests.rs` | test | s | — | — | — |
 | `src/remote/wire.rs` | src | s | 3 crate-vis | — | The transport seam under [`RemoteClient`] (OF-237): what carries a request this client signed, and the reply… |
 | `tests/agent_verbs.rs` | test | s | — | — | Generated SDK calls preserve handles and durable C9 wait results |
