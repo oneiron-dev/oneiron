@@ -68,6 +68,7 @@ pub(super) fn signature_report(
         kind: e.kind,
         byte_range: e.byte_range,
         coverage: e.coverage,
+        revision_coverage: e.revision_coverage,
         digest: e.digest,
         profile,
         integrity,

@@ -118,9 +118,13 @@ impl Store {
 }
 
 /// The `vault_meta` prefixes of the rows [`checkpoint_retirements`] reads.
-pub(super) fn retirement_prefixes() -> [&'static [u8]; 2] {
+pub(super) fn retirement_prefixes() -> [&'static [u8]; 3] {
     let [holds] = legal_hold::target_prefixes();
-    [retirement_prefix(), holds]
+    [
+        retirement_prefix(),
+        holds,
+        side_table::COOPERATIVE_RESTRICTION.prefix,
+    ]
 }
 
 /// Each claim, body instance and known-value history key-retirement intent
@@ -143,6 +147,16 @@ pub(super) fn checkpoint_retirements(
         ) || crate::store::credential_kind(intent.subject.kind())
         {
             retirements.push((intent, true));
+            continue;
+        }
+        if intent.subject.kind() == CustodyKind::CheckpointPayload
+            && intent.cause == RetireCause::Erase
+        {
+            let carried =
+                crate::store::checkpoint_payload::retirement::checkpoint_erase_ready_in_rows(
+                    rows, &intent,
+                )?;
+            retirements.push((intent, carried));
             continue;
         }
         if intent.subject.kind() != CustodyKind::ClaimDecision {

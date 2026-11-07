@@ -37,6 +37,12 @@ pub(crate) fn discard_workflow_in_txn(
         for key in keys {
             NOTE_PROPOSAL_DOC.delete(store, txn, &key)?;
         }
+        // The marks on its authority's forks go with them (FIX 12789).
+        super::sync_rows::NOTE_FORK_AUTHORITY.delete_from(
+            store,
+            txn,
+            format!("{}:", note.to_hex()).as_bytes(),
+        )?;
     }
     let forks: Vec<EntityId> = NOTE_FORK
         .scan(store, txn)?

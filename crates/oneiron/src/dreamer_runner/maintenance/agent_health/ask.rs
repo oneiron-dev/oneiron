@@ -71,8 +71,10 @@ pub struct AgentHealthCoachAnswer {
     /// came from, the pad read's row and each pad. `None` for an answer that
     /// predates recorded provenance: unknown.
     pub source_rows: Option<Vec<EntityId>>,
-    /// `Some(false)` while the brief also read numbers that name no row, so
-    /// `source_rows` is not every row it read; `None` when not recorded.
+    /// Whether the host-local model-input read-row union was complete when
+    /// drafted. This does not attest primary-entity/authority/erasure
+    /// resolution. `source_rows` above remains the separate known-source
+    /// erase witness, not this input-row union; `None` when not recorded.
     pub source_rows_complete: Option<bool>,
     /// `Some(true)` once an erase of a row the draft was written from
     /// cleared its diagnosis and proposal (FIX 9221); its route and target
@@ -147,8 +149,11 @@ pub struct CoachHealthBrief {
     pub current_task: Option<String>,
     /// The sealed pads the Coach read; empty when the read was held.
     pub pads: Vec<DiaryEntry>,
-    /// The rows the brief was read from (FIX 6997); `None`, unknown, while
-    /// the card's numbers name none.
+    /// Host-local model-input read-row union (FIX 6997): the card's numbers,
+    /// loaded skills, TASK, observed brief and pads. Native side-table keys
+    /// may occur; this is not primary-entity, authority or erasure proof.
+    /// Routing, recipients and owner-copy policy are outside this union.
+    /// `None` when any contributing read is unknown.
     pub source_rows: Option<Vec<EntityId>>,
 }
 
@@ -238,7 +243,7 @@ pub(super) fn ask_coach_in_txn(
     card.updated_at = at;
     let new_sources = card.draft_source_rows();
     sync_card_membership(&vault.store, txn, key, &old_sources, &new_sources)?;
-    CARDS.put(&vault.store, txn, key, &card)?;
+    super::receipt_index::put_card_in_txn(&vault.store, txn, key, &card)?;
     // A touched card can arm the digest on its own (FIX 1979).
     crate::batch::queue_proactivity_change(vault, txn);
     Ok(ConcernMoveOutcome::AskCoach { card: handle, ask })
@@ -359,19 +364,33 @@ impl Vault {
             Ok(DiaryReadOutcome::NotCovered) => (AgentHealthPadRead::NotCovered, Vec::new()),
             Err(error) => (AgentHealthPadRead::Refused { code: error.code }, Vec::new()),
         };
-        // The card's numbers are review state merged across passes, naming no
-        // rows they were counted from: the brief stays unknown until they do
-        // (FIX 6997). Its skills, TASK and the pads read are known, and are
-        // kept on the answer before that fold loses them (FIX 9220).
-        let card_rows: Option<Vec<EntityId>> = None;
+        // Keep the input-row union distinct from the known-source erase
+        // witness (FIX 9220); a missing contributor poisons the whole union.
+        let card_rows = card.source_rows.clone();
         let pad_rows: Vec<EntityId> = entries.iter().map(|pad| pad.id).collect();
         let known = known_source_rows(
             &card,
             &pads,
             [&skill_rows, &task_rows, &brief_rows, &pad_rows],
         );
-        let source_rows =
-            union_source_rows([card_rows, Some(skill_rows), Some(task_rows), Some(pad_rows)]);
+        let source_rows = union_source_rows([
+            card_rows,
+            Some(skill_rows),
+            Some(task_rows),
+            Some(brief_rows),
+            match &pads {
+                AgentHealthPadRead::Read {
+                    read: Some(read),
+                    pad_ids,
+                    ..
+                } => Some(
+                    std::iter::once(*read)
+                        .chain(pad_ids.iter().copied())
+                        .collect(),
+                ),
+                _ => None,
+            },
+        ]);
         let complete = source_rows.is_some();
         // A failed call still lands a draftless answer, so the ask may be
         // asked again, and the attempt fails with the error.
@@ -420,7 +439,7 @@ impl Vault {
             // yields an empty set, so nothing is added (FIX 10434).
             let new_sources = card.draft_source_rows();
             sync_card_membership(&self.store, txn, &key, &old_sources, &new_sources)?;
-            CARDS.put(&self.store, txn, &key, &card)?;
+            super::receipt_index::put_card_in_txn(&self.store, txn, &key, &card)?;
             // A touched card can arm the digest on its own (FIX 1979).
             crate::batch::queue_proactivity_change(self, txn);
             Ok(())
