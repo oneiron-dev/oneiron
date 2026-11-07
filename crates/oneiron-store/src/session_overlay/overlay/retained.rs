@@ -86,6 +86,9 @@ impl Retained {
     /// A live segment: its preview, staged mutations and staged journal.
     pub(super) fn segment(&mut self, segment: &TxnSegment) {
         self.state(&segment.preview);
+        if let Some(checkpoint) = &segment.net_budget {
+            self.state(&checkpoint.preview);
+        }
         self.add(
             segment
                 .mutations

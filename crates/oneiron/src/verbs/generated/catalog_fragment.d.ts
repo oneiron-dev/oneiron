@@ -1990,7 +1990,7 @@ declare namespace Sdk {
   type ResearchWorkWire = { root: EntityId; purpose: RsiSpendPurpose; units: number; attempt?: EntityId | null };
   type ResearchSettleWire = { root: EntityId; reservation: EntityId; actual: number };
   type ResearchReservationLine = { work: { purpose: RsiSpendPurpose } } | "exploration";
-  type RsiSettlement = { Spent: number } | { Exposure: number } | "Refunded";
+  type RsiSettlement = { Spent: number } | "Unknown" | { Exposure: number } | "Refunded";
   type ResearchReservation = { id: EntityId; line: ResearchReservationLine; units: number; attempt?: AttemptId | null; settlement?: RsiSettlement | null; reserved_at: number };
   type ResearchRefundWire = { root: EntityId; reservation: EntityId };
   type ResearchExplorationWire = { root: EntityId; units: number; attempt?: EntityId | null };
@@ -2050,11 +2050,11 @@ declare namespace Sdk {
   type ArchiveDeleteConfirmEntry = { entity: string; result: ArchiveDeleteConfirmOutcome };
   type ArchiveDeleteBatchResult = { entries: ArchiveDeleteConfirmEntry[] };
   type UsageRepairListRequest = Record<string, never>;
-  type UndecodableUsageReason = "stored_event_decode_failed";
+  type UndecodableUsageReason = "stored_event_decode_failed" | "stored_pending_decode_failed";
   type UndecodableUsageRow = { rowRef: string; byteLength: number; hash: string; decodeReason: UndecodableUsageReason };
   type UndecodableUsageList = { events: UndecodableUsageRow[] };
   type UsageRepairRemoveRequest = { rowRef: string; expectedHash: string };
-  type UsageRepairReason = "undecodable_event_removed";
+  type UsageRepairReason = "undecodable_event_removed" | "undecodable_pending_removed";
   type UsageRepairAuthority = { kind: "owner"; ref: string } | { kind: "grant"; ref: string };
   type UsageRepairSurface = { kind: "this_install" } | { kind: "linked_device"; machine: string } | { kind: "hosted_console" };
   type UsageRepairReceipt = { receiptId: string; owner: string; vaultId: string; rowRef: string; hash: string; byteLength: number; reason: UsageRepairReason; actorRef: string; actorClass: string; authority: UsageRepairAuthority; surface: UsageRepairSurface; recordedAt: number };
@@ -3628,7 +3628,7 @@ declare namespace Sdk {
   type DecisionAskClimbRequest = { seq: number };
   type DecisionAskConfirmGrantRequest = { seq: number; notice: string };
   type ConnectorListRequest = { query?: string | null };
-  type ConnectorEntry = { name: string; connector: string; summary: string; verbs: string[]; call_class: string; registered_at: number };
+  type ConnectorEntry = { source: "catalog"; name: string; connector: string; summary: string; verbs: string[]; call_class: string; registered_at: number } | { source: "builtin"; name: string; connector: string; summary: string; verbs: string[] };
   type ConnectorNameRequest = { name: string };
   type ConnectorView = { key_ref: string; entry: ConnectorEntry; status: string; secret_ref?: string | null; key_generation: number; registered_at: number; status_changed_at?: number | null; budgeted_as_sends: boolean };
   type ConnectorSchemaRequest = { name: string; tool: string };
@@ -4828,7 +4828,7 @@ declare const connector: { readonly [name: string]: { readonly [tool: string]: (
   call(input: Sdk.ConnectorCallRequest): Promise<Sdk.ActAnswer<Sdk.ConnectorCallReply> | StoredResult>;
   /** Where one connector.call stands, by the call_ref its held, pending_delivery or awaiting_input reply named: pending, the questions it waits on, or its settled reply. Only its caller and the vault's owner read it. */
   call_status(input: Sdk.ConnectorCallStatusRequest): Promise<Sdk.ConnectorCallStatus | StoredResult>;
-  /** Every live catalogued connector whose name or summary matches the query. */
+  /** Every matching live catalogued connector and first-party web interface, distinguished by source. */
   list(input: Sdk.ConnectorListRequest): Promise<Sdk.ConnectorEntry[] | StoredResult>;
   outbound: {
     /** Schedules one send through a granted outbound connector, gated and held for delivery. */

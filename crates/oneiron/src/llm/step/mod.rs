@@ -76,8 +76,8 @@ pub use self::types::{
 };
 
 pub(crate) use self::step_only::{
-    consume_step_wait_in_txn, open_step_wait_in_txn, register_detached_step_in_txn,
-    signal_step_wait_in_txn,
+    consume_step_wait_in_txn, erase_detached_step_actor_in_txn, open_step_wait_in_txn,
+    register_detached_step_in_txn, signal_step_wait_in_txn,
 };
 
 pub(crate) use self::settled::{

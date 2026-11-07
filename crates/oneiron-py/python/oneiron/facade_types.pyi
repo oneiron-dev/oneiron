@@ -10036,7 +10036,7 @@ class RsiSettlementSpent(TypedDict):
     Spent: int
 class RsiSettlementExposure(TypedDict):
     Exposure: int
-RsiSettlement = Literal["Refunded"] | RsiSettlementSpent | RsiSettlementExposure
+RsiSettlement = Literal["Unknown", "Refunded"] | RsiSettlementSpent | RsiSettlementExposure
 class ResearchReservation(TypedDict):
     id: EntityId
     line: ResearchReservationLine
@@ -10278,7 +10278,7 @@ class ArchiveDeleteBatchResult(TypedDict):
     entries: list[ArchiveDeleteConfirmEntry]
 class UsageRepairListRequest(TypedDict):
     ...
-UndecodableUsageReason = Literal["stored_event_decode_failed"]
+UndecodableUsageReason = Literal["stored_event_decode_failed", "stored_pending_decode_failed"]
 class UndecodableUsageRow(TypedDict):
     rowRef: str
     byteLength: int
@@ -10289,7 +10289,7 @@ class UndecodableUsageList(TypedDict):
 class UsageRepairRemoveRequest(TypedDict):
     rowRef: str
     expectedHash: str
-UsageRepairReason = Literal["undecodable_event_removed"]
+UsageRepairReason = Literal["undecodable_event_removed", "undecodable_pending_removed"]
 class UsageRepairAuthorityOwner(TypedDict):
     kind: Literal["owner"]
     ref: str
@@ -18421,13 +18421,21 @@ class DecisionAskConfirmGrantRequest(TypedDict):
     notice: str
 class ConnectorListRequest(TypedDict):
     query: NotRequired[str | None]
-class ConnectorEntry(TypedDict):
+class ConnectorEntryCatalog(TypedDict):
+    source: Literal["catalog"]
     name: str
     connector: str
     summary: str
     verbs: list[str]
     call_class: str
     registered_at: int
+class ConnectorEntryBuiltin(TypedDict):
+    source: Literal["builtin"]
+    name: str
+    connector: str
+    summary: str
+    verbs: list[str]
+ConnectorEntry = ConnectorEntryCatalog | ConnectorEntryBuiltin
 class ConnectorNameRequest(TypedDict):
     name: str
 class ConnectorView(TypedDict):

@@ -56,10 +56,12 @@ pub(super) fn held_out_receipts_in_txn(
     )
 }
 
-/// [`held_out_receipts`] beside the outcome-ledger rows it read (FIX 7288):
-/// one attempt row id per receipt, in receipt order. `None` is unknown: a
-/// receipt that names no row. Capture only: the receipts are exactly
-/// [`held_out_receipts_in_txn`]'s.
+/// [`held_out_receipts`] with optional physical source row ids.
+///
+/// The outcome ledger has side-table rows, not `EntityId`-addressable entities,
+/// so its source ids are unknown (`None`). Receipt suffixes and input read sets
+/// do not identify the physical rows this read accessed. The receipts, order,
+/// and errors are exactly [`held_out_receipts_in_txn`]'s.
 ///
 /// # Errors
 ///
@@ -77,25 +79,7 @@ pub(super) fn held_out_receipts_sourced_in_txn(
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
 ) -> Result<(Vec<String>, Option<Vec<EntityId>>)> {
-    let receipts = crate::skill_reliability::attributed_outcome_receipts(vault, rtxn, skill)?;
-    let rows = match crate::skill_reliability::attributed_outcome_row_ids(vault, rtxn, skill)? {
-        None => None,
-        Some(ids) => Some(
-            receipts
-                .iter()
-                .zip(ids)
-                .filter(|(receipt, _)| receipt_is_held_out(skill, receipt))
-                .map(|(_, row)| row)
-                .collect::<Vec<_>>(),
-        ),
-    };
-    Ok((
-        receipts
-            .into_iter()
-            .filter(|receipt| receipt_is_held_out(skill, receipt))
-            .collect(),
-        rows,
-    ))
+    Ok((held_out_receipts_in_txn(vault, rtxn, skill)?, None))
 }
 
 /// Held-out outcomes WITH their world labels, in the same ledger order as

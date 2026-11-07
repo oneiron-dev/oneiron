@@ -3939,7 +3939,7 @@ export type ResearchSettleWire = { root: EntityId; reservation: EntityId; actual
 /** `oneiron::autoreason_campaign::research::budget::ResearchReservationLine` */
 export type ResearchReservationLine = { work: { purpose: RsiSpendPurpose } } | "exploration"
 /** `oneiron::research_budget::RsiSettlement` */
-export type RsiSettlement = { Spent: number } | { Exposure: number } | "Refunded"
+export type RsiSettlement = { Spent: number } | "Unknown" | { Exposure: number } | "Refunded"
 /** `oneiron::autoreason_campaign::research::budget::ResearchReservation` */
 export type ResearchReservation = { id: EntityId; line: ResearchReservationLine; units: number; attempt?: AttemptId | null; settlement?: RsiSettlement | null; reserved_at: number }
 /** `oneiron::verbs::research::ResearchRefundWire` */
@@ -4059,7 +4059,7 @@ export type ArchiveDeleteBatchResult = { entries: ArchiveDeleteConfirmEntry[] }
 /** `oneiron::memory::usage_repair::UsageRepairListRequest` */
 export type UsageRepairListRequest = Record<string, never>
 /** `oneiron::memory::usage_repair::UndecodableUsageReason` */
-export type UndecodableUsageReason = "stored_event_decode_failed"
+export type UndecodableUsageReason = "stored_event_decode_failed" | "stored_pending_decode_failed"
 /** `oneiron::memory::usage_repair::UndecodableUsageRow` */
 export type UndecodableUsageRow = { rowRef: string; byteLength: number; hash: string; decodeReason: UndecodableUsageReason }
 /** `oneiron::memory::usage_repair::UndecodableUsageList` */
@@ -4067,7 +4067,7 @@ export type UndecodableUsageList = { events: UndecodableUsageRow[] }
 /** `oneiron::memory::usage_repair::UsageRepairRemoveRequest` */
 export type UsageRepairRemoveRequest = { rowRef: string; expectedHash: string }
 /** `oneiron::memory::usage_repair::UsageRepairReason` */
-export type UsageRepairReason = "undecodable_event_removed"
+export type UsageRepairReason = "undecodable_event_removed" | "undecodable_pending_removed"
 /** `oneiron::memory::usage_repair::UsageRepairAuthority` */
 export type UsageRepairAuthority = { kind: "owner"; ref: string } | { kind: "grant"; ref: string }
 /** `oneiron::memory::usage_repair::UsageRepairSurface` */
@@ -7215,7 +7215,7 @@ export type DecisionAskConfirmGrantRequest = { seq: number; notice: string }
 /** `oneiron::verbs::connector::ConnectorListRequest` */
 export type ConnectorListRequest = { query?: string | null }
 /** `oneiron::verbs::connector::ConnectorEntry` */
-export type ConnectorEntry = { name: string; connector: string; summary: string; verbs: string[]; call_class: string; registered_at: number }
+export type ConnectorEntry = { source: "catalog"; name: string; connector: string; summary: string; verbs: string[]; call_class: string; registered_at: number } | { source: "builtin"; name: string; connector: string; summary: string; verbs: string[] }
 /** `oneiron::verbs::connector::ConnectorNameRequest` */
 export type ConnectorNameRequest = { name: string }
 /** `oneiron::verbs::connector::ConnectorView` */

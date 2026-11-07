@@ -611,7 +611,12 @@ pub(crate) fn apply_ops_session(
             // staged. Its own row is its scope's turn, so no promote or save
             // replays it.
             BatchOp::Delete { id } => {
-                super::session_delete::stage_session_delete(view, wtxn, id)?;
+                let id = *id;
+                overlay.with_net_budget(|| {
+                    super::session_delete::stage_session_delete(view, wtxn, &id)?;
+                    overlay.stage_journal_entry(entry)
+                })?;
+                continue;
             }
             _ => {
                 return Err(Error::InvariantViolation(

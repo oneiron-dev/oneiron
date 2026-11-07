@@ -27,6 +27,7 @@ impl RecordingJsHost<'_, '_> {
             &outcome,
             SelfDispatchOutcome::InferenceDefaults(_)
                 | SelfDispatchOutcome::TaskAskStatus(_)
+                | SelfDispatchOutcome::TaskWaitSet(_)
                 | SelfDispatchOutcome::Team(_)
         ) {
             return self.store_large_typed_reply(outcome);
@@ -75,9 +76,10 @@ impl RecordingJsHost<'_, '_> {
     }
 
     /// A typed reply too large for one message (FIX449): the inference
-    /// defaults, a settled ask, a world-privacy answer, or a direct team's
-    /// native receipt, spilled through the sweeping result sink and tainted
-    /// card with facets, never `store_answer`. Under the inline size, or with no
+    /// defaults, a settled ask, a world-privacy answer, a wait set without
+    /// program feedback, or a direct team's native receipt, spilled through
+    /// the sweeping result sink and tainted card with facets, never
+    /// `store_answer`. Under the inline size, or with no
     /// result store, the original outcome stays inline, unchanged.
     fn store_large_typed_reply(
         &mut self,
@@ -107,6 +109,10 @@ impl RecordingJsHost<'_, '_> {
                 SelfStoredReplyKind::TaskAskWorldPrivacy,
                 json!({"output": TaskAskWait::WorldPrivacyReady(request.clone())}),
             ),
+            // Nonempty feedback stays typed for its independent release projection.
+            SelfDispatchOutcome::TaskWaitSet(result) if result.program_steps.is_empty() => {
+                (SelfStoredReplyKind::TaskWaitSet, json!({"output": result}))
+            }
             SelfDispatchOutcome::Team(result)
                 if result.source_rows.is_some()
                     && matches!(

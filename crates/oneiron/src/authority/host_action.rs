@@ -135,13 +135,17 @@ impl HostActionGuard {
 
 /// A host action as a durable record keeps it (FIX 7231): what a stored
 /// approval proves again at every recheck in place of the
-/// [`HostActionGuard`], whose presented root cannot be stored. It carries no
+/// `HostActionGuard`, whose presented root cannot be stored. It carries no
 /// credential bytes and no signature, and it rebuilds no proof: it names
 /// the posture, the owner, and the install's host root by its mint, and
 /// [`Self::holds_in`] asks the same rule a guard asks of that mint as the
 /// log holds it now.
+///
+/// A self-hosted root's credential call keeps it as its witness (FIX 4744).
+/// Its host reads it through these methods alone; its fields stay private,
+/// and a copy that deserializes grants nothing until `holds_in` passes.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub(crate) struct HostActionIdentity {
+pub struct HostActionIdentity {
     /// The posture the action was proven under.
     posture: crate::HostingPrivacyPosture,
     owner: EntityId,
@@ -160,17 +164,52 @@ pub(crate) struct HostRootIdentity {
 
 impl HostActionIdentity {
     /// The person this recorded action acts as; liveness still needs `holds_in`.
-    pub(crate) fn owner(&self) -> EntityId {
+    #[must_use]
+    pub fn owner(&self) -> EntityId {
         self.owner
+    }
+
+    /// The host root this recorded action acts under, by slip id; `None`
+    /// for the dev mode. A credential witness backs that slip alone (FIX
+    /// 4744).
+    pub(crate) fn root_slip_id(&self) -> Option<[u8; 32]> {
+        self.root.as_ref().map(|root| root.slip_id)
+    }
+
+    /// Whether this recorded action acts under the host root minted as
+    /// `slip` for `vault`: the instrument a self-hosted root's call was
+    /// admitted on (FIX 4744). It is a comparison, not proof; `holds_in`
+    /// proves.
+    #[must_use]
+    pub fn acts_under(&self, slip: &[u8; 32], vault: &[u8; 32]) -> bool {
+        self.root
+            .as_ref()
+            .is_some_and(|root| root.slip_id == *slip && root.vault_id == *vault)
+    }
+
+    /// Whether `claims` are the very host root this action recorded: the
+    /// same slip, the same vault and the same binding key (FIX 4744).
+    pub(crate) fn names_root(&self, claims: &SlipClaims) -> bool {
+        self.root.as_ref().is_some_and(|root| {
+            root.slip_id == claims.slip_id
+                && root.vault_id == claims.vault_id
+                && root.binding_key == claims.binding_key
+        })
     }
 
     /// Whether this action still holds in `txn`: the same posture, the same
     /// install's root still live and still binding this owner (or, for the
     /// dev mode, the owner-verb rule still passing), and the owner a live
     /// PERSON. Off the recorded or a self-hosted posture it is the typed
-    /// refusal; a lapse is the owner refusal ([`host_action_refused`] tells
+    /// refusal; a lapse is the owner refusal (`host_action_refused` tells
     /// both from a failure to judge).
-    pub(crate) fn holds_in(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
+    ///
+    /// # Errors
+    ///
+    /// [`Error::HostActionRequiresSupportGrant`] off the recorded or a
+    /// self-hosted posture; the owner refusal when the action lapsed;
+    /// storage errors as they occur.
+    pub fn holds_in(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
         if vault.privacy_posture() != self.posture {
             return Err(Error::HostActionRequiresSupportGrant);
         }

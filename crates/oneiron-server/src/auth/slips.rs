@@ -136,6 +136,31 @@ impl CoreAuth {
             None => auth,
         })
     }
+    /// The self-hosted root's caller a resumed call rebuilds from its
+    /// recorded host action (FIX 4744): `verified` is the root this host
+    /// retains, verified again now as the very root the action recorded, and
+    /// `instrument` the fingerprint of the token the request presented, so
+    /// its authority ceiling is the one the call was admitted under. It
+    /// names no principal and keeps no holder binding: it acts only through
+    /// the host action its door resolves. Anything but a full host root is
+    /// refused.
+    pub(crate) fn from_recorded_host_root(
+        verified: VerifiedSlip,
+        instrument: [u8; 32],
+        vault: &dyn RevokedTokenJtis,
+    ) -> Result<Self, ApiError> {
+        let unattenuated = verified.is_full_vault_owner_grade();
+        let mut auth = Self::from_verified(verified, unattenuated)?;
+        if auth.host_root().is_none() {
+            return Err(ApiError::unauthorized());
+        }
+        auth.instrument = Some(instrument);
+        auth.facets_owner_exempt = auth
+            .verified_slip
+            .as_ref()
+            .is_some_and(|proof| vault.credential_facets_owner_exempt(proof));
+        Ok(auth)
+    }
     /// The exact instrument this credential was authenticated on, if any.
     pub(crate) const fn instrument(&self) -> Option<[u8; 32]> {
         self.instrument
