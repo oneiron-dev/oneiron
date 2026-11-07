@@ -837,10 +837,18 @@ def mcp_input_dispatch(row):
         # One target per describe (FIX 3256), on the args the pre hooks left,
         # before the self, card-key and TASKS-section paths.
         body += f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n'
-        # describe(self) renders the authenticated run brief, the same door REST takes.
+        # describe(self) renders the connection's own brief (FIX 17594): the
+        # registered actor and the connection its registration resolved, its
+        # stream, connector scope, bound verbs and verified auth, never Core's
+        # session observations or a session the body names. A code-mode
+        # call's dispatch carries its trusted durable run (`McpCodeRun`), and
+        # its describe(self) renders that run's own brief through the run's
+        # installed custody (FIX 17594 D5); neither reads a run from a body
+        # `session_id`. REST keeps the Core-auth door.
         body += ('if input.get("self").and_then(Value::as_bool) == Some(true) {\n'
-                 '    let auth = actor.auth.as_ref().ok_or_else(invalid)?;\n'
-                 '    let (value, listed) = Box::pin(crate::api::context_board::describe_self_for_auth(server, auth, &input)).await.map_err(|_| invalid())?;\n'
+                 '    // A code-mode call names its trusted durable run; a direct call names none.\n'
+                 '    let run = surface.run.as_ref().map(|run| run.run_id);\n'
+                 '    let (value, listed) = Box::pin(crate::api::context_board::describe_self_for_mcp(server, actor, run, &input)).await.map_err(|_| invalid())?;\n'
                  '    // Derived from the rows its card lists, the roster it read among them.\n'
                  '    served.extend(listed);\n'
                  '    let output: oneiron::task_verb::TaskDescription = serde_json::from_value(value).map_err(|_| invalid())?;\n'
@@ -1839,6 +1847,27 @@ def host_door_rows(facade_rows):
     out += '    pub(in crate::api::facade) fn from_verb(verb: &str) -> Option<Self> {\n        Some(match verb {\n'
     out += ''.join(f'            {json.dumps(r["name"])} => Self::{variant(r)},\n' for r in checked)
     out += '            _ => return None,\n        })\n    }\n}\n'
+    # FIX 4794: the MCP rows whose handler takes the caller's credential
+    # before it runs, as `mcp_input_dispatch` emits them, so the hook
+    # admission refuses a call with none before the row's pre hooks. Most are
+    # the checked host doors above; only the difference is listed.
+    credential = [r['name'] for r in mcp_rows()
+                  if r['name'] != 'ai.anonymous_chat' and r.get('context') != 'board'
+                  and (r.get('admission', {}).get('owner_grade') or r.get('host_door'))]
+    checked_names = [r['name'] for r in checked]
+    added = [name for name in credential if name not in checked_names]
+    removed = [name for name in checked_names if name not in credential]
+    alternatives = lambda names: ' | '.join(json.dumps(name) for name in names)
+    out += ('/// Whether `verb` is an MCP row whose handler takes the caller\'s credential\n'
+            '/// before it runs: every host door and every owner-grade row. A call that\n'
+            '/// carries none is refused before the row\'s pre hooks (FIX 4794).\n')
+    out += '#[must_use]\npub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {\n'
+    test = 'HostDoorRow::from_verb(verb).is_some()'
+    if removed:
+        test = f'({test} && !matches!(verb, {alternatives(removed)}))'
+    if added:
+        test += f' || matches!(verb, {alternatives(added)})'
+    out += f'    {test}\n}}\n'
     return out
 
 # FIX 10471: `rust_feature` gates one CORE Rust typed emission behind a Cargo
