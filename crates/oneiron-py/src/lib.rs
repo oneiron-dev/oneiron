@@ -2152,6 +2152,55 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_weave_admin_report(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.weave.admin.report")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.weave.admin.report", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_weave_admin_lens(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.weave.admin.lens")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.weave.admin.lens", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_weave_admin_digest(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.weave.admin.digest")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.weave.admin.digest", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_weave_admin_link_wrong(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.weave.admin.link.wrong")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.weave.admin.link.wrong", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_weave_admin_item_wrong(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.weave.admin.item.wrong")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.weave.admin.item.wrong", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_step_up_passkeys_reset(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.step_up.passkeys.reset")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.step_up.passkeys.reset", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_step_up_totp_reset(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.step_up.totp.reset")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.step_up.totp.reset", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_weave_enqueue(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.weave.enqueue")?;
         let output = py
@@ -3376,6 +3425,16 @@ impl NativeClient {
             .detach(|| {
                 self.inner
                     .agent_verb("vault.members.invitation_slip", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_members_invitation_code(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.members.invitation_code")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.members.invitation_code", input)
             })
             .map_err(raise)?;
         encode(&output)
@@ -4712,6 +4771,20 @@ impl NativeClient {
             .detach(|| {
                 self.inner
                     .agent_verb("vault.coach.training_offers.sources", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_coach_training_runs_cancel(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.coach.training_runs.cancel")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.coach.training_runs.cancel", input)
             })
             .map_err(raise)?;
         encode(&output)
@@ -6121,6 +6194,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_hooks_checks(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.hooks.checks")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.hooks.checks", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_hooks_replay(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.hooks.replay")?;
         let output = py
@@ -6556,6 +6636,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.code.model_heal_count")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.code.model_heal_count", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_corrections(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.corrections")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.corrections", input))
             .map_err(raise)?;
         encode(&output)
     }
@@ -7801,6 +7888,30 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "tasks.answer")?;
         let output = py
             .detach(|| self.inner.agent_verb("tasks.answer", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn tasks_answer_forward_challenge(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "tasks.answer.forward.challenge")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("tasks.answer.forward.challenge", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn tasks_answer_forward(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "tasks.answer.forward")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("tasks.answer.forward", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn tasks_answer_forward_status(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "tasks.answer.forward.status")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("tasks.answer.forward.status", input))
             .map_err(raise)?;
         encode(&output)
     }
@@ -11190,6 +11301,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.mail.compliance.search")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.mail.compliance.search", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_files_sources_convert(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.files.sources.convert")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.files.sources.convert", input))
             .map_err(raise)?;
         encode(&output)
     }

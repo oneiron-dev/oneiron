@@ -31,6 +31,7 @@ mod body_actor;
 pub(crate) mod checkpoint;
 mod discard;
 mod lift;
+mod mask;
 mod receipts;
 pub(crate) mod reviewed_fork;
 pub use self::body_actor::BodyActor;
@@ -134,9 +135,9 @@ pub(crate) fn birth_typed_body_in_txn<T>(
     if HEADS.contains(&vault.store, txn, entity)? {
         return Err(invalid("the entity already has a typed body"));
     }
-    let doc = LoroDoc::new();
+    let mut doc = LoroDoc::new();
     doc.set_record_timestamp(true);
-    let (value, receipt) = commit_as(vault, txn, &doc, *entity, writer, "birth", init)?;
+    let (value, receipt) = commit_as(vault, txn, &mut doc, *entity, writer, "birth", init)?;
     let frontier = doc.oplog_frontiers().encode();
     DOCS.put(&vault.store, txn, entity, &snapshot(&doc)?)?;
     let head = TypedBodyHead {
@@ -164,13 +165,13 @@ pub(crate) fn edit_typed_body_in_txn<T>(
     edit: impl FnOnce(&LoroDoc) -> Result<T>,
 ) -> Result<(T, TypedBodyCommit)> {
     let mut head = head_in_txn(&vault.store, txn, entity, writer.schema)?;
-    let live = load(DOCS.get(&vault.store, txn, entity)?, Some(&head.frontier))?;
+    let mut live = load(DOCS.get(&vault.store, txn, entity)?, Some(&head.frontier))?;
     let (value, receipt) = match base {
-        None => commit_as(vault, txn, &live, *entity, writer, "edit", edit)?,
+        None => commit_as(vault, txn, &mut live, *entity, writer, "edit", edit)?,
         Some(base) => {
-            let target = fork_at(&live, base)?;
+            let mut target = fork_at(&live, base)?;
             let before = target.oplog_vv();
-            let out = commit_as(vault, txn, &target, *entity, writer, "edit", edit)?;
+            let out = commit_as(vault, txn, &mut target, *entity, writer, "edit", edit)?;
             let updates = target
                 .export(ExportMode::updates(&before))
                 .map_err(|_| invalid("typed body update export"))?;
@@ -258,8 +259,8 @@ pub(crate) fn edit_typed_body_fork_in_txn<T>(
     if record.state != TypedForkState::Open || !record.opener.is(writer.actor.entity_ref()) {
         return Err(invalid("only the opener writes to its open fork"));
     }
-    let doc = load(FORK_DOCS.get(&vault.store, txn, &key)?, None)?;
-    let (value, receipt) = commit_as(vault, txn, &doc, *entity, writer, "fork", edit)?;
+    let mut doc = load(FORK_DOCS.get(&vault.store, txn, &key)?, None)?;
+    let (value, receipt) = commit_as(vault, txn, &mut doc, *entity, writer, "fork", edit)?;
     FORK_DOCS.put(&vault.store, txn, &key, &snapshot(&doc)?)?;
     record.commits += 1;
     FORKS.put(&vault.store, txn, &key, &record)?;
@@ -538,11 +539,14 @@ impl Vault {
 
 /// Runs one call's operations under a fresh peer bound to the writer's actor
 /// and commits them under a message naming no one; the peer's receipt row
-/// keeps the writer's receipt (FIX 4513).
+/// keeps the writer's receipt (FIX 4513). A call whose body would read a new
+/// secret lands masked instead (FIX 2372, the `mask` module): `doc` is then
+/// the body as the call found it, with the call's masked changes committed
+/// under the same peer, and no operation holds the value.
 fn commit_as<T>(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
-    doc: &LoroDoc,
+    doc: &mut LoroDoc,
     entity: EntityId,
     writer: TypedBodyWriter<'_>,
     verb: &str,
@@ -564,14 +568,33 @@ fn commit_as<T>(
     let before = doc.state_frontiers();
     let value = edit(doc)?;
     let message = receipts::commit_message(verb);
-    doc.commit_with(CommitOptions::new().commit_msg(&message).timestamp(at));
+    let options = || CommitOptions::new().commit_msg(&message).timestamp(at);
+    doc.commit_with(options());
+    if doc.oplog_vv().get(&peer).copied().unwrap_or(0) <= 0 {
+        return Err(invalid("the call changed nothing"));
+    }
+    let stood = match admit_body(vault, txn, doc, &before) {
+        Ok(stood) => stood,
+        Err(refusal) => {
+            // A new secret (FIX 2372): the body as the call found it takes
+            // the call's changes with each string admitted, under the same
+            // peer. A secret no string's admission places refuses as before.
+            let Some(masked) = mask::masked_call_diff(vault, txn, entity, doc, &before)? else {
+                return Err(refusal);
+            };
+            let landed = mask::land_masked(doc, &before, peer, masked, options())?;
+            let stood = admit_body(vault, txn, &landed, &before)?;
+            *doc = landed;
+            stood
+        }
+    };
     let end = doc.oplog_vv().get(&peer).copied().unwrap_or(0);
     if end <= 0 {
         return Err(invalid("the call changed nothing"));
     }
     // A body that read as secret before the call and still does: the texts
     // it leaves are marked, a lifted value keeping its record (OF-067).
-    if admit_body(vault, txn, doc, &before)? {
+    if stood {
         lift::remark_typed_body_in_txn(vault, txn, &entity, doc)?;
     }
     bind_peer(vault, txn, peer, actor, made_by.at)?;
@@ -591,9 +614,10 @@ fn commit_as<T>(
 /// The body as one call left it, read whole by the write door under the
 /// owner's switch before it is serialized (OF-067). A typed body's history is
 /// its receipt ledger, so no handle can replace what an operation wrote: a
-/// hit refuses the call, unless the body read the same way before it.
-/// `true` when the door let a hit stand because the body read as secret
-/// before the call too.
+/// hit refuses, unless the body read the same way before the call, and
+/// [`commit_as`] then lands the call masked when it can (FIX 2372). `true`
+/// when the door let a hit stand because the body read as secret before the
+/// call too.
 fn admit_body(vault: &Vault, txn: &RoTxn<'_>, doc: &LoroDoc, before: &Frontiers) -> Result<bool> {
     let read = |doc: &LoroDoc| {
         serde_json::to_vec(&doc.get_deep_value())
