@@ -1239,6 +1239,7 @@ pub(crate) fn mcp_agent_verb_input(
         "ai.ask_image" => a.spec.clone().ok_or_else(invalid),
         "ai.verdict" => a.spec.clone().ok_or_else(invalid),
         "vault.graph.ask" => a.spec.clone().ok_or_else(invalid),
+        "self.skills.graph" => a.spec.clone().ok_or_else(invalid),
         "vault.graph.admit" => a.spec.clone().ok_or_else(invalid),
         "vault.questions.create" => a.spec.clone().ok_or_else(invalid),
         "vault.questions.edit" => a.spec.clone().ok_or_else(invalid),
@@ -4583,6 +4584,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.graph.ask" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "self.skills.graph" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.graph.admit" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -7450,6 +7454,7 @@ async fn execute_agent_verb_row_on(
         "ai.ask_image" => boxed_mcp_verb_row_ai_ask_image(row).await,
         "ai.verdict" => boxed_mcp_verb_row_ai_verdict(row).await,
         "vault.graph.ask" => boxed_mcp_verb_row_vault_graph_ask(row).await,
+        "self.skills.graph" => boxed_mcp_verb_row_self_skills_graph(row).await,
         "vault.graph.admit" => boxed_mcp_verb_row_vault_graph_admit(row).await,
         "vault.questions.create" => boxed_mcp_verb_row_vault_questions_create(row).await,
         "vault.questions.edit" => boxed_mcp_verb_row_vault_questions_edit(row).await,
@@ -57239,6 +57244,57 @@ async fn mcp_verb_row_vault_graph_ask(row: McpVerbRow<'_>) -> McpVerbRowResult {
     let input: oneiron::receipt::GraphAskRequest =
         serde_json::from_value(input).map_err(|_| invalid())?;
     let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_graph_ask(
+        server, auth, input,
+    ))
+    .await;
+    // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+    served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+        listed,
+    ));
+    let output = output.map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_self_skills_graph<'a>(row: McpVerbRow<'a>) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_self_skills_graph(row))
+}
+async fn mcp_verb_row_self_skills_graph(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("self.skills.graph", &input)
+        .map_err(mcp_facade_error)?;
+    let input: oneiron::receipt::GraphSkillRunRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let (output, listed) = Box::pin(crate::api::facade::host_doors::self_skills_graph(
         server, auth, input,
     ))
     .await;

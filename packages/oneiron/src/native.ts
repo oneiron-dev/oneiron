@@ -1013,6 +1013,7 @@ aiVideoCancel(input: unknown): unknown
 aiAskImage(input: unknown): unknown
 aiVerdict(input: unknown): unknown
 vaultGraphAsk(input: unknown): unknown
+selfSkillsGraph(input: unknown): unknown
 vaultGraphAdmit(input: unknown): unknown
 vaultQuestionsCreate(input: unknown): unknown
 vaultQuestionsEdit(input: unknown): unknown

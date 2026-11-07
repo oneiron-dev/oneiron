@@ -36,7 +36,7 @@ pub use self::codec::{decode_skill_record, encode_skill_record};
 pub(crate) use self::codec::{is_legacy_opaque_skill_body, validate_skill_record_bytes};
 pub use self::graph::{
     GraphSkillAnswerRef, GraphSkillFailure, GraphSkillInput, GraphSkillProgram, GraphSkillResult,
-    GraphSkillStage, execute_graph_workflow_skill,
+    GraphSkillStage, execute_graph_workflow_skill, execute_graph_workflow_skill_with_read_key,
 };
 pub use self::identity::{
     SKILL_CONTENT_HASH_HEX_LEN, SKILL_TREE_HASH_DOMAIN, SKILL_TREE_PATH_MAX_BYTES,

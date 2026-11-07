@@ -982,6 +982,7 @@ pub enum AgentVerb {
     AiAskImage,
     AiVerdict,
     VaultGraphAsk,
+    SelfSkillsGraph,
     VaultGraphAdmit,
     VaultQuestionsCreate,
     VaultQuestionsEdit,
@@ -2293,6 +2294,7 @@ impl AgentVerb {
         Self::AiAskImage,
         Self::AiVerdict,
         Self::VaultGraphAsk,
+        Self::SelfSkillsGraph,
         Self::VaultGraphAdmit,
         Self::VaultQuestionsCreate,
         Self::VaultQuestionsEdit,
@@ -3637,6 +3639,7 @@ impl AgentVerb {
             Self::AiAskImage => "ai.ask_image",
             Self::AiVerdict => "ai.verdict",
             Self::VaultGraphAsk => "vault.graph.ask",
+            Self::SelfSkillsGraph => "self.skills.graph",
             Self::VaultGraphAdmit => "vault.graph.admit",
             Self::VaultQuestionsCreate => "vault.questions.create",
             Self::VaultQuestionsEdit => "vault.questions.edit",
@@ -4958,6 +4961,7 @@ impl AgentVerb {
                 | Self::AiAskImage
                 | Self::AiVerdict
                 | Self::VaultGraphAsk
+                | Self::SelfSkillsGraph
                 | Self::VaultGraphAdmit
                 | Self::VaultQuestionsCreate
                 | Self::VaultQuestionsEdit
@@ -6298,6 +6302,7 @@ impl AgentVerb {
                 | Self::AiAskImage
                 | Self::AiVerdict
                 | Self::VaultGraphAsk
+                | Self::SelfSkillsGraph
                 | Self::VaultGraphAdmit
                 | Self::VaultQuestionsCreate
                 | Self::VaultQuestionsEdit
@@ -7757,6 +7762,7 @@ impl AgentVerb {
                 | Self::AiVideoCancel
                 | Self::AiVerdict
                 | Self::VaultGraphAsk
+                | Self::SelfSkillsGraph
                 | Self::VaultGraphAdmit
                 | Self::VaultQuestionsCreate
                 | Self::VaultQuestionsEdit
@@ -8628,6 +8634,7 @@ impl AgentVerb {
                 | Self::AiVideo
                 | Self::AiVideoCancel
                 | Self::VaultGraphAsk
+                | Self::SelfSkillsGraph
                 | Self::VaultGraphAdmit
                 | Self::VaultQuestionsCreate
                 | Self::VaultQuestionsEdit
@@ -8827,6 +8834,7 @@ impl AgentVerb {
                 | Self::VaultDisclosureOffer
                 | Self::Reveal
                 | Self::VaultGraphAsk
+                | Self::SelfSkillsGraph
                 | Self::VaultGraphAdmit
                 | Self::VaultCommit
                 | Self::VaultRemember
@@ -9846,6 +9854,7 @@ impl AgentVerb {
             Self::AiAskImage => &["spec"],
             Self::AiVerdict => &["spec"],
             Self::VaultGraphAsk => &["spec"],
+            Self::SelfSkillsGraph => &["spec"],
             Self::VaultGraphAdmit => &["spec"],
             Self::VaultQuestionsCreate => &["spec"],
             Self::VaultQuestionsEdit => &["spec"],
@@ -11158,6 +11167,7 @@ impl AgentVerb {
             Self::AiAskImage => &["spec"],
             Self::AiVerdict => &["spec"],
             Self::VaultGraphAsk => &["spec"],
+            Self::SelfSkillsGraph => &["spec"],
             Self::VaultGraphAdmit => &["spec"],
             Self::VaultQuestionsCreate => &["spec"],
             Self::VaultQuestionsEdit => &["spec"],
@@ -14377,6 +14387,9 @@ impl AgentVerb {
                 "The caller's own typed question through the host's decision ladder: yes or no, one of its options, a score in the caller's range, or a box or point in an image, answered with a probability and a decision receipt."
             }
             Self::VaultGraphAsk => "",
+            Self::SelfSkillsGraph => {
+                "Runs a saved graph workflow from this resident-owned skill on the attached leased run; answers stay proposals and partial stages remain visible."
+            }
             Self::VaultGraphAdmit => {
                 "Admits the caller's own provider measurement for one graph unit in place of the host ladder's, validating the whole decision and its provider-bound paired readings before landing it as a proposed claim private to the caller."
             }

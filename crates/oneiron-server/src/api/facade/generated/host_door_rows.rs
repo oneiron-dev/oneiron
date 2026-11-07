@@ -103,6 +103,7 @@
 //! - `ai.options`
 //! - `ai.ask_image`
 //! - `vault.graph.ask`
+//! - `self.skills.graph`
 //! - `vault.graph.admit`
 //! - `vault.questions.create`
 //! - `vault.questions.edit`
@@ -1786,6 +1787,7 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "ai.options"
                 | "ai.ask_image"
                 | "vault.graph.ask"
+                | "self.skills.graph"
                 | "vault.graph.admit"
                 | "vault.questions.create"
                 | "vault.questions.edit"

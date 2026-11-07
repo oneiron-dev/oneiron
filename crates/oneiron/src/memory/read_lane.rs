@@ -137,6 +137,16 @@ impl Memory<'_> {
         self.in_room_turn(self.actor_read_key()?)
     }
 
+    /// The current credential's read key, when this handle carries one.
+    /// Native callers without a credential keep their existing identity
+    /// reader instead of acquiring a new credential requirement.
+    pub fn proof_backed_read_key(&self) -> MemoryResult<Option<ScopedReadActorKey>> {
+        if self.read_proof.is_none() {
+            return Ok(None);
+        }
+        self.read_key().map(Some)
+    }
+
     /// The bound actor's own read, without a bound room turn's ceiling: what
     /// its grants alone admit. A room read checks it beside membership; it
     /// never serves a row inside a turn.
