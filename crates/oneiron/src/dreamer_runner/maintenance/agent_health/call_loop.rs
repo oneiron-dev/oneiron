@@ -68,6 +68,8 @@ pub(super) fn loop_findings(
                 actual: count,
                 dial: repeats as i64,
                 measured: count,
+                exact_dial: None,
+                exact_measured: None,
                 counter,
                 confession: None,
                 blocked: false,
