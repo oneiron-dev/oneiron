@@ -1605,6 +1605,7 @@ class TaskRow(TypedDict):
     counter_task_ref: NotRequired[str | None]
     cancel_pathology: NotRequired[CancelRejectionPathology | None]
     widening: NotRequired[ConsultWidening | None]
+    due_at: NotRequired[int | None]
     fits: NotRequired[list[str]]
 class TasksOverflow(TypedDict):
     known_omitted_rows: int
@@ -12610,6 +12611,7 @@ class GraphFsLinkView(TypedDict):
     mount: GraphFsMountRequest
     path: str
     target: NotRequired[str | None]
+    read_receipt: NotRequired[ScopedReadReceipt | None]
 class GraphFsLsRequest(TypedDict):
     mount: GraphFsMountRequest
     path: str

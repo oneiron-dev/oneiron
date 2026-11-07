@@ -616,7 +616,7 @@ export type CommReach = "parent" | "subtree" | "project" | "vault"
 /** `oneiron::context_board::tasks::projection::ConsultWidening` */
 export type ConsultWidening = { child: string; from?: CommReach | null; to: CommReach }
 /** `oneiron::context_board::tasks::projection::TaskRow` */
-export type TaskRow = { id: string; line: string; status: TaskBoardStatus; is_intent: boolean; folded_job_count: number; kind?: TaskKind | null; assignee?: string | null; terminal_disposition?: TaskTerminalDisposition | null; connector_outcome?: ConnectorSendTaskOutcome | null; result_ref?: string | null; ladder_disposition?: LadderTerminalDisposition | null; counter_task_ref?: string | null; cancel_pathology?: CancelRejectionPathology | null; widening?: ConsultWidening | null; fits?: string[] }
+export type TaskRow = { id: string; line: string; status: TaskBoardStatus; is_intent: boolean; folded_job_count: number; kind?: TaskKind | null; assignee?: string | null; terminal_disposition?: TaskTerminalDisposition | null; connector_outcome?: ConnectorSendTaskOutcome | null; result_ref?: string | null; ladder_disposition?: LadderTerminalDisposition | null; counter_task_ref?: string | null; cancel_pathology?: CancelRejectionPathology | null; widening?: ConsultWidening | null; due_at?: number | null; fits?: string[] }
 /** `oneiron::context_board::tasks::projection::TasksOverflow` */
 export type TasksOverflow = { known_omitted_rows: number; source_exhausted: boolean }
 /** `oneiron::context_board::tasks::projection::TasksSection` */
@@ -5068,7 +5068,7 @@ export type GraphFsOutput = { mount: GraphFsMountRequest; path: string; output: 
 /** `oneiron::memory::graph_fs_doors::types::GraphFsLinkRequest` */
 export type GraphFsLinkRequest = { mount: GraphFsMountRequest; path: string }
 /** `oneiron::memory::graph_fs_doors::types::GraphFsLinkView` */
-export type GraphFsLinkView = { mount: GraphFsMountRequest; path: string; target?: string | null }
+export type GraphFsLinkView = { mount: GraphFsMountRequest; path: string; target?: string | null; read_receipt?: ScopedReadReceipt | null }
 /** `oneiron::memory::graph_fs_doors::types::GraphFsLsRequest` */
 export type GraphFsLsRequest = { mount: GraphFsMountRequest; path: string; cursor?: string | null; by_time?: boolean }
 /** `oneiron::memory::graph_fs_doors::types::GraphFsFindRequest` */
