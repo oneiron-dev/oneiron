@@ -4,7 +4,6 @@
 //! its entity id and the genesis-bound vault id. The log fold, not a transport
 //! credential or a row in MACHINE, grants the signer authority.
 
-use ed25519_dalek::Signature;
 use rmpv::Value;
 
 use crate::batch::EntityMetadataHeader;
@@ -403,6 +402,7 @@ pub(crate) fn machine_claim_read_admitted(
             }
         });
     }
+    let mut verified_history: Option<crate::claim::transition::ClaimTransitionProjection> = None;
     // An id that already has machine history stays machine-owned even if an
     // attacker replaces its LWW row with ordinary/no actor evidence.
     if !crate::claim::history_store::machine_history_ids_for_target(store, txn, *id)?.is_empty()
@@ -414,11 +414,17 @@ pub(crate) fn machine_claim_read_admitted(
         match crate::claim::history_projection::resolved_machine_history(store, txn, fold, *id) {
             Ok(projection)
                 if crate::claim::history_projection::project_machine_claim(&projection)
-                    == *body => {}
+                    == *body =>
+            {
+                verified_history = Some(projection);
+            }
             // A superseded history's same-id successor is an ordinary claim.
             Ok(projection)
                 if projection.admits_successor_by(crate::claim::claim_author(body))
-                    && !machine_claim_needs_history(store, txn, body)? => {}
+                    && !machine_claim_needs_history(store, txn, body)? =>
+            {
+                verified_history = Some(projection);
+            }
             Ok(_)
             | Err(Error::Claim(ClaimError::MachineClaimHistoryIncomplete))
             | Err(Error::Claim(ClaimError::InvalidMachineClaimProof)) => return Ok(false),
@@ -464,24 +470,30 @@ pub(crate) fn machine_claim_read_admitted(
     let Some(vault_id) = fold.vault_id else {
         return Ok(false);
     };
-    let Ok(key_bytes) = super::strong_ed25519_key(&proof.public_key) else {
-        return Ok(false);
-    };
     // The immutable signed origin is verified against the exact stored birth
-    // bytes. Current approval/lifecycle comes from the signed operation fold.
-    let Ok(projection) =
-        crate::claim::history_projection::resolved_machine_history(store, txn, fold, *id)
-    else {
-        return Ok(false);
+    // bytes (a success on exactly these bytes answers again, FIX 21959).
+    // Current approval/lifecycle comes from the signed operation fold; the
+    // history resolved above in this call is reused, never a stale one.
+    let projection = match verified_history.take() {
+        Some(projection) => projection,
+        None => {
+            let Ok(projection) =
+                crate::claim::history_projection::resolved_machine_history(store, txn, fold, *id)
+            else {
+                return Ok(false);
+            };
+            projection
+        }
     };
     let original = &projection.birth;
     let Ok(transcript) = machine_claim_transcript(&vault_id, id, original) else {
         return Ok(false);
     };
-    if key_bytes
-        .verify_strict(&transcript, &Signature::from_bytes(&proof.signature))
-        .is_err()
-        || crate::claim::history_projection::project_machine_claim(&projection) != *body
+    if !oneiron_authority::authority::strong_ed25519_verified_once(
+        &proof.public_key,
+        &transcript,
+        &proof.signature,
+    ) || crate::claim::history_projection::project_machine_claim(&projection) != *body
     {
         return Ok(false);
     }
@@ -657,8 +669,7 @@ pub(crate) fn verify_machine_claim_in_txn(
         return Err(denied());
     }
     let proof = proof.ok_or_else(|| invalid_origin(replicated))?;
-    let key =
-        super::strong_ed25519_key(&proof.public_key).map_err(|_| invalid_origin(replicated))?;
+    super::strong_ed25519_key(&proof.public_key).map_err(|_| invalid_origin(replicated))?;
     if let Some(vault_id) = fold.vault_id {
         match crate::claim::history_projection::resolved_machine_history(store, txn, &fold, *id) {
             Ok(projection) => {
@@ -695,14 +706,17 @@ pub(crate) fn verify_machine_claim_in_txn(
                 // transition, which only its history proves: the row waits
                 // on that history and lands when it resolves (FIX 4295).
                 let transcript = machine_claim_transcript(&vault_id, id, body)?;
-                key.verify_strict(&transcript, &Signature::from_bytes(&proof.signature))
-                    .map_err(|_| {
-                        if replicated {
-                            Error::Claim(ClaimError::RemoteMachineHistoryPending)
-                        } else {
-                            denied()
-                        }
-                    })?;
+                if !oneiron_authority::authority::strong_ed25519_verified_once(
+                    &proof.public_key,
+                    &transcript,
+                    &proof.signature,
+                ) {
+                    return Err(if replicated {
+                        Error::Claim(ClaimError::RemoteMachineHistoryPending)
+                    } else {
+                        denied()
+                    });
+                }
             }
             Err(Error::Claim(ClaimError::InvalidMachineClaimProof)) => {
                 return Err(invalid_origin(replicated));
