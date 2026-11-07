@@ -824,6 +824,7 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
             ]),
         ),
         teacher_probe_default_entry(),
+        crate::gate::code_consent_settlement::CodeConsentSettlementRow::shipped_entry(),
         (
             Value::from(POLICY_SHEET_ANSWER_PRECEDENCE_KEY),
             Value::Map(vec![(
