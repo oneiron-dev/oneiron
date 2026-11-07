@@ -23,7 +23,7 @@ use crate::federation::{
 };
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
-use oneiron_authority::federation::FederationGrantKind;
+use oneiron_authority::federation::{FederationGrantKind, ScopeAxis};
 
 pub(crate) use crate::store::principal_record::{
     NoStanding, PACT_STANDING_LAPSED, PrincipalStanding,
@@ -348,10 +348,12 @@ impl AgentGrantStanding {
     /// rule, verb by verb, with no rule of its own. Its pact half reads no
     /// verb, so the first listed verb [`Self::stands_for`] admits decides it.
     /// The pact half is read as an observation
-    /// ([`Self::pact_standing_lapse_observed_in_txn`]).
+    /// ([`Self::pact_standing_lapse_observed_in_txn`]). The owner's
+    /// verb-class rows are read only when this Grant names a class (FIX 8735).
     ///
     /// # Errors
-    /// The failure of the pact membership check itself.
+    /// The failure of the pact membership check itself, or of the class-row
+    /// read.
     pub(crate) fn stands_for_any_listed_verb_in_txn(
         &self,
         vault: &Vault,
@@ -363,9 +365,11 @@ impl AgentGrantStanding {
         let ScopeAxis::Some(verbs) = &self.grant.authority_scope.verbs else {
             return Ok(false);
         };
+        let classes =
+            AgentVerbClasses::for_grants_in_txn(&vault.store, txn, std::iter::once(&self.grant))?;
         if !verbs
             .iter()
-            .any(|verb| self.stands_for(agent, verb, now, owners))
+            .any(|verb| self.stands_for(agent, verb, now, owners, &classes))
         {
             return Ok(false);
         }
