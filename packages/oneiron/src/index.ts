@@ -3622,7 +3622,15 @@ export class Oneiron {
     /** Posts a new TASK and its try from one TASK's current brief, assignee, spec, label and parent through the task highway, under the caller's intent key; the redone TASK, its result and its receipts are never written. */
     redo: (input: Facade.TaskRedo): Facade.TaskCallReceipt => this.#call(() => this.#client.tasksRedo(input) as Facade.TaskCallReceipt),
     /** Admits one person's word on an ask; the word is evidence, never approval. */
-    answer: (handle: TaskAskHandle, word: TaskAskWord): Facade.TaskAskAnswer => this.#call(() => this.#client.tasksAnswer({handle, word}) as Facade.TaskAskAnswer),
+    answer: Object.assign((handle: TaskAskHandle, word: TaskAskWord): Facade.TaskAskAnswer => this.#call(() => this.#client.tasksAnswer({handle, word}) as Facade.TaskAskAnswer), {
+      /** Relays one person's own word, or the void of their own seat, on an ask to the node that admitted it; it stays pending until that node's result reads here. */
+      forward: Object.assign((handle: TaskAskHandle, intentKey: string, act: Facade.AskForwardAct, proof: Facade.AskForwardHolderProof): Facade.AskForwardReceipt => this.#call(() => this.#client.tasksAnswerForward({handle, intent_key: intentKey, act, proof}) as Facade.AskForwardReceipt), {
+        /** The challenge one person signs, through their slip's binding transcript, to relay their own word or seat void on an ask to the node that admitted it. */
+        challenge: (handle: TaskAskHandle, intentKey: string, act: Facade.AskForwardAct): Facade.TaskAnswerForwardChallenge => this.#call(() => this.#client.tasksAnswerForwardChallenge({handle, intent_key: intentKey, act}) as Facade.TaskAnswerForwardChallenge),
+        /** Where one relayed ask word stands, for its own holder: pending until the admitting node's result reads here, then that result. */
+        status: (intentRef: Facade.EntityId): Facade.AskForwardReceipt => this.#call(() => this.#client.tasksAnswerForwardStatus({intent_ref: intentRef}) as Facade.AskForwardReceipt),
+      }),
+    }),
     /** Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to. */
     outcomes: (handle: TaskAskHandle): Facade.CalibrationPair[] => this.#call(() => this.#client.tasksOutcomes(handle) as Facade.CalibrationPair[]),
     /** Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay. */

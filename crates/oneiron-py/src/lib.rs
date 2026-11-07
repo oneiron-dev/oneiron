@@ -7884,6 +7884,30 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn tasks_answer_forward_challenge(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "tasks.answer.forward.challenge")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("tasks.answer.forward.challenge", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn tasks_answer_forward(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "tasks.answer.forward")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("tasks.answer.forward", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn tasks_answer_forward_status(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "tasks.answer.forward.status")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("tasks.answer.forward.status", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn tasks_outcomes(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "tasks.outcomes")?;
         let output = py

@@ -847,6 +847,9 @@ both bindings and their export-census tests in one change.
 - `ask`
 - `wait`
 - `tasks.answer`
+- `tasks.answer.forward.challenge`
+- `tasks.answer.forward`
+- `tasks.answer.forward.status`
 - `tasks.outcomes`
 - `vault.rooms.list`
 - `vault.rooms.messages`

@@ -876,6 +876,9 @@ peek(requestJson: string): string
 ask(input: unknown): unknown
 wait(input: unknown): unknown
 tasksAnswer(input: unknown): unknown
+tasksAnswerForwardChallenge(input: unknown): unknown
+tasksAnswerForward(input: unknown): unknown
+tasksAnswerForwardStatus(input: unknown): unknown
 tasksOutcomes(input: unknown): unknown
 vaultRoomsList(input: unknown): unknown
 vaultRoomsMessages(input: unknown): unknown

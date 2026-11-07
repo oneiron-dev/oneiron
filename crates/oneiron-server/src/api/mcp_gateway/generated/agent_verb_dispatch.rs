@@ -990,6 +990,9 @@ pub(crate) fn mcp_agent_verb_input(
         "ask" => a.spec.clone().ok_or_else(invalid),
         "wait" => a.spec.clone().ok_or_else(invalid),
         "tasks.answer" => a.spec.clone().ok_or_else(invalid),
+        "tasks.answer.forward.challenge" => a.spec.clone().ok_or_else(invalid),
+        "tasks.answer.forward" => a.spec.clone().ok_or_else(invalid),
+        "tasks.answer.forward.status" => a.spec.clone().ok_or_else(invalid),
         "tasks.outcomes" => a.spec.clone().ok_or_else(invalid),
         "vault.rooms.list" => Ok(Value::Object(serde_json::Map::new())),
         "vault.rooms.messages" => {
@@ -4115,6 +4118,15 @@ pub(crate) fn mcp_agent_verb_arguments(
         "tasks.answer" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "tasks.answer.forward.challenge" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "tasks.answer.forward" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "tasks.answer.forward.status" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "tasks.outcomes" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -7196,6 +7208,11 @@ async fn execute_agent_verb_row_on(
         "ask" => boxed_mcp_verb_row_ask(row).await,
         "wait" => boxed_mcp_verb_row_wait(row).await,
         "tasks.answer" => boxed_mcp_verb_row_tasks_answer(row).await,
+        "tasks.answer.forward.challenge" => {
+            boxed_mcp_verb_row_tasks_answer_forward_challenge(row).await
+        }
+        "tasks.answer.forward" => boxed_mcp_verb_row_tasks_answer_forward(row).await,
+        "tasks.answer.forward.status" => boxed_mcp_verb_row_tasks_answer_forward_status(row).await,
         "tasks.outcomes" => boxed_mcp_verb_row_tasks_outcomes(row).await,
         "vault.rooms.list" => boxed_mcp_verb_row_vault_rooms_list(row).await,
         "vault.rooms.messages" => boxed_mcp_verb_row_vault_rooms_messages(row).await,
@@ -50730,6 +50747,134 @@ async fn mcp_verb_row_tasks_answer(row: McpVerbRow<'_>) -> McpVerbRowResult {
         serde_json::from_value(input).map_err(|_| invalid())?;
     served.extend([input.handle.group_ref]);
     let output = oneiron::task_verb::sdk::tasks_answer(&memory, input).map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_tasks_answer_forward_challenge<'a>(
+    row: McpVerbRow<'a>,
+) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_tasks_answer_forward_challenge(row))
+}
+async fn mcp_verb_row_tasks_answer_forward_challenge(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let input: oneiron::task_verb::sdk::TaskAnswerForwardChallengeRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    served.extend([input.handle.group_ref]);
+    let output = oneiron::task_verb::sdk::tasks_answer_forward_challenge(&memory, input)
+        .map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_tasks_answer_forward<'a>(row: McpVerbRow<'a>) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_tasks_answer_forward(row))
+}
+async fn mcp_verb_row_tasks_answer_forward(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let input: oneiron::task_verb::sdk::TaskAnswerForwardRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    served.extend([input.handle.group_ref]);
+    let output =
+        oneiron::task_verb::sdk::tasks_answer_forward(&memory, input).map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_tasks_answer_forward_status<'a>(row: McpVerbRow<'a>) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_tasks_answer_forward_status(row))
+}
+async fn mcp_verb_row_tasks_answer_forward_status(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let input: oneiron::task_verb::sdk::TaskAnswerForwardStatusRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    served.extend([input.intent_ref]);
+    let output = oneiron::task_verb::sdk::tasks_answer_forward_status(&memory, input)
+        .map_err(mcp_facade_error)?;
     let source = crate::mcp::McpPageSource::complete(1);
     mcp_agent_verb_output(output, source)
 }

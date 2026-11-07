@@ -7540,6 +7540,33 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn tasks_answer_forward_challenge(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("tasks.answer.forward.challenge", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn tasks_answer_forward(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("tasks.answer.forward", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn tasks_answer_forward_status(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("tasks.answer.forward.status", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn tasks_outcomes(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("tasks.outcomes", js_json(input))
