@@ -1225,6 +1225,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/handler/message_stream_tests.rs` | test | s | — | — | Streaming text stays on the existing opaque, budgeted ephemeral hub lane |
 | `src/handler/mod.rs` | src | s | 7 crate-vis | — | WebSocket upgrade handler and connection lifecycle |
 | `src/handler/note_socket_tests.rs` | test | L | — | — | Real websocket NOTE commands: actor binding, durable pins, reviewed edits |
+| `src/handler/peer_serve.rs` | src | s | 10 crate-vis | — | FIX 4748: this machine serving another machine of its vault while their home is down (owner RULING B… |
 | `src/handler/protocol_close.rs` | src | s | 9 crate-vis | — | A socket the server closes on a protocol rejection (FIX 3303, OF-538): a hello it refused, a frame it would… |
 | `src/handler/residence_socket_tests.rs` | test | XL | — | — | A real enrol: root + thin index, one opened item, remote search and offline honesty |
 | `src/handler/sealed_updates.rs` | src | s | 3 crate-vis | — | The home's side of the sealed world-update relay (DEC-0005 fix 8: "The cloud relays its sealed updates… |
@@ -1262,7 +1263,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/linear_host/push.rs` | src | s | 3 crate-vis | — | A caller's own push of one TASK to Linear (FIX 8788, FIX 9382) |
 | `src/linear_host/tests.rs` | test | s | — | — | — |
 | `src/linear_host/webhook.rs` | src | s | 6 crate-vis | — | `POST /v1/hooks/linear`: the signed Linear webhook door (OF-427 C1–C4, C11) |
-| `src/livequery.rs` | src | m | 37 crate-vis | — | App-tier framing and coarse live-query state, separate from WindowSync |
+| `src/livequery.rs` | src | m | 38 crate-vis | — | App-tier framing and coarse live-query state, separate from WindowSync |
 | `src/livequery/ask_option_link.rs` | src | s | 3 crate-vis | — | Bearer option-link dispatch off the socket loop |
 | `src/livequery/budget.rs` | src | s | 7 crate-vis | — | Retained app state is charged to the server's retained-memory line (`limits.retained_memory_bytes`), never… |
 | `src/livequery/connection.rs` | src | L | 22 crate-vis | — | Socket attachment and bounded reconnect retention |

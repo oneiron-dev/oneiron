@@ -374,7 +374,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/history_repair.rs` | src | s | 1 enum · 2 fn · 2 crate-vis | AuthorityRepairOutcome | Staged repair of missing authority history (OF-469) |
 | `src/authority/history_transfer.rs` | src | m | 1 struct · 7 fn · 6 crate-vis | VaultRecoveryRequest | Signed-history migration and independently authorized per-vault re-root doors |
 | `src/authority/history_transfer/page.rs` | src | s | 1 fn · 5 crate-vis | — | One delivery page of a history this vault holds in part (OF-469): the page door, its root check and its… |
-| `src/authority/home_candidacy.rs` | src | m | 1 fn · 9 crate-vis | — | Folds each machine's signed MACRO home candidacy (FIX 4898; Engine 10-19 rulings on ARCH-0026: "Election… |
+| `src/authority/home_candidacy.rs` | src | m | 1 fn · 10 crate-vis | — | Folds each machine's signed MACRO home candidacy (FIX 4898; Engine 10-19 rulings on ARCH-0026: "Election… |
 | `src/authority/home_pick.rs` | src | s | 12 crate-vis | — | Folds the owner's signed picks of his vault's home node (DOOR-101 PR2a; ARCH-0026: "The owner picks the home… |
 | `src/authority/host_action.rs` | src | m | 2 struct · 7 fn · 14 crate-vis | HostActionAuthority, HostActionIdentity | Who a host credential acts as inside its vault (FIX 2222, owner ruling "A + support", 2026-10-18) |
 | `src/authority/host_actor.rs` | src | s | 1 crate-vis | — | The owner a self-hosted root binds (H149) |
@@ -410,7 +410,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/membership_execution.rs` | src | s | 2 crate-vis | — | The signed record of a shared-vault membership change no host issuer could sign (FIX 12335, Engine 13:13… |
 | `src/authority/mesh_machine.rs` | src | m | 2 struct · 7 fn · 1 const · 1 re-export | MeshMachineAddress, MeshMachineAddressEnvelope | Local host-authorized mesh binding and grants, distinct from address hints |
 | `src/authority/mesh_machine/doors.rs` | src | m | 3 struct · 8 fn | MeshAlpnGrant, MeshBindingIdentity, MeshMachineBinding | Public mesh setup inputs and owner-bound doors over the host's existing binding, ALPN and terminal… |
-| `src/authority/mod.rs` | src | m | 2 mod · 73 re-export · 51 crate-vis | — | AUTHORITY_LOG record substrate |
+| `src/authority/mod.rs` | src | m | 2 mod · 73 re-export · 52 crate-vis | — | AUTHORITY_LOG record substrate |
 | `src/authority/observation_policy.rs` | src | s | 1 struct · 2 fn · 8 const · 1 crate-vis | AuthorityObservationPolicy | Device-local authority observation policy and its versioned duration row |
 | `src/authority/op_apply.rs` | src | m | 7 crate-vis | — | Applies one [`super::AuthorityOp`] to a [`super::fold_state::FoldState`] |
 | `src/authority/origin_cut.rs` | src | m | 16 crate-vis | — | Folds the owner's signed cuts of a repository's origin authority (FIX 15740, Engine 11-06 02:54 A2… |
@@ -1329,7 +1329,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/served_lifecycle.rs` | src | s | 1 enum | ServedLifecycle | Lifecycle version exposed by a scoped claim read |
 | `src/claim/source_trust.rs` | src | s | 1 re-export · 10 crate-vis | — | Source-of-truth, taint, sensitivity and demotion state carried in a claim's engine-owned `scope` map, plus… |
 | `src/claim/supersession_diff.rs` | src | s | 6 crate-vis | — | Immutable before/after revision bindings for accepted supersession edges |
-| `src/claim/supersession_provenance.rs` | src | m | 7 crate-vis | — | Runner-owned companion claims; structural taint mirrors also run on replay |
+| `src/claim/supersession_provenance.rs` | src | m | 8 crate-vis | — | Runner-owned companion claims; structural taint mirrors also run on replay |
 | `src/claim/supersession_provenance/tests.rs` | test | s | — | — | — |
 | `src/claim/tests.rs` | test | XL | — | — | — |
 | `src/claim/transition/event.rs` | src | m | 10 crate-vis | — | Canonical MessagePack and Ed25519 proof for claim transition events |
@@ -2506,7 +2506,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/free_time/policy.rs` | src | m | 4 struct · 2 enum · 3 fn · 1 const · 6 crate-vis | FreeTimeCadence, FreeTimePolicy, FreeTimePolicyInput, FreeTimeSchedule, FreeTimeSplit, UnsetFreeTimePolicy | The owner's free-time policy for one agent (FIX 4453): the total budget one cycle may spend, the cycle's… |
 | `src/dreamer_runner/free_time/receipt.rs` | src | s | 2 struct · 2 enum · 3 fn · 4 crate-vis | FreeTimeCycleSheet, FreeTimeFloor, FreeTimeItemOutcome, FreeTimeItemReceipt | Each free-time item's terminal receipt, and a cycle's floor (FIX 4453) |
 | `src/dreamer_runner/free_time/restore.rs` | src | s | 1 crate-vis | — | FIX 6577: the `job_records` rows a restore over a live vault keeps as the live vault holds them |
-| `src/dreamer_runner/home.rs` | src | m | 4 fn · 6 crate-vis | — | The single MACRO home-node election (ARCH-0026; DOOR-101 PR2a; FIX 4898): which node of the vault runs its… |
+| `src/dreamer_runner/home.rs` | src | m | 4 fn · 8 crate-vis | — | The single MACRO home-node election (ARCH-0026; DOOR-101 PR2a; FIX 4898): which node of the vault runs its… |
 | `src/dreamer_runner/lease_fence.rs` | src | s | 3 crate-vis | — | The lease a wake pass ran an admitted try under, and the park fenced on it (FIX 6057): a held program… |
 | `src/dreamer_runner/maintenance/action_mode.rs` | src | m | 4 struct · 1 enum · 3 fn · 2 const · 4 crate-vis | ActionModeCeiling, ActionModeEffect, ActionModePolicy, ActionModeProjection, ActionModeRule | Action modes (OF-335): the owner's bands over the composite state index, each naming a mode in the owner's… |
 | `src/dreamer_runner/maintenance/agent_health.rs` | src | s | 1 const · 1 mod · 13 re-export · 11 crate-vis | — | The Coach's agent-health review (OF-568, agent-mind §3): a closed-form T1 recipe on the gated maintenance… |
@@ -6427,7 +6427,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/bridge/tests/fact_suppression.rs` | test | L | — | — | F24 round 7 (H219): a task whose authority fact was tombstoned before it arrived keeps reading as a refusal… |
 | `src/sync/bridge/tests/resident.rs` | test | s | — | — | — |
 | `src/sync/bridge/tombstones.rs` | src | m | 7 crate-vis | — | Observer B's tombstone driver: classification through the shared ingest entry, then one batch transaction… |
-| `src/sync/carrier.rs` | src | s | 1 enum · 2 trait · 1 type · 3 crate-vis | SyncDialer, SyncIo, SyncStream | What a sync socket rides on (OF-535): TCP to the home's URL, or a stream a [`SyncDialer`] opens, such as a… |
+| `src/sync/carrier.rs` | src | s | 1 enum · 3 trait · 1 type · 5 crate-vis | SyncDialer, SyncIo, SyncPeerDialer, SyncStream | What a sync socket rides on (OF-535): TCP to the home's URL, or a stream a [`SyncDialer`] opens, such as a… |
 | `src/sync/carrier_holds.rs` | src | s | 3 crate-vis | — | What a carrier-only tear destroys, read from the carrier itself (OF-470, FIX 3061) |
 | `src/sync/carrier_parts.rs` | src | s | 13 crate-vis | — | Linked parts for a window carrier too large for one map value (Rule 5) |
 | `src/sync/checkpoint_payload/author_carrier.rs` | src | s | 2 crate-vis | — | A window's copy of an identity-topology author carrier (FIX 17143): an `entities` value whose row is an… |
@@ -6451,7 +6451,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/client/ask_forward.rs` | src | s | 1 crate-vis | — | The client lane's registration for relayed ask intents (FIX 7494): after a frame that imports window rows… |
 | `src/sync/client/base.rs` | src | m | 1 struct · 16 fn · 18 crate-vis | SyncClient | SyncClient construction, window and ephemeral accessors, and root persistence |
 | `src/sync/client/connect.rs` | src | s | 3 fn · 1 re-export | — | Public Connect delivery/rejoin over the production guest admission path |
-| `src/sync/client/documents.rs` | src | m | 4 crate-vis | — | Document import and durable local-journal confirmation on the one socket |
+| `src/sync/client/documents.rs` | src | m | 5 crate-vis | — | Document import and durable local-journal confirmation on the one socket |
 | `src/sync/client/endpoint.rs` | src | s | 4 crate-vis | — | FIX 8862: where this machine's sync credentials may go |
 | `src/sync/client/federated.rs` | src | m | 7 fn · 1 re-export · 7 crate-vis | — | Federated admission and staged vault-import confirmation |
 | `src/sync/client/federation_replay.rs` | src | s | 4 fn | — | Durable inbound federation drain, entered on startup, receive and timer ticks |
@@ -6508,15 +6508,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/client/window_pads.rs` | src | m | 14 crate-vis | — | The device's side of the window pad envelope (KS-5, FIX 7107) |
 | `src/sync/client/window_pads/deferred.rs` | src | m | 9 crate-vis | — | A sealed window payload's isolated check before its capsule installs, and the updates that wait for the pads… |
 | `src/sync/connection/batch_admission.rs` | src | m | 1 enum · 1 trait · 1 fn · 3 type · 16 crate-vis | SyncBatchAdmission, SyncBatchVerdict | The host's admission for each batch a sync connection applies or sends (FIX 12036), and the pause that keeps… |
-| `src/sync/connection/converge.rs` | src | m | 4 crate-vis | — | Convergence: run_convergence, re_bootstrap, server-frame pump |
+| `src/sync/connection/converge.rs` | src | m | 5 crate-vis | — | Convergence: run_convergence, re_bootstrap, server-frame pump |
 | `src/sync/connection/directives.rs` | src | s | 1 crate-vis | — | The owner's residence directives, applied on the machine they name (OF-534) |
-| `src/sync/connection/handshake.rs` | src | m | 2 fn · 5 crate-vis | — | Handshake: run loop, connect_and_sync, overflow check, resync markers |
+| `src/sync/connection/handshake.rs` | src | L | 2 fn · 5 crate-vis | — | Handshake: run loop, connect_and_sync, overflow check, resync markers |
 | `src/sync/connection/handshake/acks.rs` | src | s | 1 crate-vis | — | Residence queue acknowledgments during the initial exchange |
 | `src/sync/connection/home_handoff.rs` | src | m | 2 crate-vis | — | FIX 5661 C2a: the old home's delivery worker |
 | `src/sync/connection/home_search.rs` | src | s | 1 struct · 1 enum · 6 fn · 6 crate-vis | DeviceResidence, HomeSearch | The home search this device's query doors reach through its own sync connection (OF-534): a search an opened… |
 | `src/sync/connection/mod.rs` | src | L | 3 struct · 18 fn · 4 re-export · 1 crate-vis | ConnectionConfig, ResidenceModeChange, SyncConnection | WebSocket connection manager with debounced sync and reconnection |
 | `src/sync/connection/node_batch.rs` | src | m | 3 crate-vis | — | One bounded node proposal batch per sync tick, its window updates and document frames taking turns (FIX… |
 | `src/sync/connection/note_reads.rs` | src | s | 2 fn | — | Typed reads of a residence open, using the named connection's own vault |
+| `src/sync/connection/peer_session.rs` | src | s | 12 crate-vis | — | FIX 4748: a device's sessions while its home is down (owner RULING B, 2026-10-19; ARCH-0023b `#home-down`… |
 | `src/sync/connection/residence_mode.rs` | src | s | 2 crate-vis | — | FIX 8869: the residence mode follows the committed home |
 | `src/sync/connection/server_close.rs` | src | s | 2 crate-vis | — | The server's close frame, read by its code (FIX 5927), never only formatted into a message |
 | `src/sync/connection/session.rs` | src | s | 20 crate-vis | — | Session types: WS aliases, pump budget, convergence session, resync markers |
@@ -6605,10 +6606,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/manager/recovery_commits.rs` | src | s | 3 crate-vis | — | The updates a window's cold-open recovery commits, each persisted and routed as the commit it is (FIX 5133) |
 | `src/sync/manager/replacement.rs` | src | s | 2 fn · 1 crate-vis | — | Installing a peer's window replacement in place of the live window |
 | `src/sync/manager/tests.rs` | test | s | — | — | — |
-| `src/sync/mesh_path.rs` | src | s | 1 struct · 3 enum · 4 fn · 2 const | MeshPathDirection, MeshPathKind, MeshPathOutcome, MeshPathReceipt | Path receipts for paired-machine mesh connections (OF-535) |
+| `src/sync/mesh_path.rs` | src | s | 1 struct · 3 enum · 4 fn · 3 const | MeshPathDirection, MeshPathKind, MeshPathOutcome, MeshPathReceipt | Path receipts for paired-machine mesh connections (OF-535) |
 | `src/sync/message_docs.rs` | src | m | 14 crate-vis | — | FIX 853 (OF-460): a MESSAGE's document on the window plane |
 | `src/sync/message_docs/checkpoint.rs` | src | s | 2 crate-vis | — | A MESSAGE document in a checkpoint (KS7-3a), read with the head codec and filed under its message: the head… |
-| `src/sync/mod.rs` | src | s | 26 mod · 20 re-export · 25 crate-vis | — | CRDT sync layer for Oneiron |
+| `src/sync/mod.rs` | src | s | 27 mod · 20 re-export · 25 crate-vis | — | CRDT sync layer for Oneiron |
 | `src/sync/note.rs` | src | s | 10 crate-vis | — | Native NOTE carriers for ordinary window sync, distinct from history-free recovery |
 | `src/sync/note/checkpoint.rs` | src | s | 3 crate-vis | — | The native NOTE carriers' values in a checkpoint (KS7-3a, KS7-3b), read with the NOTE sync codecs: a… |
 | `src/sync/note/codec.rs` | src | s | 4 crate-vis | — | Binding validation of untrusted NOTE proposal values and workflow metadata |
@@ -6622,6 +6623,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/origin_positions/import.rs` | src | m | 1 struct · 2 fn · 11 crate-vis | OwnDevicePositionImport | Exact optional position operations of one successful own-device import |
 | `src/sync/pack_sync.rs` | src | s | 5 crate-vis | — | PackByteMap sync seams: canonical wire form, echo mapping, and remote validation |
 | `src/sync/pack_sync/tests.rs` | test | m | — | — | — |
+| `src/sync/peer_route.rs` | src | s | 1 struct · 1 enum · 7 fn · 3 const | PeerSyncPart, PeerSyncReceipt | FIX 4748 (owner RULING B, 2026-10-19): while the home node is off, linked devices sync device to device over… |
 | `src/sync/quarantine/keys_classifier.rs` | src | m | 1 struct · 1 enum · 1 fn · 3 const · 14 crate-vis | QuarantineContainer, QuarantineRecord | Quarantine key codec plus remote/local rejection classifier |
 | `src/sync/quarantine/mod.rs` | src | s | 4 re-export · 10 crate-vis | — | Quarantine sink (`x:` family) + needs-rematerialization (`rm:`) retry markers — no silent drops on the sync… |
 | `src/sync/quarantine/reassert_drain.rs` | src | m | 1 struct · 2 fn · 7 crate-vis | ReassertDrainReport | ra: tombstone reassert markers, enqueue/pending/drain |
@@ -6773,7 +6775,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/window/forward/edge_pass/mod.rs` | src | m | 2 crate-vis | — | Edge pass of forward rematerialization: materialize window edge rows into LMDB |
 | `src/sync/window/forward/entity_pass.rs` | src | s | 5 crate-vis | — | Entity pass of forward rematerialization: every window entity blob through the shared ingest entry, one… |
 | `src/sync/window/forward/tombstone_pass.rs` | src | m | 3 crate-vis | — | Tombstone pass of forward rematerialization: reason-aware replay of window tombstones |
-| `src/sync/window/history_free.rs` | src | m | 1 enum · 9 fn · 9 crate-vis | WindowExport | History-free window transport: what a window pinned history-free, or already shallow, ships to a peer that… |
+| `src/sync/window/history_free.rs` | src | L | 1 enum · 10 fn · 9 crate-vis | WindowExport | History-free window transport: what a window pinned history-free, or already shallow, ships to a peer that… |
 | `src/sync/window/history_free_tests.rs` | test | XL | — | — | The stall ticket's invariants over the code's own list of pin causes and replacement steps |
 | `src/sync/window/mod.rs` | src | m | 1 struct · 6 fn · 1 mod · 10 re-export · 33 crate-vis | LoadedWindow | Window lifecycle management for the CRDT sync layer |
 | `src/sync/window/pad_custody.rs` | src | m | 1 struct · 2 enum · 8 fn · 2 const · 1 re-export · 3 crate-vis | PreparedWindowPads, WindowPadPartRepair, WindowPadReceiptWitness | A window pad envelope's two engine doors (KS-5, FIX 7107), one for each side of the wire and both crates'… |
@@ -6781,7 +6783,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/window/pad_custody/persist.rs` | src | s | 1 fn · 3 crate-vis | — | A window blob as it persists here (KS-5, FIX 7107): its pad rows as their bare references, the form a `u:`… |
 | `src/sync/window/project_history.rs` | src | s | 1 crate-vis | — | Project history beside the PROJECT carriers a window document holds (PR 3 decision 9) |
 | `src/sync/window/rebootstrap.rs` | src | s | 4 crate-vis | — | Re-bootstrap of a window from its canonical rebuild (OF-005, ARCH-0038 `#recover-window-built`): the rebuilt… |
-| `src/sync/window/replacement.rs` | src | L | 2 struct · 1 fn · 4 crate-vis | PreparedReplacement, ReplacementConflict | Installing a window replacement: a peer's history-free snapshot takes the place of this vault's window, and… |
+| `src/sync/window/replacement.rs` | src | L | 2 struct · 1 fn · 5 crate-vis | PreparedReplacement, ReplacementConflict | Installing a window replacement: a peer's history-free snapshot takes the place of this vault's window, and… |
 | `src/sync/window/repo_manifest_conflict.rs` | src | s | 1 struct · 1 enum · 8 fn | RepoManifestConflictDiscard, RepoManifestConflictReview | Owner review and keep-held resolution for a repo-manifest conflict |
 | `src/sync/window/reverse.rs` | src | L | 1 fn · 10 crate-vis | — | Reverse rematerialization plus skip/policy predicates and carrier removal |
 | `src/sync/window/sealed_membership.rs` | src | s | 1 crate-vis | — | Sealed-mirror membership (FIX 536): before a sealed window's mirror is packed again, a carrier it keeps for… |
