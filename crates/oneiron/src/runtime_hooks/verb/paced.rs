@@ -45,8 +45,16 @@ use super::credential::{
 use super::state::DrainScope;
 use super::{InvocationId, hook_class, run_failed_transient};
 
-/// The verbs a budget window's pace holds in the line.
-pub(crate) const PACED_VERBS: [&str; 1] = [AgentVerb::VaultSharesCreate.as_str()];
+/// The verbs a budget window's pace holds in the line: share creation and
+/// the channel identity lifecycle requests the Gate paces (Engine 14:34 B).
+pub(crate) const PACED_VERBS: [&str; 6] = [
+    AgentVerb::VaultSharesCreate.as_str(),
+    AgentVerb::VaultChannelIdentitiesProvision.as_str(),
+    AgentVerb::VaultChannelIdentitiesBind.as_str(),
+    AgentVerb::VaultChannelIdentitiesRotate.as_str(),
+    AgentVerb::VaultChannelIdentitiesRelease.as_str(),
+    AgentVerb::VaultChannelIdentitiesRouteInbound.as_str(),
+];
 /// How long a paced call waits for its turn when the host sets no wait.
 pub const PACED_VERB_WAIT_DEFAULT_SECS: u64 = 7 * 24 * 60 * 60;
 /// How long an ended call's row stays for its caller's retry.
@@ -176,6 +184,21 @@ fn held(next_eligible_at: u64, deadline: u64) -> MemoryError {
     }
 }
 
+/// The refusal a paced call's turn answers when its window paces it again:
+/// the drain puts it back in line, not before `next_eligible_at`.
+pub(crate) fn paced_turn_again(next_eligible_at: u64) -> MemoryError {
+    MemoryError {
+        resets_at: vec![next_eligible_at],
+        ..MemoryError::new(
+            MEMORY_CODE_PACED_HOLD,
+            format!(
+                "a budget window paced this call's turn; it runs at {next_eligible_at} or later"
+            ),
+            &["Send nothing again: the call runs on its next turn."],
+        )
+    }
+}
+
 /// Holds `memory`'s call of `verb` with `args` in its principal's paced
 /// line, to run no earlier than `next_eligible_at`: the refusal its caller
 /// gets. `None` when the call cannot be held, so it answers as it did: no
@@ -289,7 +312,7 @@ pub(crate) fn paced_verb_reply(memory: &Memory<'_>, verb: &str) -> Option<Memory
         )));
     }
     Some(match (row.state, row.outcome) {
-        (PacedState::Ended, Some(SavedOutcome::Ok { result })) => serde_json::from_str(&result)
+        (PacedState::Ended, Some(SavedOutcome::Ok { result, .. })) => serde_json::from_str(&result)
             .map_err(|_| Error::CorruptedIndex("paced verb call outcome").into()),
         (PacedState::Ended, Some(SavedOutcome::Err { code, message, .. })) => {
             Err(MemoryError::new(
@@ -301,6 +324,22 @@ pub(crate) fn paced_verb_reply(memory: &Memory<'_>, verb: &str) -> Option<Memory
         (PacedState::Ended, None) => Err(Error::CorruptedIndex("paced verb call outcome").into()),
         _ => Err(held(row.next_eligible_at, row.deadline)),
     })
+}
+
+impl Memory<'_> {
+    /// What a retry of this handle's call of `verb` meets once a budget
+    /// window held an earlier try of its invocation and the drain ran it to
+    /// its end: the saved result, or the saved refusal (FIX 8753). A
+    /// transport answers it before it starts the call again, so the effect
+    /// never runs twice. `None` while the call still waits in line, when
+    /// nothing of it was held, and on the drain's own run of it.
+    #[must_use]
+    pub fn ended_paced_verb_reply(&self, verb: &str) -> Option<MemoryResult<Value>> {
+        match paced_verb_reply(self, verb)? {
+            Err(error) if error.code == MEMORY_CODE_PACED_HOLD => None,
+            reply => Some(reply),
+        }
+    }
 }
 
 /// Marks the paced call `invocation`'s turn runs as landed, in the verb's
@@ -526,13 +565,12 @@ impl Vault {
             return Ok(true);
         };
         let receipt = RefusalReceipt::new(&row.reference, &row.verb, row.actor, class, &args, None);
-        let ran = match self.resume_paced_turn(key, &row, class, args)? {
-            VerbAskResumed::Ran(ran) => ran,
-            VerbAskResumed::Refused(refusal) => Err(refusal.error()),
-        };
+        let (ran, producers) = self
+            .resume_paced_turn(key, &row, class, args)?
+            .into_outcome();
         let now = self.store.clock.now_recorded_at();
         let end = match ran {
-            Ok(value) => TurnEnd::Ended(SavedOutcome::result(&value)?, None),
+            Ok(value) => TurnEnd::Ended(SavedOutcome::result(&value, producers)?, None),
             Err(error) if error.code == MEMORY_CODE_PACED_HOLD => TurnEnd::Back(
                 error
                     .resets_at
@@ -603,7 +641,9 @@ impl Vault {
         };
         let _draining = DrainScope::enter(invocation);
         let _turn = PacedTurnScope::enter(invocation);
-        Ok(check.resume(call, VerbAskDrainPermit::paced(invocation)))
+        let drain =
+            VerbAskDrainPermit::paced(invocation).with_credential_door(call.reference.door.clone());
+        Ok(check.resume(call, drain))
     }
 
     /// Saves how turn `work` left its call, unless the verb's own effect

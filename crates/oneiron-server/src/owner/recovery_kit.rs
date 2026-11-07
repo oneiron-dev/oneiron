@@ -14,6 +14,8 @@ use serde::Serialize;
 use super::stamp::rfc3339_secs;
 use super::vault_key::hex;
 
+pub(crate) mod authority_recovery;
+
 /// One kit as the owner reads it.
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct KitView {
