@@ -264,6 +264,7 @@ fn policy_admits(server: &SyncServer, row: &MediaRow) -> bool {
             response_format: ResponseFormat::Text,
             locality: row.locality,
             host_keyless: false,
+            host_paid: false,
             seat_effort: None,
         },
         operation: row.operation,
