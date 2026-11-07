@@ -1512,6 +1512,25 @@ recall is `memory_miss`, a consolidation error `task_failure`, a consent storm o
 diagnostic does not say which agent failed, so these counts carry the agent `unattributed`.
 Counts wait in the vault, across restarts, until the publisher takes them.
 
+## Coach prompt repair drafts
+
+When a case is routed to `prompt_inject`, the served Coach author can now draft prompt text
+using its configured Coach model and the pass's existing draft budget. It receives the recorded
+case, agent, pre-failure checkpoint, diagnosis and cause context as data. The existing engine
+writer binds those references again and files a `coach.prompt_repair` Proposed artifact with
+the heal. This draft does not inject text, resume a run, grant authority or prove a replay passed.
+
+The shipped instruction lives in `prompts/coach-prompt-repair.md`. Override it through
+`[models.dreamer.wording]` with `coach_prompt_repair_prompt` or
+`coach_prompt_repair_prompt_file`, using the same inline/file resolution as the other Coach
+wording. A relative file path resolves from the config directory.
+
+The answer is `{"prompt":"<exact text>","rationale":"<why>"}`. A null `prompt` declines.
+The engine still handles an empty draft, unavailable model, author error, stale case or missing
+binding as a route-only heal. Custom `CoachHealAuthor` implementations keep the default `None`
+unless they implement this method. Skill edits, producer fixes and environment repairs keep
+their existing behavior.
+
 ## Model-graded self-heal detectors
 
 Canon ships no detector wording, so no model-graded detector runs until you write one. Each
