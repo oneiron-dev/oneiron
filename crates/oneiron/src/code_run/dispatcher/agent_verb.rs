@@ -30,7 +30,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
 
-const AGENT_VERB_RECEIPT_DOMAIN: &[u8] = b"oneiron:executor-agent-verb-receipt:v1";
+const AGENT_VERB_RECEIPT_DOMAIN: &[u8] =
+    crate::entity_id::derived_domains::EXECUTOR_AGENT_VERB_RECEIPT;
 
 /// The reason a receipt's refusal row carries, so that no row read back from
 /// the receipt's answer, a refusal or not, is ever taken for one.
@@ -74,8 +75,8 @@ impl HostSelfDispatcher<'_> {
     /// room's overlay instead (DOOR-127, Engine ruling 10-18), as the door
     /// admits it for its caller, through the run's captured route and under
     /// this same receipt (WILL L11-01 S01-2a, `session_write`).
-    /// `vault.get`, `vault.hydrate`, `vault.refs.resolve` and
-    /// `vault.search.bm25` read the room's view on the key the door admits
+    /// `vault.get`, `vault.hydrate`, `vault.refs.resolve`, `vault.search.bm25`
+    /// and `vault.receipts` read the room's view on the key the door admits
     /// for its caller (WILL L11-01, `session_verbs`); every other call is
     /// refused.
     ///
