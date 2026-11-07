@@ -1,0 +1,125 @@
+//! The OAuth server's five side tables and the rows they hold. A code, a token or a page's poll
+//! secret is never a field: its row is keyed by the secret's keyed hash, or holds only that hash.
+
+use serde::{Deserialize, Serialize};
+
+use super::clients::OAuthClientRecord;
+use crate::EntityId;
+use crate::authority::AgentTier;
+use crate::side_table::{self, HexId, Named, SideTable};
+
+/// Every client that may sign in, registered or known by its metadata document. Key: hex64, the
+/// BLAKE3 hash of its `client_id`.
+pub(super) const CLIENTS: SideTable<String, OAuthClientRecord, Named> =
+    SideTable::new(&side_table::AUTHORITY_OAUTH_CLIENT);
+/// Each authorization request until its page collects the owner's answer, or it lapses. Key:
+/// hex32, the request's id.
+pub(super) const REQUESTS: SideTable<HexId, PendingAuthorization, Named> =
+    SideTable::new(&side_table::AUTHORITY_OAUTH_REQUEST);
+/// Each authorization code until it lapses; a redeemed one stays, naming its token family, so a
+/// second redemption revokes that family. Key: hex64, the code's keyed hash.
+pub(super) const CODES: SideTable<String, IssuedCode, Named> =
+    SideTable::new(&side_table::AUTHORITY_OAUTH_CODE);
+/// Each access and refresh token until it lapses; a spent refresh token stays, so its reuse
+/// revokes its family. Key: hex64, the token's keyed hash.
+pub(super) const TOKENS: SideTable<String, IssuedToken, Named> =
+    SideTable::new(&side_table::AUTHORITY_OAUTH_TOKEN);
+/// Each token family: every token one code's redemption and its refreshes minted. Key: hex32,
+/// the family's id.
+pub(super) const FAMILIES: SideTable<HexId, TokenFamily, Named> =
+    SideTable::new(&side_table::AUTHORITY_OAUTH_FAMILY);
+
+/// What the owner's allow bound a sign-in to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct AuthorizedGrant {
+    /// The client's agent principal.
+    pub(super) agent: EntityId,
+    /// The owner agent grant every token of the sign-in stands on.
+    pub(super) grant_ref: EntityId,
+    /// The tier the owner gave.
+    pub(super) tier: AgentTier,
+    /// The one world the grant is bound to; `None`: every world the owner reads.
+    pub(super) world: Option<EntityId>,
+}
+
+/// Where an authorization request stands.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) enum AuthorizationDecision {
+    /// Waiting for the owner.
+    Pending,
+    /// The owner allowed it; the page's next poll mints the code.
+    Allowed(AuthorizedGrant),
+    /// The owner denied it; the page's next poll sends the client `access_denied`.
+    Denied,
+}
+
+/// One authorization request, as `/oauth/authorize` validated it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PendingAuthorization {
+    pub(super) client_id: String,
+    pub(super) redirect_uri: String,
+    /// The PKCE S256 challenge the code is bound to.
+    pub(super) code_challenge: String,
+    /// The client's own `state`, echoed on the redirect.
+    pub(super) state: Option<String>,
+    /// The RFC 8707 resource: this vault's `/mcp`.
+    pub(super) resource: String,
+    /// The tier the client asked for.
+    pub(super) tier: AgentTier,
+    /// The keyed hash of the page's poll secret (hex64).
+    pub(super) page_secret_key: String,
+    pub(super) expires_at: u64,
+    pub(super) decision: AuthorizationDecision,
+}
+
+/// One authorization code.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct IssuedCode {
+    pub(super) client_id: String,
+    pub(super) redirect_uri: String,
+    pub(super) code_challenge: String,
+    pub(super) resource: String,
+    pub(super) grant: AuthorizedGrant,
+    pub(super) expires_at: u64,
+    /// The family its redemption minted; `None` until it is redeemed.
+    pub(super) redeemed_family: Option<EntityId>,
+}
+
+/// Which kind of token a token row is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) enum TokenKind {
+    Access,
+    Refresh,
+}
+
+/// One access or refresh token.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct IssuedToken {
+    pub(super) kind: TokenKind,
+    pub(super) family: EntityId,
+    pub(super) expires_at: u64,
+    /// A refresh token already traded for the next one.
+    pub(super) spent: bool,
+}
+
+/// One token family.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct TokenFamily {
+    pub(super) client_id: String,
+    pub(super) resource: String,
+    pub(super) grant: AuthorizedGrant,
+    /// When its newest refresh token lapses; past it, no token of the family stands.
+    pub(super) expires_at: u64,
+    /// Revoked: no token of the family stands, whatever its own expiry.
+    pub(super) revoked: bool,
+}
+
+/// The [`CLIENTS`] key of a client ID.
+pub(super) fn client_key(client_id: &str) -> String {
+    blake3::hash(client_id.as_bytes()).to_hex().to_string()
+}

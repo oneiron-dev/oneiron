@@ -3846,6 +3846,11 @@ export_facade! {
     let output = client.vault_agents_grants_revoke(&input)?;
     crate::codec::lift_record("vault.agents.grants.revoke", &output)
 };
+"vault.oauth.authorization.answer" => fn vault_oauth_authorization_answer(&self, input: OAuthAuthorizationAnswer) -> OAuthAuthorizationAnswered = |client| {
+    let input: oneiron::task_verb::sdk::OAuthAuthorizationAnswer = crate::codec::lower_record("vault.oauth.authorization.answer", input)?;
+    let output = client.vault_oauth_authorization_answer(&input)?;
+    crate::codec::lift_record("vault.oauth.authorization.answer", &output)
+};
 "vault.repo.git_push.mint" => fn vault_repo_git_push_mint(&self, input: GitPushGrantMintInput) -> GitPushGrantMintOutput = |client| {
     let input: oneiron::task_verb::sdk::GitPushGrantMintInput = crate::codec::lower_record("vault.repo.git_push.mint", input)?;
     let output = client.vault_repo_git_push_mint(&input)?;

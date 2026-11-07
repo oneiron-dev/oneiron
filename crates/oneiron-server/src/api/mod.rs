@@ -84,6 +84,7 @@ mod booking;
 mod booking_anti_abuse;
 mod campaign;
 mod client_metadata;
+// FIX 4902 slice B: the vault as its own `/mcp`'s OAuth 2.1 authorization server.
 mod companion;
 mod consumer_usage;
 mod context_pack;
@@ -97,6 +98,7 @@ mod discover;
 mod entity;
 mod error_map;
 mod esign;
+mod oauth_server;
 pub(crate) use self::esign::delivery_outbox::spawn as spawn_esign_delivery_outbox;
 pub(crate) use self::esign::hold_worker::spawn_admitted as spawn_esign_hold_worker_admitted;
 pub(crate) use self::esign::notice_worker::dispatch_due_notices as dispatch_esign_due_notices;
