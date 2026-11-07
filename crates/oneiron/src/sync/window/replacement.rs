@@ -34,8 +34,10 @@
 //! The candidate, its version and its history-free state are persisted in one transaction that
 //! also retires the old window's pending updates and the queued sends it took in, whose effects
 //! step 1 carried over, and clears the pending mirrors (`pm:`, `lm:w:`) step 1 replayed; a
-//! `lm:w:` marker whose value comes back as a conflict stays owed. Preparation refused before
-//! that transaction leaves every mirror marker in place. The caller attaches observers last.
+//! `lm:w:` marker whose value comes back as a conflict stays owed. A peer's state-only copy
+//! installed while the home is down retires no queued send ([`QueuedSends::Keep`], FIX 4748).
+//! Preparation refused before that transaction leaves every mirror marker in place. The caller
+//! attaches observers last.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -92,8 +94,20 @@ pub fn prepare_replacement(
         snapshot,
         evidence,
         ReplacementByteBound::NetworkFrame,
+        QueuedSends::Retire,
         None,
     )
+}
+
+/// What a replacement install does with the queued sends it takes in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::sync) enum QueuedSends {
+    /// They retire with the install: their effects are in the installed window as its own
+    /// operations.
+    Retire,
+    /// They stay queued (FIX 4748): the install is a peer's state-only copy while the home is
+    /// down, and a peer session retires no queued send, so the home session replays every one.
+    Keep,
 }
 
 /// How long a replacement snapshot may be.
@@ -171,9 +185,13 @@ pub(in crate::sync) fn check_bounded_replacement(
     .map(drop)
 }
 
-/// [`prepare_replacement`] for a snapshot up to `bound`. Only the length check
-/// differs: the snapshot passes the same admission, and the install keeps the
-/// same bookkeeping.
+/// [`prepare_replacement`] for a snapshot up to `bound`, the queued sends it takes in retired
+/// or kept as `queued` says. Only the length check differs: the snapshot passes the same
+/// admission, and the install keeps the same bookkeeping.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the install's window, snapshot, bound, queue handling and origin positions"
+)]
 pub(in crate::sync) fn prepare_bounded_replacement(
     vault: &Vault,
     materializer: &Materializer,
@@ -182,6 +200,7 @@ pub(in crate::sync) fn prepare_bounded_replacement(
     snapshot: &[u8],
     evidence: &HashMap<EntityId, (WindowKey, Vec<u8>)>,
     bound: ReplacementByteBound,
+    queued: QueuedSends,
     positions: Option<crate::sync::origin_positions::OwnDevicePositionImport>,
 ) -> Result<PreparedReplacement> {
     let candidate = admitted_replacement(
@@ -295,11 +314,14 @@ pub(in crate::sync) fn prepare_bounded_replacement(
     vault.with_write_txn_grouped(|wtxn| {
         persist_window_doc_in_txn(vault, wtxn, key, &state, &vv)?;
         // The old generation's pending updates and the queued sends it took in depend on history
-        // the candidate does not hold; their effects are in it as its own operations.
+        // the candidate does not hold; their effects are in it as its own operations. A peer's
+        // copy keeps the queued sends for the home, which has not taken them (FIX 4748).
         for update in &stale_updates {
             WINDOW_UPDATE.delete(&vault.store, wtxn, update)?;
         }
-        crate::sync::queue::retire_queued_in_txn(vault, wtxn, &carried)?;
+        if queued == QueuedSends::Retire {
+            crate::sync::queue::retire_queued_in_txn(vault, wtxn, &carried)?;
+        }
         for marker in &mirrored {
             OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker)?;
         }
@@ -320,6 +342,66 @@ pub(in crate::sync) fn prepare_bounded_replacement(
         doc: candidate,
         conflicts,
     })
+}
+
+/// The replacement of a private world's sealed mirror `old` by `snapshot`, a mirror a bundle
+/// section carried that does not merge into it (FIX 17210): a mirror cut history-free whose root
+/// `old` lacks, or one whose operations run concurrent with `old`'s own cut. As a window
+/// replacement does, the candidate is a fresh document built from the snapshot alone, and `old`
+/// contributes what this vault holds that the snapshot does not: steps 1, 2 and 4 above, on the
+/// document alone. A mirror has no queued sends, pending mirrors or markers here, and its caller
+/// lands its rows. Returns the candidate and how many of `old`'s values it could not carry over.
+///
+/// # Errors
+///
+/// A snapshot that does not decode whole; storage failures.
+pub(crate) fn replace_detached_mirror(
+    vault: &Vault,
+    old: &LoroDoc,
+    snapshot: &[u8],
+) -> Result<(LoroDoc, usize)> {
+    let meta = LoroDoc::decode_import_blob_meta(snapshot, true).map_err(|_| rejected())?;
+    let candidate = LoroDoc::from_snapshot(snapshot).map_err(|_| rejected())?;
+    if !candidate.oplog_vv().includes_vv(&meta.partial_end_vv) {
+        return Err(rejected());
+    }
+    let mut hard = hard_tombstones(&candidate);
+    let (mut conflicts, written) = carry_over_unseen_writes(old, &candidate)?;
+    carry_over_hard_deletes(vault, old, &candidate)?;
+    carry_over_mirror_hard_deletes(old, &candidate)?;
+    hard.extend(hard_tombstones(&candidate));
+    conflicts.extend(keep_hard_deletes(&candidate, &hard, &written)?);
+    conflicts.extend(delete_wins(&candidate, &written)?);
+    candidate.commit();
+    conflicts.retain(|conflict| !holds_value(&candidate, conflict));
+    Ok((candidate, conflicts.len()))
+}
+
+/// Every hard delete the mirror `old` holds that `candidate` does not hold
+/// hard, applied to the candidate with the removal of its carriers: a mirror
+/// keeps another machine's hard deletes, which this vault may never have
+/// marked, and no replacement softens or drops one, whatever order the two
+/// copies' writes take (FIX 17210).
+fn carry_over_mirror_hard_deletes(old: &LoroDoc, candidate: &LoroDoc) -> Result<()> {
+    let tombstones = TombstoneIndex::build(&candidate.get_map("tombstones"));
+    let mut hard = Vec::new();
+    for (key, raw) in hard_tombstones(old) {
+        let Ok(id) = EntityId::from_hex(&key) else {
+            continue;
+        };
+        if !tombstones
+            .values_for(&id)
+            .iter()
+            .any(|held| crate::deletion::decode_tombstone_value(held).is_hard())
+        {
+            hard.push((id, raw));
+        }
+    }
+    for (id, raw) in &hard {
+        apply_tombstone_to_indexed_window_doc(candidate, &tombstones, id, raw)?;
+    }
+    candidate.commit();
+    Ok(())
 }
 
 /// A persisted replacement, ready to install.

@@ -247,8 +247,7 @@ fn train(
         generation,
         trainer,
     };
-    let spawned = std::thread::Builder::new()
-        .name(format!("drafter-training-{}", version.to_hex()))
+    let spawned = crate::engine_thread(format!("drafter-training-{}", version.to_hex()))
         .spawn(move || run.dispatched(&admission, permit));
     if spawned.is_err() {
         // The permit went with the closure that never ran: dropped
@@ -619,8 +618,7 @@ fn recover_job(server: &SyncServer, version: EntityId) {
         job,
         trainer,
     };
-    let spawned = std::thread::Builder::new()
-        .name(format!("drafter-recovery-{}", version.to_hex()))
+    let spawned = crate::engine_thread(format!("drafter-recovery-{}", version.to_hex()))
         .spawn(move || run.recovered(admission.as_ref()));
     if spawned.is_err() {
         waiters().remove(&version);

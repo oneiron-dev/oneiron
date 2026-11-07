@@ -62,6 +62,11 @@ pub(super) fn scrub_pending(vault: &Vault, txn: &mut heed::RwTxn<'_>, id: Entity
                 .ok_or_else(|| invalid("NOTE pending frame"))?,
         )
         .map_err(|_| invalid("NOTE pending frame"))?;
+        // A fork upload's marker holds no text (FIX 12789): only commands
+        // carry a citation.
+        if frame.kind != crate::sync::transport::document_sub_tags::NOTE_OPS {
+            continue;
+        }
         let operation = super::NoteOperation::decode(frame.payload)?;
         if let super::NoteChange::Cite { pin } = operation.change
             && super::citation_erase::pin_is_erased(vault, txn, &pin)?
