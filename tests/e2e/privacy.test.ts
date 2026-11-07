@@ -818,8 +818,8 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
 // counterfeit, independent-vault substitute, or private storage edits.
 // Keep this whole journey BLOCKED until vault.sync.outbox AND L03 #4343's
 // empty-vault enrolment merge. This file's one slot remains unchanged.
-suite.todo(test, "PRIVACY-03",
-  "waits on merged vault.sync.outbox and L03 #4343 empty-vault enrolment for genuine machine-link/device-enrol receiver B, pre-erase backup/restore/sync replay and ACK observation. Erasure resists offline replay should work");
+suite.skip(test, "PRIVACY-03",
+  "waits on merged vault.sync.outbox and L03 #4343 empty-vault enrolment for genuine machine-link/device-enrol receiver B, pre-erase backup/restore/sync replay and ACK observation. Erasure resists offline replay should work [FIX 3966; qualif 17866]");
 
 suite.test(test, "PRIVACY-04", "Shared blobs survive one record erasure should work", async () => {
   const catalog = await loadFixtures();
@@ -1003,8 +1003,8 @@ suite.test(test, "PRIVACY-05", "Legal hold narrows delete should work", async ()
 // is provoked, so no floor-receipt exception applies here.
 // Keep the whole journey BLOCKED until vault.sync.outbox AND L03 #4343's
 // empty-vault enrolment merge; no weakening of the privacy oracle.
-suite.todo(test, "PRIVACY-06",
-  "waits on merged vault.sync.outbox and L03 #4343 empty-vault enrolment for real receiver B backup/restore/sync replay and LIVE overlay/spill-id exclusion reads FROM B; session write/read/execute doors exist. Off-record session discard should work");
+suite.skip(test, "PRIVACY-06",
+  "waits on merged vault.sync.outbox and L03 #4343 empty-vault enrolment for real receiver B backup/restore/sync replay and LIVE overlay/spill-id exclusion reads FROM B; session write/read/execute doors exist. Off-record session discard should work [FIX 3967; qualif 17866]");
 
 // PRIVACY-07. ARCH-0052 #d5-notice/#d5-save-grant, ARCH-0040 #mcp-actor-ceilings.
 // rooms.start/witness/status/save/save_from_here/suggest_save/confirm_save/
@@ -1027,8 +1027,8 @@ suite.todo(test, "PRIVACY-06",
 // evaporate this live stretch. No raw leave route, fake saver or fifth actor
 // is substituted. Once that setup exists, also assert content-free notices
 // {act,by,at}, guest-only visible attachment talk, and notice removal at close.
-suite.todo(test, "PRIVACY-07",
-  "waits on a named typed HTTP+SDK live room-leave or saver-grant revoke/regrant setup for the four real participants; existing room save/suggest/export DTOs are not the blocker. Off-record save from the middle should work");
+suite.skip(test, "PRIVACY-07",
+  "waits on a named typed HTTP+SDK live room-leave or saver-grant revoke/regrant setup for the four real participants; existing room save/suggest/export DTOs are not the blocker. Off-record save from the middle should work [FIX 3968; qualif 17820]");
 
 // PRIVACY-08. ARCH-0052 anonymous mode and G10=B require zero durable
 // records, including hash-only safety receipts. Script only the external model wire.

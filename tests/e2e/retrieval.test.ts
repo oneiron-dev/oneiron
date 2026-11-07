@@ -488,7 +488,7 @@ suite.test(test, "RETRIEVAL-03", "Bitemporal widening should work", async () => 
 
 /* The stale producer and filtered claim reads exist. They do not provide the
  * complete caller-filter journey across recall/hydrate/neighbors/search. */
-suite.todo(test, "RETRIEVAL-04", "waits on caller ReadFilterInput bindings on recall, hydrate, neighbors and every search/read door; demote and list_filtered alone do not cover this ID");
+suite.skip(test, "RETRIEVAL-04", "waits on caller ReadFilterInput bindings on recall, hydrate, neighbors and every search/read door; demote and list_filtered alone do not cover this ID [FIX 3977; qualif 17779]");
 
 /* RETRIEVAL-05: real reranker traffic and a held public HyDE work item. */
 suite.test(test, "RETRIEVAL-05", "Retrieval effort and deadline should work", async () => {
@@ -1226,7 +1226,7 @@ suite.test(test, "RETRIEVAL-10", "Clustering produces proposals not truth should
  * from an evidence read. No source:"generated" upsert or fabricated run is
  * a positive control. Keep the complete original pending-critical oracle.
  */
-suite.todo(test, "RETRIEVAL-11", "waits on merged complete production Generated/Auto and pending-critical producers and qualification of the genuine caller-owned leased-run fixture; spawn/agent-pair/leased-get/attach composition exists, while evidence inspection is not a producer");
+suite.skip(test, "RETRIEVAL-11", "waits on merged complete production Generated/Auto and pending-critical producers and qualification of the genuine caller-owned leased-run fixture; spawn/agent-pair/leased-get/attach composition exists, while evidence inspection is not a producer [FIX 3983]");
 
 /* RETRIEVAL-12 replacement section. Drop-in for retrieval.test.ts: delete the
  * RETRIEVAL-12 suite.todo block and paste this whole section in its place.

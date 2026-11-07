@@ -752,8 +752,8 @@ suite.test(test, "MEMORY-02", "Claim admission rejects malformed scope should wo
  * attempt with refusal/held-proposal receipt and unchanged stated source,
  * evidence and lifecycle. Never directly upsert an observed result instead.
  */
-suite.todo(test, "MEMORY-03",
-  "waits on merged FIX 21842 production Observed/language producer and qualification of the whole original leased supersession fixture; spawn/agent-pair/leased-get/attach composition exists, not a new registration API");
+suite.skip(test, "MEMORY-03",
+  "waits on merged FIX 21842 production Observed/language producer and qualification of the whole original leased supersession fixture; spawn/agent-pair/leased-get/attach composition exists, not a new registration API [FIX 3958]");
 
 /* MEMORY-04: ARCH-0032 writers, ARCH-0002 NOTE beside CLAIM, OF-330.
  * author_take NOW EXISTS as AuthorTakeRequest -> EntityRefReceipt, and real
@@ -771,8 +771,8 @@ suite.todo(test, "MEMORY-03",
  * edge's source revision. Raw entity/export byte comparison would not prove
  * that link-level invariant, so do not arm an attribution-only partial test.
  */
-suite.todo(test, "MEMORY-04",
-  "waits on typed per-edge author/source-revision provenance read; author_take and real agent pairing already exist");
+suite.skip(test, "MEMORY-04",
+  "waits on typed per-edge author/source-revision provenance read; author_take and real agent pairing already exist [FIX 3959]");
 
 interface TimedPackRequest {
   query: string; limit: number; edge_hop: number; view: "full";
@@ -853,8 +853,8 @@ suite.test(test, "MEMORY-05", "Bitemporal entity history should work", async () 
  * and immutable payload; refuse changed payload; one HabitCheckin child,
  * original clocks/data, current_streak=1 and longest_streak=1; task readback.
  */
-suite.todo(test, "MEMORY-06",
-  "waits on merged real oneiron.productivity hub pack and engine pin PRs supplying the exact HubImportRequest/pin/publisher; role/tree/check-in calls exist");
+suite.skip(test, "MEMORY-06",
+  "waits on merged real oneiron.productivity hub pack and engine pin PRs supplying the exact HubImportRequest/pin/publisher; role/tree/check-in calls exist [FIX 3961; qualif 17747]");
 
 // ARCH-0055 redirect shells, evidence-guided split, masks and counter-events.
 suite.test(test, "MEMORY-07", "Identity merge split and undo should work", async () => {

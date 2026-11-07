@@ -14,6 +14,7 @@ The `oneiron` TypeScript SDK's witness and recall use camelCase DTOs, while
 DTOs. Bind each method's declared type rather than applying a casing rule to
 all SDK methods.
 Runtime OpenAPI is a binding diagnostic, never an expected-behavior oracle.
+Schema artifacts retain only SHA-256, byte length and path count, not the full body.
 
 ## Files and ownership
 
@@ -40,8 +41,10 @@ native addon. No lockfile was generated on the Mac.
 
 Use `defineFile` once at module scope. Import Bun's `test` and `afterAll` in the
 **test file**, not in a process launcher. Use `suite.test` for every planned ID;
-use `suite.todo` for unavailable typed doors. Do not use `.skip`, `.only`,
-`.failing`, native unregistered tests, or concurrent tests.
+use `suite.todo` for unavailable typed doors unless the owner explicitly defers the
+case. Owner-deferred cases use `suite.skip` with the missing-door reason and FIX id;
+keep their complete journey plans. Do not use native `.skip`, `.only`, `.failing`,
+unregistered tests, or concurrent tests.
 
 ```ts
 import { afterAll, expect, test } from "bun:test";
@@ -52,7 +55,7 @@ import { loadFixtures } from "./support/fixtures.ts";
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
 const suite = defineFile(import.meta, { profile, slots: 1 });
-afterAll(suite.flush); // Required even when every ID is a TODO.
+afterAll(suite.flush); // Required even when every ID is a TODO or SKIPPED.
 
 // Registration form (put only the IDs assigned to this file here):
 // suite.test(test, "BOOT-01", "model-free restart", async () => { ... });
@@ -72,7 +75,13 @@ request/result shape in the design notes beside that TODO. Do not cast the name
 to `FacadeVerb`, route it through a generic endpoint, execute code instead, or
 use internal state as a substitute. For G09's additional hook families, use
 `"waits on owner question G09"`. A TODO is a BLOCKED report row and makes a
-required run non-green. It is not passing coverage.
+required run non-green. It is not passing coverage. The owner ruling of 7 Nov 10:33,
+relayed by the Engine at 10:35, instead defers BOOT-06, MEMORY-04, MEMORY-06,
+PRIVACY-03, PRIVACY-06, PRIVACY-07, RETRIEVAL-04 and RETRIEVAL-11 as SKIPPED until
+their doors exist. MEMORY-03 is also SKIPPED while its complete journey still needs
+the Observed producer (FIX 21842). These cases remain registered with their reasons
+and FIX ids, are not failures, and never hold a run or a runtime grant. They are not
+passing feature coverage.
 
 ## EngineFixture
 
@@ -149,7 +158,11 @@ server owns this fixture's bootstrap link.
 
 HTTP, CLI and SDK calls persist redacted request-start records before the call,
 with a step id, operation, path and start time. Completion/error records carry
-that id. SDK batches also write per-operation markers inside the native process.
+that id. If the flow expires while its start diagnostic is being written, a
+same-id cancellation record says that the operation was not launched. Each case
+keeps its own deadline and abort state, so a late continuation cannot start calls
+under the next case's lifecycle. SDK batches also write per-operation markers
+inside the native process.
 Fixture startup emits stage-start markers before init, bootstrap, launch, pairing
 and schema discovery, including before a second vault has a launch artifact.
 An unmatched request-start identifies a call that has no captured completion;
@@ -304,6 +317,11 @@ placeholder executable digests that could accidentally pass.
   `sampling`, and explicit role-to-`real`/`stub` `bindings`. It must have a real
   binding; missing weights/config/tokenizer blocks rather than changing models.
 
+The immutable build inventory is verified once per suite-file process in a
+file-level hook, outside the flow timer. Cached verification is keyed by manifest
+path, digest and profile; every distinct key keeps the full asset/provenance checks.
+Assets must remain immutable for that frozen run.
+
 The package pins Bun 1.3.4, Node 22.16.0 and Python 3.12.11 as reference runtime
 revisions in the inventory requirements. Other dependency pins are in
 `package.json`. Preparation and any typecheck/install happen on Linux, never
@@ -335,13 +353,15 @@ the booked fleet job; never run the suite outside that job or on the Mac.
 
 ## Reports, cleanup and redaction
 
-Every selected planned ID gets PASS, FAIL or BLOCKED, duration and a reason
-where needed. Coverage includes the pinned row map and explicit exclusions. A
-run succeeds only if all selected IDs pass, file declarations/IDs match the
-plan, each PASS agrees with Bun's JUnit, and the whole run (including preflight
-and cleanup) stays within 600 seconds. A TODO or failing test keeps that run
-non-green but does not turn an independently passing sibling into FAIL. Full
-plan completion additionally requires all 242 IDs. Partial and optional-profile
+Every selected planned ID gets PASS, FAIL, BLOCKED or owner-deferred SKIPPED,
+duration and a reason where needed. Coverage includes the pinned row map and
+explicit exclusions. A run succeeds only if every selected ID is PASS or SKIPPED,
+file declarations/IDs match the plan, each PASS agrees with Bun's JUnit, each
+SKIPPED agrees with a raw JUnit skip, and the whole run (including preflight and
+cleanup) stays within 600 seconds. A TODO or failing test keeps that run non-green
+but does not turn an independently passing sibling into FAIL. Owner-deferred
+SKIPPED cases do not hold a run or grant and are never counted as PASS. Full feature
+coverage still requires passing evidence for all 242 IDs. Partial and optional-profile
 results never claim default completeness. The 585-second planning
 estimate has not been measured.
 
@@ -370,7 +390,9 @@ operation carrying a generated secret-test value. Never log credentials, raw
 SDK process output, pairing links, or recognisable secret sentinels. Use
 `artifacts.json(name, value)` rather than direct log files. HTTP automatic logs
 contain routing/status metadata only; explicitly save sanitized bodies and
-public receipt IDs when they matter to a failure.
+public receipt IDs when they matter to a failure. Holder-proof exact redaction is
+scoped to its request; credential, binding-header/key and private-output rules
+remain active without retaining every new proof globally.
 
 Providers, sockets and engines register end-of-flow cleanup automatically.
 `ownResource(close)` covers additional fixture services; `ManagedProcess` and
