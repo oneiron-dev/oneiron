@@ -21,7 +21,7 @@ use rmpv::Value;
 
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptRecord};
-use crate::authority::{TaskActorProof, TaskActorVerb, actor_binding_is_active};
+use crate::authority::{TaskActorProof, TaskActorVerb, TaskGrantStanding, actor_binding_is_active};
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error};
 use crate::memory::{
@@ -130,6 +130,12 @@ impl Memory<'_> {
     /// for the in-process host's own caller, its store truth; else a binding,
     /// which it then lacks. A TASK the actor is no party to is not found; a
     /// party the verb does not admit is told why, with `suggestion`.
+    ///
+    /// A handle bound to an ask guest's grant proves that exact grant again
+    /// first, in this transaction (FIX 4743): its ask still records it for
+    /// its guest, and it is live, not withdrawn and names this actor. This
+    /// runs before any proof is chosen, so a binding the actor gained since
+    /// never stands in for a grant that lapsed.
     pub(super) fn highway_task_actor_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -143,6 +149,24 @@ impl Memory<'_> {
                 forbidden(reason, suggestion)
             }
             other => MemoryError::from(other),
+        };
+        let task_grant = match self.admitted_task_grant() {
+            Some(grant) => match self
+                .vault()
+                .prove_admitted_task_grant_in_txn(txn, &grant, self.actor())
+                .map_err(refusal)?
+            {
+                TaskGrantStanding::Proven(proven) => Some(proven),
+                TaskGrantStanding::OtherActor
+                | TaskGrantStanding::AskChanged
+                | TaskGrantStanding::Lapsed => {
+                    return Err(forbidden(
+                        "the ask guest's grant no longer proves this actor",
+                        suggestion,
+                    ));
+                }
+            },
+            None => None,
         };
         let actor = self.write_actor();
         let fold = self
@@ -165,10 +189,10 @@ impl Memory<'_> {
                 actor: self.actor(),
                 slip,
             }
-        } else if let Some(grant) = self.presented_task_grant() {
+        } else if let Some(grant) = task_grant {
             TaskActorProof::Grant {
                 actor: self.actor(),
-                grant,
+                grant: grant.grant(),
             }
         } else if self.native_invocation() {
             TaskActorProof::Native(&writer)
