@@ -2903,6 +2903,9 @@ class Oneiron:
         @property
         def retained_work(self) -> "Oneiron._VaultSyncRetainedWorkVerbs":
             return Oneiron._VaultSyncRetainedWorkVerbs(self._client)
+        @property
+        def repo_manifests(self) -> "Oneiron._VaultSyncRepoManifestsVerbs":
+            return Oneiron._VaultSyncRepoManifestsVerbs(self._client)
     class _VaultSyncQuarantineVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2921,6 +2924,21 @@ class Oneiron:
         def set(self, spec):
             """The owner sets one retained-work queue's wait in seconds, or resets it to its existing default, and receives the effective wait."""
             return json.loads(_translate(lambda: self._client.vault_sync_retained_work_wait_set(json.dumps(spec))))
+    class _VaultSyncRepoManifestsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def conflict(self) -> "Oneiron._VaultSyncRepoManifestsConflictVerbs":
+            return Oneiron._VaultSyncRepoManifestsConflictVerbs(self._client)
+    class _VaultSyncRepoManifestsConflictVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def review(self, spec):
+            """The owner reviews one durable repo-manifest conflict and its exact held/carried manifests; return the opaque binding to discard that reviewed carrier."""
+            return json.loads(_translate(lambda: self._client.vault_sync_repo_manifests_conflict_review(json.dumps(spec))))
+        def discard(self, spec):
+            """The owner discards exactly the reviewed carrier, keeping the held manifest; report Stale or WindowLive, or the actual delta and queue acceptance, never delivery."""
+            return json.loads(_translate(lambda: self._client.vault_sync_repo_manifests_conflict_discard(json.dumps(spec))))
     class _VaultTrustedContactsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -5052,13 +5070,13 @@ class Oneiron:
             """Reads the owner-pinned v2 model manifest, or none when no manifest is configured."""
             return json.loads(_translate(lambda: self._client.vault_models_manifest_read(json.dumps(spec))))
         def replace(self, spec):
-            """Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically clearing resident route overrides."""
+            """Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically retaining resident route overrides that remain admitted."""
             return json.loads(_translate(lambda: self._client.vault_models_manifest_replace(json.dumps(spec))))
     class _VaultModelsOneironerVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def bind(self, spec):
-            """Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and clearing resident route overrides."""
+            """Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and retaining resident route overrides that remain admitted."""
             return json.loads(_translate(lambda: self._client.vault_models_oneironer_bind(json.dumps(spec))))
     class _VaultModelsRoutesVerbs:
         def __init__(self, client: _NativeClient) -> None:

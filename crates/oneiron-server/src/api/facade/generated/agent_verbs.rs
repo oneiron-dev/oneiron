@@ -1359,6 +1359,14 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.mail.threads.read", post(facade_route))
         .route("/vault.mail.compliance.search", post(facade_route))
         .route("/vault.files.sources.convert", post(facade_route))
+        .route(
+            "/vault.sync.repo_manifests.conflict.review",
+            post(facade_route),
+        )
+        .route(
+            "/vault.sync.repo_manifests.conflict.discard",
+            post(facade_route),
+        )
         .route("/connector.answer", post(facade_route))
         .route("/self.browser.open", post(facade_route))
         .route("/self.browser.observe", post(facade_route))

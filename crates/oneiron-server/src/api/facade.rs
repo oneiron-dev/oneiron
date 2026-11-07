@@ -159,6 +159,7 @@ mod receipts;
 mod release;
 mod reply_doors;
 mod repo_doors;
+mod repo_manifest_conflict_doors;
 mod research_doors;
 mod reservoir_source_doors;
 mod residence_doors;

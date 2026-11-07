@@ -1247,3 +1247,5 @@ both bindings and their export-census tests in one change.
 - `vault.mail.threads.read`
 - `vault.mail.compliance.search`
 - `vault.files.sources.convert`
+- `vault.sync.repo_manifests.conflict.review`
+- `vault.sync.repo_manifests.conflict.discard`

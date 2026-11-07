@@ -1267,6 +1267,8 @@ pub enum AgentVerb {
     VaultMailThreadsRead,
     VaultMailComplianceSearch,
     VaultFilesSourcesConvert,
+    VaultSyncRepoManifestsConflictReview,
+    VaultSyncRepoManifestsConflictDiscard,
     ConnectorAnswer,
     SelfBrowserOpen,
     SelfBrowserObserve,
@@ -2571,6 +2573,8 @@ impl AgentVerb {
         Self::VaultMailThreadsRead,
         Self::VaultMailComplianceSearch,
         Self::VaultFilesSourcesConvert,
+        Self::VaultSyncRepoManifestsConflictReview,
+        Self::VaultSyncRepoManifestsConflictDiscard,
         Self::ConnectorAnswer,
         Self::SelfBrowserOpen,
         Self::SelfBrowserObserve,
@@ -3912,6 +3916,12 @@ impl AgentVerb {
             Self::VaultMailThreadsRead => "vault.mail.threads.read",
             Self::VaultMailComplianceSearch => "vault.mail.compliance.search",
             Self::VaultFilesSourcesConvert => "vault.files.sources.convert",
+            Self::VaultSyncRepoManifestsConflictReview => {
+                "vault.sync.repo_manifests.conflict.review"
+            }
+            Self::VaultSyncRepoManifestsConflictDiscard => {
+                "vault.sync.repo_manifests.conflict.discard"
+            }
             Self::ConnectorAnswer => "connector.answer",
             Self::SelfBrowserOpen => "self.browser.open",
             Self::SelfBrowserObserve => "self.browser.observe",
@@ -5196,6 +5206,8 @@ impl AgentVerb {
                 | Self::VaultMailThreadsRead
                 | Self::VaultMailComplianceSearch
                 | Self::VaultFilesSourcesConvert
+                | Self::VaultSyncRepoManifestsConflictReview
+                | Self::VaultSyncRepoManifestsConflictDiscard
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -6529,6 +6541,8 @@ impl AgentVerb {
                 | Self::VaultMailThreadsRead
                 | Self::VaultMailComplianceSearch
                 | Self::VaultFilesSourcesConvert
+                | Self::VaultSyncRepoManifestsConflictReview
+                | Self::VaultSyncRepoManifestsConflictDiscard
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -7958,6 +7972,8 @@ impl AgentVerb {
                 | Self::VaultMailThreadsRead
                 | Self::VaultMailComplianceSearch
                 | Self::VaultFilesSourcesConvert
+                | Self::VaultSyncRepoManifestsConflictReview
+                | Self::VaultSyncRepoManifestsConflictDiscard
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -8734,6 +8750,7 @@ impl AgentVerb {
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailComplianceSearch
                 | Self::VaultFilesSourcesConvert
+                | Self::VaultSyncRepoManifestsConflictDiscard
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserClick
@@ -10081,6 +10098,8 @@ impl AgentVerb {
             Self::VaultMailThreadsRead => &["spec"],
             Self::VaultMailComplianceSearch => &["spec"],
             Self::VaultFilesSourcesConvert => &["spec"],
+            Self::VaultSyncRepoManifestsConflictReview => &["spec"],
+            Self::VaultSyncRepoManifestsConflictDiscard => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
@@ -11386,6 +11405,8 @@ impl AgentVerb {
             Self::VaultMailThreadsRead => &["spec"],
             Self::VaultMailComplianceSearch => &["spec"],
             Self::VaultFilesSourcesConvert => &["spec"],
+            Self::VaultSyncRepoManifestsConflictReview => &["spec"],
+            Self::VaultSyncRepoManifestsConflictDiscard => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
@@ -14094,7 +14115,7 @@ impl AgentVerb {
                 "Reads the owner-pinned v2 model manifest, or none when no manifest is configured."
             }
             Self::VaultModelsManifestReplace => {
-                "Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically clearing resident route overrides."
+                "Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically retaining resident route overrides that remain admitted."
             }
             Self::VaultSettingsWebConnector => {
                 "Reads the owner's web connector switch: which provider serves connector.web.search and fetch, on the backend key, the owner's own secret or a hub connector. Unset reads as Tavily on the backend key."
@@ -14106,7 +14127,7 @@ impl AgentVerb {
                 "Reads the web connector's usage rows, newest first: provider, tool, key source, latency, cost and its basis, provider request id and outcome per call, with the summed cost. No query, URL or result text."
             }
             Self::VaultModelsOneironerBind => {
-                "Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and clearing resident route overrides."
+                "Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and retaining resident route overrides that remain admitted."
             }
             Self::VaultModelsRoutesRead => {
                 "Reads one independent model slot route with its manifest pin and effective resident narrowing."
@@ -15133,6 +15154,12 @@ impl AgentVerb {
             }
             Self::VaultFilesSourcesConvert => {
                 "The owner converts an attached notes folder on this host to Files, keeping its existing notes, history and links. The host rescans the folder into its Files world and returns the source and rescan report."
+            }
+            Self::VaultSyncRepoManifestsConflictReview => {
+                "The owner reviews one durable repo-manifest conflict and its exact held/carried manifests; return the opaque binding to discard that reviewed carrier."
+            }
+            Self::VaultSyncRepoManifestsConflictDiscard => {
+                "The owner discards exactly the reviewed carrier, keeping the held manifest; report Stale or WindowLive, or the actual delta and queue acceptance, never delivery."
             }
             Self::ConnectorAnswer => {
                 "Answers the questions one of the caller's own connector calls waits on, by the handle its awaiting_input reply named, under that call's grant and principal; the connector's next questions or its result come back as foreign data."

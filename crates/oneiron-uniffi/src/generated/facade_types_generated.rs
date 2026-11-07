@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1279 facade rows, 4627 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1231.
+// UniFFI census: 1281 facade rows, 4635 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1233.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -1963,6 +1963,18 @@ pub struct HealthReviewReceipt {
     pub dial: i64,
     #[serde(rename = "measured")]
     pub measured: i64,
+    #[serde(
+        rename = "exact_dial",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub exact_dial: Option<f64>,
+    #[serde(
+        rename = "exact_measured",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub exact_measured: Option<f64>,
     #[serde(rename = "diagnostics")]
     pub diagnostics: Vec<String>,
     #[serde(rename = "evidence")]
@@ -2168,6 +2180,18 @@ pub struct AgentHealthCard {
     pub measured: i64,
     #[serde(rename = "dial")]
     pub dial: i64,
+    #[serde(
+        rename = "exact_dial",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub exact_dial: Option<f64>,
+    #[serde(
+        rename = "exact_measured",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub exact_measured: Option<f64>,
     #[serde(rename = "counter_evidence")]
     pub counter_evidence: Vec<AgentHealthCounter>,
     #[serde(rename = "agent_blocked")]
@@ -7095,6 +7119,12 @@ pub struct SpendScope {
     pub unit: String,
     #[serde(rename = "cap_units")]
     pub cap_units: u64,
+    #[serde(
+        rename = "ceiling_units",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ceiling_units: Option<u64>,
     #[serde(rename = "hard")]
     pub hard: bool,
     #[serde(rename = "spent_units")]
@@ -53936,6 +53966,8 @@ pub enum LabelReadFailure {
     EmittedText,
     #[serde(rename = "NotEosStop")]
     NotEosStop,
+    #[serde(rename = "TokenCap")]
+    TokenCap,
     #[serde(rename = "MissingLabels")]
     MissingLabels,
     #[serde(rename = "Malformed")]
@@ -71820,6 +71852,129 @@ pub struct FilesSourceConvertRequest {
     pub path: String,
     #[serde(rename = "exclude", default, skip_serializing_if = "Option::is_none")]
     pub exclude: Option<Vec<String>>,
+}
+
+/// `oneiron::verbs::repo_manifest_conflict::RepoManifestConflictReviewRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RepoManifestConflictReviewRequest {
+    #[serde(rename = "window")]
+    pub window: String,
+    #[serde(rename = "portable_repo")]
+    pub portable_repo: String,
+}
+
+/// A tuple as UniFFI carries it: positional fields crossing as one JSON array.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct TupleStringString {
+    pub item0: String,
+    pub item1: String,
+}
+impl serde::Serialize for TupleStringString {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        crate::codec::ser_tuple2(&self.item0, &self.item1, serializer)
+    }
+}
+impl<'de> serde::Deserialize<'de> for TupleStringString {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        crate::codec::de_tuple2(deserializer, |item0, item1| Self { item0, item1 })
+    }
+}
+
+/// `oneiron::origin::repo_manifest::RepoManifestWriter`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RepoManifestWriter {
+    #[serde(rename = "machine")]
+    pub machine: String,
+    #[serde(rename = "signature")]
+    pub signature: Vec<u8>,
+}
+
+/// `oneiron::origin::repo_manifest::RepoManifest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RepoManifest {
+    #[serde(rename = "portable")]
+    pub portable: String,
+    #[serde(rename = "version")]
+    pub version: u16,
+    #[serde(rename = "code")]
+    pub code: String,
+    #[serde(rename = "minted_at")]
+    pub minted_at: u64,
+    #[serde(
+        rename = "origin_name",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub origin_name: Option<String>,
+    #[serde(rename = "visible_refs")]
+    pub visible_refs: Vec<TupleStringString>,
+    #[serde(rename = "lfs_pointers")]
+    pub lfs_pointers: Vec<String>,
+    #[serde(rename = "epoch")]
+    pub epoch: u64,
+    #[serde(rename = "updated_at")]
+    pub updated_at: u64,
+    #[serde(rename = "writer", default, skip_serializing_if = "Option::is_none")]
+    pub writer: Option<RepoManifestWriter>,
+}
+
+/// `oneiron::verbs::repo_manifest_conflict::RepoManifestConflictReviewView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RepoManifestConflictReviewView {
+    #[serde(rename = "window")]
+    pub window: String,
+    #[serde(rename = "portable_repo")]
+    pub portable_repo: String,
+    #[serde(rename = "held")]
+    pub held: RepoManifest,
+    #[serde(rename = "carried")]
+    pub carried: RepoManifest,
+    #[serde(rename = "binding")]
+    pub binding: String,
+}
+
+/// `oneiron::verbs::repo_manifest_conflict::RepoManifestConflictDiscardRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RepoManifestConflictDiscardRequest {
+    #[serde(rename = "binding")]
+    pub binding: String,
+}
+
+/// `oneiron::verbs::repo_manifest_conflict::RepoManifestConflictQueueView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state")]
+pub enum RepoManifestConflictQueueView {
+    #[serde(rename = "queued")]
+    Queued {
+        #[serde(rename = "sequence")]
+        sequence: u64,
+    },
+    #[serde(rename = "failed")]
+    Failed {
+        #[serde(rename = "error")]
+        error: String,
+    },
+}
+
+/// `oneiron::verbs::repo_manifest_conflict::RepoManifestConflictDiscardView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state")]
+pub enum RepoManifestConflictDiscardView {
+    #[serde(rename = "discarded")]
+    Discarded {
+        #[serde(rename = "update_base64")]
+        update_base64: String,
+        #[serde(rename = "queue")]
+        queue: RepoManifestConflictQueueView,
+    },
+    #[serde(rename = "stale")]
+    Stale,
+    #[serde(rename = "window_live")]
+    WindowLive,
 }
 
 /// `oneiron::code_run::dispatcher::connector_answer::ConnectorAnswerAction`.

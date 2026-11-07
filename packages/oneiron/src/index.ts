@@ -1590,6 +1590,14 @@ export class Oneiron {
           set: (input: Facade.RetainedWorkWaitSetRequest): number => this.#call(() => this.#client.vaultSyncRetainedWorkWaitSet(input) as number),
         },
       },
+      repo_manifests: {
+        conflict: {
+          /** The owner reviews one durable repo-manifest conflict and its exact held/carried manifests; return the opaque binding to discard that reviewed carrier. */
+          review: (input: Facade.RepoManifestConflictReviewRequest): Facade.RepoManifestConflictReviewView | null => this.#call(() => this.#client.vaultSyncRepoManifestsConflictReview(input) as Facade.RepoManifestConflictReviewView | null),
+          /** The owner discards exactly the reviewed carrier, keeping the held manifest; report Stale or WindowLive, or the actual delta and queue acceptance, never delivery. */
+          discard: (input: Facade.RepoManifestConflictDiscardRequest): Facade.RepoManifestConflictDiscardView => this.#call(() => this.#client.vaultSyncRepoManifestsConflictDiscard(input) as Facade.RepoManifestConflictDiscardView),
+        },
+      },
     },
     trusted_contacts: {
       /** A live person names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again. */
@@ -2793,11 +2801,11 @@ export class Oneiron {
       manifest: {
         /** Reads the owner-pinned v2 model manifest, or none when no manifest is configured. */
         read: (input: Facade.EmptyRequest): Facade.ModelManifest | null => this.#call(() => this.#client.vaultModelsManifestRead(input) as Facade.ModelManifest | null),
-        /** Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically clearing resident route overrides. */
+        /** Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically retaining resident route overrides that remain admitted. */
         replace: (input: Facade.ModelManifestReplace): Facade.ModelManifest => this.#call(() => this.#client.vaultModelsManifestReplace(input) as Facade.ModelManifest),
       },
       oneironer: {
-        /** Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and clearing resident route overrides. */
+        /** Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and retaining resident route overrides that remain admitted. */
         bind: (input: Facade.OneironerBind): Facade.ModelManifest => this.#call(() => this.#client.vaultModelsOneironerBind(input) as Facade.ModelManifest),
       },
       routes: {
