@@ -115,83 +115,145 @@ fn freebusy_listed_in(
     read: &CalendarRead<'_>,
     calendars: &[CalendarSel],
     range: TimeRange,
-    mut listed: Option<&mut std::collections::BTreeMap<EntityId, Vec<EntityId>>>,
+    listed: Option<&mut std::collections::BTreeMap<EntityId, Vec<EntityId>>>,
 ) -> Result<BusyUnion> {
-    // Validate selector structure before matching calendar passports below.
-    validate_selectors(calendars)?;
+    PreparedBusy::read(read, calendars)?.union(calendars, range, listed)
+}
 
-    let bounds = ordered(range);
-    // A held claim may keep a slot busy and never frees one: every EVENT is
-    // read as written and as its held claims keep it busy, and a slot either
-    // read finds busy is busy.
-    let mut written = Vec::new();
-    let mut held = Vec::new();
-    visit_calendar_events_busy(read, |row, busy| {
-        written.push(row);
-        held.extend(busy);
-        Ok(())
-    })?;
-    let withheld = read.withheld_exception_series()?;
-    let settled: std::collections::BTreeSet<_> = withheld
-        .iter()
-        .filter(|(_, is_held)| !**is_held)
-        .map(|(key, _)| key.clone())
-        .collect();
-    let all: std::collections::BTreeSet<_> = withheld.into_keys().collect();
-    let mut intervals = Vec::new();
-    for (rows, withheld_exception) in [(written, &all), (held, &settled)] {
-        let exceptions: Vec<_> = rows
+/// [`freebusy_scoped`] as one page (FIX 11998): the range from `from` (or
+/// its start) in time slices, each the exact union of its own span, until
+/// the range's end or `deadline` (see `query::pages`). The rows and claims
+/// are read once. Returns the union of the covered prefix and where the
+/// next page starts.
+///
+/// # Errors
+///
+/// As [`freebusy_scoped`].
+pub(in crate::calendar) fn freebusy_page_scoped(
+    read: &ScopedRead<'_>,
+    calendars: &[CalendarSel],
+    range: TimeRange,
+    from: Option<u64>,
+    deadline: Option<std::time::Instant>,
+) -> Result<ScopedReadResult<(BusyUnion, Option<u64>)>> {
+    super::query::receipted(read, |lane| {
+        let prepared = PreparedBusy::read(lane, calendars)?;
+        let mut slices =
+            super::query::Slices::new(from.unwrap_or(range.start), range.end, deadline, false);
+        let mut intervals = Vec::new();
+        while let Some(slice) = slices.next_slice() {
+            intervals.extend(prepared.union(calendars, slice, None)?);
+        }
+        Ok((normalize_busy(intervals), slices.resume_from()))
+    })
+}
+
+/// Every EVENT as written and as its held claims keep it busy, with the
+/// exception series this lane may not read: read once, then projected over
+/// a range or one slice of it at a time.
+struct PreparedBusy {
+    written: Vec<CalendarEventRow>,
+    held: Vec<CalendarEventRow>,
+    /// Every withheld exception series: the written read masks none of them.
+    all: std::collections::BTreeSet<(EntityId, String)>,
+    /// The withheld series whose exceptions do not await a critical
+    /// confirm: the held read masks only these.
+    settled: std::collections::BTreeSet<(EntityId, String)>,
+}
+
+impl PreparedBusy {
+    fn read(read: &CalendarRead<'_>, calendars: &[CalendarSel]) -> Result<Self> {
+        // Validate selector structure before matching calendar passports below.
+        validate_selectors(calendars)?;
+        // A held claim may keep a slot busy and never frees one: every EVENT is
+        // read as written and as its held claims keep it busy, and a slot either
+        // read finds busy is busy.
+        let mut written = Vec::new();
+        let mut held = Vec::new();
+        visit_calendar_events_busy(read, |row, busy| {
+            written.push(row);
+            held.extend(busy);
+            Ok(())
+        })?;
+        let withheld = read.withheld_exception_series()?;
+        let settled: std::collections::BTreeSet<_> = withheld
             .iter()
-            .filter_map(|row| row.facts.exception().cloned())
+            .filter(|(_, is_held)| !**is_held)
+            .map(|(key, _)| key.clone())
             .collect();
-        // Each exception EVENT, by the master whose occurrence it masks.
-        let masks: Vec<(&CalendarEventRow, EntityId)> = if listed.is_some() {
-            rows.iter()
-                .filter_map(|row| {
-                    row.facts
-                        .exception()
-                        .map(|exception| (row, exception.master_ref))
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-        for row in &rows {
-            if !matches_selectors(row.facts.systems(), calendars)
-                || !row.facts.blocks_time()
-                || row.facts.is_cancelled()
-                || row.facts.series_withheld()
-            {
-                continue;
-            }
-            if let Some(listed) = listed.as_deref_mut()
-                && row.facts.series().is_some()
-            {
-                for (exception, _) in masks.iter().filter(|(_, master)| *master == row.id) {
-                    listed
-                        .entry(exception.id)
-                        .or_insert_with(|| exception.claims.clone());
+        let all: std::collections::BTreeSet<_> = withheld.into_keys().collect();
+        Ok(Self {
+            written,
+            held,
+            all,
+            settled,
+        })
+    }
+
+    /// The busy union over `range`, listing in `listed` the EVENTs it keeps.
+    fn union(
+        &self,
+        calendars: &[CalendarSel],
+        range: TimeRange,
+        mut listed: Option<&mut std::collections::BTreeMap<EntityId, Vec<EntityId>>>,
+    ) -> Result<BusyUnion> {
+        let bounds = ordered(range);
+        let mut intervals = Vec::new();
+        for (rows, withheld_exception) in [(&self.written, &self.all), (&self.held, &self.settled)]
+        {
+            let exceptions: Vec<_> = rows
+                .iter()
+                .filter_map(|row| row.facts.exception().cloned())
+                .collect();
+            // Each exception EVENT, by the master whose occurrence it masks.
+            let masks: Vec<(&CalendarEventRow, EntityId)> = if listed.is_some() {
+                rows.iter()
+                    .filter_map(|row| {
+                        row.facts
+                            .exception()
+                            .map(|exception| (row, exception.master_ref))
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            for row in rows {
+                if !matches_selectors(row.facts.systems(), calendars)
+                    || !row.facts.blocks_time()
+                    || row.facts.is_cancelled()
+                    || row.facts.series_withheld()
+                {
+                    continue;
                 }
-            }
-            let occurrences =
-                super::query::occurrences(row, bounds, &exceptions, withheld_exception)?;
-            for occurrence in occurrences {
-                if let Some(clipped) = clip(occurrence, bounds) {
-                    let (start_utc, end_utc) = half_open(clipped)?;
-                    if let Some(listed) = listed.as_deref_mut() {
-                        listed.entry(row.id).or_insert_with(|| row.claims.clone());
+                if let Some(listed) = listed.as_deref_mut()
+                    && row.facts.series().is_some()
+                {
+                    for (exception, _) in masks.iter().filter(|(_, master)| *master == row.id) {
+                        listed
+                            .entry(exception.id)
+                            .or_insert_with(|| exception.claims.clone());
                     }
-                    intervals.push(BusyInterval {
-                        start_utc,
-                        end_utc,
-                        source: row.id,
-                    });
+                }
+                let occurrences =
+                    super::query::occurrences(row, bounds, &exceptions, withheld_exception)?;
+                for occurrence in occurrences {
+                    if let Some(clipped) = clip(occurrence, bounds) {
+                        let (start_utc, end_utc) = half_open(clipped)?;
+                        if let Some(listed) = listed.as_deref_mut() {
+                            listed.entry(row.id).or_insert_with(|| row.claims.clone());
+                        }
+                        intervals.push(BusyInterval {
+                            start_utc,
+                            end_utc,
+                            source: row.id,
+                        });
+                    }
                 }
             }
         }
-    }
 
-    Ok(normalize_busy(intervals))
+        Ok(normalize_busy(intervals))
+    }
 }
 
 /// Sorts, then merges overlapping *and* touching intervals.
