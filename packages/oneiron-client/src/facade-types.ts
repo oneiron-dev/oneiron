@@ -2369,7 +2369,7 @@ export type FactPositionHex = string
 /** `oneiron::runtime_hooks::source::FactKind` */
 export type FactKind = "claim.landed" | "claim.superseded" | "proposal.settled"
 /** `oneiron::runtime_hooks::replay::HookReplayCase` */
-export type HookReplayCase = { on: "fact"; source: FactSource; position: FactPositionHex; kind: FactKind; entity: string } | { on: "verb"; run_key: string; invocation: string; verb: string; phase: HookPhase }
+export type HookReplayCase = { on: "fact"; source: FactSource; position: FactPositionHex; kind: FactKind; entity: string } | { on: "verb"; run_key: string; invocation: string; verb: string; phase: HookPhase } | { on: "unknown_run"; run_key: string }
 /** `oneiron::runtime_hooks::replay::HookReplayCompare` */
 export type HookReplayCompare = "same" | "differs" | "incomplete"
 /** `oneiron::verbs::host::hooks_replay::HookReplayOutcome` */
