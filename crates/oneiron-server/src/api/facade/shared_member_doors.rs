@@ -7,7 +7,7 @@
 //! engine's roster, role, expiry and power checks decide. Beside them, the
 //! owner's guest slip mint (OF-232), under the owner's proof and the host's
 //! slip issuer. An invitee's own slip (FIX 1925) lists, accepts or declines
-//! only the invitation it names.
+//! only the invitation it names, on the key the invitee bound (FIX 8745).
 //!
 //! Every row here but the erase pair lists its rows (`host_door_lists`), as
 //! `shared_act_doors` says: invitations, objections, notices and erase asks
@@ -24,10 +24,11 @@ use oneiron::federation::{
 use oneiron::memory::erase_sweep::{RecordEraseSweep, RecordEraseSweepRequest};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{
-    self, ActAnswer, GuestSlipMintRequest, GuestSlipMinted, InvitationSlip, InvitationSlipRequest,
-    RecordEraseConfirmRequest, RecordEraseOutcome, RecordErasePreview, RecordEraseRequest,
-    SharedActRequest, SharedEraseAskCloseRequest, SharedEraseAskRequest, SharedInvitationRequest,
-    SharedInvitationWithdrawRequest, SharedVaultRequest,
+    self, ActAnswer, GuestSlipMintRequest, GuestSlipMinted, InvitationCode, InvitationCodeRequest,
+    InvitationSlip, InvitationSlipRequest, RecordEraseConfirmRequest, RecordEraseOutcome,
+    RecordErasePreview, RecordEraseRequest, SharedActRequest, SharedEraseAskCloseRequest,
+    SharedEraseAskRequest, SharedInvitationRequest, SharedInvitationWithdrawRequest,
+    SharedVaultRequest,
 };
 
 use super::host_doors::support::{
@@ -206,9 +207,11 @@ pub(crate) async fn vault_members_accept(
     .await
 }
 
-/// `vault.members.invitation_slip`: an `add_member` holder's mint of a
-/// pending invitation's slip (a founding invitation's, or a lost one), under
-/// the host's slip issuer.
+/// `vault.members.invitation_slip`: the invitee binds their own pending
+/// invitation to the key of the independent human slip this request came on
+/// and gets the invitation's slip under the host's slip issuer (FIX 8745).
+/// The engine refuses any other credential, an invitation's own slip among
+/// them (`person` admits that only at its invitation's doors).
 pub(crate) async fn vault_members_invitation_slip(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -219,11 +222,41 @@ pub(crate) async fn vault_members_invitation_slip(
         server,
         VERB,
         person(server, auth, VERB),
-        move |server, admin| {
+        move |server, invitee| {
             crate::api::pairing::with_issuer(server, |issuer| {
                 Ok(sdk::mint_invitation_slip_as(
                     server.vault(),
-                    &admin,
+                    &invitee,
+                    issuer,
+                    input,
+                ))
+            })
+            .map_err(|_| internal(VERB))?
+        },
+        |_| Some(Vec::new()),
+    )
+    .await
+}
+
+/// `vault.members.invitation_code`: the owner's act mints an invitation
+/// pairing code for a pending invitation under the host's slip issuer
+/// (FIX 8745) and returns it to the owner, who passes it on by any channel.
+pub(crate) async fn vault_members_invitation_code(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: InvitationCodeRequest,
+) -> MaybeListed<InvitationCode> {
+    const VERB: &str = "vault.members.invitation_code";
+    let owner = super::owner_binding::facade_owner(server, auth, VERB);
+    as_person_naming(
+        server,
+        VERB,
+        owner,
+        move |server, owner| {
+            crate::api::pairing::with_issuer(server, |issuer| {
+                Ok(sdk::issue_invitation_code_as(
+                    server.vault(),
+                    &owner,
                     issuer,
                     input,
                 ))

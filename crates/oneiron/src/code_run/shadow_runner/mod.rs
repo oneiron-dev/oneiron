@@ -23,10 +23,17 @@
 //! An unavailable arm is a result with a typed reason
 //! ([`ShadowUnavailableReason`]), never a loss or a fix; `Err` is a runner
 //! or storage failure.
+//!
+//! A model reads an arm's body only through [`read_for_model`] (FIX 9468):
+//! it reads again the arm's mark on the body, its source, the reader's Grant
+//! and the taint of each source occurrence the arm was seeded with
+//! ([`ShadowReleaseSource`]). [`ShadowBodyStore::read`] stays the raw byte
+//! read of the arm's owner.
 
 mod admit;
 mod bridge;
 mod frames;
+mod release;
 mod source;
 mod store;
 mod types;
@@ -35,12 +42,18 @@ use std::future::Future;
 use std::pin::Pin;
 
 pub use self::admit::admit_published_inline;
-pub(crate) use self::bridge::{ArmReads, ShadowBridgeHost};
-pub use self::frames::{ShadowFrame, ShadowFrameBody, ShadowModelAnswer, ShadowReceiptFrame};
-pub use self::source::{
-    PreparedShadowStep, prepare_shadow_step_source, shadow_route_prompt, shadow_source_gone,
+pub(crate) use self::bridge::{
+    ArmCallableLoad, ArmCallables, ArmReads, ArmTreatedCall, ShadowBridgeHost,
+    absent_delivery_outcome,
 };
-pub(crate) use self::source::{ShadowSourceAdmission, prepare_admitted_shadow_step_source};
+pub use self::frames::{ShadowFrame, ShadowFrameBody, ShadowModelAnswer, ShadowReceiptFrame};
+pub use self::release::{ShadowReleaseSource, read_for_model};
+pub use self::source::{
+    PreparedShadowStep, ShadowSourceAdmission, ShadowSourceWitness, WitnessedRelease,
+    prepare_shadow_step_source, prepare_witnessed_shadow_step_source, shadow_route_prompt,
+    shadow_source_gone,
+};
+pub(crate) use self::source::{admission_lapsed, prepare_admitted_shadow_step_source};
 pub use self::store::{ShadowBodyStore, ShadowSourceHold};
 pub use self::types::{
     ArtifactDigest, ArtifactDigestAlgorithm, EngineArtifactPin, ShadowArmLease, ShadowBodyRef,

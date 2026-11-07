@@ -51,6 +51,8 @@ impl SeededPolicyValueRows {
     }
 
     /// Selects the authored-or-seeded baseline, then applies trusted narrowing.
+    /// A Narrowing `ScopePrecedence` row contributes nothing: only an authored
+    /// row selects the precedence mode (FIX 11769).
     pub(in crate::gate) fn finish(self, folded: &mut Vec<PolicyValueRow>) {
         let authored = self.authored;
         folded.extend(
@@ -59,9 +61,11 @@ impl SeededPolicyValueRows {
                 .filter(|row| !authored.contains(&(row.key, row.scope))),
         );
         for mut narrowing in self.narrowing {
-            // Precedence has no meet: retain its existing conflict handling.
+            // Precedence has no meet, and no mode is uniformly stricter, so
+            // only an authored row selects it (FIX 11769): a trusted
+            // Narrowing row cannot change the seeded or authored mode, and
+            // never puts a second row in its slot.
             if narrowing.key == PolicyValueKey::ScopePrecedence {
-                folded.push(narrowing);
                 continue;
             }
             let slot = (narrowing.key, narrowing.scope);

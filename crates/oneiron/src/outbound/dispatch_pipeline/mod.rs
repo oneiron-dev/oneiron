@@ -20,7 +20,7 @@ mod vault;
 pub(super) mod verdict;
 
 pub(crate) use self::connector_slate::connector_slate_effect_from_frozen_payload;
-pub(super) use self::degrade::ALTERNATIVE_OUTCOME_FIELD;
+pub(super) use self::degrade::{ALTERNATIVE_OUTCOME_FIELD, ambient_alternative_ref};
 pub(crate) use self::esign_delivery::{
     EsignDeliveryCall, esign_approval_digest_from_frozen_payload, esign_delivery_call_in_txn,
     esign_delivery_grant_in_txn, failure_signals_approval_digest_from_frozen_payload,
