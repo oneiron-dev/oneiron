@@ -163,7 +163,17 @@ pub(super) fn cursor(
     source: FactSource,
 ) -> Result<Option<CursorRow>> {
     let rtxn = vault.store.env.read_txn()?;
-    CURSORS.get(&vault.store, &rtxn, &(binding, [source.tag()]))
+    cursor_in_txn(vault, &rtxn, binding, source)
+}
+
+/// [`cursor`] in the caller's snapshot.
+pub(super) fn cursor_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    binding: EntityId,
+    source: FactSource,
+) -> Result<Option<CursorRow>> {
+    CURSORS.get(&vault.store, txn, &(binding, [source.tag()]))
 }
 
 pub(super) fn put_cursor_in_txn(
@@ -328,6 +338,54 @@ impl HookRunDerivation {
         verdict_evidence: &[EntityId],
         runtime_identity: Option<String>,
     ) -> Result<Self> {
+        Self::new_in_snapshot(
+            vault,
+            None,
+            binding_id,
+            binding,
+            grant,
+            entry,
+            reads,
+            verdict_evidence,
+            runtime_identity,
+        )
+    }
+
+    pub(in crate::runtime_hooks) fn new_in_txn(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        binding_id: EntityId,
+        binding: &PackHookBinding,
+        grant: &HookGrant,
+        entry: &FactEntry,
+        reads: &[HookReadPin],
+        verdict_evidence: &[EntityId],
+        runtime_identity: Option<String>,
+    ) -> Result<Self> {
+        Self::new_in_snapshot(
+            vault,
+            Some(txn),
+            binding_id,
+            binding,
+            grant,
+            entry,
+            reads,
+            verdict_evidence,
+            runtime_identity,
+        )
+    }
+
+    fn new_in_snapshot(
+        vault: &Vault,
+        txn: Option<&heed::RoTxn<'_>>,
+        binding_id: EntityId,
+        binding: &PackHookBinding,
+        grant: &HookGrant,
+        entry: &FactEntry,
+        reads: &[HookReadPin],
+        verdict_evidence: &[EntityId],
+        runtime_identity: Option<String>,
+    ) -> Result<Self> {
         let selector = serde_json::to_vec(&binding.selector)
             .map_err(|_| Error::InvariantViolation("hook selector encode"))?;
         let mut params = blake3::Hasher::new();
@@ -346,25 +404,12 @@ impl HookRunDerivation {
             })
         }));
         for id in verdict_evidence {
-            let (revision, body_hash) = {
-                let txn = vault.store.env.read_txn()?;
-                let raw = crate::vault::entity_revision::read_entity_revision_in_txn(
-                    vault,
-                    &txn,
-                    id,
-                    crate::vault::ReadMode::Live,
-                )?;
-                let body_hash = raw
-                    .as_deref()
-                    .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..))
-                    .map(|body| *blake3::hash(body).as_bytes());
-                let revision = match body_hash.as_ref() {
-                    Some(hash) => crate::vault::entity_revision::revision_for_body_hash_in_txn(
-                        vault, &txn, id, hash,
-                    )?,
-                    None => None,
-                };
-                (revision, body_hash)
+            let (revision, body_hash) = match txn {
+                Some(txn) => Self::evidence_revision_in_txn(vault, txn, id)?,
+                None => {
+                    let txn = vault.store.env.read_txn()?;
+                    Self::evidence_revision_in_txn(vault, &txn, id)?
+                }
             };
             dependencies.push(HookDependency {
                 id: *id,
@@ -386,6 +431,29 @@ impl HookRunDerivation {
             runtime_identity,
             dependencies,
         })
+    }
+    fn evidence_revision_in_txn(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<(Option<RevisionRef>, Option<[u8; 32]>)> {
+        let raw = crate::vault::entity_revision::read_entity_revision_in_txn(
+            vault,
+            txn,
+            id,
+            crate::vault::ReadMode::Live,
+        )?;
+        let body_hash = raw
+            .as_deref()
+            .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..))
+            .map(|body| *blake3::hash(body).as_bytes());
+        let revision = match body_hash.as_ref() {
+            Some(hash) => {
+                crate::vault::entity_revision::revision_for_body_hash_in_txn(vault, txn, id, hash)?
+            }
+            None => None,
+        };
+        Ok((revision, body_hash))
     }
 }
 
@@ -572,7 +640,16 @@ pub(super) struct HookIntent {
 
 pub(super) fn memo(vault: &Vault, key: &RunKey) -> Result<Option<HookRunRecord>> {
     let rtxn = vault.store.env.read_txn()?;
-    MEMOS.get(&vault.store, &rtxn, key)
+    memo_in_txn(vault, &rtxn, key)
+}
+
+/// [`memo`] in the caller's snapshot.
+pub(super) fn memo_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &RunKey,
+) -> Result<Option<HookRunRecord>> {
+    MEMOS.get(&vault.store, txn, key)
 }
 
 /// The id of the receipt a run writes.
