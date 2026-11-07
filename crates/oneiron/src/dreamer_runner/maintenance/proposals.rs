@@ -101,13 +101,21 @@ pub(super) fn emit_in_txn(
     .map(|(id, _)| id)
 }
 
-/// [`emit_in_txn`] for a finding whose claim stands where `scope` places it
-/// (FIX 21886): the opaque claim scope map, whose `scopeProjectId` is the
-/// claim's project stamp. The same signing and Gate path writes it; a replay
-/// of the same content in another scope is refused.
+/// Where a scoped finding's claim stands (FIX 21886, 22064).
+pub(super) struct FindingPlace {
+    /// The opaque claim scope map; its `scopeProjectId` is the claim's
+    /// project stamp.
+    pub(super) scope: Option<Value>,
+    /// The claim's world; `None` leaves it in base reality.
+    pub(super) world: Option<EntityId>,
+}
+
+/// [`emit_in_txn`] for a finding whose claim stands where `place` puts it.
+/// The same signing and Gate path writes it; a replay of the same content
+/// in another place is refused.
 #[expect(
     clippy::too_many_arguments,
-    reason = "one finding's subject, claim, evidence, scope and write envelope"
+    reason = "one finding's subject, claim, evidence, place and write envelope"
 )]
 pub(super) fn emit_scoped_in_txn(
     vault: &Vault,
@@ -116,7 +124,7 @@ pub(super) fn emit_scoped_in_txn(
     predicate: &str,
     value: &serde_json::Value,
     evidence: &[EntityId],
-    scope: &Value,
+    place: &FindingPlace,
     envelope: &crate::WriteEnvelope,
     now: u64,
 ) -> Result<EntityId> {
@@ -129,7 +137,7 @@ pub(super) fn emit_scoped_in_txn(
             value,
             evidence,
         },
-        Some(scope),
+        Some(place),
         envelope,
         now,
     )
@@ -174,14 +182,14 @@ pub(super) fn finding_erased_in_txn(
     Ok(crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, txn, &id)?.deleted)
 }
 
-/// Lands one finding under `envelope`, its claim scoped by `scope` when one
+/// Lands one finding under `envelope`, its claim placed by `place` when one
 /// is given, or returns the one already landed with the same content and
-/// scope; the flag is true only for a fresh landing.
+/// place; the flag is true only for a fresh landing.
 fn write_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     finding: &Finding<'_>,
-    scope: Option<&Value>,
+    place: Option<&FindingPlace>,
     envelope: &crate::WriteEnvelope,
     now: u64,
 ) -> Result<(EntityId, bool)> {
@@ -207,7 +215,11 @@ fn write_in_txn(
             || body.value.as_str() != std::str::from_utf8(&bytes).ok()
             || body.source != Some(crate::ClaimSource::Generated)
             || crate::claim::session_claim_producer(&body) != Some(envelope.actor().entity_ref())
-            || scope.is_some_and(|scope| body.scope.as_ref() != Some(scope))
+            || place.is_some_and(|place| {
+                body.scope != place.scope
+                    || body.world.unwrap_or_else(crate::claim::base_world_id)
+                        != place.world.unwrap_or_else(crate::claim::base_world_id)
+            })
         {
             return Err(super::invalid());
         }
@@ -226,9 +238,14 @@ fn write_in_txn(
             source_meet: crate::ClaimSource::Generated,
         },
     ));
-    // Placed before it is signed, so the signature covers its scope.
-    if let Some(scope) = scope {
-        candidate = candidate.with_scope(scope.clone());
+    // Placed before it is signed, so the signature covers its place.
+    if let Some(place) = place {
+        if let Some(scope) = &place.scope {
+            candidate = candidate.with_scope(scope.clone());
+        }
+        if let Some(world) = place.world {
+            candidate = candidate.with_world(world);
+        }
     }
     let mut envelope = envelope.clone();
     vault.sign_retained_machine_claim_in_txn(&*txn, &id, &candidate, &mut envelope)?;
