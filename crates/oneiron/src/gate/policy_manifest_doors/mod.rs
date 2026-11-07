@@ -62,6 +62,7 @@ const FIELDS: &[&str] = &[
     "signatures",
     "auto_checker",
     "slide_review_policy",
+    crate::gate::code_consent_settlement::KEY,
     "teacher_probe",
     "sheet_answer_limits",
 ];
