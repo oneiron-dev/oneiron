@@ -16,7 +16,9 @@
 //! baseline's, trusted in the host's process; only the arm id, the target
 //! and the isolation differ, and the runner meters both under the Coach
 //! alike. The Grant is read again before each arm is sent and before each
-//! body of an arm is read.
+//! body of an arm is read. The host prepares each arm's source again under
+//! the pair's own gate, owned as its witness, and asks it before each raw
+//! read (FIX 9446).
 //!
 //! A pair is judged only when both arms ran their step to its end on the
 //! target, step, request, start and pins named, the candidate ran sandboxed,
@@ -25,6 +27,8 @@
 //! the candidate fixed it. Anything else is a typed not-run, never a verdict,
 //! and a runner or storage error stays an error. Every arm's lease is
 //! released on every way out.
+
+use std::sync::Arc;
 
 use serde_json::json;
 
@@ -35,7 +39,7 @@ use super::publisher::{
     EngineCandidateRun, EngineNotRun, EnginePairState,
 };
 use crate::code_run::shadow_runner::{
-    ShadowDeterminism, ShadowRunRequest, ShadowRunResult, ShadowSourceAdmission, ShadowStatus,
+    ShadowDeterminism, ShadowRunRequest, ShadowRunResult, ShadowStatus,
     prepare_admitted_shadow_step_source,
 };
 use crate::code_run::step_replay_capsules;
@@ -175,9 +179,12 @@ impl CoachReplay<'_> {
             Err(refused) => return Ok(Err(EngineNotRun::Admission(refused))),
         };
         run.grant = Some(engine_admission.grant());
-        let gate = EngineStepGate::of(&engine_admission, &capsule);
+        // FIX 9446: the gate owns the pair's admission and step, so the
+        // host's worker prepares each arm's source again under this proof.
+        let gate = Arc::new(EngineStepGate::of(engine_admission, capsule));
+        let witness = EngineStepGate::witness(&gate);
         let meter = shadow.arm_meter();
-        let pair = match PairDescriptor::read(self.vault, &capsule, meter, &gate)? {
+        let pair = match PairDescriptor::read(self.vault, meter, &gate)? {
             Ok(pair) => pair,
             Err(unavailable) => return Ok(Err(EngineNotRun::Source(unavailable))),
         };
@@ -197,8 +204,10 @@ impl CoachReplay<'_> {
         if let Err(reason) = still_admitted(self.vault, &gate)? {
             return Ok(Err(reason));
         }
-        let candidate =
-            shadow.run_arm(pair.arm(target.clone(), ShadowIsolationRequired::Sandboxed))?;
+        let candidate = shadow.run_arm(
+            pair.arm(target.clone(), ShadowIsolationRequired::Sandboxed),
+            witness.clone(),
+        )?;
         held.hold(&candidate);
         run.arms
             .push(EngineArmSummary::of(EngineArm::Candidate, &candidate));
@@ -208,10 +217,13 @@ impl CoachReplay<'_> {
         if let Err(reason) = still_admitted(self.vault, &gate)? {
             return Ok(Err(reason));
         }
-        let baseline = shadow.run_arm(pair.arm(
-            ShadowTarget::Baseline,
-            ShadowIsolationRequired::TrustedInProcessBaseline,
-        ))?;
+        let baseline = shadow.run_arm(
+            pair.arm(
+                ShadowTarget::Baseline,
+                ShadowIsolationRequired::TrustedInProcessBaseline,
+            ),
+            witness,
+        )?;
         held.hold(&baseline);
         run.arms
             .push(EngineArmSummary::of(EngineArm::Baseline, &baseline));
@@ -321,17 +333,16 @@ struct PairDescriptor {
 }
 
 impl PairDescriptor {
-    /// `capsule`'s step, read through the runner's own preparation while
-    /// `gate` still admits it (FIX 7027, 8704), with `meter` for both arms;
-    /// or the runner's reason it cannot be read, a capture that pinned no
-    /// answering model or no route among them.
+    /// The step of `gate`'s capsule, read through the runner's own
+    /// preparation while `gate` still admits it (FIX 7027, 8704), with
+    /// `meter` for both arms; or the runner's reason it cannot be read, a
+    /// capture that pinned no answering model or no route among them.
     fn read(
         vault: &Vault,
-        capsule: &StepReplayCapsule,
         meter: ShadowMeterContext,
-        gate: &dyn ShadowSourceAdmission,
+        gate: &EngineStepGate,
     ) -> Result<std::result::Result<Self, ShadowUnavailable>> {
-        let prepared = match prepare_admitted_shadow_step_source(vault, capsule, gate)? {
+        let prepared = match prepare_admitted_shadow_step_source(vault, gate.capsule(), gate)? {
             Ok(prepared) => prepared,
             Err(unavailable) => return Ok(Err(unavailable)),
         };
@@ -463,7 +474,7 @@ fn isolated(result: &ShadowRunResult, pin: EngineArtifactPin) -> bool {
 struct ArmBodies<'a> {
     shadow: &'a dyn CodeFixShadowHost,
     vault: &'a Vault,
-    gate: &'a EngineStepGate<'a>,
+    gate: &'a EngineStepGate,
 }
 
 impl ArmBodies<'_> {

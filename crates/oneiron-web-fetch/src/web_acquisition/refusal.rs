@@ -6,6 +6,12 @@ pub const HOSTED_INFRASTRUCTURE_REASON: &str = "hosted_infrastructure";
 /// The named reason every hosted private-network refusal carries (FIX 7657).
 pub const HOSTED_PRIVATE_NETWORK_REASON: &str = "hosted_private_network";
 
+/// The exact reason a same-site crawl records for a page refused for leaving
+/// its pinned origin: a hop or a navigation a rung refused before contact
+/// (FIX 4734), or a landing outside the pin. A host browser's destination
+/// refusal names it too.
+pub const CROSS_SITE_REDIRECT_REASON: &str = "cross_site_redirect";
+
 /// Why a hosted node's guard refused a destination; also the error a host's
 /// transport fails a refused connection with (its resolver's, its redirect
 /// policy's or its relay's), which the rung turns into the matching
@@ -112,7 +118,11 @@ impl RendererErrorKind {
         match self {
             Self::HostedInfrastructure => Some(HostedEgressRefusal::Infrastructure),
             Self::HostedPrivateNetwork => Some(HostedEgressRefusal::PrivateNetwork),
-            Self::Transport | Self::Extraction | Self::InvalidResponse => None,
+            Self::Transport
+            | Self::Extraction
+            | Self::InvalidResponse
+            | Self::CrossSiteRedirect
+            | Self::UnsafeRedirect => None,
         }
     }
 }
@@ -130,6 +140,30 @@ impl RendererError {
         };
         Self {
             kind,
+            message: message.into(),
+        }
+    }
+
+    /// A rung refused a URL it was about to contact (the page, a redirect
+    /// hop, a navigation) because it is outside a same-site crawl's pinned
+    /// origin, before anything resolved or sent it (FIX 4734). The ladder
+    /// stops on it and reports [`WebFetchError::CrossSiteRedirect`]; no lower
+    /// rung runs.
+    #[must_use]
+    pub fn cross_site_redirect(message: impl Into<String>) -> Self {
+        Self {
+            kind: RendererErrorKind::CrossSiteRedirect,
+            message: message.into(),
+        }
+    }
+
+    /// A rung refused a redirect hop that is not credential-free absolute
+    /// http(s) before sending it (FIX 4734). The ladder stops on it and
+    /// reports [`WebFetchError::UnsafeRedirect`]; no lower rung runs.
+    #[must_use]
+    pub fn unsafe_redirect(message: impl Into<String>) -> Self {
+        Self {
+            kind: RendererErrorKind::UnsafeRedirect,
             message: message.into(),
         }
     }

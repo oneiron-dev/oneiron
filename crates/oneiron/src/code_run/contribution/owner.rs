@@ -18,17 +18,22 @@
 //! answer that no longer reads score nothing and close the pair. The pair
 //! keeps the original credit's anchor. The owner's word is each fork
 //! score's judge, never a world outcome.
+//!
+//! The owner the pair asks is selected first, and each text it is shown is
+//! read under that owner's own admission to the pair's source (FIX 20607).
+//! The owner is asked again before the pair is shown. A selected owner row
+//! is no credential: the owner reads as a question's own reader reads.
 
 use serde::{Deserialize, Serialize};
 
 use super::super::storage::{
-    accept_owner_pair_in_txn, close_owner_pair_in_txn, fork_response, judge_owner_pair_in_txn,
-    owner_pair_in_txn, put_owner_pair,
+    accept_owner_pair_in_txn, close_owner_pair_in_txn, judge_owner_pair_in_txn, owner_pair_in_txn,
+    put_owner_pair,
 };
 use super::{
     ContributionForkReceipt, ContributionReplayUnavailable as Unavailable, ExecutedForkView,
     ExecutedStepStatus, ForkEvidenceMode, ForkJudge, ForkScore, ForkScoring, ForkScoringIdentity,
-    ForkTreatment, Outcome, Prepared, Runner,
+    ForkTreatment, Outcome, PairReader, Prepared, Runner,
 };
 use crate::compaction::output::OutputRef;
 use crate::dreamer_runner::maintenance::ContributionForks;
@@ -429,7 +434,8 @@ impl Runner<'_> {
     /// settled: the pair as the owner's word scored it, else its pending
     /// pair, kept now on the first pass and asked while no ask carries it.
     /// A pending pair reads its kept answers again to ask, and pays for
-    /// nothing; it is `Unfinished` until the owner's word lands.
+    /// nothing; it is `Unfinished` until the owner's word lands. The owner
+    /// it asks is admitted again before it is shown the pair (FIX 20607).
     pub(super) fn owner_judged(
         &self,
         prepared: &Prepared,
@@ -459,6 +465,7 @@ impl Runner<'_> {
                 pair.shown_first,
                 [&with_skill, &without_skill],
                 mode,
+                pair.owner,
             )? {
                 Ok(texts) => texts,
                 Err(reason) => return Ok(Err(reason)),
@@ -466,6 +473,12 @@ impl Runner<'_> {
             // Texts that no longer read as reserved are no question to ask.
             if !texts.match_presentation(&pair.presentation) {
                 return Ok(Err(Unavailable::Unreadable));
+            }
+            let owner = PairReader::Consumer {
+                owner: Some(pair.owner),
+            };
+            if !prepared.source.admits_now(self.vault, owner)? {
+                return Ok(Err(Unavailable::Unfinished));
             }
             crate::task_verb::ask_contribution_pair(self.vault, &pair, &texts);
         }
@@ -525,7 +538,8 @@ impl Runner<'_> {
     /// owner it asks, its presentation's ids and texts' digests, and the
     /// frozen criterion. A pair another pass kept first is returned as kept.
     /// A pair its writer does not keep is unavailable for that writer's own
-    /// reason (FIX 6256).
+    /// reason (FIX 6256). The owner is selected before any text is read, and
+    /// the texts are read under that owner's admission (FIX 20607).
     fn reserve_owner_pair(
         &self,
         prepared: &Prepared,
@@ -546,16 +560,6 @@ impl Runner<'_> {
         } else {
             ForkTreatment::WithoutSkill
         };
-        let texts = match self.owner_pair_texts(
-            prepared,
-            &criterion,
-            shown_first,
-            [with_skill, without_skill],
-            mode,
-        )? {
-            Ok(texts) => texts,
-            Err(reason) => return Ok(Err(reason)),
-        };
         let (owner, conversation) = {
             let txn = self.vault.store.env.read_txn()?;
             let Some(owner) = crate::policy_model::owners_in_txn(self.vault, &txn)?
@@ -567,6 +571,17 @@ impl Runner<'_> {
             let conversation =
                 crate::task_verb::coach_owner_conversation_in(self.vault, &txn, &owner)?;
             (owner, conversation)
+        };
+        let texts = match self.owner_pair_texts(
+            prepared,
+            &criterion,
+            shown_first,
+            [with_skill, without_skill],
+            mode,
+            owner,
+        )? {
+            Ok(texts) => texts,
+            Err(reason) => return Ok(Err(reason)),
         };
         let part = |text: &str| -> Result<OwnerPairPart> {
             Ok(OwnerPairPart {
@@ -612,8 +627,9 @@ impl Runner<'_> {
         put_owner_pair(self.vault, &self.pair, &self.provenance, &pair)
     }
 
-    /// The texts the owner reads, both answers read again from the bodies
-    /// the run owns and, in the `Executed` mode, with what each program did.
+    /// The texts `owner` reads, both answers read again from the bodies the
+    /// run owns under `owner`'s admission (FIX 20607) and, in the `Executed`
+    /// mode, with what each program did.
     fn owner_pair_texts(
         &self,
         prepared: &Prepared,
@@ -621,16 +637,18 @@ impl Runner<'_> {
         shown_first: ForkTreatment,
         [with_skill, without_skill]: [&ContributionForkReceipt; 2],
         mode: ForkEvidenceMode,
+        owner: EntityId,
     ) -> Outcome<OwnerPairTexts> {
         let (first, second) = match shown_first {
             ForkTreatment::WithSkill => (with_skill, without_skill),
             ForkTreatment::WithoutSkill => (without_skill, with_skill),
         };
-        let shown_a = match self.shown_answer(prepared, first, mode)? {
+        let reader = PairReader::Consumer { owner: Some(owner) };
+        let shown_a = match self.shown_answer(prepared, first, mode, reader)? {
             Ok(text) => text,
             Err(reason) => return Ok(Err(reason)),
         };
-        let shown_b = match self.shown_answer(prepared, second, mode)? {
+        let shown_b = match self.shown_answer(prepared, second, mode, reader)? {
             Ok(text) => text,
             Err(reason) => return Ok(Err(reason)),
         };
@@ -641,21 +659,20 @@ impl Runner<'_> {
         }))
     }
 
-    /// One fork's answer as the owner reads it, whole.
+    /// One fork's answer as the owner reads it, whole, read for `reader`,
+    /// the owner the pair asks (FIX 20607).
     fn shown_answer(
         &self,
         prepared: &Prepared,
         fork: &ContributionForkReceipt,
         mode: ForkEvidenceMode,
+        reader: PairReader,
     ) -> Outcome<String> {
-        let Some(response) = fork_response(self.vault, prepared.capsule.run, fork)? else {
-            return Ok(Err(if fork.response_erased {
-                Unavailable::Erased
-            } else {
-                Unavailable::Unreadable
-            }));
+        let response = match self.read_response(prepared, fork, reader)? {
+            Ok(response) => response,
+            Err(reason) => return Ok(Err(reason)),
         };
-        let executed = match self.executed_view(prepared, fork, mode)? {
+        let executed = match self.executed_view(prepared, fork, mode, reader)? {
             Ok(executed) => executed,
             Err(reason) => return Ok(Err(reason)),
         };
