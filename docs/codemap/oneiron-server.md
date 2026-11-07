@@ -726,8 +726,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_routes/proactivity_routes/training_runs.rs` | src | m | 4 crate-vis | — | `/v1/owner/coach/training-offers/{prepare,authorize,training}` (OF-577): the owner's setup of a Train… |
 | `src/api/owner_routes/proactivity_routes/training_runs/checkpoints.rs` | src | s | 3 crate-vis | — | `PUT /v1/owner/coach/training-checkpoints` (FIX 12086): the owner's starting checkpoint into custody… |
 | `src/api/owner_routes/recovery_kit_routes.rs` | src | s | 3 crate-vis | — | `/v1/owner/recovery-kit`: the world kit's public status on a running server (OF-173) |
-| `src/api/owner_routes/recovery_kit_target_routes.rs` | src | m | 8 crate-vis | — | The target install's own kit calls (FIX 4736, 4530, 4564, 4955): the material a root change or a late… |
+| `src/api/owner_routes/recovery_kit_target_routes.rs` | src | m | 9 crate-vis | — | The target install's own kit calls (FIX 4736, 4530, 4564, 4955): the material a root change or a late… |
 | `src/api/owner_routes/recovery_kit_target_routes/authority_enrollment.rs` | src | s | 1 crate-vis | — | The owner's explicit pre-loss recovery-key enrollment on the kit's target install |
+| `src/api/owner_routes/recovery_kit_target_routes/authority_recover.rs` | src | s | 1 crate-vis | — | Lost-owner recovery: the enrolled kit key authenticates; the device is only a target |
 | `src/api/owner_routes/recovery_kit_target_routes/pad_access.rs` | src | m | 3 crate-vis | — | A late joiner's pad access by the owner's kit, and what the sealed bundle upkeep last moved (FIX 4564, 4953… |
 | `src/api/owner_routes/recovery_kit_target_routes/root_doors.rs` | src | m | 5 crate-vis | — | The root ceremonies made directly on this install while its server runs (FIX 4955): where the owner is… |
 | `src/api/owner_routes/recovery_kit_target_routes/secret_anchor.rs` | src | s | 3 crate-vis | — | `POST /v1/owner/secrets/anchor-sign` (FIX 1956): the owner's recovery kit pushes a portable secret's current… |
