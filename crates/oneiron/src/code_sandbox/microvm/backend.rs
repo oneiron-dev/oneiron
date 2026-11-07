@@ -425,6 +425,7 @@ impl MicroVmBackend for DevProcessBackend {
             status: 0,
             overlay_dirty,
             result_json: None,
+            guest_error: None,
         })
     }
 

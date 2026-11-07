@@ -54,6 +54,8 @@ pub enum VerifyFindingCode {
     TrustRootUnavailable,
     TrustCheckNotRun,
     ValidationMaterialInvalid,
+    ValidationMaterialUnavailable,
+    RevocationStatusUnknown,
     DocumentTimestampInvalid,
     ModificationNotAllowed,
     NoSignature,
@@ -72,6 +74,32 @@ pub enum Coverage {
     EntireRevision,
     EntireFile,
 }
+
+/// An unsigned byte range beyond the signature's required `/Contents` exclusion.
+/// Offsets are half-open: `start` is included and `end` is excluded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UncoveredByteRange {
+    pub start: u64,
+    pub end: u64,
+}
+
+/// Coverage of a proven structural revision, excluding the signature value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RevisionCoverage {
+    WholeRevision {
+        revision: usize,
+        byte_end: u64,
+    },
+    Partial {
+        revision: usize,
+        byte_end: u64,
+        /// A valid two-span signature starts at zero and excludes only
+        /// `/Contents`, so any additional unsigned bytes form one tail.
+        uncovered: [UncoveredByteRange; 1],
+    },
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SignatureKind {
@@ -134,6 +162,8 @@ pub struct SignatureReport {
     pub kind: SignatureKind,
     pub byte_range: ByteRangeEvidence,
     pub coverage: Coverage,
+    /// `None` when the byte range or structural revision cannot be established.
+    pub revision_coverage: Option<RevisionCoverage>,
     pub digest: Option<SignedRangeDigest>,
     pub profile: Option<PadesProfile>,
     pub integrity: VerifyVerdict,

@@ -31,6 +31,7 @@ use crate::learning::{
 };
 use crate::{EntityId, Result, Vault};
 
+mod float_setting_fit;
 mod setting_fit;
 
 /// The reviewer cell's axis: a card outcome scores the evaluator's diagnosis.
@@ -39,7 +40,7 @@ pub use crate::skill::health_review::HEALTH_REVIEW_RECEIPT_PREFIX;
 const REVIEW_STATE_DOMAIN: &[u8] = b"oneiron.coach.agent_health.review_state.v1";
 
 /// One outcome set on a card, with what it judged frozen as it stood then.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HealthReviewReceipt {
     /// The review state's id: `health_review:` and 64 hex. A re-settle of the
@@ -63,6 +64,12 @@ pub struct HealthReviewReceipt {
     pub dial: i64,
     /// The number the card showed.
     pub measured: i64,
+    /// The exact native dial and measured values, frozen from the card. Units
+    /// are signal-specific: `long_wait` share, `cost_spike` ratio, `silent`
+    /// minutes for the dial; `long_wait` share, `cost_spike` ratio, `silent`
+    /// quiet seconds for the measured.
+    pub exact_dial: Option<f64>,
+    pub exact_measured: Option<f64>,
     /// The card's DIAGNOSTICs when it was set, newest last.
     pub diagnostics: Vec<EntityId>,
     /// The card's receipt and attempt ids when it was set, newest last.
@@ -175,6 +182,8 @@ pub(super) fn settle_with_review_receipt_in_txn(
             reviewer_revision: card.reviewer_revision,
             dial: card.dial,
             measured: card.measured,
+            exact_dial: card.exact_dial,
+            exact_measured: card.exact_measured,
             diagnostics: card.diagnostics.clone(),
             evidence: card.evidence.clone(),
             observed_brief: card.observed_brief.clone(),
@@ -274,7 +283,8 @@ fn project_receipt(
     crate::skill_attribution::health_review::project_health_review_outcome_in_txn(
         vault, txn, card, held,
     )?;
-    setting_fit::project_in_txn(vault, txn, held, now)
+    setting_fit::project_in_txn(vault, txn, held, now)?;
+    float_setting_fit::project_float_setting_fit_in_txn(vault, txn, held, now)
 }
 
 /// The evaluator's `learning.reliability` cell, one per evaluator string:
@@ -341,7 +351,7 @@ pub(super) fn reproject_pending(vault: &Vault, now: u64) -> Result<u64> {
                 }
             }
             if changed {
-                CARDS.put(&vault.store, txn, key, &card)?;
+                super::receipt_index::put_card_in_txn(&vault.store, txn, key, &card)?;
             }
         }
         Ok(applied)
@@ -351,8 +361,9 @@ pub(super) fn reproject_pending(vault: &Vault, now: u64) -> Result<u64> {
 impl Vault {
     /// The card that holds reviewer receipt `receipt` (`health_review:` and
     /// 64 hex), and its newest copy of that receipt: what the replay judge
-    /// replays a reviewer revision on. Every card is read. `None` when no card
-    /// holds it, or the id has another prefix.
+    /// replays a reviewer revision on. Only the cards the receipt index names
+    /// are read (FIX 10880). `None` when no card holds it, or the id has
+    /// another shape.
     ///
     /// # Errors
     ///
@@ -361,11 +372,14 @@ impl Vault {
         &self,
         receipt: &str,
     ) -> Result<Option<(AgentHealthCard, HealthReviewReceipt)>> {
-        if !receipt.starts_with(HEALTH_REVIEW_RECEIPT_PREFIX) {
+        let Some(digest) = super::receipt_index::receipt_digest(receipt) else {
             return Ok(None);
-        }
+        };
         let rtxn = self.store.env.read_txn()?;
-        for (_, card) in CARDS.scan(&self.store, &rtxn)? {
+        for key in super::receipt_index::cards_holding(&self.store, &rtxn, &digest)? {
+            let Some(card) = CARDS.get(&self.store, &rtxn, &key)? else {
+                continue;
+            };
             let held = card
                 .review_outcomes
                 .iter()
