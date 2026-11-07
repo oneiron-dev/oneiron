@@ -83,10 +83,10 @@ impl ProposalOutcome {
 /// resolution event's own actor field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProposalScope {
-    /// The proposed op's wire kind (`merge` / `split`).
+    /// The proposed op's wire kind (`merge` / `split` / `facet`).
     pub op_kind: &'static str,
     /// Registry kind name of the op's primary target entity (the merge
-    /// survivor / the split original), e.g. `"PERSON"`.
+    /// survivor / the split original / the facet base), e.g. `"PERSON"`.
     pub target_class: String,
     /// The proposing actor's opaque handle (`proposer:` and 64 hex digits,
     /// FIX 9870), never its entity ref, or
