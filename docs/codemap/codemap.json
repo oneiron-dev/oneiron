@@ -16783,7 +16783,7 @@
       "const": 2,
       "crate-vis": 1,
       "enum": 1,
-      "fn": 14,
+      "fn": 15,
       "struct": 3
      }
     },
@@ -17725,7 +17725,7 @@
       "const": 6,
       "crate-vis": 13,
       "enum": 8,
-      "fn": 20,
+      "fn": 21,
       "re-export": 1,
       "struct": 21,
       "trait": 1
@@ -17774,6 +17774,7 @@
      "path": "src/code_run/reader_fold.rs",
      "purpose": "The model call behind `summarize` (code-mode-summary-sdk-v1): the one prompt a summary job sends, by its…",
      "surface": {
+      "crate-vis": 3,
       "fn": 2
      }
     },
@@ -19859,7 +19860,7 @@
      "path": "src/code_sandbox/microvm/overlay.rs",
      "purpose": "The host-side scratch root and the checked overlay walk that turns guest writes into proposals",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 6,
       "fn": 2
      }
     },
@@ -21519,7 +21520,7 @@
       "const": 1,
       "crate-vis": 15,
       "enum": 3,
-      "fn": 5,
+      "fn": 6,
       "struct": 6
      }
     },
@@ -36271,7 +36272,7 @@
      "path": "src/engine_executor/host.rs",
      "purpose": "The recording JS host, its state and its runtime adapter",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -78185,8 +78186,9 @@
       "const": 4,
       "crate-vis": 3,
       "enum": 2,
-      "fn": 16,
-      "re-export": 2,
+      "fn": 17,
+      "mod": 1,
+      "re-export": 3,
       "struct": 4
      }
     },
@@ -78229,6 +78231,17 @@
       "fn": 4,
       "struct": 1,
       "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/chunks/stream.rs",
+     "purpose": "The chunk-sync stream an HTTP exchange carries each way (FIX 145): an envelope ([`CHUNK_SYNC_VERSION`] and…",
+     "surface": {
+      "const": 1,
+      "fn": 4
      }
     },
     {
@@ -79041,6 +79054,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/connection/shared_leave.rs",
+     "purpose": "Observed shared-vault runs with leave checks beside their connection attempts",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -79322,7 +79346,7 @@
       "crate-vis": 18,
       "enum": 1,
       "fn": 1,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 1
      }
     },
@@ -79334,6 +79358,20 @@
      "purpose": "Transactional per-principal/grant observations, independent of connections",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FederationPayloadBytes"
+     ],
+     "path": "src/sync/federation_burst/payload.rs",
+     "purpose": "Shared memory ownership for original and isolated federation payload bytes",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -79364,7 +79402,7 @@
      "path": "src/sync/federation_burst/queue.rs",
      "purpose": "Actual deferred payloads and their identity-bound, idempotent completion",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -79391,6 +79429,26 @@
      "surface": {
       "crate-vis": 3,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/federation_burst/review_encoding.rs",
+     "purpose": "Memory ownership for the retained review's exact named MessagePack output",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/federation_burst/review_memory.rs",
+     "purpose": "Pre-admitted payload allocations for native retained-review decoding",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -94624,7 +94682,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 389,
+     "files": 394,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94836,7 +94894,7 @@
    },
    "over_bar": 187,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6711,
+   "source_files": 6716,
    "test_files": 895
   },
   "oneiron-android": {
@@ -113444,7 +113502,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/compaction/chat.rs",
@@ -118407,13 +118465,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/git_lfs/support.rs",
      "purpose": "LFS size, href, time, and JSON helpers",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 21
      }
     },
     {
@@ -121505,13 +121563,13 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/transfer.rs",
      "purpose": "Bounded transfers between an HTTP body and a blocking worker, shared by the git smart-HTTP and LFS bridges",
      "surface": {
-      "crate-vis": 34
+      "crate-vis": 37
      }
     },
     {
@@ -121903,7 +121961,7 @@
      "path": "src/byte_line.rs",
      "purpose": "Bytes in memory the work under one row may hold at once: the embedder endpoint's request bodies or answers…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -125176,6 +125234,16 @@
      "purpose": "A request's work, batch by batch (FIX 9487)",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embedder/serve/body.rs",
+     "purpose": "A request's body, read under room its budget holds for it (FIX 149)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -133369,7 +133437,7 @@
      "purpose": "The engine inside an app's own process (OF-237): [`serve_embedded`] serves a vault the app already opened…"
     },
     "embedder": {
-     "files": 30,
+     "files": 31,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -133705,9 +133773,9 @@
      "purpose": "The host's precision recalculator (ARCH-0075 xlsx row; FIX 2462, OF-505 = A): LibreOffice Calc headless…"
     }
    },
-   "over_bar": 58,
+   "over_bar": 59,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1721,
+   "source_files": 1722,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
