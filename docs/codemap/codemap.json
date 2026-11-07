@@ -26210,6 +26210,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/connector_witness.rs",
+     "purpose": "A reply job participant's erase reaches the conversation rows its exchange was witnessed into (FIX 10897)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -38435,7 +38445,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/federation/shared_act/membership.rs",
@@ -43447,7 +43457,7 @@
      "path": "src/ingest/connector_conversation.rs",
      "purpose": "A served connector conversation as the answering agent's memory (FIX 2404)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 3,
       "struct": 1
      }
@@ -44066,7 +44076,7 @@
      "path": "src/ingest/mod.rs",
      "purpose": "Ingest source registry and source-local normalization",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "mod": 4,
       "re-export": 18
      }
@@ -57728,8 +57738,8 @@
      "path": "src/outbound/reply_job.rs",
      "purpose": "The durable connector reply job (FIX 2405)",
      "surface": {
-      "const": 2,
-      "crate-vis": 6,
+      "const": 3,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 8,
       "struct": 2
@@ -57743,6 +57753,16 @@
      "purpose": "Repays completed replies' owed witnesses without reopening their sends",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound/reply_job/witness_rows.rs",
+     "purpose": "The conversation rows a reply job's exchange was witnessed into, as a participant's erase finds them (FIX…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -93794,7 +93814,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 65,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94284,7 +94304,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 67,
+     "files": 68,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94928,9 +94948,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 188,
+   "over_bar": 189,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6719,
+   "source_files": 6721,
    "test_files": 895
   },
   "oneiron-android": {
@@ -95092,7 +95112,7 @@
      "path": "src/authority/constants.rs",
      "purpose": "Pinned AUTHORITY_LOG constant table",
      "surface": {
-      "const": 105,
+      "const": 106,
       "re-export": 1,
       "type": 1
      }
