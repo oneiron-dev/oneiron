@@ -46,6 +46,49 @@ impl Vault {
         Ok(receipt)
     }
 
+    /// Acts only on a real sealed code wait and the holder's own answer word.
+    /// The digest and policy proof are read here, never supplied by a caller.
+    pub(crate) fn act_on_code_consent_wait_as_holder_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        holder: &AuthenticatedOwner,
+        input: &crate::code_run::CodeConsentAnswerInput,
+    ) -> Result<Option<super::super::code_settlement::CodeConsentHolderDecision>> {
+        let Some((policy, effect_digest)) =
+            crate::code_run::prove_code_consent_holder_act_in_txn(self, txn, holder, input)?
+        else {
+            return Ok(None);
+        };
+        let decision_id = crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?);
+        let receipt = match input.choice {
+            crate::code_run::CodeConsentChoice::Deny => ConsentReceipt::Denied {
+                decision_id,
+                effect_digest,
+            },
+            crate::code_run::CodeConsentChoice::ApproveOnce => {
+                self.claim_approve_once_in_txn(txn, &effect_digest, decision_id)?;
+                ConsentReceipt::Approved {
+                    decision_id,
+                    grant: ConsentGrant::ApproveOnce(effect_digest),
+                }
+            }
+            crate::code_run::CodeConsentChoice::ApproveAndStopAsking => {
+                return Err(Error::Gate(GateError::ConsentUnauthenticatedActor(
+                    "effect settlement power does not change a connector setting",
+                )));
+            }
+        };
+        let attribution = policy.attribution();
+        self.append_code_consent_holder_receipt_in_txn(txn, &attribution, &receipt)?;
+        crate::batch::queue_consent_answer(self, txn);
+        Ok(Some(
+            super::super::code_settlement::CodeConsentHolderDecision {
+                receipt,
+                attribution,
+            },
+        ))
+    }
+
     /// [`Self::approve_once_in_txn`] on a person's own proof, owner of this
     /// vault or not, for one operation that is that person's own: the
     /// caller proves, in this same writer, that the operation acts only on

@@ -270,7 +270,9 @@ impl Vault {
                     self.append_owner_work_result_in_txn(txn, asked.hash, asked.me, outcome)?;
                     return Ok(Answered::Refused(reason));
                 }
-                RootRecheck::AwaitsBasis => return Ok(Answered::AwaitsBasis),
+                RootRecheck::AwaitsBasis | RootRecheck::AwaitsBoundRoot => {
+                    return Ok(Answered::AwaitsBasis);
+                }
             }
             let done = effect(txn)?;
             if answer == Answer::Enacted {
