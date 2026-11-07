@@ -279,6 +279,10 @@ pub struct Vault {
     /// green landing starts a full-auto pass at once. In memory only and
     /// never shared across vaults; each lifecycle tick repairs a missed one.
     pub(crate) origin_mirror_wake: crate::origin::OriginMirrorWake,
+    /// The relayed ask intents that landed for asks this vault admitted and
+    /// wait for their consumption (FIX 7494). In memory only: it drops with
+    /// the vault, and the next open reads the stored intents again.
+    pub(crate) ask_forward_arrivals: std::sync::Mutex<crate::task_verb::AskForwardArrivals>,
     /// The served host's transport an exact publish's mirror git goes
     /// through, its credential broker installing the credential (FIX 19083),
     /// installed once per open vault
