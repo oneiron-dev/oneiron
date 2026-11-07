@@ -154,7 +154,7 @@ impl EngineNativeExecutor<'_> {
                         .map_err(Error::from)?
                 }
             };
-            let request =
+            let mut request =
                 self.build_llm_request(config, &record, &wire_prompt.text, continuation.as_ref())?;
             match self.feed_compaction(config, &record, &request)? {
                 Ok(Some(reason)) => {
@@ -199,6 +199,16 @@ impl EngineNativeExecutor<'_> {
                     }
                 }
             }
+            // FIX 17594 (map §2.2): folds by kind the feed landed after this
+            // request was built are a brief boundary. With a brief port bound,
+            // the request is built and counted again before it is hashed,
+            // captured or sent.
+            let refreshed = self.refresh_brief_request(&mut request, completed_steps, |this| {
+                this.build_llm_request(config, &record, &wire_prompt.text, continuation.as_ref())
+            })?;
+            if let Some(status) = refreshed {
+                return Ok(self.outcome(status, steps_run, record));
+            }
             // Rule 5 (FIX 4197): the first step past the `[limits]
             // executor_run_steps` row asks whether everything is okay, once
             // per run however often it re-enters, and the run keeps going.
@@ -221,6 +231,9 @@ impl EngineNativeExecutor<'_> {
                     .generate_sourced(request, self.lease, sources)
                     .await
             }?;
+            // FIX 17594 (Engine call C): the backend answered a request that
+            // carried the run's brief, so the host's prefix is delivered.
+            self.brief_delivered();
             let execution_text = self.post_turn_hooks(turn, &response)?;
             // Only the post-hook execution view is healed below, as its text:
             // no copy of the reply is made for it (FIX 448). The raw provider
@@ -311,6 +324,7 @@ impl EngineNativeExecutor<'_> {
                         recoverable,
                     ),
                 )?
+                .with_file_output_step(completed_steps)
                 .with_skill_executor(&config.model)
                 .with_result_share(&self.result_share)
                 .with_callable_checks(CallableChecks::new(self.code_check, completed_steps));

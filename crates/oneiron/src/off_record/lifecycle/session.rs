@@ -22,6 +22,7 @@ use crate::error::OffRecordError;
 
 mod checkpoint;
 mod counters;
+mod reader_txn;
 mod routed_side;
 mod type_feedback;
 mod vector_search;

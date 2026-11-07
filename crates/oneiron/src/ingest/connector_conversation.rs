@@ -255,6 +255,7 @@ impl Vault {
             imported_at: now,
             conversation_body: conversation_body(origin)?,
             message_occurred: vec![occurred_at],
+            source_audience: None,
         };
         let receipt =
             self.memory(agent, EdgeActorClass::Agent)
