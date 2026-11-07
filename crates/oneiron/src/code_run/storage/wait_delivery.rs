@@ -16,6 +16,10 @@
 //! (`wait_holders`, FIX 5718): once an erase of its actor took its replies,
 //! it is delivered the reply's erased form, parks on nothing and reads a
 //! typed unavailable, while every other holder reads the reply as before.
+//!
+//! A settler that froze the origins of its reply settles them with it, in
+//! one value (FIX 7083): every copy of the settled reply, routed or late,
+//! keeps them, and a reply with none keeps its origins unknown.
 
 mod erased_read;
 mod resume;
@@ -31,7 +35,7 @@ use super::wait_holders::{
     hold_settled_for_caller_in_txn, holder_erased_in_txn, holder_erased_routed, join_wait_in_txn,
     join_wait_routed,
 };
-use crate::code_run::ExecutorStorage;
+use crate::code_run::{ExecutorStorage, ResultOrigins};
 use crate::llm::{DreamerTrapKind, TrapRef};
 use crate::off_record::OffRecordSession;
 use crate::side_table::{
@@ -101,17 +105,21 @@ pub(crate) fn deliver_wait_in_txn(
     reply: &serde_json::Value,
     now_ms: u64,
 ) -> Result<usize> {
-    deliver_wait_listing_in_txn(vault, txn, wait_id, reply, None, now_ms)
+    deliver_wait_listing_in_txn(vault, txn, wait_id, reply, None, None, now_ms)
 }
 
 /// [`deliver_wait_in_txn`], `reply` kept beside `rows`, the rows its settler
-/// listed it derived from (FIX 5455), when it lists them.
+/// listed it derived from (FIX 5455), when it lists them, and beside
+/// `origins`, the origins its settler froze with it (FIX 7083), when it
+/// froze them. A wait that already settled keeps its first reply whole,
+/// its rows and origins with it.
 pub(crate) fn deliver_wait_listing_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     wait_id: EntityId,
     reply: &serde_json::Value,
     rows: Option<&[EntityId]>,
+    origins: Option<&ResultOrigins>,
     now_ms: u64,
 ) -> Result<usize> {
     let settled = match settled_in_txn(&vault.store, txn, wait_id)? {
@@ -121,6 +129,7 @@ pub(crate) fn deliver_wait_listing_in_txn(
                 reply: reply_text(reply)?,
                 delivered_at_ms: now_ms,
                 source_rows: rows.map(<[EntityId]>::to_vec),
+                origins: origins.cloned(),
                 erased: false,
             };
             SETTLED.admit(vault, txn, &(SETTLED_TAG, wait_id), &mut settled)?;
@@ -339,27 +348,30 @@ fn deliver_routed(
 }
 
 impl ExecutorStorage<'_> {
-    /// [`deliver_wait_in_txn`] where the run's rows are. A room's rows ride
-    /// its route in one routed writer, each written only where it is
-    /// absent: the settled row, then each waiter's delivery, which joins the
-    /// wait's holders and takes the reply's erased form for a run an erase
-    /// of its actor took the replies of (FIX 6586). They bind no trap.
+    /// [`deliver_wait_listing_in_txn`] where the run's rows are. A room's
+    /// rows ride its route in one routed writer, each written only where it
+    /// is absent: the settled row, then each waiter's delivery, which joins
+    /// the wait's holders and takes the reply's erased form for a run an
+    /// erase of its actor took the replies of (FIX 6586). They bind no trap.
+    /// A settled row keeps the origins it settled with (FIX 7083).
     pub(crate) fn deliver_wait(
         &self,
         wait_id: EntityId,
         reply: &serde_json::Value,
         rows: Option<&[EntityId]>,
+        origins: Option<&ResultOrigins>,
         now_ms: u64,
     ) -> Result<usize> {
         match self {
             Self::Canonical(vault) => vault.with_write_txn_grouped(|txn| {
-                deliver_wait_listing_in_txn(vault, txn, wait_id, reply, rows, now_ms)
+                deliver_wait_listing_in_txn(vault, txn, wait_id, reply, rows, origins, now_ms)
             }),
             Self::Session(binding) => binding.answered(|| {
                 let fresh = WaitDelivery {
                     reply: reply_text(reply)?,
                     delivered_at_ms: now_ms,
                     source_rows: rows.map(<[EntityId]>::to_vec),
+                    origins: origins.cloned(),
                     erased: false,
                 };
                 binding
@@ -535,7 +547,8 @@ impl<'a> WaitDeliveries<'a> {
     /// its own, and `connector.call_status` lists them. A canonical wait
     /// that is a connector call's, by its ref, holds its settled reply for
     /// the call's caller in the same commit (FIX 5718 part 3): that
-    /// caller's erase reaches the copy `connector.call_status` reads.
+    /// caller's erase reaches the copy `connector.call_status` reads. A
+    /// reply settled here has unknown origins (FIX 7083).
     pub fn deliver_listing(
         &self,
         wait_id: EntityId,
@@ -544,13 +557,18 @@ impl<'a> WaitDeliveries<'a> {
         now_ms: u64,
     ) -> Result<usize> {
         let ExecutorStorage::Canonical(vault) = &self.storage else {
-            return self.storage.deliver_wait(wait_id, reply, rows, now_ms);
+            return self
+                .storage
+                .deliver_wait(wait_id, reply, rows, None, now_ms);
         };
         let Some(caller) = connector_call_caller(vault, wait_id)? else {
-            return self.storage.deliver_wait(wait_id, reply, rows, now_ms);
+            return self
+                .storage
+                .deliver_wait(wait_id, reply, rows, None, now_ms);
         };
         vault.with_write_txn_grouped(|txn| {
-            let delivered = deliver_wait_listing_in_txn(vault, txn, wait_id, reply, rows, now_ms)?;
+            let delivered =
+                deliver_wait_listing_in_txn(vault, txn, wait_id, reply, rows, None, now_ms)?;
             hold_settled_for_caller_in_txn(vault, txn, wait_id, caller)?;
             Ok(delivered)
         })
@@ -698,7 +716,8 @@ pub(crate) fn observe_wait_change(
 /// each waiter's own key and never into the settled row, so a run that
 /// parks later reads the wait afresh; a settled wait takes none, as its
 /// final reply wins. A waiter already holding a reply keeps it, so repeated
-/// voids coalesce. Returns how many runs this call delivered to.
+/// voids coalesce. Its origins are unknown (FIX 7083). Returns how many runs
+/// this call delivered to.
 pub(crate) fn deliver_changed_wait_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -714,6 +733,7 @@ pub(crate) fn deliver_changed_wait_in_txn(
         reply: reply_text(reply)?,
         delivered_at_ms: now_ms,
         source_rows: None,
+        origins: None,
         erased: false,
     };
     let mut delivered = 0;
