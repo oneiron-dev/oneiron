@@ -268,6 +268,10 @@ side_tables! {
     /// digest of its server and tool, then its admission times. Key: id16(attempt) + u64be(call
     /// seq).
     OUTBOUND_INTENT_UNAVAILABLE: VaultMeta b"outbound:intent_unavailable:v1:" Raw;
+    /// A Deferred send's remote task poll (FIX 11023): its next poll time, poll count and last
+    /// status word; the session and credential choice stay in the settlement's handle. Key:
+    /// hash32 (intent id).
+    OUTBOUND_REMOTE_TASK_POLL: VaultMeta b"outbound:remote_task_poll:v1:" Named;
     /// Deterministic receipt id -> intent id. Key: id16.
     OUTBOUND_SUPPRESSION_INDEX: VaultMeta b"outbound:suppression_index:v1:" Raw;
     /// Device-local receipt body, `rmp_serde::to_vec_named`. Key: hash32 (intent id).
@@ -749,5 +753,6 @@ side_tables! {
     /// Durable wait binding for a run-branch ask. Key: attempt id16 + handle hash32 + step hash32.
     RUN_TREE_ASK_WAIT: VaultMeta b"run.ask.wait.v1/" Named;
     /// One explicitly reviewed run's settlement and compensating-operation handles. Key: job id.
-    RUN_REVIEW_SETTLEMENT: VaultMeta b"run_review:settlement:v1:" Named;
+    RUN_REVIEW_SETTLEMENT: VaultMeta b"run_review:settlement:v1:" Named
+        => crate::memory::run_review::erase_run_review_actor_in_txn;
 }
