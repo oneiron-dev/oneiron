@@ -23430,6 +23430,47 @@ async fn vault_code_origin_publications(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_code_checkout_holder_bind(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.checkout.holder.bind")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.checkout.holder.bind", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.code.checkout.holder.bind", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_code_checkout_holder_bind(
+            server,
+            auth,
+            caller,
+            Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+                &server.vault,
+                &hooks,
+            )),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_code_checkout_bind(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -46552,6 +46593,14 @@ fn boxed_vault_code_origin_publications<'a>(
     Box::pin(vault_code_origin_publications(server, call, input))
 }
 #[inline(never)]
+fn boxed_vault_code_checkout_holder_bind<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_checkout_holder_bind(server, call, input))
+}
+#[inline(never)]
 fn boxed_vault_code_checkout_bind<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
@@ -52395,6 +52444,9 @@ async fn call_verb_row(
         }
         "vault.code.origin.publications" => {
             boxed_vault_code_origin_publications(server, call, input).await
+        }
+        "vault.code.checkout.holder.bind" => {
+            boxed_vault_code_checkout_holder_bind(server, call, input).await
         }
         "vault.code.checkout.bind" => boxed_vault_code_checkout_bind(server, call, input).await,
         "vault.code.checkout.claim" => boxed_vault_code_checkout_claim(server, call, input).await,

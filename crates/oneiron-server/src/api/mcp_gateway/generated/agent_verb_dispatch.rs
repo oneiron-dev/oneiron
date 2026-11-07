@@ -880,6 +880,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.code.origin.authority.get" => a.spec.clone().ok_or_else(invalid),
         "vault.code.origin.authority.set" => a.spec.clone().ok_or_else(invalid),
         "vault.code.origin.publications" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.checkout.holder.bind" => a.spec.clone().ok_or_else(invalid),
         "vault.code.checkout.bind" => a.spec.clone().ok_or_else(invalid),
         "vault.code.checkout.claim" => a.spec.clone().ok_or_else(invalid),
         "vault.code.checkout.get" => a.spec.clone().ok_or_else(invalid),
@@ -3798,6 +3799,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.code.origin.publications" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.code.checkout.holder.bind" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.code.checkout.bind" => {
@@ -7061,6 +7065,9 @@ async fn execute_agent_verb_row_on(
         }
         "vault.code.origin.publications" => {
             boxed_mcp_verb_row_vault_code_origin_publications(row).await
+        }
+        "vault.code.checkout.holder.bind" => {
+            boxed_mcp_verb_row_vault_code_checkout_holder_bind(row).await
         }
         "vault.code.checkout.bind" => boxed_mcp_verb_row_vault_code_checkout_bind(row).await,
         "vault.code.checkout.claim" => boxed_mcp_verb_row_vault_code_checkout_claim(row).await,
@@ -45043,6 +45050,68 @@ async fn mcp_verb_row_vault_code_origin_publications(row: McpVerbRow<'_>) -> Mcp
         serde_json::from_value(input).map_err(|_| invalid())?;
     let (output, listed) = Box::pin(
         crate::api::facade::host_doors::vault_code_origin_publications(server, auth, input),
+    )
+    .await;
+    // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+    served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+        listed,
+    ));
+    let output = output.map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_vault_code_checkout_holder_bind<'a>(
+    row: McpVerbRow<'a>,
+) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_code_checkout_holder_bind(row))
+}
+async fn mcp_verb_row_vault_code_checkout_holder_bind(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("vault.code.checkout.holder.bind", &input)
+        .map_err(mcp_facade_error)?;
+    let input: oneiron::memory::repo_doors::RepoCheckoutBindInput =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let (output, listed) = Box::pin(
+        crate::api::facade::host_doors::vault_code_checkout_holder_bind(
+            server,
+            auth,
+            (actor.actor_ref, actor.actor_class),
+            oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                &memory,
+                "vault.code.checkout.holder.bind",
+            ),
+            input,
+        ),
     )
     .await;
     // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).

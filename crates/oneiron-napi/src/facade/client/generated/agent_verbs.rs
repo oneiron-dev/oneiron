@@ -6388,6 +6388,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_code_checkout_holder_bind(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.checkout.holder.bind", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_code_checkout_bind(
         &self,
         input: serde_json::Value,
