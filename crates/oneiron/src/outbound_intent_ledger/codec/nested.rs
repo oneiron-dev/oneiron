@@ -41,6 +41,35 @@ pub(super) fn decode_admitted_approval(
     )))
 }
 
+pub(super) fn decode_pinned_approval(
+    value: &Value,
+) -> IntentLedgerResult<Option<crate::consent::approval_proof::PinnedApproval>> {
+    use crate::consent::approval_proof::{PinnedApproval, PinnedApprovalFamily};
+
+    if matches!(value, Value::Nil) {
+        return Ok(None);
+    }
+    let invalid = || IntentLedgerError::InvalidRecord("pinned approval is not canonical");
+    let Value::Map(entries) = value else {
+        return Err(invalid());
+    };
+    if entries.len() != 2
+        || entries[0].0.as_str() != Some("family")
+        || entries[1].0.as_str() != Some("proof")
+    {
+        return Err(invalid());
+    }
+    let family = match expect_u64(&entries[0].1)? {
+        1 => PinnedApprovalFamily::LinearDispatch,
+        2 => PinnedApprovalFamily::CampaignLeg,
+        3 => PinnedApprovalFamily::ScopedMcp,
+        4 => PinnedApprovalFamily::ConnectorSlate,
+        _ => return Err(invalid()),
+    };
+    let proof = decode_admitted_approval(&entries[1].1)?.ok_or_else(invalid)?;
+    Ok(Some(PinnedApproval::new(family, proof)))
+}
+
 pub(super) fn decode_budget_accounting(value: &Value) -> IntentLedgerResult<BudgetChargeMarker> {
     let Value::Map(entries) = value else {
         return Err(IntentLedgerError::InvalidRecord(

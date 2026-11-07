@@ -101,7 +101,7 @@ pub use branch::{BranchTurn, ConsolidationBranchPlan, ConversationPart};
 pub(crate) use conflict::topic_key_canonical_bytes;
 pub use conflict::*;
 pub use executor::*;
-pub(crate) use extracted_people::pin_lineage_origin_in_txn;
+pub(crate) use extracted_people::{delete_lineage_origin_in_txn, pin_lineage_origin_in_txn};
 pub use gap::*;
 pub(crate) use neighbourhood::unpin_neighbourhood_in_txn;
 pub(crate) use partition::PartitionAudience;
@@ -178,7 +178,7 @@ pub use thing_agent::{
     ThingPortRequest, ThingProposalRef,
 };
 pub(crate) use turn_text::compaction_span::{
-    ConversationSpanRead, conversation_span_text, conversation_span_text_in,
+    ConversationSpanRead, conversation_span_text, conversation_span_text_in, scoped_turn_text_in,
 };
 pub(crate) use turn_text::{
     TurnText, cited_evidence_bytes, dreamer_may_read_messages_in, dreamer_may_read_turns_in,

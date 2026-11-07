@@ -5,7 +5,7 @@
 //! the room's view and its records stage in the room's own store
 //! ([`session`], [`storage`]; WILL L11-01 S01-2c).
 
-mod projection;
+pub(super) mod projection;
 mod run;
 mod session;
 mod storage;
@@ -701,23 +701,7 @@ impl<'c> Chain<'c> {
         outcome: &HookOutcome,
         check: Option<VerbArgsCheck<'_>>,
     ) -> std::result::Result<(), String> {
-        match outcome {
-            HookOutcome::Rewrite { args } => match check {
-                Some(check) => check(args)
-                    .map_err(|reason| format!("the rewritten args are refused: {reason}")),
-                None => Err("a rewrite has nothing to check its args".to_owned()),
-            },
-            HookOutcome::Skip { .. } if self.call.verb == COMPACT => {
-                Err("a host.compact pre-hook may not skip".to_owned())
-            }
-            HookOutcome::Redact { paths } if paths.is_empty() => {
-                Err("a redact names one or more paths".to_owned())
-            }
-            HookOutcome::Annotate { note } if note.trim().is_empty() => {
-                Err("an annotation is empty".to_owned())
-            }
-            _ => Ok(()),
-        }
+        admit_verb_outcome(&self.call.verb, outcome, check)
     }
 
     fn block(
@@ -846,4 +830,34 @@ const fn phase_token(phase: HookPhase) -> &'static str {
 
 fn hook_name(binding: &PackHookBinding) -> String {
     format!("{}/{}", binding.pack, binding.hook)
+}
+
+/// The verb engine's own checks on an outcome a binding accepted, beside
+/// `judge`: a Rewrite must pass `check`, a `host.compact` pre-hook may not
+/// Skip, a Redact names a path and an Annotate a note. The live chain and
+/// verb replay both apply them (FIX 2393), so a replayed outcome's token
+/// is the one the live run recorded. The reason refuses the outcome.
+pub(in crate::runtime_hooks) fn admit_verb_outcome(
+    verb: &str,
+    outcome: &HookOutcome,
+    check: Option<VerbArgsCheck<'_>>,
+) -> std::result::Result<(), String> {
+    match outcome {
+        HookOutcome::Rewrite { args } => match check {
+            Some(check) => {
+                check(args).map_err(|reason| format!("the rewritten args are refused: {reason}"))
+            }
+            None => Err("a rewrite has nothing to check its args".to_owned()),
+        },
+        HookOutcome::Skip { .. } if verb == COMPACT => {
+            Err("a host.compact pre-hook may not skip".to_owned())
+        }
+        HookOutcome::Redact { paths } if paths.is_empty() => {
+            Err("a redact names one or more paths".to_owned())
+        }
+        HookOutcome::Annotate { note } if note.trim().is_empty() => {
+            Err("an annotation is empty".to_owned())
+        }
+        _ => Ok(()),
+    }
 }
