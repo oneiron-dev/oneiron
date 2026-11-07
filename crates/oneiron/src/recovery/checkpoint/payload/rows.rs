@@ -608,6 +608,17 @@ families! {
     Class::Other(Client::Dispatch(OtherClient::Response)) => SELF_HEAL_CENTROID_EVIDENCE;
     // A saved query's verdict memo (FIX 10089), carried whole (FIX 10533).
     Class::Other(Client::Dispatch(OtherClient::Response)) => SAVED_QUERY_MEMO;
+    // A row's source-audience binding and hold, each under the row its key
+    // names (fix list row 17455). SOURCE_AUDIENCE_DERIVED stays in the image
+    // until its floor check reads opened parts (fix list row 20941).
+    Class::Owner(Getter::SourceAudience) => SOURCE_AUDIENCE_RECORD SOURCE_AUDIENCE_HELD;
+    // The source-audience policies, their events and the thread index stay
+    // under the vault-wide seal until a per-owner compartment (row 17208).
+    Class::Unclassified => SOURCE_AUDIENCE_POLICY SOURCE_AUDIENCE_EVENT SOURCE_AUDIENCE_THREAD;
+    // A landing's birth marks and a changed policy's wakes and windows are
+    // live working state.
+    Class::NotImaged => SOURCE_AUDIENCE_POLICY_WAKE SOURCE_AUDIENCE_POLICY_WINDOW
+        SOURCE_AUDIENCE_BIRTH;
     Class::NotImaged => SELF_HEAL_SIGNED_EVENT SELF_HEAL_SIGNED_RUN SKILL_SOURCE_INDEX
         SKILL_HUB_CONTENT_HASH_INDEX SKILL_HUB_CONTENT_HASH_INDEX_SCHEMA_VERSION
         SECRET_CUSTODY_RESTORE_ELECTION;
@@ -689,7 +700,7 @@ families! {
         TYPED_BODY_HEAD TYPED_BODY_RECEIPT;
     Class::Structure => WEAVE_DIGEST_RERENDER
         TEXT_BM25_FIELD_SCHEMA_HASH TEXT_INDEX_SCHEMA_VERSION
-        WORLD_KEY_SEALED_MIRROR_LANDED;
+        WORLD_KEY_SEALED_MIRROR_ERASES WORLD_KEY_SEALED_MIRROR_LANDED;
     Class::NotImaged => TASK_CREATE_RATE_WINDOW VAULT_ARCHIVED_BY_RESTORE;
     Class::Unclassified => TAGGING_MENTION_REF TAGGING_PROVISIONAL TAGGING_PROVISIONAL_HINT
         TAGGING_TAG_SET TASK_ASK_BAND TASK_ASK_LINK_SIGNER TASK_ASK_OPTION_LINK
