@@ -247,7 +247,7 @@ impl WasmtimeComponentRuntime {
         // with: a cancelled step never counts as run.
         cancel.check()?;
         match outcome? {
-            Stepped::Ended(outcome) => bridge.held.into_outcome(outcome),
+            Stepped::Ended(outcome) => bridge.held.into_outcome(bridge.step_seq, outcome),
             Stepped::Deadline(calls) => bridge.held.into_deadline_outcome(&calls),
         }
     }
@@ -602,16 +602,32 @@ impl HeldOutput {
     }
 
     /// The step's outcome with what was held: the answer of a finished
-    /// step, else its console lines, and its files.
-    fn into_outcome(self, mut outcome: JsCodeModeStepOutcome) -> Result<JsCodeModeStepOutcome> {
-        let text = if outcome.done {
-            self.finish
+    /// step, else its console lines, and its files. A finished step's
+    /// console lines are kept as an output at the engine executor's own
+    /// console path for step `seq`: evidence beside the answer, which stays
+    /// the observation (FIX 6885).
+    fn into_outcome(
+        self,
+        seq: u64,
+        mut outcome: JsCodeModeStepOutcome,
+    ) -> Result<JsCodeModeStepOutcome> {
+        let (text, console) = if outcome.done {
+            (
+                self.finish,
+                Some(self.console).filter(|lines| !lines.is_empty()),
+            )
         } else {
-            self.console
+            (self.console, None)
         };
         if outcome.observation.is_empty() {
             outcome.observation = String::from_utf8(text)
                 .map_err(|_| failure("streamed observation is not UTF-8"))?;
+        }
+        if let Some(console) = console {
+            outcome.outputs.push(JsCodeModeOutput::new(
+                crate::engine_executor::console_output_path(seq),
+                console,
+            ));
         }
         outcome.outputs.extend(
             self.files

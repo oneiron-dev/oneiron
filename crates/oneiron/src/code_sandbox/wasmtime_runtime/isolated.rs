@@ -68,8 +68,8 @@ pub(super) fn run(
             .propose_write(proposal.write().clone())?;
     }
     cancel.check()?;
-    held.into_outcome(wire::decode_output(
-        &outcome.result_json,
-        runtime.budget.message_bytes,
-    )?)
+    held.into_outcome(
+        step.seq,
+        wire::decode_output(&outcome.result_json, runtime.budget.message_bytes)?,
+    )
 }
