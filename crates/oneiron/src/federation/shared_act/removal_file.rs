@@ -326,6 +326,66 @@ pub(crate) fn removal_archive_body_keys_in_txn(
     Ok(())
 }
 
+/// One kept removal archive as raw `vault_meta` rows hold it (FIX 3679): its
+/// receipt, the archive owner its file is held under (its row's: the
+/// removed member and the receipt), and the file, by descriptor occurrence
+/// and body.
+pub(crate) struct RemovalArchiveBinding {
+    pub(crate) receipt: EntityId,
+    pub(crate) owner: EntityId,
+    pub(crate) occurrence: EntityId,
+    pub(crate) body: BodyRef,
+}
+
+/// The archive owners of the removal archive rows among the raw
+/// `vault_meta` rows `rows`, read from the rows' keys alone.
+pub(crate) fn removal_archive_owners_in_rows(
+    rows: &[(Vec<u8>, Vec<u8>)],
+) -> std::collections::BTreeSet<EntityId> {
+    let prefix = super::REMOVAL_EXPORT.decl().prefix;
+    rows.iter()
+        .filter_map(|(key, _)| key.strip_prefix(prefix))
+        .filter_map(|key| std::str::from_utf8(key).ok())
+        .filter_map(ArchiveRow::from_key)
+        .filter_map(|row| removal_archive_owner(row).ok())
+        .collect()
+}
+
+/// Each removal archive row of the raw `vault_meta` rows `rows`, by its full
+/// key, with the file it names. A row that does not decode names no file
+/// and is left out; its readers refuse it as before.
+pub(crate) fn removal_archive_bindings_in_rows(
+    rows: &[(Vec<u8>, Vec<u8>)],
+) -> Vec<(Vec<u8>, RemovalArchiveBinding)> {
+    let prefix = super::REMOVAL_EXPORT.decl().prefix;
+    let mut bindings = Vec::new();
+    for (key, value) in rows {
+        let Some(row) = key
+            .strip_prefix(prefix)
+            .and_then(|key| std::str::from_utf8(key).ok())
+            .and_then(ArchiveRow::from_key)
+        else {
+            continue;
+        };
+        let Ok(stored) = super::REMOVAL_EXPORT.decode_value(value) else {
+            continue;
+        };
+        let Ok(owner) = removal_archive_owner(row) else {
+            continue;
+        };
+        bindings.push((
+            key.clone(),
+            RemovalArchiveBinding {
+                receipt: row.receipt,
+                owner,
+                occurrence: stored.file().occurrence,
+                body: stored.file().body.clone(),
+            },
+        ));
+    }
+    bindings
+}
+
 /// A host without the vault's body store keeps no removal archive: the
 /// store is where its bytes go.
 #[cfg(not(unix))]
