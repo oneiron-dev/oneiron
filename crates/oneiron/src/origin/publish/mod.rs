@@ -264,6 +264,7 @@ impl Vault {
             refusal: None,
             created_at: now,
             finished_at: None,
+            broker_isolation: None,
         };
         self.put_publish_request_in_txn(&mut txn, &view, &built.pages)?;
         txn.commit()?;

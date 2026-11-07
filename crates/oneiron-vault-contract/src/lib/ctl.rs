@@ -13,7 +13,7 @@ use super::slim_control::{SlimResidency, SlimStatusWire, UnslimWire};
 use super::wake::validate_wake_fields;
 use super::{
     IdleReapWire, LedgerPage, LedgerPageRequest, LedgerPulledRequest, LedgerReportHead,
-    ManagedBackupFacts, valid_owner_signing_challenge,
+    ManagedBackupFacts, UsageExportCursor, UsageExportPage, valid_owner_signing_challenge,
 };
 
 /// How a managed vault came up, as every `Ping` reports it.
@@ -211,6 +211,13 @@ pub enum CtlRequest {
         #[serde(flatten)]
         request: LedgerPulledRequest,
     },
+    /// Appended last (LC191311): one original usage event's JSON, paged by
+    /// `cursor` ([`CtlResponse::UsageExport`]). A read that writes nothing,
+    /// so a vault frozen for reap answers it and stays frozen.
+    UsageExport {
+        #[serde(default)]
+        cursor: Option<UsageExportCursor>,
+    },
 }
 
 impl CtlRequest {
@@ -250,7 +257,8 @@ impl CtlRequest {
             | CtlRequest::SlimStatus
             | CtlRequest::Unslim
             | CtlRequest::RestoreStatus { .. }
-            | CtlRequest::PrepareIdleReap => {}
+            | CtlRequest::PrepareIdleReap
+            | CtlRequest::UsageExport { .. } => {}
         }
         Ok(())
     }
@@ -749,6 +757,12 @@ pub enum CtlResponse {
     /// above, and it carries no `ok`.
     LedgerPage {
         ledger_page: LedgerPage,
+    },
+    /// Appended last (LC191311): the answer to [`CtlRequest::UsageExport`].
+    /// Its one required field {usage_export} is disjoint from every variant
+    /// above, and it carries no `ok`.
+    UsageExport {
+        usage_export: UsageExportPage,
     },
 }
 
