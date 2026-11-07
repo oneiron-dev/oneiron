@@ -181,6 +181,14 @@ side_tables! {
     /// The saved fork alarm for one key a held handoff retired, kept until the owner acknowledges
     /// it. Key: string (signer suite ":" key hex).
     AUTHORITY_HANDOFF_ALARM: VaultMeta b"authority:handoff-alarm:v1:" Raw;
+    /// The digest of the leave-notice delegation a settled ReRoot's root signed beside it (FIX
+    /// 7932), written in the transaction that settled the handoff and never rewritten. Key:
+    /// hash32 (the ReRoot's entry hash).
+    AUTHORITY_LEAVE_NOTICE_DELEGATION_BY_HANDOFF: VaultMeta b"authority:leave-notice-delegation-by-handoff:v1:" Raw;
+    /// One leave-notice delegation's canonical bytes (FIX 7932): a root's signed, purpose-limited
+    /// hand-on of leave-notice verification to its ReRoot's successor. Immutable authority
+    /// evidence. Key: bytes32 (its digest).
+    AUTHORITY_LEAVE_NOTICE_DELEGATION: VaultMeta b"authority:leave-notice-delegation:v1:" Raw;
     /// One claim-authoring campaign (OF-366): its strategy skill pin, fixed config, strategy pin
     /// and BEAM promotion receipt. Key: id16 (root attempt).
     AUTORESEARCH_AUTHORING: VaultMeta b"autoresearch:authoring:v1:" Named;
