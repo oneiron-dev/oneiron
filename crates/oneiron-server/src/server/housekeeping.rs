@@ -3,11 +3,12 @@
 //! off the request path, unless the last pass is still running; the engine
 //! decides which sweeps are due. After it, the host prunes what only the
 //! process holds: MCP credentials that were revoked or have expired, and live
-//! runs whose lease has gone. Hourly, on a task of its own, the host runs the
-//! served repositories' git maintenance, each repository waiting for a git
-//! exchange permit. The owner's "run now" is a pass of the same kind. Every
-//! pass is held in [`HousekeepingPasses`], so stopping the host stops and
-//! waits for each.
+//! runs whose lease has gone. It also runs the vault's model pack retirement
+//! pass against the access its offers hold (FIX 5368). Hourly, on a task of
+//! its own, the host runs the served repositories' git maintenance, each
+//! repository waiting for a git exchange permit. The owner's "run now" is a
+//! pass of the same kind. Every pass is held in [`HousekeepingPasses`], so
+//! stopping the host stops and waits for each.
 //!
 //! Log lines carry a sweep's code, its counts and an error's kind, never row
 //! text or an error's message.
@@ -268,6 +269,39 @@ impl SyncServer {
                     tracing::warn!(
                         panicked = error.is_panic(),
                         "legal-hold maintenance task failed"
+                    );
+                }
+            }
+            // FIX 5368: model pack retirement notices at 60, 30 and 7 days,
+            // and the retirement-day move, on the vault's day clock, against
+            // the access this host's offers hold.
+            let packs = Arc::clone(&server);
+            match tokio::task::spawn_blocking(move || {
+                let access = packs
+                    .ai
+                    .model_runtime()
+                    .router()
+                    .map(|router| router.access_snapshot())
+                    .unwrap_or_default();
+                packs.vault().run_model_pack_retirement(&access)
+            })
+            .await
+            {
+                Ok(Ok(report)) if report.notices > 0 || report.migrated => {
+                    tracing::info!(
+                        notices = report.notices,
+                        migrated = report.migrated,
+                        "model pack retirement pass"
+                    );
+                }
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => {
+                    tracing::warn!(kind = ?error.kind(), "model pack retirement pass failed");
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        panicked = error.is_panic(),
+                        "model pack retirement task failed"
                     );
                 }
             }

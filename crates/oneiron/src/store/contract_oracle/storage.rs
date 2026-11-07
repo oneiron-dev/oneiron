@@ -1,7 +1,7 @@
 //! Immutable baseline and verdict rows, and structural contract diffs.
 use super::{
     CommandOutput, ContractBaseline, ContractDiff, ContractSnapshot, ContractSpec, ContractVerdict,
-    invalid, rust_public_names, safe_path,
+    invalid, js_public_names, rust_public_names, safe_path,
 };
 use crate::{
     Vault,
@@ -61,6 +61,11 @@ impl<'a> ContractOracle<'a> {
         };
         for (name, path) in &spec.rust_crates {
             let surface = rust_public_names(root, name, path)?;
+            snapshot.public_names.extend(surface.names);
+            snapshot.unresolved_exports.extend(surface.unresolved);
+        }
+        for (name, path) in &spec.js_modules {
+            let surface = js_public_names(root, name, path)?;
             snapshot.public_names.extend(surface.names);
             snapshot.unresolved_exports.extend(surface.unresolved);
         }
