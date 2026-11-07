@@ -44,6 +44,7 @@ pub mod test_hooks;
 mod tombstones;
 mod withdrawn;
 
+pub(in crate::sync) use self::admission::encoded_root_state;
 #[cfg(test)]
 pub(in crate::sync) use self::admission::validate_window_update_residence;
 pub(in crate::sync) use self::admission::{
@@ -68,10 +69,10 @@ pub(in crate::sync) use self::discard_projection::{
 pub(crate) use self::discard_projection::{
     forget_unprojected_in_txn, mark_base_windows_owed_in_txn, resync_projected_windows_in_txn,
 };
+pub(crate) use self::egress::export_history_free_window_snapshot;
 use self::egress::window_packing_excludes_entity;
-pub(crate) use self::egress::{export_history_free_window_snapshot, persisted_window_snapshot};
 pub(in crate::sync) use self::egress::{
-    export_scrubbed_window_snapshot, withdrawn_delete_carriers,
+    export_scrubbed_window_snapshot, withdrawn_delete_carriers, withhold_audience_carriers,
 };
 pub use self::egress::{
     history_free_window_required, replay_pending_mirrors, require_history_free_window,
@@ -80,6 +81,7 @@ pub use self::egress::{
 pub(crate) use self::forward::forward_recovery;
 pub use self::forward::forward_rematerialize;
 pub(crate) use self::forward::{FORWARD_PASS_VERSION, ForwardRun, forward_rematerialize_mirror};
+pub(crate) use self::history_free::export_sealed_mirror_snapshot;
 pub use self::history_free::{
     WindowExport, export_promotion_snapshot, export_window_replacement,
     export_window_replacement_for, export_window_since, export_window_since_for,
@@ -92,6 +94,7 @@ pub use self::pad_custody::{
     prepare_window_pads, promotion_window_pads,
 };
 pub(crate) use self::rebootstrap::{prepare_rebootstrap, reject_held_rebootstrap};
+pub(crate) use self::replacement::replace_detached_mirror;
 pub use self::replacement::{PreparedReplacement, ReplacementConflict, prepare_replacement};
 pub(in crate::sync) use self::replacement::{
     ReplacementByteBound, check_bounded_replacement, prepare_bounded_replacement,
@@ -157,6 +160,9 @@ pub struct LoadedWindow {
     _observer_message_docs: Option<Subscription>,
     /// Observer B for the repo manifest map (FIX 6870), on base and world windows.
     _observer_repo_manifests: Option<Subscription>,
+    /// Observer B for the source audience map (Engine A), on base and world
+    /// windows.
+    _observer_source_audiences: Subscription,
     /// Observer A state for pending bytes tracking.
     pub observer_a_state: Arc<ObserverAState>,
 }
@@ -242,6 +248,8 @@ impl LoadedWindow {
             materializer,
             key.as_str(),
         ));
+        let observer_source_audiences =
+            bridge::register_source_audiences_observer(&doc, vault, materializer, key.as_str());
 
         Self {
             doc,
@@ -254,6 +262,7 @@ impl LoadedWindow {
             _observer_document_pins: observer_document_pins,
             _observer_message_docs: observer_message_docs,
             _observer_repo_manifests: observer_repo_manifests,
+            _observer_source_audiences: observer_source_audiences,
             observer_a_state,
         }
     }

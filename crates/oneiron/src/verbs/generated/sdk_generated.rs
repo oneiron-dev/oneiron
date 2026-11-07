@@ -1130,6 +1130,48 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.weave.admin.report",
+                crate::code_run::vault_read::request_schema::<
+                    crate::authority::WeaveAdminReportRequest,
+                >(),
+            ),
+            (
+                "vault.weave.admin.lens",
+                crate::code_run::vault_read::request_schema::<
+                    crate::authority::WeaveAdminLensRequest,
+                >(),
+            ),
+            (
+                "vault.weave.admin.digest",
+                crate::code_run::vault_read::request_schema::<
+                    crate::authority::WeaveAdminDigestRequest,
+                >(),
+            ),
+            (
+                "vault.weave.admin.link.wrong",
+                crate::code_run::vault_read::request_schema::<
+                    crate::authority::WeaveAdminLinkWrongRequest,
+                >(),
+            ),
+            (
+                "vault.weave.admin.item.wrong",
+                crate::code_run::vault_read::request_schema::<
+                    crate::authority::WeaveAdminItemWrongRequest,
+                >(),
+            ),
+            (
+                "vault.step_up.passkeys.reset",
+                crate::code_run::vault_read::request_schema::<
+                    crate::authority::StepUpPasskeysResetRequest,
+                >(),
+            ),
+            (
+                "vault.step_up.totp.reset",
+                crate::code_run::vault_read::request_schema::<
+                    crate::authority::StepUpTotpResetRequest,
+                >(),
+            ),
+            (
                 "vault.weave.enqueue",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::WeaveEnqueueRequest,
@@ -2572,6 +2614,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.coach.training_runs.cancel",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::offer_doors::TrainingRunRef,
+                >(),
+            ),
+            (
                 "vault.drafters.list",
                 crate::code_run::vault_read::request_schema::<crate::drafter::DrafterListRequest>(),
             ),
@@ -3456,6 +3504,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.hooks.checks",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
                 "vault.hooks.replay",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::HooksReplayRequest,
@@ -3760,6 +3812,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.code.model_heal_count",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::code_run_doors::CodeRunModelHealCountRequest,
+                >(),
+            ),
+            (
+                "vault.code.corrections",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_run_doors::CodeRunCorrectionsRequest,
                 >(),
             ),
             (
@@ -4664,6 +4722,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "tasks.answer",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::TaskAnswerRequest,
+                >(),
+            ),
+            (
+                "tasks.answer.forward.challenge",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::TaskAnswerForwardChallengeRequest,
+                >(),
+            ),
+            (
+                "tasks.answer.forward",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::TaskAnswerForwardRequest,
+                >(),
+            ),
+            (
+                "tasks.answer.forward.status",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::TaskAnswerForwardStatusRequest,
                 >(),
             ),
             (
@@ -6881,6 +6957,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.files.sources.convert",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::FilesSourceConvertRequest,
+                >(),
+            ),
+            (
                 "connector.answer",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ConnectorAnswerRequest,
@@ -7258,6 +7340,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::team::TeamRecordInput>(),
             ),
             (
+                "self.team.vote",
+                crate::code_run::vault_read::request_schema::<crate::team::TeamVoteInput>(),
+            ),
+            (
                 "self.team.submit",
                 crate::code_run::vault_read::request_schema::<crate::code_run::TeamSubmitInput>(),
             ),
@@ -7416,6 +7502,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.saved_query.archive",
     "self.saved_query.members",
     "self.saved_query.evaluate",
+    "vault.step_up.passkeys.reset",
+    "vault.step_up.totp.reset",
     "vault.weave.enqueue",
     "vault.weave.schedules.list",
     "vault.weave.schedules.put",
@@ -7638,6 +7726,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.coach.training_offers.pilots.complete",
     "vault.coach.training_offers.pilots.get",
     "vault.coach.training_offers.sources",
+    "vault.coach.training_runs.cancel",
     "vault.drafters.list",
     "vault.drafters.list_as",
     "vault.drafters.status",
@@ -7740,6 +7829,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "host.compact",
     "host.wake",
     "host.budget.hit",
+    "vault.hooks.checks",
     "vault.hooks.regen.due",
     "vault.hooks.regen.get",
     "vault.hooks.regen.adopt",
@@ -7783,6 +7873,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.proposal_settlement",
     "execute_code",
     "vault.code.model_heal_count",
+    "vault.code.corrections",
     "vault.code.type_diagnostics",
     "vault.code.waits.rebind",
     "vault.code.waits.resolve",
@@ -8118,6 +8209,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.identity.events.get",
     "vault.identity.proposals.resolve",
     "vault.identity.proposals.for_pair",
+    "vault.files.sources.convert",
     "self.browser.open",
     "self.browser.observe",
     "self.browser.find",
@@ -8548,6 +8640,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "self.saved_query.evaluate" => crate::code_run::vault_read::request_schema::<
             crate::campaign::surface::SavedQueryEvaluationReceipt,
         >(),
+        "vault.step_up.passkeys.reset" => {
+            crate::code_run::vault_read::request_schema::<crate::authority::StepUpPasskeysReset>()
+        }
+        "vault.step_up.totp.reset" => {
+            crate::code_run::vault_read::request_schema::<crate::authority::StepUpTotpReset>()
+        }
         "vault.weave.enqueue" => {
             crate::code_run::vault_read::request_schema::<crate::memory::DreamerAttemptRef>()
         }
@@ -9240,6 +9338,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.coach.training_offers.sources" => crate::code_run::vault_read::request_schema::<
             crate::edit_distance::reservoir::ReservoirSourcePreview,
         >(),
+        "vault.coach.training_runs.cancel" => {
+            crate::code_run::vault_read::request_schema::<crate::embed::PendingEmbedderBinding>()
+        }
         "vault.drafters.list" => {
             crate::code_run::vault_read::request_schema::<Vec<crate::drafter::DrafterVersionView>>()
         }
@@ -9546,6 +9647,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "host.budget.hit" => crate::code_run::vault_read::request_schema::<
             crate::runtime_hooks::host_doors::HostBudgetHitResult,
         >(),
+        "vault.hooks.checks" => {
+            crate::code_run::vault_read::request_schema::<Vec<crate::runtime_hooks::HookCheck>>()
+        }
         "vault.hooks.regen.due" => {
             crate::code_run::vault_read::request_schema::<Vec<crate::EntityId>>()
         }
@@ -9678,6 +9782,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.code.model_heal_count" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_run_doors::CodeRunModelHealCountView,
+        >(),
+        "vault.code.corrections" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_run_doors::CodeRunCorrectionsView,
         >(),
         "vault.code.type_diagnostics" => crate::code_run::vault_read::request_schema::<
             Option<crate::code_run::ProgramStepFeedbackRelease>,
@@ -10701,6 +10808,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.identity.proposals.for_pair" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::IdentityPairProposals,
+        >(),
+        "vault.files.sources.convert" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::FilesSourceAttachAnswer,
         >(),
         "self.browser.open" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::BrowserObservationPage,
@@ -12373,6 +12483,55 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.weave.owner.item.wrong" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.admin.report" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.admin.lens" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.admin.digest" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.admin.link.wrong" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.admin.item.wrong" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.step_up.passkeys.reset" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.step_up.totp.reset" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -14266,6 +14425,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.coach.training_runs.cancel" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.drafters.list" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -15303,6 +15469,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.hooks.checks" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.hooks.replay" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -15661,6 +15834,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.code.model_heal_count" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.corrections" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -16685,6 +16865,27 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "tasks.answer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "tasks.answer.forward.challenge" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "tasks.answer.forward" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "tasks.answer.forward.status" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19486,6 +19687,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.files.sources.convert" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "connector.answer" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -19974,6 +20182,13 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.weave.owner.link.wrong" => validate_input_vault_weave_owner_link_wrong(value)?,
         "vault.weave.item.wrong" => validate_input_vault_weave_item_wrong(value)?,
         "vault.weave.owner.item.wrong" => validate_input_vault_weave_owner_item_wrong(value)?,
+        "vault.weave.admin.report" => validate_input_vault_weave_admin_report(value)?,
+        "vault.weave.admin.lens" => validate_input_vault_weave_admin_lens(value)?,
+        "vault.weave.admin.digest" => validate_input_vault_weave_admin_digest(value)?,
+        "vault.weave.admin.link.wrong" => validate_input_vault_weave_admin_link_wrong(value)?,
+        "vault.weave.admin.item.wrong" => validate_input_vault_weave_admin_item_wrong(value)?,
+        "vault.step_up.passkeys.reset" => validate_input_vault_step_up_passkeys_reset(value)?,
+        "vault.step_up.totp.reset" => validate_input_vault_step_up_totp_reset(value)?,
         "vault.weave.enqueue" => validate_input_vault_weave_enqueue(value)?,
         "vault.weave.schedules.list" => validate_input_vault_weave_schedules_list(value)?,
         "vault.weave.schedules.put" => validate_input_vault_weave_schedules_put(value)?,
@@ -20395,6 +20610,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.coach.training_offers.sources" => {
             validate_input_vault_coach_training_offers_sources(value)?
         }
+        "vault.coach.training_runs.cancel" => {
+            validate_input_vault_coach_training_runs_cancel(value)?
+        }
         "vault.drafters.list" => validate_input_vault_drafters_list(value)?,
         "vault.drafters.list_as" => validate_input_vault_drafters_list_as(value)?,
         "vault.drafters.status" => validate_input_vault_drafters_status(value)?,
@@ -20610,6 +20828,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "host.compact" => validate_input_host_compact(value)?,
         "host.wake" => validate_input_host_wake(value)?,
         "host.budget.hit" => validate_input_host_budget_hit(value)?,
+        "vault.hooks.checks" => validate_input_vault_hooks_checks(value)?,
         "vault.hooks.replay" => validate_input_vault_hooks_replay(value)?,
         "vault.hooks.regen.due" => validate_input_vault_hooks_regen_due(value)?,
         "vault.hooks.regen.get" => validate_input_vault_hooks_regen_get(value)?,
@@ -20678,6 +20897,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.code.oplog" => validate_input_vault_code_oplog(value)?,
         "execute_code" => validate_input_execute_code(value)?,
         "vault.code.model_heal_count" => validate_input_vault_code_model_heal_count(value)?,
+        "vault.code.corrections" => validate_input_vault_code_corrections(value)?,
         "vault.code.type_diagnostics" => validate_input_vault_code_type_diagnostics(value)?,
         "vault.code.waits.rebind_prepare" => validate_input_vault_code_waits_rebind_prepare(value)?,
         "vault.code.waits.rebind" => validate_input_vault_code_waits_rebind(value)?,
@@ -20858,6 +21078,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "ask" => validate_input_ask(value)?,
         "wait" => validate_input_wait(value)?,
         "tasks.answer" => validate_input_tasks_answer(value)?,
+        "tasks.answer.forward.challenge" => validate_input_tasks_answer_forward_challenge(value)?,
+        "tasks.answer.forward" => validate_input_tasks_answer_forward(value)?,
+        "tasks.answer.forward.status" => validate_input_tasks_answer_forward_status(value)?,
         "tasks.outcomes" => validate_input_tasks_outcomes(value)?,
         "vault.rooms.list" => validate_input_vault_rooms_list(value)?,
         "vault.rooms.messages" => validate_input_vault_rooms_messages(value)?,
@@ -21385,6 +21608,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.mail.inbox" => validate_input_vault_mail_inbox(value)?,
         "vault.mail.threads.read" => validate_input_vault_mail_threads_read(value)?,
         "vault.mail.compliance.search" => validate_input_vault_mail_compliance_search(value)?,
+        "vault.files.sources.convert" => validate_input_vault_files_sources_convert(value)?,
         "connector.answer" => validate_input_connector_answer(value)?,
         "self.browser.open" => validate_input_self_browser_open(value)?,
         "self.browser.observe" => validate_input_self_browser_observe(value)?,
@@ -22542,6 +22766,41 @@ fn validate_input_vault_weave_item_wrong(value: &serde_json::Value) -> MemoryRes
 #[inline(never)]
 fn validate_input_vault_weave_owner_item_wrong(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::claim::WeaveWrongItemRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_weave_admin_report(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::authority::WeaveAdminReportRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_weave_admin_lens(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::authority::WeaveAdminLensRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_weave_admin_digest(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::authority::WeaveAdminDigestRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_weave_admin_link_wrong(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::authority::WeaveAdminLinkWrongRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_weave_admin_item_wrong(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::authority::WeaveAdminItemWrongRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_step_up_passkeys_reset(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::authority::StepUpPasskeysResetRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_step_up_totp_reset(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::authority::StepUpTotpResetRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -24029,6 +24288,11 @@ fn validate_input_vault_coach_training_offers_sources(
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_coach_training_runs_cancel(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::skill_optimize::offer_doors::TrainingRunRef = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_vault_drafters_list(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::drafter::DrafterListRequest = decode(value.clone())?;
     Ok(())
@@ -24857,6 +25121,11 @@ fn validate_input_host_budget_hit(value: &serde_json::Value) -> MemoryResult<()>
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_hooks_checks(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: EmptyRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_vault_hooks_replay(value: &serde_json::Value) -> MemoryResult<()> {
     let input: crate::task_verb::sdk::HooksReplayRequest = decode(value.clone())?;
     input.limit()?;
@@ -25140,6 +25409,11 @@ fn validate_input_execute_code(value: &serde_json::Value) -> MemoryResult<()> {
 fn validate_input_vault_code_model_heal_count(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::memory::code_run_doors::CodeRunModelHealCountRequest =
         decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_code_corrections(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::memory::code_run_doors::CodeRunCorrectionsRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -25939,6 +26213,21 @@ fn validate_input_wait(value: &serde_json::Value) -> MemoryResult<()> {
 #[inline(never)]
 fn validate_input_tasks_answer(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::task_verb::sdk::TaskAnswerRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_tasks_answer_forward_challenge(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::TaskAnswerForwardChallengeRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_tasks_answer_forward(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::TaskAnswerForwardRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_tasks_answer_forward_status(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::TaskAnswerForwardStatusRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -27405,12 +27694,7 @@ fn validate_input_vault_artifacts_body_deck_preview(value: &serde_json::Value) -
 }
 #[inline(never)]
 fn validate_input_vault_artifacts_append(value: &serde_json::Value) -> MemoryResult<()> {
-    let input: AppendBlobVersionRequest = decode(value.clone())?;
-    if input.content_base64.len() > crate::memory::caps::MAX_BLOB_BASE64_LEN {
-        return Err(MemoryError::bad_request(
-            "blob base64 exceeds the content ceiling",
-        ));
-    }
+    let _input: AppendBlobVersionRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -28136,6 +28420,11 @@ fn validate_input_vault_mail_compliance_search(value: &serde_json::Value) -> Mem
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_files_sources_convert(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::FilesSourceConvertRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_connector_answer(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::task_verb::sdk::ConnectorAnswerRequest = decode(value.clone())?;
     Ok(())
@@ -28737,6 +29026,13 @@ pub fn invoke(
         "vault.weave.owner.link.wrong" => invoke_vault_weave_owner_link_wrong(memory, value),
         "vault.weave.item.wrong" => invoke_vault_weave_item_wrong(memory, value),
         "vault.weave.owner.item.wrong" => invoke_vault_weave_owner_item_wrong(memory, value),
+        "vault.weave.admin.report" => invoke_vault_weave_admin_report(memory, value),
+        "vault.weave.admin.lens" => invoke_vault_weave_admin_lens(memory, value),
+        "vault.weave.admin.digest" => invoke_vault_weave_admin_digest(memory, value),
+        "vault.weave.admin.link.wrong" => invoke_vault_weave_admin_link_wrong(memory, value),
+        "vault.weave.admin.item.wrong" => invoke_vault_weave_admin_item_wrong(memory, value),
+        "vault.step_up.passkeys.reset" => invoke_vault_step_up_passkeys_reset(memory, value),
+        "vault.step_up.totp.reset" => invoke_vault_step_up_totp_reset(memory, value),
         "vault.weave.enqueue" => invoke_vault_weave_enqueue(memory, value),
         "vault.weave.schedules.list" => invoke_vault_weave_schedules_list(memory, value),
         "vault.weave.schedules.put" => invoke_vault_weave_schedules_put(memory, value),
@@ -29158,6 +29454,9 @@ pub fn invoke(
         "vault.coach.training_offers.sources" => {
             invoke_vault_coach_training_offers_sources(memory, value)
         }
+        "vault.coach.training_runs.cancel" => {
+            invoke_vault_coach_training_runs_cancel(memory, value)
+        }
         "vault.drafters.list" => invoke_vault_drafters_list(memory, value),
         "vault.drafters.list_as" => invoke_vault_drafters_list_as(memory, value),
         "vault.drafters.status" => invoke_vault_drafters_status(memory, value),
@@ -29373,6 +29672,7 @@ pub fn invoke(
         "host.compact" => invoke_host_compact(memory, value),
         "host.wake" => invoke_host_wake(memory, value),
         "host.budget.hit" => invoke_host_budget_hit(memory, value),
+        "vault.hooks.checks" => invoke_vault_hooks_checks(memory, value),
         "vault.hooks.replay" => invoke_vault_hooks_replay(memory, value),
         "vault.hooks.regen.due" => invoke_vault_hooks_regen_due(memory, value),
         "vault.hooks.regen.get" => invoke_vault_hooks_regen_get(memory, value),
@@ -29441,6 +29741,7 @@ pub fn invoke(
         "vault.code.oplog" => invoke_vault_code_oplog(memory, value),
         "execute_code" => invoke_execute_code(memory, value),
         "vault.code.model_heal_count" => invoke_vault_code_model_heal_count(memory, value),
+        "vault.code.corrections" => invoke_vault_code_corrections(memory, value),
         "vault.code.type_diagnostics" => invoke_vault_code_type_diagnostics(memory, value),
         "vault.code.waits.rebind_prepare" => invoke_vault_code_waits_rebind_prepare(memory, value),
         "vault.code.waits.rebind" => invoke_vault_code_waits_rebind(memory, value),
@@ -29621,6 +29922,9 @@ pub fn invoke(
         "ask" => invoke_ask(memory, value),
         "wait" => invoke_wait(memory, value),
         "tasks.answer" => invoke_tasks_answer(memory, value),
+        "tasks.answer.forward.challenge" => invoke_tasks_answer_forward_challenge(memory, value),
+        "tasks.answer.forward" => invoke_tasks_answer_forward(memory, value),
+        "tasks.answer.forward.status" => invoke_tasks_answer_forward_status(memory, value),
         "tasks.outcomes" => invoke_tasks_outcomes(memory, value),
         "vault.rooms.list" => invoke_vault_rooms_list(memory, value),
         "vault.rooms.messages" => invoke_vault_rooms_messages(memory, value),
@@ -30126,6 +30430,7 @@ pub fn invoke(
         "vault.mail.inbox" => invoke_vault_mail_inbox(memory, value),
         "vault.mail.threads.read" => invoke_vault_mail_threads_read(memory, value),
         "vault.mail.compliance.search" => invoke_vault_mail_compliance_search(memory, value),
+        "vault.files.sources.convert" => invoke_vault_files_sources_convert(memory, value),
         "connector.answer" => invoke_connector_answer(memory, value),
         "self.browser.open" => invoke_self_browser_open(memory, value),
         "self.browser.observe" => invoke_self_browser_observe(memory, value),
@@ -31621,6 +31926,55 @@ fn invoke_vault_weave_owner_item_wrong(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_weave_owner_item_wrong(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_weave_admin_report(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_weave_admin_report(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_weave_admin_lens(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_weave_admin_lens(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_weave_admin_digest(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_weave_admin_digest(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_weave_admin_link_wrong(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_weave_admin_link_wrong(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_weave_admin_item_wrong(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_weave_admin_item_wrong(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_step_up_passkeys_reset(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_step_up_passkeys_reset(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_step_up_totp_reset(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_step_up_totp_reset(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_weave_enqueue(
@@ -33624,6 +33978,13 @@ fn invoke_vault_coach_training_offers_sources(
     encode(vault_coach_training_offers_sources(memory, decode(value)?)?)
 }
 #[inline(never)]
+fn invoke_vault_coach_training_runs_cancel(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_coach_training_runs_cancel(memory, decode(value)?)?)
+}
+#[inline(never)]
 fn invoke_vault_drafters_list(
     memory: &Memory<'_>,
     value: serde_json::Value,
@@ -34733,6 +35094,13 @@ fn invoke_host_budget_hit(
     encode(host_budget_hit(memory, decode(value)?)?)
 }
 #[inline(never)]
+fn invoke_vault_hooks_checks(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_hooks_checks(memory, decode(value)?)?)
+}
+#[inline(never)]
 fn invoke_vault_hooks_replay(
     memory: &Memory<'_>,
     value: serde_json::Value,
@@ -35101,6 +35469,13 @@ fn invoke_vault_code_model_heal_count(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_code_model_heal_count(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_code_corrections(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_code_corrections(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_code_type_diagnostics(
@@ -36137,6 +36512,27 @@ fn invoke_tasks_answer(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(tasks_answer(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_tasks_answer_forward_challenge(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(tasks_answer_forward_challenge(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_tasks_answer_forward(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(tasks_answer_forward(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_tasks_answer_forward_status(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(tasks_answer_forward_status(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_tasks_outcomes(
@@ -38952,6 +39348,13 @@ fn invoke_vault_mail_compliance_search(
     encode(vault_mail_compliance_search(memory, decode(value)?)?)
 }
 #[inline(never)]
+fn invoke_vault_files_sources_convert(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_files_sources_convert(memory, decode(value)?)?)
+}
+#[inline(never)]
 fn invoke_connector_answer(
     memory: &Memory<'_>,
     value: serde_json::Value,
@@ -41238,6 +41641,56 @@ pub fn vault_weave_owner_item_wrong(
         &input,
     )
 }
+pub fn vault_weave_admin_report(
+    memory: &Memory<'_>,
+    input: crate::authority::WeaveAdminReportRequest,
+) -> MemoryResult<crate::claim::WeaveReportView> {
+    crate::task_verb::sdk::host_only(memory, "vault.weave.admin.report", &input)
+}
+pub fn vault_weave_admin_lens(
+    memory: &Memory<'_>,
+    input: crate::authority::WeaveAdminLensRequest,
+) -> MemoryResult<crate::lens::LensFrameCard> {
+    crate::task_verb::sdk::host_only(memory, "vault.weave.admin.lens", &input)
+}
+pub fn vault_weave_admin_digest(
+    memory: &Memory<'_>,
+    input: crate::authority::WeaveAdminDigestRequest,
+) -> MemoryResult<Option<crate::claim::WeaveDigestView>> {
+    crate::task_verb::sdk::host_only(memory, "vault.weave.admin.digest", &input)
+}
+pub fn vault_weave_admin_link_wrong(
+    memory: &Memory<'_>,
+    input: crate::authority::WeaveAdminLinkWrongRequest,
+) -> MemoryResult<crate::claim::WeaveLinkCorrectionView> {
+    crate::task_verb::sdk::host_only(memory, "vault.weave.admin.link.wrong", &input)
+}
+pub fn vault_weave_admin_item_wrong(
+    memory: &Memory<'_>,
+    input: crate::authority::WeaveAdminItemWrongRequest,
+) -> MemoryResult<crate::claim::WeaveItemCorrectionView> {
+    crate::task_verb::sdk::host_only(memory, "vault.weave.admin.item.wrong", &input)
+}
+pub fn vault_step_up_passkeys_reset(
+    memory: &Memory<'_>,
+    input: crate::authority::StepUpPasskeysResetRequest,
+) -> MemoryResult<crate::authority::StepUpPasskeysReset> {
+    crate::task_verb::sdk::reset_step_up_passkeys_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.step_up.passkeys.reset")?,
+        input,
+    )
+}
+pub fn vault_step_up_totp_reset(
+    memory: &Memory<'_>,
+    input: crate::authority::StepUpTotpResetRequest,
+) -> MemoryResult<crate::authority::StepUpTotpReset> {
+    crate::task_verb::sdk::reset_step_up_totp_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.step_up.totp.reset")?,
+        input,
+    )
+}
 pub fn vault_weave_enqueue(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::WeaveEnqueueRequest,
@@ -43517,6 +43970,17 @@ pub fn vault_coach_training_offers_sources(
         input,
     )
 }
+pub fn vault_coach_training_runs_cancel(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::offer_doors::TrainingRunRef,
+) -> MemoryResult<crate::embed::PendingEmbedderBinding> {
+    crate::skill_optimize::offer_doors::cancel_training_run(
+        memory.vault(),
+        &memory.embedded_owner("vault.coach.training_runs.cancel")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
 pub fn vault_drafters_list(
     memory: &Memory<'_>,
     input: crate::drafter::DrafterListRequest,
@@ -44851,6 +45315,15 @@ pub fn host_budget_hit(
 ) -> MemoryResult<crate::runtime_hooks::host_doors::HostBudgetHitResult> {
     crate::task_verb::sdk::host_only(memory, "host.budget.hit", &input)
 }
+pub fn vault_hooks_checks(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::runtime_hooks::HookCheck>> {
+    memory
+        .vault()
+        .hook_checks_as_owner(&memory.embedded_owner("vault.hooks.checks")?)
+        .map_err(crate::memory::MemoryError::from)
+}
 pub fn vault_hooks_replay(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::HooksReplayRequest,
@@ -45236,6 +45709,12 @@ pub fn vault_code_model_heal_count(
         &memory.embedded_owner("vault.code.model_heal_count")?,
         input,
     )
+}
+pub fn vault_code_corrections(
+    memory: &Memory<'_>,
+    input: crate::memory::code_run_doors::CodeRunCorrectionsRequest,
+) -> MemoryResult<crate::memory::code_run_doors::CodeRunCorrectionsView> {
+    memory.code_run_corrections_as(&memory.embedded_owner("vault.code.corrections")?, input)
 }
 pub fn vault_code_type_diagnostics(
     memory: &Memory<'_>,
@@ -46480,6 +46959,37 @@ pub fn tasks_answer(
         ],
     )?;
     memory.tasks_answer(&input.handle, &input.word)
+}
+pub fn tasks_answer_forward_challenge(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::TaskAnswerForwardChallengeRequest,
+) -> MemoryResult<crate::task_verb::sdk::TaskAnswerForwardChallenge> {
+    Ok(
+        crate::task_verb::sdk::TaskAnswerForwardChallenge::from_bytes(
+            &memory.tasks_answer_forward_challenge(&input.handle, &input.intent_key, &input.act)?,
+        ),
+    )
+}
+pub fn tasks_answer_forward(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::TaskAnswerForwardRequest,
+) -> MemoryResult<crate::task_verb::AskForwardReceipt> {
+    crate::task_verb::admit_ask_references(
+        memory,
+        "tasks.answer.forward",
+        &input,
+        &[
+            "/act/word/provenance_refs/*/claim",
+            "/act/word/provenance_refs/*/turn",
+        ],
+    )?;
+    memory.tasks_answer_forward(&input.handle, &input.intent_key, &input.act, &input.proof)
+}
+pub fn tasks_answer_forward_status(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::TaskAnswerForwardStatusRequest,
+) -> MemoryResult<crate::task_verb::AskForwardReceipt> {
+    memory.tasks_answer_forward_status(input.intent_ref)
 }
 pub fn tasks_outcomes(
     memory: &Memory<'_>,
@@ -48731,11 +49241,6 @@ pub fn vault_artifacts_append(
     memory: &Memory<'_>,
     input: AppendBlobVersionRequest,
 ) -> MemoryResult<crate::memory::BlobVersionAppendOutcome> {
-    if input.content_base64.len() > crate::memory::caps::MAX_BLOB_BASE64_LEN {
-        return Err(MemoryError::bad_request(
-            "blob base64 exceeds the content ceiling",
-        ));
-    }
     memory_requests::append_blob(memory, input)
 }
 pub fn vault_artifacts_read(
@@ -49872,6 +50377,12 @@ pub fn vault_mail_compliance_search(
     input: crate::mail_pack::MailComplianceSearchRequest,
 ) -> MemoryResult<crate::mail_pack::MailComplianceSearchReply> {
     memory.mail_compliance_search(&input)
+}
+pub fn vault_files_sources_convert(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::FilesSourceConvertRequest,
+) -> MemoryResult<crate::task_verb::sdk::FilesSourceAttachAnswer> {
+    crate::task_verb::sdk::convert_files_source_embedded(memory, input)
 }
 pub fn connector_answer(
     memory: &Memory<'_>,
