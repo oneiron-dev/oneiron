@@ -40,6 +40,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // Content-owned audit, never authority (FIX 10260).
     (&t::MESSAGE_REPLY_ASSERTIONS, CONTENT),
     (&t::MESSAGE_STREAM_ACTIVE, CONTENT),
+    (&t::MESSAGE_STREAM_ERASED, CONTENT),
     (&t::MESSAGE_STREAM_POLICY, LIVE),
     (&t::MESSAGE_STREAM_RECEIPT, CONTENT),
     (&t::MODEL_STEP_SUBMISSION, CONTENT),
@@ -123,6 +124,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::OUTBOUND_INTENT_PARTY, LIVE),
     (&t::OUTBOUND_INTENT_PARTY_OF, LIVE),
     (&t::OUTBOUND_INTENT_LATE_RECIPIENT, LIVE),
+    (&t::OUTBOUND_REMOTE_TASK_POLL, LIVE),
     (&t::OUTBOUND_INTENT_UNAVAILABLE, LIVE),
     (&t::OUTBOUND_PINNED_APPROVAL, LIVE),
     (&t::OUTBOUND_SUPPRESSION_INDEX, LIVE),
