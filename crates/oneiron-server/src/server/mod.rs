@@ -20,6 +20,7 @@ mod lifecycle;
 mod live_runs;
 mod media_door;
 mod media_embedding;
+pub(crate) mod meeting_imports;
 mod merge_queue_checker;
 mod message_stream;
 mod mirror_pushes;
