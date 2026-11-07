@@ -329,3 +329,55 @@ pub(crate) async fn vault_code_export_preview_read(
     )
     .await
 }
+
+/// The holder door binds its actual credential, never an owner or a run.
+pub(super) fn checkout_holder_admits(server: &SyncServer, auth: &CoreAuth) -> MemoryResult<()> {
+    checkout_holder_caller(server, auth).map(drop)
+}
+
+fn checkout_holder_caller(
+    server: &SyncServer,
+    auth: &CoreAuth,
+) -> MemoryResult<(EntityId, EdgeActorClass)> {
+    auth.require_lane_record_scope().map_err(|_| {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "a channel-bound credential reaches no checkout holder door",
+            &[],
+        )
+    })?;
+    super::owner_binding::facade_caller_or(server, auth, || {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "checkout materialization needs the lease holder's own credential",
+            &[],
+        )
+    })
+}
+
+pub(crate) async fn vault_code_checkout_holder_bind(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    _caller: (EntityId, EdgeActorClass),
+    invocation: Option<InvocationId>,
+    input: oneiron::memory::repo_doors::RepoCheckoutBindInput,
+) -> Listed<oneiron::memory::repo_doors::RepoCheckoutBindOutput> {
+    let caller = match checkout_holder_caller(server, auth) {
+        Ok(caller) => caller,
+        Err(refusal) => return (Err(refusal), Vec::new()),
+    };
+    credential_listing(
+        server,
+        auth,
+        caller,
+        "vault.code.checkout.holder.bind",
+        move |_, _, memory| {
+            let memory = match invocation {
+                Some(invocation) => memory.with_invocation(invocation),
+                None => memory,
+            };
+            memory.repo_checkout_bind_for_holder(input)
+        },
+    )
+    .await
+}
