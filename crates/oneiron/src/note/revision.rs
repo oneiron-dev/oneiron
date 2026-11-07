@@ -159,7 +159,7 @@ pub(super) fn index_stored_note_in_txn(
     txn: &mut heed::RwTxn<'_>,
     note: EntityId,
     indexed_before: Option<&[u8]>,
-    grant: Option<&crate::off_record::promote::PromoteReplayGrant>,
+    grant: Option<&crate::off_record::PromoteReplayGrant>,
 ) -> Result<()> {
     let capture = crate::vault::entity_revision::capture_native_note_in_txn(
         vault,
