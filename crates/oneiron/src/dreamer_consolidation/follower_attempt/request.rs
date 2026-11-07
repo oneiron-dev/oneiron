@@ -122,6 +122,7 @@ pub(super) fn ask_request(
     model: &ModelId,
     locality: ModelLocality,
     keyless: bool,
+    paid: bool,
     work: &AskWork,
     labels: &CallLabelMap,
 ) -> Result<LlmRequest> {
@@ -143,6 +144,7 @@ pub(super) fn ask_request(
         model,
         locality,
         keyless,
+        paid,
         &work.pins,
         work.instruction.clone(),
         content,
@@ -165,6 +167,7 @@ pub(super) fn fold_request(
     model: &ModelId,
     locality: ModelLocality,
     keyless: bool,
+    paid: bool,
     instruction: &str,
     group: &[String],
     pins: &[Pin],
@@ -177,6 +180,7 @@ pub(super) fn fold_request(
         model,
         locality,
         keyless,
+        paid,
         pins,
         instruction.to_owned(),
         content,
@@ -187,6 +191,7 @@ fn request(
     model: &ModelId,
     locality: ModelLocality,
     keyless: bool,
+    paid: bool,
     pins: &[Pin],
     system: String,
     content: Vec<ContentPart>,
@@ -215,6 +220,7 @@ fn request(
             response_format: ResponseFormat::Text,
             locality,
             host_keyless: keyless,
+            host_paid: paid,
         }
         .with_purpose_defaults(),
         messages: vec![

@@ -14,28 +14,9 @@ pub(crate) fn cores() -> usize {
 
 pub(crate) use oneiron::host_memory::{MachineMemory, MemoryLease, MemoryRefusal, memory_bytes};
 
-/// Descriptors this process may hold open at once, when the platform says.
-pub(crate) fn open_file_limit() -> Option<u64> {
-    #[cfg(unix)]
-    {
-        let mut limit = libc::rlimit {
-            rlim_cur: 0,
-            rlim_max: 0,
-        };
-        // SAFETY: `getrlimit` writes the struct on the stack and nothing else.
-        if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut limit) } != 0 {
-            return None;
-        }
-        if limit.rlim_cur == libc::RLIM_INFINITY {
-            return Some(u64::MAX);
-        }
-        Some(limit.rlim_cur)
-    }
-    #[cfg(not(unix))]
-    {
-        None
-    }
-}
+// Descriptors this process may hold open at once, which the process's one
+// descriptor floor is sized from (FIX 6299).
+pub(crate) use oneiron::host_descriptors::open_file_limit;
 
 /// The most descriptors serving raises its soft open-file limit to: hard
 /// limits are often far higher (524,288 on many Linux hosts; unlimited, as
