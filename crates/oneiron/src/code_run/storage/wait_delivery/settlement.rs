@@ -13,6 +13,7 @@ use super::{
     SETTLED, SETTLED_TAG, WAITERS, WaitDelivery, WaitKey, deliver_in_txn, reply_text,
     settled_in_txn, waiter_prefix,
 };
+use crate::code_run::ResultOrigins;
 use crate::{EntityId, Result, Vault};
 
 /// Settles `wait_id` with `reply` in the caller's transaction: records the
@@ -26,23 +27,27 @@ pub(crate) fn deliver_wait_in_txn(
     reply: &serde_json::Value,
     now_ms: u64,
 ) -> Result<usize> {
-    deliver_wait_listing_in_txn(vault, txn, wait_id, reply, None, now_ms)
+    deliver_wait_listing_in_txn(vault, txn, wait_id, reply, None, None, now_ms)
 }
 
 /// [`deliver_wait_in_txn`], `reply` kept beside `rows`, the rows its settler
-/// listed it derived from (FIX 5455), when it lists them. When `wait_id` is
-/// a connector call's wait, the call's caller joins the wait's holders in
-/// this writer, after every parked run joined (FIX 6656). So the membership
-/// commits with the settled row, before any post-commit observer runs. With
-/// no call row left, a caller membership the call's erase released still
-/// applies: the settled row takes its erased form once no membership keeps
-/// it (FIX 19257).
+/// listed it derived from (FIX 5455), when it lists them, and beside
+/// `origins`, the origins its settler froze with it (FIX 7083), when it
+/// froze them. A wait that already settled keeps its first reply whole,
+/// its rows and origins with it. When `wait_id` is a connector call's
+/// wait, the call's caller joins the wait's holders in this writer, after
+/// every parked run joined (FIX 6656). So the membership commits with the
+/// settled row, before any post-commit observer runs. With no call row
+/// left, a caller membership the call's erase released still applies: the
+/// settled row takes its erased form once no membership keeps it (FIX
+/// 19257).
 pub(crate) fn deliver_wait_listing_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     wait_id: EntityId,
     reply: &serde_json::Value,
     rows: Option<&[EntityId]>,
+    origins: Option<&ResultOrigins>,
     now_ms: u64,
 ) -> Result<usize> {
     let settled = match settled_in_txn(&vault.store, txn, wait_id)? {
@@ -52,6 +57,7 @@ pub(crate) fn deliver_wait_listing_in_txn(
                 reply: reply_text(reply)?,
                 delivered_at_ms: now_ms,
                 source_rows: rows.map(<[EntityId]>::to_vec),
+                origins: origins.cloned(),
                 erased: false,
             };
             SETTLED.admit(vault, txn, &(SETTLED_TAG, wait_id), &mut settled)?;
