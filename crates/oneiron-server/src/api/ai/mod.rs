@@ -13,8 +13,8 @@ use axum::{Json, Router};
 use oneiron_driver::SessionHint;
 use serde::Deserialize;
 
-use oneiron::llm::VaultRef;
 use oneiron::llm::manifest::ModelRole;
+use oneiron::llm::{VaultRef, WorkerMode};
 
 use crate::auth::{CoreAuth, CoreScope};
 use crate::config::models::role_key;
@@ -109,12 +109,45 @@ async fn status(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> Respon
     ));
     models.tagger = server.tagger_slot().as_deref().map(tagger_status);
     point_tagger_seat(&mut models);
+    name_worker_machines(&server, &mut models).await;
     Json(serde_json::json!({
         "ai": server.ai.status(),
         "models": models,
         "quota_questions": server.ai.model_runtime().quota_questions(),
     }))
     .into_response()
+}
+
+/// The physical machine each worker this host runs is on (FIX 9192): this
+/// install's machine in the vault the server serves. An external worker is
+/// an endpoint that may run anywhere, so it names none; so does every worker
+/// while this install has no machine id, or when it does not read.
+async fn name_worker_machines(server: &Arc<SyncServer>, models: &mut crate::models::ModelsStatus) {
+    if !models
+        .workers
+        .iter()
+        .any(|worker| worker.mode == WorkerMode::Managed)
+    {
+        return;
+    }
+    let vault = Arc::clone(server.vault());
+    let machine = tokio::task::spawn_blocking(move || {
+        vault
+            .local_machine()
+            .map(|machine| machine.map(|machine| machine.id))
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .flatten();
+    let Some(machine) = machine else {
+        return;
+    };
+    for worker in &mut models.workers {
+        if worker.mode == WorkerMode::Managed {
+            worker.machine = Some(machine);
+        }
+    }
 }
 
 /// An `extraction_encoder` seat no generating rung serves keeps its
