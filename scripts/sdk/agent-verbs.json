@@ -10645,7 +10645,7 @@
     },
     {
       "name": "vault.code.symbols.release",
-      "description": "Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies, approves and schedules nothing.",
+      "description": "Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies and approves nothing, and once committed it wakes the merge queue driver.",
       "input": "crate::memory::code_doors::CodeSymbolsTaskRequest",
       "output": "crate::memory::code_doors::CodeSymbolsReleased",
       "call": "memory.code_symbols_release_as(&memory.embedded_owner(\"vault.code.symbols.release\")?, input)?",
@@ -11626,7 +11626,7 @@
     },
     {
       "name": "vault.code.snapshots.ingest",
-      "description": "Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt.",
+      "description": "Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot, of a registered repository when named. Owner only. It registers no repository, whitelist or membership.",
       "input": "crate::memory::codebase_doors::CodeSnapshotIngestRequest",
       "output": "crate::memory::codebase_doors::CodeSnapshotView",
       "call": "memory.code_snapshot_ingest_as(&memory.embedded_owner(\"vault.code.snapshots.ingest\")?, input)?",
@@ -12103,7 +12103,7 @@
     },
     {
       "name": "vault.repo.anchor.bind",
-      "description": "The owner binds one served repo to its CODE anchor in a live PROJECT he names, the anchor a git_push Grant, a run's repo bounds and a publish name it by; a repeat changes nothing.",
+      "description": "The owner binds a served repo, or registers an external local Git repo, as one stable CODE anchor of a live PROJECT, with its portable id and editable whitelist (exact paths, empty is read-only); it grants no membership.",
       "input": "crate::task_verb::sdk::RepoAnchorBindInput",
       "output": "crate::task_verb::sdk::RepoAnchorBindOutput",
       "call": "crate::task_verb::sdk::bind_repo_anchor_as(memory.vault(), &memory.embedded_owner(\"vault.repo.anchor.bind\")?, input)?",

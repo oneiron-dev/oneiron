@@ -4280,7 +4280,7 @@ class Oneiron:
             """Renew the live symbol declaration the caller holds for one task by its declared lifetime. Owner only."""
             return json.loads(_translate(lambda: self._client.vault_code_symbols_renew(json.dumps(spec))))
         def release(self, spec):
-            """Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies, approves and schedules nothing."""
+            """Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies and approves nothing, and once committed it wakes the merge queue driver."""
             return json.loads(_translate(lambda: self._client.vault_code_symbols_release(json.dumps(spec))))
         def definitions(self, spec):
             """Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language."""
@@ -4487,7 +4487,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def ingest(self, spec):
-            """Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt."""
+            """Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot, of a registered repository when named. Owner only. It registers no repository, whitelist or membership."""
             return json.loads(_translate(lambda: self._client.vault_code_snapshots_ingest(json.dumps(spec))))
         def get(self, spec):
             """Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant."""
@@ -4667,7 +4667,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def bind(self, spec):
-            """The owner binds one served repo to its CODE anchor in a live PROJECT he names, the anchor a git_push Grant, a run's repo bounds and a publish name it by; a repeat changes nothing."""
+            """The owner binds a served repo, or registers an external local Git repo, as one stable CODE anchor of a live PROJECT, with its portable id and editable whitelist (exact paths, empty is read-only); it grants no membership."""
             return json.loads(_translate(lambda: self._client.vault_repo_anchor_bind(json.dumps(spec))))
     class _VaultRepoSnapshotsVerbs:
         def __init__(self, client: _NativeClient) -> None:
