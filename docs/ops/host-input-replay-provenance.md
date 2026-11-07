@@ -50,11 +50,13 @@ Returned output metadata comes from the stored, post-fence record, including an
 erased preview when the native fence erased it.
 
 This closes the publication-to-membership gap for these two host APIs. It does
-not prove that every newly captured source was still live at publication, and it
-does not add a hard-versus-soft source-deletion predicate or complete source-erase
-coverage for other publishers.
+not complete source-erase coverage for other publishers.
 
 FIX9348 remains partial. The source-erase path covers decodable, already-persisted
-manifests. A new late capture after the erase remains open; this slice does not
-claim a cohort that was never persisted, generic source closure, or runtime proof.
+manifests. An occurrence first captured after the erase meets the same retirement
+in its publishing writer's replay fence: when a source in its frozen `input_rows`
+has the native hard-delete marker, the fence stages that occurrence's stale mark
+and retires it as above. A soft delete, a missing row or a pending erasure does
+not count; a pending erasure meets the occurrence in its own accepted writer. This
+slice does not claim unknown sources, generic source closure, or runtime proof.
 There is no new format, default, cap, migration or old-format reader.
