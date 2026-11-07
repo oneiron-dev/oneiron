@@ -31,14 +31,17 @@ Unknown or malformed stored formats remain errors, not silent gaps or
 permission to copy another family. Ordinary claim keys stay in native custody;
 only the opened source bytes are re-encrypted to the independent host key.
 
-The collector takes the native custody guard before its source writer snapshot.
-Only after it holds that writer and rechecks stop and the actual order term does
-it send `Accepted`. This pins that source snapshot; it is not a complete clone
-or independent legal-order authority. The collector keeps both guards until
+The collector takes the native custody guard before its LMDB read snapshot.
+Only after it holds that snapshot and rechecks stop and the actual order term
+does it send `Accepted`. This pins that source snapshot; it is not a complete
+clone or independent legal-order authority. The collector keeps both until
 the same host acknowledges the exact request and ciphertext transcript after
-durable publication. The source transaction writes nothing and
-aborts after the acknowledgement. Stop and the actual order term are checked
-throughout capture. Managed shutdown must close every accepted socket, then
+durable publication, then ends the snapshot. It holds no writer, so the
+user's writes and erases commit while a capture streams; an erase's key
+destruction takes the custody guard's write half after its commit, so it waits
+for the capture and the snapshot never loses a key it reads. An archived
+vault refuses every writer, so a capture there is no longer refused for want
+of one. Stop and the actual order term are checked throughout capture. Managed shutdown must close every accepted socket, then
 join its blocking worker before closing the vault.
 
 ## Encrypted stream and host obligations
@@ -175,8 +178,8 @@ a read-surface rule and does not apply to the clone, which is sealed to the
 order's recipient.
 
 The collector pins every result body, then takes the custody read guard before
-its source writer, as a gate capture does, and holds all three until the exact
-HOST acknowledgement; the source transaction writes nothing and aborts. Assets
+its LMDB read snapshot, as a gate capture does, and holds all three until the
+exact HOST acknowledgement. Assets
 and model-call records are not part of this extent, and messages stored after
 the request are never included: only an explicit prospective scope may add
 them.
