@@ -158,7 +158,7 @@ impl<'a> BranchResources<'a> {
             actor,
             read,
             prepared_wake,
-            branch: branch.clone(),
+            origin: ResourceOrigin::Branch(branch.clone()),
             sources,
             turns: branch.turn_parts(),
             texts,
@@ -223,8 +223,8 @@ impl<'a> BranchResources<'a> {
             .collect();
         if parents.len() != 1
             || parents[0].target != conversation
-            || facts.world_ref.or(parent.world_ref) != self.branch.world_ref
-            || facts.facet_ref.or(parent.facet_ref) != self.branch.facet_ref
+            || facts.world_ref.or(parent.world_ref) != self.origin.axes().world_ref
+            || facts.facet_ref.or(parent.facet_ref) != self.origin.axes().facet_ref
             || !dreamer_extraction_role_admissible(dreamer_turn_role(
                 facts.speaker.as_deref(),
                 &self.read.vault().config.assistant_display_names,
@@ -242,6 +242,9 @@ impl<'a> BranchResources<'a> {
 
     /// Whether `id` is a declared part's conversation.
     pub(in crate::dreamer_consolidation) fn is_part_parent(&self, id: &EntityId) -> bool {
-        self.branch.conversations().any(|parent| parent == *id)
+        match &self.origin {
+            ResourceOrigin::Branch(branch) => branch.conversations().any(|parent| parent == *id),
+            ResourceOrigin::Root(_) => self.turns.values().any(|parent| parent == id),
+        }
     }
 }

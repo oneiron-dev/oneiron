@@ -465,14 +465,15 @@ pub(super) async fn blocking<T: Send + 'static>(
 }
 
 /// `GET /v1/owner/status`: where the data lives, the embedder as this
-/// server serves it, where feedback goes, the bytes this process's sync
-/// links moved, and how its browser stands.
+/// server serves it, where feedback goes, failure-signal delivery, the
+/// bytes this process's sync links moved, and how its browser stands.
 #[derive(serde::Serialize)]
 struct OwnerStatus {
     #[serde(flatten)]
     location: location::Location,
     embedder: crate::owner::embedder::EmbedderReport,
     feedback: feedback::FeedbackStatus,
+    failure_signals: crate::owner::failure_signals::FailureSignalStatus,
     /// Every sync and LLM mesh link since this process started, summed per inner frame
     /// tag: raw bytes against the bytes on the wire, each way (OF-604).
     link_bytes: Vec<oneiron::sync::transport::TagBytesRow>,
@@ -508,6 +509,7 @@ async fn status(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerR
             location: host.locate(server.vault())?,
             embedder: server.embedder_report()?,
             feedback: feedback::status(server.feedback.as_deref(), &server.config.feedback_inbox),
+            failure_signals: crate::owner::failure_signals::status(&server)?,
             link_bytes: oneiron::sync::transport::process_link_bytes(),
             browser: server.browser_readiness().snapshot(),
         })
