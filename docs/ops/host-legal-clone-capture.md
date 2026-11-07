@@ -159,14 +159,24 @@ missing id, or an id whose row is not a MESSAGE, fails the capture before its
 summary, so no acknowledgement can claim it. For each message, in id order, the
 stream carries its exact entity row (component 8), then its document head and
 every stored row and update of that document slot (component 9), then every
-stored outgoing edge row (component 10), all copied as stored. Every component
-of one message carries the BLAKE3 of its entity row as its revision. The
-summary's `messages` count is the selected id count; `decisions`,
-`live_sessions` and `live_bodies` are zero.
+stored outgoing edge row (component 10), all copied as stored. When the
+message's result attachment names a body that the message still holds (its own
+body occurrence, that exact digest and length, from the producer run,
+occurrence and path the attachment names), that body's exact bytes follow as
+component 11 (family `code_run:raw_output`, key the stored raw-output key of
+its handle, fingerprint its BLAKE3), checked against its length and digest as
+it streams. Every component of one message carries the BLAKE3 of its entity row
+as its revision. The summary's `messages` count is the selected id count;
+`absent_result_bodies` names each selected message whose attachment names a
+body it no longer holds, or that no row holds any longer: its rows are
+captured, the body is not and is never claimed. `decisions`, `live_sessions`
+and `live_bodies` are zero. A world withhold on the producer's served rows is
+a read-surface rule and does not apply to the clone, which is sealed to the
+order's recipient.
 
-The collector takes the custody read guard before its source writer, as a
-gate capture does, and holds both until the exact HOST acknowledgement; the
-source transaction writes nothing and aborts. Result-attachment bodies, assets
+The collector pins every result body, then takes the custody read guard before
+its source writer, as a gate capture does, and holds all three until the exact
+HOST acknowledgement; the source transaction writes nothing and aborts. Assets
 and model-call records are not part of this extent, and messages stored after
 the request are never included: only an explicit prospective scope may add
 them.
