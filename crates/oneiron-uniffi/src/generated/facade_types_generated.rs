@@ -1518,6 +1518,12 @@ pub struct IdentityActNowRequest {
     pub prompt: String,
     #[serde(rename = "someone_new")]
     pub someone_new: String,
+    #[serde(
+        rename = "provisional",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub provisional: Option<String>,
 }
 
 /// `oneiron::dreamer_runner::maintenance::identity::IdentityActNow`.
@@ -22075,6 +22081,11 @@ pub enum SharedVaultChange {
     VaultDeleted {
         #[serde(rename = "backup_retain_until")]
         backup_retain_until: u64,
+    },
+    #[serde(rename = "owner_added")]
+    OwnerAdded {
+        #[serde(rename = "owner")]
+        owner: String,
     },
     #[serde(rename = "ownership_transferred")]
     OwnershipTransferred {
