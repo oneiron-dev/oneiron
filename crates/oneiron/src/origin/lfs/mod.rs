@@ -24,7 +24,9 @@ mod transport;
 mod upload;
 pub(crate) use self::chunks::archive_lfs_tables;
 
-pub use self::batch_client::{LFS_BATCH_ANSWER_MAX_BYTES, upload_lfs_objects};
+pub use self::batch_client::{
+    LFS_BATCH_ANSWER_MAX_BYTES, download_lfs_objects, upload_lfs_objects,
+};
 pub use self::chunks::{
     LFS_CHUNK_AVG, LFS_CHUNK_MAX, LFS_CHUNK_MIN, LfsChunkParameters, LfsChunkRef, LfsManifest,
 };
@@ -44,7 +46,6 @@ pub use self::transport::{
     LfsRequest, LfsTransferReport, LfsTransport,
 };
 pub use self::upload::{LFS_DEFAULT_OBJECT_CAP, LFS_WHOLE_SCAN_MAX};
-pub(crate) use batch_client::download_lfs_objects;
 pub(crate) use chunks::random_lfs_chunk_seed;
 pub(crate) use direct::DirectLfsRemote;
 pub(crate) use lifecycle::{

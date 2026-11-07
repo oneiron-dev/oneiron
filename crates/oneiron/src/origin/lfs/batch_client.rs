@@ -156,11 +156,12 @@ pub fn upload_lfs_objects(
 /// batch call under `credential`, and installs it through `vault`'s LFS
 /// upload door at `now`. Answers the objects that did not arrive: one the
 /// remote refused or left out, one whose transfer failed, or one the door
-/// refused.
+/// refused. A served host runs it over its credential broker's transport
+/// for an outside import (FIX 19876).
 ///
 /// # Errors
 /// A batch call that fails or answers what does not decode.
-pub(crate) fn download_lfs_objects(
+pub fn download_lfs_objects(
     vault: &Vault,
     transport: &dyn LfsTransport,
     credential: LfsBatchCredential,
