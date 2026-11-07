@@ -67,6 +67,7 @@ impl SyncClient {
     ) -> Result<ConnectDelivery> {
         let vault = manager.vault();
         let (local, state) = active(vault, owner, &id(&request.pact)?)?;
+        let by = owner.actor_for_read(vault)?;
         let local_world = crate::entity_id::LocalWorldId::try_from(request.world_ref)?;
         let grant = grant(vault, state.grant_ref)?;
         let selector = SyncSelector::new(
@@ -81,7 +82,7 @@ impl SyncClient {
             return Err(refused());
         }
         let window = manager.open_window(&key)?;
-        let envelope = crate::sync::selector::guest_share_envelope_body(
+        let (envelope, rows, travelled) = crate::sync::selector::guest_share_envelope_body_listing(
             vault,
             &window.doc,
             &key,
@@ -99,9 +100,22 @@ impl SyncClient {
             window_key: request.window_key,
             update: envelope.update,
         };
+        let signature = issuer.sign_connect_window(&body)?;
+        let travel_receipt = Some(vault.record_guest_window_travel(
+            &state.grant_ref,
+            &grant.member_ref,
+            grant.scope,
+            &body.window_key,
+            &body.world_ref,
+            &rows,
+            &body.update,
+            &by,
+            travelled,
+        ));
         Ok(ConnectDelivery {
-            signature: issuer.sign_connect_window(&body)?,
+            signature,
             body,
+            travel_receipt,
         })
     }
 
