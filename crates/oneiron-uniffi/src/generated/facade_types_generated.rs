@@ -11126,6 +11126,24 @@ pub struct RetrievalRunRecord {
     )]
     pub query_expander_id: Option<String>,
     #[serde(
+        rename = "dispatch_attempt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub dispatch_attempt: Option<AttemptId>,
+    #[serde(
+        rename = "policy_manifest_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub policy_manifest_ref: Option<String>,
+    #[serde(
+        rename = "policy_manifest_body_hash",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub policy_manifest_body_hash: Option<String>,
+    #[serde(
         rename = "reranker_id",
         default,
         skip_serializing_if = "Option::is_none"
