@@ -15,7 +15,9 @@ use std::sync::Arc;
 
 use oneiron::agent_def::{AgentModel, ensure_inherited_model_list};
 use oneiron::agent_dispatch::SpendScopeId;
-use oneiron::code_run::{CODE_RUN_RNG_SEED_LEN, CodeRunDeterminism, CompactionHostBinding};
+use oneiron::code_run::{
+    CODE_RUN_RNG_SEED_LEN, CodeRunDeterminism, CompactionHostBinding, ScopedChildProfile,
+};
 use oneiron::compaction::EpochEmbedder;
 use oneiron::engine_executor::{
     ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorConfig, EngineExecutorLimits, TypeFeedback,
@@ -40,7 +42,7 @@ use super::status::StatusCell;
 use crate::config::models::{BROWSER_PLANNER_ROLE, CodeCheckSettings, ModelsConfig};
 use crate::mcp::{
     McpQuickJsProvider, ModelCallBackend, ModelListBackend, PlannedMeter, PlannedModel,
-    PlannedRoute, RunCompactionSeat,
+    PlannedRoute, RunCompactionSeat, RunProfiledCompactionSeat,
 };
 use crate::models::{ModelRuntime, RoleCall, RoleRefusal};
 use crate::server::{SharedModelSlots, SyncServer};
@@ -281,8 +283,9 @@ pub(super) async fn bind(
         pinned: true,
         browser,
     });
-    let provider =
-        provider.with_pinned_compaction(pinned_compaction(&compaction, Arc::clone(&slots), pinned));
+    let provider = provider
+        .with_pinned_compaction(pinned_compaction(&compaction, Arc::clone(&slots), pinned))
+        .with_profiled_compaction(profiled_compaction(&compaction, Arc::clone(&slots)));
     server.with_mcp_quickjs_provider(
         compaction.attach(provider, status, slots, live_admission),
         runs,
@@ -306,6 +309,24 @@ fn pinned_compaction(
                 Some(slot) => seat.with_room_vectors(slot as Arc<dyn EpochEmbedder>),
                 None => seat,
             }
+        },
+    )
+}
+
+/// A profiled child's original accounting travels to each paid compaction
+/// call. Its memory profile and compaction prompt stay the ordinary ones.
+fn profiled_compaction(
+    compaction: &CodeModeCompaction,
+    slots: Arc<SharedModelSlots>,
+) -> RunProfiledCompactionSeat {
+    let compaction = compaction.clone();
+    Arc::new(
+        move |host: CompactionHostBinding, credential: &str, profile: &ScopedChildProfile| {
+            let seat = compaction.for_profiled_run(host, credential, profile)?;
+            Some(match slots.load().embedder.clone() {
+                Some(slot) => seat.with_room_vectors(slot as Arc<dyn EpochEmbedder>),
+                None => seat,
+            })
         },
     )
 }
@@ -593,17 +614,21 @@ impl CodeModeBackend {
             } else if let Some(planned) = &self.planned {
                 // FIX 2310: the model that answered, marked when it is not
                 // the child's pick.
-                let (response, binding) = call
-                    .ladder
+                call.ladder
                     .generate_recorded_while(&run, call.request, None, &may_send)
-                    .await?;
-                planned.answered(&run, binding.rung.model.clone());
-                Ok((response, binding))
+                    .await
+                    .map(|(response, binding)| {
+                        planned.answered(&run, binding.rung.model.clone());
+                        (response, binding)
+                    })
             } else {
                 call.ladder
                     .generate_recorded_while(&run, call.request, None, &may_send)
                     .await
             };
+            if let Some(live) = &live {
+                live.book_and_revise();
+            }
             if answered.is_ok() {
                 handoff.answered();
             }
