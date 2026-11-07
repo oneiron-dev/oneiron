@@ -84,7 +84,8 @@ impl VaultPressGrants {
                 tracing::warn!(%error, "a browser run's project did not read; its sends name none");
             })
             .ok()
-            .flatten();
+            .flatten()
+            .or_else(|| caller_project(caller));
         Self {
             vault: Arc::clone(vault),
             scope: BrowserSendScope {
@@ -116,5 +117,24 @@ impl PressGrants for VaultPressGrants {
         let mut scope = self.scope.clone();
         scope.audience = Some(audience.to_owned());
         grants_policy(&self.vault, Some(&scope))
+    }
+}
+
+/// The one project a credential caller's verified slip scopes it to (FIX
+/// 11906): a slip whose audience names exactly one project acts in that
+/// project, so the sends of a run with no host-known project are in it. A
+/// pumped run's agent, a caller with no slip, and a slip whose audience is
+/// every project, none or several name none.
+fn caller_project(caller: &VerdictAsker) -> Option<oneiron::EntityId> {
+    let auth = match caller {
+        VerdictAsker::Connector(context) => context.auth.as_ref()?,
+        VerdictAsker::Credential(auth, _) => auth,
+        VerdictAsker::Agent(..) => return None,
+    };
+    match &auth.verified_slip()?.scope().audience {
+        oneiron::federation::ScopeAxis::Some(projects) if projects.len() == 1 => {
+            projects.first().map(|project| project.0)
+        }
+        _ => None,
     }
 }

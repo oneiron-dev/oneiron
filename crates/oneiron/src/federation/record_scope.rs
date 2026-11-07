@@ -33,7 +33,7 @@ mod stamping;
 mod tests;
 
 pub(crate) use self::stamping::{
-    has_stored_position, restrict_stamp_in_txn, room_rows_placed, settle_epoch_birth,
+    has_stored_position, restrict_stamp_in_txn, room_row_placed, settle_epoch_birth,
     settle_source_birth, stage_session_position, stamp_blob_project, stamp_import_audience_birth,
     stamp_leader_project, stamp_put, stamp_queue_check_exhaust_birth, stamp_task_birth,
     stamp_task_fact, unstage_session_position,
@@ -356,8 +356,24 @@ fn stored_scope(
     let Some(stamp) = SCOPE_RECORD.get(store, txn, &id)? else {
         return Ok(None);
     };
-    if stamp.version != 2 || stamp.kind != kind {
+    if !stamp_bound_on(store, txn, id, kind, &stamp)? {
         return Ok(None);
+    }
+    let scope = note_world::note_position(store, txn, id, kind, stamp.scope);
+    Ok(Some(scope))
+}
+/// Whether `stamp` is a version-2 birth stamp of `kind` whose birth facet
+/// `id` still holds on `store`'s content. The stamp may come from another
+/// store: a room read binds base's stamp on the room's edges (FIX 5161).
+fn stamp_bound_on(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    stamp: &Stamp,
+) -> Result<bool> {
+    if stamp.version != 2 || stamp.kind != kind {
+        return Ok(false);
     }
     let facet = if kind == crate::registry::ENTITY_TYPE_CLAIM {
         // CLAIM carries its immutable facet in its body; `stamp_put` and the
@@ -393,11 +409,7 @@ fn stored_scope(
     } else {
         Some(crate::claim::substrate_facet_id(id)?)
     };
-    if facet.is_none_or(|facet| stamp.birth_facet != *facet.as_bytes()) {
-        return Ok(None);
-    }
-    let scope = note_world::note_position(store, txn, id, kind, stamp.scope);
-    Ok(Some(scope))
+    Ok(facet.is_some_and(|facet| stamp.birth_facet == *facet.as_bytes()))
 }
 /// The world the stored row `id` of `kind`, with body `data`, sits in: what
 /// every read that checks a world asks. A CLAIM, key pad or key wrap names its own; a
@@ -556,46 +568,7 @@ pub(crate) fn validate_edit_birth_scope(
     let stamp = SCOPE_RECORD
         .get(store, txn, &id)?
         .ok_or(Error::InvalidClaimBody("unstamped promoted edit"))?;
-    if stamp.version != 2 || stamp.kind != kind || stored_scope(store, txn, id, kind)?.is_none() {
-        return Err(Error::InvalidClaimBody("record scope restamp refused"));
-    }
-    if kind == crate::registry::ENTITY_TYPE_CLAIM {
-        let body = crate::claim::decode_claim_body(data, true)?;
-        let mut proposed = body.record_scope("read");
-        proposed.verbs = ScopeAxis::Bottom;
-        if proposed != stamp.scope || stamp.birth_facet != *body.scope_facet.as_bytes() {
-            return Err(Error::InvalidClaimBody("record scope restamp refused"));
-        }
-    }
-    if matches!(
-        kind,
-        crate::registry::ENTITY_TYPE_FACET | crate::registry::ENTITY_TYPE_RELATIONSHIP
-    ) {
-        let proposed = match rmpv::decode::read_value(&mut &data[..]) {
-            Ok(rmpv::Value::Map(entries)) => {
-                let bands: Vec<_> = entries
-                    .iter()
-                    .filter(|(key, _)| key.as_str() == Some("sensitivity"))
-                    .collect();
-                match bands.as_slice() {
-                    [] => Sensitivity::Sensitive,
-                    [(_, value)] => match value.as_str() {
-                        Some("public") => Sensitivity::Public,
-                        Some("private") => Sensitivity::Private,
-                        Some("sensitive") => Sensitivity::Sensitive,
-                        Some("restricted") => Sensitivity::Restricted,
-                        _ => return Err(Error::InvalidClaimBody("invalid facet sensitivity")),
-                    },
-                    _ => return Err(Error::InvalidClaimBody("duplicate facet sensitivity")),
-                }
-            }
-            _ => Sensitivity::Sensitive,
-        };
-        if stamp.scope.sensitivity != SensitivityCeiling::AtMost(proposed) {
-            return Err(Error::InvalidClaimBody("record scope restamp refused"));
-        }
-    }
-    Ok(())
+    stamping::body_keeps_stamp(store, txn, id, kind, data, &stamp)
 }
 
 /// Derive only an intrinsic current stamp or a birth-facet-bound persisted stamp.
