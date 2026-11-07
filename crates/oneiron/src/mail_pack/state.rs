@@ -29,6 +29,12 @@ pub(super) const BODY_QUEUE: SideTable<(EntityId, u64, [u8; 32]), String, Named>
 /// MESSAGE's delete returns.
 pub(super) const HEADER_RETIREMENTS: SideTable<(EntityId, [u8; 32], EntityId), u64, Named> =
     SideTable::new(&side_table::MAIL_PACK_HEADER_RETIREMENT);
+/// How many times each thread's CONVERSATION was forgotten whole, by the
+/// source and the BLAKE3 of the thread key ([`thread_hash`]): a message
+/// landing in the thread afterwards opens a new CONVERSATION, never the one
+/// forgotten (fix list row 18084).
+pub(super) const THREAD_EPOCHS: SideTable<(EntityId, [u8; 32]), u64, Named> =
+    SideTable::new(&side_table::MAIL_PACK_THREAD_EPOCH);
 /// The rows each provider message landed as, so an erase of any of them
 /// reaches the message: by the row (its CONVERSATION, TURN or a MESSAGE
 /// revision), the source and the BLAKE3 of the provider's id. The value is
@@ -155,6 +161,11 @@ pub(super) struct MailOccurrence {
 /// The key of the provider message `provider_id` of `source`.
 pub(super) fn occurrence_key(source: EntityId, provider_id: &str) -> (EntityId, [u8; 32]) {
     (source, *blake3::hash(provider_id.as_bytes()).as_bytes())
+}
+
+/// The key a thread's epoch is kept under.
+pub(super) fn thread_hash(thread_key: &str) -> [u8; 32] {
+    *blake3::hash(thread_key.as_bytes()).as_bytes()
 }
 
 /// The body queue key of a message received at `received_at`.

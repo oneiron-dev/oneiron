@@ -22,7 +22,8 @@ use serde::{Deserialize, Serialize};
 use super::landing::{LandOutcome, Landing};
 use super::pack::require_pack_active_in;
 use super::provider_delete::{
-    ProviderDeleteOutcome, apply_provider_delete, restore_from_provider_trash, update_labels,
+    ProviderDeleteOutcome, apply_provider_delete, restore_from_provider_trash, resume_owed_forgets,
+    update_labels,
 };
 use super::source::{MailCopySetting, MailSourceKind, MailSourceRow, MailSourceStatus, SOURCES};
 use super::state::{
@@ -672,7 +673,10 @@ impl Vault {
         // Header revisions a body superseded and whose delete did not return
         // go first, whether or not the provider lists them again (FIX 15413).
         super::header_retire::retire_superseded_headers(self, source_ref);
+        let mut owed = None;
         let outcome = (|| -> MemoryResult<()> {
+            // Then a forget a failure stopped part-way (fix list row 18084).
+            owed = resume_owed_forgets(step.vault, step.source)?;
             if step.state()?.anchor.is_none() {
                 let anchor = step.wire.current_anchor(&step.wire_source)?;
                 step.write_state(|state| state.anchor = Some(anchor))?;
@@ -691,7 +695,11 @@ impl Vault {
             step.report.attachments_stored += stored;
             Ok(())
         })();
-        let error = outcome.as_ref().err().map(|error| error.message.clone());
+        let error = outcome
+            .as_ref()
+            .err()
+            .map(|error| error.message.clone())
+            .or(owed);
         step.write_state(|state| {
             state.last_step_at = Some(at);
             state.last_error = error;
