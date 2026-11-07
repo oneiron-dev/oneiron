@@ -6464,6 +6464,7 @@ ChatCompletionRemembered = ChatCompletionRememberedSaved | ChatCompletionRemembe
 class ChatCompletionMemory(TypedDict):
     injected: bool
     remembered: ChatCompletionRemembered
+    recall_skipped: NotRequired[str | None]
 class ChatCompletionResponse(TypedDict):
     id: str
     object: ChatCompletionObject
