@@ -73,7 +73,10 @@ impl EngineNativeExecutor<'_> {
                 }
                 let note = asked.clone().flatten();
                 // FIX 4465 C: the live request as its rung sends it sizes and rides the flight.
-                let (live, room) = super::compaction::live_fork::capture(driver, request);
+                // FIX 9463: only with every row it was read from witnessed.
+                let prefix_sources = self.step_source_rows(config, record);
+                let (live, room) =
+                    super::compaction::live_fork::capture(driver, request, prefix_sources);
                 // FIX 4933: the fork's prefix is the run's latest completed
                 // call; the flight seals only the steps it holds, and every
                 // later step and fold mark waits raw for a later breakpoint.

@@ -46,4 +46,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/step_cancellation.rs` | src | s | 1 struct · 6 fn · 1 const | StepCancellation | The cancellation of one code step (FIX 600): a flag its owner sets and its runtime reads, linked one way to… |
 | `src/tokenizer.rs` | src | s | 1 enum · 1 trait · 4 fn · 2 const | ContextPackTokenizer, PackTokenizer | — |
 | `src/unsubscribe_headers.rs` | src | s | 1 struct · 4 fn · 5 const | ListUnsubscribeTarget | Deterministic unsubscribe headers and their frozen outbound payload representation |
-| `src/work_line.rs` | src | m | 5 struct · 2 trait · 20 fn · 2 const | LineCrossing, LineObserver, LinePermit, LineShortage, TaskWorkTurn, WaitTimedOut, WorkLine | A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work… |
+| `src/work_line.rs` | src | L | 5 struct · 2 trait · 23 fn · 2 const | LineCrossing, LineObserver, LinePermit, LineShortage, TaskWorkTurn, WaitTimedOut, WorkLine | A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work… |
