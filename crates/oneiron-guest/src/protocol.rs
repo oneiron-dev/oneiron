@@ -339,8 +339,8 @@ impl<T: Read + Write> Session<T> {
     }
 
     pub(crate) fn result(&mut self, result_json: &str) -> Result<()> {
-        if self.finished || result_json.len() > MAX_FILE {
-            return Err(Error::Protocol("step result bounds"));
+        if self.finished {
+            return Err(Error::Protocol("step result after finish"));
         }
         self.send(&GuestFrame::StepResult { result_json })
     }
