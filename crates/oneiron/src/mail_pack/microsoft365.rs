@@ -686,6 +686,16 @@ impl MailProviderWire for HttpGraphMailWire<'_> {
         }))
     }
 
+    fn own_addresses(&self, source: &MailSyncSource) -> Result<Option<Vec<String>>> {
+        // The mailbox's own object, on the base its mail is read from (fix
+        // list row 20400); a right to send as another mailbox never counts.
+        let select = [("$select", "mail,proxyAddresses".to_owned())];
+        let Some(me) = self.found(source, GRAPH_ME_URL, &select, PREFER_IMMUTABLE_IDS)? else {
+            return Ok(None);
+        };
+        Ok(Some(graph_own_addresses(&me)))
+    }
+
     fn attachment(
         &self,
         source: &MailSyncSource,
@@ -803,6 +813,22 @@ fn recipients(message: &Value, key: &str) -> Vec<String> {
         .map(mailbox_text)
         .filter(|text| !text.is_empty())
         .collect()
+}
+
+/// The SMTP addresses a Graph user or group object names as its own: its
+/// `mail`, and each `proxyAddresses` entry of type `smtp:` (any case, the
+/// primary `SMTP:` included), the prefix stripped. Any other address type
+/// (`SIP:`, `X500:`) is no mail address.
+fn graph_own_addresses(me: &Value) -> Vec<String> {
+    let mut own: Vec<String> = text_of(me.get("mail")).into_iter().collect();
+    own.extend(array(me, "proxyAddresses").iter().filter_map(|proxy| {
+        let proxy = proxy.as_str()?;
+        if !proxy.get(..5)?.eq_ignore_ascii_case("smtp:") {
+            return None;
+        }
+        Some(proxy.get(5..)?.trim().to_owned())
+    }));
+    own
 }
 
 /// The label a folder that is no well-known one gives its mail.

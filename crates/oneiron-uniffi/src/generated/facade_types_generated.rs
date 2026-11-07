@@ -71965,6 +71965,12 @@ pub struct MailSourceView {
     pub kind: MailSourceKind,
     #[serde(rename = "address", default, skip_serializing_if = "Option::is_none")]
     pub address: Option<String>,
+    #[serde(
+        rename = "own_addresses",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub own_addresses: Option<Vec<String>>,
     #[serde(rename = "owner_ref", default, skip_serializing_if = "Option::is_none")]
     pub owner_ref: Option<String>,
     #[serde(rename = "reads")]
@@ -72017,6 +72023,12 @@ pub struct MailSourceSettingsRequest {
     pub calendar_details: Option<CalendarDetailSetting>,
     #[serde(rename = "status", default, skip_serializing_if = "Option::is_none")]
     pub status: Option<MailSourceStatus>,
+    #[serde(
+        rename = "own_addresses",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub own_addresses: Option<Vec<String>>,
 }
 
 /// `oneiron::mail_pack::doors::MailSourceMembersRequest`.
