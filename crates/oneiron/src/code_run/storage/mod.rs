@@ -114,7 +114,8 @@ pub(crate) use self::wait_delivery::{
     canonical_wait_ids, deliver_changed_wait_in_txn, has_parked_run_in_txn, observe_wait_change,
 };
 pub(crate) use self::wait_delivery::{
-    deliver_wait_in_txn, deliver_wait_listing_in_txn, settled_wait_reply_in_txn,
+    clear_parked_wait_in_txn, deliver_wait_in_txn, deliver_wait_listing_in_txn,
+    settled_wait_reply_in_txn,
 };
 // DOOR-141 PR3b: a turn program's resume checkpoint and its wait.
 pub(crate) use self::program_resume::{
