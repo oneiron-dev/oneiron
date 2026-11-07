@@ -13,6 +13,8 @@ use super::hex_bytes;
 use super::json_payload;
 use super::parse_entity_id_param;
 use super::parse_optional_entity_id;
+// memory/watch.rs reads it through `use super::*`.
+use super::scoped_read_for_core_auth;
 use super::stage_core_entity_put;
 use super::unix_seconds_now;
 use crate::auth::CoreAuth;
