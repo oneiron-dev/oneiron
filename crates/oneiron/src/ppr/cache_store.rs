@@ -15,8 +15,8 @@ use super::query::DeferredPprCacheWrite;
 use super::walk::{PprCacheState, PprFrontierEntry, SCORE_EPSILON};
 
 mod invalidation_plan;
-use invalidation_plan::{delete_dep_rows_for_seed_hash, invalidate_ppr_caches};
 pub(crate) use invalidation_plan::{PprInvalidationProjection, PreparedPprInvalidation};
+use invalidation_plan::{delete_dep_rows_for_seed_hash, invalidate_ppr_caches};
 
 mod purge;
 pub(crate) use purge::purge_ppr_for_erase_in_txn;
