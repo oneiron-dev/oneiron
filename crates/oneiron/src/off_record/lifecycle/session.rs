@@ -23,6 +23,7 @@ use super::types::{OffRecordBackendClass, OffRecordCloseOutcome, OffRecordMode};
 use crate::error::OffRecordError;
 
 mod checkpoint;
+mod reader_txn;
 mod routed_side;
 mod type_feedback;
 mod vector_search;
