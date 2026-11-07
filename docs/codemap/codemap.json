@@ -47613,7 +47613,7 @@
      "purpose": "The boundary cap contract (ONE-1441 §Binding cap contract, I11)",
      "surface": {
       "crate-vis": 1,
-      "fn": 2,
+      "fn": 3,
       "re-export": 1
      }
     },
@@ -77050,7 +77050,7 @@
      "path": "src/sync/client/documents.rs",
      "purpose": "Document import and durable local-journal confirmation on the one socket",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -77904,6 +77904,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/documents/copy.rs",
+     "purpose": "A marked repo source's copy stream on the text plane of a device that holds the source (FIX 10872): its…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/documents/destination.rs",
      "purpose": "Destination policy for text-plane admission and release",
      "surface": {
@@ -77932,7 +77942,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "DocumentRegistry",
@@ -77941,7 +77951,7 @@
      "path": "src/sync/documents/mod.rs",
      "purpose": "Per-entity text documents",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "fn": 16,
       "re-export": 2,
       "struct": 2
@@ -80031,7 +80041,7 @@
      "path": "src/sync/selector/secret_projection.rs",
      "purpose": "The masked copy every sync peer gets of a marked repo item (FIX 7608 slice 4; ruling A3: sync always carries…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 3
      }
     },
@@ -80044,9 +80054,19 @@
      "path": "src/sync/selector/secret_projection/documents.rs",
      "purpose": "A marked repo item's entity document as a sync peer gets it, a peer's edit of it as the source text takes…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 7,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/selector/secret_projection/documents/device.rs",
+     "purpose": "A marked repo source's copy stream on a device that holds the source (FIX 10872, Engine 04:48)",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -93155,7 +93175,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 375,
+     "files": 377,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93365,9 +93385,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 177,
+   "over_bar": 178,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6587,
+   "source_files": 6589,
    "test_files": 895
   },
   "oneiron-android": {
@@ -108273,7 +108293,7 @@
      "path": "src/lib/boundary.rs",
      "purpose": "Shared caps, parse/validate helpers and napi error mapping for the legacy surface",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 26
      }
     },
     {
@@ -113272,7 +113292,7 @@
      "path": "src/api/booking/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 16
      }
     },
     {
@@ -113486,7 +113506,7 @@
      "path": "src/api/booking/validate.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -139322,15 +139342,16 @@
      "notable": [
       "StoredMessagePart",
       "WitnessMessageBodyAuthor",
-      "WitnessMessageEnvelope"
+      "WitnessMessageEnvelope",
+      "WitnessMetadataMeasure"
      ],
      "path": "src/witness_message_body.rs",
      "purpose": "Canonical MESSAGE body vocabulary, encoding, and structural validation",
      "surface": {
       "const": 5,
       "enum": 2,
-      "fn": 4,
-      "struct": 1
+      "fn": 6,
+      "struct": 2
      }
     },
     {
