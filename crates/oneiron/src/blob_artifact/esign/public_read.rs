@@ -292,8 +292,10 @@ impl Vault {
 
     /// [`Self::esign_preview_for_capability_as`] with its PDF bytes leased
     /// from this machine's memory: file-plane and plain inline ASSET bodies
-    /// reserve their exact output length before allocating it. Record-head
-    /// bodies lease their length after reading. The lease rides through inspection.
+    /// reserve their exact output length before allocating it. The lease then
+    /// names the returned buffer's reported capacity as allocated. Record-head
+    /// bodies lease that capacity after reading and name it allocated as well.
+    /// The lease rides through inspection.
     pub fn esign_preview_for_capability_leased_as(
         &self,
         token: &EsignCapability,
@@ -347,7 +349,7 @@ impl Vault {
                 })
             },
         )?;
-        let actual = u64::try_from(pair.0.len()).unwrap_or(u64::MAX);
+        let actual = u64::try_from(pair.0.capacity()).unwrap_or(u64::MAX);
         let (bytes, guard) = pair;
         match guard {
             Some((mut lease, reserved)) => {
@@ -355,9 +357,10 @@ impl Vault {
                 Ok((page, bytes, lease))
             }
             None => {
-                let lease = memory
+                let mut lease = memory
                     .lease(actual, deadline)
                     .map_err(EsignLeasedReadError::Refused)?;
+                lease.materialized(actual, actual);
                 Ok((page, bytes, lease))
             }
         }
