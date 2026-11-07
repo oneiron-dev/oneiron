@@ -245,7 +245,7 @@ pub(super) async fn fetch_valid_ocsp(
         // Checked as a verifier checks it, against the DSS certificates and
         // the anchors. The existing validator also admits and checks any
         // delegated responder in the response.
-        let targets = verify::ocsp_entry_valid(
+        let evidence = verify::ocsp_entry_valid(
             &response.body,
             &context.certs,
             &context.anchors,
@@ -253,7 +253,9 @@ pub(super) async fn fetch_valid_ocsp(
             memory,
         )
         .map_err(resource_error)?;
-        if targets.is_some_and(|targets| targets.contains(&cert_der)) {
+        if evidence
+            .is_some_and(|evidence| !evidence.unknown && evidence.good_targets.contains(&cert_der))
+        {
             return Ok(Some(response.body));
         }
     }
