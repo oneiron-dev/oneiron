@@ -1188,6 +1188,8 @@ class Oneiron:
         @property
         def weave(self) -> "Oneiron._VaultWeaveVerbs": ...
         @property
+        def step_up(self) -> "Oneiron._VaultStepUpVerbs": ...
+        @property
         def inbox(self) -> "Oneiron._VaultInboxVerbs": ...
         @property
         def proactivity(self) -> "Oneiron._VaultProactivityVerbs": ...
@@ -1882,6 +1884,8 @@ class Oneiron:
         def owner(self) -> "Oneiron._VaultWeaveOwnerVerbs": ...
         @property
         def item(self) -> "Oneiron._VaultWeaveItemVerbs": ...
+        @property
+        def admin(self) -> "Oneiron._VaultWeaveAdminVerbs": ...
         def enqueue(self, spec: Facade.WeaveEnqueueRequest) -> Facade.DreamerAttemptRef:
             """Admits a generated candidate weave recipe under the owner's proof and queues its pinned execution; poll vault.consolidation.status for completion."""
         @property
@@ -1919,6 +1923,23 @@ class Oneiron:
     class _VaultWeaveItemVerbs:
         def wrong(self, spec: Facade.WeaveWrongItemRequest) -> Facade.WeaveItemCorrectionView:
             """A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays."""
+    class _VaultWeaveAdminVerbs:
+        def report(self, spec: Facade.WeaveAdminReportRequest) -> Facade.WeaveReportView:
+            """A weave Admin's live report of the shared vault, inside the Admin membership grant's Scope, after the person stepped up with a passkey on this credential (MFA-1 A); never an Owner read."""
+        def lens(self, spec: Facade.WeaveAdminLensRequest) -> Facade.LensFrameCard:
+            """A weave Admin's live report rendered into its lens on the server's model, under the stepped-up Admin proof; the server holds its frame for the card's events."""
+        def digest(self, spec: Facade.WeaveAdminDigestRequest) -> Facade.WeaveDigestView | None:
+            """One of a weave Admin's saved digests, or the newest, under the stepped-up Admin proof and the current read policy."""
+        @property
+        def link(self) -> "Oneiron._VaultWeaveAdminLinkVerbs": ...
+        @property
+        def item(self) -> "Oneiron._VaultWeaveAdminItemVerbs": ...
+    class _VaultWeaveAdminLinkVerbs:
+        def wrong(self, spec: Facade.WeaveAdminLinkWrongRequest) -> Facade.WeaveLinkCorrectionView:
+            """A weave Admin labels a link its Admin report shows as wrong, under the stepped-up Admin proof, with the grant on the label; the link stays."""
+    class _VaultWeaveAdminItemVerbs:
+        def wrong(self, spec: Facade.WeaveAdminItemWrongRequest) -> Facade.WeaveItemCorrectionView:
+            """A weave Admin labels a claim, project, budget or sieve audit row its Admin report shows as wrong, under the stepped-up Admin proof; the row stays."""
     class _VaultWeaveSchedulesVerbs:
         def list(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.WeaveScheduleView]:
             """Lists every reader's daily or weekly weave digest schedule under the owner's proof."""
@@ -1936,6 +1957,17 @@ class Oneiron:
     class _VaultWeaveDigestFeedbackVerbs:
         def put(self, spec: Facade.WeaveDigestFeedback) -> Facade.WeaveDigestFeedback:
             """Tells the Coach the owner's own digest preference: a rhythm, a section to lead with, or keep the settings as they are."""
+    class _VaultStepUpVerbs:
+        @property
+        def passkeys(self) -> "Oneiron._VaultStepUpPasskeysVerbs": ...
+        @property
+        def totp(self) -> "Oneiron._VaultStepUpTotpVerbs": ...
+    class _VaultStepUpPasskeysVerbs:
+        def reset(self, spec: Facade.StepUpPasskeysResetRequest) -> Facade.StepUpPasskeysReset:
+            """The vault owner removes every passkey a person enrolled for step-up, and that person's step-ups, so a person who lost each passkey can enroll a first one again; under the owner's own credential."""
+    class _VaultStepUpTotpVerbs:
+        def reset(self, spec: Facade.StepUpTotpResetRequest) -> Facade.StepUpTotpReset:
+            """The vault owner removes a person's authenticator-app enrollments and their TOTP step-ups; passkeys and passkey step-ups remain unchanged."""
     class _VaultInboxVerbs:
         @property
         def concerns(self) -> "Oneiron._VaultInboxConcernsVerbs": ...
