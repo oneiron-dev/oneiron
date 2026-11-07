@@ -5459,6 +5459,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_connectors_replies_retry_failed(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.connectors.replies.retry_failed")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.connectors.replies.retry_failed", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_consent_deny(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.consent.deny")?;
         let output = py
