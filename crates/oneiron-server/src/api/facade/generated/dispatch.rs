@@ -35607,6 +35607,7 @@ async fn vault_channel_identities_provision(
         let (output, listed) = super::host_doors::vault_channel_identities_provision(
             server,
             auth,
+            Some(super::FacadePacedCall::of(call)?),
             facade_door_input(&mut hooks)?,
         )
         .await;
@@ -35641,6 +35642,7 @@ async fn vault_channel_identities_bind(
         let (output, listed) = super::host_doors::vault_channel_identities_bind(
             server,
             auth,
+            Some(super::FacadePacedCall::of(call)?),
             facade_door_input(&mut hooks)?,
         )
         .await;
@@ -35711,6 +35713,7 @@ async fn vault_channel_identities_rotate(
         let (output, listed) = super::host_doors::vault_channel_identities_rotate(
             server,
             auth,
+            Some(super::FacadePacedCall::of(call)?),
             facade_door_input(&mut hooks)?,
         )
         .await;
@@ -35746,6 +35749,7 @@ async fn vault_channel_identities_release(
         let (output, listed) = super::host_doors::vault_channel_identities_release(
             server,
             auth,
+            Some(super::FacadePacedCall::of(call)?),
             facade_door_input(&mut hooks)?,
         )
         .await;
@@ -35786,6 +35790,7 @@ async fn vault_channel_identities_route_inbound(
         let (output, listed) = super::host_doors::vault_channel_identities_route_inbound(
             server,
             auth,
+            Some(super::FacadePacedCall::of(call)?),
             facade_door_input(&mut hooks)?,
         )
         .await;

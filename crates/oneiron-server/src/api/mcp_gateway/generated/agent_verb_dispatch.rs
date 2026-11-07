@@ -24653,7 +24653,7 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_channel_identities_provision(
-                    server, auth, input,
+                    server, auth, None, input,
                 ),
             )
             .await;
@@ -24672,7 +24672,9 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::memory::channel_doors::ChannelIdentityBindRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(
-                crate::api::facade::host_doors::vault_channel_identities_bind(server, auth, input),
+                crate::api::facade::host_doors::vault_channel_identities_bind(
+                    server, auth, None, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -24711,7 +24713,7 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_channel_identities_rotate(
-                    server, auth, input,
+                    server, auth, None, input,
                 ),
             )
             .await;
@@ -24731,7 +24733,7 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_channel_identities_release(
-                    server, auth, input,
+                    server, auth, None, input,
                 ),
             )
             .await;
@@ -24754,7 +24756,7 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_channel_identities_route_inbound(
-                    server, auth, input,
+                    server, auth, None, input,
                 ),
             )
             .await;
