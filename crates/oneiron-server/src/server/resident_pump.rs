@@ -445,14 +445,12 @@ impl SyncServer {
         // on its own thread with its own reactor, as `execute_code` does.
         // The admission goes with it, held through its claim, its run and
         // its settlement.
-        let spawned = std::thread::Builder::new()
-            .name("oneiron-agent-run".to_owned())
-            .spawn(move || {
-                let leave = server.run_agent_blocking(id, of, &key, runtime);
-                drop(admission);
-                drop(permit);
-                let _ = sender.send(leave);
-            });
+        let spawned = crate::engine_thread("oneiron-agent-run".to_owned()).spawn(move || {
+            let leave = server.run_agent_blocking(id, of, &key, runtime);
+            drop(admission);
+            drop(permit);
+            let _ = sender.send(leave);
+        });
         if let Err(error) = spawned {
             tracing::warn!(%error, attempt = ?id, "an agent run thread did not start");
             return false;
