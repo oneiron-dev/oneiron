@@ -460,6 +460,7 @@ vaultFilesSourcesRescan(input: unknown): unknown
 vaultFilesSourcesDetach(input: unknown): unknown
 vaultFilesSourcesList(input: unknown): unknown
 vaultFilesSourcesFiles(input: unknown): unknown
+vaultFilesSourcesExclude(input: unknown): unknown
 vaultResidenceMode(input: unknown): unknown
 vaultResidenceOpen(input: unknown): unknown
 vaultResidenceIndex(input: unknown): unknown

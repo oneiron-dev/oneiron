@@ -3687,6 +3687,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_files_sources_exclude(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.files.sources.exclude", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_residence_mode(
         &self,
         input: serde_json::Value,
