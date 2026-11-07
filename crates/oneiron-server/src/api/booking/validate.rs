@@ -5,8 +5,7 @@ use oneiron::booking::agent_api::{
 };
 
 use super::constants::{
-    MAX_BOOKER_EMAIL_BYTES, MAX_IDEMPOTENCY_KEY_BYTES, MAX_INTAKE_ANSWERS,
-    MAX_INTAKE_FIELD_KEY_BYTES, MAX_INTAKE_VALUE_BYTES, MAX_SESSION_REF_BYTES,
+    MAX_BOOKER_EMAIL_BYTES, MAX_INTAKE_ANSWERS, MAX_INTAKE_FIELD_KEY_BYTES, MAX_INTAKE_VALUE_BYTES,
 };
 use crate::error::ApiError;
 
@@ -15,8 +14,13 @@ use crate::error::ApiError;
 // -------------------------------------------------------------------------
 
 /// Validates the caller-controlled shape of one request before any storage
-/// read, any admission call, and any solve.
-pub(super) fn validate_operation_shape(request: &BookingOperationRequest) -> Result<(), ApiError> {
+/// read, any admission call, and any solve. An `anonymous` visitor's email and
+/// intake keep their pre-auth bounds, so its work stays sheddable; an
+/// authenticated caller's are measured instead ([`measure_authenticated`]).
+pub(super) fn validate_operation_shape(
+    request: &BookingOperationRequest,
+    anonymous: bool,
+) -> Result<(), ApiError> {
     match request {
         BookingOperationRequest::Availability(input) => {
             validate_event_type(&input.event_type)?;
@@ -37,8 +41,8 @@ pub(super) fn validate_operation_shape(request: &BookingOperationRequest) -> Res
             validate_session_ref(&input.session_ref)?;
             validate_idempotency_key(&input.idempotency_key)?;
             validate_token(&input.hold_token, "hold_token")?;
-            validate_booker_email(&input.booker_email)?;
-            validate_intake(&input.intake)
+            validate_booker_email(&input.booker_email, anonymous)?;
+            validate_intake(&input.intake, anonymous)
         }
         BookingOperationRequest::Reschedule(input) => {
             validate_idempotency_key(&input.idempotency_key)?;
@@ -52,20 +56,23 @@ pub(super) fn validate_operation_shape(request: &BookingOperationRequest) -> Res
     }
 }
 
+/// An event type key of any length, non-blank (ABC row 67).
 fn validate_event_type(event_type: &EventTypeKey) -> Result<(), ApiError> {
-    if event_type.0.trim().is_empty() || event_type.0.len() > 64 {
+    if event_type.0.trim().is_empty() {
         return Err(ApiError::bad_request(
-            "event_type must be 1..=64 non-blank bytes",
+            "event_type must be non-blank",
             Some("event_type"),
         ));
     }
     Ok(())
 }
 
+/// A session ref of any length (ABC row 68): a long one names its card by a
+/// digest in the front.
 fn validate_session_ref(session_ref: &str) -> Result<(), ApiError> {
-    if session_ref.is_empty() || session_ref.len() > MAX_SESSION_REF_BYTES {
+    if session_ref.is_empty() {
         return Err(ApiError::bad_request(
-            format!("session_ref must be 1..={MAX_SESSION_REF_BYTES} bytes"),
+            "session_ref must not be empty",
             Some("session_ref"),
         ));
     }
@@ -101,10 +108,12 @@ pub(super) fn validate_selected_slot(slot: SelectedSlot) -> Result<(), ApiError>
     Ok(())
 }
 
+/// An idempotency key of any length (ABC row 73); the lifecycle queue keys on
+/// its digest.
 fn validate_idempotency_key(key: &str) -> Result<(), ApiError> {
-    if key.is_empty() || key.len() > MAX_IDEMPOTENCY_KEY_BYTES {
+    if key.is_empty() {
         return Err(ApiError::bad_request(
-            format!("idempotency_key must be 1..={MAX_IDEMPOTENCY_KEY_BYTES} bytes"),
+            "idempotency_key must not be empty",
             Some("idempotency_key"),
         ));
     }
@@ -133,10 +142,16 @@ fn validate_optional_token(token: Option<&str>, field: &'static str) -> Result<(
     token.map_or(Ok(()), |token| validate_token(token, field))
 }
 
-fn validate_booker_email(email: &str) -> Result<(), ApiError> {
-    if email.trim().is_empty() || email.len() > MAX_BOOKER_EMAIL_BYTES {
+fn validate_booker_email(email: &str, anonymous: bool) -> Result<(), ApiError> {
+    if email.trim().is_empty() {
         return Err(ApiError::bad_request(
-            format!("booker_email must be 1..={MAX_BOOKER_EMAIL_BYTES} non-blank bytes"),
+            "booker_email must be non-blank",
+            Some("booker_email"),
+        ));
+    }
+    if anonymous && email.len() > MAX_BOOKER_EMAIL_BYTES {
+        return Err(ApiError::bad_request(
+            format!("booker_email must be at most {MAX_BOOKER_EMAIL_BYTES} bytes"),
             Some("booker_email"),
         ));
     }
@@ -160,18 +175,21 @@ pub(super) fn validate_anonymous_intake_count(
     Ok(())
 }
 
-fn validate_intake(intake: &[BookingIntakeAnswer]) -> Result<(), ApiError> {
+fn validate_intake(intake: &[BookingIntakeAnswer], anonymous: bool) -> Result<(), ApiError> {
     for answer in intake {
-        if answer.field_key.trim().is_empty() || answer.field_key.len() > MAX_INTAKE_FIELD_KEY_BYTES
-        {
+        if answer.field_key.trim().is_empty() {
             return Err(ApiError::bad_request(
-                format!(
-                    "intake field_key must be 1..={MAX_INTAKE_FIELD_KEY_BYTES} non-blank bytes"
-                ),
+                "intake field_key must be non-blank",
                 Some("intake.field_key"),
             ));
         }
-        if answer.value.len() > MAX_INTAKE_VALUE_BYTES {
+        if anonymous && answer.field_key.len() > MAX_INTAKE_FIELD_KEY_BYTES {
+            return Err(ApiError::bad_request(
+                format!("intake field_key must be at most {MAX_INTAKE_FIELD_KEY_BYTES} bytes"),
+                Some("intake.field_key"),
+            ));
+        }
+        if anonymous && answer.value.len() > MAX_INTAKE_VALUE_BYTES {
             return Err(ApiError::bad_request(
                 format!("intake value must be at most {MAX_INTAKE_VALUE_BYTES} bytes"),
                 Some("intake.value"),
@@ -179,4 +197,29 @@ fn validate_intake(intake: &[BookingIntakeAnswer]) -> Result<(), ApiError> {
         }
     }
     Ok(())
+}
+
+/// An authenticated caller's confirm, measured against its `[limits]` rows
+/// once the shape is valid (ABC rows 69, 70, 72): past a row it asks whether
+/// everything is okay, and the confirm is served whole.
+pub(super) fn measure_authenticated(vault: &oneiron::Vault, request: &BookingOperationRequest) {
+    use oneiron::limit_ask::EngineLimit;
+    match request {
+        BookingOperationRequest::Book(BookingBookInput::Confirm(input)) => {
+            let _ = vault.measure_limit(
+                EngineLimit::BookingEmailBytes,
+                input.booker_email.len() as u64,
+            );
+            let _ =
+                vault.measure_limit(EngineLimit::BookingIntakeAnswers, input.intake.len() as u64);
+            let largest = input
+                .intake
+                .iter()
+                .map(|answer| answer.value.len())
+                .max()
+                .unwrap_or(0);
+            let _ = vault.measure_limit(EngineLimit::BookingIntakeValueBytes, largest as u64);
+        }
+        _ => {}
+    }
 }
