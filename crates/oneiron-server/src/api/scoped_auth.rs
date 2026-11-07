@@ -287,7 +287,10 @@ pub(crate) fn mcp_credential_memory<'a>(
 /// it again through that action and the root it retains (FIX 4744). A
 /// managed vault's attested owner, who presents no slip, has his own
 /// ([`attested_owner_instrument`]).
-fn verb_ask_instrument(vault: &oneiron::Vault, auth: &CoreAuth) -> Option<VerbAskInstrument> {
+pub(crate) fn verb_ask_instrument(
+    vault: &oneiron::Vault,
+    auth: &CoreAuth,
+) -> Option<VerbAskInstrument> {
     if auth.invocation_slip().is_none() && auth.host_root().is_none() {
         return attested_owner_instrument(vault, auth);
     }
