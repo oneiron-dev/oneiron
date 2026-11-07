@@ -24,6 +24,12 @@
 //! NOT atomic. Hosts must dispatch the stop before another dequeue, reject old
 //! epochs at BOTH enqueue and playback, and fail closed on dispatch failure.
 //! [`VoiceCascadeSession::end`] is separate from user barge-in and is idempotent.
+//! A user backchannel ("mm-hmm", aizuchi) keeps the agent talking (FIX 4899):
+//! speech past the barge-in hold is a pending interruption until it is
+//! sustained or its words are not a backchannel ([`is_backchannel`]), and a
+//! backchannel final while the agent holds the floor starts no reply.
+//! [`HeardLedger`] records what the person heard of each reply, apart from the
+//! text it generated ([`HeardPlayback`]).
 //!
 //! No audio, ASR intermediate, tool history or turn is persisted here. Retrieval
 //! telemetry and policy receipts retain their existing engine semantics. A host
@@ -55,8 +61,10 @@
 //! machine-readable RSS trace. Local typed interfaces are not a shipped wire
 //! codec or evidence that any runtime/latency/soak gate passed.
 
+mod backchannel;
 mod budget;
 mod cancellation;
+mod heard;
 pub mod hosted_tts;
 pub mod media;
 mod protocol;
@@ -74,13 +82,18 @@ pub mod tts_spikes;
 pub mod uds;
 pub mod voxcpm2;
 
+pub use backchannel::{BACKCHANNEL_LEXICON, is_backchannel};
 pub use cancellation::{OutputStop, StopReason};
+pub use heard::{
+    HeardBasis, HeardCoverage, HeardLedger, HeardPlayback, HeardUtterance, SpeechAlignment,
+};
 pub use protocol::*;
 pub use retrieval::{PartialRetrieval, SpeculativeRetrievalBridge, UtteranceHandle};
 pub use safeguard::{SafeguardRequest, SentenceEnforcement, SentenceWork};
 pub use session::{
-    AsrUpdate, AudienceRefresh, PreparedAsr, SafeguardUpdate, VOICE_IDENTITY_ASK_SECONDS,
-    VoiceCascadeSession, VoiceContainerBinding, VoiceSessionConfig,
+    AsrUpdate, AudienceRefresh, FloorWords, PreparedAsr, SUSTAINED_INTERRUPTION_HOLD,
+    SafeguardUpdate, VOICE_IDENTITY_ASK_SECONDS, VoiceCascadeSession, VoiceContainerBinding,
+    VoiceSessionConfig,
 };
 pub use speakable::pieces as speakable_pieces;
 
