@@ -3,6 +3,8 @@ use axum::extract::connect_info::Connected;
 use axum::serve::IncomingStream;
 use tokio::net::{UnixListener, unix::UCred};
 
+use super::listener::AdmittedListener;
+
 #[derive(Clone, Debug)]
 pub(crate) struct UnixPeer(Option<UCred>);
 
@@ -25,5 +27,13 @@ impl Connected<IncomingStream<'_, UnixListener>> for UnixPeer {
         // The socket owns this identity: no HTTP header can provide it. If
         // credential lookup fails, the signing transport fails closed.
         Self(stream.io().peer_cred().ok())
+    }
+}
+
+/// The same identity, read off a socket admitted on the descriptor line
+/// (FIX 6299).
+impl Connected<IncomingStream<'_, AdmittedListener<UnixListener>>> for UnixPeer {
+    fn connect_info(stream: IncomingStream<'_, AdmittedListener<UnixListener>>) -> Self {
+        Self(stream.io().get_ref().peer_cred().ok())
     }
 }

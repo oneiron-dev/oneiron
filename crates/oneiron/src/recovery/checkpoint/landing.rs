@@ -52,6 +52,7 @@ impl Vault {
         custody: Custody<'_>,
         erased: &BTreeSet<EntityId>,
         budget: &dyn RecoveryWriteBudget,
+        mut archives: Option<super::removal_files::LiveArchives>,
     ) -> std::result::Result<(MadeDestination, ForkedCustody, Self, RestoreReport), Rejected> {
         validate_image_rows_before_destination(&image)?;
         // The compartments its payload is sealed in, carried apart from the
@@ -159,7 +160,12 @@ impl Vault {
             .map(super::payload::OpenedPayload::row_lengths)
             .unwrap_or_default();
         let mut room = write_budget::RestoreRoom::new(budget, &image, &lengths, &config)
-            .with_payload(&payload_rows);
+            .with_payload(&payload_rows)
+            .with_files(
+                archives
+                    .iter()
+                    .flat_map(super::removal_files::LiveArchives::landing_lens),
+            );
         room.admit()?;
         let mut made = MadeDestination::make(destination, home)?;
         // A sealed copy's open writes its page-seal mirror beside it, outside
@@ -187,6 +193,18 @@ impl Vault {
             &mut unlanded_bodies,
         )
         .map_err(Rejected::landing)?;
+        // So do the kept removal archives' files the live vault carried in
+        // and the image does not (FIX 3679).
+        if let Some(archives) = &mut archives {
+            archives
+                .land(
+                    &vault.store.body_dir()?,
+                    body_custody.as_ref(),
+                    &mut room,
+                    &mut image,
+                )
+                .map_err(Rejected::landing)?;
+        }
         // A queue row landed from its carried bytes goes unleased, as the
         // snapshot unleased every other (FIX 7115).
         response_rows::unlease_carried_attempts(&mut image, &retired).map_err(Rejected::landing)?;
@@ -216,6 +234,12 @@ impl Vault {
             } else {
                 Vec::new()
             };
+            // Each kept removal archive's descriptor stands as the live vault
+            // holds it, and no other descriptor of its receipts does, an
+            // opened payload's included (FIX 3679).
+            if let Some(archives) = &archives {
+                archives.settle_in_txn(&vault.store, txn)?;
+            }
             // The rows came back without a put: every entity kind is judged
             // against the image's own registry, now readable in this
             // transaction. A refusal discards the copy before it commits.
@@ -425,9 +449,11 @@ impl Vault {
 const BARE_ERASURE_NOTE: &str = "erasures after the cut not applied";
 
 /// Refuses a row with no header, which the index rebuild refuses anyway; a
-/// body the local identity refusal turns away; or an AUTHORITY_LOG row whose
+/// body the local identity refusal turns away; an AUTHORITY_LOG row whose
 /// body the shared authority validator refuses, an empty one included: no
-/// authority row is a bodiless shell.
+/// authority row is a bodiless shell; or a row whose source-audience
+/// obligation is malformed or stands on a kind no source landing stamps
+/// (fix list row 16256). A valid stamp restores as its exact bytes.
 fn validate_checkpoint_entity_row(blob: &[u8]) -> Result<()> {
     let header = crate::batch::EntityMetadataHeader::parse(blob).ok_or_else(codec_error)?;
     let body = &blob[crate::batch::ENTITY_METADATA_HEADER_LEN..];
@@ -435,6 +461,9 @@ fn validate_checkpoint_entity_row(blob: &[u8]) -> Result<()> {
     if header.entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG
         && crate::authority::validate_authority_log_entry_body_bytes(body).is_err()
     {
+        return Err(codec_error());
+    }
+    if !crate::source_audience::restorable_obligation(blob) {
         return Err(codec_error());
     }
     Ok(())
