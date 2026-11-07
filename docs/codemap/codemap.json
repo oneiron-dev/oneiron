@@ -17855,7 +17855,7 @@
      "path": "src/code_run/shadow_runner/admit.rs",
      "purpose": "A shadow arm's writes, masked at write (FIX 5718 part 3; shadow items 2 and 5; CALLS C5718-21)",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -17866,7 +17866,7 @@
      "path": "src/code_run/shadow_runner/bridge.rs",
      "purpose": "The bridge an arm's program calls (PR-S1): every `self.*` call the program makes joins the arm's…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -17876,7 +17876,7 @@
      "path": "src/code_run/shadow_runner/bridge/results.rs",
      "purpose": "The results of a shadow arm's run (PR-S1): their names, how a read of one resolves and is checked, what…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -17926,9 +17926,23 @@
      "purpose": "The shadow runner (PR-S1; FIX 1661/2144, the runner side of L07-B's B2b): one captured step of a canonical…",
      "surface": {
       "crate-vis": 2,
-      "re-export": 6,
+      "re-export": 7,
       "trait": 1,
       "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ShadowReleaseSource"
+     ],
+     "path": "src/code_run/shadow_runner/release.rs",
+     "purpose": "A shadow arm's bodies as a model reads them (FIX 9468, extends FIX 6649)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -17940,19 +17954,23 @@
      "path": "src/code_run/shadow_runner/source.rs",
      "purpose": "The source an arm runs from (PR-S1): one captured step of a canonical run, read from its capsule and frozen…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 14,
+      "re-export": 1,
       "struct": 1
      }
     },
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "ShadowSourceAdmission"
+     ],
      "path": "src/code_run/shadow_runner/source/admitted.rs",
      "purpose": "A captured step prepared for a reader admitted to its capture (FIX 8704): the reader's own admission is…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2,
+      "trait": 1
      }
     },
     {
@@ -17986,7 +18004,7 @@
      "path": "src/code_run/shadow_runner/store.rs",
      "purpose": "A shadow arm's own body store (PR-S1): one directory, outside any vault, of whole bodies, each a file named…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 10,
       "struct": 2
      }
@@ -35869,7 +35887,7 @@
      "path": "src/engine_executor/type_feedback.rs",
      "purpose": "A step's type feedback on the executor (FIX 8277): its check started beside its program, its feedback kept…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -92251,7 +92269,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 210,
+     "files": 211,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93590,7 +93608,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6606,
+   "source_files": 6607,
    "test_files": 895
   },
   "oneiron-android": {
@@ -99216,7 +99234,7 @@
      "path": "src/wasm.rs",
      "purpose": "The Wasmtime runner of the in-process backends: tsc-rs (`components/tsc-rs`) and tsrs (`vendor/tsrs`)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -110255,7 +110273,7 @@
      "path": "src/remote/response.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 10
      }
     },
     {
@@ -112662,7 +112680,7 @@
      "path": "src/ai_host/shadow_runner/arm_store.rs",
      "purpose": "A shadow arm's bodies at its host (PR-S1), kept for the caller under an opaque lease: one directory per arm…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -112675,7 +112693,7 @@
      "purpose": "The host's shadow runner (PR-S1; FIX 1661/2144, the runner side of L07-B's B2b): [`ServerShadowRunner`] runs…",
      "surface": {
       "crate-vis": 3,
-      "fn": 5,
+      "fn": 6,
       "struct": 1,
       "type": 1
      }
@@ -119219,6 +119237,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/request_floor.rs",
+     "purpose": "The API's request floor (`limits.request_body_bytes`, ABC transport rows T1, T3, T4)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -121260,7 +121288,7 @@
      "path": "src/commands/mcp_bridge/link/replies.rs",
      "purpose": "Reply forwarding on the bridge's shared socket driver",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -131383,7 +131411,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 699,
+     "files": 700,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -131903,7 +131931,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1680,
+   "source_files": 1681,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
