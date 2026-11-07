@@ -1213,7 +1213,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/history_projection/pin.rs` | src | s | 1 fn · 4 crate-vis | — | The trusted pin: its key, and the door that pins a host packet before its claim bytes arrive |
 | `src/claim/history_projection/resolve.rs` | src | s | 1 fn · 1 crate-vis | — | The live CLAIM projected from its authenticated history |
 | `src/claim/history_seal.rs` | src | s | 7 crate-vis | — | The target index's seal (FIX 4296): a running digest over every control put one target's machine-history… |
-| `src/claim/history_store.rs` | src | m | 19 crate-vis | — | Scoped, engine-owned CLAIM carriers for immutable MACHINE birth and transition evidence |
+| `src/claim/history_store.rs` | src | L | 20 crate-vis | — | Scoped, engine-owned CLAIM carriers for immutable MACHINE birth and transition evidence |
 | `src/claim/learning_evidence.rs` | src | s | 3 struct · 4 enum · 4 fn · 3 crate-vis | Anchor, EvidenceRow, EvidenceSource, LearningEvidence, Observation, Retest, RetestScore | Anchored learning evidence and retest request vocabulary |
 | `src/claim/learning_predicate.rs` | src | s | 2 enum · 4 fn · 1 const | LearningPredicate, MeasuredLearningPredicate | Measured-state predicate vocabulary and its permitted estimate forms |
 | `src/claim/lexical_query_hint.rs` | src | s | 1 re-export | — | — |
