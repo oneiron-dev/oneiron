@@ -2925,6 +2925,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_shared_propose_add_owner(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shared.propose_add_owner", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_shared_execute(
         &self,
         input: serde_json::Value,
@@ -3192,6 +3201,24 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.shared.policy.changes", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_shared_owner_change_wait_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shared.owner_change_wait.set", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_shared_owner_change_wait_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shared.owner_change_wait.get", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

@@ -14,10 +14,12 @@ use super::codec::invalid_grant;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
+mod detach;
 mod git_push;
 mod guest_key;
 mod repo_bounds;
 
+pub use detach::ConnectMemberLeaveBinding;
 pub(crate) use git_push::git_push_scope;
 
 /// Current FederationGrant body schema version.
@@ -40,8 +42,11 @@ pub const MAX_DELEGATE_TTL_SECS: u64 = 7_776_000;
 /// the owner's own grant to a named agent (FIX 5628), a Delegate whose
 /// `expires_at` is optional; it is absent on every other body. `repo_bounds`
 /// rides only such an agent grant, when the owner gave it repo bounds (FIX
-/// 6867); `grant_kind` and `git_push_bounds` a GitPush grant (G1-PUSH).
-pub const FEDERATION_GRANT_BODY_KEYS: [&str; 13] = [
+/// 6867); `grant_kind` and `git_push_bounds` a GitPush grant (G1-PUSH);
+/// `detach_on_member_leave` a Connect guest grant whose minting owner chose
+/// the local release (FIX 12555). Each optional tail key keeps its own named
+/// child constant, never a bare index alias.
+pub const FEDERATION_GRANT_BODY_KEYS: [&str; 14] = [
     "schema_version",
     "scope",
     "member_ref",
@@ -55,6 +60,7 @@ pub const FEDERATION_GRANT_BODY_KEYS: [&str; 13] = [
     "repo_bounds",
     "grant_kind",
     "git_push_bounds",
+    detach::KEY_DETACH_ON_MEMBER_LEAVE,
 ];
 
 /// Count of unconditionally required keys at the head of
@@ -385,6 +391,10 @@ pub struct FederationGrant {
     pub kind: crate::federation::FederationGrantKind,
     /// The repos a GitPush grant names; absent on an Access grant.
     pub git_push_bounds: Option<crate::federation::GitPushBounds>,
+    /// The owner's local detach-on-member-leave setting (FIX 12555); `Some`
+    /// only on a Connect guest grant whose minting owner chose it. A selector
+    /// for the genuine-leave release, never authority.
+    pub detach_on_member_leave: Option<ConnectMemberLeaveBinding>,
 }
 
 impl FederationGrant {
@@ -421,6 +431,7 @@ impl FederationGrant {
             repo_bounds: None,
             kind: crate::federation::FederationGrantKind::Access,
             git_push_bounds: None,
+            detach_on_member_leave: None,
         }
     }
 
@@ -450,6 +461,7 @@ impl FederationGrant {
             repo_bounds: None,
             kind: crate::federation::FederationGrantKind::Access,
             git_push_bounds: None,
+            detach_on_member_leave: None,
         };
         grant.validate()?;
         Ok(grant)
@@ -513,6 +525,7 @@ impl FederationGrant {
             repo_bounds: None,
             kind: crate::federation::FederationGrantKind::Access,
             git_push_bounds: None,
+            detach_on_member_leave: None,
         })
     }
 
@@ -544,6 +557,7 @@ impl FederationGrant {
         }
         repo_bounds::validate(self)?;
         git_push::validate(self)?;
+        detach::validate(self)?;
         // Each purpose has its one role class: Ask and Connect are Guest, and
         // only Ask carries the fact payload; a shared vault is never Guest.
         match (self.scope, self.role.is_guest(), self.guest.as_ref()) {
@@ -650,6 +664,19 @@ impl FederationGrant {
                     && guest.disclosed_refs.contains(&fact)
             })
     }
+
+    /// Whether this grant releases when `leaver` genuinely leaves shared
+    /// vault `vault_id`: the one detach-selection policy (FIX 12555). Only a
+    /// Connect guest grant carrying the owner's matching local binding does;
+    /// the binding selects, it never authorizes.
+    #[must_use]
+    pub(crate) fn detaches_on_member_leave(&self, vault_id: u64, leaver: EntityId) -> bool {
+        self.role == FederationGrantRole::Guest
+            && matches!(self.scope, FederationGrantScope::Connect { .. })
+            && self.guest.is_none()
+            && matches!(&self.detach_on_member_leave, Some(binding)
+                if binding.shared_vault_id == vault_id && binding.person_ref == leaver)
+    }
 }
 
 /// Encodes a FederationGrant body in canonical MessagePack field order.
@@ -693,6 +720,7 @@ pub fn encode_federation_grant_body(grant: &FederationGrant) -> Result<Vec<u8>> 
     }
     entries.extend(repo_bounds::body_entry(grant));
     entries.extend(git_push::body_entries(grant));
+    entries.extend(detach::body_entry(grant));
 
     encode_msgpack_value(
         &Value::Map(entries),
@@ -764,6 +792,7 @@ fn decode_federation_grant_value(value: &Value) -> Result<FederationGrant> {
     };
     let repo_bounds = repo_bounds::decode_body_entry(entries)?;
     let (kind, git_push_bounds) = git_push::decode_body_entries(entries)?;
+    let detach_on_member_leave = detach::decode_body_entry(entries)?;
 
     let grant = FederationGrant {
         authority_scope: if legacy {
@@ -787,6 +816,7 @@ fn decode_federation_grant_value(value: &Value) -> Result<FederationGrant> {
         repo_bounds,
         kind,
         git_push_bounds,
+        detach_on_member_leave,
     };
     // Role-conditional presence is enforced here: a five-key Delegate body and
     // a seven-key Owner body both die at `validate`, not at the key allowlist.
