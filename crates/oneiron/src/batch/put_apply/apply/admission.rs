@@ -113,10 +113,8 @@ pub(super) fn admit_put<'a>(
     } = options.replication;
     let hub_sync_imported = options.hub.sync_imported;
     let claim_gate_prechecked = options.decision.prechecked;
-    // A record kept only for a refused privacy erasure takes no change while
-    // an order forbids its use: the refusal is `use_restricted` naming the
-    // order's bound, or absence while that order is secret (OF-470 C6,
-    // WILL-PLAN L01 row 03).
+    // A record a customer hold kept from a privacy erasure, or a cooperative
+    // restriction, takes no named change (OF-470 C6).
     if let Some(refusal) = store.use_restricted_in_txn(wtxn, &id)? {
         return Err(refusal);
     }
