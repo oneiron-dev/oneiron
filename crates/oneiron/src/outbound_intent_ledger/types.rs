@@ -11,12 +11,9 @@ use crate::error::{Error, SecretError};
 
 /// Current schema version for device-local outbound intent rows.
 ///
-/// v4 keeps the payload in its stored form: bare, or an envelope that names
-/// the admitting actor and keeps the request clear, sealed under the row's
-/// own custody key, or erased (FIX 9283, 9372, 2328). These rows are
-/// device-local and pre-release, so v4 is read exclusively: there is no
-/// old-schema reader.
-pub const INTENT_LEDGER_SCHEMA_VERSION: u64 = 5;
+/// v6 keeps the original Gate-minted pinned approval in the Pending row that
+/// commits its spend. Only this canonical format is accepted.
+pub const INTENT_LEDGER_SCHEMA_VERSION: u64 = 6;
 
 /// Binding format emitted and accepted by this greenfield ledger.
 pub const OUTBOUND_BINDING_VERSION: u64 = 2;
@@ -495,6 +492,7 @@ pub(crate) trait OutboundSender {
 }
 
 pub(crate) use crate::consent::approval_proof::AdmittedApproval;
+use crate::consent::approval_proof::PinnedApproval;
 
 /// What a call's ledger row keeps outside the call's checkpoint compartment
 /// (KS7-5, FIX 12117): its budget marker, recorded outcome, sticky delivery
@@ -547,6 +545,7 @@ pub struct IntentLedgerRecord {
     pub idempotency_supported: bool,
     pub authorization_binding: Option<OutboundAuthorizationBinding>,
     pub(crate) admitted_approval: Option<AdmittedApproval>,
+    pub(crate) pinned_approval: Option<PinnedApproval>,
     pub binding_version: u64,
     pub resolved_endpoint: Option<String>,
     /// Typed per-grant capability identity, or `None` for every ordinary
@@ -614,6 +613,7 @@ impl IntentLedgerRecord {
             idempotency_supported,
             authorization_binding: request.authorization_binding,
             admitted_approval: None,
+            pinned_approval: None,
             binding_version: OUTBOUND_BINDING_VERSION,
             resolved_endpoint: request.resolved_endpoint,
             capability_provenance: request.capability_provenance,

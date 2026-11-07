@@ -18,8 +18,8 @@ mod nested;
 
 use self::nested::{
     decode_admitted_approval, decode_budget_accounting, decode_capability_provenance,
-    decode_recorded_outcome, expect_binary, expect_binary_array, expect_string, expect_u64,
-    required,
+    decode_pinned_approval, decode_recorded_outcome, expect_binary, expect_binary_array,
+    expect_string, expect_u64, required,
 };
 
 /// The whole hand-rolled row codec, wrapped for the typed `outbound:intent_ledger:v2:` side
@@ -40,7 +40,7 @@ impl RawValue for IntentLedgerRecord {
 }
 
 /// Pinned MessagePack key set for device-local outbound intent rows.
-pub const INTENT_LEDGER_VALUE_KEYS: [&str; 23] = [
+pub const INTENT_LEDGER_VALUE_KEYS: [&str; 24] = [
     "schema_version",
     "id",
     "attempt_id",
@@ -62,6 +62,7 @@ pub const INTENT_LEDGER_VALUE_KEYS: [&str; 23] = [
     "created_ms",
     "updated_ms",
     "admitted_approval",
+    "pinned_approval",
     "authorizing_owner",
     "content_digest",
 ];
@@ -123,13 +124,15 @@ pub(super) const KEY_UPDATED_MS: &str = INTENT_LEDGER_VALUE_KEYS[19];
 
 pub(super) const KEY_ADMITTED_APPROVAL: &str = INTENT_LEDGER_VALUE_KEYS[20];
 
-pub(super) const KEY_AUTHORIZING_OWNER: &str = INTENT_LEDGER_VALUE_KEYS[21];
+pub(super) const KEY_PINNED_APPROVAL: &str = INTENT_LEDGER_VALUE_KEYS[21];
 
-pub(super) const KEY_CONTENT_DIGEST: &str = INTENT_LEDGER_VALUE_KEYS[22];
+pub(super) const KEY_AUTHORIZING_OWNER: &str = INTENT_LEDGER_VALUE_KEYS[22];
+
+pub(super) const KEY_CONTENT_DIGEST: &str = INTENT_LEDGER_VALUE_KEYS[23];
 
 /// The canonical intent body used as the digest preimage.
 ///
-/// Entries are exactly `INTENT_LEDGER_VALUE_KEYS[0..22]`, in that order, with
+/// Entries are exactly `INTENT_LEDGER_VALUE_KEYS[0..23]`, in that order, with
 /// `KEY_CONTENT_DIGEST` absent. This is the single source of every stored body
 /// value — raw payload, authorization binding, nested budget accounting, typed
 /// capability provenance, recorded outcome, state, timestamps, and the owner
@@ -270,16 +273,14 @@ fn record_entries_without_digest(record: &IntentLedgerRecord) -> Vec<(Value, Val
         (Value::from(KEY_UPDATED_MS), Value::from(record.updated_ms)),
         (
             Value::from(KEY_ADMITTED_APPROVAL),
-            record.admitted_approval.map_or(Value::Nil, |proof| {
+            record.admitted_approval.map_or(Value::Nil, approval_value),
+        ),
+        (
+            Value::from(KEY_PINNED_APPROVAL),
+            record.pinned_approval.map_or(Value::Nil, |approval| {
                 Value::Map(vec![
-                    (
-                        Value::from("intent_id"),
-                        Value::Binary(proof.intent_id().to_vec()),
-                    ),
-                    (
-                        Value::from("effect_digest"),
-                        Value::Binary(proof.effect_digest().as_bytes().to_vec()),
-                    ),
+                    (Value::from("family"), Value::from(approval.family.tag())),
+                    (Value::from("proof"), approval_value(approval.proof)),
                 ])
             }),
         ),
@@ -293,9 +294,22 @@ fn record_entries_without_digest(record: &IntentLedgerRecord) -> Vec<(Value, Val
     ]
 }
 
+fn approval_value(proof: super::types::AdmittedApproval) -> Value {
+    Value::Map(vec![
+        (
+            Value::from("intent_id"),
+            Value::Binary(proof.intent_id().to_vec()),
+        ),
+        (
+            Value::from("effect_digest"),
+            Value::Binary(proof.effect_digest().as_bytes().to_vec()),
+        ),
+    ])
+}
+
 /// Encodes `Value::Map(record_entries_without_digest(record))`.
 ///
-/// The 22-entry MessagePack map header is part of the preimage, and so are the
+/// The 23-entry MessagePack map header is part of the preimage, and so are the
 /// raw `payload` bytes: the preimage is definitionally the stored body minus
 /// the digest key, and carving `payload` out would reintroduce a second body
 /// representation. The O(payload) cost per encode/decode is accepted;
@@ -344,7 +358,7 @@ pub(super) fn id_from_ledger_key(key: &[u8]) -> Option<[u8; 32]> {
     key[INTENT_LEDGER_PRIVATE_PREFIX.len()..].try_into().ok()
 }
 
-/// Encodes the canonical 23-entry row: the digest preimage body plus the
+/// Encodes the canonical 24-entry row: the digest preimage body plus the
 /// content digest computed over exactly those bytes, appended as the final
 /// `content_digest` entry.
 pub(super) fn encode_record(record: &IntentLedgerRecord) -> IntentLedgerResult<Vec<u8>> {
@@ -410,6 +424,7 @@ fn decode_record_fields(raw: &[u8]) -> IntentLedgerResult<IntentLedgerRecord> {
     let mut updated_ms = None;
     let mut content_digest = None;
     let mut admitted_approval = None;
+    let mut pinned_approval = None;
     let mut authorizing_owner = None;
     let mut seen = [false; INTENT_LEDGER_VALUE_KEYS.len()];
 
@@ -494,6 +509,9 @@ fn decode_record_fields(raw: &[u8]) -> IntentLedgerResult<IntentLedgerRecord> {
             KEY_ADMITTED_APPROVAL => {
                 admitted_approval = Some(decode_admitted_approval(&value)?);
             }
+            KEY_PINNED_APPROVAL => {
+                pinned_approval = Some(decode_pinned_approval(&value)?);
+            }
             KEY_AUTHORIZING_OWNER => {
                 authorizing_owner = Some(if matches!(value, Value::Nil) {
                     None
@@ -543,6 +561,7 @@ fn decode_record_fields(raw: &[u8]) -> IntentLedgerResult<IntentLedgerRecord> {
             admitted_approval,
             "missing outbound intent admitted_approval",
         )?,
+        pinned_approval: required(pinned_approval, "missing outbound intent pinned_approval")?,
         binding_version: required(binding_version, "missing outbound intent binding_version")?,
         resolved_endpoint: required(
             resolved_endpoint,

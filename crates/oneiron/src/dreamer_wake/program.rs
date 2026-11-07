@@ -189,6 +189,13 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for TurnProgramExecutor<'
     fn runs_turn_programs(&self) -> bool {
         self.runtime.is_some()
     }
+
+    /// The wrapped executor's bound (FIX 12735): a turn program reads under
+    /// its own code run, never the sources this wake lists, so the listing's
+    /// legs are the wrapped executor's alone.
+    fn destination_bound(&self) -> Option<crate::settings::ReadDestination> {
+        self.inner.destination_bound()
+    }
 }
 
 /// Parks `attempt` as the program runtime's own hold: it stays parked until

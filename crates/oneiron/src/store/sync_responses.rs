@@ -82,7 +82,10 @@ impl ResponseStamps {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IdempotencyEntry {
     pub created_at_secs: u64,
-    pub request_body: Vec<u8>,
+    /// The BLAKE3 digest of the request body this entry answers (ABC
+    /// transport row T5): a retry under the key is the same request when its
+    /// body has the same digest. The body itself is never kept.
+    pub request_digest: Vec<u8>,
     pub status: u16,
     pub headers: Vec<(String, Vec<u8>)>,
     pub response_body: Vec<u8>,
