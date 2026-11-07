@@ -110,7 +110,7 @@ impl Memory<'_> {
                         format!("source-trust rules forbid replacing keyed address {:?}/{:?}", address.namespace, address.key),
                         &["Keep the true source. Store generated output under a separate key. Only a genuine new user statement may be submitted as user_stated; never relabel generated output."],
                     ))?;
-                content.update_claim(prior_id, |txn| {
+                content.update_claim(prior_id, |txn, _lane| {
                     self.vault.supersede_claim_in_txn_as(txn, &id, &prior_id, now,
                         Some(self.write_actor()))
                 })?;
@@ -142,7 +142,7 @@ impl Memory<'_> {
                     receipt_refs: Vec::new(),
                 });
             };
-            content.update_claim(id, |txn| {
+            content.update_claim(id, |txn, _lane| {
                 let receipt = self.vault.retract_claim_in_txn_as(
                     txn,
                     &id,

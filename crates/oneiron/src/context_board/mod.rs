@@ -59,8 +59,12 @@ pub use history::{
 };
 pub(crate) use history::{fold_board_turns_in_txn, validate_board_claim};
 pub use self_brief::{
-    BriefPlacement, BriefSkillRow, ClassLimit, ClassVerdict, CommunicationLimits, PlacedSelfBrief,
-    SelfBrief, SelfBriefInput, SelfBriefSession, SelfBriefState,
+    BriefActPosture, BriefBranchBound, BriefCeiling, BriefCeilingPosture, BriefCeilingTarget,
+    BriefClassPrecedence, BriefConnectorCeiling, BriefContextBound, BriefCredentialCeiling,
+    BriefGrant, BriefGrants, BriefParentBound, BriefParentCeiling, BriefPlacement, BriefRunCeiling,
+    BriefSkillRow, BriefWorkingHandle, BriefWorkingSet, CommunicationLimits, PlacedSelfBrief,
+    SelfBrief, SelfBriefInput, SelfBriefSession, SelfBriefState, brief_credential_ceiling,
+    brief_run_ceiling,
 };
 mod hook_pins;
 mod memories;

@@ -42,6 +42,7 @@ mod residence_work;
 mod resident_pump;
 mod run_host_door;
 pub(crate) use run_host_door::RunMediaStep;
+pub(crate) mod self_brief_custody;
 mod space_move;
 mod tagging;
 mod wave_door;

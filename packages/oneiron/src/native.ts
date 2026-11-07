@@ -243,6 +243,13 @@ vaultWeaveLinkWrong(input: unknown): unknown
 vaultWeaveOwnerLinkWrong(input: unknown): unknown
 vaultWeaveItemWrong(input: unknown): unknown
 vaultWeaveOwnerItemWrong(input: unknown): unknown
+vaultWeaveAdminReport(input: unknown): unknown
+vaultWeaveAdminLens(input: unknown): unknown
+vaultWeaveAdminDigest(input: unknown): unknown
+vaultWeaveAdminLinkWrong(input: unknown): unknown
+vaultWeaveAdminItemWrong(input: unknown): unknown
+vaultStepUpPasskeysReset(input: unknown): unknown
+vaultStepUpTotpReset(input: unknown): unknown
 vaultWeaveEnqueue(input: unknown): unknown
 vaultWeaveSchedulesList(input: unknown): unknown
 vaultWeaveSchedulesPut(input: unknown): unknown

@@ -22,6 +22,7 @@ The known-answer tests in `tests/kat.rs` check these exact versions.
 | `aes-gcm` | `=0.11.1` | AES-256-GCM | README: one NCC Group audit (of an earlier release), no significant findings |
 | `hkdf` / `sha2` / `sha3` | `=0.13.0` / `=0.11.0` / `=0.11.0` | HKDF-SHA256, SHA3-256 | no audit claimed here |
 | `argon2` | `=0.6.0` | Argon2id (RFC 9106) | no audit claimed here |
+| `hmac-sha1` (package `hmac`) / `sha1` | `=0.12.1` / `=0.10.6` | RFC 6238 authenticator-app profile only | no audit claimed here |
 | `zeroize` | `=1.9.0` | wiping secrets | — |
 
 What this means, plainly:
@@ -38,6 +39,16 @@ What this means, plainly:
   McEliece/HQC pilot only.
 - Nothing here claims hardware-backed PQ keys, vault encryption, or interoperability
   with any other implementation of these formats.
+
+## Authenticator-app codes
+
+`totp::matching_totp_step` implements RFC 6238's HMAC-SHA1, six-digit,
+30-second profile with one adjacent step on each side. It returns the actual
+newest matching step. It takes Unix seconds, not an authority observation
+clock. Enrollment, seed custody, replay-step consumption and request authority
+belong to the caller. SHA-1 here is only the interoperable TOTP MAC profile,
+not a new signature, envelope or digest suite. See
+[`authenticator-step-up.md`](../../docs/ops/authenticator-step-up.md).
 
 ## Suite table
 

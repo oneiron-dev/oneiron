@@ -68,6 +68,9 @@ pub(crate) use self::task_workflow::{WorkflowPreflight, preflight_task_workflow}
 // The facade's browser rows count their hooks' decisions as this door's do
 // (FIX 10425).
 pub(crate) use self::guests::count_hook_decisions;
+// A code-mode run's self brief states its budget from the run's line (FIX
+// 17594 D5).
+pub(crate) use self::dispatch::code_mode_line;
 
 use self::dispatch::*;
 use self::field_writer::RunFieldWriter;

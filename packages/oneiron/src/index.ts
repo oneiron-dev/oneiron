@@ -1016,6 +1016,22 @@ export class Oneiron {
         /** A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays. */
         wrong: (input: Facade.WeaveWrongItemRequest): Facade.WeaveItemCorrectionView => this.#call(() => this.#client.vaultWeaveItemWrong(input) as Facade.WeaveItemCorrectionView),
       },
+      admin: {
+        /** A weave Admin's live report of the shared vault, inside the Admin membership grant's Scope, after the person stepped up with a passkey on this credential (MFA-1 A); never an Owner read. */
+        report: (input: Facade.WeaveAdminReportRequest): Facade.WeaveReportView => this.#call(() => this.#client.vaultWeaveAdminReport(input) as Facade.WeaveReportView),
+        /** A weave Admin's live report rendered into its lens on the server's model, under the stepped-up Admin proof; the server holds its frame for the card's events. */
+        lens: (input: Facade.WeaveAdminLensRequest): Facade.LensFrameCard => this.#call(() => this.#client.vaultWeaveAdminLens(input) as Facade.LensFrameCard),
+        /** One of a weave Admin's saved digests, or the newest, under the stepped-up Admin proof and the current read policy. */
+        digest: (input: Facade.WeaveAdminDigestRequest): Facade.WeaveDigestView | null => this.#call(() => this.#client.vaultWeaveAdminDigest(input) as Facade.WeaveDigestView | null),
+        link: {
+          /** A weave Admin labels a link its Admin report shows as wrong, under the stepped-up Admin proof, with the grant on the label; the link stays. */
+          wrong: (input: Facade.WeaveAdminLinkWrongRequest): Facade.WeaveLinkCorrectionView => this.#call(() => this.#client.vaultWeaveAdminLinkWrong(input) as Facade.WeaveLinkCorrectionView),
+        },
+        item: {
+          /** A weave Admin labels a claim, project, budget or sieve audit row its Admin report shows as wrong, under the stepped-up Admin proof; the row stays. */
+          wrong: (input: Facade.WeaveAdminItemWrongRequest): Facade.WeaveItemCorrectionView => this.#call(() => this.#client.vaultWeaveAdminItemWrong(input) as Facade.WeaveItemCorrectionView),
+        },
+      },
       /** Admits a generated candidate weave recipe under the owner's proof and queues its pinned execution; poll vault.consolidation.status for completion. */
       enqueue: (input: Facade.WeaveEnqueueRequest): Facade.DreamerAttemptRef => this.#call(() => this.#client.vaultWeaveEnqueue(input) as Facade.DreamerAttemptRef),
       schedules: {
@@ -1037,6 +1053,16 @@ export class Oneiron {
       digest_feedback: {
         /** Tells the Coach the owner's own digest preference: a rhythm, a section to lead with, or keep the settings as they are. */
         put: (input: Facade.WeaveDigestFeedback): Facade.WeaveDigestFeedback => this.#call(() => this.#client.vaultWeaveDigestFeedbackPut(input) as Facade.WeaveDigestFeedback),
+      },
+    },
+    step_up: {
+      passkeys: {
+        /** The vault owner removes every passkey a person enrolled for step-up, and that person's step-ups, so a person who lost each passkey can enroll a first one again; under the owner's own credential. */
+        reset: (input: Facade.StepUpPasskeysResetRequest): Facade.StepUpPasskeysReset => this.#call(() => this.#client.vaultStepUpPasskeysReset(input) as Facade.StepUpPasskeysReset),
+      },
+      totp: {
+        /** The vault owner removes a person's authenticator-app enrollments and their TOTP step-ups; passkeys and passkey step-ups remain unchanged. */
+        reset: (input: Facade.StepUpTotpResetRequest): Facade.StepUpTotpReset => this.#call(() => this.#client.vaultStepUpTotpReset(input) as Facade.StepUpTotpReset),
       },
     },
     inbox: {

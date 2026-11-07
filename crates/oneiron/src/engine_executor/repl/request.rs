@@ -106,6 +106,18 @@ impl EngineNativeExecutor<'_> {
                 text: format!("Run id: {}\nTask:\n{}", config.run_id.to_hex(), config.task),
             }],
         });
+        // FIX 17594 (delivery slice D2): the host's self brief, one message of
+        // its own right after the task and before any history, so its bytes
+        // come before the history, continuation, instruction and wake
+        // material, inside the request's cached prefix. They hold from one
+        // brief boundary to the next. A run whose host binds no brief port
+        // carries none.
+        if let Some(text) = self.brief_prefix_text(config.run_id)? {
+            messages.push(LlmMessage {
+                role: LlmMessageRole::User,
+                content: vec![ContentPart::Text { text }],
+            });
+        }
 
         let steps = self.sync_output_context(record)?;
         // Only a Full view expands its body; older steps cost their reference.

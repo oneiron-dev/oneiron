@@ -321,6 +321,7 @@ pub(crate) mod side_table_erase_scan;
 pub mod site_skill_exposure;
 pub mod skill_attribution_evidence;
 pub(crate) mod text_index;
+pub(crate) mod totp_custody;
 pub(crate) mod vector_index;
 mod vector_index_dbs;
 pub mod workflow_definition;
