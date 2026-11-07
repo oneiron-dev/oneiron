@@ -130,6 +130,7 @@ mod lens_selection_doors;
 mod linear_doors;
 mod live_run_doors;
 mod live_voice_doors;
+mod live_voice_settlement;
 mod merge_queue_checker_doors;
 mod merge_queue_doors;
 mod mesh_doors;
@@ -158,6 +159,7 @@ mod receipts;
 mod release;
 mod reply_doors;
 mod repo_doors;
+mod repo_manifest_conflict_doors;
 mod research_doors;
 mod reservoir_source_doors;
 mod residence_doors;
@@ -216,7 +218,10 @@ mod web_fetch_doors;
 mod widen_proposal_doors;
 mod wire_health_doors;
 
-pub(crate) use admission_doors::{admission_observer, call_verb};
+pub(crate) use admission_doors::{
+    admission_observer, call_verb, carrying_admission_observer, tracker_observer, tracks_admission,
+    with_admission_observer, with_admission_observer_sync,
+};
 pub(crate) use asr_doors::AsrSessions;
 pub(crate) use call_context::{FacadeCall, FacadeCallOutput};
 use call_context::{VerbContext, context_required, facade_invocation_id};
