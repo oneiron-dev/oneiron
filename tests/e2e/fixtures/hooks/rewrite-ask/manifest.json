@@ -1,0 +1,171 @@
+{
+  "version": 1,
+  "area": "hooks-rewrite-ask",
+  "assets": [
+    {
+      "id": "hooks-rewrite-ask-PACK-md",
+      "path": "PACK.md",
+      "source": {
+        "uri": "independent-oracle:hooks03-scoped-rewrite-and-durable-ask",
+        "revision": "hooks03-rewrite-ask-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "28c30f25f16cdb3436fb21c73fbcf1047ec91e1883a02c99c862c1a1e1cb244b",
+      "expectedFacts": {
+        "packPath": "PACK.md",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects"
+      },
+      "scenarios": [
+        "HOOKS-03"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-rewrite-ask-rewrite-HOOK-md",
+      "path": "hooks/scoped-rewrite/HOOK.md",
+      "source": {
+        "uri": "independent-oracle:hooks03-scoped-rewrite-and-durable-ask",
+        "revision": "hooks03-rewrite-ask-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "2cb64595cc87f9c9a11bcf8f43b2ee4446358161d2e2108e216d7ed6bd5ddedb",
+      "expectedFacts": {
+        "packPath": "hooks/scoped-rewrite/HOOK.md",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects"
+      },
+      "scenarios": [
+        "HOOKS-03"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-rewrite-ask-rewrite-body-js",
+      "path": "hooks/scoped-rewrite/body.js",
+      "source": {
+        "uri": "independent-oracle:hooks03-scoped-rewrite-and-durable-ask",
+        "revision": "hooks03-rewrite-ask-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "90da80070ea5d766e378dd33999a443535c26856fc40622b3aa29c96b85864c9",
+      "expectedFacts": {
+        "packPath": "hooks/scoped-rewrite/body.js",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects"
+      },
+      "scenarios": [
+        "HOOKS-03"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-rewrite-ask-rewrite-intent-md",
+      "path": "hooks/scoped-rewrite/intent.md",
+      "source": {
+        "uri": "independent-oracle:hooks03-scoped-rewrite-and-durable-ask",
+        "revision": "hooks03-rewrite-ask-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "3e099215fc305a4b91899098ca3f7a79c792ccc41bef4ff48981b7a353473503",
+      "expectedFacts": {
+        "packPath": "hooks/scoped-rewrite/intent.md",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects"
+      },
+      "scenarios": [
+        "HOOKS-03"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-rewrite-ask-ask-HOOK-md",
+      "path": "hooks/saved-question/HOOK.md",
+      "source": {
+        "uri": "independent-oracle:hooks03-scoped-rewrite-and-durable-ask",
+        "revision": "hooks03-rewrite-ask-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "78373c6cf95670bde9e6ebffe82aa765831b356fc7fecde2047c6ddf5c684bc3",
+      "expectedFacts": {
+        "packPath": "hooks/saved-question/HOOK.md",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects"
+      },
+      "scenarios": [
+        "HOOKS-03"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-rewrite-ask-ask-body-js",
+      "path": "hooks/saved-question/body.js",
+      "source": {
+        "uri": "independent-oracle:hooks03-scoped-rewrite-and-durable-ask",
+        "revision": "hooks03-rewrite-ask-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "e99e681c704ed1b31fc821b351d7f17b0d1453c9df454d7598118462e8ef1a71",
+      "expectedFacts": {
+        "packPath": "hooks/saved-question/body.js",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects"
+      },
+      "scenarios": [
+        "HOOKS-03"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-rewrite-ask-ask-intent-md",
+      "path": "hooks/saved-question/intent.md",
+      "source": {
+        "uri": "independent-oracle:hooks03-scoped-rewrite-and-durable-ask",
+        "revision": "hooks03-rewrite-ask-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "4e61bb160f09ed3574ff7007f0c152d23b8e01f76c75f59461a45865bac42664",
+      "expectedFacts": {
+        "packPath": "hooks/saved-question/intent.md",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects"
+      },
+      "scenarios": [
+        "HOOKS-03"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-rewrite-ask-scenario",
+      "path": "scenario.json",
+      "source": {
+        "uri": "independent-oracle:hooks03-scoped-rewrite-and-durable-ask",
+        "revision": "hooks03-rewrite-ask-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "b2659faa13a6dcfd48ccaed01f14905ddb040c1f571bfe8e370ed9f1d612be15",
+      "expectedFacts": {
+        "carriers": [
+          "HTTP",
+          "MCP"
+        ],
+        "hookOrder": [
+          "scoped-rewrite",
+          "saved-question"
+        ],
+        "runsPerHookPerLogicalInvocation": 1,
+        "validEffects": 1,
+        "escapeEffects": 0,
+        "taskAnswerIsAuthority": false,
+        "currentAuthorityReduction": "revoke same grant; not attenuation or a different credential",
+        "revokedEffects": 0,
+        "samePendingAcrossRestart": true,
+        "sameResultOnRepeat": true,
+        "invalidRewrite": {
+          "hookOutcome": "refused",
+          "keepsOriginalArgs": true,
+          "asks": 1,
+          "effects": 1
+        },
+        "runnerProgress": "independent live saved calls after original invocation keys; not saved-refusal receipt discovery"
+      },
+      "scenarios": [
+        "HOOKS-03"
+      ],
+      "requires": []
+    }
+  ]
+}
