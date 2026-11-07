@@ -407,23 +407,29 @@ pub(crate) fn record_raw_json_export(vault: &Vault, json: &[u8], roots: ExportTh
 /// Records the whole-vault JSON bundle `json` a raw `Vault` door encoded,
 /// which carries other members' personal mailboxes (fix list row 15416),
 /// before a byte of it leaves ([`record_member_mail_export`]): its length
-/// and digest, no act, and each private thread it carries, `roots`.
+/// and digest, no act, and each private thread it carries, `roots`. With no
+/// `mailboxes`, `json` is the bundle made again without them after such a
+/// write did not commit, recorded the same strict way, counting no mailbox.
 ///
 /// # Errors
 ///
-/// As [`record_member_mail_export`].
+/// As [`record_member_mail_export`], or no embedded owner to record.
 pub(crate) fn record_member_mail_json_export(
     vault: &Vault,
     json: &[u8],
     roots: ExportThreadRoots,
-    mailboxes: &crate::mail_pack::CarriedMemberMailboxes,
+    mailboxes: Option<&crate::mail_pack::CarriedMemberMailboxes>,
 ) -> crate::Result<()> {
+    let exporter = match mailboxes {
+        Some(mailboxes) => mailboxes.exporter(),
+        None => crate::vault::embedded_owner_actor_id()?,
+    };
     let copy = ExportCopy {
         bytes: u64::try_from(json.len()).ok(),
         digest: Some(blake3::hash(json).to_hex().to_string()),
-        ..ExportCopy::raw(mailboxes.exporter(), EXPORT_FORMAT_JSON, Vec::new(), roots)
+        ..ExportCopy::raw(exporter, EXPORT_FORMAT_JSON, Vec::new(), roots)
     };
-    record_member_mail_export(vault, copy, Some(mailboxes)).map(drop)
+    record_member_mail_export(vault, copy, mailboxes).map(drop)
 }
 
 /// Records `copy`, an Owner's copy of whatever shape that carries other
