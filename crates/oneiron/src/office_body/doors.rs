@@ -275,6 +275,12 @@ impl Vault {
             let (minted, commit) =
                 edit_typed_body_in_txn(self, wtxn, artifact, base, writer, edit)?;
             validate(kind, &self.loro_body(wtxn, artifact, kind, None)?.1)?;
+            crate::housekeeping::note_wake_in_txn(
+                &self.store,
+                wtxn,
+                crate::housekeeping::HousekeepingSweep::AnnotationBodyAnchors,
+                self.now_recorded_at(),
+            )?;
             Ok(OfficeBodyEdit {
                 frontier: commit.frontier,
                 minted,
@@ -612,7 +618,13 @@ impl Vault {
         let limits = self.docedit_package_limits()?;
         let (bytes, recalc) = match self.project_body(artifact, &head, "preview", at, zone)? {
             Some((bytes, _, recalc, _)) => (bytes, recalc),
-            None => recalc_xlsx(&self.body_source(artifact, &head)?, limits, at, zone)?,
+            None => recalc_xlsx(
+                &self.body_source(artifact, &head)?,
+                limits,
+                at,
+                zone,
+                self.xlsx_precision_recalc().as_deref(),
+            )?,
         };
         let book = read_xlsx_cells(&bytes, limits, &crate::office_body::document_resources())
             .map_err(|error| {

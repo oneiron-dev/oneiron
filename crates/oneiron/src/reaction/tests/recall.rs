@@ -39,7 +39,10 @@ fn recalled_and_context_packed_message_carries_its_grouped_reactions() {
     let room = reacted_room();
     let expected = vec!["👍×2 (Bob, Erin)".to_owned(), "🎉×1 (Bob)".to_owned()];
     assert_eq!(
-        owner_read(&room).reaction_lines(&room.message).unwrap(),
+        owner_read(&room)
+            .reaction_lines(&room.message)
+            .unwrap()
+            .value,
         expected
     );
     // Recall reads every room turn for the vault's bound owner (H149).
