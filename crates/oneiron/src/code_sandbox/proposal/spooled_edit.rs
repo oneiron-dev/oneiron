@@ -1,7 +1,8 @@
 //! Whole-file proposals compared with a spooled boot snapshot.
 
 use super::{
-    LOWER_FRAME, SandboxFileEditProposal, SandboxFileWriteProposal, SandboxProposalBody, zeroed,
+    LOWER_FRAME, SandboxFileEdit, SandboxFileEditProposal, SandboxFileWriteProposal,
+    SandboxProposalBody, SandboxProposalText, zeroed,
 };
 use crate::{Error, Result, engine_executor::StepCancellation};
 use std::{io::Read, time::Instant};
@@ -77,15 +78,24 @@ pub(super) fn lower(
     // Validate the entire base, including unchanged bytes, just as the slice
     // lowering does. UTF-8 sequences may cross any comparison frame boundary.
     let (start, end) = char_offsets(base, prefix, old_end, cancel, deadline)?;
-    let expected = String::from_utf8(base.read_range(prefix, span_len(old_end - prefix)?)?)
-        .map_err(|_| Error::InvalidClaimBody("code edit base is not UTF-8"))?;
-    let replacement =
-        String::from_utf8(body.read_range(prefix, span_len(body.len() - prefix - suffix)?)?)
-            .map_err(|_| Error::InvalidClaimBody("code edit output is not UTF-8"))?;
+    let expected = SandboxProposalText::from_body(
+        base,
+        prefix,
+        old_end - prefix,
+        "code edit base is not UTF-8",
+        || checkpoint(cancel, deadline),
+    )?;
+    let replacement = SandboxProposalText::from_body(
+        body,
+        prefix,
+        body.len() - prefix - suffix,
+        "code edit output is not UTF-8",
+        || checkpoint(cancel, deadline),
+    )?;
     Ok(Some(SandboxFileEditProposal {
         path: write.path.clone(),
         base_content_hash: base.digest(),
-        edit: crate::code_document::CodeFileEdit {
+        edit: SandboxFileEdit {
             path: write.path.relative_path().to_owned(),
             start,
             end,
@@ -94,11 +104,6 @@ pub(super) fn lower(
             new_path: None,
         },
     }))
-}
-
-fn span_len(bytes: u64) -> Result<usize> {
-    usize::try_from(bytes)
-        .map_err(|_| Error::InvalidClaimBody("code edit span exceeds host memory"))
 }
 
 fn boundary(base: &SandboxProposalBody, at: u64) -> Result<bool> {
@@ -148,7 +153,7 @@ fn char_offsets(
     }
 }
 
-fn checkpoint(cancel: &StepCancellation, deadline: Instant) -> Result<()> {
+pub(super) fn checkpoint(cancel: &StepCancellation, deadline: Instant) -> Result<()> {
     cancel.check()?;
     if Instant::now() >= deadline {
         return Err(Error::InvalidClaimBody("code edit deadline exceeded"));

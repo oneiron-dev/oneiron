@@ -23,7 +23,7 @@ use super::paths::serve_failed;
 use super::push_projection::{bind_projection_ingress_in_txn, prepare_projection_ingress};
 use super::read_projection::{RepoGitBackend, prepare_recipient_read_backend};
 use super::recipient_serve::delivery::prepare_repo_git_delivery;
-use super::recipient_serve::{RepoGitReadContext, store_holds_readable_marks_in_txn};
+use super::recipient_serve::{RepoGitReadContext, store_may_need_masked_copy_in_txn};
 use super::serve::unpinned_repo_ref;
 use super::serve_cmd::{ServeCommand, ServeRequest};
 use crate::Vault;
@@ -165,7 +165,7 @@ pub(super) fn select_projected_exchange(
     let store = lfs_repo_id(&wire.repository_identity(repo_dir)?.as_hex())?;
     {
         let txn = vault.store.env.read_txn()?;
-        if !store_holds_readable_marks_in_txn(vault, &txn, &store)? {
+        if !store_may_need_masked_copy_in_txn(vault, &txn, &store)? {
             return Ok(None);
         }
     }
@@ -245,7 +245,8 @@ fn granted_variant(
             None => return Ok(masked),
         },
     };
-    let Some(mut plan) = plan_repo_git_release(vault, &masked, binding.clone())? else {
+    let Some(mut plan) = plan_repo_git_release(vault, wire, canonical, &masked, binding.clone())?
+    else {
         retire_superseded_recipient_copies(vault, &masked, &binding, None);
         return Ok(masked);
     };
