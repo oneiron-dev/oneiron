@@ -6,7 +6,7 @@ use crate::claim::{ClaimReadStatus, ScopedReadActorKey};
 use crate::code_run::consent;
 use crate::code_run::storage::{ExecutorStorage, require_facet_placement_in, unplaceable};
 use crate::code_run::types::{
-    SelfDispatchOutcome, SelfEffect, SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall,
+    SelfCall, SelfDispatchOutcome, SelfEffect, SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall,
     SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
     SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
 };
@@ -42,13 +42,24 @@ impl HostSelfDispatcher<'_> {
     /// `revalidate` refuses the write instead of splitting the record across
     /// the flip.
     ///
+    /// An anonymous room keeps no memory (ARCH-0052), so it serves only a
+    /// call that keeps nothing: the run's own search, a context descriptor,
+    /// and the five reads its room's view answers (FIX 5166). The rule reads
+    /// the whole `call`, not only its effect: an `AgentVerb` read passes
+    /// only when [`Self::room_session_read`] routes it to
+    /// `dispatch_session_read`, never because its verb writes nothing.
+    ///
     /// The match is exhaustive so a new effect cannot default into either
     /// answer — it has to be ruled on here.
-    pub(super) fn enforce_off_record_effect_policy(&self, effect: SelfEffect) -> Result<()> {
-        // Anonymous permits only effects with no transcript or mandatory
+    pub(super) fn enforce_off_record_effect_policy(&self, call: &SelfCall) -> Result<()> {
+        let effect = call.effect();
+        // Anonymous permits only calls with no transcript or mandatory
         // audit. Do not execute destructive/outbound/approval effects while
-        // silently dropping the evidence their ordinary doors require.
-        if !matches!(effect, SelfEffect::MemorySearch | SelfEffect::Context)
+        // silently dropping the evidence their ordinary doors require. A
+        // room read's retrieval telemetry and its hooks' records take the
+        // room's Discard route (FIX 5166).
+        if !matches!(call, SelfCall::MemorySearch(_) | SelfCall::Context(_))
+            && self.room_session_read(call).is_none()
             && let ExecutorStorage::Session(binding) = &self.storage
         {
             binding
@@ -125,8 +136,9 @@ impl HostSelfDispatcher<'_> {
             // DOOR-127: a claim put and a fixture claim stage in the room's
             // overlay (`OffRecordSession::stage_session_claim`). A verb
             // forward reaches `dispatch_agent_verb`, which writes a NOTE or a
-            // claim into the room and refuses every other verb, whose door
-            // runs against the canonical vault.
+            // claim into the room, reads the five session reads through its
+            // view, and refuses every other verb, whose door runs against
+            // the canonical vault.
             SelfEffect::MemoryPutClaim
             | SelfEffect::MemoryWriteFixture
             | SelfEffect::AgentVerb
@@ -270,6 +282,8 @@ impl HostSelfDispatcher<'_> {
         &self,
         call: SelfMemoryWriteFixtureCall,
     ) -> Result<SelfDispatchOutcome> {
+        // A position-narrowed slip places no row in core (FIX 10666).
+        self.refuse_narrowed_program_write()?;
         let admission = self.code_emission_admission()?;
         let candidate = match admission
             .as_ref()
@@ -315,6 +329,8 @@ impl HostSelfDispatcher<'_> {
         call: SelfMemoryPutClaimCall,
         read_as: Option<ScopedReadActorKey>,
     ) -> Result<SelfDispatchOutcome> {
+        // A position-narrowed slip places no row in core (FIX 10666).
+        self.refuse_narrowed_program_write()?;
         let admission = self.code_emission_admission()?;
         let candidate = match admission
             .as_ref()
@@ -422,6 +438,8 @@ impl HostSelfDispatcher<'_> {
         call: SelfMemorySupersedeClaimCall,
         read_as: Option<ScopedReadActorKey>,
     ) -> Result<SelfDispatchOutcome> {
+        // A position-narrowed slip places no row in core (FIX 10666).
+        self.refuse_narrowed_program_write()?;
         // Both claims it names resolve for its writer (OF-063, FIX 1214).
         if let Some(refused) = self.refused_write_reference(
             SelfEffect::MemorySupersedeClaim,
@@ -507,6 +525,8 @@ impl HostSelfDispatcher<'_> {
         read_as: Option<ScopedReadActorKey>,
     ) -> Result<SelfDispatchOutcome> {
         ensure_public_memory_edge_kind(call.kind)?;
+        // A position-narrowed slip places no row in core (FIX 10666).
+        self.refuse_narrowed_program_write()?;
         // Both ends it names resolve for its writer (OF-063, FIX 1214).
         if let Some(refused) = self.refused_write_reference(
             SelfEffect::MemoryPutEdge,

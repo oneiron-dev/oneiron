@@ -56,6 +56,8 @@ mod tests;
 pub(crate) use self::bundle::BundleCarry;
 #[cfg(feature = "sync")]
 pub(crate) use self::bundle::PadEraseSubject;
+#[cfg(feature = "sync")]
+pub(crate) use self::bundle::publication_grant_requests;
 pub use self::bundle::{
     OpenedBundleSection, OpenedKeyPads, OpenedVaultBundle, SEALED_BUNDLE_KEEP,
     SEALED_BUNDLE_PAD_STEP_BYTES, SEALED_BUNDLE_UPLOAD_INTERVAL_SECS, SealedBundleGeneration,

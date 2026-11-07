@@ -61,8 +61,17 @@ pub(crate) async fn handle_mcp_request(
                 .ok()
                 .flatten()
                 .map(|id| crate::owner::vault_key::hex(&id));
+            // The version the client asks for when this server speaks it,
+            // else the newest (FIX 4902).
+            let protocol_version = mcp_negotiated_version(
+                request
+                    .params
+                    .as_ref()
+                    .and_then(|params| params.get("protocolVersion"))
+                    .and_then(Value::as_str),
+            );
             let result = json!({
-                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "protocolVersion": protocol_version,
                 "serverInfo": {
                     "name": crate::mcp::MCP_SERVER_NAME,
                     "version": env!("CARGO_PKG_VERSION"),
