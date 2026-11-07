@@ -134,6 +134,12 @@ pub(super) struct MailOccurrence {
     pub(super) content_hashes: Vec<String>,
     pub(super) stage: MailStage,
     pub(super) presence: MailPresence,
+    /// Moved on each time the message leaves the provider or comes back to
+    /// it (FIX 15414): a re-check of the claims drawn from it is owed for
+    /// one generation, and one a restore or a later delete overtook changes
+    /// nothing.
+    #[serde(default)]
+    pub(super) presence_generation: u64,
     pub(super) labels: Vec<String>,
     pub(super) rfc_message_id: Option<String>,
     /// The sender and subject, as the inbox lists the message.
@@ -243,6 +249,20 @@ pub(super) fn record_occurrence_rows_in_txn(
     Ok(())
 }
 
+/// The keys of the provider messages `row` landed for: the occurrences its
+/// CONVERSATION, TURN or MESSAGE revision belongs to.
+pub(super) fn occurrence_keys_of_row_in(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    row: &EntityId,
+) -> Result<Vec<(EntityId, [u8; 32])>> {
+    Ok(OCCURRENCE_ROWS
+        .scan_keys(store, txn, row.as_bytes())?
+        .into_iter()
+        .map(|(_, source, hash)| (source, hash))
+        .collect())
+}
+
 /// Owes each of `headers`, the header-only revisions of the provider
 /// message keyed `key` its body superseded, a delete, and takes them out of
 /// the message's erase reach, so that delete leaves the message as it
@@ -264,8 +284,9 @@ pub(super) fn owe_header_retirements_in_txn(
 /// The entity eraser (deletion/derived_rows.rs): an erased CONVERSATION,
 /// TURN or MESSAGE of an imported message scrubs that message's occurrence,
 /// so the inbox, the thread and the compliance search no longer list its
-/// sender or subject, and its body leaves the queue. A no-op for any other
-/// entity.
+/// sender or subject, and its body leaves the queue. A re-check of the
+/// claims drawn from it still waiting goes moot and settles changing
+/// nothing (FIX 15414). A no-op for any other entity.
 pub(crate) fn erase_occurrence_rows_in_txn(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
@@ -291,6 +312,7 @@ pub(crate) fn erase_occurrence_rows_in_txn(
         }
         occurrence.scrub(at);
         OCCURRENCES.put(store, txn, &key, &occurrence)?;
+        super::claim_recheck::obsolete_rechecks_in_txn(store, txn, &key, at)?;
         super::attachments::forget_message_attachments_in_txn(
             store,
             txn,
@@ -333,6 +355,17 @@ pub struct MailSyncStatusView {
     /// Messages waiting for their bodies.
     pub bodies_waiting: u64,
     pub deleted_at_provider: u64,
+    /// Messages deleted at the provider and kept whose claims wait to be
+    /// checked again (FIX 15414).
+    pub claim_rechecks_pending: u64,
+    /// Those whose claims were checked again: each stands, or the Dreamer
+    /// moved it down its demotion ladder.
+    pub claim_rechecks_checked: u64,
+    /// Those with a claim whose check waits for the owner's review.
+    pub claim_rechecks_review_needed: u64,
+    /// Checks a restore, a later delete or an erase of the message made
+    /// moot.
+    pub claim_rechecks_obsolete: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_step_at: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -349,6 +382,7 @@ pub(super) fn status_view_in(
     let bodies_waiting = BODY_QUEUE
         .scan_keys(&vault.store, txn, source.as_bytes())?
         .len() as u64;
+    let rechecks = super::claim_recheck::counts_in(vault, txn, source)?;
     Ok(MailSyncStatusView {
         source_ref: source.to_hex(),
         live: state.anchor.is_some(),
@@ -357,6 +391,10 @@ pub(super) fn status_view_in(
         bodies: state.bodies,
         bodies_waiting,
         deleted_at_provider: state.deleted_at_provider,
+        claim_rechecks_pending: rechecks.pending,
+        claim_rechecks_checked: rechecks.checked,
+        claim_rechecks_review_needed: rechecks.review_needed,
+        claim_rechecks_obsolete: rechecks.obsolete,
         last_step_at: state.last_step_at,
         last_error: state.last_error,
     })

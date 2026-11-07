@@ -44,6 +44,7 @@ use oneiron_driver::{
 use super::policy::{DreamerRoute, dreamer_role_purpose, dreamer_route, extraction_egress};
 
 mod claim_authoring;
+mod claim_source_recheck;
 mod compaction_check;
 mod destination_bound;
 mod free_time;
@@ -1507,6 +1508,15 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
             match self.check {
                 Some(lend) => lend.check(attempt, ctx, self.decisions).await,
                 None => Ok(oneiron::dreamer_runner::maintenance::compaction_check::unlent()),
+            }
+        } else if attempt.status.payload.attempt_type
+            == oneiron::dreamer_runner::maintenance::CLAIM_SOURCE_RECHECK_FACET
+        {
+            // FIX 15414: judged on the weaver's route, as a compaction's
+            // check is; it moves a claim only down the demotion ladder.
+            match self.check {
+                Some(lend) => lend.recheck_claim_sources(attempt, ctx).await,
+                None => Ok(oneiron::dreamer_runner::maintenance::claim_source_recheck::unlent()),
             }
         } else if attempt.status.payload.attempt_type
             == oneiron::dreamer_runner::DREAMER_WEAVE_LENS_ATTEMPT_KIND
