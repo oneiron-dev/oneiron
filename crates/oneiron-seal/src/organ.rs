@@ -74,8 +74,7 @@ use crate::api::{
 };
 use crate::error::{FatalCode, InputInvalidCode, RetryableCode, SealError, SealStage};
 use crate::memory::{
-    AdmittedBytes, AdmittedStr, MemoryLedger, SealMemory, SealMemoryProvider,
-    SealMemoryRefusal,
+    AdmittedBytes, AdmittedStr, MemoryLedger, SealMemory, SealMemoryProvider, SealMemoryRefusal,
 };
 use crate::native::NativeSealEngine;
 use crate::native::pdf::{
