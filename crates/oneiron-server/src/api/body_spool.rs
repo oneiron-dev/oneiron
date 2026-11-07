@@ -71,7 +71,9 @@ pub(super) struct BodySpool {
 impl BodySpool {
     /// The spool as one JSON document `T`, decoded as it is read; `None`
     /// when it is not one.
-    pub(super) fn json<T: serde::de::DeserializeOwned>(&mut self) -> Result<Option<T>, MemoryRefusal> {
+    pub(super) fn json<T: serde::de::DeserializeOwned>(
+        &mut self,
+    ) -> Result<Option<T>, MemoryRefusal> {
         let mut memory = self.admit_reader()?;
         Ok(self.with_reader_admitted(&mut memory, |reader| serde_json::from_reader(reader).ok()))
     }
@@ -236,13 +238,7 @@ pub(super) async fn spool_then<R: Send + 'static>(
         let memory = RawSpoolMemory::admit(bytes, &stopped).map_err(Unspooled::MemoryRefused)?;
         let body = BodyReader::new_admitted(receiver, Arc::clone(&memory));
         let _ = ready.send(Arc::clone(&memory));
-        let file = spool_to_end(
-            file,
-            body,
-            account,
-            declared,
-            &memory,
-        );
+        let file = spool_to_end(file, body, account, declared, &memory);
         // The reader, queue, current piece and read buffer have all left.
         let _ = raw_done.send(());
         if feed_done.blocking_recv().is_err() {
@@ -255,9 +251,8 @@ pub(super) async fn spool_then<R: Send + 'static>(
             stopped,
         }))
     });
-    let feed = transfer::feed_body_stoppable(
-        body, sender, idle, SPOOL_PIECE, feed_stopped, admitted,
-    );
+    let feed =
+        transfer::feed_body_stoppable(body, sender, idle, SPOOL_PIECE, feed_stopped, admitted);
     let mut feed = memory::FeedCompletion::new(feed, completed);
     // A worker that ends early drops the whole feeder without waiting for
     // another client frame. Its completion signal follows that cleanup.

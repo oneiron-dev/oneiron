@@ -15,6 +15,8 @@ mod conformance;
 mod egress;
 #[cfg(target_os = "linux")]
 mod native;
+#[cfg(target_os = "linux")]
+mod native_mounts;
 
 #[cfg(target_os = "linux")]
 pub use boot::run as run_production;
