@@ -24,7 +24,7 @@ pub struct PolicyScopedGrantRow {
 
 /// A lossless JSON representation of a MessagePack value. Integer text avoids
 /// SDK number rounding; float bytes preserve their width and exact bits.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(
     tag = "kind",
     content = "value",
@@ -48,14 +48,14 @@ pub enum PolicyGrantValue {
     Extension(PolicyGrantExtension),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PolicyGrantMapEntry {
     pub key: PolicyGrantValue,
     pub value: PolicyGrantValue,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PolicyGrantExtension {
     pub tag: i8,
@@ -141,29 +141,34 @@ impl PolicyGrantValue {
     }
 }
 
+impl PolicyScopedGrantRow {
+    /// The typed view of one scoped grant row as the policy fold decoded it.
+    pub(crate) fn of_decoded(row: &crate::gate::grants::PolicyScopedGrant) -> Result<Self> {
+        Ok(Self {
+            actor_class: row.actor_class.clone(),
+            actor_ref: row.actor_ref.clone(),
+            effector: row.effector.clone(),
+            scope: row.authority_scope.clone(),
+            selectors: row
+                .scope
+                .as_ref()
+                .map(PolicyGrantValue::from_value)
+                .transpose()?,
+            budget: row
+                .budget
+                .as_ref()
+                .map(PolicyGrantValue::from_value)
+                .transpose()?,
+            receipt_required: row.receipt_required,
+        })
+    }
+}
+
 pub(super) fn decode_table(value: &Value) -> Result<Vec<PolicyScopedGrantRow>> {
     crate::gate::decode::decode_scoped_grant_table(value)
         .ok_or_else(|| super::invalid("malformed scoped grants"))?
         .iter()
-        .map(|row| {
-            Ok(PolicyScopedGrantRow {
-                actor_class: row.actor_class.clone(),
-                actor_ref: row.actor_ref.clone(),
-                effector: row.effector.clone(),
-                scope: row.authority_scope.clone(),
-                selectors: row
-                    .scope
-                    .as_ref()
-                    .map(PolicyGrantValue::from_value)
-                    .transpose()?,
-                budget: row
-                    .budget
-                    .as_ref()
-                    .map(PolicyGrantValue::from_value)
-                    .transpose()?,
-                receipt_required: row.receipt_required,
-            })
-        })
+        .map(PolicyScopedGrantRow::of_decoded)
         .collect()
 }
 
