@@ -3819,6 +3819,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.secrets.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeRepoRequest,
+                >(),
+            ),
+            (
+                "vault.code.secrets.propose",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeRepoSecretProposeRequest,
+                >(),
+            ),
+            (
                 "execute_code",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::foreign_code::ForeignCodeRunRequest,
@@ -4032,6 +4044,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.code.origin.publications",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::origin_doors::OriginPublicationsRequest,
+                >(),
+            ),
+            (
+                "vault.code.checkout.holder.bind",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::repo_doors::RepoCheckoutBindInput,
                 >(),
             ),
             (
@@ -5055,6 +5073,23 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.settings.web_connector.replace",
                 crate::code_run::vault_read::request_schema::<
                     crate::web_connector::WebConnectorSetting,
+                >(),
+            ),
+            (
+                "vault.settings.model_pack",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
+                "vault.settings.model_pack.replace",
+                crate::code_run::vault_read::request_schema::<
+                    crate::settings::model_pack::ModelPackPreference,
+                >(),
+            ),
+            (
+                "vault.model_pack.revert",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::model_pack::ModelPackRevertRequest,
                 >(),
             ),
             (
@@ -7908,6 +7943,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.proposal_review",
     "vault.code.proposal_settle",
     "vault.code.proposal_settlement",
+    "vault.code.secrets.get",
+    "vault.code.secrets.propose",
     "execute_code",
     "vault.code.model_heal_count",
     "vault.code.corrections",
@@ -7938,6 +7975,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.origin.authority.get",
     "vault.code.origin.authority.set",
     "vault.code.origin.publications",
+    "vault.code.checkout.holder.bind",
     "vault.code.checkout.bind",
     "vault.code.checkout.claim",
     "vault.code.checkout.get",
@@ -8024,6 +8062,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.models.manifest.replace",
     "vault.settings.web_connector",
     "vault.settings.web_connector.replace",
+    "vault.settings.model_pack",
+    "vault.settings.model_pack.replace",
+    "vault.model_pack.revert",
     "vault.connectors.web.usage",
     "vault.models.oneironer.bind",
     "vault.models.routes.read",
@@ -9825,6 +9866,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.code.proposal_settlement" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_doors::CodeProposalSettlementView,
         >(),
+        "vault.code.secrets.get" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_doors::CodeRepoSecretsView,
+        >(),
+        "vault.code.secrets.propose" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_doors::CodeRepoSecretRemediation,
+        >(),
         "execute_code" => crate::code_run::vault_read::request_schema::<
             crate::memory::foreign_code::ForeignCodeRunResult,
         >(),
@@ -9914,6 +9961,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.code.origin.publications" => crate::code_run::vault_read::request_schema::<
             crate::memory::origin_doors::OriginPublicationsView,
+        >(),
+        "vault.code.checkout.holder.bind" => crate::code_run::vault_read::request_schema::<
+            crate::memory::repo_doors::RepoCheckoutBindOutput,
         >(),
         "vault.code.checkout.bind" => crate::code_run::vault_read::request_schema::<
             crate::memory::origin_doors::CheckoutDoorBinding,
@@ -10179,6 +10229,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.settings.web_connector.replace" => crate::code_run::vault_read::request_schema::<
             crate::web_connector::WebConnectorSetting,
         >(),
+        "vault.settings.model_pack" => crate::code_run::vault_read::request_schema::<
+            crate::llm::model_pack::ModelPackSetting,
+        >(),
+        "vault.settings.model_pack.replace" => crate::code_run::vault_read::request_schema::<
+            crate::llm::model_pack::ModelPackSetting,
+        >(),
+        "vault.model_pack.revert" => {
+            crate::code_run::vault_read::request_schema::<crate::llm::model_pack::ModelPackRevert>()
+        }
         "vault.connectors.web.usage" => crate::code_run::vault_read::request_schema::<
             crate::web_connector::WebConnectorUsagePage,
         >(),
@@ -15907,6 +15966,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.secrets.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.secrets.propose" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "execute_code" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -16153,6 +16226,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.code.origin.publications" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.checkout.holder.bind" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -17423,6 +17503,27 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.settings.web_connector.replace" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.settings.model_pack" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.settings.model_pack.replace" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.model_pack.revert" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -21004,6 +21105,8 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.code.proposal_settle" => validate_input_vault_code_proposal_settle(value)?,
         "vault.code.proposal_settlement" => validate_input_vault_code_proposal_settlement(value)?,
         "vault.code.oplog" => validate_input_vault_code_oplog(value)?,
+        "vault.code.secrets.get" => validate_input_vault_code_secrets_get(value)?,
+        "vault.code.secrets.propose" => validate_input_vault_code_secrets_propose(value)?,
         "execute_code" => validate_input_execute_code(value)?,
         "vault.code.model_heal_count" => validate_input_vault_code_model_heal_count(value)?,
         "vault.code.corrections" => validate_input_vault_code_corrections(value)?,
@@ -21052,6 +21155,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.code.origin.authority.get" => validate_input_vault_code_origin_authority_get(value)?,
         "vault.code.origin.authority.set" => validate_input_vault_code_origin_authority_set(value)?,
         "vault.code.origin.publications" => validate_input_vault_code_origin_publications(value)?,
+        "vault.code.checkout.holder.bind" => validate_input_vault_code_checkout_holder_bind(value)?,
         "vault.code.checkout.bind" => validate_input_vault_code_checkout_bind(value)?,
         "vault.code.checkout.claim" => validate_input_vault_code_checkout_claim(value)?,
         "vault.code.checkout.get" => validate_input_vault_code_checkout_get(value)?,
@@ -21264,6 +21368,11 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.settings.web_connector.replace" => {
             validate_input_vault_settings_web_connector_replace(value)?
         }
+        "vault.settings.model_pack" => validate_input_vault_settings_model_pack(value)?,
+        "vault.settings.model_pack.replace" => {
+            validate_input_vault_settings_model_pack_replace(value)?
+        }
+        "vault.model_pack.revert" => validate_input_vault_model_pack_revert(value)?,
         "vault.connectors.web.usage" => validate_input_vault_connectors_web_usage(value)?,
         "vault.models.oneironer.bind" => validate_input_vault_models_oneironer_bind(value)?,
         "vault.models.routes.read" => validate_input_vault_models_routes_read(value)?,
@@ -25536,6 +25645,16 @@ fn validate_input_vault_code_oplog(value: &serde_json::Value) -> MemoryResult<()
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_code_secrets_get(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::memory::code_doors::CodeRepoRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_code_secrets_propose(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::memory::code_doors::CodeRepoSecretProposeRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_execute_code(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::memory::foreign_code::ForeignCodeRunRequest = decode(value.clone())?;
     Ok(())
@@ -25715,6 +25834,11 @@ fn validate_input_vault_code_origin_authority_set(value: &serde_json::Value) -> 
 #[inline(never)]
 fn validate_input_vault_code_origin_publications(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::memory::origin_doors::OriginPublicationsRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_code_checkout_holder_bind(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::memory::repo_doors::RepoCheckoutBindInput = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -26673,6 +26797,21 @@ fn validate_input_vault_settings_web_connector_replace(
     value: &serde_json::Value,
 ) -> MemoryResult<()> {
     let _input: crate::web_connector::WebConnectorSetting = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_settings_model_pack(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_settings_model_pack_replace(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::settings::model_pack::ModelPackPreference = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_model_pack_revert(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::llm::model_pack::ModelPackRevertRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -29899,6 +30038,8 @@ pub fn invoke(
         "vault.code.proposal_settle" => invoke_vault_code_proposal_settle(memory, value),
         "vault.code.proposal_settlement" => invoke_vault_code_proposal_settlement(memory, value),
         "vault.code.oplog" => invoke_vault_code_oplog(memory, value),
+        "vault.code.secrets.get" => invoke_vault_code_secrets_get(memory, value),
+        "vault.code.secrets.propose" => invoke_vault_code_secrets_propose(memory, value),
         "execute_code" => invoke_execute_code(memory, value),
         "vault.code.model_heal_count" => invoke_vault_code_model_heal_count(memory, value),
         "vault.code.corrections" => invoke_vault_code_corrections(memory, value),
@@ -29947,6 +30088,7 @@ pub fn invoke(
         "vault.code.origin.authority.get" => invoke_vault_code_origin_authority_get(memory, value),
         "vault.code.origin.authority.set" => invoke_vault_code_origin_authority_set(memory, value),
         "vault.code.origin.publications" => invoke_vault_code_origin_publications(memory, value),
+        "vault.code.checkout.holder.bind" => invoke_vault_code_checkout_holder_bind(memory, value),
         "vault.code.checkout.bind" => invoke_vault_code_checkout_bind(memory, value),
         "vault.code.checkout.claim" => invoke_vault_code_checkout_claim(memory, value),
         "vault.code.checkout.get" => invoke_vault_code_checkout_get(memory, value),
@@ -30159,6 +30301,11 @@ pub fn invoke(
         "vault.settings.web_connector.replace" => {
             invoke_vault_settings_web_connector_replace(memory, value)
         }
+        "vault.settings.model_pack" => invoke_vault_settings_model_pack(memory, value),
+        "vault.settings.model_pack.replace" => {
+            invoke_vault_settings_model_pack_replace(memory, value)
+        }
+        "vault.model_pack.revert" => invoke_vault_model_pack_revert(memory, value),
         "vault.connectors.web.usage" => invoke_vault_connectors_web_usage(memory, value),
         "vault.models.oneironer.bind" => invoke_vault_models_oneironer_bind(memory, value),
         "vault.models.routes.read" => invoke_vault_models_routes_read(memory, value),
@@ -35650,6 +35797,20 @@ fn invoke_vault_code_oplog(
     encode(vault_code_oplog(memory, decode(value)?)?)
 }
 #[inline(never)]
+fn invoke_vault_code_secrets_get(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_code_secrets_get(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_code_secrets_propose(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_code_secrets_propose(memory, decode(value)?)?)
+}
+#[inline(never)]
 fn invoke_execute_code(
     memory: &Memory<'_>,
     value: serde_json::Value,
@@ -35900,6 +36061,13 @@ fn invoke_vault_code_origin_publications(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_code_origin_publications(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_code_checkout_holder_bind(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_code_checkout_holder_bind(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_code_checkout_bind(
@@ -37152,6 +37320,27 @@ fn invoke_vault_settings_web_connector_replace(
         memory,
         decode(value)?,
     )?)
+}
+#[inline(never)]
+fn invoke_vault_settings_model_pack(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_settings_model_pack(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_settings_model_pack_replace(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_settings_model_pack_replace(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_model_pack_revert(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_model_pack_revert(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_connectors_web_usage(
@@ -42248,42 +42437,42 @@ pub fn vault_skills_get(
     memory: &Memory<'_>,
     input: HubSkillRequest,
 ) -> MemoryResult<crate::task_verb::sdk::SkillLibraryView> {
-    crate::task_verb::sdk::skill_library_get_as_owner(
+    memory.witness_skill_bodies(crate::task_verb::sdk::skill_library_get_as_owner(
         memory.vault(),
         &memory.embedded_owner("vault.skills.get")?,
         &input,
-    )
+    ))
 }
 pub fn vault_skills_list(
     memory: &Memory<'_>,
     input: SkillLibraryListRequest,
 ) -> MemoryResult<crate::task_verb::sdk::SkillLibraryPage> {
-    crate::task_verb::sdk::skill_library_list_as_owner(
+    memory.witness_skill_bodies(crate::task_verb::sdk::skill_library_list_as_owner(
         memory.vault(),
         &memory.embedded_owner("vault.skills.list")?,
         &input,
-    )
+    ))
 }
 pub fn vault_skills_archive(
     memory: &Memory<'_>,
     input: HubSkillRequest,
 ) -> MemoryResult<crate::task_verb::sdk::SkillLibraryView> {
-    crate::task_verb::sdk::skill_archive_as_owner(
+    memory.witness_skill_bodies(crate::task_verb::sdk::skill_archive_as_owner(
         memory.vault(),
         &memory.embedded_owner("vault.skills.archive")?,
         &input,
-    )
+    ))
 }
 pub fn vault_skills_restore(
     memory: &Memory<'_>,
     input: SkillLibraryRestoreRequest,
 ) -> MemoryResult<crate::task_verb::sdk::SkillLibraryRestoreReceipt> {
-    crate::task_verb::sdk::skill_restore_as_owner(
+    memory.witness_skill_bodies(crate::task_verb::sdk::skill_restore_as_owner(
         memory.vault(),
         &memory.embedded_owner("vault.skills.restore")?,
         &input,
         None,
-    )
+    ))
 }
 pub fn vault_skills_fork(
     memory: &Memory<'_>,
@@ -45943,6 +46132,19 @@ pub fn vault_code_oplog(
 ) -> MemoryResult<crate::memory::code_doors::CodeMutationLog> {
     memory.code_mutation_log_as(&memory.embedded_owner("vault.code.oplog")?, input)
 }
+pub fn vault_code_secrets_get(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeRepoRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeRepoSecretsView> {
+    memory.code_repo_secrets_get_as(&memory.embedded_owner("vault.code.secrets.get")?, input)
+}
+pub fn vault_code_secrets_propose(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeRepoSecretProposeRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeRepoSecretRemediation> {
+    memory
+        .code_repo_secrets_propose_as(&memory.embedded_owner("vault.code.secrets.propose")?, input)
+}
 pub fn execute_code(
     memory: &Memory<'_>,
     input: crate::memory::foreign_code::ForeignCodeRunRequest,
@@ -46221,6 +46423,12 @@ pub fn vault_code_origin_publications(
         &memory.embedded_owner("vault.code.origin.publications")?,
         input,
     )
+}
+pub fn vault_code_checkout_holder_bind(
+    memory: &Memory<'_>,
+    input: crate::memory::repo_doors::RepoCheckoutBindInput,
+) -> MemoryResult<crate::memory::repo_doors::RepoCheckoutBindOutput> {
+    memory.repo_checkout_bind_for_holder(input)
 }
 pub fn vault_code_checkout_bind(
     memory: &Memory<'_>,
@@ -47674,6 +47882,24 @@ pub fn vault_settings_web_connector_replace(
     input: crate::web_connector::WebConnectorSetting,
 ) -> MemoryResult<crate::web_connector::WebConnectorSetting> {
     crate::task_verb::sdk::replace_web_connector_setting(memory, input)
+}
+pub fn vault_settings_model_pack(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<crate::llm::model_pack::ModelPackSetting> {
+    crate::task_verb::sdk::read_model_pack_setting(memory)
+}
+pub fn vault_settings_model_pack_replace(
+    memory: &Memory<'_>,
+    input: crate::settings::model_pack::ModelPackPreference,
+) -> MemoryResult<crate::llm::model_pack::ModelPackSetting> {
+    crate::task_verb::sdk::replace_model_pack_preference(memory, input)
+}
+pub fn vault_model_pack_revert(
+    memory: &Memory<'_>,
+    input: crate::llm::model_pack::ModelPackRevertRequest,
+) -> MemoryResult<crate::llm::model_pack::ModelPackRevert> {
+    crate::task_verb::sdk::revert_model_pack(memory, input)
 }
 pub fn vault_connectors_web_usage(
     memory: &Memory<'_>,

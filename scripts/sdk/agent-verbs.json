@@ -4115,7 +4115,7 @@
       "description": "Reads skill lifecycle, exact source, provenance, source availability, scan and admission receipts, and retained fork ancestry.",
       "input": "HubSkillRequest",
       "output": "crate::task_verb::sdk::SkillLibraryView",
-      "call": "crate::task_verb::sdk::skill_library_get_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.get\")?, &input)?",
+      "call": "memory.witness_skill_bodies(crate::task_verb::sdk::skill_library_get_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.get\")?, &input))?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
@@ -4130,7 +4130,7 @@
       "description": "Lists a page of the owner skill library, including inactive skills and their retained evidence.",
       "input": "SkillLibraryListRequest",
       "output": "crate::task_verb::sdk::SkillLibraryPage",
-      "call": "crate::task_verb::sdk::skill_library_list_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.list\")?, &input)?",
+      "call": "memory.witness_skill_bodies(crate::task_verb::sdk::skill_library_list_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.list\")?, &input))?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
@@ -4145,7 +4145,7 @@
       "description": "The owner soft-retires an active skill without deleting its body, source or receipts; running callable invocations are cancelled.",
       "input": "HubSkillRequest",
       "output": "crate::task_verb::sdk::SkillLibraryView",
-      "call": "crate::task_verb::sdk::skill_archive_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.archive\")?, &input)?",
+      "call": "memory.witness_skill_bodies(crate::task_verb::sdk::skill_archive_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.archive\")?, &input))?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
@@ -4160,7 +4160,7 @@
       "description": "The owner restores an archived skill through the same admission gates; a hub restore prepares exact consent and reruns held-out scoring.",
       "input": "SkillLibraryRestoreRequest",
       "output": "crate::task_verb::sdk::SkillLibraryRestoreReceipt",
-      "call": "crate::task_verb::sdk::skill_restore_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.restore\")?, &input, None)?",
+      "call": "memory.witness_skill_bodies(crate::task_verb::sdk::skill_restore_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.restore\")?, &input, None))?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
@@ -10792,6 +10792,36 @@
       "host_door_lists": true
     },
     {
+      "name": "vault.code.secrets.get",
+      "description": "Read one repository's marked secrets and linked remediations, value-free: each mark's blob, path, detector kind, where the push saw it and its custody handle. Owner only.",
+      "input": "crate::memory::code_doors::CodeRepoRequest",
+      "output": "crate::memory::code_doors::CodeRepoSecretsView",
+      "call": "memory.code_repo_secrets_get_as(&memory.embedded_owner(\"vault.code.secrets.get\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.secrets.propose",
+      "description": "Stage one remediation of a repository's current code: marked keys become secret references, committed .env files go, .gitignore and .env.example follow. Owner only. It only proposes.",
+      "input": "crate::memory::code_doors::CodeRepoSecretProposeRequest",
+      "output": "crate::memory::code_doors::CodeRepoSecretRemediation",
+      "call": "memory.code_repo_secrets_propose_as(&memory.embedded_owner(\"vault.code.secrets.propose\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "execute_code",
       "description": "Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal.",
       "input": "crate::memory::foreign_code::ForeignCodeRunRequest",
@@ -10855,7 +10885,7 @@
     },
     {
       "name": "vault.code.waits.resolve",
-      "description": "Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken.",
+      "description": "Answer a sealed code consent wait as its authenticated owner or current policy-admitted power holder, on their own word. First answer wins; the effect meets its current gate once. No raw reply, grant or consumption.",
       "input": "crate::memory::code_wait_doors::CodeWaitResolveRequest",
       "output": "crate::memory::code_wait_doors::CodeWaitReceiptView",
       "call": "memory.code_wait_resolve_as(&memory.embedded_owner(\"vault.code.waits.resolve\")?, input)?",
@@ -10870,7 +10900,7 @@
     },
     {
       "name": "vault.code.waits.receipt",
-      "description": "Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait.",
+      "description": "Read a code consent wait as its authenticated owner or current policy-admitted power holder: effect, answer, settlement and replay-consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait.",
       "input": "crate::memory::code_wait_doors::CodeWaitReceiptRequest",
       "output": "Option<crate::memory::code_wait_doors::CodeWaitReceiptView>",
       "call": "memory.code_wait_receipt_as(&memory.embedded_owner(\"vault.code.waits.receipt\")?, input)?",
@@ -11341,6 +11371,24 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.checkout.holder.bind",
+      "description": "Materialize the caller's own live checkout without a run. One current repo read Grant must cover the full ref at the lease's pinned commit and every path of that tree. Returns the lease-bound remote URL, not a host path; no lease is minted.",
+      "input": "crate::memory::repo_doors::RepoCheckoutBindInput",
+      "output": "crate::memory::repo_doors::RepoCheckoutBindOutput",
+      "call": "memory.repo_checkout_bind_for_holder(input)?",
+      "scope": "Write",
+      "admission": {
+        "lane_record_scope": true,
+        "require_granted_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
       "openapi": true
     },
     {
@@ -14436,6 +14484,54 @@
       "input": "crate::web_connector::WebConnectorSetting",
       "output": "crate::web_connector::WebConnectorSetting",
       "call": "crate::task_verb::sdk::replace_web_connector_setting(memory, input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
+      "openapi": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.settings.model_pack",
+      "description": "Reads the owner's model pack setting: follow the latest pack (the default), a pinned season or a pinned pack, the pack it selects now, the last change and the pack before it, and every installed model pack.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "crate::llm::model_pack::ModelPackSetting",
+      "call": "crate::task_verb::sdk::read_model_pack_setting(memory)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
+      "openapi": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.settings.model_pack.replace",
+      "description": "Replaces the owner's model pack preference under the owner proof: auto_upgrade follows the latest pack; pinned names a season, pinned_pack one pack, installed and still served. A move of the active pack sends its change notice.",
+      "input": "crate::settings::model_pack::ModelPackPreference",
+      "output": "crate::llm::model_pack::ModelPackSetting",
+      "call": "crate::task_verb::sdk::replace_model_pack_preference(memory, input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
+      "openapi": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.model_pack.revert",
+      "description": "Reverts a model pack change, its notice's one tap: pins the pack before it while the change is the vault's last and that pack is installed at its bytes and served; else answers why it cannot run now and changes nothing.",
+      "input": "crate::llm::model_pack::ModelPackRevertRequest",
+      "output": "crate::llm::model_pack::ModelPackRevert",
+      "call": "crate::task_verb::sdk::revert_model_pack(memory, input)?",
       "scope": "Write",
       "host_door": true,
       "host_door_precheck": false,

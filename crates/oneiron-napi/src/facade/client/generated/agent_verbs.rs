@@ -6071,6 +6071,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_code_secrets_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.secrets.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_secrets_propose(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.secrets.propose", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn execute_code(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("execute_code", js_json(input))
@@ -6394,6 +6412,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.code.origin.publications", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_checkout_holder_bind(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.checkout.holder.bind", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -8135,6 +8162,33 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.settings.web_connector.replace", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_settings_model_pack(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.settings.model_pack", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_settings_model_pack_replace(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.settings.model_pack.replace", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_model_pack_revert(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.model_pack.revert", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

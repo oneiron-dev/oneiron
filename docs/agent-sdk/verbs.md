@@ -702,6 +702,8 @@ both bindings and their export-census tests in one change.
 - `vault.code.proposal_settle`
 - `vault.code.proposal_settlement`
 - `vault.code.oplog`
+- `vault.code.secrets.get`
+- `vault.code.secrets.propose`
 - `execute_code`
 - `vault.code.model_heal_count`
 - `vault.code.corrections`
@@ -738,6 +740,7 @@ both bindings and their export-census tests in one change.
 - `vault.code.origin.authority.get`
 - `vault.code.origin.authority.set`
 - `vault.code.origin.publications`
+- `vault.code.checkout.holder.bind`
 - `vault.code.checkout.bind`
 - `vault.code.checkout.claim`
 - `vault.code.checkout.get`
@@ -916,6 +919,9 @@ both bindings and their export-census tests in one change.
 - `vault.models.manifest.replace`
 - `vault.settings.web_connector`
 - `vault.settings.web_connector.replace`
+- `vault.settings.model_pack`
+- `vault.settings.model_pack.replace`
+- `vault.model_pack.revert`
 - `vault.connectors.web.usage`
 - `vault.models.oneironer.bind`
 - `vault.models.routes.read`

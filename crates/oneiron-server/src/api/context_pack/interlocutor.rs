@@ -1,11 +1,10 @@
 //! Interlocutor-set resolution and third-party party inputs for context-pack requests.
 
 use super::super::{core_engine_error, parse_entity_id_param};
-use super::controls::{
-    CoreInterlocutorControls, CoreInterlocutorParty, MAX_INTERLOCUTOR_THIRD_PARTIES,
-};
+use super::controls::{CoreInterlocutorControls, CoreInterlocutorParty};
 use crate::auth::CoreAuth;
 use crate::error::ApiError;
+use oneiron::limit_ask::EngineLimit;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Resolves the effective interlocutor set for a core context-pack request
@@ -45,18 +44,18 @@ pub(crate) fn resolve_core_interlocutor_set(
         if controls.owner_present == Some(true) && !auth.is_owner_grade() {
             return Err(ApiError::forbidden_scope("interlocutors.owner_present"));
         }
-        if controls.third_parties.len() > MAX_INTERLOCUTOR_THIRD_PARTIES {
-            return Err(ApiError::bad_request(
-                format!(
-                    "third_parties must contain at most {MAX_INTERLOCUTOR_THIRD_PARTIES} entries"
-                ),
-                Some("interlocutors.third_parties"),
-            ));
-        }
         owner_present = controls.owner_present;
         for (index, party) in controls.third_parties.iter().enumerate() {
             parties.push(core_interlocutor_party_input(party, index)?);
         }
+        // Physical65 ABC14: the submitted third parties whole, label-only
+        // parties included, measured once after their shape checks and
+        // before contact resolution. Ask-and-serve: the crossing asks, the
+        // set resolves whole.
+        vault.measure_limit(
+            EngineLimit::ContextThirdParties,
+            controls.third_parties.len() as u64,
+        );
         voice_session_ref = controls.voice_session_ref.clone();
     }
 
