@@ -13,6 +13,7 @@ mod export_records;
 mod membership;
 mod owner_add;
 mod removal;
+mod removal_answer;
 mod removal_archive;
 mod removal_file;
 mod removal_import;
@@ -24,6 +25,7 @@ pub use membership::{
     OwnerRecoveryAuthorization, SHARED_INVITATION_TTL_SECS, SharedInvitation, SharedInvitationState,
 };
 pub use owner_add::AddOwnerPlan;
+pub use removal_answer::RemovalExportFile;
 #[cfg(all(unix, feature = "sync"))]
 pub(crate) use removal_file::removal_archive_body_keys_in_txn;
 pub(crate) use removal_file::{removal_archive_bindings_in_rows, removal_archive_owners_in_rows};

@@ -85,11 +85,11 @@ pub use shared_act::{
     AddOwnerPlan, DELETED_VAULT_BACKUP_RETENTION_SECS, DeleteVaultPlan, EraseAskKind,
     EraseAskStatus, NOTIFICATION_PRODUCER_ERASE_ASK, OwnerRecoveryAuthorization,
     REMOVAL_EXPORT_RETAIN_SECS, ReceivedRemovalArchive, ReceivedRemovalArchiveState,
-    RemovalExportCopy, RemovalExportDelivery, RemoveOwnerPlan, SHARED_ACT_OUTCOME_NOTICE_DOMAIN,
-    SHARED_INVITATION_TTL_SECS, SharedActExecution, SharedActExecutionReceipt, SharedActExport,
-    SharedActKind, SharedActOutcome, SharedEraseAsk, SharedInvitation, SharedInvitationState,
-    SharedVaultChange, SharedVaultDeletion, SignedSharedActOutcome, TransferOwnershipPlan,
-    shared_act_outcome_transcript,
+    RemovalExportCopy, RemovalExportDelivery, RemovalExportFile, RemoveOwnerPlan,
+    SHARED_ACT_OUTCOME_NOTICE_DOMAIN, SHARED_INVITATION_TTL_SECS, SharedActExecution,
+    SharedActExecutionReceipt, SharedActExport, SharedActKind, SharedActOutcome, SharedEraseAsk,
+    SharedInvitation, SharedInvitationState, SharedVaultChange, SharedVaultDeletion,
+    SignedSharedActOutcome, TransferOwnershipPlan, shared_act_outcome_transcript,
 };
 pub(crate) use shared_act::{removal_archive_bindings_in_rows, removal_archive_owners_in_rows};
 pub(crate) use shared_creation::shared_vault_creation_for_store_in_txn;

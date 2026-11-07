@@ -185,41 +185,19 @@ impl Vault {
         })
     }
 
-    /// The bytes of the row `row`'s archive `file`, as `txn` names
-    /// it: its descriptor must be complete with this body, and the file is
-    /// read through the instance row `txn` holds and checked against its
-    /// digest. A writer's snapshot keeps the file: no release of it commits
-    /// while the writer is open.
+    /// The archive `file` of the row `row`, as `txn` names it, copied into
+    /// an anonymous spool file of the vault's own and rewound to its start:
+    /// what a door answers and a projection reads where it lies (FIX
+    /// 21529), so no archive is held whole. Its descriptor must be complete
+    /// with this body; the file is read through the instance row `txn`
+    /// holds, so a sealed file's spool holds the plaintext, and checked
+    /// against its length and digest as it is copied. A writer's snapshot
+    /// keeps the file: no release of it commits while the writer is open.
     ///
     /// # Errors
     ///
-    /// [`Error::CorruptedIndex`] for a descriptor, file or digest that does
-    /// not match; storage and filesystem errors.
-    pub(super) fn read_removal_archive_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        row: ArchiveRow,
-        file: &ArchiveFile,
-    ) -> Result<Vec<u8>> {
-        let mut reader = self.open_removal_archive_in_txn(txn, row, file)?;
-        let mut bytes = Vec::with_capacity(usize::try_from(file.body.bytes).unwrap_or(0));
-        reader.read_to_end(&mut bytes)?;
-        if blake3::hash(&bytes).as_bytes() != &file.body.blake3 {
-            return Err(Error::CorruptedIndex("removal archive digest"));
-        }
-        Ok(bytes)
-    }
-
-    /// The archive `file` of the row `row` copied into an anonymous spool
-    /// file of the vault's own, checked against its length and digest as it
-    /// is copied and rewound to its start: what a projection reads where it
-    /// lies (FIX 21529), so no archive is held whole. A sealed file is
-    /// opened through its instance, so the spool holds the plaintext. Read
-    /// in `txn`, as [`Vault::read_removal_archive_in_txn`] reads it.
-    ///
-    /// # Errors
-    ///
-    /// As [`Vault::read_removal_archive_in_txn`]; spool filesystem errors.
+    /// [`Error::CorruptedIndex`] for a descriptor, file, length or digest
+    /// that does not match; storage, filesystem and spool errors.
     pub(super) fn spool_removal_archive_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -470,12 +448,12 @@ impl Vault {
         Err(no_body_store())
     }
 
-    pub(super) fn read_removal_archive_in_txn(
+    pub(super) fn spool_removal_archive_in_txn(
         &self,
         _txn: &heed::RoTxn<'_>,
         _row: ArchiveRow,
         _file: &ArchiveFile,
-    ) -> Result<Vec<u8>> {
+    ) -> Result<std::fs::File> {
         Err(no_body_store())
     }
 
