@@ -456,6 +456,7 @@ pub enum AgentVerb {
     VaultRecordsEraseConfirm,
     VaultRecordsEraseSweep,
     VaultOutboundCallsRequestErase,
+    VaultOutboundUncertainSendAnswer,
     VaultResearchCreateChild,
     VaultResearchArchive,
     VaultResearchArchiveInstall,
@@ -1760,6 +1761,7 @@ impl AgentVerb {
         Self::VaultRecordsEraseConfirm,
         Self::VaultRecordsEraseSweep,
         Self::VaultOutboundCallsRequestErase,
+        Self::VaultOutboundUncertainSendAnswer,
         Self::VaultResearchCreateChild,
         Self::VaultResearchArchive,
         Self::VaultResearchArchiveInstall,
@@ -3077,6 +3079,7 @@ impl AgentVerb {
             Self::VaultRecordsEraseConfirm => "vault.records.erase_confirm",
             Self::VaultRecordsEraseSweep => "vault.records.erase_sweep",
             Self::VaultOutboundCallsRequestErase => "vault.outbound_calls.request.erase",
+            Self::VaultOutboundUncertainSendAnswer => "vault.outbound.uncertain_send.answer",
             Self::VaultResearchCreateChild => "vault.research.create_child",
             Self::VaultResearchArchive => "vault.research.archive",
             Self::VaultResearchArchiveInstall => "vault.research.archive.install",
@@ -4407,6 +4410,7 @@ impl AgentVerb {
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultRecordsEraseSweep
                 | Self::VaultOutboundCallsRequestErase
+                | Self::VaultOutboundUncertainSendAnswer
                 | Self::VaultResearchCreateChild
                 | Self::VaultResearchArchive
                 | Self::VaultResearchArchiveInstall
@@ -5740,6 +5744,7 @@ impl AgentVerb {
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultRecordsEraseSweep
                 | Self::VaultOutboundCallsRequestErase
+                | Self::VaultOutboundUncertainSendAnswer
                 | Self::VaultResearchCreateChild
                 | Self::VaultResearchArchive
                 | Self::VaultResearchArchiveInstall
@@ -7224,6 +7229,7 @@ impl AgentVerb {
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultRecordsEraseSweep
                 | Self::VaultOutboundCallsRequestErase
+                | Self::VaultOutboundUncertainSendAnswer
                 | Self::VaultResearchCreateChild
                 | Self::VaultResearchArchive
                 | Self::VaultResearchArchiveInstall
@@ -8273,6 +8279,7 @@ impl AgentVerb {
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultOutboundCallsRequestErase
+                | Self::VaultOutboundUncertainSendAnswer
                 | Self::VaultResearchCreateChild
                 | Self::VaultResearchArchiveInstall
                 | Self::VaultResearchArchiveRecord
@@ -9270,6 +9277,7 @@ impl AgentVerb {
             Self::VaultRecordsEraseConfirm => &["spec"],
             Self::VaultRecordsEraseSweep => &["spec"],
             Self::VaultOutboundCallsRequestErase => &["spec"],
+            Self::VaultOutboundUncertainSendAnswer => &["spec"],
             Self::VaultResearchCreateChild => &["spec"],
             Self::VaultResearchArchive => &["spec"],
             Self::VaultResearchArchiveInstall => &["spec"],
@@ -10575,6 +10583,7 @@ impl AgentVerb {
             Self::VaultRecordsEraseConfirm => &["spec"],
             Self::VaultRecordsEraseSweep => &["spec"],
             Self::VaultOutboundCallsRequestErase => &["spec"],
+            Self::VaultOutboundUncertainSendAnswer => &["spec"],
             Self::VaultResearchCreateChild => &["spec"],
             Self::VaultResearchArchive => &["spec"],
             Self::VaultResearchArchiveInstall => &["spec"],
@@ -12768,6 +12777,9 @@ impl AgentVerb {
             }
             Self::VaultOutboundCallsRequestErase => {
                 "The owner erases one outbound call's frozen request, keeping its delivery evidence and accounting."
+            }
+            Self::VaultOutboundUncertainSendAnswer => {
+                "The owner answers the ask on a scheduled send that may have gone out and that the provider cannot confirm: send it once more, or leave it unsent."
             }
             Self::VaultResearchCreateChild => {
                 "The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave."

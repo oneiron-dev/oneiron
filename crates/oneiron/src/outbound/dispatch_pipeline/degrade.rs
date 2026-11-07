@@ -14,6 +14,7 @@ use crate::outbound::connector_task::SEND_EXECUTOR_FENCE_FIELD;
 use crate::outbound::dispatch_types::{
     OutboundDispatchOutcome, OutboundDispatchRequest, OutboundDispatchResult, OutboundExecutionSink,
 };
+use crate::outbound::send_lookup::{EngineSendId, SENT_LOOKUP_FIELD};
 use crate::outbound::{OutboundAmbientAlternative, OutboundDeliveryWindowDecision};
 
 /// Receipt field naming the surface the interrupt degraded to.
@@ -69,6 +70,18 @@ fn ambient_alternative_request(
     // FIX 4747: the alternative sends for the interrupt's TASK, so its
     // transport call passes the same send executor fence.
     request.send_executor_fence = parent.send_executor_fence;
+    // FIX 4747 (review #6574): the alternative is a send of its own under an
+    // engine send id derived from its interrupt's and its surface, the same
+    // on every machine. An alternative an earlier executor may have sent is
+    // looked up first, as its interrupt's send would be, and the owner's
+    // resend releases it the same way.
+    request.engine_send_id = parent
+        .engine_send_id
+        .as_ref()
+        .map(|id| EngineSendId::derive(&derive(id.as_str())));
+    request.earlier_send_lookup = parent.earlier_send_lookup;
+    request.owner_released_resend = parent.owner_released_resend;
+    request.send_approved_at = parent.send_approved_at;
     request
 }
 
@@ -129,12 +142,15 @@ pub(super) fn dispatch_ambient_alternative<S: OutboundExecutionSink>(
                 child.outcome.as_str().to_owned(),
             );
             // FIX 4747: an alternative the send executor fence stood down
-            // stands its interrupt's attempt down with it.
+            // stands its interrupt's attempt down with it, and what the
+            // alternative's lookup found settles its interrupt's TASK: one
+            // nobody can tell about holds it for the owner (review #6574).
             for field in [
                 "retry_at",
                 "provider_retry_after",
                 "provider_wait",
                 SEND_EXECUTOR_FENCE_FIELD,
+                SENT_LOOKUP_FIELD,
             ] {
                 if let Some(value) = child.receipt.fields.get(field) {
                     fields

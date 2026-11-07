@@ -216,6 +216,31 @@ fn update_settlement_in_txn(
     Ok(())
 }
 
+/// Drops row `id`'s settlement as the stood-down row it belongs to is
+/// superseded (FIX 4747 slice 4), in the caller's writer: only while its
+/// reserved budget already came out, or it reserved none, so the send's next
+/// admission reserves its own. `false`, and nothing dropped, while its
+/// reservation still stands reserved or settled.
+///
+/// # Errors
+/// Storage and row-codec faults.
+pub(super) fn forget_released_settlement_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &IntentId,
+) -> IntentLedgerResult<bool> {
+    let settlement = intent_settlement_in_txn(vault, wtxn, id)?;
+    if settlement
+        .reservation
+        .as_ref()
+        .is_some_and(|reservation| reservation.status != ReservationStatus::Released)
+    {
+        return Ok(false);
+    }
+    SETTLEMENT.delete(&vault.store, wtxn, id)?;
+    Ok(true)
+}
+
 /// Keeps the budget admission reserved for row `id`, in the admission's
 /// writer (FIX 7964), with what its preauthorized spend stood on (FIX
 /// 8689) and the preauthorizing rows it met (FIX 11662). A charge that
