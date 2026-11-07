@@ -343,6 +343,21 @@ pub const DEVICE_SUCCESSION_TARGET: &[u8] = b"oneiron/device-succession-target/v
 /// manifest id, the part index as u32 big-endian.
 pub const IDENTITY_TOPOLOGY_OPERATION_PART: &[u8] = b"oneiron/identity-topology/operation-part/v1";
 
+/// The window identity of one executor step a compaction reads
+/// (`engine_executor::compaction::step_message_id`, FIX 9838). Parts: the run,
+/// the step (u64 big-endian).
+pub const EXECUTOR_COMPACTION_STEP: &[u8] = b"oneiron:executor-compaction-step:v1";
+
+/// The request identity of one executor fold's pass
+/// (`engine_executor::compaction::fold_request_id`, FIX 9838). Parts: the run,
+/// the fold (u64 big-endian).
+pub const EXECUTOR_FOLD_REQUEST: &[u8] = b"oneiron:executor-fold-request:v1";
+
+/// An executor continuation checkpoint (`engine_executor::continuation`,
+/// `ExecutorCheckpointRef::id`, FIX 9838). Parts: the source run, the step
+/// (u64 little-endian).
+pub const EXECUTOR_CONTINUATION_CHECKPOINT: &[u8] = b"oneiron:executor-continuation-checkpoint:v1";
+
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
 pub(crate) const ALL: [&[u8]; 61] = [
