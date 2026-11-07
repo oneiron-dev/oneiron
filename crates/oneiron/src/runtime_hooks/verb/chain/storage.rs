@@ -127,6 +127,11 @@ impl Chain<'_> {
             self.used.set(true);
             return Err(ask::used_error());
         }
+        if self.call.verb == "host.turn.generate"
+            && let (Some(token), Some(turn)) = (&self.token, &self.call.turn)
+        {
+            crate::code_run::clear_parked_wait_in_txn(vault, txn, turn.run, token.ask())?;
+        }
         let at = vault.store.clock.now_recorded_at().saturating_mul(1_000);
         for run in &self.runs {
             let mut receipt = self.receipt(run);
@@ -263,6 +268,13 @@ impl Chain<'_> {
             phase: self.phase,
             verb: self.call.verb.clone(),
             input_json: (run.input.len() <= MAX_PINNED_INPUT).then(|| run.input.clone()),
+            landing_original: run
+                .landing_original
+                .as_ref()
+                .filter(|original| original.len() <= MAX_PINNED_INPUT)
+                .cloned(),
+            had_landing: run.had_landing,
+            args_withheld: run.args_withheld,
             history_erased: false,
             input_hash: blake3::hash(run.input.as_bytes()).to_hex().to_string(),
             dependencies: run.dependencies.clone(),

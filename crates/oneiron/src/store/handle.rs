@@ -345,6 +345,9 @@ pub struct StoreCore {
     /// Legal-hold refusals waiting for their hold log: the refusing
     /// transaction rolls back (OF-470). Never persisted.
     pub(crate) legal_hold_refusals: super::legal_hold::LegalHoldRefusals,
+    /// Wakes a HOST order's prospective capture worker after a new message
+    /// is sealed to it (FIX 13866). Never persisted.
+    pub(crate) host_legal_prospective: super::legal_hold::ProspectiveWake,
     /// Content-free, per-vault: bumped after each committed legal-hold
     /// release and each hold maintenance pass, so a deferred delete that a
     /// standing hold kept asks again (FIX 1488). Never persisted.
@@ -358,6 +361,8 @@ pub struct StoreCore {
     /// Content-free, per-vault: bumped after each commit that may have
     /// changed an admitted policy manifest (FIX 11402). Never persisted.
     pub(crate) policy_manifest_updates: tokio::sync::watch::Sender<u64>,
+    /// Content-free, per-vault terminal hook-ask changes, published after commit.
+    pub(crate) verb_hook_ask_updates: tokio::sync::watch::Sender<u64>,
     /// The one decision-answer signal every ask door and waiter on this open
     /// vault shares (FIX 4706): content-free, the last ask number answered
     /// or withdrawn, sent only after that commit.

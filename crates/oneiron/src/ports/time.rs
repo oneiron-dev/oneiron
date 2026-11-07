@@ -11,6 +11,9 @@ pub(crate) use oneiron_store::store_clock::AUTHORIZATION_LEASE_SECS;
 use oneiron_store::store_clock::lease_journal;
 pub use oneiron_store::store_clock::{Clock, IdGen, StoreClock};
 
+mod recording_plan;
+pub(crate) use recording_plan::{PreparedRecordingClock, RecordingClockProjection};
+
 impl crate::Vault {
     /// Sample this vault's injected, nondecreasing policy/recording clock.
     pub fn now_recorded_at(&self) -> u64 {
@@ -45,21 +48,8 @@ fn clock_floor_and_lease_in_txn(
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
 ) -> Result<(u64, u64)> {
-    let Some(bytes) = store.vault_meta().get(txn, CLOCK_FLOOR)? else {
-        return Ok((0, 0));
-    };
-    let half = |at: usize| -> Result<u64> {
-        bytes
-            .get(at..at + 8)
-            .and_then(|part| part.try_into().ok())
-            .map(u64::from_be_bytes)
-            .ok_or(Error::CorruptedIndex("recorded clock floor"))
-    };
-    match bytes.len() {
-        8 => Ok((half(0)?, 0)),
-        16 => Ok((half(0)?, half(8)?)),
-        _ => Err(Error::CorruptedIndex("recorded clock floor")),
-    }
+    let bytes = store.vault_meta().get(txn, CLOCK_FLOOR)?;
+    recording_plan::decode_clock_floor(bytes.as_deref())
 }
 
 fn put_clock_floor_in_txn(
@@ -68,9 +58,7 @@ fn put_clock_floor_in_txn(
     floor: u64,
     lease: u64,
 ) -> Result<()> {
-    let mut bytes = [0u8; 16];
-    bytes[..8].copy_from_slice(&floor.to_be_bytes());
-    bytes[8..].copy_from_slice(&lease.to_be_bytes());
+    let bytes = recording_plan::encode_clock_floor(floor, lease);
     store.vault_meta().put(txn, CLOCK_FLOOR, &bytes)?;
     Ok(())
 }
@@ -398,12 +386,7 @@ pub(crate) fn observe_clock_floor_in_txn(
     store: &impl crate::store::ManifestDbs,
     txn: &mut heed::RwTxn<'_>,
 ) -> Result<u64> {
-    let (persisted, lease) = clock_floor_and_lease_in_txn(store, txn)?;
-    let now = store.clock().observe_leased_floor(persisted, lease)?;
-    if now != persisted {
-        put_clock_floor_in_txn(store, txn, now, lease)?;
-    }
-    Ok(now)
+    recording_plan::observe_clock_floor_in_txn(store, txn)
 }
 
 /// Persists the floor of the ids this store has allocated, in the caller's
@@ -414,20 +397,5 @@ pub(crate) fn persist_id_floor_in_txn(
     store: &impl crate::store::ManifestDbs,
     txn: &mut heed::RwTxn<'_>,
 ) -> Result<()> {
-    let id_floor = match store.vault_meta().get(txn, ID_FLOOR)? {
-        Some(bytes) => u128::from_be_bytes(
-            bytes
-                .as_ref()
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("id source floor"))?,
-        ),
-        None => 0,
-    };
-    let observed_id_floor = store.clock().observe_id_floor(id_floor)?;
-    if observed_id_floor != id_floor {
-        store
-            .vault_meta()
-            .put(txn, ID_FLOOR, &observed_id_floor.to_be_bytes())?;
-    }
-    Ok(())
+    recording_plan::persist_id_floor_in_txn(store, txn)
 }

@@ -83,6 +83,20 @@ pub const VM_RESTORE_PORT: u32 = 1032;
 /// Guest to host: the custody anchor proxy (FIX 6517, [`crate::vm_anchor`]),
 /// one stream per connection to the anchor URL the host bound the boot to.
 pub const VM_ANCHOR_PROXY_PORT: u32 = 1033;
+/// Host to the root bootstrap: original-engine source control. Linux vsock
+/// reserves ports below 1024 to CAP_NET_BIND_SERVICE, so a vault UID cannot
+/// impersonate the bootstrap when source setup is unavailable.
+pub const VM_SOURCE_CTL_PORT: u32 = 1023;
+
+/// The root bootstrap's source-only hello, followed by one ctl exchange.
+/// This names its actual pidfd-owned child, not a credential or source-actor
+/// generation. A host must still bind it to the same VM boot and actor.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VmSourceEngine {
+    pub vault: String,
+    pub engine_pid: u32,
+}
 /// The owner-only directory a vault VM's `[models.voice]` socket lies in.
 pub const VM_VOICE_DIR: &str = "/run/oneiron/voice";
 /// Where the guest mounts the vault's read-only config drive: its settings

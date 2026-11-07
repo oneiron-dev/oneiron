@@ -238,3 +238,17 @@ pub(crate) async fn vault_coach_training_offers_pilots_get(
             .map_or(Some(Vec::new()), offer_pilot::listed_pilot)
     })
 }
+
+pub(crate) async fn vault_coach_training_runs_cancel(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: offer_doors::TrainingRunRef,
+) -> Listed<oneiron::embed::PendingEmbedderBinding> {
+    owned_control(
+        server,
+        auth,
+        "vault.coach.training_runs.cancel",
+        move |vault, owner| offer_doors::cancel_training_run(vault, owner, input),
+    )
+    .await
+}
