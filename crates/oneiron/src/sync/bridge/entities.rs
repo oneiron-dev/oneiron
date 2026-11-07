@@ -10,8 +10,9 @@ use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::sync::ingest::{
-    IngestCtx, Residence, TaskComponents, authority_parent_order, ingest_rows_in_savepoint,
-    is_authority_row, note_born, note_delivered_in_txn, waits_for_sibling_row, watches,
+    EntityStep, IngestCtx, Residence, TaskComponents, authority_parent_order,
+    ingest_rows_in_savepoint, is_authority_row, note_born, note_delivered_in_txn,
+    waits_for_sibling_row, watches,
 };
 use crate::sync::loro_support::TombstoneIndex;
 use crate::sync::pack_sync;
@@ -187,6 +188,13 @@ impl EntityMaterialization {
                 rows.iter().zip(&steps).zip(before)
             {
                 let (Some(id), Some(blob)) = (step.written(), value) else {
+                    // A row already here as the peer sent it is still this
+                    // delivery's: its world registers to the pact, so a
+                    // re-connected peer's unchanged world reads live again
+                    // (FIX 4312).
+                    if let (EntityStep::Unchanged(id), Some(blob)) = (step, value) {
+                        note_delivered_in_txn(vault, wtxn, *id, blob)?;
+                    }
                     continue;
                 };
                 if unborn {
