@@ -11,6 +11,35 @@ pub const PERSON_SUBSTRATE_FACET: &[u8] = b"oneiron/person-substrate-facet/v1";
 /// JSON address, request id.
 pub const KEY_VALUE: &[u8] = b"oneiron.key_value.v1";
 
+/// The speech TURN of one durable executor run
+/// (`executor_speech_identity::executor_speech_turn_id`, FIX 9711). Parts: the
+/// run ref, then the run id when one is known.
+pub const EXECUTOR_SPEECH_TURN: &[u8] = b"oneiron:executor-speech-turn:v1";
+
+/// The compaction session of one durable executor run
+/// (`executor_speech_identity::executor_compaction_session_id`, FIX 9711).
+/// Parts: the run ref, the run id.
+pub const EXECUTOR_COMPACTION_SESSION: &[u8] = b"oneiron:executor-compaction-session:v1";
+
+/// The conversation an executor run's speech lands in
+/// (`code_run::storage::speech_identity`, FIX 9711). Parts: the run ref, then
+/// the run id when one is known.
+pub const EXECUTOR_SPEECH_CONVERSATION: &[u8] = b"oneiron:executor-speech-conversation:v1";
+
+/// One executor speech MESSAGE (`code_run::storage::speech_identity`, FIX
+/// 9711). Parts: the run ref, the run id when one is known, the bubble's
+/// order (u32 little-endian).
+pub const EXECUTOR_SPEECH_MESSAGE: &[u8] = b"oneiron:executor-speech-message:v1";
+
+/// A held code call's consent wait (`code_run::consent_wait::binding`, FIX
+/// 9711). Parts: the write receipt, the request digest.
+pub const CODE_CONSENT_WAIT: &[u8] = b"oneiron:code-consent-wait:v1";
+
+/// The write receipt of one executor agent-verb call
+/// (`code_run::dispatcher::agent_verb`, FIX 9711). Parts: the run ref, the
+/// run id, the step start and the ordinal (u64 little-endian each).
+pub const EXECUTOR_AGENT_VERB_RECEIPT: &[u8] = b"oneiron:executor-agent-verb-receipt:v1";
+
 /// A built-in bootstrap skill (`skill_hub::bootstrap`). Parts: skill name.
 pub const BOOTSTRAP_SKILL: &[u8] = b"oneiron/bootstrap/v1/";
 
