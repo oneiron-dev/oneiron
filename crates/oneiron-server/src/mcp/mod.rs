@@ -59,8 +59,8 @@ pub use self::exec_host::{
     CodeRunLimits, McpCodeExecutionError, McpCodeExecutionHost, McpCodeExecutionRequest,
     McpCodeModeProvider, McpCodeRunResumeCondition, McpCodeRunResumed, McpCodeRunSelfBrief,
     McpEngineNativeCodeHost, PlannedMeter, PlannedModel, PlannedRoute, ReaderMeter,
-    RunCompactionSeat, bind_mcp_code_execution_host, mcp_code_execution_host, mcp_code_run_id,
-    mcp_scoped_identity_id,
+    RunCompactionSeat, RunProfiledCompactionSeat, bind_mcp_code_execution_host,
+    mcp_code_execution_host, mcp_code_run_id, mcp_scoped_identity_id,
 };
 pub(crate) use self::exec_host::{
     EngineRunError, ModelCallBackend, ModelListBackend, OffRecordRunSession, ScopeMeter,
@@ -95,7 +95,6 @@ pub use self::tool_catalog::{
     MCP_BOOK_OPERATIONS, MCP_SERVER_NAME, MCP_TOOL_ARGS_SCHEMA_VERSION, McpToolValidationError,
     McpValidatedToolArgs,
 };
-
 #[cfg(test)]
 mod tests;
 
