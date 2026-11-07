@@ -48,7 +48,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
 
 async fn serve_with_handles(
     args: &ServeArgs,
-    managed: ManagedArgs,
+    mut managed: ManagedArgs,
     handles: &mut StartingHandles,
 ) -> anyhow::Result<std::io::Result<()>> {
     // The supervisor names a personal vault's owner by the contract's copy of
@@ -77,6 +77,7 @@ async fn serve_with_handles(
     let shutdown = ManagedShutdown::new();
     let mut host = super::host::ManagedHost::new(&managed, managed.host_limits, shutdown.clone())?;
     let http = host.listener()?;
+    let host_legal = crate::managed::host_legal::HostLegalListener::take(&mut managed)?;
     // A cold restore's plan, on its own pipe before the credential frame: no
     // socket below listens until the restore is verified and kept.
     let mut restore = super::restore::ManagedRestore::begin(&managed, &mut config)?;
@@ -184,8 +185,10 @@ async fn serve_with_handles(
     // The one credential-broker context, built from the opened vault: the
     // `[models]` providers, the System One seat, the embedder and the GPU
     // pods read their `key_secret` keys at its custody door, call by call.
-    // Its broker is the same-user child beside this binary; a missing broker
-    // or secret leaves those calls refused before they start, as on any host.
+    // Its default broker is the same-user child beside this binary. Explicit
+    // trusted bindings may name a separate-user socket or custom program/roots.
+    // A missing broker or secret leaves those calls refused before they start,
+    // as on any host.
     let broker = crate::models::BrokerContext::for_serve(&vault, &config);
     // The embedder slot and the pods' health poller, as plain serve builds
     // them; the worker that fills the slot starts under the write admission.
@@ -441,6 +444,7 @@ async fn serve_with_handles(
 
     // Dedicated environments open before ready and the opening wake push, so
     // the first supervisor schedule already includes their earliest deadlines.
+    // The shared teardown stops them on every exit, a failed start included.
     let shared = crate::shared_envs::SharedEnvRegistry::open_all(
         config.shared_env.clone(),
         &config,
@@ -450,6 +454,10 @@ async fn serve_with_handles(
     )
     .await;
     sync_server.install_shared_envs(shared);
+
+    if let Some(listener) = host_legal {
+        handles.host_legal = Some(listener.start(Arc::clone(&vault), shutdown.clone())?);
+    }
 
     handles.ctl_task = Some(tokio::spawn({
         let state = Arc::clone(&state);
@@ -464,10 +472,7 @@ async fn serve_with_handles(
     // traffic to. A facility it serves without is named first, and the ready
     // signal is the same either way.
     super::vault_gates::warn_degraded(&readiness);
-    if let Err(error) = host.ready() {
-        sync_server.stop_shared_envs().await;
-        return Err(error);
-    }
+    host.ready()?;
     tracing::info!(vault = %managed.vault_name, "managed vault ready");
     #[cfg(target_os = "linux")]
     if let Some(link) = host.vm_link() {

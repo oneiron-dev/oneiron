@@ -66,6 +66,21 @@ pub(super) fn identity_topology_receipts(
         )? {
             continue;
         }
+        // The seal binds the stored record; the receipt shows the decision
+        // read whole (FIX 10188). A part, or a manifest still waiting on
+        // one, projects nothing.
+        let actor = record.actor;
+        let Some(mut record) =
+            crate::identity_topology::logical_identity_topology_event_for_store_in_txn(
+                &vault.store,
+                rtxn,
+                &event_id,
+                record,
+            )?
+        else {
+            continue;
+        };
+        record.actor = actor;
         // Per-kind dispatch: a resolution row NAMED by the fold as a
         // duplicate (the proposal already retired by an EARLIER ruling)
         // projects nothing — an outcome receipt for it would read as a
@@ -274,6 +289,13 @@ fn identity_topology_receipt(
             fields.insert("facet_count".to_owned(), facets.len().to_string());
             Some(format!("entity:{}", entity.to_hex()))
         }
+        // FIX 7814: a parked facet counts the masks its ruling would mint.
+        // The labels stay on the ledger event, never in the receipt.
+        StoredIdentityOpAction::ParkedFacet { entity, specs, .. } => {
+            fields.insert("entity".to_owned(), entity.to_hex());
+            fields.insert("facet_count".to_owned(), specs.len().to_string());
+            Some(format!("entity:{}", entity.to_hex()))
+        }
         // ONE-1746: the pair is the decision, and the claim is where it
         // lives — both projected so a reader can audit the assertion without
         // dereferencing the ledger event.
@@ -303,8 +325,10 @@ fn identity_topology_receipt(
         }
         StoredIdentityOpAction::AdmissionDisposition(_)
         | StoredIdentityOpAction::AuthorAttribution { .. }
-        | StoredIdentityOpAction::AuthorRedaction { .. } => {
-            unreachable!("sidecars do not project as topology receipts")
+        | StoredIdentityOpAction::AuthorRedaction { .. }
+        | StoredIdentityOpAction::OperationManifest { .. }
+        | StoredIdentityOpAction::OperationPart { .. } => {
+            unreachable!("sidecars and operation parts do not project as topology receipts")
         }
     };
 

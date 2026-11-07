@@ -31,21 +31,28 @@
 //! loaded or waited on for the arm (FIX 10389, fork d): under the arm's own
 //! identity, its check run only while the arm's lease holds the arm, its
 //! feedback read under that lease alone ([`ServerShadowRunner::read_feedback`]).
+//!
+//! A model reads an arm's body only through the runner's model release
+//! ([`ServerShadowRunner::read_body_for_model`], FIX 9468): beside the raw
+//! read of the lease holder, it reads again the arm's mark on the body, its
+//! source, the reader's Grant and the taint of each source occurrence the
+//! arm was seeded with.
 
 mod arm_store;
 mod model;
+mod runtimes;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::Duration;
 
 use oneiron::code_run::shadow_runner::{
-    PreparedShadowStep, SHADOW_PROTOCOL_VERSION, ShadowArmLease, ShadowIsolationRequired,
-    ShadowRequestDigest, ShadowRunFuture, ShadowRunRequest, ShadowRunResult, ShadowRunner,
-    ShadowSandboxBinding, ShadowScope, ShadowSource, ShadowSourceHold, ShadowStatus,
-    ShadowStepIdentity, ShadowStepRun, ShadowTarget, ShadowUnavailable,
-    ShadowUnavailableReason as Reason, admit_published_inline, prepare_shadow_step_source,
-    shadow_source_gone,
+    PreparedShadowStep, SHADOW_PROTOCOL_VERSION, ShadowArmLease, ShadowBodyRef,
+    ShadowIsolationRequired, ShadowRequestDigest, ShadowRunFuture, ShadowRunRequest,
+    ShadowRunResult, ShadowRunner, ShadowSandboxBinding, ShadowScope, ShadowSource,
+    ShadowSourceAdmission, ShadowSourceHold, ShadowStatus, ShadowStepIdentity, ShadowStepRun,
+    ShadowTarget, ShadowUnavailable, ShadowUnavailableReason as Reason, admit_published_inline,
+    prepare_shadow_step_source, read_for_model, shadow_source_gone,
 };
 use oneiron::code_run::{ExecutorStepStart, ProgramStepFeedback, step_replay_capsules};
 use oneiron::compaction::output::OutputRef;
@@ -54,8 +61,10 @@ use oneiron::engine_executor::{
 };
 use oneiron::{EntityId, Error, LlmResponse, Result, Vault};
 
-use self::arm_store::{ArmEntry, ArmRegistry};
+use self::arm_store::ArmEntry;
+pub(crate) use self::arm_store::ArmRegistry;
 use self::model::Gateway;
+pub(crate) use self::runtimes::{CheckedInRuntimes, checked_in_runtimes};
 use crate::server::SyncServer;
 
 /// Where an arm's program runs: a fresh JS runtime for each step, made on
@@ -114,9 +123,10 @@ impl ServerShadowRunner {
     }
 
     /// The whole body `body` of the arm `lease` holds, while it holds it:
-    /// how a caller adopts an arm's evidence before it releases the lease.
-    /// Unavailable once the lease holds no arm or the arm no such body
-    /// (`SourceMissing`), and once an erase or actor scrub of the arm's
+    /// the raw read of the lease holder, which checks no mark and no taint.
+    /// A model reads a body through [`Self::read_body_for_model`] (FIX
+    /// 9468). Unavailable once the lease holds no arm or the arm no such
+    /// body (`SourceMissing`), and once an erase or actor scrub of the arm's
     /// source actor took its content (`SourceWithheld`, FIX 5718), which
     /// releases the arm.
     ///
@@ -135,6 +145,39 @@ impl ServerShadowRunner {
             .store()
             .read(body)?
             .ok_or_else(|| ShadowUnavailable::new(Reason::SourceMissing, "body")))
+    }
+
+    /// The whole body `body` of the arm `lease` holds, released to a model
+    /// (FIX 9468): how a caller adopts an arm's evidence for a model before
+    /// it releases the lease. Unavailable as [`Self::read_body`] is, and
+    /// withheld (`SourceWithheld`) while the arm marked the body, once
+    /// `admission` no longer admits its reader to the step's capture, and
+    /// while a source occurrence the arm was seeded with reads tainted now
+    /// ([`read_for_model`]). The bytes are the arm's, as written.
+    ///
+    /// # Errors
+    ///
+    /// The arm's store failing, a body that is not its digest, a server that
+    /// stopped, and the release's storage errors.
+    pub fn read_body_for_model(
+        &self,
+        lease: &ShadowArmLease,
+        body: &ShadowBodyRef,
+        admission: &dyn ShadowSourceAdmission,
+    ) -> Result<Outcome<Vec<u8>>> {
+        let Some(arm) = self.arms.get(lease) else {
+            return Ok(Err(ShadowUnavailable::new(Reason::SourceMissing, "lease")));
+        };
+        if let Some(withheld) = arm.store().source_withheld() {
+            self.arms.release(lease);
+            return Ok(Err(withheld));
+        }
+        let server = self
+            .server
+            .upgrade()
+            .ok_or_else(|| Error::InvalidConfig("shadow runner: the server stopped".to_owned()))?;
+        let vault = server.vault();
+        read_for_model(vault, arm.store(), arm.release_source(), body, admission)
     }
 
     /// The type feedback of the program the arm `lease` holds ran, as its
@@ -300,7 +343,8 @@ impl Arm {
         let source_actor = prepared.source_actor();
         let source = (source_actor, prepared.step().run);
         let hold = source_hold(&vault, source_actor);
-        let arm = self.arms.open_arm(lease, source, hold, &vault)?;
+        let release = prepared.release_source();
+        let arm = self.arms.open_arm(lease, source, hold, release, &vault)?;
         result.lease = Some(lease);
         let gateway = Gateway {
             server: &server,
@@ -504,8 +548,9 @@ fn prepare_step(vault: &Vault, step: ShadowStepIdentity) -> Result<Outcome<Prepa
 
 /// What an arm of a step `actor`'s source run is for asks at each read and
 /// publication (FIX 5718): whether the actor is still here, in a short read
-/// of the vault of its own. A vault that is gone holds nothing.
-fn source_hold(vault: &Arc<Vault>, actor: EntityId) -> ShadowSourceHold {
+/// of the vault of its own. A vault that is gone holds nothing. A
+/// contribution fork's scratch store asks it too (FIX 3607).
+pub(crate) fn source_hold(vault: &Arc<Vault>, actor: EntityId) -> ShadowSourceHold {
     let vault = Arc::downgrade(vault);
     ShadowSourceHold::new(move || {
         vault

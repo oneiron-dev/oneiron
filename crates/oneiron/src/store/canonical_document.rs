@@ -29,6 +29,24 @@ pub struct CanonicalEntityDocument {
     /// fork, pin, receipt or purge: that one is its current value alone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub history: Option<CanonicalEntityDocumentHistory>,
+    /// Where the value was captured (FIX 3553). Absent for a head whose
+    /// incarnation is no id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<CanonicalDocumentOrigin>,
+}
+
+/// The incarnation a value was captured at and that incarnation's version
+/// there, as (peer, counter) pairs in peer order (FIX 3553): the one Loro
+/// value a snapshot carries, and never replayed. A restore names it in the
+/// rebuilt document as the history that document replaces, so a peer that
+/// holds exactly that incarnation adopts it. It names where a value was
+/// captured, never the value: a recovery whose document holds the value is
+/// equivalent to the artifact whatever its origin.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CanonicalDocumentOrigin {
+    pub incarnation: [u8; 16],
+    pub version: Vec<(u64, i32)>,
 }
 
 /// The causal state of a generic EntityDoc, CRDT-independent: the retained
@@ -157,35 +175,59 @@ pub struct CanonicalDocumentPurge {
     pub live_text_hash: [u8; 32],
 }
 
+/// Resumable reconstruction of the same canonical history text vector.
+pub(crate) struct CanonicalDocumentTexts {
+    texts: Vec<String>,
+}
+
+impl CanonicalDocumentTexts {
+    pub(crate) fn new(history: &CanonicalEntityDocumentHistory) -> Self {
+        Self {
+            texts: Vec::with_capacity(history.versions.len()),
+        }
+    }
+
+    pub(crate) fn advance_row(&mut self, history: &CanonicalEntityDocumentHistory) -> Result<bool> {
+        let index = self.texts.len();
+        let Some(version) = history.versions.get(index) else {
+            return Ok(true);
+        };
+        let base: Vec<char> = match version.parents.first() {
+            None => Vec::new(),
+            Some(&parent) => {
+                let parent = parent as usize;
+                if parent >= index {
+                    return Err(invalid("entity document version parent"));
+                }
+                self.texts[parent].chars().collect()
+            }
+        };
+        let prefix = version.prefix as usize;
+        let suffix = version.suffix as usize;
+        if prefix
+            .checked_add(suffix)
+            .is_none_or(|kept| kept > base.len())
+        {
+            return Err(invalid("entity document version splice"));
+        }
+        let mut text: String = base[..prefix].iter().collect();
+        text.push_str(&version.middle);
+        text.extend(&base[base.len() - suffix..]);
+        self.texts.push(text);
+        Ok(false)
+    }
+
+    pub(crate) fn into_texts(self) -> Vec<String> {
+        self.texts
+    }
+}
+
 impl CanonicalEntityDocumentHistory {
     /// Every version's full text, rebuilt from its splice, in version order.
     pub fn texts(&self) -> Result<Vec<String>> {
-        let mut texts: Vec<String> = Vec::with_capacity(self.versions.len());
-        for (index, version) in self.versions.iter().enumerate() {
-            let base: Vec<char> = match version.parents.first() {
-                None => Vec::new(),
-                Some(&parent) => {
-                    let parent = parent as usize;
-                    if parent >= index {
-                        return Err(invalid("entity document version parent"));
-                    }
-                    texts[parent].chars().collect()
-                }
-            };
-            let prefix = version.prefix as usize;
-            let suffix = version.suffix as usize;
-            if prefix
-                .checked_add(suffix)
-                .is_none_or(|kept| kept > base.len())
-            {
-                return Err(invalid("entity document version splice"));
-            }
-            let mut text: String = base[..prefix].iter().collect();
-            text.push_str(&version.middle);
-            text.extend(&base[base.len() - suffix..]);
-            texts.push(text);
-        }
-        Ok(texts)
+        let mut texts = CanonicalDocumentTexts::new(self);
+        while !texts.advance_row(self)? {}
+        Ok(texts.into_texts())
     }
 
     /// The splice that turns `parent` into `text`: the longest common prefix,

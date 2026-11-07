@@ -40,7 +40,7 @@ pub use self::tsrs::{TSRS_COMMIT, TSRS_VERSION, TsrsWasm};
 
 use serde::Serialize;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// What the engine does with a program's check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -263,10 +263,30 @@ pub trait CodeCheck: Send + Sync {
     ) -> (BackendId, Result<CheckReport, CheckFailure>) {
         (self.backend(), self.check(input))
     }
+
+    /// How long one check here runs at most, when it keeps a deadline.
+    fn wall_time(&self) -> Option<Duration> {
+        None
+    }
+
+    /// [`Self::check_attributed`], ended no later than `deadline` (FIX
+    /// 9045): a checker that keeps a deadline of its own ends at the earlier
+    /// of the two. One that keeps none checks as [`Self::check_attributed`]
+    /// does.
+    fn check_attributed_before(
+        &self,
+        input: &CheckInput<'_>,
+        _deadline: Instant,
+    ) -> (BackendId, Result<CheckReport, CheckFailure>) {
+        self.check_attributed(input)
+    }
 }
 
 /// Runs `then` when `first` gives no complete report, whatever the failure:
-/// a busy first checker could not check either.
+/// a busy first checker could not check either. Both run within one
+/// deadline, the longer of their wall times from the check's start, so a
+/// step never waits two full checks (FIX 9045); `then` does not start once
+/// it has passed.
 pub struct Fallback {
     first: Box<dyn CodeCheck>,
     then: Box<dyn CodeCheck>,
@@ -288,15 +308,46 @@ impl CodeCheck for Fallback {
         self.check_attributed(input).1
     }
 
-    /// When `then` fails too, the failure is `then`'s own, under its name,
-    /// unless only `first` printed a partial report: that report stands.
+    fn wall_time(&self) -> Option<Duration> {
+        self.first.wall_time().max(self.then.wall_time())
+    }
+
     fn check_attributed(
         &self,
         input: &CheckInput<'_>,
     ) -> (BackendId, Result<CheckReport, CheckFailure>) {
-        match self.first.check_attributed(input) {
+        match self.wall_time() {
+            Some(wall_time) => self.check_attributed_before(input, Instant::now() + wall_time),
+            None => self.chain(input, None),
+        }
+    }
+
+    fn check_attributed_before(
+        &self,
+        input: &CheckInput<'_>,
+        deadline: Instant,
+    ) -> (BackendId, Result<CheckReport, CheckFailure>) {
+        self.chain(input, Some(deadline))
+    }
+}
+
+impl Fallback {
+    /// When `then` fails too, the failure is `then`'s own, under its name,
+    /// unless only `first` printed a partial report: that report stands. Past
+    /// `deadline`, `then` does not start, and `first`'s result stands.
+    fn chain(
+        &self,
+        input: &CheckInput<'_>,
+        deadline: Option<Instant>,
+    ) -> (BackendId, Result<CheckReport, CheckFailure>) {
+        let run = |checker: &dyn CodeCheck| match deadline {
+            Some(deadline) => checker.check_attributed_before(input, deadline),
+            None => checker.check_attributed(input),
+        };
+        match run(self.first.as_ref()) {
             (backend, Ok(report)) if report.incomplete.is_none() => (backend, Ok(report)),
-            first => match self.then.check_attributed(input) {
+            first if deadline.is_some_and(|deadline| Instant::now() >= deadline) => first,
+            first => match run(self.then.as_ref()) {
                 (_, Err(_)) if first.1.is_ok() => first,
                 then => then,
             },
