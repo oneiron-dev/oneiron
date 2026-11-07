@@ -82,10 +82,10 @@ pub(super) struct SelfChat {
 
 /// `chat_compaction_sources`: the self mode of `agent`'s answer in
 /// `conversation_ref`, its log read from the retained ledger as `reader`
-/// reads it, `history_lines` raw messages after its summaries. `None` keeps
+/// reads it (a room's audience through the room's held projection, FIX
+/// 5031), `history_lines` raw messages after its summaries. `None` keeps
 /// the chat path as it was: a non-self agent, a row on the retained turns,
-/// a room's audience, a conversation with no ledger yet, or a log the
-/// caller could not read.
+/// a conversation with no ledger yet, or a log the caller could not read.
 pub(super) fn self_chat(
     ai: &AiHandle,
     vault: &Vault,
@@ -97,8 +97,7 @@ pub(super) fn self_chat(
     let mode = ai.chat_self_mode(vault, agent)?;
     let conversation = resolve_entity_ref(vault, conversation_ref).ok()?;
     match read_chat_log(reader, conversation, mode.hot_turns(), history_lines) {
-        Ok(Some(log)) => Some(SelfChat { mode, log }),
-        Ok(None) => None,
+        Ok(log) => Some(SelfChat { mode, log }),
         Err(_) => {
             tracing::info!(
                 reason = "chat_log_unread",
@@ -310,7 +309,8 @@ pub(super) fn enter(
 /// The seed a chat turn's reply keeps: its request exactly as the rung its
 /// walk takes now sends it, the rung by ref, the log's sources, and the
 /// craft rows the host's snapshot read for it (FIX 9439). None for a log
-/// whose turns were not all pinned, or a call no rung takes now.
+/// whose turns were not all pinned or that a room's projection read (FIX
+/// 5031: a reuse checks its seed on its own reader), or a call no rung takes now.
 fn capture_seed(
     agent: EntityId,
     reader: WriteActor,
@@ -319,7 +319,7 @@ fn capture_seed(
     craft: Vec<ManifestEntry>,
     admitted: &RoleCall,
 ) -> Option<ChatBreakpoint> {
-    if !log.pinned {
+    if !log.pinned || log.room_projection {
         return None;
     }
     let (rung, request) = admitted.ladder.live_rung(&admitted.request)?;
