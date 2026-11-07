@@ -29,7 +29,14 @@ pub const CLAIM_HISTORY_CARRY_VERSION: u8 = 2;
 const MAX_SCOPE: usize = 4096;
 const MAX_BIRTHS: usize = 1024;
 const MAX_TRANSITIONS: usize = 4096;
-const MAX_PARENTS: usize = 64;
+/// Heads one packet lists: each root its delta does not consume and each of
+/// its own unconsumed transitions.
+const MAX_HEADS: usize = MAX_BIRTHS + MAX_TRANSITIONS;
+/// Parents one transition names: at most every root (the previous packet's
+/// heads) and every other transition of its delta. The bounds above imply
+/// it, so a transition that consumes a whole pinned frontier always fits
+/// (FIX 8673).
+const MAX_PARENTS: usize = MAX_HEADS + MAX_TRANSITIONS;
 const MAX_WIRE: usize = 1_048_576;
 
 /// One exact machine CLAIM birth and the digest of its canonical signed row.
@@ -160,7 +167,7 @@ impl ClaimHistoryHandoff {
             || self.births.len() > MAX_BIRTHS
             || self.transitions.len() > MAX_TRANSITIONS
             || self.heads.is_empty()
-            || self.heads.len() > MAX_BIRTHS + MAX_TRANSITIONS
+            || self.heads.len() > MAX_HEADS
             || self
                 .transitions
                 .iter()
@@ -300,7 +307,7 @@ impl ClaimHistoryHandoff {
             }
             transitions.push(ClaimTransition { hash, predecessors });
         }
-        let heads_len = cursor.count(MAX_BIRTHS + MAX_TRANSITIONS)?;
+        let heads_len = cursor.count(MAX_HEADS)?;
         let mut heads = Vec::with_capacity(heads_len);
         for _ in 0..heads_len {
             heads.push(cursor.take()?);
