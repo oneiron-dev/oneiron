@@ -120,6 +120,7 @@ fn output_receipt_rows(
     })
 }
 
+#[allow(single_use_lifetimes)] // A reference in an impl-Trait associated type needs a named lifetime.
 pub(super) fn take_rows<'a>(
     rows: impl Iterator<Item = &'a mut ShapeRow>,
 ) -> Result<Vec<Option<WireJson>>, OneironError> {
@@ -130,6 +131,7 @@ pub(super) fn take_rows<'a>(
         .collect()
 }
 
+#[allow(single_use_lifetimes)] // A reference in an impl-Trait associated type needs a named lifetime.
 pub(super) fn restore_rows<'a>(
     rows: impl Iterator<Item = &'a mut crate::ShapeRow>,
     json: Vec<Option<WireJson>>,
