@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1337 code-mode rows (1296 host rows, 41 run rows), 4711 declarations.
-// Replies: 1145 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1338 code-mode rows (1297 host rows, 41 run rows), 4713 declarations.
+// Replies: 1146 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -3434,6 +3434,8 @@ declare namespace Sdk {
   type ModelStreamAbort = { stream_key: string; usage: LlmUsage };
   type ModelStreamTerminal = { stream_ref: string; stream_key: string; model: ModelId; status: ModelStreamStatus; response?: LlmResponse | null; failure?: string | null };
   type ModelStreamTerminalRequest = { stream_key: string };
+  type ModelStreamRelease = { stream_key: string };
+  type ModelStreamReleased = { stream_ref: string; stream_key: string; status: ModelStreamStatus; released: boolean };
   type AiReplyReader = { definition: string; task_family?: string | null };
   type ContextPackRetrievalBudgetControls = { claims?: number | null; turns?: number | null; summaries?: number | null; facets?: number | null; other?: number | null; selected_edges?: number | null };
   type ContextPackBudgetControls = { token_budget?: number | null; max_item_tokens?: number | null; max_field_chars?: number | null; retrieval?: ContextPackRetrievalBudgetControls | null };
@@ -4763,6 +4765,8 @@ declare const ai: {
     events(input: Sdk.ModelStreamEventsRequest): Promise<Sdk.ModelStreamEvents | StoredResult>;
     /** Open one owner-bound shared model stream under a stable key: a single admitted producer starts (or the standing stream answers), and a replay never starts a second one. */
     open(input: Sdk.ModelStreamOpen): Promise<Sdk.ModelStreamOpened | StoredResult>;
+    /** Explicitly discard this credential's model-stream replay and revoke its handles; the producer and durable terminal stay. Later subscribers get only future events; never-released replay stays unchanged. */
+    release(input: Sdk.ModelStreamRelease): Promise<Sdk.ModelStreamReleased | StoredResult>;
     /** Attach before or after open to the caller's shared model stream, without starting a producer; replay every typed part event from the first under an independently detachable handle. */
     subscribe(input: Sdk.ModelStreamSubscribe): Promise<Sdk.ModelStreamSubscribed | StoredResult>;
     /** Read the one durable terminal of the caller's model stream by key (its ordered ContentParts, usage and finish reason, or its recorded failure) after any restart, without calling a model. */

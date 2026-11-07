@@ -965,6 +965,7 @@ aiStreamsEvents(input: unknown): unknown
 aiStreamsDetach(input: unknown): unknown
 aiStreamsAbort(input: unknown): unknown
 aiStreamsTerminal(input: unknown): unknown
+aiStreamsRelease(input: unknown): unknown
 aiReply(input: unknown): unknown
 vaultReceiptsContext(input: unknown): unknown
 vaultReceiptsCraftReplyManifest(input: unknown): unknown

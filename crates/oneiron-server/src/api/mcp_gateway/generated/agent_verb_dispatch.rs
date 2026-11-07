@@ -1191,6 +1191,7 @@ pub(crate) fn mcp_agent_verb_input(
         "ai.streams.detach" => a.spec.clone().ok_or_else(invalid),
         "ai.streams.abort" => a.spec.clone().ok_or_else(invalid),
         "ai.streams.terminal" => a.spec.clone().ok_or_else(invalid),
+        "ai.streams.release" => a.spec.clone().ok_or_else(invalid),
         "ai.reply" => a.spec.clone().ok_or_else(invalid),
         "vault.receipts.context" => a.spec.clone().ok_or_else(invalid),
         "vault.receipts.craft_reply_manifest" => a.spec.clone().ok_or_else(invalid),
@@ -4438,6 +4439,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "ai.streams.terminal" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "ai.streams.release" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "ai.reply" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -7383,6 +7387,7 @@ async fn execute_agent_verb_row_on(
         "ai.streams.detach" => boxed_mcp_verb_row_ai_streams_detach(row).await,
         "ai.streams.abort" => boxed_mcp_verb_row_ai_streams_abort(row).await,
         "ai.streams.terminal" => boxed_mcp_verb_row_ai_streams_terminal(row).await,
+        "ai.streams.release" => boxed_mcp_verb_row_ai_streams_release(row).await,
         "ai.reply" => boxed_mcp_verb_row_ai_reply(row).await,
         "vault.receipts.context" => boxed_mcp_verb_row_vault_receipts_context(row).await,
         "vault.receipts.craft_reply_manifest" => {
@@ -54859,6 +54864,53 @@ async fn mcp_verb_row_ai_streams_terminal(row: McpVerbRow<'_>) -> McpVerbRowResu
     let input: oneiron::llm::model_stream::ModelStreamTerminalRequest =
         serde_json::from_value(input).map_err(|_| invalid())?;
     let output = Box::pin(crate::api::facade::host_doors::ai_streams_terminal(
+        server, auth, input,
+    ))
+    .await
+    .map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_ai_streams_release<'a>(row: McpVerbRow<'a>) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_ai_streams_release(row))
+}
+async fn mcp_verb_row_ai_streams_release(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("ai.streams.release", &input)
+        .map_err(mcp_facade_error)?;
+    let input: oneiron::llm::model_stream::ModelStreamRelease =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let output = Box::pin(crate::api::facade::host_doors::ai_streams_release(
         server, auth, input,
     ))
     .await

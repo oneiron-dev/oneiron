@@ -1031,6 +1031,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/ai.streams.detach", post(facade_route))
         .route("/ai.streams.abort", post(facade_route))
         .route("/ai.streams.terminal", post(facade_route))
+        .route("/ai.streams.release", post(facade_route))
         .route("/ai.reply", post(facade_route))
         .route("/vault.receipts.context", post(facade_route))
         .route("/vault.receipts.craft_reply_manifest", post(facade_route))
