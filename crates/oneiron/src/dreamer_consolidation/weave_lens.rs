@@ -160,6 +160,7 @@ fn lens_request(
     model: ModelId,
     locality: ModelLocality,
     keyless: bool,
+    paid: bool,
     instruction: String,
     text: String,
 ) -> Result<LlmRequest> {
@@ -181,6 +182,7 @@ fn lens_request(
             },
             locality,
             host_keyless: keyless,
+            host_paid: paid,
         }
         .with_purpose_defaults(),
         messages: vec![
@@ -225,6 +227,7 @@ pub fn live_weave_lens_request(
         model,
         locality,
         false,
+        inference.selected_paid(),
         live.instruction.clone(),
         live.input.clone(),
     )?;
@@ -328,7 +331,15 @@ pub async fn run_weave_lens(
         .selected_locality()
         .ok_or_else(|| invalid("the host binding names no locality"))?;
     let keyless = model.inference.selected_keyless();
-    let request = lens_request(model.model.clone(), locality, keyless, instruction, text)?;
+    let paid = model.inference.selected_paid();
+    let request = lens_request(
+        model.model.clone(),
+        locality,
+        keyless,
+        paid,
+        instruction,
+        text,
+    )?;
     let mut request = ctx
         .vault
         .authorize_model_role(model.role, request, &model.inference)?

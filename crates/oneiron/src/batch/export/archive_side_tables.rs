@@ -23,6 +23,7 @@
 //! restores it in the import's write transaction once the entities are in:
 //! records first, then indexes, then heads. An identical live row is unchanged;
 //! any other refuses the import.
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek};
 
@@ -31,6 +32,7 @@ use serde::{Deserialize, Serialize};
 
 use super::archive_index::{ArchiveIndex, IndexedArchive, Loc, Tag};
 use super::document_import::parse_id;
+use crate::code_revision::ArchivedRevisionRow;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::serialize::ExportBodyFile;
@@ -1029,15 +1031,36 @@ pub(crate) fn restore_side_rows_in_txn<R: Read + Seek>(
             }
         }
         let table = lent(row.family)?;
-        match table.stored(store, wtxn, &row.key)? {
-            Some(live) if live == row.value => unchanged += 1,
-            Some(_) => {
-                return Err(invalid("side row collides with a different stored row"));
+        let stored = table.stored(store, wtxn, &row.key)?;
+        let collides = || invalid("side row collides with a different stored row");
+        let restore = match row.family {
+            // A revision's author this vault erased never lands, and a twin
+            // equal but for attribution is unchanged (FIX 6258).
+            ArchiveSideFamily::CodeRevisionRecord | ArchiveSideFamily::CodeRevisionProposal => {
+                match crate::code_revision::land_archived_revision_row_in_txn(
+                    store,
+                    wtxn,
+                    row.family == ArchiveSideFamily::CodeRevisionProposal,
+                    &row.value,
+                    stored.as_deref(),
+                )? {
+                    ArchivedRevisionRow::Unchanged => None,
+                    ArchivedRevisionRow::Restore(value) => Some(Cow::Owned(value)),
+                    ArchivedRevisionRow::Collides => return Err(collides()),
+                }
             }
-            None => {
-                table.restore(store, wtxn, &row.key, &row.value)?;
+            _ => match stored {
+                Some(live) if live == row.value => None,
+                Some(_) => return Err(collides()),
+                None => Some(Cow::Borrowed(row.value.as_slice())),
+            },
+        };
+        match restore {
+            Some(value) => {
+                table.restore(store, wtxn, &row.key, &value)?;
                 restored += 1;
             }
+            None => unchanged += 1,
         }
         after = Some(key);
     }
