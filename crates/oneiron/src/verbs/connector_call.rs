@@ -137,15 +137,20 @@ pub fn connector_call_host_only(
 }
 
 /// `connector.schema`: one tool's approved input schema for the bound
-/// caller, through the resolution a call of it takes. Reads only.
+/// caller, through the resolution a call of it takes. Reads only. The
+/// built-in `google.sheets` answers its own declared schemas (FIX 4862).
 pub fn connector_schema_read(
     memory: &Memory<'_>,
     input: ConnectorSchemaRequest,
 ) -> MemoryResult<ConnectorSchemaReply> {
-    let schema = memory
-        .vault()
-        .connector_tool_schema(memory, &input.name, &input.tool)
-        .map_err(connector_call_error)?;
+    let schema = if input.name == crate::channel_identity_provider::sheets::SHEETS_CATALOG_NAME {
+        crate::channel_identity_provider::sheets::sheets_tool_schema(memory.vault(), &input.tool)?
+    } else {
+        memory
+            .vault()
+            .connector_tool_schema(memory, &input.name, &input.tool)
+            .map_err(connector_call_error)?
+    };
     let source = source(&input.name, &input.tool);
     Ok(match schema {
         ConnectorToolSchema::Approved {
