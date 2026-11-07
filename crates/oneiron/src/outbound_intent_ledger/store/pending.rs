@@ -140,9 +140,9 @@ pub(crate) fn abandon_attempt_undelivered_intents_in_txn(
 /// Abandoned for [`IntentEscalationReason::SendExecutorStoodDown`] that no
 /// transport may have delivered is removed with its attempt index entry,
 /// its settlement, its dedupe binding and the dedupe reservation that still
-/// names it, and any approval press kept beside it, so the attempt the new
-/// lease runs admits the logical send afresh, gate, budget and dedupe
-/// included. Engine call (CALLS, FIX 4747): removal, not a new state: the
+/// names it, and the approval press the row itself keeps goes with it, so
+/// the attempt the new lease runs admits the logical send afresh, gate,
+/// budget and dedupe included. Engine call (CALLS, FIX 4747): removal, not a new state: the
 /// ledger moves no terminal row on, and a removed row is never read as
 /// delivered. Its budget came out at the stand-down; a row whose
 /// reservation did not is kept, and so is every row abandoned for any other
@@ -175,7 +175,6 @@ pub(crate) fn supersede_stood_down_intents_in_txn(
             continue;
         }
         crate::outbound_chokepoint::dedupe::forget_superseded_intent_in_txn(vault, wtxn, &id)?;
-        super::super::pinned_approval::drop_pinned_approval_in_txn(vault, wtxn, &id)?;
         INTENT_ATTEMPT_INDEX.delete(
             &vault.store,
             wtxn,

@@ -385,6 +385,10 @@ pub const DEVICE_SUCCESSION_TARGET: &[u8] = b"oneiron/device-succession-target/v
 /// manifest id, the part index as u32 big-endian.
 pub const IDENTITY_TOPOLOGY_OPERATION_PART: &[u8] = b"oneiron/identity-topology/operation-part/v1";
 
+/// A lexical query hint CLAIM (`claim::lexical_query_hint_claim_id`, FIX 9597).
+/// Parts: the target claim (16 bytes), the normalized query (UTF-8).
+pub const LEXICAL_QUERY_HINT: &[u8] = b"oneiron.lexical-query-hint.v1";
+
 /// The window identity of one executor step a compaction reads
 /// (`engine_executor::compaction::step_message_id`, FIX 9838). Parts: the run,
 /// the step (u64 big-endian).
