@@ -24,6 +24,13 @@ pub struct CallEnvelope {
     /// serde so step hashes, replay capsules and memo keys do not move.
     #[serde(skip)]
     pub host_keyless: bool,
+    /// Host-attested only (FIX 18407): true means the stamping door found, on
+    /// the host-bound ladder, a rung that may serve this call that is paid
+    /// work by the run admission's own rule (`offer_is_free_work` false).
+    /// False keeps today's rule. Never read from caller JSON. Skipped by
+    /// serde so step hashes, replay capsules and memo keys do not move.
+    #[serde(skip)]
+    pub host_paid: bool,
     /// Set only at seat birth; adapters make this pin authoritative over raw options.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seat_effort: Option<super::ReasoningEffort>,

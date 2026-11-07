@@ -93,11 +93,13 @@ impl ModelRuntime {
                 response_format: ResponseFormat::Text,
                 locality: backend.locality,
                 host_keyless: false,
+                host_paid: false,
                 seat_effort: None,
             },
             operation,
             parts: Vec::new(),
             references: Vec::new(),
+            mask: None,
             params: BTreeMap::new(),
             voice: None,
         };

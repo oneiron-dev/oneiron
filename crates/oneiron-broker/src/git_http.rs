@@ -26,15 +26,21 @@
 //! 4. The broker installs that value as the one auth header, streams the
 //!    spool to the repository, and writes the reply as a streamed reply: its
 //!    header, its body in chunks exactly as they came, and the end. A reply
-//!    that holds the credential is cut ([`crate::Failure::ReplyHoldsKey`]),
+//!    that holds a literal form of the credential is cut
+//!    ([`crate::Failure::ReplyHoldsKey`]) before any byte of the form goes,
 //!    never rewritten: a rewrite would break pkt-line lengths and pack
-//!    checksums.
+//!    checksums. The model strip's rule of marking a run of escapes it cannot
+//!    settle does not apply: a ref name or a pack full of escapes passes.
 //!
 //! No step has a call deadline or a total size bound: a pack can be any
-//! size and take any time. Each read and write waits at most the send
-//! policy's timeout without progress, the spool needs the disk room for the
-//! body, and the daemon's hang-up cancels the exchange. No redirect is
-//! followed and nothing is resent.
+//! size and take any time. Each step waits at most the exchange's own idle
+//! bound without progress (the host's transfer idle limit, which the
+//! header carries, so a model send's timeout never shortens it), the spool
+//! needs the disk room for the body, and the daemon's hang-up cancels the
+//! exchange. The broker alone times the repository: the daemon waits for
+//! the reply's chunks as long as the broker relays them, since the broker
+//! may hold bytes back while it watches them for the credential. No
+//! redirect is followed and nothing is resent.
 
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -349,11 +355,16 @@ pub struct GitCallHeader {
     pub body_len: u64,
     /// [`GitRequestDigest`] of the target, the headers and the body.
     pub digest: String,
+    /// How long, in milliseconds, each step of the exchange may wait
+    /// without progress: the host's transfer idle limit. Transport context,
+    /// outside the digest.
+    pub idle_ms: u64,
 }
 
 impl GitCallHeader {
     /// The exchange `call` to `target`, whose body of `body_len` bytes had
-    /// `digest` as the daemon spooled it.
+    /// `digest` as the daemon spooled it, each step waiting at most `idle`
+    /// without progress.
     #[must_use]
     pub fn new(
         call: String,
@@ -361,6 +372,7 @@ impl GitCallHeader {
         headers: Vec<(String, String)>,
         body_len: u64,
         digest: String,
+        idle: std::time::Duration,
     ) -> Self {
         Self {
             version: PROTOCOL_VERSION,
@@ -369,7 +381,14 @@ impl GitCallHeader {
             headers,
             body_len,
             digest,
+            idle_ms: u64::try_from(idle.as_millis()).unwrap_or(u64::MAX),
         }
+    }
+
+    /// The exchange's idle bound.
+    #[must_use]
+    pub const fn idle(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(self.idle_ms)
     }
 
     /// Every check on the exchange's header, with no I/O: the daemon runs it
@@ -378,14 +397,15 @@ impl GitCallHeader {
     ///
     /// # Errors
     ///
-    /// [`Refusal::Version`], a target or header refusal, [`Refusal::Body`]
+    /// [`Refusal::Version`], [`Refusal::Frame`] for an empty or long call
+    /// id or a zero idle bound, a target or header refusal, [`Refusal::Body`]
     /// for an advertisement with a body, [`Refusal::Digest`] for a digest
     /// not in its hex form.
     pub fn check(&self) -> Result<Url, Refusal> {
         if self.version != PROTOCOL_VERSION {
             return Err(Refusal::Version);
         }
-        if self.call.is_empty() || self.call.len() > MAX_GIT_HEADER_VALUE {
+        if self.call.is_empty() || self.call.len() > MAX_GIT_HEADER_VALUE || self.idle_ms == 0 {
             return Err(Refusal::Frame);
         }
         check_git_headers(&self.headers)?;

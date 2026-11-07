@@ -229,6 +229,27 @@ pub(in crate::sync) fn release_landed_stamps(
     )
 }
 
+/// The stamps the staged import `receipt_id`'s lane keeps on `row` of `key`,
+/// a row its admitted artifact brought whose body a delivery after its
+/// confirmation landed, once that landing birthed it from `carrier`, the bytes
+/// the artifact brings (FIX 12408). `None` when none is held.
+#[cfg(feature = "sync")]
+pub(in crate::sync) fn release_staged_landed_stamps(
+    vault: &Vault,
+    key: &WindowKey,
+    receipt_id: &[u8; 32],
+    (row, carrier): (EntityId, Vec<u8>),
+) -> Result<Option<ReleasedStamps>> {
+    release_born_stamps(
+        vault,
+        key,
+        &staged_lane(receipt_id),
+        &[(row, carrier)],
+        &BTreeSet::from([row]),
+        &[],
+    )
+}
+
 /// The rows a staged artifact's admitted bytes bring that this vault lacks
 /// and that its receipt holds stamps on, read before the confirmation imports
 /// them.
