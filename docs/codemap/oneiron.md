@@ -1269,7 +1269,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/scoped_read/reactions.rs` | src | s | 6 fn · 2 crate-vis | — | Reactions riding along with the conversation records a scoped read admits |
 | `src/claim/scoped_read/receipt.rs` | src | s | 1 fn · 2 re-export · 3 crate-vis | — | Mandatory read receipts |
 | `src/claim/scoped_read/records_cover.rs` | src | s | 1 fn · 2 crate-vis | — | FIX 8245 (Engine 10-22, CALLS `FIX 8245 records cover`): a credential's records caveat that names an… |
-| `src/claim/scoped_read/residence.rs` | src | s | 1 struct · 5 fn | ResidenceReadContext | One residence read's admission for the machine at the other end of the connection |
+| `src/claim/scoped_read/residence.rs` | src | s | 1 struct · 5 fn · 1 crate-vis | ResidenceReadContext | One residence read's admission for the machine at the other end of the connection |
 | `src/claim/scoped_read/residence_page.rs` | src | s | 1 crate-vis | — | The home's paged residence search (FIX 8865): one ranked text list as deep as a device's whole request, past… |
 | `src/claim/scoped_read/retrieval_loop.rs` | src | s | 5 crate-vis | — | Scoped admission shared by the read-only retrieval loop's verbs |
 | `src/claim/scoped_read/retrieval_visibility.rs` | src | s | 4 crate-vis | — | The retrieval authority floor for graph channels on a scoped read |
@@ -5120,7 +5120,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/recovery/checkpoint/pad_objects.rs` | src | m | 1 enum · 11 crate-vis | PadObjectNote | The home's current pad objects on a restore beside its source, a restore over or keeping a live vault's… |
 | `src/recovery/checkpoint/pad_reopen.rs` | src | m | 2 struct · 1 enum · 1 fn | PadReopenFault, PadReopenReport, PadReopenStage | Opening a restored vault's Locked worlds again (PAD-2, FIX 10470; CALLS C-L04-MANAGED-RESTORE-LOCKED-WORLDS… |
 | `src/recovery/checkpoint/payload/actors.rs` | src | s | 4 crate-vis | — | Actor groups (KS7-2b): the actor parts the getters split out of every owner's rows, grouped under each… |
-| `src/recovery/checkpoint/payload/automatic.rs` | src | s | 4 crate-vis | — | The positive, known-world slice of an automatic physical backup |
+| `src/recovery/checkpoint/payload/automatic.rs` | src | m | 4 crate-vis | — | The positive, known-world slice of an automatic physical backup |
 | `src/recovery/checkpoint/payload/capture.rs` | src | s | 3 crate-vis | — | KS7-5 capture: the snapshot's rows placed in its own read transaction ([`project_image`]), then, once that… |
 | `src/recovery/checkpoint/payload/mod.rs` | src | L | 31 crate-vis | — | The checkpoint payload projection (KS-7, FIX 5688 KS7-2b): which of an image's rows go into their owners'… |
 | `src/recovery/checkpoint/payload/preflight.rs` | src | m | 10 crate-vis | — | The payload registry's preflight (KS7-6, Engine 10-30 11:12): the gaps in the registry ([`super::rows`])… |
@@ -6437,7 +6437,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/documents/destination.rs` | src | s | 3 fn · 2 crate-vis | — | Destination policy for text-plane admission and release |
 | `src/sync/documents/entity.rs` | src | s | 6 crate-vis | — | A non-NOTE record's text on the sync plane (FIX 8871): the frames and the local journal around its canonical… |
 | `src/sync/documents/held_copy.rs` | src | s | 2 fn | — | Owner review and exact canonical settlement of a retained document-copy lineage (FIX12419, document-only) |
-| `src/sync/documents/mod.rs` | src | L | 2 struct · 16 fn · 2 re-export · 21 crate-vis | DocumentRegistry, EntityDocument | Per-entity text documents |
+| `src/sync/documents/mod.rs` | src | L | 2 struct · 16 fn · 2 re-export · 22 crate-vis | DocumentRegistry, EntityDocument | Per-entity text documents |
 | `src/sync/documents/note_fork_upload.rs` | src | s | 2 fn · 2 crate-vis | — | An own device's queue of replica-local NOTE forks for the NOTE's authority (FIX 12789), beside its queued… |
 | `src/sync/documents/note_requests.rs` | src | s | 2 fn · 2 crate-vis | — | Durable semantic NOTE requests for an authority-owned document subscription |
 | `src/sync/documents/note_state.rs` | src | s | 2 crate-vis | — | The authenticated NOTE state envelope (FIX 2401; OF-073): every NOTE text-plane frame names its head, its… |
@@ -6495,7 +6495,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/loro_support.rs` | src | s | 1 re-export · 8 crate-vis | — | Loro-native helpers for the sync layer |
 | `src/sync/machine_history.rs` | src | m | 12 crate-vis | — | Machine-claim history this machine is owed (FIX 3820, FIX 4293) |
 | `src/sync/manager.rs` | src | L | 1 struct · 12 fn · 11 crate-vis | WindowManager | Production window manager: ARCH-0023b startup orchestration + registry |
-| `src/sync/manager/document_api.rs` | src | s | 9 fn · 3 crate-vis | — | Entity document access through the vault's canonical window/selector owner |
+| `src/sync/manager/document_api.rs` | src | s | 10 fn · 3 crate-vis | — | Entity document access through the vault's canonical window/selector owner |
 | `src/sync/manager/live_mirror.rs` | src | m | 10 crate-vis | — | The live mirror: rows a local commit writes reach the window docs this manager has loaded |
 | `src/sync/manager/pending_mirror.rs` | src | m | 13 crate-vis | — | Durable pending-mirror markers (FIX 7957, FIX 9599) |
 | `src/sync/manager/promotion.rs` | src | s | 2 crate-vis | — | Opened-window promotion notices on the manager-owned connection lane |
@@ -6526,11 +6526,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/quarantine/retention_reports.rs` | src | s | 1 struct · 3 fn · 3 crate-vis | SyncQuarantineReport | Seq allocation, retention enforcement, quarantined_records plus sync_doctor |
 | `src/sync/quarantine/tests.rs` | test | XL | — | — | — |
 | `src/sync/quarantine/writes_batch.rs` | src | s | 9 crate-vis | — | Quarantine row writes plus TerminalRejectionBatch |
-| `src/sync/queue/checkpoint.rs` | src | s | 3 crate-vis | — | The sync queue's rows in a checkpoint (KS7-3a), read with the queue's own key and value codecs |
+| `src/sync/queue/checkpoint.rs` | src | s | 4 crate-vis | — | The sync queue's rows in a checkpoint (KS7-3a), read with the queue's own key and value codecs |
 | `src/sync/queue/codec.rs` | src | s | 15 crate-vis | — | Key/value encode/decode plus metadata codecs |
 | `src/sync/queue/core.rs` | src | m | 13 fn · 2 crate-vis | — | SyncQueue impl: push/drain/clear/prune |
 | `src/sync/queue/embed_page.rs` | src | s | 2 crate-vis | — | A resumable physical-row read for provider-independent vector catch-up |
-| `src/sync/queue/mod.rs` | src | s | 3 struct · 5 crate-vis | QueuedEmbedJob, QueuedUpdate, SyncQueue | Persistent offline queue backed by LMDB |
+| `src/sync/queue/mod.rs` | src | s | 3 struct · 6 crate-vis | QueuedEmbedJob, QueuedUpdate, SyncQueue | Persistent offline queue backed by LMDB |
 | `src/sync/queue/scrub.rs` | src | s | 9 crate-vis | — | Carrier scrubs plus test injection hook |
 | `src/sync/queue/seq.rs` | src | s | 7 crate-vis | — | Seq allocation, delete-bearing seqs, embed-job txn helpers |
 | `src/sync/queue/tests.rs` | test | L | — | — | — |
@@ -6541,8 +6541,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/repo_manifests.rs` | src | m | 11 crate-vis | — | FIX 6870 phase 1: a repo's portable manifest on the window plane |
 | `src/sync/repo_manifests/checkpoint.rs` | src | s | 3 crate-vis | — | A repo manifest in a checkpoint (KS7-3a), read with the head codec and filed under its portable id: the head… |
 | `src/sync/repo_manifests/conflicts.rs` | src | s | 2 crate-vis | — | FIX 12763: narrow helpers for one portable manifest carrier |
-| `src/sync/residence.rs` | src | m | 10 fn · 2 const · 26 re-export · 18 crate-vis | — | Grant-checked, per-item residence projections over a window document |
-| `src/sync/residence/admission.rs` | src | s | 1 struct · 10 fn | ResidenceAdmission | One residence request's admission for the machine at the other end of the connection (OF-534 G6) |
+| `src/sync/residence.rs` | src | m | 10 fn · 2 const · 27 re-export · 20 crate-vis | — | Grant-checked, per-item residence projections over a window document |
+| `src/sync/residence/admission.rs` | src | s | 1 struct · 11 fn | ResidenceAdmission | One residence request's admission for the machine at the other end of the connection (OF-534 G6) |
 | `src/sync/residence/authority_parts.rs` | src | s | 4 struct · 1 enum · 3 fn · 2 const | AuthorityAppendPart, AuthorityAppendStage, AuthorityEntryPart, AuthorityEntryRef, AuthorityPartedPage | One authority entry past one RPC frame (FIX 8087, 8246), such as a machine profile revision that lists every… |
 | `src/sync/residence/authority_tail.rs` | src | m | 3 struct · 9 fn · 3 const · 3 crate-vis | AuthorityAppendProgress, AuthorityCheckpointPart, AuthorityPageImport | Authority history for a machine that syncs what it opened (OF-469, the delivery half) |
 | `src/sync/residence/base_projection.rs` | src | s | 2 crate-vis | — | The owner's discard of a world copy, carried into each BASE window it took rows from (FIX 14534 part E… |
@@ -6566,6 +6566,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/residence/bundle_payload/restore_pads.rs` | src | s | 2 crate-vis | — | A kit restore's pads (PAD-1, the narrow kit hook agreed with L03): the pad object's pads land after the base… |
 | `src/sync/residence/bundle_stage.rs` | src | s | 1 struct · 1 fn | SealedBundleStaged | The uploads the home stages, as its disk sees them (FIX 3354) |
 | `src/sync/residence/bundle_turn.rs` | src | s | 1 fn · 3 crate-vis | — | The publisher turn of the vault's sealed cloud bundle on the home (FIX 3351) |
+| `src/sync/residence/cache_worlds.rs` | src | s | 1 struct · 2 fn · 3 crate-vis | CachedItemWorlds | Source-world evidence for the exact bytes of a thin read cache |
 | `src/sync/residence/content_world.rs` | src | s | 1 enum · 1 fn · 4 crate-vis | ContentWorld | The content-world witness a home gives with each read-only copy it serves (FIX 14534, Engine 11-06 08:34… |
 | `src/sync/residence/custody.rs` | src | s | 5 fn | — | The residence home's door for the key custody of the owner's machines (KS-4A2, FIX 5685): the residence target |
 | `src/sync/residence/directives.rs` | src | m | 1 struct · 3 fn · 3 crate-vis | ResidenceDirectiveState | The owner's residence directives to one of their machines (OF-534): owner-vault acts that name a machine… |
@@ -6577,7 +6578,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/residence/machine_history.rs` | src | s | 1 struct · 1 enum · 3 fn · 1 const | MachineHistoryCursor, MachineHistoryPage | A target's machine-claim history as the home serves it (FIX 3820), for a machine that holds a handoff packet… |
 | `src/sync/residence/pad_custody.rs` | src | s | 3 struct · 1 enum · 3 fn · 1 const | WorldPadCapsule, WorldPadFetch, WorldPadPage, WorldPadSelection | Pad hydration through the home (KS-5, FIX 6706): one world's current pads, sealed for the one machine of the… |
 | `src/sync/residence/policy.rs` | src | s | 1 struct · 6 fn · 1 crate-vis | DeviceSyncPreference | This machine's residence choice: sync every window it may read, or sync what it opened |
-| `src/sync/residence/prune.rs` | src | s | 1 struct · 2 fn · 6 crate-vis | WindowDemotion | Last-touch accounting and pruning for opened-item read caches, and the demotion of a promoted canonical window |
+| `src/sync/residence/prune.rs` | src | m | 1 struct · 2 fn · 7 crate-vis | WindowDemotion | Last-touch accounting and pruning for opened-item read caches, and the demotion of a promoted canonical window |
 | `src/sync/residence/recall_scope.rs` | src | s | 1 re-export | — | Resolved recall scope and signing transcript, defined by the recall layer |
 | `src/sync/residence/sealed_updates.rs` | src | m | 4 struct · 8 fn · 2 type · 3 const · 1 crate-vis | OutboxSealedUpdate, SealedUpdatePage, SealedUpdateQueue, StoredSealedUpdate | The home's queue of sealed world updates (DEC-0005 fix 8, CLIP-SYNC = A, FIX 12586), and this machine's… |
 | `src/sync/residence/search.rs` | src | s | 1 struct · 3 fn · 1 const · 1 crate-vis | ResidenceSearchCursor | A residence search served in pages (FIX 8865, FIX 196), from one final grant-selected ranked list read at… |
@@ -6608,7 +6609,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/selector/authorize/filter.rs` | src | m | 1 crate-vis | — | — |
 | `src/sync/selector/born_with.rs` | src | m | 2 fn · 7 crate-vis | — | Born-with text on a copy to another vault (OF-491) |
 | `src/sync/selector/codec.rs` | src | m | 2 struct · 1 enum · 14 fn · 1 const · 1 re-export · 14 crate-vis | RequestedAxis, SelectorVvRequest, SyncSelector | Selector wire types, strict MessagePack encode/decode with key validators, and the filtered-doc/envelope… |
-| `src/sync/selector/document_admission.rs` | src | m | 7 crate-vis | — | Transaction-bound peer document admission from stored ledger truth |
+| `src/sync/selector/document_admission.rs` | src | m | 8 crate-vis | — | Transaction-bound peer document admission from stored ledger truth |
 | `src/sync/selector/edge.rs` | src | m | 14 crate-vis | — | Admitted-edge copy with reserved-kind rejection and the FacetOf off-table verdict |
 | `src/sync/selector/epoch_egress.rs` | src | s | 1 crate-vis | — | The epoch fence at sync egress: an epoch summary leaves through a selector export only beside every record… |
 | `src/sync/selector/guest_document.rs` | src | s | 2 fn · 1 re-export | — | The shared guest-document export door: owner sharing and recipient fetching |
