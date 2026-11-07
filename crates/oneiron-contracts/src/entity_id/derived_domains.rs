@@ -308,6 +308,10 @@ pub const SYNC_TEXT_BIRTH_INCARNATION: &[u8] = b"oneiron.sync-text.birth-incarna
 /// FIX 9554). Parts: the annotated row's entity type, its id.
 pub const VAD_ANNOTATION_CLAIM: &[u8] = b"oneiron:vad-annotation-claim:v1";
 
+/// The storage service principal (`ports::storage_service_principal`, FIX
+/// 10043): the actor a write no actor made is stamped with. No parts.
+pub const STORAGE_SERVICE_PRINCIPAL: &[u8] = b"oneiron:storage-service-principal:v1";
+
 /// A channel-identity autonomy handle (`channel_identity_autonomy::codec::address`,
 /// FIX 9675): a read or action envelope, a read or action grant, an autonomy
 /// mode, a graduation scope or evidence row, a space-posting envelope. Parts:
