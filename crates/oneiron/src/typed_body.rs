@@ -582,17 +582,7 @@ fn commit_as<T>(
             let Some(masked) = mask::masked_call_diff(vault, txn, entity, doc, &before)? else {
                 return Err(refusal);
             };
-            let landed = doc
-                .fork_at(&before)
-                .map_err(|_| invalid("unknown typed body frontier"))?;
-            landed.set_record_timestamp(true);
-            landed
-                .set_peer_id(peer)
-                .map_err(|_| invalid("typed body peer"))?;
-            landed
-                .apply_diff(masked)
-                .map_err(|_| invalid("typed body masked call"))?;
-            landed.commit_with(options());
+            let landed = mask::land_masked(doc, &before, peer, masked, options())?;
             let stood = admit_body(vault, txn, &landed, &before)?;
             *doc = landed;
             stood
