@@ -511,6 +511,19 @@ impl Memory<'_> {
         Ok(Some((pad, sealed)))
     }
 
+    /// The NOTE of this session's live pad, the pad
+    /// [`Self::scratchpad_board_section`] projects, read through the actor's
+    /// own scoped read, which admits a pad to its exact author only. `None`
+    /// when the session has no pad, its pad is sealed, or the read withholds
+    /// it. It never opens, appends to or seals a pad.
+    pub fn scratchpad_ref(&self, session: &str) -> MemoryResult<Option<EntityId>> {
+        validate_session(session)?;
+        let Some((pad, false)) = self.scratchpad_pointer(session)? else {
+            return Ok(None);
+        };
+        Ok(self.pad_markdown(pad)?.map(|_| pad))
+    }
+
     /// Appends one line to this session's live pad. The session's first line
     /// births a new `scratchpad` NOTE: a new pad per run (`dr:P16`), each
     /// session's or fork's its own, so another session's pad, live or not,
