@@ -3789,7 +3789,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/decision/questions/response_custody.rs` | src | s | 3 crate-vis | — | A judgment answer's typed-question copies under body custody (FIX 11236, 11237) |
 | `src/llm/decision/questions/role_asks.rs` | src | s | 1 struct · 3 fn · 4 crate-vis | QuestionUnitAsk | A question unit's person ask (OF-506; ARCH-0076 role ladder): a graph or artifact answer whose dial reaches… |
 | `src/llm/decision/questions/saved_reader.rs` | src | s | 7 crate-vis | — | OF-506 (FIX 1712, 1857, 2116): a standing question reads inside the lane its version was saved under |
-| `src/llm/decision/questions/standing.rs` | src | L | 1 struct · 2 fn · 13 crate-vis | StandingAnswer | Explicit graph-unit backfill with same-snapshot authority and source pins |
+| `src/llm/decision/questions/standing.rs` | src | L | 1 struct · 2 fn · 1 re-export · 13 crate-vis | StandingAnswer | Explicit graph-unit backfill with same-snapshot authority and source pins |
+| `src/llm/decision/questions/standing/public_admit.rs` | src | s | 2 fn | — | Public standing-answer work keeps the actual caller and the measured frontier |
 | `src/llm/decision/questions/standing_tests.rs` | test | L | — | — | — |
 | `src/llm/decision/questions/store.rs` | src | m | 7 fn · 15 crate-vis | — | Immutable question versions and a CAS-updated scheduling head in the typed `TYPED_QUESTION` side table: one… |
 | `src/llm/decision/questions/task_ask.rs` | src | s | 3 crate-vis | — | Transactional tasks.ask adapter to the shared versioned question substrate |
@@ -5099,7 +5100,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/receipt/pack_attribution.rs` | src | s | 6 struct · 1 fn · 8 crate-vis | ContributionCheck, CreditOptions, PackAttributionFields, PackLearningContext, SkillContribution, UsedProvenanceEdge | Frozen execution and actual-use facts on an attempt's pack receipt |
 | `src/receipt/projection.rs` | src | m | 5 struct · 3 fn · 8 crate-vis | BriefReceiptProjection, CounterpartyReceiptProjection, GrantReceiptProjection, ReceiptProjectionIntent, ReceiptProjectionRun | — |
 | `src/receipt/prompt_stamp.rs` | src | s | 1 struct · 1 const | PromptRecompileStamp | Receipt stamp for a compiled prompt package |
-| `src/receipt/questions.rs` | src | m | 19 struct · 3 enum · 4 fn · 2 const | GraphAdmitRequest, GraphAskDeclined, GraphAskOutcome, GraphAskRequest, GraphAskSelection, QuestionAnswer, QuestionAnswersPage, QuestionAnswersReply +14 | OF-506's doors (ARCH-0076): the wire shapes of a one-off graph ask and of the standing-question verbs |
+| `src/receipt/questions.rs` | src | m | 19 struct · 3 enum · 4 fn · 2 const · 1 re-export | GraphAdmitRequest, GraphAskDeclined, GraphAskOutcome, GraphAskRequest, GraphAskSelection, QuestionAnswer, QuestionAnswersPage, QuestionAnswersReply +14 | OF-506's doors (ARCH-0076): the wire shapes of a one-off graph ask and of the standing-question verbs |
+| `src/receipt/questions/standing_admit.rs` | src | s | 4 struct | QuestionAdmitRequest, QuestionPrepareRequest, QuestionPrepared, QuestionPreparedSource | Explicit standing-question preparation before provider work and its admission |
 | `src/receipt/record.rs` | src | m | 15 crate-vis | — | First-class, replicated immutable terminal outbound receipt record, the served-form receipt record a read… |
 | `src/receipt/reference_refusal.rs` | src | s | 7 crate-vis | — | Reference-refusal receipts (OF-063): a record ref a write named does not resolve for its writer |
 | `src/receipt/refusal_reason.rs` | src | s | 1 re-export | — | Refusal reasons are defined with their stored facts |
@@ -5704,7 +5706,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_attribution/contribution.rs` | src | m | 4 struct · 3 fn · 4 crate-vis | ContributionCandidate, ContributionCheckRecord, ContributionFork, ContributionPair | Contribution checks (ARCH-0037 #lineage-credit, ARCH-0053): whether one loaded skill, or the source of one… |
 | `src/skill_attribution/contribution_admission.rs` | src | m | 2 enum · 5 crate-vis | ContributionRecord, UnmatchedReason | Contribution-check admission (FIX 3610, OF-542): every well-formed pair a caller submits is recorded |
 | `src/skill_attribution/contribution_targets.rs` | src | s | 1 struct · 1 enum · 3 fn · 8 crate-vis | CheckedEdge, ContributionTarget | What a contribution check measures (FIX 2870, OF-542; ARCH-0037 #lineage-credit): a loaded skill, checked… |
-| `src/skill_attribution/credit_join.rs` | src | L | 1 struct · 1 fn · 16 crate-vis | CreditAdjustmentReceipt | The one reconciler of an anchored outcome's late credit (FIX 3241, FIX 10108, OF-540) |
+| `src/skill_attribution/credit_join.rs` | src | L | 1 struct · 1 fn · 17 crate-vis | CreditAdjustmentReceipt | The one reconciler of an anchored outcome's late credit (FIX 3241, FIX 10108, OF-540) |
+| `src/skill_attribution/credit_judge.rs` | src | s | 1 crate-vis | — | An existing anchored credit's late judge provenance; its score stays sealed |
 | `src/skill_attribution/decay_fit.rs` | src | s | 1 crate-vis | — | The `credit_decay` fit (FIX 2870, OF-542; ARCH-0037 #lineage-credit, ARCH-0053) |
 | `src/skill_attribution/decision_receipts.rs` | src | s | 1 fn · 2 crate-vis | — | The decision receipts behind each attempt-lane judgment (FIX 11512): the judgment row is immutable by… |
 | `src/skill_attribution/derivation_witness.rs` | src | m | 13 crate-vis | — | FIX 3103 (OF-540, OF-397): the derivation witnesses of leased runs, one event stream that does not wait for… |
@@ -7189,7 +7192,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/verbs/free_time_policy.rs` | src | s | 1 fn | — | `vault.free_time.policy.set_as` (FIX 11424): an agent sets or clears one agent's free-time policy under its… |
 | `src/verbs/generated/catalog_fragment_revision.rs` | src | generated | 1 const | — | — |
 | `src/verbs/generated/run_verb_catalog.rs` | src | generated | 1 enum · 4 fn · 1 const | RunVerb | — |
-| `src/verbs/generated/sdk_generated.rs` | src | generated | 1314 fn · 4 const | — | — |
+| `src/verbs/generated/sdk_generated.rs` | src | generated | 1316 fn · 4 const | — | — |
 | `src/verbs/generated/verb_catalog.rs` | src | generated | 1 enum · 17 fn · 1 const | AgentVerb | — |
 | `src/verbs/git_push_grant.rs` | src | s | 7 struct · 3 fn | GitPushGrantMintInput, GitPushGrantMintOutput, GitPushGrantRevokeInput, GitPushGrantRevokeOutput, GitPushGrantView, RepoAnchorBindInput, RepoAnchorBindOutput | The inputs and answers of the owner's `git_push` Grant rows (FIX 6867, G1-PUSH): `vault.repo.git_push.mint`… |
 | `src/verbs/goal_optimize.rs` | src | m | 16 struct · 1 enum · 16 fn | ProjectGoalIntakeCompleteRequest, ProjectGoalIntakeReceipt, ProjectGoalView, SkillOptimizeGoalBindRequest, SkillOptimizeGoalRequest, SkillOptimizeGoalRevision, SkillOptimizeGoalView, SkillOptimizeMeasureRequest +9 | Full witnessed goal intake and explicit optimizer proposal/admission doors |
