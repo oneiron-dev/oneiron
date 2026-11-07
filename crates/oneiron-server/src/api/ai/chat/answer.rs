@@ -66,6 +66,7 @@ pub(crate) fn begin_sourced_answer_with_fallback(
         agent,
         requester: model_call_caller,
         sources: sources.clone(),
+        today_sources: today_sources.clone(),
     };
     // The exact request the reply's craft rides in, read before it is sent.
     let craft = craft.and_then(|entries| {
@@ -334,6 +335,7 @@ pub(crate) fn chat_request(seat: &Seat, messages: Vec<LlmMessage>) -> LlmRequest
             response_format: ResponseFormat::Text,
             locality: seat.locality,
             host_keyless: false,
+            host_paid: false,
         },
         messages,
         tools: Vec::new(),

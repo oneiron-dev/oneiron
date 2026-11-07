@@ -9,12 +9,16 @@
 //! Without a manifest the role's seat is the binding: the owner's `[models]`
 //! ladder, pinned the way a routed seat is. A manifest that leaves the
 //! optional browser planner unbound leaves it unseated, as no rung does.
+//! An exact replay keeps its captured model and route, and finds the rung
+//! that answered it on the role's route or on the model's raw route (FIX
+//! 18546, [`ModelRuntime::admit_replay`]).
 use std::sync::Arc;
 
 use oneiron::llm::HostInferenceContext;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::{LlmRequest, ModelId, ModelLocality, ModelTierRef, Vault};
 
+use super::ladder::ReplayLadder;
 use super::{ModelRuntime, OfferLadder, Seat};
 use crate::config::models::{role_key, unbound_row_is_no_seat};
 
@@ -69,6 +73,55 @@ pub struct RoleRoute {
     pub ladder: Arc<OfferLadder>,
     /// No manifest binds the role, so the seat is the binding.
     seat_bound: bool,
+}
+
+/// An admitted exact replay (FIX 18546): the captured request, on its
+/// captured model at its captured route, and the routes that may hold the
+/// rung that answered it.
+pub(crate) struct ReplayAdmission {
+    pub(crate) request: LlmRequest,
+    pub(crate) routes: ReplayRoutes,
+}
+
+/// The two routes on which an exact replay looks for the rung that answered
+/// it (FIX 18546). `None` is a route that does not serve the captured model
+/// at the captured route.
+pub(crate) struct ReplayRoutes {
+    /// The captured role's route: the role's rung for the captured model,
+    /// alone, with the route prompt it has in the config now.
+    role_route: Option<Arc<OfferLadder>>,
+    /// The captured model's raw route: the ladder a raw call that names the
+    /// model meets. Its one rung has no route prompt.
+    raw_route: Option<Arc<OfferLadder>>,
+}
+
+impl ReplayRoutes {
+    /// The route whose one picked rung answered a call of `model` at
+    /// `locality`, and that rung (FIX 18546). The role's route goes first,
+    /// then the raw route. A rung whose route prompt digest is
+    /// `prompt_digest` comes before a rung with another digest. If no exact
+    /// rung has that digest, this is the first exact rung, and the caller's
+    /// digest check refuses it. `None` when no route has an exact rung.
+    pub(crate) fn exact_rung(
+        &self,
+        model: &ModelId,
+        locality: ModelLocality,
+        prompt_digest: [u8; 32],
+    ) -> Option<(&Arc<OfferLadder>, ReplayLadder<'_>)> {
+        let mut exact = [&self.role_route, &self.raw_route]
+            .into_iter()
+            .flatten()
+            .filter_map(|ladder| Some((ladder, ladder.for_replay_binding(model, locality)?)));
+        let first = exact.next()?;
+        if first.1.exact_prompt_digest() == prompt_digest {
+            return Some(first);
+        }
+        Some(
+            exact
+                .find(|(_, replay)| replay.exact_prompt_digest() == prompt_digest)
+                .unwrap_or(first),
+        )
+    }
 }
 
 impl ModelRuntime {
@@ -250,5 +303,64 @@ impl ModelRuntime {
             .map_err(RoleRefusal::refused)?
             .into_request();
         Ok(RoleCall { request, ladder })
+    }
+
+    /// Admits `request`, an exact replay of a call that `role`'s admission
+    /// sent, on its captured model at its captured route (FIX 18546). The
+    /// role's pick never replaces the model. The role's live route clamps
+    /// it as in [`Self::admit_seat_bound`], under the policy that a raw call
+    /// naming the model meets. The admission keeps both routes that can
+    /// hold the rung that answered: the role's own route, whose rung has its
+    /// configured prompt, and the model's raw route, whose rung has none. A
+    /// model that neither route serves at the captured route is refused.
+    pub(crate) fn admit_replay(
+        &self,
+        vault: &Vault,
+        role: ModelRole,
+        request: LlmRequest,
+    ) -> Result<ReplayAdmission, RoleRefusal> {
+        let seat = self.seat(role).ok_or(RoleRefusal::NoSeat)?;
+        let route = self.route_role(vault, role, seat)?;
+        let model = request.model.clone();
+        let locality = request.envelope.locality;
+        let refused = || RoleRefusal::RouteNotServed {
+            model: model.clone(),
+            route: route.locality,
+        };
+        if locality > route.locality {
+            return Err(refused());
+        }
+        // The role's route serves the model on the role's rung for it: any
+        // rung of the seat, or the one model a manifest pins.
+        let on_role_route = route.seat_bound || route.model == model;
+        let role_route = seat.rung_at(&model, locality).filter(|ladder| {
+            on_role_route && ladder.for_replay_binding(&model, locality).is_some()
+        });
+        let raw_route = self
+            .router
+            .as_ref()
+            .and_then(|router| router.served_at(&model, locality))
+            .and_then(|(served, ladder)| (served == locality).then_some(ladder));
+        let Some(served) = role_route.as_ref().or(raw_route.as_ref()) else {
+            return Err(refused());
+        };
+        let binding = served.host_binding(model.clone(), locality, false);
+        let request = vault
+            .authorize_raw_inference(
+                request,
+                &HostInferenceContext {
+                    binding,
+                    extraction_egress: None,
+                },
+            )
+            .map_err(RoleRefusal::refused)?
+            .into_request();
+        Ok(ReplayAdmission {
+            request,
+            routes: ReplayRoutes {
+                role_route,
+                raw_route,
+            },
+        })
     }
 }

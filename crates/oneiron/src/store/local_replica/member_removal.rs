@@ -1,12 +1,16 @@
 //! One member's local leaves for the replica tear: its index, projection,
 //! vector and edge rows, then its entity row. Custody, provenance, document
-//! and control rows stay.
+//! and control rows stay, except the document payload the owner's discard of
+//! a world copy takes first ([`discard_owned_payload`]).
+
+use std::collections::BTreeSet;
 
 use heed::RwTxn;
 use loro::LoroMap;
 
 use super::RemovedReplica;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{
@@ -19,6 +23,142 @@ use crate::store::loro_document::map_contains_binary;
 use crate::store::replica_edge_key::format_edge_key;
 use crate::temporal::TimeRange;
 
+/// The payload the owner's discard of a world copy takes with the members
+/// `ids` it removes, before their rows go (FIX 14534, Engine 11-06 08:34
+/// call 4 = A): each one's entity document and typed body, a NOTE's text,
+/// pending slots, review workflow (proposal snapshots, waiting forks) and
+/// kept deck outline, the born-with prose a copy carried and its own derived
+/// index copy, the recognition prints enrolled for it, a BLOB_ARTIFACT's
+/// deck creation record, retained edit proposals, version chain, byte holds
+/// and its exports' shown author and adaptation lines, the quotes its
+/// Unattached comments keep of their spots, an ASSET's hold on
+/// the blob it names, a CLAIM's Gate decisions (left as their retention
+/// skeletons) and pending Gate tray row, the bodies each one owns (a last
+/// holder's file goes to the local collector) and its fetched read caches;
+/// a TASK's report journal entries, lifecycle receipts and mirror events
+/// lose their words and stay identifier-only history, its mirror link kept.
+/// Local only: no receipt, marker, fence or operation. Custody and other
+/// lifecycle sidecars stay for now.
+pub(super) fn discard_owned_payload(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    ids: &[EntityId],
+) -> Result<()> {
+    let mut notes = BTreeSet::new();
+    let mut claims = BTreeSet::new();
+    let mut artifacts = Vec::new();
+    let mut assets = Vec::new();
+    let mut tasks = Vec::new();
+    for id in ids {
+        let kind = store
+            .port_entity_raw(txn, id)?
+            .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type));
+        match kind {
+            Some(registry::ENTITY_TYPE_NOTE) => {
+                notes.insert(*id);
+            }
+            Some(registry::ENTITY_TYPE_CLAIM) => {
+                claims.insert(*id);
+            }
+            Some(registry::ENTITY_TYPE_BLOB_ARTIFACT) => artifacts.push(*id),
+            Some(registry::ENTITY_TYPE_ASSET) => assets.push(*id),
+            Some(registry::ENTITY_TYPE_TASK) => tasks.push(*id),
+            _ => {}
+        }
+    }
+    crate::entity_doc::discard_local_copies_in_txn(store, txn, &ids.iter().copied().collect())?;
+    for note in &notes {
+        crate::note::delete_document_in_txn(store, txn, note)?;
+    }
+    crate::note::discard_workflow_in_txn(store, txn, &notes)?;
+    for id in ids {
+        crate::typed_body::discard_local_payload_in_txn(store, txn, id)?;
+        // The born-with prose a copy carried for it, and its own derived
+        // index copy (the copies derived from it stay with their owners).
+        crate::sync::selector::erase_carried_born_with_in_txn(store, txn, id)?;
+        crate::embed::discard_repo_derived_index_copy_in_txn(store, txn, id)?;
+        crate::voice_identity::discard_print_payload_in_txn(store, txn, id)?;
+    }
+    for id in notes.iter().chain(&artifacts) {
+        crate::edit_roundtrip::deck_create::discard_payload_in_txn(store, txn, id)?;
+    }
+    for artifact in &artifacts {
+        crate::edit_settle::purge_artifact_retention_in_txn(store, txn, artifact)?;
+        // Its settlements' words (their history stays) and answer withdrawals.
+        crate::edit_settle::discard_settle_payload_in_txn(store, txn, artifact)?;
+        crate::blob_artifact::discard_local_copy_in_txn(store, txn, artifact)?;
+        crate::office_body::discard_export_payload_in_txn(store, txn, artifact)?;
+        crate::anchored_annotation::discard_snapshot_payload_in_txn(store, txn, artifact)?;
+    }
+    // An ASSET's body is read for the blob it names while its descriptor
+    // still stands; the descriptors go after.
+    for asset in &assets {
+        crate::memory::discard_asset_blob_reference_in_txn(store, txn, asset)?;
+        crate::sync::asset_body::home_proof::forget_in_txn(store, txn, *asset)?;
+    }
+    for id in ids {
+        crate::provenance::body::release_owner_bodies_in_txn(store, txn, id)?;
+    }
+    store.discard_claim_gate_payload_in_txn(txn, &claims, store.clock.now_recorded_at())?;
+    for claim in &claims {
+        store.discard_pending_gate_consent_in_txn(txn, claim)?;
+    }
+    // A TASK's report journal, lifecycle receipts and mirror events stay
+    // identifier-only history, rewritten in place; its mirror link stays.
+    for task in &tasks {
+        crate::task_verb::discard_report_journal_payload_in_txn(store, txn, task)?;
+        crate::task_verb::discard_lifecycle_receipt_payload_in_txn(store, txn, task)?;
+        crate::linear_sync::discard_task_event_payload_in_txn(store, txn, *task)?;
+    }
+    crate::sync::residence::erase_item_caches_in_txn(store, txn, ids)
+}
+
+/// The bundles the owner's discard of a world copy takes once every member
+/// they name is among `discarded`, the members all its writes removed (FIX
+/// 14534, Engine 11-06 08:34 calls 1 and 4 = A): a Gate bundle becomes its
+/// retention skeleton and a NOTE review bundle's explainer reads "redacted".
+/// Each write's own pass ([`discard_owned_payload`]) sees its members only,
+/// so a bundle whose members sit in two windows or batches waits for this
+/// one, run once after the last of them. A bundle that names a member that
+/// stays, or one only an earlier discard took, keeps its content.
+pub(crate) fn discard_bundle_payload_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    discarded: &BTreeSet<EntityId>,
+) -> Result<()> {
+    store.discard_claim_gate_payload_in_txn(txn, discarded, store.clock.now_recorded_at())?;
+    crate::note::discard_bundle_explainers_in_txn(store, txn, discarded)
+}
+
+/// The content-addressed byte carriers among `order` whose bytes a holder
+/// outside it still reads: an artifact's version chain or claim, or a
+/// reference ASSET's `asset_ref` (FIX 14534, Engine 11-06 08:34 call 1 = A:
+/// shared stays). A holder held or kept for any reason is outside it. The
+/// holders inside it let go of the bytes in this same write.
+pub(super) fn shared_carriers(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    order: &[EntityId],
+) -> Result<BTreeSet<EntityId>> {
+    let gone: BTreeSet<EntityId> = order.iter().copied().collect();
+    let mut shared = BTreeSet::new();
+    for id in order {
+        let Some(raw) = store.port_entity_raw(txn, id)? else {
+            continue;
+        };
+        let Some(hash) = crate::blob_artifact::carrier_content_hash(store, txn, id, &raw)? else {
+            continue;
+        };
+        if crate::blob_artifact::content_holders_in_txn(store, txn, &hash)?
+            .iter()
+            .any(|holder| holder != id && !gone.contains(holder))
+        {
+            shared.insert(*id);
+        }
+    }
+    Ok(shared)
+}
+
 /// Tears one member's local rows. Every step is a local index or projection
 /// leaf of the physical tear; custody, provenance, document and control rows
 /// stay. A released member takes every edge it touches with it.
@@ -28,6 +168,7 @@ pub(super) fn remove_member(
     edges: &LoroMap,
     id: &EntityId,
     released: bool,
+    keep_birth_facet: bool,
     report: &mut RemovedReplica,
 ) -> Result<()> {
     let Some(raw) = store.port_entity_raw(txn, id)? else {
@@ -44,7 +185,7 @@ pub(super) fn remove_member(
     crate::code_symbol::delete_code_symbol_manifest_in_txn(store, txn, id)?;
     crate::counterparty_contact::drop_contact_index_rows_in_txn(store, txn, id)?;
     remove_vectors(store, txn, id, report)?;
-    let neighbors = remove_member_edges(store, txn, edges, id, released, report)?;
+    let neighbors = remove_member_edges(store, txn, edges, id, released, keep_birth_facet, report)?;
     if let Some((short_id, hash)) = store.port_short_id_reference(txn, id)? {
         let forward = crate::batch::encode_short_id_forward_key(&short_id, hash);
         store.short_ids.delete(txn, &forward)?;
@@ -125,6 +266,7 @@ fn remove_member_edges(
     edges: &LoroMap,
     id: &EntityId,
     all: bool,
+    keep_birth_facet: bool,
     report: &mut RemovedReplica,
 ) -> Result<Vec<EntityId>> {
     let mut incident = Vec::new();
@@ -142,6 +284,9 @@ fn remove_member_edges(
     let mut neighbors = Vec::with_capacity(incident.len());
     for (source, kind, target) in incident {
         neighbors.push(if source == *id { target } else { source });
+        if keep_birth_facet && source == *id && kind == EdgeKind::FacetOf {
+            continue;
+        }
         if (all || map_contains_binary(edges, &format_edge_key(&source, kind, &target)))
             && store.port_remove_edge_rows(txn, &source, kind, &target)?
         {
