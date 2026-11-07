@@ -165,6 +165,12 @@ pub struct AuthorityAuditRow {
     /// A federation lifecycle op's grant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant_ref: Option<String>,
+    /// An Owner handover's execution receipt, as the signed op names it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt_ref: Option<String>,
+    /// The grant ids the signed Owner handover says the change affected.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub affected_grants: Vec<String>,
     /// A critical-write confirm's claim.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claim_ref: Option<String>,
@@ -244,6 +250,42 @@ pub struct AuthorityAuditPage {
     /// image.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cold_attested: Vec<ColdAuthorityAuditRow>,
+    /// The membership changes this vault executed with no host issuer to
+    /// sign them whose carrier-signed record is not in the log yet (FIX
+    /// 12335): pending, never signed. Listed on a page with no `after`, in
+    /// receipt id order, whatever `kinds` names; empty, and omitted, when
+    /// none is pending.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_membership_executions: Vec<PendingMembershipExecutionRow>,
+}
+
+/// One membership change whose signed record is pending (FIX 12335): what
+/// its writer executed, as the intent this vault keeps holds it. Value-free:
+/// ids, a cause and a time. It is no log entry and proves nothing signed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingMembershipExecutionRow {
+    /// The change's execution receipt id.
+    pub receipt: String,
+    #[serde(with = "crate::federation::vault_id_decimal")]
+    pub vault_id: u64,
+    /// The shared act the change executed; an Owner act's alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub act: Option<String>,
+    /// The power or act that made the change, snake_case (`remove_member`,
+    /// `leave`, `transfer_ownership`, ...).
+    pub cause: String,
+    /// The PERSON who executed the change (hex).
+    pub person: String,
+    /// The member whose role moved (hex).
+    pub member: String,
+    /// When the change was executed (Unix seconds, store clock).
+    pub executed_at: u64,
+    /// The Grants an owner's signed mint made that the change deleted and
+    /// whose signed withdrawal is pending (hex).
+    pub withdrawn_grants: Vec<String>,
+    /// Whether the change hands the Owner role over, its signed handover
+    /// pending with it.
+    pub handover: bool,
 }
 
 impl Vault {
@@ -276,6 +318,11 @@ impl Vault {
             self.store
                 .port_entity_ids_by_type(&txn, ENTITY_TYPE_AUTHORITY_LOG, query.after)?;
         let mut next_stored = stored.next().transpose()?;
+        let pending_membership_executions = if query.after.is_none() {
+            self.pending_membership_execution_rows_in_txn(&txn)?
+        } else {
+            Vec::new()
+        };
         let mut rows = Vec::new();
         let mut cold_attested = Vec::new();
         let mut scanned = 0;
@@ -340,6 +387,7 @@ impl Vault {
             order: AuthorityAuditOrder::EntryRefAscending,
             scanned,
             cold_attested,
+            pending_membership_executions,
         })
     }
 }
@@ -413,6 +461,8 @@ struct OpFields {
     detail: Option<String>,
     subject_ref: Option<String>,
     grant_ref: Option<String>,
+    receipt_ref: Option<String>,
+    affected_grants: Vec<String>,
     claim_ref: Option<String>,
     holder_ref: Option<String>,
     parent_ref: Option<String>,
@@ -457,6 +507,18 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
             "slip_grant_revoke",
             OpFields {
                 grant_ref: Some(grant_ref.to_hex()),
+                ..OpFields::default()
+            },
+        ),
+        // The removal-archive door's spend of a one-shot transferred slip:
+        // its subject is the slip, its holder the removed person whose
+        // archives it took (FIX 11862).
+        AuthorityOp::RemovalArchiveConsume { slip_id, member } => (
+            Other,
+            "removal_archive_consume",
+            OpFields {
+                subject_ref: Some(hex_lower(slip_id)),
+                holder_ref: Some(member.to_hex()),
                 ..OpFields::default()
             },
         ),
@@ -512,7 +574,21 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
         AuthorityOp::OwnerRoot(_) => (Other, "owner_root", OpFields::default()),
         AuthorityOp::WorldPrivacy(_) => (Other, "world_privacy", OpFields::default()),
         AuthorityOp::WorldKeyWraps(_) => (Other, "world_key_wraps", OpFields::default()),
-        AuthorityOp::OwnerHandover(_) => (Other, "owner_handover", OpFields::default()),
+        AuthorityOp::OwnerHandover(action) => (
+            Other,
+            "owner_handover",
+            OpFields {
+                detail: Some(action.cause.wire().to_owned()),
+                subject_ref: Some(action.from.to_hex()),
+                receipt_ref: Some(action.receipt.clone()),
+                affected_grants: action
+                    .affected_grants
+                    .iter()
+                    .map(|id| id.to_hex())
+                    .collect(),
+                ..OpFields::default()
+            },
+        ),
         AuthorityOp::ResidenceDirective(_) => (Other, "residence_directive", OpFields::default()),
         AuthorityOp::ResidenceResult(_) => (Other, "residence_result", OpFields::default()),
         AuthorityOp::GrantTravelSet(set) => (
@@ -700,6 +776,39 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
             },
         ),
         AuthorityOp::AgentGrantAct(record) => agent_grant_act::classify(record),
+        // A membership change no host issuer signed, signed later by its
+        // carrier (FIX 12335): a revoke of the Grants it withdrew, its
+        // subject the member whose role moved, its holder the person who
+        // executed it, its detail the cause, how many Grants it withdrew and
+        // whether it hands the Owner role over. Its one Grant, when it names
+        // one alone, is its grant.
+        AuthorityOp::MembershipExecution(record) => (
+            if record.withdrawn_grants.is_empty() {
+                Other
+            } else {
+                Revoke
+            },
+            "membership_execution",
+            OpFields {
+                detail: Some(format!(
+                    "{}; {} grants withdrawn{}",
+                    record.cause.wire(),
+                    record.withdrawn_grants.len(),
+                    if record.handover.is_some() {
+                        "; owner handover"
+                    } else {
+                        ""
+                    }
+                )),
+                subject_ref: Some(record.member.to_hex()),
+                grant_ref: match record.withdrawn_grants.as_slice() {
+                    [grant] => Some(grant.to_hex()),
+                    _ => None,
+                },
+                holder_ref: Some(record.person.to_hex()),
+                ..OpFields::default()
+            },
+        ),
         AuthorityOp::PolicySettingSet(set) => carried_act::classify_policy_setting(set),
         AuthorityOp::ExportAct(record) => carried_act::classify_export(record),
     }
@@ -762,6 +871,8 @@ fn project_row(
         vault_ref: entry.vault_id.as_ref().map(|id| hex_lower(id)),
         subject_ref: fields.subject_ref,
         grant_ref: fields.grant_ref,
+        receipt_ref: fields.receipt_ref,
+        affected_grants: fields.affected_grants,
         claim_ref: fields.claim_ref,
         holder_ref: fields.holder_ref,
         parent_ref: fields.parent_ref,

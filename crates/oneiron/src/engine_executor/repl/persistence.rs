@@ -1,8 +1,12 @@
-//! Durable REPL record loading, failed-step appends and wait resumption.
+//! Durable REPL record loading, failed-step appends, refused-reply
+//! correction records and wait resumption.
 //! Entry: `EngineNativeExecutor::load_or_create_record`.
 //! Executor definitions belong to `engine_executor::driver` and replay rows to `code_run`.
 
+use super::super::types::EngineExecutorError;
+use super::super::wire::heal_executor_text_tracking_repairs;
 use super::*;
+use crate::code_run::ExecutorWireRepairs;
 
 impl EngineNativeExecutor<'_> {
     /// Registers the run as parked on `wait`, the wait its last step
@@ -93,8 +97,44 @@ impl EngineNativeExecutor<'_> {
         let generation = self
             .storage
             .put_code_run_wait_resume_record(record, expected, key, seq, &path)?;
-        self.storage.clear_wait(key)?;
+        if let crate::code_run::ExecutorStorage::Session(_) = &self.storage {
+            self.storage.clear_wait(key)?;
+        }
         Ok(Some(generation))
+    }
+
+    /// The ONE-1929 normalization of one reply's post-hook text. A reply it
+    /// refuses, and one that did not finish cleanly, keeps its correction
+    /// record on the run's route, with the repairs made before the refusal
+    /// and the refusal's reason, before the error returns (FIX 4412). No
+    /// program runs and the step commits nothing: the caller's re-entry asks
+    /// the model again, and that reply records as the step's next attempt.
+    pub(super) fn heal_reply_or_record_rejection(
+        &self,
+        config: &EngineExecutorConfig,
+        step: u64,
+        response: &crate::LlmResponse,
+        execution_text: &str,
+    ) -> EngineExecutorResult<HealedExecutorReply> {
+        let mut tracked_repairs = ExecutorWireRepairs::default();
+        let healed = if response.finish_reason == crate::FinishReason::Stop {
+            heal_executor_text_tracking_repairs(execution_text, &mut tracked_repairs)
+        } else {
+            Err(Error::InvalidClaimBody("executor LLM response did not finish cleanly").into())
+        };
+        let error = match healed {
+            Ok(healed) => return Ok(healed),
+            Err(error) => error,
+        };
+        let rejected = CodeRunCorrectionDraft::rejected(
+            config.run_id,
+            step,
+            &config.model,
+            tracked_repairs,
+            rejection_reason(&error),
+        );
+        self.storage.put_rejected_code_run_correction(&rejected)?;
+        Err(error)
     }
 
     #[expect(
@@ -113,10 +153,11 @@ impl EngineNativeExecutor<'_> {
         captured: Vec<CodeRunRawOutput>,
         bound: Vec<CodeRunResultBinding>,
         receipts: Vec<ReaderFoldReceipt>,
+        context_capture: StepContextCapture,
         callable_rows: Option<Vec<EntityId>>,
         durable_wait: Option<SelfDurableWait>,
         observation: String,
-        healed: bool,
+        correction: &CodeRunCorrectionDraft<'_>,
         config: &EngineExecutorConfig,
     ) -> EngineExecutorResult<Option<EngineExecutorStatus>> {
         self.gated_write.refuse_a_step_that_dropped_a_write(
@@ -177,6 +218,9 @@ impl EngineNativeExecutor<'_> {
         }
         let mut digests = StepResultDigests::of(&observation, false);
         digests.bindings = bindings;
+        // Where the failed step's calls end, and what its guest read before
+        // it failed (FIX 6354, FIX 6351, FIX 6352).
+        let (end, context) = self.step_context(config, record, bridge_start, context_capture)?;
         let checkpoint = CodeRunStepCheckpoint::new(
             completed_steps,
             checkpoint_label(completed_steps),
@@ -192,29 +236,33 @@ impl EngineNativeExecutor<'_> {
                 &digests,
                 None,
                 &record.bridge_calls[bridge_start..],
+                end,
             )?,
             config
                 .determinism
                 .frozen_unix_ms
                 .saturating_add(completed_steps),
-        )?;
+        )?
+        .ending_at(end.bridge_end);
         let bridge_end = record.bridge_calls.len();
         record
             .step_checkpoints
             .push(checkpoint.with_bridge_calls(bridge_start, bridge_end));
         // A wait seen on a failed step is sealed with it too (DOOR-079 1b).
         let parked = parked_wait(record, terminal_status.as_ref(), bridge_start);
-        // A flaky commit converts to success on one identical retry (FIX
-        // 1443); a first commit that actually landed fails the retry closed
-        // on its generation mismatch instead.
+        // The reply's correction record commits with this checkpoint (FIX
+        // 4411). A flaky commit converts to success on one identical retry
+        // (FIX 1443); a first commit that actually landed fails the retry
+        // closed on its generation mismatch instead.
         let _ = match self
             .storage
             .put_code_run_replay_record_with_receipts_if_generation(
                 record,
                 expected_generation,
-                healed.then_some(&config.model),
+                correction,
                 &receipts,
                 parked.as_ref(),
+                &context,
             ) {
             Err(error) if matches!(error, Error::Storage(_) | Error::MapFull) => {
                 tracing::warn!(
@@ -224,9 +272,10 @@ impl EngineNativeExecutor<'_> {
                     .put_code_run_replay_record_with_receipts_if_generation(
                         record,
                         expected_generation,
-                        healed.then_some(&config.model),
+                        correction,
                         &receipts,
                         parked.as_ref(),
+                        &context,
                     )?
             }
             result => result?,
@@ -315,5 +364,16 @@ impl EngineNativeExecutor<'_> {
             terminal_status: None,
             prompt: PromptBinding::Unchanged,
         })
+    }
+}
+
+/// The stable text a refused reply's correction record keeps (FIX 4412):
+/// the normalization's own static reason, never text from the reply.
+fn rejection_reason(error: &EngineExecutorError) -> String {
+    match error {
+        EngineExecutorError::Engine(
+            Error::InvalidClaimBody(reason) | Error::ArithmeticOverflow(reason),
+        ) => (*reason).to_owned(),
+        other => other.variant().to_owned(),
     }
 }

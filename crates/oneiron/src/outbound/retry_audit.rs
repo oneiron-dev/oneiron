@@ -222,7 +222,7 @@ pub(super) fn reconcile_connector_task(
 ) -> Result<bool, Error> {
     use super::connector_task::connector_send_task_outcome_in_txn;
     use crate::outbound_intent_ledger::{
-        ConnectorIntentBinding, IntentResolution, UnconfirmedDelivery,
+        ConnectorIntentBinding, IntentEscalationReason, IntentResolution, UnconfirmedDelivery,
         reconcile_connector_intent_in_txn,
     };
     let logical_ref = super::executor::connector_logical_send_intent_ref(task);
@@ -245,6 +245,28 @@ pub(super) fn reconcile_connector_task(
         else {
             return Ok(false);
         };
+        let queue = AttemptQueue::new(vault);
+        // FIX 4747: the local send this machine stopped as it stood down
+        // certainly never went, and it is no outcome of the TASK, which stays
+        // its send executor's: the queue row completes and the TASK is not
+        // touched.
+        if resolution
+            == (IntentResolution::Stopped {
+                delivery: UnconfirmedDelivery::DefiniteNonDelivery,
+                reason: IntentEscalationReason::SendExecutorStoodDown,
+            })
+        {
+            queue.complete_in_txn(
+                wtxn,
+                CompleteAttempt {
+                    id: attempt.id,
+                    lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
+                    attempt_count: attempt.attempt_count,
+                    now,
+                },
+            )?;
+            return Ok(true);
+        }
         // A remote task's send is not known delivered, and it is never
         // repeated (FIX 7960): its receipt says deferred, and its TASK
         // completes rather than fails.
@@ -271,7 +293,6 @@ pub(super) fn reconcile_connector_task(
                 ..
             } => (SendReceiptOutcome::Failed, ConnectorSendTaskOutcome::Failed),
         };
-        let queue = AttemptQueue::new(vault);
         let synced_outcome = connector_send_task_outcome_in_txn(vault, wtxn, task.task_ref)?;
         // A repeated queue row has no new terminal evidence to receipt. The
         // existing synced outcome is already the audit surface.

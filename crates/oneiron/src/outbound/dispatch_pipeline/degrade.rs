@@ -10,6 +10,7 @@ use super::pipeline::OutboundDispatchPipeline;
 use crate::Vault;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
+use crate::outbound::connector_task::SEND_EXECUTOR_FENCE_FIELD;
 use crate::outbound::dispatch_types::{
     OutboundDispatchOutcome, OutboundDispatchRequest, OutboundDispatchResult, OutboundExecutionSink,
 };
@@ -32,6 +33,14 @@ const ALTERNATIVE_DISPATCH_ERROR: &str = "dispatch_error";
 /// and before its surface: one alternative per interrupt and surface, the
 /// same on every retry of that interrupt.
 const AMBIENT_ALTERNATIVE_REF_SEGMENT: &str = "ambient";
+
+/// The identity an alternative bound for `surface` derives from its
+/// interrupt's identity `parent_ref`: its receipt id, its intent ref, and
+/// its ledger identity, under which its ledger rows are keyed (FIX 11029:
+/// the executor finds the alternative's ledger row by it).
+pub(in crate::outbound) fn ambient_alternative_ref(parent_ref: &str, surface: &str) -> String {
+    format!("{parent_ref}:{AMBIENT_ALTERNATIVE_REF_SEGMENT}:{surface}")
+}
 
 /// The alternative's own request: its intent and counterparty, the
 /// interrupt's actor, gate facts, clock and session, and identities derived
@@ -65,15 +74,10 @@ fn ambient_alternative_request(
     request.delivery_window_local_minute_of_day = parent.delivery_window_local_minute_of_day;
     request.delivery_window_clock = parent.delivery_window_clock;
     request.delivery_window_human_explicit_instant = parent.delivery_window_human_explicit_instant;
+    // FIX 4747: the alternative sends for the interrupt's TASK, so its
+    // transport call passes the same send executor fence.
+    request.send_executor_fence = parent.send_executor_fence;
     request
-}
-
-/// The identity an alternative for `surface` derives from its interrupt's
-/// identity `id`: its receipt, intent and ledger refs, the same on every
-/// retry of that interrupt (FIX 11029: the executor finds the alternative's
-/// ledger row by it).
-pub(in crate::outbound) fn ambient_alternative_ref(id: &str, surface: &str) -> String {
-    format!("{id}:{AMBIENT_ALTERNATIVE_REF_SEGMENT}:{surface}")
 }
 
 /// The request an interrupt's bound alternative goes as, outside a
@@ -169,6 +173,20 @@ pub(super) fn dispatch_ambient_alternative<S: OutboundExecutionSink>(
                 ALTERNATIVE_OUTCOME_FIELD.to_owned(),
                 child.outcome.as_str().to_owned(),
             );
+            // FIX 4747: an alternative the send executor fence stood down
+            // stands its interrupt's attempt down with it.
+            for field in [
+                "retry_at",
+                "provider_retry_after",
+                "provider_wait",
+                SEND_EXECUTOR_FENCE_FIELD,
+            ] {
+                if let Some(value) = child.receipt.fields.get(field) {
+                    fields
+                        .entry(field.to_owned())
+                        .or_insert_with(|| value.clone());
+                }
+            }
         }
         Err(error) => {
             tracing::warn!(

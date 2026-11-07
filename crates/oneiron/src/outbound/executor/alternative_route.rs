@@ -289,6 +289,14 @@ fn send_live_alternative<S: OutboundExecutionSink>(
             return Ok(RoutedAttempt::Settled);
         }
     };
+    // FIX 4747: the alternative goes under the interrupt's send executor
+    // fence. Found moved before its transport call, nothing was sent; the
+    // TASK stays the lease holder's, as an interrupt's own stand-down leaves
+    // it.
+    if send_executor_stood_down(&child) {
+        stand_down_connector_task_attempt(vault, attempt, task, now)?;
+        return Ok(RoutedAttempt::Settled);
+    }
     let outcome = child.outcome;
     let parked = parked_on_child(child, request, task, alternative, now);
     match outcome {

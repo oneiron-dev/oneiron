@@ -176,6 +176,11 @@ pub struct OutboundDispatchRequest {
     /// vault's manifests name no act row for its pairing. The dispatch
     /// receipt names that fallback. In memory only, never persisted.
     pub(crate) sender_posture_fallback: bool,
+    /// FIX 4747: the send executor lease a connector-send TASK's attempt
+    /// took, which the dispatch transport re-checks right before its
+    /// transport call. In memory only, never persisted; `None` for every
+    /// send that is not a connector-send TASK's.
+    pub(crate) send_executor_fence: Option<super::connector_task::SendExecutorFence>,
 }
 
 /// A drain's clock for one send's delivery window (FIX 8817): the frozen host
@@ -233,6 +238,7 @@ impl OutboundDispatchRequest {
             ambient_alternative: None,
             exclusive_route_ref: None,
             sender_posture_fallback: false,
+            send_executor_fence: None,
         }
     }
 

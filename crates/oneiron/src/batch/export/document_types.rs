@@ -168,7 +168,7 @@ pub struct WholeVaultDocument {
     /// The three kind slots; `None` when the export carries no setup (a
     /// records archive, OKF).
     pub slot_bindings: Option<PortableSlotBindings>,
-    /// Every session's epoch floor, in session order; empty outside a
+    /// Every lineage's epoch floor, in key order; empty outside a
     /// whole-vault export.
     pub epoch_floors: Vec<ExportEpochFloor>,
     /// FIX 2768: the allowlisted side-table rows that index the records here
@@ -182,14 +182,19 @@ pub struct WholeVaultDocument {
     pub row_births: Vec<ExportRowBirth>,
 }
 
-/// Where one session's highest removed epoch summary left the count (OF-013):
-/// its epoch and the turn it ended at, nothing it said. An import raises the
-/// local floor to it and never lowers one.
+/// Where one lineage's highest removed epoch summary left the count
+/// (OF-013): its epoch and the turn it ended at, nothing it said. A lineage
+/// is a session's own log, or one conversation's turns within a session
+/// (FIX 5029). An import raises the local floor to it and never lowers one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExportEpochFloor {
     /// The session's id, hex.
     pub session: String,
+    /// The conversation's id, hex, for a conversation's lineage; absent for
+    /// the session's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation: Option<String>,
     pub epoch: u64,
     pub turn_end: u64,
 }
