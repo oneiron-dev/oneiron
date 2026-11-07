@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1282 facade rows, 4640 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1234.
+// UniFFI census: 1283 facade rows, 4643 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1235.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -38201,6 +38201,47 @@ pub struct ShareCreated {
     pub expires_at: Option<u64>,
     #[serde(rename = "travel")]
     pub travel: TravelChoice,
+}
+
+/// `oneiron::verbs::share::ShareViewLinkRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ShareViewLinkRequest {
+    #[serde(rename = "share_ref")]
+    pub share_ref: String,
+    #[serde(rename = "actor_class")]
+    pub actor_class: String,
+    #[serde(rename = "slip_lifetime_secs")]
+    pub slip_lifetime_secs: u64,
+}
+
+/// `oneiron::authority::slip_pairing::PairingPinRef`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PairingPinRef {
+    #[serde(rename = "challenge")]
+    pub challenge: Vec<u8>,
+    #[serde(rename = "digest")]
+    pub digest: Vec<u8>,
+}
+
+/// `oneiron::authority::slip_pairing::PairingLink`.
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PairingLink {
+    #[serde(rename = "code")]
+    pub code: String,
+    #[serde(rename = "expires_at")]
+    pub expires_at: u64,
+    #[serde(rename = "pin", default, skip_serializing_if = "Option::is_none")]
+    pub pin: Option<PairingPinRef>,
+    #[serde(rename = "comm")]
+    pub comm: CommReach,
+}
+impl std::fmt::Debug for PairingLink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PairingLink").finish_non_exhaustive()
+    }
 }
 
 /// `oneiron::verbs::share::ShareRevokeRequest`.

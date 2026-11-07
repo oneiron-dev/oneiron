@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1334 code-mode rows (1293 host rows, 41 run rows), 4702 declarations.
-// Replies: 1142 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1335 code-mode rows (1294 host rows, 41 run rows), 4705 declarations.
+// Replies: 1143 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -2447,6 +2447,9 @@ declare namespace Sdk {
   type SecretGrantUseRequest = { grant: string; operation: string; arguments?: unknown };
   type ShareCreateRequest = { share_id?: string | null; recipient: string; brief_ref: string; world_refs?: string[]; facet_refs?: string[]; include_unscoped?: boolean; expires_at?: number | null; travel?: TravelChoice | null; mention?: MentionProvenance | null };
   type ShareCreated = { share_id: string; recipient: string; brief_ref: string; created_at: number; expires_at?: number | null; travel: TravelChoice };
+  type ShareViewLinkRequest = { share_ref: string; actor_class: string; slip_lifetime_secs: number };
+  type PairingPinRef = { challenge: number[]; digest: number[] };
+  type PairingLink = { code: string; expires_at: number; pin?: PairingPinRef | null; comm: CommReach };
   type ShareRevokeRequest = { share_ref: string };
   type ShareRevokeReceipt = { share_ref: string; status: string; revoked_at?: number | null };
   type ShareViewNarrowing = { world_refs?: string[]; facet_refs?: string[]; include_unscoped?: boolean };
@@ -7636,6 +7639,8 @@ declare const vault: Sdk.VaultHost & {
   shares: {
     /** The handle's actor issues a share: the brief, its recipient, the most the view may show and the text that travels. */
     create(input: Sdk.ShareCreateRequest): Promise<Sdk.ShareCreated | StoredResult>;
+    /** Issues a holder-bound view-only pairing link for one admitted share's recipient. */
+    issue_view_link(input: Sdk.ShareViewLinkRequest): Promise<Sdk.PairingLink | StoredResult>;
     revoke(input: Sdk.ShareRevokeRequest): Promise<Sdk.ShareRevokeReceipt | StoredResult>;
     view(input: Sdk.ShareViewRequest): Promise<Sdk.ScopedReadResult<Sdk.SharedBriefView | null> | StoredResult>;
   };

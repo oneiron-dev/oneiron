@@ -62,6 +62,7 @@ impl Vault {
             org_ref: None,
             grant_ref: None,
             invitation_ref: Some(invitation.to_owned()),
+            share_ref: None,
             delegation: None,
             comm: None,
             trusted_contact: None,
@@ -128,6 +129,12 @@ impl Vault {
     ) -> Result<()> {
         self.require_live_slip_grant_in_txn(txn, claims, now)?;
         self.require_live_slip_invitation_in_txn(txn, claims, now)?;
+        if let Some(share) = &claims.share_ref {
+            let share = EntityId::from_hex(share).map_err(|_| invalid_authority())?;
+            let holder = EntityId::from_hex(&claims.holder_ref).map_err(|_| invalid_authority())?;
+            crate::share::live_share_for_holder_in_txn(self, txn, &share, &holder, now)?
+                .ok_or_else(invalid_authority)?;
+        }
         self.require_live_delegation_in_txn(txn, claims)?;
         self.require_live_trusted_contact_binding_in_txn(txn, claims, now)?;
         self.require_live_seat_claim_in_txn(txn, claims)
