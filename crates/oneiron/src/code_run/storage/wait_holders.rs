@@ -437,12 +437,13 @@ fn erase_settled_in_txn(
 }
 
 /// What an erase leaves of a delivery row that does not decode: a delivery
-/// with no reply, time or rows.
+/// with no reply, time or rows, and unknown origins (FIX 7083).
 fn unreadable_delivery() -> WaitDelivery {
     WaitDelivery {
         reply: String::new(),
         delivered_at_ms: 0,
         source_rows: None,
+        origins: None,
         erased: true,
     }
 }

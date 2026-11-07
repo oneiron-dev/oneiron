@@ -1,8 +1,10 @@
 //! The shared connection pool's live pressure check (FIX 7656, OF-520). When
-//! a socket finds the descriptor floor full and has to wait, the owner's
+//! a socket finds the descriptor floor full and has to wait, or a guest's
+//! network work finds too little of it free (FIX 6304), the owner's
 //! `/v1/owner/wire-health` shows one typed "is everything okay" check: the
 //! credentials whose open request bodies hold the most connections, how long
-//! and how fast, and what the owner can do. It clears when nobody waits.
+//! and how fast, the permits guests' network work holds, and what the owner
+//! can do. It clears when nobody waits and the guest's room is back.
 //!
 //! Observation only: it holds no permit and cuts, refuses or slows nothing.
 //! The floor, its fair line and the body idle clock stay the listener's. A
@@ -57,7 +59,7 @@ const RELAY_LOCKER_REMEDY: &str = "Is everything okay? This relay locker holds a
 const MESH_REMEDY: &str = r#"Is everything okay? A mesh sync stream waits for a place. The listed machines hold the most open streams; each counts every byte its peer sent on them, requests and upgraded sockets alike. Pause the sync client on a listed machine, or remove the machine with POST /v1/owner/machines/remove, passing {"machine":"<machine_id>","seen":"<revision from GET /v1/owner/machines/answer>"}. This check does not cut a stream or refuse a connection."#;
 
 /// What the owner can do, and what the check does not promise.
-const REMEDY: &str = r#"Is everything okay? This connection pool has a waiter. The listed credential keys hold the most open request bodies. Pause the client using a listed key, or revoke its credential. For a slip key, revoke with POST /v1/core/slips/revoke, passing {"slip_id":[32 bytes decoded from the listed hex ID]}. For an engine-run client, its existing pause door is POST /v1/core/facade/vault.runs.pause with {"branch":"<attempt-id>"}; that pauses a run branch, not a credential. Account-key pause/revoke belongs to the host control plane. This check does not cut a body or guarantee that revocation releases an already-open body."#;
+const REMEDY: &str = r#"Is everything okay? This connection pool has a waiter, or a code run's network work found too little of it free; guest_network_permits counts what code runs' sockets hold. The listed credential keys hold the most open request bodies. Pause the client using a listed key, or revoke its credential. For a slip key, revoke with POST /v1/core/slips/revoke, passing {"slip_id":[32 bytes decoded from the listed hex ID]}. For an engine-run client, its existing pause door is POST /v1/core/facade/vault.runs.pause with {"branch":"<attempt-id>"}; that pauses a run branch, not a credential. Account-key pause/revoke belongs to the host control plane. This check does not cut a body or guarantee that revocation releases an already-open body."#;
 
 /// The pool's pressure as the owner reads it now.
 #[derive(Clone, Debug, Serialize)]
@@ -105,6 +107,10 @@ pub(crate) struct ConnectionPoolPressureCheck {
     other_credential_open_body_permits: u64,
     /// Connections with an open body no accepted credential is attached to.
     unattributed_open_body_permits: u64,
+    /// Permits of the floor guests' network work holds now: one for each
+    /// descriptor and worker thread of a code run's sockets, never counted
+    /// as connections (FIX 6304). None on a relay locker's or the mesh's.
+    guest_network_permits: u64,
     /// The pool's open connections now, by how each holds it.
     connections: PoolConnections,
     /// Connections the owner's reserve keeps beside the floor: one, never
@@ -357,10 +363,14 @@ impl PoolPressure {
             .sum();
         credentials.truncate(MAX_PRESSURE_CREDENTIALS);
         let connections = lock(&self.connections).clone();
-        let (parking_bound, remedy) = match self.pool {
-            PoolKind::Listener => (episode.bound, REMEDY),
-            PoolKind::RelayLocker => (0, RELAY_LOCKER_REMEDY),
-            PoolKind::Mesh => (0, MESH_REMEDY),
+        let (parking_bound, remedy, guest_network_permits) = match self.pool {
+            PoolKind::Listener => (
+                episode.bound,
+                REMEDY,
+                oneiron::code_sandbox::egress::guest_network_permits(),
+            ),
+            PoolKind::RelayLocker => (0, RELAY_LOCKER_REMEDY, 0),
+            PoolKind::Mesh => (0, MESH_REMEDY, 0),
         };
         ConnectionPoolPressure::Active {
             check: ConnectionPoolPressureCheck {
@@ -373,6 +383,7 @@ impl PoolPressure {
                 top_credentials: credentials,
                 other_credential_open_body_permits: other,
                 unattributed_open_body_permits: unattributed,
+                guest_network_permits,
                 connections,
                 reserve_bound,
                 parking_bound,

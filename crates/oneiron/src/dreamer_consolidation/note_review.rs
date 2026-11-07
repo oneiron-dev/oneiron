@@ -60,6 +60,7 @@ use crate::llm::call_as_step_checked;
 use crate::model_step_context::{DurableStepContext, StepOutcome};
 use crate::model_step_error::DurableStepError;
 use crate::registry::ENTITY_TYPE_NOTE;
+use crate::settings::ReadDestination;
 use crate::side_table::{self, Named, SideTable};
 use crate::vault::ReadMode;
 use crate::{EntityId, Result, Vault};
@@ -158,6 +159,12 @@ impl ConsolidationExecutor<'_> {
             now_ms: ctx.now_ms,
         };
         let read = super::turn_text::dreamer_read(ctx.vault)?;
+        // Listed for the destination this pass's wake was (FIX 12735): the
+        // bound its vended executors stated, else one nobody proved.
+        let destination = ctx.prepared_wake.map_or_else(
+            super::neighbourhood::listing_destination,
+            super::PreparedWake::listing_destination,
+        );
         let mut charges = StepChargeTally::default();
         loop {
             if ctx.deadline.expired() {
@@ -180,7 +187,7 @@ impl ConsolidationExecutor<'_> {
                 Ok(page) => page,
                 Err(error) => return spent_or_deferred(error, ctx, &charges),
             };
-            let notes = match readable_notes(ctx.vault, &read, &page, attempt_id) {
+            let notes = match readable_notes(ctx.vault, &read, &page, attempt_id, &destination) {
                 Ok(notes) => notes,
                 Err(error) => return spent_or_deferred(error, ctx, &charges),
             };
@@ -558,12 +565,14 @@ fn check_note_review_reply(
 /// birth facet and one project for their beliefs. Anything else is skipped,
 /// never widened. An unchanged sealed pad is read again only for the
 /// re-ask of the `keep` lines its last review missed (FIX 2240), and never
-/// by the `attempt` that wrote that review.
+/// by the `attempt` that wrote that review. Each NOTE's entities are listed
+/// for `destination` (FIX 12735).
 fn readable_notes(
     vault: &Vault,
     read: &ScopedRead<'_>,
     page: &[EntityId],
     attempt: AttemptId,
+    destination: &ReadDestination,
 ) -> Result<Vec<Note>> {
     let txn = super::turn_text::snapshot(vault)?;
     let mut notes = Vec::new();
@@ -628,18 +637,16 @@ fn readable_notes(
         // probes, through the review's own scoped read: no claims, so the
         // review's scope holds no prior head. A NOTE carries no byline. A
         // replay lists what this NOTE's pin keeps (FIX 7578).
-        // FIX 5588 S1 (Unknown-always, C3/C8): symmetric with the wake
-        // plan's listing fork; inert today (axes None lists no claims) but
-        // kept so the later FIX 12712 flip stays one value. The shared read
-        // is never narrowed.
-        let destination = super::neighbourhood::listing_destination();
-        let listing = vault.scoped_read(read.actor_key().clone().for_destination(&destination));
+        // FIX 5588 C3, FIX 12735: symmetric with the wake plan's listing
+        // fork, for the same destination (axes None lists no claims). The
+        // shared read is never narrowed.
+        let listing = vault.scoped_read(read.actor_key().clone().for_destination(destination));
         let passage = Passage {
             turns: &[(&[][..], Some(markdown.as_str()))],
             axes: None,
             bound: None,
             thing: None,
-            destination,
+            destination: destination.clone(),
         };
         let (listed, _) = discover_in(
             vault,
