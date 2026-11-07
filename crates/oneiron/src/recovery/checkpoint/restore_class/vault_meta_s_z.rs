@@ -304,6 +304,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::TASK_FANOUT_LAUNCH, LIVE),
     (&t::TASK_FANOUT_RUN, CONTENT),
     (&t::TASK_FANOUT_POLICY, CONTENT),
+    (&t::TEAM_BALLOT, CONTENT),
     (&t::TEAM_DELIVERABLE, CONTENT),
     (&t::TEAM_MARKET, CONTENT),
     (&t::TEAM_PATTERN_SKILL, CONTENT),

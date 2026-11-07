@@ -20560,6 +20560,14 @@
       "effect": "Team"
     },
     {
+      "name": "self.team.vote",
+      "input": "crate::team::TeamVoteInput",
+      "output": "crate::team::TeamRunAnswer",
+      "scope": "Write",
+      "context": "run",
+      "effect": "Team"
+    },
+    {
       "name": "self.team.submit",
       "input": "crate::code_run::TeamSubmitInput",
       "output": "crate::code_run::TeamSubmitAnswer",
