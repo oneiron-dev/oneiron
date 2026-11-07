@@ -133,6 +133,7 @@ pub(super) fn overlay_receipt(
         .map(|alias| session_short_ref_string(&alias))
         .collect();
     Ok(WitnessReceipt {
+        turn_id: plan.turn_id,
         turn_short_id,
         message_short_ids,
         receipt_ref: format!("witness:{}", plan.turn_id.to_hex()),
