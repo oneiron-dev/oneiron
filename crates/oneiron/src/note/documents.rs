@@ -222,10 +222,10 @@ impl NoteDocument {
                 let canonical =
                     super::document::NoteDocument::from_loro(self.note, self.doc.fork())?;
                 let candidate = canonical.fork_at(&base)?;
-                let original = candidate.doc.get_text(TEXT).to_string();
-                if candidate
-                    .doc
-                    .get_text(TEXT)
+                let before = candidate.doc.oplog_frontiers();
+                let body = candidate.doc.get_text(TEXT);
+                let original = body.to_string();
+                if body
                     .update(
                         text,
                         UpdateOptions {
@@ -237,7 +237,12 @@ impl NoteDocument {
                 {
                     return Ok(None);
                 }
-                text_change(&original, text)
+                // The refined update already chose the smallest op set: admit
+                // its own hunks, so unchanged text between separate edits keeps
+                // its operation identities and anchors (FIX 7785).
+                let edits = refined_hunks(&candidate.doc, &before, &original, text)
+                    .unwrap_or_else(|| vec![text_change(&original, text)]);
+                return Ok(Some((base, edits)));
             }
             NoteProgramEdit::Rewrite { .. } => return Ok(None),
         };
@@ -586,6 +591,75 @@ fn measure_retained(vault: &Vault, txn: &heed::RoTxn<'_>, note: EntityId, doc: &
     ) {
         tracing::warn!(kind = ?error.kind(), "retained NOTE head was not measured");
     }
+}
+
+/// The refined update's own hunks against `original`, highest start first:
+/// a hunk never moves the text before it, so the ordered batch applies each
+/// at its base position. Unchanged text between hunks keeps its CRDT
+/// identities and anchors (FIX 7785). `None` when the scratch history does
+/// not replay to exactly `text`; the caller keeps the conservative span.
+fn refined_hunks(
+    doc: &LoroDoc,
+    before: &Frontiers,
+    original: &str,
+    text: &str,
+) -> Option<Vec<super::NoteScalarEdit>> {
+    doc.commit();
+    let after = doc.oplog_frontiers();
+    let diff = doc.diff(before, &after).ok()?;
+    let body = loro::ContainerID::new_root(TEXT, loro::ContainerType::Text);
+    let mut hunks = Vec::new();
+    let mut open: Option<super::NoteScalarEdit> = None;
+    let mut at = 0_usize;
+    for (container, change) in diff.iter() {
+        let loro::event::Diff::Text(deltas) = change else {
+            return None;
+        };
+        if *container != body {
+            return None;
+        }
+        for delta in deltas {
+            match delta {
+                loro::TextDelta::Retain { retain, .. } => {
+                    if *retain > 0 {
+                        hunks.extend(open.take());
+                        at = at.checked_add(*retain)?;
+                    }
+                }
+                loro::TextDelta::Insert { insert, .. } => {
+                    open.get_or_insert_with(|| super::NoteScalarEdit {
+                        start: at,
+                        delete: 0,
+                        insert: String::new(),
+                    })
+                    .insert
+                    .push_str(insert);
+                }
+                loro::TextDelta::Delete { delete } => {
+                    let hunk = open.get_or_insert_with(|| super::NoteScalarEdit {
+                        start: at,
+                        delete: 0,
+                        insert: String::new(),
+                    });
+                    hunk.delete = hunk.delete.checked_add(*delete)?;
+                    at = at.checked_add(*delete)?;
+                }
+            }
+        }
+    }
+    hunks.extend(open);
+    hunks.reverse();
+    let mut replayed: Vec<char> = original.chars().collect();
+    for hunk in &hunks {
+        let end = hunk.start.checked_add(hunk.delete)?;
+        if end > replayed.len() {
+            return None;
+        }
+        replayed
+            .splice(hunk.start..end, hunk.insert.chars())
+            .for_each(drop);
+    }
+    (!hunks.is_empty() && replayed.into_iter().eq(text.chars())).then_some(hunks)
 }
 
 /// Conservative Unicode diff. A wide changed span is reviewed if it crosses
