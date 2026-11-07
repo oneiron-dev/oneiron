@@ -557,6 +557,8 @@ impl Vault {
         seed_mode: DefaultPolicySeedMode,
     ) -> Result<Self> {
         crate::batch::sweep_scope_stamps(&store)?;
+        // FIX 12327: rows of a kind no executor serves leave the queue.
+        crate::attempt_queue::drop_unserved_kinds(&store)?;
         let seed_content = matches!(seed_mode, DefaultPolicySeedMode::Required)
             && !crate::store::shared_leave_receipt::has_left(&store)?;
         // ONE-1890: the seeded system-agent roster reconciles on every seeded
