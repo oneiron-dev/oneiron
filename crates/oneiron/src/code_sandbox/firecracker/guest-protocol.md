@@ -80,6 +80,8 @@ then that many UTF-8 bytes (maximum 8 MiB). Unknown fields are refused.
      chunk. Open and close each receive one receipt too.
    - `delete` (path). Deletes a file that exists in the seeded base tree.
    - `rename` (from, to). Moves a seeded base file to a distinct workspace path.
+   - `step_error` (message). The program's own error, in place of
+     `step_result` (FIX 9209). Only a nonzero `finish` may follow it.
    - `finish` (status). Nonzero discards every proposal. Success seals deltas
      and kills/reaps the VM before exposing them to the adapter.
 
@@ -197,3 +199,31 @@ poisons its step after either failure or a transport error. Output does not alte
 `step_result`, the terminal status, workspace proposals, or the shared protocol
 version. Release the matching guest executable, rootfs/container agent, and engine
 together: an older guest still drops its output imports before sending any frame.
+
+## Step error (FIX 9209)
+
+When the component's `run-step` returns `Err(String)`, the guest sends
+`step_error { message }` with that exact string, its
+`oneiron-guest-error/1 L:C` header included, then its nonzero `finish`. In
+the Firecracker guest the dropped-privilege child sends the error and PID 1
+still sends `finish`. The guest never sends stderr, a Wasmtime trap, an OS or
+credential error, or host text: a run whose host transport failed sends no
+error. A message the 8 MiB frame bound cannot hold is not sent.
+
+`step_error` spends one logical request, as `step_result` does. The host
+drops the open proposal spool and every pending proposal, then accepts only a
+nonzero `finish`. A second error, an error after `step_result`, any other
+frame after the error, or a zero `finish` refuses the run. The exchange
+returns a failed `MicroVmExit` with `guest_error` set and no result, delta or
+dirty overlay. Neither backend makes it collectable. A nonzero `finish`
+without an error keeps the fixed refusal. Cancellation, the deadline, the
+proposal disk floor and abandonment keep their precedence. Output the
+caller's sink already admitted stays with the caller.
+
+Each caller masks the text on the host before it leaves: known values first
+(the run's or the vault's), then the release shape sanitizer, then the
+existing 2048-character cut, then the TypeScript position from the caller's
+own preparation. A pack script's position first moves past its grants
+prelude. This changes the closed wire: the guest executable, rootfs and
+container agent must be rebuilt with the engine, and the shared protocol
+revision is the image release's call.
