@@ -13,9 +13,17 @@
 //! the fold receipt its live card carried. What the read context cannot
 //! establish stops the arm; it is never answered as `unknown_handle`, and no
 //! read it cannot establish is admitted.
+//!
+//! A read of a result frozen from the step's source, the arm's run's or
+//! another run's, reads under the taint its source occurrence reads under
+//! now, at its worst with the frozen one (FIX 9468): one that went tainted
+//! after the freeze is withheld, as a run's read of it is. A result the arm
+//! stored reads under the mark it was written with and the taint it
+//! inherited.
 
 use serde_json::{Value, json};
 
+use super::super::release::live_taint;
 use super::super::types::{ShadowBodyRef, ShadowUnavailable, ShadowUnavailableReason as Reason};
 use super::taint::{exported_mark, stored_taint};
 use super::{ArmResult, ShadowBridgeHost, Taint};
@@ -109,7 +117,7 @@ impl ShadowBridgeHost<'_> {
         let outputs = self.results.iter().map(|result| &result.output);
         if let Some((output, name)) = resolve_result(self.run_id, outputs, &live, &target.reference)
         {
-            let taint = self.taint_of(&output);
+            let taint = self.taint_of(&output)?;
             let read = ResultRead::in_arm(
                 self.run_id,
                 output,
@@ -152,7 +160,8 @@ impl ShadowBridgeHost<'_> {
             .within
             .is_some_and(|range| range == (0, output.raw_len));
         let range = target.range.or(found.within.filter(|_| !whole));
-        let taint = (found.body.state, found.body.secret.clone());
+        let frozen = (found.body.state, found.body.secret.clone());
+        let taint = live_taint(self.store, found.owner, &output, frozen)?;
         let foreign = found.owner != self.run_id;
         let read = ResultRead::in_arm(
             found.owner,
@@ -175,14 +184,33 @@ impl ShadowBridgeHost<'_> {
             })
     }
 
-    /// The taint the arm holds `output` under.
-    fn taint_of(&self, output: &CodeRunRawOutput) -> Taint {
+    /// The taint the arm reads `output` under: see [`Self::held_taint`].
+    fn taint_of(&self, output: &CodeRunRawOutput) -> Result<Taint> {
         self.results
             .iter()
             .find(|held| held.output.path == output.path && held.output.handle == output.handle)
-            .map_or((ArtifactTaintState::Clean, None), |held| {
-                (held.state, held.secret.clone())
+            .map_or(Ok((ArtifactTaintState::Clean, None)), |held| {
+                self.held_taint(held)
             })
+    }
+
+    /// The taint the arm reads `held` under (FIX 9468): a result the arm
+    /// stored, as it was written; one frozen from the run, at its worst with
+    /// the taint the run's occurrence of it reads under now.
+    fn held_taint(&self, held: &ArmResult) -> Result<Taint> {
+        let taint = (held.state, held.secret.clone());
+        if held.own {
+            return Ok(taint);
+        }
+        live_taint(self.store, self.run_id, &held.output, taint)
+    }
+
+    /// Whether the run's occurrence of `output`, frozen clean for the arm,
+    /// still reads clean now (FIX 9468).
+    pub(super) fn source_clean(&self, output: &CodeRunRawOutput) -> Result<bool> {
+        let frozen = (ArtifactTaintState::Clean, None);
+        let (state, _) = live_taint(self.store, self.run_id, output, frozen)?;
+        Ok(!state.is_tainted())
     }
 
     /// Finishes the body `sink` wrote as a stored value of the arm, named by
@@ -355,7 +383,8 @@ impl ShadowBridgeHost<'_> {
     }
 
     /// One chunk of a body at `offset`, while the arm holds it clean; a
-    /// body frozen withheld stops the arm, since its live read read it.
+    /// body frozen withheld, or one that reads tainted now (FIX 9468), stops
+    /// the arm, since its live read read it.
     pub(super) fn read_chunk(
         &mut self,
         output: &CodeRunRawOutput,
@@ -386,25 +415,23 @@ impl ShadowBridgeHost<'_> {
                 "stored result is outside this run".to_owned(),
             ));
         };
-        let found = self.results.iter().find_map(|held| {
+        let found = self.results.iter().find(|held| {
             if held.output.output_ref() != wanted {
-                return None;
+                return false;
             }
-            if let Some(occurrence) = &occurrence {
-                let mine = ResultOccurrence::of(Some(self.run_id), &held.output)
-                    .ok()?
-                    .id();
-                if &mine != occurrence {
-                    return None;
-                }
-            }
-            Some((held.output.clone(), !held.state.is_tainted()))
+            let Some(occurrence) = &occurrence else {
+                return true;
+            };
+            ResultOccurrence::of(Some(self.run_id), &held.output)
+                .is_ok_and(|mine| mine.id() == *occurrence)
         });
-        let Some((output, clean)) = found else {
+        let Some(held) = found else {
             return Err(Error::InvalidConfig(
                 "stored result is outside this run".to_owned(),
             ));
         };
+        let clean = !self.held_taint(held)?.0.is_tainted();
+        let output = held.output.clone();
         self.read_chunk(&output, clean, offset)
     }
 }

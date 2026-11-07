@@ -248,15 +248,18 @@ impl GitWire<'_> {
 
     /// Pushes exactly `commit` from `fetched` to `name` at the loopback door
     /// relay `door_url`, only while the door's ref holds `expected` (`None`:
-    /// while it does not exist). No `+`, wildcard, deletion, tag or mirror;
-    /// run once, never retried here.
+    /// while it does not exist), each request carrying the relay's `ticket`
+    /// in the child's environment only (FIX 19233). No `+`, wildcard,
+    /// deletion, tag or mirror; run once, never retried here.
     ///
     /// # Errors
-    /// A door URL that is not the loopback relay, or a process failure.
+    /// A door URL that is not the loopback relay, a malformed ticket, or a
+    /// process failure.
     pub fn push_external_to_door(
         &self,
         fetched: &FetchedExternalGit,
         door_url: &str,
+        ticket: &str,
         name: &GitRefName,
         commit: &GitOid,
         expected: Option<&GitOid>,
@@ -266,7 +269,7 @@ impl GitWire<'_> {
         }
         let root = fetched.scratch.path().canonicalize()?;
         let mut env = self.process_env.clone();
-        env.import_profile = Some(ImportProcessProfile::relay(&root, door_url)?);
+        env.import_profile = Some(ImportProcessProfile::relay(&root, door_url, ticket)?);
         let mut tail = os_args(&[
             "push",
             "--porcelain",
