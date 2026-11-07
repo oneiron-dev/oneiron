@@ -29,7 +29,9 @@
 //! An executor step's capsule also holds the run's state before the step
 //! (FIX 3694): its replay row as stored, with the config and teaching it ran
 //! under, in a body the run owns. A continuation of a failed run forks from
-//! the start of its failing step.
+//! the start of its failing step. The start also holds the run's epochs and
+//! fold ledger as they stood then, which the continuation inherits (FIX
+//! 4198).
 //!
 //! Each body a capsule names is written as the side-row wall admits it, each
 //! secret in it its custody handle, and the capsule names the actor whose
@@ -58,7 +60,8 @@ use serde::{Deserialize, Serialize};
 
 use super::replay::CodeRunReplayRecord;
 use super::storage::{
-    bind_capsule_answer, finalize_capsule, put_staged_capsule, refresh_staged_request,
+    StartCompaction, bind_capsule_answer, finalize_capsule, put_staged_capsule,
+    refresh_staged_request,
 };
 use crate::attempt_queue::AttemptId;
 use crate::compaction::output::OutputRef;
@@ -92,6 +95,10 @@ pub(crate) struct StepStartBody {
     pub(crate) soft_steps: u32,
     /// The resolved teaching the run's provider work was produced under.
     pub(crate) prompt_fingerprint: String,
+    /// The run's epochs and fold ledger as they stood at this start, inside
+    /// its prefix (FIX 4198): what a continuation from it inherits. It holds
+    /// no epoch's digest and no fold's words (FIX 928, FIX 18694).
+    pub(crate) compaction: StartCompaction,
 }
 
 /// One step a capture site is about to send.

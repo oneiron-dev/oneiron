@@ -28,6 +28,7 @@ use super::super::super::replay_capsule::{
     CapsuleContent, CapsuleDraft, CapsuleRequest, ExecutorStepStart, ExposureSlot, StepCapture,
     StepReplayCapsule, StepStartBody, StepStartCapture, StoredSpan,
 };
+use super::super::StartCompaction;
 use super::super::records::{REPLAY_RECORDS, finish_output};
 use super::super::spawn_erase::fence_spawn_targets_in_txn;
 use super::erase::actor_gone_in_txn;
@@ -417,8 +418,10 @@ fn admit_start_in_txn(
 /// The start body from one admitted view of the run's row: the row as
 /// stored, read as the wall would store it now and kept so where that
 /// differs, and the prefix the body carries taken from that same view, so
-/// the run's row still descends from it byte for byte. The body goes through
-/// the wall too, and the prefix it carries must come back as it went in.
+/// the run's row still descends from it byte for byte. The body also holds
+/// the run's epochs and fold ledger from this same writer, inside that
+/// prefix (FIX 4198). The body goes through the wall too, and the prefix it
+/// carries must come back as it went in.
 fn admitted_start(
     vault: &Vault,
     wtxn: &mut RwTxn<'_>,
@@ -456,6 +459,9 @@ fn admitted_start(
         global_tier: start.global_tier.clone(),
         soft_steps: start.soft_steps,
         prompt_fingerprint: start.prompt_fingerprint.to_owned(),
+        // FIX 4198: the run's compaction at this cut, read in this writer.
+        // It holds no epoch's digest and no fold's words (FIX 18694).
+        compaction: StartCompaction::captured_in_txn(&vault.store, wtxn, &prefix)?,
     };
     let mut parts = [SidePart::Body(encode_start(&body)?)];
     admit_side_parts(vault, wtxn, (START_PLACE, key), &mut parts, reads_start)?;
