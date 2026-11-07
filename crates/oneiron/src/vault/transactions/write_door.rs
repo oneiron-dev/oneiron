@@ -106,6 +106,7 @@ impl Vault {
             result,
             approved_vad_ids,
             proactivity_changed,
+            verb_hook_ask_changed,
             consent_answered,
             decision_answers,
             (
@@ -177,6 +178,7 @@ impl Vault {
                     result,
                     approved,
                     postcommit.proactivity_changed,
+                    postcommit.verb_hook_ask_changed,
                     postcommit.consent_answered,
                     postcommit.decision_answers,
                     (
@@ -209,6 +211,9 @@ impl Vault {
         }
         if proactivity_changed {
             self.store.notify_proactivity_changes();
+        }
+        if verb_hook_ask_changed {
+            self.notify_verb_hook_ask_changes();
         }
         self.store.notify_task_updates(task_ids);
         // A pad seal can leave its text frontier unchanged. Wake live NOTE

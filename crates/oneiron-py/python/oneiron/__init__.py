@@ -25,7 +25,7 @@ import os
 from typing import TYPE_CHECKING, Any, Callable, TypeVar
 
 if TYPE_CHECKING:
-    from .facade_types import LegalHoldNotice
+    from .facade_types import LegalHoldNotice, RoomJoinHold
 
 from ._native import NativeClient as _NativeClient
 
@@ -60,6 +60,7 @@ class OneironError(RuntimeError):
         resets_at: list[int] | None = None,
         reason_codes: list[str] | None = None,
         legal_hold: LegalHoldNotice | None = None,
+        room_join_hold: RoomJoinHold | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -75,6 +76,7 @@ class OneironError(RuntimeError):
         # The refusal's stable reason codes, as its producer named them (FIX 7398).
         self.reason_codes = tuple(reason_codes) if reason_codes is not None else None
         self.legal_hold = legal_hold
+        self.room_join_hold = room_join_hold
 
 
 def _typed_error(payload: object, fallback: str) -> OneironError:
@@ -116,6 +118,8 @@ def _typed_error(payload: object, fallback: str) -> OneironError:
         )
         legal_hold = payload.get("legal_hold")
         legal_hold = legal_hold if isinstance(legal_hold, dict) else None
+        room_join_hold = payload.get("room_join_hold")
+        room_join_hold = room_join_hold if isinstance(room_join_hold, dict) else None
         return OneironError(
             payload["code"],
             payload["message"],
@@ -126,6 +130,7 @@ def _typed_error(payload: object, fallback: str) -> OneironError:
             resets_at,
             reason_codes,
             legal_hold,
+            room_join_hold,
         )
     return OneironError(
         "INTERNAL_SERVER_ERROR",
@@ -971,6 +976,9 @@ class Oneiron:
         def get(self, spec):
             """Reads a commitment with its schedule, birth provenance, separate occurrence and learning times, and lifecycle receipt."""
             return json.loads(_translate(lambda: self._client.vault_commitments_get(json.dumps(spec))))
+        def ledger(self, spec):
+            """Reads due-sorted open obligations owed by and to one counterparty contact, with their current commitment views."""
+            return json.loads(_translate(lambda: self._client.vault_commitments_ledger(json.dumps(spec))))
         def instances(self, spec):
             """Lists the materialized occurrences of a commitment series, including closed obligations."""
             return json.loads(_translate(lambda: self._client.vault_commitments_instances(json.dumps(spec))))
@@ -5212,6 +5220,10 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_questions_edit(json.dumps(spec))))
         def pause(self, spec):
             return json.loads(_translate(lambda: self._client.vault_questions_pause(json.dumps(spec))))
+        def prepare(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_questions_prepare(json.dumps(spec))))
+        def admit(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_questions_admit(json.dumps(spec))))
         def backfill(self, spec):
             return json.loads(_translate(lambda: self._client.vault_questions_backfill(json.dumps(spec))))
         def read(self, spec):
@@ -6634,6 +6646,9 @@ class Oneiron:
         def terminal(self, spec):
             """Read the one durable terminal of the caller's model stream by key (its ordered ContentParts, usage and finish reason, or its recorded failure) after any restart, without calling a model."""
             return json.loads(_translate(lambda: self._client.ai_streams_terminal(json.dumps(spec))))
+        def release(self, spec):
+            """Explicitly discard this credential's model-stream replay and revoke its handles; the producer and durable terminal stay. Later subscribers get only future events; never-released replay stays unchanged."""
+            return json.loads(_translate(lambda: self._client.ai_streams_release(json.dumps(spec))))
     class _AiVoiceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -6644,13 +6659,13 @@ class Oneiron:
             """Opens an owner-bound live media session on the configured voice routes, using the caller credential, room audience and existing budget gates."""
             return json.loads(_translate(lambda: self._client.ai_voice_start(json.dumps(spec))))
         def audio(self, spec):
-            """Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech retires old output through the shared cancellation path."""
+            """Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech, or words that are not a backchannel, retire old output through the shared cancellation path, and a backchannel starts no reply."""
             return json.loads(_translate(lambda: self._client.ai_voice_audio(json.dumps(spec))))
         def events(self, spec):
-            """Reads ordered utterance and epoch events, PCM, flushes, playout stops, safeguard receipts and notices; advancing the cursor releases consumed events."""
+            """Reads ordered utterance and epoch events, PCM, flushes, playout stops, safeguard receipts, notices and heard-playback records; advancing the cursor releases consumed events."""
             return json.loads(_translate(lambda: self._client.ai_voice_events(json.dumps(spec))))
         def ack(self, spec):
-            """Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed."""
+            """Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed, with the samples it played, which the epoch's heard-playback record rests on."""
             return json.loads(_translate(lambda: self._client.ai_voice_ack(json.dumps(spec))))
         def usage(self, spec):
             """Observes actual voice-brain run settlements and a terminal boundary after producer teardown, epoch retirement, TTS cancel and client playout acknowledgment."""
