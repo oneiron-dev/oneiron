@@ -11,6 +11,8 @@ mod egress;
 #[cfg(target_os = "linux")]
 mod launch;
 #[cfg(target_os = "linux")]
+mod oci_mounts;
+#[cfg(target_os = "linux")]
 mod oci_session;
 #[cfg(target_os = "linux")]
 mod protocol;
@@ -213,6 +215,12 @@ impl FirecrackerBackend {
             .get_mut(vm.id())
             .ok_or_else(|| refused("VM state disappeared"))?;
         match result {
+            // A failed guest keeps its program error and leaves no delta to
+            // collect (FIX 9209).
+            Ok((exit, _)) if exit.status != 0 => {
+                state.phase = Phase::Failed;
+                Ok(exit)
+            }
             Ok((exit, proposals)) => {
                 #[cfg(target_os = "linux")]
                 {

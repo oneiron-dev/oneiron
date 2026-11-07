@@ -174,6 +174,8 @@ getters! {
     EmbedMedia = 17 => crate::embed::checkpoint;
     /// Workflow leaves' retained tool transcripts and settled meters.
     WorkflowTool = 18 => crate::agent_dispatch::workflow_tool_checkpoint;
+    /// Source-audience bindings, carried policy sets and holds, by row.
+    SourceAudience = 19 => crate::source_audience::checkpoint;
 }
 
 /// The mixed sync carriers KS7-3's port splits, with the tag a bundle's

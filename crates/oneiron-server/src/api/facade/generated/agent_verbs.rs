@@ -4,6 +4,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/vault.commitments.create", post(facade_route))
         .route("/vault.commitments.get", post(facade_route))
+        .route("/vault.commitments.ledger", post(facade_route))
         .route("/vault.commitments.instances", post(facade_route))
         .route("/vault.commitments.proposals", post(facade_route))
         .route("/vault.commitments.fulfill", post(facade_route))
@@ -257,6 +258,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.packs.get", post(facade_route))
         .route("/vault.skills.import", post(facade_route))
         .route("/vault.skills.sync", post(facade_route))
+        .route("/vault.skills.proposal.settle", post(facade_route))
         .route("/vault.skills.receipts", post(facade_route))
         .route("/vault.skills.convert", post(facade_route))
         .route("/vault.skills.get", post(facade_route))
@@ -551,6 +553,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             post(facade_route),
         )
         .route("/vault.coach.training_offers.sources", post(facade_route))
+        .route("/vault.coach.training_runs.cancel", post(facade_route))
         .route("/vault.drafters.list", post(facade_route))
         .route("/vault.drafters.list_as", post(facade_route))
         .route("/vault.drafters.status", post(facade_route))
@@ -718,6 +721,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/host.compact", post(facade_route))
         .route("/host.wake", post(facade_route))
         .route("/host.budget.hit", post(facade_route))
+        .route("/vault.hooks.checks", post(facade_route))
         .route("/vault.hooks.replay", post(facade_route))
         .route("/vault.hooks.regen.due", post(facade_route))
         .route("/vault.hooks.regen.get", post(facade_route))
@@ -776,6 +780,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.code.oplog", post(facade_route))
         .route("/execute_code", post(facade_route))
         .route("/vault.code.model_heal_count", post(facade_route))
+        .route("/vault.code.corrections", post(facade_route))
         .route("/vault.code.type_diagnostics", post(facade_route))
         .route("/vault.code.waits.resolve", post(facade_route))
         .route("/vault.code.waits.receipt", post(facade_route))
@@ -931,6 +936,9 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/ask", post(facade_route))
         .route("/wait", post(facade_route))
         .route("/tasks.answer", post(facade_route))
+        .route("/tasks.answer.forward.challenge", post(facade_route))
+        .route("/tasks.answer.forward", post(facade_route))
+        .route("/tasks.answer.forward.status", post(facade_route))
         .route("/tasks.outcomes", post(facade_route))
         .route("/vault.rooms.list", post(facade_route))
         .route("/vault.rooms.messages", post(facade_route))
@@ -1023,6 +1031,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/ai.streams.detach", post(facade_route))
         .route("/ai.streams.abort", post(facade_route))
         .route("/ai.streams.terminal", post(facade_route))
+        .route("/ai.streams.release", post(facade_route))
         .route("/ai.reply", post(facade_route))
         .route("/vault.receipts.context", post(facade_route))
         .route("/vault.receipts.craft_reply_manifest", post(facade_route))
@@ -1074,6 +1083,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.questions.create", post(facade_route))
         .route("/vault.questions.edit", post(facade_route))
         .route("/vault.questions.pause", post(facade_route))
+        .route("/vault.questions.prepare", post(facade_route))
+        .route("/vault.questions.admit", post(facade_route))
         .route("/vault.questions.backfill", post(facade_route))
         .route("/vault.questions.read", post(facade_route))
         .route("/vault.questions.outcome_windows", post(facade_route))
@@ -1353,6 +1364,15 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.mail.inbox", post(facade_route))
         .route("/vault.mail.threads.read", post(facade_route))
         .route("/vault.mail.compliance.search", post(facade_route))
+        .route("/vault.files.sources.convert", post(facade_route))
+        .route(
+            "/vault.sync.repo_manifests.conflict.review",
+            post(facade_route),
+        )
+        .route(
+            "/vault.sync.repo_manifests.conflict.discard",
+            post(facade_route),
+        )
         .route("/connector.answer", post(facade_route))
         .route("/self.browser.open", post(facade_route))
         .route("/self.browser.observe", post(facade_route))
