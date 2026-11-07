@@ -582,7 +582,8 @@ impl Reader<'_> {
         let offset = self.buffer.windows(5).position(|w| w == b"%PDF-").unwrap_or(0);
         self.buffer = &self.buffer[offset..];
 
-        let version = parser::header(self.buffer, self.strict).ok_or(ParseError::InvalidFileHeader)?;
+        let version = parser::header(self.buffer, self.strict, self.decode_admission.as_deref())?
+            .ok_or(ParseError::InvalidFileHeader)?;
 
         let xref_start = Self::get_xref_start(self.buffer)?;
         if xref_start > self.buffer.len() {
@@ -810,12 +811,14 @@ impl Reader<'_> {
 
         // The document structure can be expressed in PEG as:
         //   document <- header indirect_object* xref trailer xref_start
-        let version = parser::header(self.buffer, self.strict).ok_or(ParseError::InvalidFileHeader)?;
+        let version = parser::header(self.buffer, self.strict, self.decode_admission.as_deref())?
+            .ok_or(ParseError::InvalidFileHeader)?;
 
         //The binary_mark is in line 2 after the pdf version. If at other line number, then will be declared as invalid
         // pdf.
         if let Some(pos) = self.buffer.iter().position(|&byte| byte == b'\n')
-            && let Some(binary_mark) = parser::binary_mark(&self.buffer[pos + 1..])
+            && let Some(binary_mark) =
+                parser::binary_mark(&self.buffer[pos + 1..], self.decode_admission.as_deref())?
             && binary_mark.iter().all(|&byte| byte >= 128)
         {
             self.document.binary_mark = binary_mark;
