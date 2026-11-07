@@ -9833,7 +9833,7 @@
      "purpose": "Booking quarantine claims and the admission of quarantined submissions",
      "surface": {
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -28603,6 +28603,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/settle/preference_pair.rs",
+     "purpose": "OF-023 (FIX 3079): the Memory door's observed-versus-stated preference markers, which stop asking once their…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -36345,6 +36355,16 @@
      "purpose": "A document's text index when the repo blob its row stands for is masked again (FIX 7608 slice 3): the…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/entity_doc/succession.rs",
+     "purpose": "A canonical restore's succession proof (FIX 3553, FIX 3464; Engine 11-06 20:16, option A)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -50009,6 +50029,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/memory/read_lane/hydrate_filtered.rs",
+     "purpose": "Hydration with an additional reader-bound row filter before projection",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "RecallWorlds"
      ],
@@ -50571,7 +50601,7 @@
      "purpose": "A room turn (ARCH-0067 §8): one actor's reads inside one room's Scope",
      "surface": {
       "crate-vis": 4,
-      "fn": 15,
+      "fn": 16,
       "struct": 1
      }
     },
@@ -59967,7 +59997,7 @@
      "path": "src/ports/mod.rs",
      "purpose": "Transaction-composable storage ports",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "re-export": 9
      }
     },
@@ -60138,9 +60168,19 @@
      "path": "src/ports/time.rs",
      "purpose": "Per-store clock and id source",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 3,
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ports/time/recording_plan.rs",
+     "purpose": "The native recording-clock row program and its caller-owned projection",
+     "surface": {
+      "crate-vis": 12
      }
     },
     {
@@ -64430,7 +64470,7 @@
      "purpose": "What a hook's current grant shows of one stored row (ARCH-0080 §6): the one check its scoped reads, its…",
      "surface": {
       "crate-vis": 1,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -72529,6 +72569,7 @@
      "kind": "src",
      "notable": [
       "CanonicalDocumentFork",
+      "CanonicalDocumentOrigin",
       "CanonicalDocumentPin",
       "CanonicalDocumentPurge",
       "CanonicalDocumentReceipt",
@@ -72544,7 +72585,7 @@
       "crate-vis": 5,
       "enum": 2,
       "fn": 2,
-      "struct": 7
+      "struct": 8
      }
     },
     {
@@ -84860,7 +84901,7 @@
      "path": "src/vault_cleanup/attempt_retention.rs",
      "purpose": "Reversible retention for private queue records; the serialized attempt is never changed",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 3
      }
     },
@@ -92436,7 +92477,7 @@
      "purpose": "FIX 12569: each vault's own small draft model (I5-DRAFTER = A), retrained at night on the vault's own…"
     },
     "dreamer_consolidation": {
-     "files": 160,
+     "files": 161,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92534,7 +92575,7 @@
      "purpose": "The engine's implementation of the store layer's hooks: each method forwards to the engine function of the…"
     },
     "entity_doc": {
-     "files": 41,
+     "files": 42,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92821,7 +92862,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 373,
+     "files": 374,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92968,7 +93009,7 @@
      "purpose": "The app's policy actions as host verbs (OF-181)"
     },
     "ports": {
-     "files": 50,
+     "files": 51,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -93537,7 +93578,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6601,
+   "source_files": 6605,
    "test_files": 895
   },
   "oneiron-android": {
@@ -95070,8 +95111,8 @@
      "path": "src/request_limits.rs",
      "purpose": "Request boundary limits and pure validators",
      "surface": {
-      "const": 13,
-      "fn": 12
+      "const": 11,
+      "fn": 11
      }
     },
     {
@@ -108148,9 +108189,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/facade/boundary.rs",
-     "purpose": "JS-boundary guards: error constructors, timestamp/number narrowing, blob ceiling",
+     "purpose": "JS-boundary guards: error constructors, timestamp/number narrowing, blob decoding",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 8
      }
     },
     {
@@ -113656,7 +113697,7 @@
      "path": "src/api/booking/transport.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -113706,7 +113747,7 @@
      "path": "src/api/booking_anti_abuse/guards.rs",
      "purpose": "Slot-list/hold/book/amend anti-abuse enforcement guards",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -122084,7 +122125,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DreamerWording"
@@ -122093,7 +122134,7 @@
      "purpose": "`[models.dreamer.wording]`: the host's wording of what the engine asks a model in its own words today (FIX…",
      "surface": {
       "crate-vis": 2,
-      "fn": 12,
+      "fn": 13,
       "struct": 1
      }
     },
@@ -122986,7 +123027,7 @@
      "path": "src/decision_verdict/hook.rs",
      "purpose": "`ai.verdict` for a generative fact hook (FIX 10068, 10075): the same ladder and the same clock as any…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -125537,6 +125578,16 @@
      "purpose": "The relay delete ctl requests a managed vault answers (FIX 6826): `relay_delete_execute`…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/state_serve/usage_export.rs",
+     "purpose": "Generic original-usage export over ctl (LC191311): read-only managed handler",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -129404,6 +129455,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/server/booking_calls.rs",
+     "purpose": "Authenticated booking calls, counted per actor in the current minute (FIX 128-131)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/server/browser_seats.rs",
      "purpose": "The run browsers live on this host (CUA-001), each in its run's seat as the run desktops do…",
      "surface": {
@@ -130301,6 +130362,16 @@
       "crate-vis": 4,
       "enum": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/usage/export.rs",
+     "purpose": "Generic original-usage export over ctl (LC191311): one stored event's original JSON in framed chunks",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -131619,7 +131690,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 108,
+     "files": 109,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -131724,7 +131795,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 82,
+     "files": 83,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -131759,7 +131830,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "usage": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -131810,7 +131881,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1677,
+   "source_files": 1680,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -147882,7 +147953,7 @@
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
       "mod": 22,
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -148163,6 +148234,21 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "UsageExportChunk",
+      "UsageExportCursor",
+      "UsageExportPage"
+     ],
+     "path": "src/lib/usage_export.rs",
+     "purpose": "Generic original-usage export over ctl (LC191311): one stored event's original JSON in framed chunks",
+     "surface": {
+      "enum": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "VaultUidRow",
       "VaultUidsError"
      ],
@@ -148352,7 +148438,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 57,
+     "files": 58,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -148361,7 +148447,7 @@
    },
    "over_bar": 1,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 56,
+   "source_files": 57,
    "test_files": 1
   },
   "oneiron-web-fetch": {
