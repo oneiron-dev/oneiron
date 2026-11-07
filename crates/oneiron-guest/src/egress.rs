@@ -46,11 +46,9 @@ impl EgressRelay for VsockRelay {
         })
         .map(|(_, r)| r.bytes)
     }
-    fn fetch(&self, _: HttpRequest) -> io::Result<HttpResponse> {
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "browser HTTP uses the host CDP proxy",
-        ))
+    fn fetch(&self, request: HttpRequest) -> io::Result<HttpResponse> {
+        let (_, reply) = self.request(&RelayRequest::Fetch { request })?;
+        serde_json::from_slice(&reply.bytes).map_err(io::Error::other)
     }
     fn record_session(&self, _: &oneiron_container::SessionManifest) -> io::Result<()> {
         Ok(())

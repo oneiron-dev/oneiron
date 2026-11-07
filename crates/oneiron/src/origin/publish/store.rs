@@ -17,6 +17,7 @@ use super::types::{
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::llm::BrokerIsolation;
 use crate::side_table::{self, Named, SideTable};
 
 /// The domain of a request id an idempotency key fixes.
@@ -209,9 +210,26 @@ impl Vault {
         to: OriginPublishState,
         refusal: Option<OriginPublishRefusal>,
     ) -> Result<OriginPublishRequestView> {
+        self.settle_publish_with_isolation(view, from, to, refusal, None)
+    }
+
+    /// [`Self::settle_publish`], recording on the moved row how the
+    /// credential broker its push went through is kept apart from the
+    /// daemon, when one carried it (FIX 19083), in the same write.
+    pub(super) fn settle_publish_with_isolation(
+        &self,
+        view: &OriginPublishRequestView,
+        from: &[OriginPublishState],
+        to: OriginPublishState,
+        refusal: Option<OriginPublishRefusal>,
+        broker_isolation: Option<BrokerIsolation>,
+    ) -> Result<OriginPublishRequestView> {
         let mut txn = self.store.env.write_txn()?;
         let (settled, moved) = self.transition_publish_in_txn(&mut txn, view, from, to, |row| {
             row.refusal = refusal;
+            if broker_isolation.is_some() {
+                row.broker_isolation = broker_isolation;
+            }
         })?;
         txn.commit()?;
         if moved && settled.state.is_terminal() {
