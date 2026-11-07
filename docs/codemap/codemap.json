@@ -41942,7 +41942,7 @@
      "path": "src/git_wire/hub_read.rs",
      "purpose": "Core half of `git_wire::hub_read`: its store-layer items live in `oneiron_store::git_wire::hub_read` and are…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -70499,7 +70499,7 @@
      "path": "src/skill_hub/git_fetch.rs",
      "purpose": "Generic pinned Git subtree reads",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 3,
       "struct": 1
      }
@@ -70511,7 +70511,7 @@
      "path": "src/skill_hub/git_process.rs",
      "purpose": "Private disposable object store; all Git processes use the GitWire boundary",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -70618,13 +70618,27 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "LocalDirEndpointSkillHubAdapter"
+     ],
+     "path": "src/skill_hub/local_dir.rs",
+     "purpose": "A local folder hub (FIX 21922): a Git object database in a directory on the engine host, read at one pinned…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/skill_hub/mod.rs",
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates",
      "surface": {
       "crate-vis": 21,
       "mod": 2,
-      "re-export": 21
+      "re-export": 22
      }
     },
     {
@@ -70641,7 +70655,7 @@
      "purpose": "Dependency-only OSV queries on dynamic installs, using the existing scan ledger",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 2,
       "struct": 3,
@@ -71319,13 +71333,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/skill_hub/ref_sync.rs",
      "purpose": "Per-ref sync policy (ARCH-0053 §7: sync_policy per ref, not per hub)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 2
      }
     },
@@ -94811,7 +94825,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 101,
+     "files": 102,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -95100,7 +95114,7 @@
    },
    "over_bar": 192,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6732,
+   "source_files": 6733,
    "test_files": 895
   },
   "oneiron-android": {
@@ -137405,9 +137419,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/git_wire/hub_read.rs",
-     "purpose": "Fixed network-read profile for a private disposable hub object store",
+     "purpose": "Fixed read profiles for a private disposable hub object store: the network profile, and the local-only…",
      "surface": {
-      "fn": 4
+      "fn": 5
      }
     },
     {
