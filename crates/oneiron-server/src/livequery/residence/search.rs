@@ -5,7 +5,9 @@
 use super::*;
 
 /// A forwarded search's verified caller is written to `attribution`, for its
-/// receipt to name (FIX 3550), and taken back if the caller stops verifying.
+/// receipt to name (FIX 3550), and taken back if the caller stops verifying;
+/// `off_carrier` is set when that caller sits off the carrying device, so
+/// the reply's send judges its rows for an unknown destination (FIX 11991).
 pub(super) fn search(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -13,6 +15,7 @@ pub(super) fn search(
     params: Value,
     budgets: ResidenceOperationBudgets,
     attribution: &mut Option<ForwardedAttribution>,
+    off_carrier: &mut bool,
 ) -> Result<Answer, AppError> {
     let input: SearchRequest =
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
@@ -23,5 +26,5 @@ pub(super) fn search(
     {
         return Err(AppError::invalid_params());
     }
-    pages::search_pages(server, auth, peer, input, budgets, attribution)
+    pages::search_pages(server, auth, peer, input, budgets, attribution, off_carrier)
 }

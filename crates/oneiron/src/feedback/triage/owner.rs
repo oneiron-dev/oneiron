@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     BINDING, COACH_FEEDBACK_SWEEP_FACET, FeedbackTriageBinding, FeedbackTriageContinuation,
-    FeedbackTriageHandoffSource, FeedbackTriageResult, FeedbackTriageSourceRef, HANDOFFS, SOURCES,
+    FeedbackTriageHandoffSource, FeedbackTriageResult, FeedbackTriageSourceRef, SOURCES,
     STALE_BINDING, attempt_id, attempt_ref, binding_in_txn, erased, handoff_key,
 };
 use crate::attempt_queue::{AttemptQueue, AttemptState};
@@ -331,7 +331,9 @@ impl Vault {
         if binding.skill.is_none() {
             holds.push(FeedbackTriageHold::SkillUnbound);
         }
-        let mut handoffs = HANDOFFS.scan(&self.store, &txn)?;
+        // The open rows and this sweep's own, not every handoff (FIX 7550).
+        let keys = super::handoff_index::status_keys(&self.store, &txn, &input.attempt)?;
+        let mut handoffs = super::handoff_index::rows(&self.store, &txn, keys)?;
         handoffs.sort_by(|(_, a), (_, b)| source_order(&a.source).cmp(&source_order(&b.source)));
         for (key, handoff) in handoffs {
             if let FeedbackTriageHandoffSource::Retained { source_ref, .. } = &handoff.source

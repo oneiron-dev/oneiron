@@ -39,6 +39,34 @@ pub fn clipboard_world_id() -> Result<EntityId> {
 }
 
 impl Vault {
+    /// Whether this live WORLD has the engine-owned Clipboard role marker.
+    pub(crate) fn is_clipboard_world_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        world: EntityId,
+    ) -> Result<bool> {
+        let crate::vault::LiveEntityRow::Live { entity_type, body } =
+            crate::vault::live_entity_row_in_txn(&self.store, txn, &world)?
+        else {
+            return Ok(false);
+        };
+        if entity_type != ENTITY_TYPE_WORLD {
+            return Ok(false);
+        }
+        let value = rmpv::decode::read_value(&mut &body[..]).map_err(|_| Error::InvalidKey)?;
+        if crate::batch::secret_scan::release_body_reads_whole_as_stored(&value, &body) {
+            return Ok(false);
+        }
+        let rmpv::Value::Map(entries) = value else {
+            return Ok(false);
+        };
+        Ok(entries
+            .iter()
+            .find(|(key, _)| key.as_str() == Some("system_role"))
+            .and_then(|(_, value)| value.as_str())
+            == Some(CLIPBOARD_ROLE))
+    }
+
     /// The Clipboard role's stored WORLD, if it has been opened. This locator
     /// is not a read grant and does not return clipboard text.
     pub fn clipboard_world(&self) -> Result<Option<ClipboardWorld>> {
