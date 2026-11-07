@@ -710,8 +710,8 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
     }), { inputTokens: 128, outputTokens: 32 }),
   }, {
     // The extracted person's roster About producer shares the narrative origin,
-    // but is not the declared source SUMMARY. GRANT 5's rejected bodies were
-    // this prompt with no response_format; answer it separately and strictly.
+    // but is not the declared source SUMMARY. R36's captured rejected bodies
+    // carried this prompt with no response_format; answer separately and strictly.
     id: "source-person-about", origin: "summary", role: "dreamer_current", purpose: "summarize extracted person for roster About",
     standing: true,
     request: { method: "POST", path: "/v1/chat/completions", model: "privacy-summary", system: PERSON_ABOUT_PROMPT },
