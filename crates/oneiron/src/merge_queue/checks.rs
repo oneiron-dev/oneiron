@@ -1,5 +1,6 @@
 //! Out-of-order check completion, all-path agreement and red-batch diagnosis.
 use super::check_inputs::QueueCheckReceipt;
+use super::contract_review::contract_review_evidence;
 use super::{BatchState, CheckInvocation, CheckPhase, CheckReport, MergeQueue, Quarantine};
 use crate::{
     error::{Error, Result},
@@ -58,7 +59,10 @@ impl MergeQueue<'_> {
         let queue = self.queue()?;
         let mut current = self.batch(id)?;
         self.settle_slot(&mut current, mask, phase, &path.commit, &verdict.id, None)?;
-        self.save(&queue, &[&current])?;
+        // A removed public name routes to a person review in the writer that
+        // saves the settled slot (FIX 4365). The verdict stays red.
+        let review = contract_review_evidence(&current, mask, phase, &path.tree, &verdict);
+        self.save_with_review(&queue, &[&current], review.as_ref())?;
         Ok(verdict)
     }
 
