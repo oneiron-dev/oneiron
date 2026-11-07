@@ -1,6 +1,7 @@
 //! Typed DEC-0005 policy axes. Other manifest tables stay at their own doors.
 use std::collections::BTreeMap;
 
+use super::PolicyScopedGrantRow;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
@@ -17,11 +18,17 @@ pub enum PolicyCriticality {
     Critical,
 }
 
+/// A predicate class's rung on the DEC-0005 content ladder: `public`,
+/// `private`, `sensitive`, `restricted`. `normal` is the ordinary,
+/// non-sensitive label the shipped packs carry; it keeps that meaning.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PolicySensitivity {
-    Normal,
+    Public,
+    Private,
     Sensitive,
+    Restricted,
+    Normal,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
@@ -141,6 +148,10 @@ pub struct PolicyManifest {
     /// shipped rows hold.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slide_review_policy: Option<Vec<crate::llm::decision::SlideReviewPolicyRow>>,
+    /// Omit to preserve the stored table; an explicit list replaces it and
+    /// an empty list clears it. No other manifest table is changed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scoped_grants: Option<Vec<PolicyScopedGrantRow>>,
     /// The teacher-probe floor row: a holder authors a proposal's floor here
     /// to apply it (FIX 8780).
     #[serde(default, skip_serializing_if = "Option::is_none")]

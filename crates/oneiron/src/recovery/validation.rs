@@ -1,14 +1,13 @@
 //! Fail-closed whole-payload validation before a recovery mutation.
 
-use super::canonical::{
-    CanonicalEntityDocument, CanonicalForkStatus, CanonicalSnapshot, id, invalid,
-};
+use super::canonical::{CanonicalSnapshot, id, invalid};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::Result;
 use std::collections::{BTreeMap, BTreeSet};
 
 mod documents;
 mod entity_documents;
+mod entity_history;
 mod manifest;
 mod window_rows;
 pub(super) use documents::DocumentRows;
@@ -131,148 +130,31 @@ fn pointer(body: &[u8]) -> Result<Option<String>> {
 
 /// A causal row binds inside itself: every version leads to the head, pins
 /// quote their version, and forks, receipts and purges name carried versions.
-fn validate_history(row: &CanonicalEntityDocument) -> Result<()> {
-    strict(row.record_fields.iter())?;
-    if row.record_fields.iter().any(|field| {
-        !crate::ports::is_metadata_field(field) || row.field.as_deref() == Some(field.as_str())
-    }) || (row.field.is_none() && !row.record_fields.is_empty())
-    {
-        return Err(invalid("document native record fields"));
-    }
-    validate_document_metadata(&row.metadata, row.field.as_deref())?;
-    validate_summary_meta(&row.summary_meta)?;
-    let Some(history) = &row.history else {
-        return Ok(());
-    };
-    if !history.shallow
-        && history.pins.is_empty()
-        && history.receipts.is_empty()
-        && history.forks.is_empty()
-        && history.purges.is_empty()
-    {
-        return Err(invalid("entity document history without causal state"));
-    }
-    if !history.purges.is_empty() && !history.shallow {
-        return Err(invalid("entity document purge without a purge floor"));
-    }
-    let texts = history.texts()?;
-    let head = texts
-        .len()
-        .checked_sub(1)
-        .ok_or(invalid("entity document history has no head"))?;
-    if texts[head] != row.text || history.versions[head].metadata != row.metadata {
-        return Err(invalid("entity document head version"));
-    }
-    let mut reached = vec![false; texts.len()];
-    reached[head] = true;
-    for (index, version) in history.versions.iter().enumerate().rev() {
-        validate_document_metadata(&version.metadata, row.field.as_deref())?;
-        validate_summary_meta(&version.summary_meta)?;
-        if !reached[index] {
-            return Err(invalid("entity document version is not before its head"));
-        }
-        if history.shallow && index > 0 && version.parents.is_empty() {
-            return Err(invalid("entity document version precedes its purge floor"));
-        }
-        strict(version.parents.iter().copied())?;
-        for &parent in &version.parents {
-            let parent = parent as usize;
-            if parent >= index {
-                return Err(invalid("entity document version parent"));
-            }
-            reached[parent] = true;
-        }
-    }
-    let version = |index: u32| (index as usize) < texts.len();
-    strict(history.pins.iter().map(|pin| pin.citation))?;
-    for pin in &history.pins {
-        for value in [pin.citation, pin.document].into_iter().chain(pin.actor) {
-            id(value)?;
-        }
-        let text = texts
-            .get(pin.version as usize)
-            .ok_or(invalid("entity document pin version"))?;
-        let (start, end) = (pin.start as usize, pin.end as usize);
-        let quote: String = text
-            .chars()
-            .skip(start)
-            .take(end.saturating_sub(start))
-            .collect();
-        if start > end
-            || end > text.chars().count()
-            || quote != pin.quote
-            || blake3::hash(quote.as_bytes()).as_bytes() != &pin.hash
-        {
-            return Err(invalid("entity document pin quote"));
-        }
-    }
-    strict(history.receipts.iter().map(|receipt| receipt.receipt))?;
-    for receipt in &history.receipts {
-        for value in [receipt.receipt, receipt.proposal, receipt.fork]
-            .into_iter()
-            .chain(receipt.actor)
-        {
-            id(value)?;
-        }
-        if !version(receipt.before) || !version(receipt.after) {
-            return Err(invalid("entity document receipt version"));
-        }
-    }
-    strict(history.forks.iter().map(|fork| fork.fork))?;
-    for fork in &history.forks {
-        for value in [fork.fork, fork.proposal, fork.parent_document]
-            .into_iter()
-            .chain(fork.actor)
-        {
-            id(value)?;
-        }
-        let pending = fork.status == CanonicalForkStatus::Pending;
-        match fork.base {
-            Some(base) if version(base) => {}
-            None if history.shallow && !pending => {}
-            _ => return Err(invalid("entity document fork base")),
-        }
-        if let Some(metadata) = &fork.output_metadata {
-            validate_document_metadata(metadata, row.field.as_deref())?;
-        }
-        if fork.output_metadata.is_some() != pending
-            || fork.output.is_some() != pending
-            || fork.proposal_index >= fork.proposal_len
-        {
-            return Err(invalid("entity document fork state"));
-        }
-    }
-    strict(history.purges.iter().map(|purge| purge.receipt))?;
-    for purge in &history.purges {
-        for value in [purge.receipt, purge.document]
-            .into_iter()
-            .chain(purge.actor)
-        {
-            id(value)?;
-        }
-        if !version(purge.requested) || !version(purge.applied) {
-            return Err(invalid("entity document purge version"));
-        }
-    }
-    Ok(())
-}
-
 fn validate_document_metadata(
     fields: &BTreeMap<String, Vec<u8>>,
     body_field: Option<&str>,
 ) -> Result<()> {
     for (field, bytes) in fields {
-        if Some(field.as_str()) == body_field {
-            return Err(invalid("document body duplicated in metadata"));
-        }
-        let mut cursor = bytes.as_slice();
-        let value = rmpv::decode::read_value(&mut cursor)
-            .map_err(|_| invalid("document metadata encoding"))?;
-        if !cursor.is_empty() {
-            return Err(invalid("trailing document metadata bytes"));
-        }
-        crate::ports::validate_metadata(field, &value)?;
+        validate_document_metadata_field(field, bytes, body_field)?;
     }
+    Ok(())
+}
+
+fn validate_document_metadata_field(
+    field: &str,
+    bytes: &[u8],
+    body_field: Option<&str>,
+) -> Result<()> {
+    if Some(field) == body_field {
+        return Err(invalid("document body duplicated in metadata"));
+    }
+    let mut cursor = bytes;
+    let value =
+        rmpv::decode::read_value(&mut cursor).map_err(|_| invalid("document metadata encoding"))?;
+    if !cursor.is_empty() {
+        return Err(invalid("trailing document metadata bytes"));
+    }
+    crate::ports::validate_metadata(field, &value)?;
     Ok(())
 }
 
@@ -280,11 +162,16 @@ fn validate_document_metadata(
 /// each one whole value of its own type.
 fn validate_summary_meta(fields: &BTreeMap<String, Vec<u8>>) -> Result<()> {
     for (field, bytes) in fields {
-        match field.as_str() {
-            "purpose" => decode_whole::<crate::scope_summary::SummaryPurpose>(bytes)?,
-            "derivation" => decode_whole::<crate::scope_summary::SummaryDerivation>(bytes)?,
-            _ => return Err(invalid("entity document summary meta field")),
-        }
+        validate_summary_meta_field(field, bytes)?;
+    }
+    Ok(())
+}
+
+fn validate_summary_meta_field(field: &str, bytes: &[u8]) -> Result<()> {
+    match field {
+        "purpose" => decode_whole::<crate::scope_summary::SummaryPurpose>(bytes)?,
+        "derivation" => decode_whole::<crate::scope_summary::SummaryDerivation>(bytes)?,
+        _ => return Err(invalid("entity document summary meta field")),
     }
     Ok(())
 }

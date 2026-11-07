@@ -1,7 +1,12 @@
 //! The step replay capsule and contribution fork rows (FIX 3028): each
 //! capsule's metadata keyed by its attempt, lease generation and step, each
 //! matched pair's fork receipts or the reason it is unavailable, and the
-//! request, start and response bodies they name, owned by the original run.
+//! request, start and response bodies they name, an engine step's fork's
+//! executed bodies too ([`execution`], FIX 3607), the replay context its
+//! step's checkpoint committed ([`context`], FIX 6351), and the route prompt
+//! its answering rung put first ([`route_prompt`], FIX 6255), owned by the
+//! original run. An owner verdict's pair also keeps its pending owner pair
+//! beside its forks ([`owner_pair`], FIX 3609).
 //!
 //! Each body is written as the side-row wall admits it, in the writer that
 //! puts its capsule ([`admit`]), and an erase of the capsule's actor
@@ -10,21 +15,23 @@
 //! body's occurrence, whoever else keeps the same bytes (FIX 6144).
 
 mod admit;
+mod context;
 mod erase;
+mod execution;
 mod fork_erase;
+mod owner_pair;
 mod restore;
+mod route_prompt;
 mod spawn_erase;
 mod start_parts;
 
 use serde::{Deserialize, Serialize};
 
 use super::super::contribution::{
-    ContributionForkReceipt, ContributionReplayUnavailable, ForkTreatment,
+    ContributionForkReceipt, ContributionReplayUnavailable, ForkTreatment, OwnerPair,
 };
 use super::super::replay::{CodeRunRawOutput, ResultOccurrence};
-use super::super::replay_capsule::{
-    CapsuleRequest, CapsuleRungBinding, ReplayRoutePin, StepReplayCapsule,
-};
+use super::super::replay_capsule::{CapsuleHost, CapsuleRequest, StepReplayCapsule};
 use super::records::body_drifted;
 use crate::compaction::output::OutputRef;
 use crate::provenance::body::owned_body_in_txn;
@@ -32,12 +39,23 @@ use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, LlmRequest, LlmResponse, Result, Vault};
 
 pub(crate) use self::admit::{put_staged_capsule, refresh_staged_request, store_fork_response};
+pub(crate) use self::context::{
+    capsule_context_body, join_step_context_in_txn, stage_step_context,
+};
 pub(crate) use self::erase::erase_capsule_actor_in_txn;
 pub(crate) use self::erase::{actor_gone_in_store, actor_gone_in_txn};
 pub(super) use self::erase::{capsule_bodies_in_txn, names_no_actor};
+pub(crate) use self::execution::{fork_execution_outputs, store_fork_execution};
 pub(crate) use self::fork_erase::ForkProvenance;
-pub(crate) use self::fork_erase::erase_contribution_forks_in_txn;
+pub(crate) use self::fork_erase::{
+    contribution_pair_erase_candidates_in_txn, erase_contribution_forks_in_txn,
+};
+pub(crate) use self::owner_pair::{
+    accept_owner_pair_in_txn, bind_owner_pair_ask_in_txn, close_owner_pair_in_txn,
+    judge_owner_pair_in_txn, owner_pair_in_txn, put_owner_pair,
+};
 pub(crate) use self::restore::retire_replay_bodies_in_rows;
+pub(crate) use self::route_prompt::{capsule_route_prompt, finalize_capsule, route_prompt_at};
 pub(super) use self::spawn_erase::erase_spawn_prefixes_in_txn;
 pub(crate) use self::start_parts::{
     drop_step_start_in_rows, kept_step_start_in_txn, kept_step_starts_in_txn,
@@ -72,6 +90,8 @@ struct ForkRow {
 enum ForkValue {
     Fork(ContributionForkReceipt),
     Unavailable(ContributionReplayUnavailable),
+    /// An owner verdict's pending pair (FIX 3609).
+    OwnerPair(Box<OwnerPair>),
 }
 
 /// A matched pair's rows as they stand.
@@ -80,6 +100,7 @@ pub(crate) struct ForkRows {
     pub(crate) unavailable: Option<ContributionReplayUnavailable>,
     pub(crate) with_skill: Option<ContributionForkReceipt>,
     pub(crate) without_skill: Option<ContributionForkReceipt>,
+    pub(crate) owner_pair: Option<OwnerPair>,
 }
 
 fn fork_row_name(treatment: ForkTreatment) -> &'static str {
@@ -107,6 +128,27 @@ fn kept_in_txn(
     Ok(CAPSULES
         .get(&vault.store, rtxn, key)?
         .filter(|capsule| capsule.content.actor().is_some()))
+}
+
+/// What a fork writer kept, or why it kept nothing (FIX 6256). The writer
+/// that meets the fence names the reason, and the runner keeps it as it is.
+type ForkWrite<T> = std::result::Result<T, ContributionReplayUnavailable>;
+
+/// The capsule at `key` and its actor, as a fork writer reads it in `txn`
+/// (FIX 6256). A capsule row that is gone is `Unreadable`. A capsule whose
+/// actor's erase took its content is `Erased`: its custody is retired.
+fn fork_capsule_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &(EntityId, u64, u64),
+) -> Result<ForkWrite<(StepReplayCapsule, EntityId)>> {
+    let Some(capsule) = CAPSULES.get(&vault.store, txn, key)? else {
+        return Ok(Err(ContributionReplayUnavailable::Unreadable));
+    };
+    let Some(actor) = capsule.content.actor() else {
+        return Ok(Err(ContributionReplayUnavailable::Erased));
+    };
+    Ok(Ok((capsule, actor)))
 }
 
 /// The whole body `body` names at `path`, as run `owner` holds it, read in
@@ -150,33 +192,6 @@ fn held_body(
         return Ok(None);
     }
     held_body_in_txn(vault, &rtxn, owner, path, body)
-}
-
-/// Records the rung that answered the capsule at `key`, and the route it
-/// went out on when it pinned one (PR-S1), once and in one write: a capsule
-/// already finalized keeps its rung and its pin. An erased capsule, or one
-/// whose actor is gone by now, takes neither: its route prompt is content an
-/// erase clears (FIX 6144).
-pub(crate) fn finalize_capsule(
-    vault: &Vault,
-    key: &(EntityId, u64, u64),
-    binding: CapsuleRungBinding,
-    route_pin: Option<ReplayRoutePin>,
-) -> Result<()> {
-    vault.with_write_txn_grouped(|txn| {
-        let Some(mut capsule) = CAPSULES.get(&vault.store, txn, key)? else {
-            return Ok(());
-        };
-        let Some(actor) = capsule.content.actor() else {
-            return Ok(());
-        };
-        if capsule.binding.is_some() || erase::actor_gone_in_txn(vault, txn, &actor) {
-            return Ok(());
-        }
-        capsule.binding = Some(binding);
-        capsule.route_pin = route_pin;
-        CAPSULES.put(vault, txn, key, &capsule)
-    })
 }
 
 /// Every capsule of `attempt`, in lease generation then step order.
@@ -299,6 +314,41 @@ pub(crate) fn capsule_request(
     Ok(serde_json::from_slice(&bytes).ok())
 }
 
+/// Binds a single-call workflow step's answer to its capsule (FIX 3611):
+/// `answer`, the digest and length of the text the call returned, on the
+/// capsule at `key` whose request was sent as `request_hash`. Only a
+/// finalized workflow capsule that still holds its content, for an actor
+/// that is not erased, takes it, and only once: a bound answer stays as it
+/// is. Whether the capsule binds `answer` now.
+pub(crate) fn bind_capsule_answer(
+    vault: &Vault,
+    key: &(EntityId, u64, u64),
+    request_hash: [u8; 32],
+    answer: OutputRef,
+) -> Result<bool> {
+    vault.with_write_txn_grouped(|wtxn| {
+        let Some(mut capsule) = CAPSULES.get(&vault.store, wtxn, key)? else {
+            return Ok(false);
+        };
+        let Some(actor) = capsule.content.actor() else {
+            return Ok(false);
+        };
+        if capsule.host != CapsuleHost::WorkflowStep
+            || capsule.binding.is_none()
+            || capsule.request_hash != request_hash
+            || actor_gone_in_txn(vault, wtxn, &actor)
+        {
+            return Ok(false);
+        }
+        if let Some(bound) = capsule.answer {
+            return Ok(bound == answer);
+        }
+        capsule.answer = Some(answer);
+        CAPSULES.put(vault, wtxn, key, &capsule)?;
+        Ok(true)
+    })
+}
+
 /// A matched pair's rows.
 pub(crate) fn fork_rows(vault: &Vault, pair: &[u8; 32]) -> Result<ForkRows> {
     let txn = vault.store.env.read_txn()?;
@@ -320,6 +370,7 @@ pub(crate) fn fork_rows_in_txn(
                 ForkTreatment::WithSkill => rows.with_skill = Some(receipt),
                 ForkTreatment::WithoutSkill => rows.without_skill = Some(receipt),
             },
+            ForkValue::OwnerPair(pair) => rows.owner_pair = Some(*pair),
         }
     }
     Ok(rows)
@@ -327,31 +378,36 @@ pub(crate) fn fork_rows_in_txn(
 
 /// Scores the exact fork still kept at its live pair, or reuses its first
 /// committed score. An erase that moved it, or ran while the scorer
-/// answered, can never recreate its old row.
+/// answered, can never recreate its old row. A fork no longer kept as it
+/// was is `Unreadable`; a subject gone now is the fence's `Unfinished`
+/// (FIX 6256).
 pub(crate) fn put_fork(
     vault: &Vault,
     pair: &[u8; 32],
     receipt: &ContributionForkReceipt,
-) -> Result<Option<ContributionForkReceipt>> {
+) -> Result<ForkWrite<ContributionForkReceipt>> {
     let key = (*pair, fork_row_name(receipt.treatment).to_owned());
     vault.with_write_txn_grouped(|txn| {
         let Some(mut row) = FORKS.get(&vault.store, txn, &key)? else {
-            return Ok(None);
+            return Ok(Err(ContributionReplayUnavailable::Unreadable));
         };
         let ForkValue::Fork(kept) = &row.value else {
-            return Ok(None);
+            return Ok(Err(ContributionReplayUnavailable::Unreadable));
         };
         let mut expected = receipt.clone();
-        expected.passed = kept.passed;
-        if *kept != expected || !row.provenance.live_in_txn(vault, txn) {
-            return Ok(None);
+        expected.score = kept.score;
+        if *kept != expected {
+            return Ok(Err(ContributionReplayUnavailable::Unreadable));
         }
-        if kept.passed.is_some() {
-            return Ok(Some(kept.clone()));
+        if let Err(reason) = row.provenance.fence_in_txn(vault, txn) {
+            return Ok(Err(reason));
+        }
+        if kept.score.is_some() {
+            return Ok(Ok(kept.clone()));
         }
         row.value = ForkValue::Fork(receipt.clone());
         FORKS.put(vault, txn, &key, &row)?;
-        Ok(Some(receipt.clone()))
+        Ok(Ok(receipt.clone()))
     })
 }
 
