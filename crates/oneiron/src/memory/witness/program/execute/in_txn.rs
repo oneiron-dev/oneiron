@@ -179,10 +179,11 @@ impl Memory<'_> {
                     &[&plan.turn.assertions],
                 )?,
             };
-            let bytes = match &view {
-                Some(view) => staged_message_bytes(view, wtxn, &planned.id)?,
-                None => staged_message_bytes(&self.vault.store, wtxn, &planned.id)?,
+            let text = match &view {
+                Some(view) => staged_message_text(view, wtxn, &planned.id)?,
+                None => staged_message_text(&self.vault.store, wtxn, &planned.id)?,
             };
+            let bytes = text.len() as u64;
             let receipt = super::super::super::stream::MessageStreamReceipt {
                 message_id: planned.id,
                 actor: self.actor,
@@ -201,7 +202,7 @@ impl Memory<'_> {
                 reply_assertions: assertions,
             };
             super::super::super::stream::keep_session_terminal_in_txn(&dbs, wtxn, &receipt)?;
-            terminal.remember(receipt);
+            terminal.remember(receipt, plan.turn_id, text);
         }
         effect(
             wtxn,
@@ -210,6 +211,13 @@ impl Memory<'_> {
                 _ => None,
             },
         )?;
+        // A source landing binds in `effect` every row it marked born, or
+        // commits none of them (fix list row 16256).
+        if matches!(sink, WitnessSink::Base(_)) && plan.source_audience().is_some() {
+            let mut stamped = vec![plan.conversation_id, plan.turn_id];
+            stamped.extend(plan.message_ids());
+            crate::source_audience::refuse_unbound_births_in(self.vault, wtxn, &stamped)?;
+        }
         // FIX 10260: a reply born whole keeps the set its turn asserted,
         // as admitted above, beside each MESSAGE this write landed new; a
         // streamed birth's receipt, which `effect` saved, keeps it there.
@@ -320,11 +328,11 @@ impl Memory<'_> {
 }
 
 /// The text the same staged row actually holds, after its canonical write admission.
-fn staged_message_bytes(
+fn staged_message_text(
     dbs: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     message: &EntityId,
-) -> MemoryResult<u64> {
+) -> MemoryResult<String> {
     let row = crate::ports::EntityStoreRead::port_entity_record(dbs, txn, message)?.ok_or(
         Error::InvariantViolation("a staged stream MESSAGE is missing"),
     )?;
@@ -335,5 +343,5 @@ fn staged_message_bytes(
         .get("content")
         .and_then(serde_json::Value::as_str)
         .ok_or(Error::CorruptedIndex("stream MESSAGE content"))?;
-    Ok(content.len() as u64)
+    Ok(content.to_owned())
 }

@@ -369,6 +369,33 @@ impl MemoryLedger {
         })
     }
 
+    /// Adds bytes to a hold from this same ledger before an allocation.
+    /// These are not decode bytes, so a parse pass cannot return them early.
+    pub(crate) fn extend_hold(
+        &self,
+        hold: &mut LedgerHold,
+        additional: u64,
+    ) -> Result<(), SealMemoryRefusal> {
+        self.take(additional, false)?;
+        hold.bytes = hold.bytes.saturating_add(additional);
+        Ok(())
+    }
+
+    /// Adopts `bytes` ALREADY taken from this ledger's spare (FIX 14217):
+    /// no second take, no service call, infallible. The hold returns the
+    /// bytes to spare when it drops with the adopted value.
+    /// Contract (caller-proved): `bytes` were charged to THIS ledger
+    /// exactly once for an allocation still live, never released or adopted
+    /// twice, and dropped BEFORE the hold (as [`Held`] orders fields).
+    /// Over-adopt forges spare; under-adopt stays conservative. Only proven
+    /// callers: `walk::pages` output, `revision_ends` ends.
+    pub(crate) fn adopt_charged(&self, bytes: usize) -> LedgerHold {
+        LedgerHold {
+            state: Arc::clone(&self.state),
+            bytes: wide(bytes),
+        }
+    }
+
     /// Returns `bytes` from decoded or scoped allocations that were freed,
     /// to spare room for a later admission. Never more than is live: held
     /// service reservations and a kept refusal stay as they are, and this
@@ -434,6 +461,17 @@ pub(crate) struct LedgerHold {
     /// The ledger's state, kept with its reservations while the copy lives.
     state: Arc<Mutex<LedgerState>>,
     bytes: u64,
+}
+
+impl LedgerHold {
+    /// Returns only bytes this hold charged, after their allocation is freed.
+    /// The ledger's refusal, if any, stays latched.
+    pub(crate) fn shrink(&mut self, freed: u64) {
+        let freed = freed.min(self.bytes);
+        self.bytes -= freed;
+        let mut state = lock(&self.state);
+        state.spare = state.spare.saturating_add(freed);
+    }
 }
 
 impl Drop for LedgerHold {

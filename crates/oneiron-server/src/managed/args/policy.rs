@@ -113,6 +113,21 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.custody_anchor_credentials_fd.is_some(),
         ArgvUse::Read,
     ),
+    (
+        "checkpoint-host-holds-recipient-fd",
+        |args| args.checkpoint_host_holds_recipient_fd.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "host-legal-listen-fd",
+        |args| args.host_legal_listen_fd.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "host-legal-uid",
+        |args| args.host_legal_uid.is_some(),
+        ArgvUse::Read,
+    ),
     ("restore", |args| args.restore, ArgvUse::Read),
     (
         "restore-input-fd",
@@ -530,11 +545,6 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     (
         "ephemeral-timeout-ms",
         |args| args.ephemeral_timeout_ms.is_some(),
-        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
-    ),
-    (
-        "max-ephemeral-payload-bytes",
-        |args| args.max_ephemeral_payload_bytes.is_some(),
         ArgvUse::Refused(NO_TUNING_LAYER_REASON),
     ),
     (

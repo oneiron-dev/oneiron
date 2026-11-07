@@ -15,7 +15,9 @@ use std::sync::Arc;
 
 use oneiron::agent_def::{AgentModel, ensure_inherited_model_list};
 use oneiron::agent_dispatch::SpendScopeId;
-use oneiron::code_run::{CODE_RUN_RNG_SEED_LEN, CodeRunDeterminism, CompactionHostBinding};
+use oneiron::code_run::{
+    CODE_RUN_RNG_SEED_LEN, CodeRunDeterminism, CompactionHostBinding, ScopedChildProfile,
+};
 use oneiron::compaction::EpochEmbedder;
 use oneiron::engine_executor::{
     ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorConfig, EngineExecutorLimits, TypeFeedback,
@@ -24,8 +26,8 @@ use oneiron::llm::BudgetDenied;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::PayerPerson;
 use oneiron::{
-    BudgetGuard, BudgetLease, EntityId, LlmBackend, LlmError, LlmGenerateFuture, LlmRequest,
-    LlmStreamResult, ModelId, ModelLocality, ModelTierRef, Vault,
+    BudgetGuard, BudgetLease, EntityId, LlmBackend, LlmCapability, LlmError, LlmGenerateFuture,
+    LlmRequest, LlmStreamResult, ModelId, ModelLocality, ModelTierRef, Vault,
 };
 use oneiron_code_check::{
     BackendKind, CheckFailure, CheckMode, CodeCheck, Fallback, FeedbackCheck, MicrosoftTsc,
@@ -37,10 +39,10 @@ use super::browser_planner::{self, BrowserPlannerRuns};
 use super::compaction::{CodeModeCompaction, LiveAdmission};
 use super::live_lease::{LiveLease, LiveLeaseState};
 use super::status::StatusCell;
-use crate::config::models::{CodeCheckSettings, ModelsConfig};
+use crate::config::models::{BROWSER_PLANNER_ROLE, CodeCheckSettings, ModelsConfig};
 use crate::mcp::{
     McpQuickJsProvider, ModelCallBackend, ModelListBackend, PlannedMeter, PlannedModel,
-    PlannedRoute, RunCompactionSeat,
+    PlannedRoute, RunCompactionSeat, RunProfiledCompactionSeat,
 };
 use crate::models::{ModelRuntime, RoleCall, RoleRefusal};
 use crate::server::{SharedModelSlots, SyncServer};
@@ -281,8 +283,9 @@ pub(super) async fn bind(
         pinned: true,
         browser,
     });
-    let provider =
-        provider.with_pinned_compaction(pinned_compaction(&compaction, Arc::clone(&slots), pinned));
+    let provider = provider
+        .with_pinned_compaction(pinned_compaction(&compaction, Arc::clone(&slots), pinned))
+        .with_profiled_compaction(profiled_compaction(&compaction, Arc::clone(&slots)));
     server.with_mcp_quickjs_provider(
         compaction.attach(provider, status, slots, live_admission),
         runs,
@@ -306,6 +309,24 @@ fn pinned_compaction(
                 Some(slot) => seat.with_room_vectors(slot as Arc<dyn EpochEmbedder>),
                 None => seat,
             }
+        },
+    )
+}
+
+/// A profiled child's original accounting travels to each paid compaction
+/// call. Its memory profile and compaction prompt stay the ordinary ones.
+fn profiled_compaction(
+    compaction: &CodeModeCompaction,
+    slots: Arc<SharedModelSlots>,
+) -> RunProfiledCompactionSeat {
+    let compaction = compaction.clone();
+    Arc::new(
+        move |host: CompactionHostBinding, credential: &str, profile: &ScopedChildProfile| {
+            let seat = compaction.for_profiled_run(host, credential, profile)?;
+            Some(match slots.load().embedder.clone() {
+                Some(slot) => seat.with_room_vectors(slot as Arc<dyn EpochEmbedder>),
+                None => seat,
+            })
         },
     )
 }
@@ -593,17 +614,21 @@ impl CodeModeBackend {
             } else if let Some(planned) = &self.planned {
                 // FIX 2310: the model that answered, marked when it is not
                 // the child's pick.
-                let (response, binding) = call
-                    .ladder
+                call.ladder
                     .generate_recorded_while(&run, call.request, None, &may_send)
-                    .await?;
-                planned.answered(&run, binding.rung.model.clone());
-                Ok((response, binding))
+                    .await
+                    .map(|(response, binding)| {
+                        planned.answered(&run, binding.rung.model.clone());
+                        (response, binding)
+                    })
             } else {
                 call.ladder
                     .generate_recorded_while(&run, call.request, None, &may_send)
                     .await
             };
+            if let Some(live) = &live {
+                live.book_and_revise();
+            }
             if answered.is_ok() {
                 handoff.answered();
             }
@@ -631,7 +656,54 @@ impl CodeModeBackend {
     }
 }
 
+impl CodeModeBackend {
+    /// Whether every ladder a call naming `model` can be admitted on has
+    /// `capability` (FIX 4762): the router's views of `model`, which a
+    /// seat-bound or pinned call takes, and the live routes of the chat role
+    /// and the browser planner, which any other call takes on that route's
+    /// own model, as [`admit_code_mode_call`] admits them. Each is narrowed
+    /// to the run's listed models, as [`Self::generate_on`] narrows it. A
+    /// path that refuses now serves no call and sets no bound; with no path
+    /// left, nothing holds.
+    fn admitted_ladders_support(&self, model: &ModelId, capability: &LlmCapability) -> bool {
+        let router = self.models.router();
+        let views = router.iter().flat_map(|router| {
+            [
+                router.served_at(model, ModelLocality::OnDevice),
+                router.served(model),
+            ]
+        });
+        let routes = [CHAT_ROLE, BROWSER_PLANNER_ROLE]
+            .into_iter()
+            .filter_map(|role| {
+                let seat = self.models.seat(role)?;
+                self.models.route_role(&self.vault, role, seat).ok()
+            })
+            .map(|route| (route.model, route.ladder));
+        let mut paths = views
+            .flatten()
+            .map(|(_, ladder)| (model.clone(), ladder))
+            .chain(routes)
+            .filter_map(|(served, ladder)| {
+                if self.listed.is_empty() {
+                    return Some((served, ladder));
+                }
+                ensure_inherited_model_list(&self.listed, &served).ok()?;
+                let narrowed = ladder.for_model_list(&self.listed).ok()?;
+                Some((served, Arc::new(narrowed)))
+            })
+            .peekable();
+        paths.peek().is_some() && paths.all(|(served, ladder)| ladder.supports(&served, capability))
+    }
+}
+
 impl LlmBackend for CodeModeBackend {
+    /// Forwarded to the ladders the call can take, so a capable model is
+    /// asked natively (FIX 4762); the reply is still checked as before.
+    fn supports(&self, model: &ModelId, capability: LlmCapability) -> bool {
+        self.admitted_ladders_support(model, &capability)
+    }
+
     fn generate<'a>(&'a self, request: LlmRequest, _: &'a BudgetLease) -> LlmGenerateFuture<'a> {
         self.generate_on(request, None)
     }
