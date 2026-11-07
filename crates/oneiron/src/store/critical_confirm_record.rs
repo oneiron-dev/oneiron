@@ -53,9 +53,14 @@ pub(crate) fn critical_write_confirm_binding(
     digest.update(&pending.read_frontier_hash);
     let effect_digest = *digest.finalize().as_bytes();
     let nonce = pending.decision_id.as_bytes();
-    let expires_at = pending
-        .created_at
-        .saturating_add(CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS);
+    // The deadline the gate froze when it attached the confirm (FIX 8760);
+    // a hold with none of its own, attached on sync or reopened for an open
+    // obligation, never times out here and signs the shipped lifetime.
+    let expires_at = pending.expires_at.unwrap_or_else(|| {
+        pending
+            .created_at
+            .saturating_add(CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS)
+    });
     let mut confirm = Sha256::new();
     confirm.update(CRITICAL_WRITE_CONFIRM_DOMAIN);
     confirm.update(pending.decision_id.as_bytes());

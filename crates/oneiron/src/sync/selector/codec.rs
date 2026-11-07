@@ -1,6 +1,6 @@
 //! Selector wire types, strict MessagePack encode/decode with key validators, and the filtered-doc/envelope entry points.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
 
 use loro::{ExportMode, LoroDoc};
@@ -20,9 +20,10 @@ use crate::sync::types::WindowKey;
 use crate::sync::window::Withhold;
 
 use super::authorize::{authorize_selector_export, filter_window_doc, strip_guest_share_metadata};
-use super::born_with::carry_born_with;
+use super::born_with::{carry_born_with, row_born_with_fields};
 use crate::provenance::birth::WithheldKey;
 use crate::sync::row_birth::BirthReach;
+use oneiron_authority::share_travel::BornWithField;
 
 /// Current selector payload schema version.
 pub const SYNC_SELECTOR_SCHEMA_VERSION: u64 = 2;
@@ -418,17 +419,22 @@ pub fn guest_share_envelope_body(
     selector: &SyncSelector,
 ) -> Result<GuestShareEnvelopeBody> {
     guest_share_envelope_body_listing(vault, source, key, grant_scope, selector)
-        .map(|(body, _)| body)
+        .map(|(body, _, _)| body)
 }
 
-/// The same stripped body, with the rows its update actually carries.
+/// The stripped body, its listed rows, and born-with field names keyed by
+/// their actual transport row keys after projection. No prose is returned.
 pub(crate) fn guest_share_envelope_body_listing(
     vault: &Vault,
     source: &LoroDoc,
     key: &WindowKey,
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
-) -> Result<(GuestShareEnvelopeBody, Vec<EntityId>)> {
+) -> Result<(
+    GuestShareEnvelopeBody,
+    Vec<EntityId>,
+    BTreeMap<String, Vec<BornWithField>>,
+)> {
     let now_secs = vault.store.clock.now_recorded_at();
     let position = authorize_selector_export(vault, grant_scope, selector, now_secs)?;
     // A guest is another vault: its births go masked under its grant's key.
@@ -467,7 +473,17 @@ pub(crate) fn guest_share_envelope_body_listing(
         },
     );
     // FIX 7608 slice 4: the guest gets a marked repo item's masked copy.
-    let update = super::secret_projection::released_update(vault, update)?;
+    // Projection can rekey or coalesce born-with rows. Observe its final doc;
+    // an unchanged update uses the already-held stripped doc instead.
+    let mut travelled = None;
+    let update = super::secret_projection::released_update(
+        vault,
+        update,
+        Some(&mut |released: &LoroDoc| {
+            travelled = Some(row_born_with_fields(released));
+        }),
+    )?;
+    let travelled = travelled.unwrap_or_else(|| row_born_with_fields(&stripped));
     Ok((
         GuestShareEnvelopeBody::new(
             grant_scope,
@@ -477,6 +493,7 @@ pub(crate) fn guest_share_envelope_body_listing(
             update,
         ),
         rows,
+        travelled,
     ))
 }
 

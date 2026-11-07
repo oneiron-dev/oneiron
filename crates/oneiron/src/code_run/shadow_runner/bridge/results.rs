@@ -7,20 +7,33 @@
 //! read did (FIX 6352): a reader child's delegated input, inside its range
 //! and while its job was live, else a settled finding of the run's
 //! children, each from the step's read context and for its owner, with the
-//! taint it was frozen with. A whole result's card carries the fold receipt
-//! its live card carried. What the read context cannot establish stops the
-//! arm; it is never answered as `unknown_handle`.
+//! taint it was frozen with. Such a read is admitted, withheld or refused as
+//! the door's row check answered the live read by the same reference, under
+//! the same gate, at the same bridge position. A whole result's card carries
+//! the fold receipt its live card carried. What the read context cannot
+//! establish stops the arm; it is never answered as `unknown_handle`, and no
+//! read it cannot establish is admitted.
+//!
+//! A read of a result frozen from the step's source, the arm's run's or
+//! another run's, reads under the taint its source occurrence reads under
+//! now, at its worst with the frozen one (FIX 9468): one that went tainted
+//! after the freeze is withheld, as a run's read of it is. A result the arm
+//! stored reads under the mark it was written with and the taint it
+//! inherited.
 
 use serde_json::{Value, json};
 
+use super::super::release::live_taint;
 use super::super::types::{ShadowBodyRef, ShadowUnavailable, ShadowUnavailableReason as Reason};
 use super::taint::{exported_mark, stored_taint};
 use super::{ArmResult, ShadowBridgeHost, Taint};
 use crate::code_run::{
     CodeRunRawOutput, CodeRunResultBinding, ResultFacet, ResultOccurrence, ResultRead, ResultReply,
-    resolve_result, result_cannot, result_refusal, unknown_handle,
+    RetainedReadVerdict, resolve_result, result_cannot, result_refusal, unknown_handle,
 };
-use crate::engine_executor::{JsResultTarget, parse_result_read_path, store_result_output_path};
+use crate::engine_executor::{
+    ACT_GATES_COUNT_CALLABLE_ROWS, JsResultTarget, parse_result_read_path, store_result_output_path,
+};
 use crate::secret_rotation::ArtifactTaintState;
 use crate::store::BodySink;
 use crate::{Error, Result};
@@ -91,18 +104,20 @@ impl ShadowBridgeHost<'_> {
 
     /// The result `target` names, read as a run's read is, with the taint it
     /// reads under, or the refusal the guest gets: one of the arm's own, else
-    /// one of another run the step's read context names (FIX 6352). A read
-    /// the context cannot answer stops the arm.
+    /// one of another run the step's read context names (FIX 6352), under
+    /// the gate that counts the run's callable rows when `callable`, as the
+    /// live gate does. A read the context cannot answer stops the arm.
     fn checked(
         &mut self,
         target: &JsResultTarget,
+        callable: bool,
     ) -> Result<std::result::Result<(ResultRead, Taint), Value>> {
         self.admit_read()?;
         let live = self.live_bindings();
         let outputs = self.results.iter().map(|result| &result.output);
         if let Some((output, name)) = resolve_result(self.run_id, outputs, &live, &target.reference)
         {
-            let taint = self.taint_of(&output);
+            let taint = self.taint_of(&output)?;
             let read = ResultRead::in_arm(
                 self.run_id,
                 output,
@@ -132,12 +147,21 @@ impl ShadowBridgeHost<'_> {
                 Err(missing) => return Err(self.stop(missing)),
             }
         }
+        // The rows another run's result was served from reach the door's
+        // caller only as the live row check answered (FIX 6352).
+        match step.retained_read_verdict(&target.reference, callable, self.next_seq) {
+            Ok(RetainedReadVerdict::Admitted) => {}
+            Ok(RetainedReadVerdict::Withheld) => return Ok(Err(result_refusal("result_withheld"))),
+            Ok(RetainedReadVerdict::Refused(code)) => return Ok(Err(result_refusal(code))),
+            Err(missing) => return Err(self.stop(missing)),
+        }
         let output = found.body.output.clone();
         let whole = found
             .within
             .is_some_and(|range| range == (0, output.raw_len));
         let range = target.range.or(found.within.filter(|_| !whole));
-        let taint = (found.body.state, found.body.secret.clone());
+        let frozen = (found.body.state, found.body.secret.clone());
+        let taint = live_taint(self.store, found.owner, &output, frozen)?;
         let foreign = found.owner != self.run_id;
         let read = ResultRead::in_arm(
             found.owner,
@@ -160,14 +184,33 @@ impl ShadowBridgeHost<'_> {
             })
     }
 
-    /// The taint the arm holds `output` under.
-    fn taint_of(&self, output: &CodeRunRawOutput) -> Taint {
+    /// The taint the arm reads `output` under: see [`Self::held_taint`].
+    fn taint_of(&self, output: &CodeRunRawOutput) -> Result<Taint> {
         self.results
             .iter()
             .find(|held| held.output.path == output.path && held.output.handle == output.handle)
-            .map_or((ArtifactTaintState::Clean, None), |held| {
-                (held.state, held.secret.clone())
+            .map_or(Ok((ArtifactTaintState::Clean, None)), |held| {
+                self.held_taint(held)
             })
+    }
+
+    /// The taint the arm reads `held` under (FIX 9468): a result the arm
+    /// stored, as it was written; one frozen from the run, at its worst with
+    /// the taint the run's occurrence of it reads under now.
+    fn held_taint(&self, held: &ArmResult) -> Result<Taint> {
+        let taint = (held.state, held.secret.clone());
+        if held.own {
+            return Ok(taint);
+        }
+        live_taint(self.store, self.run_id, &held.output, taint)
+    }
+
+    /// Whether the run's occurrence of `output`, frozen clean for the arm,
+    /// still reads clean now (FIX 9468).
+    pub(super) fn source_clean(&self, output: &CodeRunRawOutput) -> Result<bool> {
+        let frozen = (ArtifactTaintState::Clean, None);
+        let (state, _) = live_taint(self.store, self.run_id, output, frozen)?;
+        Ok(!state.is_tainted())
     }
 
     /// Finishes the body `sink` wrote as a stored value of the arm, named by
@@ -251,7 +294,8 @@ impl ShadowBridgeHost<'_> {
         }
         let mut inherit = Vec::with_capacity(sources.len());
         for source in sources {
-            match self.checked(&JsResultTarget::parse(source))? {
+            let target = JsResultTarget::parse(source);
+            match self.checked(&target, ACT_GATES_COUNT_CALLABLE_ROWS)? {
                 Ok((_, taint)) => inherit.push(taint),
                 Err(refused) => return Ok(refused),
             }
@@ -265,7 +309,7 @@ impl ShadowBridgeHost<'_> {
     /// card of it carried (FIX 6352). A result the arm stored, and one at a
     /// path no `store` writes, is no fold's.
     pub(super) fn describe_result(&mut self, target: &JsResultTarget) -> Result<Value> {
-        let read = match self.checked(target)? {
+        let read = match self.checked(target, true)? {
             Ok((read, _)) => read,
             Err(refused) => return Ok(refused),
         };
@@ -293,7 +337,7 @@ impl ShadowBridgeHost<'_> {
         target: &JsResultTarget,
         child: bool,
     ) -> Result<Value> {
-        let verdict = match self.checked(target)? {
+        let verdict = match self.checked(target, true)? {
             Ok((read, _)) => read.preflight(),
             Err(refused) => result_cannot(refused),
         };
@@ -312,7 +356,7 @@ impl ShadowBridgeHost<'_> {
         facet: ResultFacet,
         input: Value,
     ) -> Result<Value> {
-        let read = match self.checked(target)? {
+        let read = match self.checked(target, true)? {
             Ok((read, _)) => read,
             Err(refused) => return Ok(refused),
         };
@@ -339,7 +383,8 @@ impl ShadowBridgeHost<'_> {
     }
 
     /// One chunk of a body at `offset`, while the arm holds it clean; a
-    /// body frozen withheld stops the arm, since its live read read it.
+    /// body frozen withheld, or one that reads tainted now (FIX 9468), stops
+    /// the arm, since its live read read it.
     pub(super) fn read_chunk(
         &mut self,
         output: &CodeRunRawOutput,
@@ -370,25 +415,23 @@ impl ShadowBridgeHost<'_> {
                 "stored result is outside this run".to_owned(),
             ));
         };
-        let found = self.results.iter().find_map(|held| {
+        let found = self.results.iter().find(|held| {
             if held.output.output_ref() != wanted {
-                return None;
+                return false;
             }
-            if let Some(occurrence) = &occurrence {
-                let mine = ResultOccurrence::of(Some(self.run_id), &held.output)
-                    .ok()?
-                    .id();
-                if &mine != occurrence {
-                    return None;
-                }
-            }
-            Some((held.output.clone(), !held.state.is_tainted()))
+            let Some(occurrence) = &occurrence else {
+                return true;
+            };
+            ResultOccurrence::of(Some(self.run_id), &held.output)
+                .is_ok_and(|mine| mine.id() == *occurrence)
         });
-        let Some((output, clean)) = found else {
+        let Some(held) = found else {
             return Err(Error::InvalidConfig(
                 "stored result is outside this run".to_owned(),
             ));
         };
+        let clean = !self.held_taint(held)?.0.is_tainted();
+        let output = held.output.clone();
         self.read_chunk(&output, clean, offset)
     }
 }

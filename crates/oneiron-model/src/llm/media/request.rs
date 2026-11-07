@@ -76,6 +76,9 @@ pub struct MediaRequest {
     /// order. Each one is a part the call sends.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub references: Vec<MediaPart>,
+    /// An explicit image-edit mask, interpreted by the selected provider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mask: Option<ImageBytes>,
     /// Generic output params (`size`, `voice`, `seconds`, `dimensions`,
     /// ...). Never a route selector: the model id and the host's binding
     /// pick the model and its route, as for a text call.
@@ -136,6 +139,14 @@ impl MediaVoice {
 }
 
 impl MediaRequest {
+    /// An image mask belongs to an image edit and carries actual image bytes.
+    pub fn validate_image_mask(&self) -> LlmResult<()> {
+        if self.mask.is_some() && self.operation != AiOperation::Image {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+        crate::llm::image::validate_edit_mask(self.mask.as_ref(), self.references.len())
+    }
+
     /// The call as the run admits it: this model, envelope and params, and
     /// no messages. Admission reads only these.
     #[must_use]
