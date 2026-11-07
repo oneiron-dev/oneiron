@@ -21454,6 +21454,18 @@
       "section": false
     },
     {
+      "name": "vault.mail.sources.sync",
+      "description": "The vault's owner runs one bounded import step of a Google or Microsoft 365 mailbox source on this device: changes since its anchor, the next newest-first pages under its copy setting, then waiting bodies.",
+      "input": "crate::mail_pack::MailSourceSyncRequest",
+      "output": "crate::mail_pack::MailSyncReport",
+      "call": "memory.mail_sources_sync(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.mail.inbox",
       "description": "The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence.",
       "input": "crate::mail_pack::MailInboxRequest",

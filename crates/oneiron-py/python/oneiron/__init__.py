@@ -5993,6 +5993,9 @@ class Oneiron:
         def sync_status(self, spec):
             """Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers."""
             return json.loads(_translate(lambda: self._client.vault_mail_sources_sync_status(json.dumps(spec))))
+        def sync(self, spec):
+            """The vault's owner runs one bounded import step of a Google or Microsoft 365 mailbox source on this device: changes since its anchor, the next newest-first pages under its copy setting, then waiting bodies."""
+            return json.loads(_translate(lambda: self._client.vault_mail_sources_sync(json.dumps(spec))))
     class _VaultMailSourcesSettingsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

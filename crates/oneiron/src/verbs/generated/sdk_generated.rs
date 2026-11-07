@@ -6974,6 +6974,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::mail_pack::MailSourceRef>(),
             ),
             (
+                "vault.mail.sources.sync",
+                crate::code_run::vault_read::request_schema::<
+                    crate::mail_pack::MailSourceSyncRequest,
+                >(),
+            ),
+            (
                 "vault.mail.inbox",
                 crate::code_run::vault_read::request_schema::<crate::mail_pack::MailInboxRequest>(),
             ),
@@ -19788,6 +19794,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.mail.sources.sync" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.mail.inbox" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -21749,6 +21762,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.mail.compliance.set" => validate_input_vault_mail_compliance_set(value)?,
         "vault.mail.compliance.log" => validate_input_vault_mail_compliance_log(value)?,
         "vault.mail.sources.sync_status" => validate_input_vault_mail_sources_sync_status(value)?,
+        "vault.mail.sources.sync" => validate_input_vault_mail_sources_sync(value)?,
         "vault.mail.inbox" => validate_input_vault_mail_inbox(value)?,
         "vault.mail.threads.read" => validate_input_vault_mail_threads_read(value)?,
         "vault.mail.compliance.search" => validate_input_vault_mail_compliance_search(value)?,
@@ -28586,6 +28600,11 @@ fn validate_input_vault_mail_sources_sync_status(value: &serde_json::Value) -> M
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_mail_sources_sync(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::mail_pack::MailSourceSyncRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_vault_mail_inbox(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::mail_pack::MailInboxRequest = decode(value.clone())?;
     Ok(())
@@ -30630,6 +30649,7 @@ pub fn invoke(
         "vault.mail.compliance.set" => invoke_vault_mail_compliance_set(memory, value),
         "vault.mail.compliance.log" => invoke_vault_mail_compliance_log(memory, value),
         "vault.mail.sources.sync_status" => invoke_vault_mail_sources_sync_status(memory, value),
+        "vault.mail.sources.sync" => invoke_vault_mail_sources_sync(memory, value),
         "vault.mail.inbox" => invoke_vault_mail_inbox(memory, value),
         "vault.mail.threads.read" => invoke_vault_mail_threads_read(memory, value),
         "vault.mail.compliance.search" => invoke_vault_mail_compliance_search(memory, value),
@@ -39578,6 +39598,13 @@ fn invoke_vault_mail_sources_sync_status(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_mail_sources_sync_status(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_mail_sources_sync(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_mail_sources_sync(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_mail_inbox(
@@ -50675,6 +50702,12 @@ pub fn vault_mail_sources_sync_status(
     input: crate::mail_pack::MailSourceRef,
 ) -> MemoryResult<crate::mail_pack::MailSyncStatusView> {
     memory.mail_sources_sync_status(&input)
+}
+pub fn vault_mail_sources_sync(
+    memory: &Memory<'_>,
+    input: crate::mail_pack::MailSourceSyncRequest,
+) -> MemoryResult<crate::mail_pack::MailSyncReport> {
+    memory.mail_sources_sync(&input)
 }
 pub fn vault_mail_inbox(
     memory: &Memory<'_>,

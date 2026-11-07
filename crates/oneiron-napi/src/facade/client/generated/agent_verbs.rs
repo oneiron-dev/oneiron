@@ -11309,6 +11309,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_mail_sources_sync(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.mail.sources.sync", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_mail_inbox(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.mail.inbox", js_json(input))

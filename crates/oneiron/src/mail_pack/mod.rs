@@ -27,17 +27,24 @@
 //! newest first, headers before bodies, live through the provider's change
 //! feed; each message lands as imported evidence bound to its thread's
 //! audience ([`landing`]), and a provider delete applies the source's setting
-//! ([`provider_delete`]). Provider wires land per provider row, Google
-//! Workspace first.
+//! ([`provider_delete`]). Provider wires land per provider row: Gmail for
+//! Google Workspace and Google ([`gmail`]), Microsoft Graph for Microsoft 365
+//! ([`microsoft365`]); the owner runs a step on this device through
+//! [`local_sync`].
 
 mod compliance;
+mod credential;
 mod doors;
+mod gmail;
 mod header_retire;
 mod importer;
 mod inbox;
 mod landing;
+mod local_sync;
+mod microsoft365;
 mod pack;
 mod provider_delete;
+mod rest;
 mod share;
 mod source;
 mod state;
@@ -54,10 +61,13 @@ pub use doors::{
     MailSourceConnectReceipt, MailSourceConnectRequest, MailSourceMembersRequest, MailSourceRef,
     MailSourceSettingsRequest,
 };
+pub use gmail::HttpGmailMailWire;
 pub use importer::{MailSyncBudget, MailSyncReport};
 pub use inbox::{
     MailInboxItem, MailInboxPage, MailInboxRequest, MailThreadRequest, MailThreadView,
 };
+pub use local_sync::MailSourceSyncRequest;
+pub use microsoft365::{HttpGraphMailWire, MICROSOFT365_CONNECTOR_EFFECTOR};
 pub use pack::{
     MAIL_CALENDAR_PACK_NAME, install_mail_calendar_pack_embedded, mail_calendar_pack_files,
 };
