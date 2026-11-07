@@ -47,6 +47,11 @@ pub(crate) trait ReceiptReader {
     /// point read; `None` for a handle bound to no credential, which keeps
     /// every receipt.
     fn readable_trigger_rows(&self, ids: &[EntityId]) -> MemoryResult<Option<BTreeSet<EntityId>>>;
+    /// Whether this reader is bound to a read credential. A room's key is
+    /// always bound; an unbound Memory keeps its actor's receipt behavior.
+    fn has_read_credential(&self) -> bool {
+        true
+    }
     /// Whether a served form takes a page place only when this reader's key
     /// reads the ASSET and ASSET_TEXT it names, as well as its trigger: a
     /// room's reader does, since the room's served forms name rows of the
@@ -74,6 +79,10 @@ impl ReceiptReader for Memory<'_> {
 
     fn readable_trigger_rows(&self, ids: &[EntityId]) -> MemoryResult<Option<BTreeSet<EntityId>>> {
         self.credential_readable_ids(ids)
+    }
+
+    fn has_read_credential(&self) -> bool {
+        self.read_proof.is_some()
     }
 
     fn reads_owner_notices(&self) -> bool {
@@ -257,35 +266,58 @@ pub(crate) fn receipts_of_kinds_for(
 }
 
 /// `receipts` cut to what `reader`'s credential reads, before any page cut
-/// (OF-172 D2): a receipt whose trigger names a row the lane withholds takes
-/// no page place, and pure metadata stays. For a reader that screens served
-/// forms, a served form's ASSET and ASSET_TEXT are judged the same way. An
-/// unbound handle keeps them all, in one lane read over all named rows.
+/// (OF-172 D2). Triggers and a prepared guest window's private source world
+/// and rows must all pass the same lane read. For a reader that screens
+/// served forms, its ASSET and ASSET_TEXT are judged the same way. Pure
+/// metadata stays; an unbound handle keeps its actor's receipt behavior.
 fn credential_kept_receipts(
     reader: &impl ReceiptReader,
     receipts: Vec<ReceiptRecord>,
 ) -> MemoryResult<Vec<ReceiptRecord>> {
-    if receipts.is_empty() {
+    if receipts.is_empty() || !reader.has_read_credential() {
         return Ok(receipts);
     }
     let screens_forms = reader.screens_served_form_rows();
-    let named = |receipt: &ReceiptRecord| -> Vec<EntityId> {
-        let mut rows: Vec<EntityId> = trigger_row_of(receipt).into_iter().collect();
+    let mut named = Vec::with_capacity(receipts.len());
+    for receipt in receipts {
+        let mut rows: Vec<EntityId> = trigger_row_of(&receipt).into_iter().collect();
         if screens_forms && receipt.receipt_kind == ReceiptKind::ServedForm {
-            rows.extend(crate::receipt::served_form_rows(receipt));
+            rows.extend(crate::receipt::served_form_rows(&receipt));
         }
-        rows
-    };
-    let ids: Vec<EntityId> = receipts.iter().flat_map(&named).collect();
-    if ids.is_empty() {
-        return Ok(receipts);
+        if receipt.receipt_kind == ReceiptKind::Share && receipt.outcome == "prepared" {
+            let Some(sequence) = receipt
+                .receipt_id
+                .strip_prefix("share:export:")
+                .and_then(|sequence| sequence.parse().ok())
+            else {
+                continue;
+            };
+            let Some(source) =
+                crate::share_travel::export_travel_source_rows(reader.receipt_vault(), sequence)?
+            else {
+                continue;
+            };
+            rows.extend(source);
+        }
+        named.push((receipt, rows));
     }
-    let Some(readable) = reader.readable_trigger_rows(&ids)? else {
-        return Ok(receipts);
+    let ids: Vec<EntityId> = named
+        .iter()
+        .flat_map(|(_, rows)| rows.iter().copied())
+        .collect();
+    let readable = if ids.is_empty() {
+        None
+    } else {
+        reader.readable_trigger_rows(&ids)?
     };
-    Ok(receipts
+    Ok(named
         .into_iter()
-        .filter(|receipt| named(receipt).iter().all(|id| readable.contains(id)))
+        .filter(|(_, rows)| {
+            readable
+                .as_ref()
+                .is_none_or(|readable| rows.iter().all(|id| readable.contains(id)))
+        })
+        .map(|(receipt, _)| receipt)
         .collect())
 }
 
