@@ -37,6 +37,11 @@ export interface EngineOptions {
   /** MRL prefix width; serialized at config root before [keystore] so init first-opens with it. Engine owns the 1 <= fd < dimensions check at open. */
   readonly fastDims?:number;
   readonly embedder?:EndpointEmbedder;
+  /** `[embedder] idle_interval_ms`, written into the host config after init writes its
+   * [embedder] table, as embeddings.test.ts does: public host policy, not a private tick. */
+  readonly embedderIdleIntervalMs?:number;
+  /** RUST_LOG for the served engine process only (never the CLI, whose stdout is parsed). Diagnostic; changes no behaviour. */
+  readonly serverLog?:string;
   readonly oneironer?:EndpointTagger;
   readonly surface?:"primary"|"tool-first";
   readonly capabilities?:readonly string[];
@@ -135,6 +140,14 @@ export class EngineFixture {
       await stage("cli-init");
       const init=await engine.cli.run(["init",resolve(root,"vault"),"--config",config,...endpointArgs,...taggerArgs,...(options.initArgs??[])],undefined,LIMITS.readyMs,true,true);
       if(init.exitCode!==0) throw new CliError(init,"vault-init");
+      if(options.embedderIdleIntervalMs!==undefined) {
+        const written=await readFile(config,"utf8");
+        if((written.match(/^\[embedder\]$/gm)??[]).length!==1) throw new TypeError("embedderIdleIntervalMs needs exactly one [embedder] table written by init");
+        const policy=written.replace(/^\[embedder\]$/m,`[embedder]\nidle_interval_ms = ${options.embedderIdleIntervalMs}`);
+        const parsed=Bun.TOML.parse(policy) as {embedder?:{idle_interval_ms?:number}};
+        if(parsed.embedder?.idle_interval_ms!==options.embedderIdleIntervalMs) throw new TypeError("embedder idle interval did not land in [embedder]");
+        await writeFile(config,policy,{mode:0o600});
+      }
       await stage("cli-bootstrap");
       const bootstrap=await engine.cli.run(["token","bootstrap","--url",engine.url,"--config",config],undefined,LIMITS.readyMs,true);
       if(bootstrap.exitCode!==0) throw new CliError(bootstrap,"owner-bootstrap");
@@ -184,7 +197,7 @@ export class EngineFixture {
   }
   private async launch():Promise<void> {
     const server=await ManagedProcess.start([requireAsset(this.build,"server"),"serve","--config",resolve(this.root,"oneiron.toml")],
-      {cwd:this.root,env:this.env,label:`server-${secretHex(4)}`,artifacts:this.artifacts,diagnosticOutput:true});
+      {cwd:this.root,env:this.options.serverLog?{...this.env,RUST_LOG:this.options.serverLog}:this.env,label:`server-${secretHex(4)}`,artifacts:this.artifacts,diagnosticOutput:true});
     this.server=server;
     const publicClient=new PublicHttpClient(this.url,{timeoutMs:1000,artifacts:this.artifacts,label:"health"});
     await awaitPublic(async()=>{

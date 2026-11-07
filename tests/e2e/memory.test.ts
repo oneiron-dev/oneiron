@@ -222,7 +222,19 @@ async function mintProject(engine: EngineFixture, providers: ScriptedProviders, 
     messages: [{ author: "user", message_type: "text", is_visible: true, order: 0,
       content: `I am starting ${row.name}, a project I will plan, build and review over several weeks of sittings.` }] });
   const message = (await entity(client, witnessed.message_short_ids[0]!)).id_hex;
-  await providers.awaitBarrier(decide);
+  try {
+    await providers.awaitBarrier(decide);
+  } catch (error) {
+    await engine.artifacts.json(`project-decide-${index}-timeout.json`, {
+      conversation_ref: conversation.id, message_ref: message,
+      seenFixtureCalls: providers.seenFixtureCalls.map(call => ({
+        origin: call.origin, fixtureId: call.fixtureId, path: call.path,
+        model: (call.body as {model?:unknown})?.model,
+      })),
+    });
+    if(process.env.E2E_MEMORY_RETAIN_VAULT==="1") await engine.close({retainVault:true});
+    throw error;
+  }
   const card_id = `project-${message}`;
   const proposal = { card_id, source_message_ref: message,
     goal: { goal: `Build ${row.name}`, why: `${row.name} is the owner's stated multi-week project.`, axes: ["plan", "build", "review"] },
@@ -252,14 +264,15 @@ async function mintProject(engine: EngineFixture, providers: ScriptedProviders, 
 async function closeWorld(w: World): Promise<void> {
   const errors: string[] = [];
   const text = (error: unknown): string => error instanceof Error ? error.message : String(error);
-  try { await w.engine.close(); } catch (error) { errors.push(text(error)); }
+  try { await w.engine.close({retainVault:process.env.E2E_MEMORY_RETAIN_VAULT==="1"}); } catch (error) { errors.push(text(error)); }
   try { await w.providers.close(); } catch (error) { errors.push(text(error)); }
   if (errors.length) throw new Error(`close: ${errors.join("; ")}`);
 }
 async function setup(id: string): Promise<World> {
   const data = await (await loadFixtures()).readJson<Data>("memory-canonical-cases");
   const providers = await ScriptedProviders.start({ id: `memory-projects-${id}`, origins: ["decider", "drafter"], steps: [] });
-  const engine = await EngineFixture.start({ id, profile, serverConfig: memoryModels(providers) });
+  const engine = await EngineFixture.start({ id, profile, serverConfig: memoryModels(providers),
+    serverLog: "info,oneiron::workflow_pump=debug,oneiron_server::ai_host=debug,oneiron_server::big_rung=debug,oneiron_server::decision_host=debug,oneiron::agent_dispatch=debug,oneiron::llm::decision=debug,oneiron::workspace_roster=debug" });
   const occurred = 1769947200; // Public setup input, never an engine clock override.
   await installProjectProposal(engine);
   const projects = new Map<string, string>();
@@ -844,7 +857,7 @@ suite.test(test, "MEMORY-02", "Claim admission rejects malformed scope should wo
     primary = error;
   } finally {
     const cleanups: string[] = [];
-    try { await w.engine.close(); } catch (error) { cleanups.push(errorText(error)); }
+    try { await w.engine.close({retainVault:process.env.E2E_MEMORY_RETAIN_VAULT==="1"}); } catch (error) { cleanups.push(errorText(error)); }
     try { await w.providers.close(); } catch (error) { cleanups.push(errorText(error)); }
     if (primaryFailed) {
       if (cleanups.length) throw new Error(`${errorText(primary)}; cleanup: ${cleanups.join("; ")}`);

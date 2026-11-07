@@ -496,7 +496,8 @@ export async function runSuite(profile: Profile, workers = 4, names: readonly st
         const env = isolatedEnv(fileRoot,{...build.environment,E2E_PROFILE:profile,E2E_FILE_SLOTS:String(file.slots),
           E2E_CPU_CREDITS:String(file.slots*LIMITS.cpuPerSlot),E2E_MEMORY_MIB:String(file.slots*LIMITS.memoryMiBPerSlot),
           E2E_OWNERS_DIR:ownerDir,E2E_ARTIFACTS_DIR:resolve(output,file.file),E2E_RESULT_FILE:resultFile,E2E_SELECTED_IDS:selectedIds(file).join(","),
-          E2E_TEMP_ROOT:fileRoot,E2E_BUILD_MANIFEST:process.env.E2E_BUILD_MANIFEST!,E2E_BUILD_MANIFEST_SHA256:process.env.E2E_BUILD_MANIFEST_SHA256!});
+          E2E_TEMP_ROOT:fileRoot,E2E_BUILD_MANIFEST:process.env.E2E_BUILD_MANIFEST!,E2E_BUILD_MANIFEST_SHA256:process.env.E2E_BUILD_MANIFEST_SHA256!,
+          ...(process.env.E2E_MEMORY_RETAIN_VAULT?{E2E_MEMORY_RETAIN_VAULT:process.env.E2E_MEMORY_RETAIN_VAULT}:{})});
         await mkdir(env.TMPDIR!,{recursive:true,mode:0o700});
         const child = await ManagedProcess.start([...build.launcher,requireAsset(build,"bun"),"test",resolve(E2E_ROOT,file.file),"--timeout",String(LIMITS.suiteMs),"--max-concurrency","1","--reporter=junit","--reporter-outfile",junitFile],
           {cwd:E2E_ROOT,env,label:`process-${file.file}`,artifacts});
