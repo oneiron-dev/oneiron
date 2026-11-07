@@ -10,6 +10,7 @@ mod context;
 mod context_output;
 mod finish;
 mod host_occurrence;
+mod progress;
 mod reader;
 
 pub(crate) use self::finish::FinishedOutput;
