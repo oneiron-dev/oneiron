@@ -103,6 +103,11 @@ const ERASERS: &[EntitySideRowEraser] = &[
     |write, txn, id| erase_inbox_cards_in_txn(write.store, txn, id),
     // FIX 12559: an imported mail message's occurrence, when one of its rows is erased.
     |write, txn, id| crate::mail_pack::erase_occurrence_rows_in_txn(write.store, txn, id),
+    // FIX 11030: a deleted PERSON's unresolved sends, linked by its party key
+    // while its body still names it.
+    |write, txn, id| {
+        crate::outbound_intent_ledger::link_late_recipients_in_txn(write.store, txn, id)
+    },
     // FIX 15414: every mail claim re-check naming an erased TURN, MESSAGE or claim.
     |write, txn, id| crate::mail_pack::erase_claim_recheck_ids_in_txn(write.store, txn, id),
     // FIX 11815: an agent hook's proposal, by the binding claim it widens.
