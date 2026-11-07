@@ -59389,7 +59389,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/policy_model/classify.rs",
@@ -78019,6 +78019,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/client/residence/bundle/publication_access.rs",
+     "purpose": "Existing-generation publication grants over the bundle-access RPC",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/client/residence/bundle/refill.rs",
      "purpose": "A kept object's read, typed, and a kept pad object's refill (FIX 9362, L03 half)",
      "surface": {
@@ -79845,7 +79855,7 @@
       "const": 2,
       "crate-vis": 20,
       "fn": 10,
-      "re-export": 27
+      "re-export": 28
      }
     },
     {
@@ -80092,7 +80102,7 @@
      "path": "src/sync/residence/bundle_payload.rs",
      "purpose": "What the vault's sealed cloud bundle carries (FIX 922 PR 2): the base section and the section of each world…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3,
       "re-export": 1,
       "struct": 2
@@ -80350,6 +80360,20 @@
      "surface": {
       "crate-vis": 7,
       "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PendingPublicationGrant"
+     ],
+     "path": "src/sync/residence/publication_access.rs",
+     "purpose": "Request-bound publication grants kept by the home beside their generation",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -90952,7 +90976,7 @@
      "path": "src/world_keys/bundle.rs",
      "purpose": "The vault's one sealed cloud bundle (DEC-0005 \"Sealed copies\", FIX 922), and the sealed pad object beside it",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 5,
       "struct": 5
      }
@@ -91081,7 +91105,7 @@
      "path": "src/world_keys/bundle/publication_grant.rs",
      "purpose": "Publication-scoped outer access for the install the owner asked to publish (FIX 4785)",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 8,
       "struct": 1
      }
@@ -91258,7 +91282,7 @@
      "path": "src/world_keys/mod.rs",
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "fn": 3,
       "re-export": 22,
       "struct": 2
@@ -93655,7 +93679,7 @@
     "policy_model": {
      "files": 61,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Policy classification over two planes"
     },
@@ -94024,7 +94048,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 383,
+     "files": 385,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94234,9 +94258,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 185,
+   "over_bar": 186,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6660,
+   "source_files": 6662,
    "test_files": 895
   },
   "oneiron-android": {
