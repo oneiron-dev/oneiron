@@ -532,6 +532,10 @@ export class Oneiron {
         /** Before preparing a training run, read a reservoir scope's sources with other people or unknown people, each with its pairs, and the pairs the run would carry and leave out by reason under the ticks given so far. */
         sources: (input: Facade.ReservoirSourcesRequest): Facade.ReservoirSourcePreview => this.#call(() => this.#client.vaultCoachTrainingOffersSources(input) as Facade.ReservoirSourcePreview),
       }),
+      training_runs: {
+        /** Cancel a staged trained embedder swap while its binding still waits or fills; an applied swap keeps the existing space-move undo door. */
+        cancel: (input: Facade.TrainingRunRef): Facade.PendingEmbedderBinding => this.#call(() => this.#client.vaultCoachTrainingRunsCancel(input) as Facade.PendingEmbedderBinding),
+      },
     },
     people: {
       /** One page of the people the caller reads, in handle order. */
@@ -558,7 +562,7 @@ export class Oneiron {
       facet: (input: Facade.IdentityFacetRequest): Facade.IdentityTopologyResult => this.#call(() => this.#client.vaultIdentityFacet(input) as Facade.IdentityTopologyResult),
       /** The owner asserts two identities are distinct through one symmetric claim that suppresses merge re-proposals. */
       assert_distinct: (input: Facade.IdentityAssertDistinctRequest): Facade.IdentityTopologyResult => this.#call(() => this.#client.vaultIdentityAssertDistinct(input) as Facade.IdentityTopologyResult),
-      /** The owner parks a nominated merge or split candidate with no topology effects; distinct pairs suppress merge proposals. */
+      /** The owner parks a nominated merge, split or facet candidate with no topology effects; distinct pairs suppress merge proposals. */
       propose: (input: Facade.IdentityProposeRequest): Facade.IdentityTopologyResult => this.#call(() => this.#client.vaultIdentityPropose(input) as Facade.IdentityTopologyResult),
       /** The owner undoes one current topology event by appending a counter-event under its observed revision. */
       undo: (input: Facade.IdentityUndoRequest): Facade.IdentityTopologyResult => this.#call(() => this.#client.vaultIdentityUndo(input) as Facade.IdentityTopologyResult),
@@ -1016,6 +1020,22 @@ export class Oneiron {
         /** A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays. */
         wrong: (input: Facade.WeaveWrongItemRequest): Facade.WeaveItemCorrectionView => this.#call(() => this.#client.vaultWeaveItemWrong(input) as Facade.WeaveItemCorrectionView),
       },
+      admin: {
+        /** A weave Admin's live report of the shared vault, inside the Admin membership grant's Scope, after the person stepped up with a passkey on this credential (MFA-1 A); never an Owner read. */
+        report: (input: Facade.WeaveAdminReportRequest): Facade.WeaveReportView => this.#call(() => this.#client.vaultWeaveAdminReport(input) as Facade.WeaveReportView),
+        /** A weave Admin's live report rendered into its lens on the server's model, under the stepped-up Admin proof; the server holds its frame for the card's events. */
+        lens: (input: Facade.WeaveAdminLensRequest): Facade.LensFrameCard => this.#call(() => this.#client.vaultWeaveAdminLens(input) as Facade.LensFrameCard),
+        /** One of a weave Admin's saved digests, or the newest, under the stepped-up Admin proof and the current read policy. */
+        digest: (input: Facade.WeaveAdminDigestRequest): Facade.WeaveDigestView | null => this.#call(() => this.#client.vaultWeaveAdminDigest(input) as Facade.WeaveDigestView | null),
+        link: {
+          /** A weave Admin labels a link its Admin report shows as wrong, under the stepped-up Admin proof, with the grant on the label; the link stays. */
+          wrong: (input: Facade.WeaveAdminLinkWrongRequest): Facade.WeaveLinkCorrectionView => this.#call(() => this.#client.vaultWeaveAdminLinkWrong(input) as Facade.WeaveLinkCorrectionView),
+        },
+        item: {
+          /** A weave Admin labels a claim, project, budget or sieve audit row its Admin report shows as wrong, under the stepped-up Admin proof; the row stays. */
+          wrong: (input: Facade.WeaveAdminItemWrongRequest): Facade.WeaveItemCorrectionView => this.#call(() => this.#client.vaultWeaveAdminItemWrong(input) as Facade.WeaveItemCorrectionView),
+        },
+      },
       /** Admits a generated candidate weave recipe under the owner's proof and queues its pinned execution; poll vault.consolidation.status for completion. */
       enqueue: (input: Facade.WeaveEnqueueRequest): Facade.DreamerAttemptRef => this.#call(() => this.#client.vaultWeaveEnqueue(input) as Facade.DreamerAttemptRef),
       schedules: {
@@ -1037,6 +1057,16 @@ export class Oneiron {
       digest_feedback: {
         /** Tells the Coach the owner's own digest preference: a rhythm, a section to lead with, or keep the settings as they are. */
         put: (input: Facade.WeaveDigestFeedback): Facade.WeaveDigestFeedback => this.#call(() => this.#client.vaultWeaveDigestFeedbackPut(input) as Facade.WeaveDigestFeedback),
+      },
+    },
+    step_up: {
+      passkeys: {
+        /** The vault owner removes every passkey a person enrolled for step-up, and that person's step-ups, so a person who lost each passkey can enroll a first one again; under the owner's own credential. */
+        reset: (input: Facade.StepUpPasskeysResetRequest): Facade.StepUpPasskeysReset => this.#call(() => this.#client.vaultStepUpPasskeysReset(input) as Facade.StepUpPasskeysReset),
+      },
+      totp: {
+        /** The vault owner removes a person's authenticator-app enrollments and their TOTP step-ups; passkeys and passkey step-ups remain unchanged. */
+        reset: (input: Facade.StepUpTotpResetRequest): Facade.StepUpTotpReset => this.#call(() => this.#client.vaultStepUpTotpReset(input) as Facade.StepUpTotpReset),
       },
     },
     inbox: {
@@ -1620,6 +1650,8 @@ export class Oneiron {
         list: (input: Facade.FilesSourceListRequest): Facade.FilesSourceList => this.#call(() => this.#client.vaultFilesSourcesList(input) as Facade.FilesSourceList),
         /** The owner reads one Files source's ledger: each file's path, readiness (text or name only, and why), revision and dates. */
         files: (input: Facade.FilesSourceFilesRequest): Facade.FilesSourceFiles => this.#call(() => this.#client.vaultFilesSourcesFiles(input) as Facade.FilesSourceFiles),
+        /** The owner converts an attached notes folder on this host to Files, keeping its existing notes, history and links. The host rescans the folder into its Files world and returns the source and rescan report. */
+        convert: (input: Facade.FilesSourceConvertRequest): Facade.FilesSourceAttachAnswer => this.#call(() => this.#client.vaultFilesSourcesConvert(input) as Facade.FilesSourceAttachAnswer),
       },
     },
     residence: {
@@ -2106,6 +2138,8 @@ export class Oneiron {
       view: (input: Facade.ShareViewRequest): Facade.ScopedReadResult<Facade.SharedBriefView | null> => this.#call(() => this.#client.vaultSharesView(input) as Facade.ScopedReadResult<Facade.SharedBriefView | null>),
     },
     hooks: {
+      /** The owner reads saved hook cycle and depth checks, including their causal lineage. Reads no hook arguments, body or result values and changes nothing; keeps the native list's oldest-key order and 1000-row limit. */
+      checks: (input: Facade.EmptyRequest = {}): Facade.HookCheck[] => this.#call(() => this.#client.vaultHooksChecks(input) as Facade.HookCheck[]),
       /** The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands, 256 entries a page; next_cursor continues to the rest. */
       replay: (input: Facade.HooksReplayRequest): Facade.HooksReplayPage => this.#call(() => this.#client.vaultHooksReplay(input) as Facade.HooksReplayPage),
       regen: {
@@ -2308,6 +2342,8 @@ export class Oneiron {
       oplog: (input: Facade.CodeRepoRequest): Facade.CodeMutationLog => this.#call(() => this.#client.vaultCodeOplog(input) as Facade.CodeMutationLog),
       /** Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy. */
       model_heal_count: (input: Facade.CodeRunModelHealCountRequest): Facade.CodeRunModelHealCountView => this.#call(() => this.#client.vaultCodeModelHealCount(input) as Facade.CodeRunModelHealCountView),
+      /** Read one code run's durable correction records as the owner, oldest first: per model response its model, repairs, outcome and committed checkpoint, with the repair policy. Canonical runs only. */
+      corrections: (input: Facade.CodeRunCorrectionsRequest): Facade.CodeRunCorrectionsView => this.#call(() => this.#client.vaultCodeCorrections(input) as Facade.CodeRunCorrectionsView),
       /** Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref. */
       type_diagnostics: (input: Facade.CodeRunTypeDiagnosticsRequest): Facade.ProgramStepFeedbackRelease | null => this.#call(() => this.#client.vaultCodeTypeDiagnostics(input) as Facade.ProgramStepFeedbackRelease | null),
       waits: {
@@ -2910,18 +2946,18 @@ export class Oneiron {
         /** The owner imports one exact uploaded ICS version through the existing UID diff and imported-claim gate; the receipt exposes pending claim refs without granting consent. */
         import: (input: Facade.CalendarIcsImportRequest): Facade.CalendarIcsImportReceipt => this.#call(() => this.#client.vaultCalendarIcsImport(input) as Facade.CalendarIcsImportReceipt),
       },
-      /** Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions. */
-      occurrences: (input: Facade.CalendarOccurrencesRequest): Facade.ScopedReadResult<Facade.CalendarOccurrenceView[]> => this.#call(() => this.#client.vaultCalendarOccurrences(input) as Facade.ScopedReadResult<Facade.CalendarOccurrenceView[]>),
+      /** Expands an admitted stored master in an inclusive UTC window under the caller's read scope, masking detached exceptions, as one page: an optional deadline_ms, and resume_from to continue. */
+      occurrences: (input: Facade.CalendarOccurrencesPageRequest): Facade.ScopedReadResult<Facade.CalendarOccurrencesPage> => this.#call(() => this.#client.vaultCalendarOccurrences(input) as Facade.ScopedReadResult<Facade.CalendarOccurrencesPage>),
       instances: {
         /** The owner applies one uploaded detached-instance amendment matching its UID, original start and new interval, through the import gate without changing other instances. */
         move: (input: Facade.CalendarInstanceMoveRequest): Facade.CalendarIcsImportReceipt => this.#call(() => this.#client.vaultCalendarInstancesMove(input) as Facade.CalendarIcsImportReceipt),
       },
       /** Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt. */
       read: (input: Facade.CalendarReadRequest): Facade.ScopedReadResult<Facade.CalendarEventView | null> => this.#call(() => this.#client.vaultCalendarRead(input) as Facade.ScopedReadResult<Facade.CalendarEventView | null>),
-      /** Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt. */
-      search: (input: Facade.CalendarSearchRequest): Facade.ScopedReadResult<Facade.CalendarEventView[]> => this.#call(() => this.#client.vaultCalendarSearch(input) as Facade.ScopedReadResult<Facade.CalendarEventView[]>),
-      /** Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt. */
-      freebusy: (input: Facade.CalendarFreebusyRequest): Facade.ScopedReadResult<Facade.CalendarFreebusyDto> => this.#call(() => this.#client.vaultCalendarFreebusy(input) as Facade.ScopedReadResult<Facade.CalendarFreebusyDto>),
+      /** Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, as one page in time order: an optional deadline_ms, and resume_from to continue. */
+      search: (input: Facade.CalendarSearchPageRequest): Facade.ScopedReadResult<Facade.CalendarSearchPage> => this.#call(() => this.#client.vaultCalendarSearch(input) as Facade.ScopedReadResult<Facade.CalendarSearchPage>),
+      /** Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals, one page of the covered prefix: an optional deadline_ms, and resume_from to continue. */
+      freebusy: (input: Facade.CalendarFreebusyPageRequest): Facade.ScopedReadResult<Facade.CalendarFreebusyPage> => this.#call(() => this.#client.vaultCalendarFreebusy(input) as Facade.ScopedReadResult<Facade.CalendarFreebusyPage>),
       /** Builds a fresh caller-scoped meeting PrepPack with commitments first and a 250-word ceiling, or deliberately returns no pack. */
       prep: (input: Facade.CalendarMeetingRequest): Facade.ScopedReadResult<Facade.PrepPack | null> => this.#call(() => this.#client.vaultCalendarPrep(input) as Facade.ScopedReadResult<Facade.PrepPack | null>),
       /** Reads the caller-visible meeting outcome and its recorded basis; silence projects to unknown and never to held or no_show. */
@@ -3604,7 +3640,15 @@ export class Oneiron {
     /** Posts a new TASK and its try from one TASK's current brief, assignee, spec, label and parent through the task highway, under the caller's intent key; the redone TASK, its result and its receipts are never written. */
     redo: (input: Facade.TaskRedo): Facade.TaskCallReceipt => this.#call(() => this.#client.tasksRedo(input) as Facade.TaskCallReceipt),
     /** Admits one person's word on an ask; the word is evidence, never approval. */
-    answer: (handle: TaskAskHandle, word: TaskAskWord): Facade.TaskAskAnswer => this.#call(() => this.#client.tasksAnswer({handle, word}) as Facade.TaskAskAnswer),
+    answer: Object.assign((handle: TaskAskHandle, word: TaskAskWord): Facade.TaskAskAnswer => this.#call(() => this.#client.tasksAnswer({handle, word}) as Facade.TaskAskAnswer), {
+      /** Relays one person's own word, or the void of their own seat, on an ask to the node that admitted it; it stays pending until that node's result reads here. */
+      forward: Object.assign((handle: TaskAskHandle, intentKey: string, act: Facade.AskForwardAct, proof: Facade.AskForwardHolderProof): Facade.AskForwardReceipt => this.#call(() => this.#client.tasksAnswerForward({handle, intent_key: intentKey, act, proof}) as Facade.AskForwardReceipt), {
+        /** The challenge one person signs, through their slip's binding transcript, to relay their own word or seat void on an ask to the node that admitted it. */
+        challenge: (handle: TaskAskHandle, intentKey: string, act: Facade.AskForwardAct): Facade.TaskAnswerForwardChallenge => this.#call(() => this.#client.tasksAnswerForwardChallenge({handle, intent_key: intentKey, act}) as Facade.TaskAnswerForwardChallenge),
+        /** Where one relayed ask word stands, for its own holder: pending until the admitting node's result reads here, then that result. */
+        status: (intentRef: Facade.EntityId): Facade.AskForwardReceipt => this.#call(() => this.#client.tasksAnswerForwardStatus({intent_ref: intentRef}) as Facade.AskForwardReceipt),
+      }),
+    }),
     /** Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to. */
     outcomes: (handle: TaskAskHandle): Facade.CalibrationPair[] => this.#call(() => this.#client.tasksOutcomes(handle) as Facade.CalibrationPair[]),
     /** Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay. */

@@ -522,6 +522,67 @@ pub(crate) fn watchable(secret: &[u8]) -> bool {
     secret.len() >= MIN_SECRET && secret.len() <= MAX_SECRET && admits(secret)
 }
 
+/// Whether a git credential's watched token is one the broker sends: any
+/// bytes, up to [`MAX_SECRET`]. The git reply's echo watch searches the
+/// token's literal forms and never rewrites a reply, which every byte
+/// supports, so a Basic password with a `%`, or one shorter than a model
+/// key, goes as it did before the broker ([`git_echo_form`] says which
+/// forms a short one is watched by).
+pub(crate) fn git_watchable(token: &[u8]) -> bool {
+    !token.is_empty() && token.len() <= MAX_SECRET
+}
+
+/// The literal forms of a git credential's `token` the git reply watch
+/// searches for, in its headers and its body: each of at least
+/// [`git_echo_form`]'s length.
+pub(crate) fn git_echo_forms(token: &[u8]) -> Vec<Zeroizing<Vec<u8>>> {
+    let mut forms = crate::strip::forms(token);
+    forms.extend(crate::strip::base64_forms(token));
+    forms.retain(|form| git_echo_form(form));
+    forms
+}
+
+/// A git reply's headers as the daemon gets them: each one whose name or
+/// value holds one of `forms` ([`git_echo_forms`]) is left out whole, and
+/// every other passes byte for byte, under the model reply's count and byte
+/// bounds. Nothing is rewritten: the model strip would redact a short
+/// token's text inside git's own values (a password `git` in
+/// `application/x-git-upload-pack-advertisement`), and Git would not know
+/// the reply.
+pub(crate) fn git_reply_headers(
+    headers: &reqwest::header::HeaderMap,
+    forms: &[Zeroizing<Vec<u8>>],
+) -> Vec<(String, String)> {
+    let holds = |bytes: &[u8]| {
+        forms
+            .iter()
+            .any(|form| memchr::memmem::find(bytes, form).is_some())
+    };
+    let mut kept = Vec::new();
+    let mut size = 0;
+    for (name, value) in headers {
+        if holds(name.as_str().as_bytes()) || holds(value.as_bytes()) {
+            continue;
+        }
+        let value = String::from_utf8_lossy(value.as_bytes()).into_owned();
+        size += name.as_str().len() + value.len();
+        if kept.len() == MAX_REPLY_HEADERS || size > MAX_REPLY_HEADER_BYTES {
+            break;
+        }
+        kept.push((name.as_str().to_owned(), value));
+    }
+    kept
+}
+
+/// Whether the git echo watch searches a reply for `form`, one literal form
+/// of a git credential's token: one of at least a model key's least length.
+/// A shorter one would be found among a pack's bytes by chance and cut a
+/// clean reply, so a short token is watched by its longer forms alone (its
+/// `Bearer`, percent and base64 forms).
+pub(crate) fn git_echo_form(form: &[u8]) -> bool {
+    form.len() >= MIN_SECRET
+}
+
 /// The shape's key header value for `secret`, marked sensitive.
 pub(crate) fn auth_value(call: &CallHeader, secret: &[u8]) -> Result<HeaderValue, Refusal> {
     // Only a key the strip rule is sure to find in a reply: ASCII, so no key
