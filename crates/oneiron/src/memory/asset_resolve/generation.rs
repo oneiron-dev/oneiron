@@ -21,13 +21,16 @@ impl Memory<'_> {
         occurred_at: u64,
     ) -> MemoryResult<LandedImage> {
         let description = intent.instruction.clone();
-        let response = catalog.render(intent, None, lease).await.map_err(|error| {
-            MemoryError::new(
-                MEMORY_CODE_MODEL_UNAVAILABLE,
-                format!("image generation failed: {error}"),
-                &[],
-            )
-        })?;
+        let response = catalog
+            .render(intent, None, None, lease)
+            .await
+            .map_err(|error| {
+                MemoryError::new(
+                    MEMORY_CODE_MODEL_UNAVAILABLE,
+                    format!("image generation failed: {error}"),
+                    &[],
+                )
+            })?;
         self.land_generated_image(&response, &description, occurred_at)
     }
 

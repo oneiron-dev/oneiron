@@ -41,7 +41,8 @@ pub(crate) struct ContextBoardRoomControls {
 }
 
 /// Where the ROOM rows this board rendered sit in the room's whole stream
-/// (FIX 9746, 9747): its members by actor id, then its rules by claim id.
+/// (FIX 9746, 9747): its members in the room record's order (FIX 10567),
+/// then its rules by claim id.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct ContextBoardRoomPage {
     /// Members on the room's whole roster.
