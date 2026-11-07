@@ -55,25 +55,19 @@ fn invalid(reason: &str) -> Error {
 }
 
 /// A plan is for the offer's seat, from its base: the starting checkpoint's
-/// model, and its first file's hash when the offer pins one, as the offer
-/// derives it. An offer trains its seat's role, never a question head.
+/// model and complete load-set hash when the offer pins one. An offer trains
+/// its seat's role, never a question head.
 fn plan_matches(seat: &EvalSeat, base: &OfferModelPin, plan: &TrainingPlan) -> Result<()> {
     if plan.target.question().is_some() {
         return Err(invalid(
             "a training offer's run trains its seat's role, not a question head",
         ));
     }
-    let first = plan
-        .starting_checkpoint
-        .files
-        .first()
-        .map(|file| bytes_to_hex_lower(&file.content.blake3));
-    if plan.seat != *seat
-        || plan.starting_checkpoint.model.as_str() != base.model
-        || base
-            .content_hash
-            .as_ref()
-            .is_some_and(|hash| first.as_ref() != Some(hash))
+    let hash_matches = match &base.content_hash {
+        Some(hash) => bytes_to_hex_lower(&plan.starting_checkpoint.content_hash()?) == *hash,
+        None => true,
+    };
+    if plan.seat != *seat || plan.starting_checkpoint.model.as_str() != base.model || !hash_matches
     {
         return Err(invalid(
             "the prepared run is not for the offer's seat and base model",
