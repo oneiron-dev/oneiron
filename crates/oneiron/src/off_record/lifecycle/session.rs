@@ -906,13 +906,30 @@ impl OffRecordSession<'_> {
     /// vault's; the vault's `bodies/` once it is on record.
     pub(crate) fn body_dir(&self, target: RouteTarget) -> Result<crate::store::BodyDir> {
         match target {
-            RouteTarget::Overlay => self
-                .vault
-                .store
-                .session_body_dir(&self.session_ref, true)?
-                .ok_or(Error::InvariantViolation(
-                    "off-record body directory missing",
-                )),
+            RouteTarget::Overlay => {
+                let state = session_entry_state(&self.entry)?;
+                if state.gone {
+                    return Err(Error::OffRecord(OffRecordError::OffRecordSessionNotFound {
+                        session_ref: self.session_ref.clone(),
+                    }));
+                }
+                if state.record.closing {
+                    return Err(Error::OffRecord(OffRecordError::OffRecordSessionClosing {
+                        session_ref: self.session_ref.clone(),
+                    }));
+                }
+                let _io = self.entry.live_spill.io()?;
+                let mut dir = self
+                    .vault
+                    .store
+                    .session_body_dir(&self.session_ref, true)?
+                    .ok_or(Error::InvariantViolation(
+                        "off-record body directory missing",
+                    ))?;
+                self.entry.live_spill.attach(&dir)?;
+                dir.live_spill = Some(Arc::clone(&self.entry.live_spill));
+                Ok(dir)
+            }
             RouteTarget::Base => self.vault.store.body_dir(),
             RouteTarget::Discard => Err(Error::InvariantViolation(
                 "anonymous routes write no result bodies",

@@ -170,6 +170,30 @@ impl Store {
         Ok(())
     }
 
+    /// Deletes the row of `run_id`'s attempt index naming `attempt_id`, the
+    /// one [`Self::put_attempt_run_index_in_txn`] wrote: a row that leaves the
+    /// queue leaves no index entry naming it (FIX 12327).
+    pub(crate) fn delete_attempt_run_index_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        run_id: Option<&str>,
+        attempt_id: &[u8; 16],
+    ) -> Result<()> {
+        let Some(run_id) = run_id else {
+            return Ok(());
+        };
+        ATTEMPT_RUN_INDEX.delete(
+            self,
+            wtxn,
+            &suffix_of(
+                attempt_run_index_key(run_id, attempt_id),
+                ATTEMPT_RUN_INDEX_PREFIX,
+            ),
+        )?;
+        self.refresh_pending_gate_consent_group_aliases_for_run_in_txn(wtxn, run_id)?;
+        Ok(())
+    }
+
     /// Deletes every attempt run index row, for a restore that rebuilds the
     /// index from the attempt rows it landed (FIX 6577).
     pub(crate) fn clear_attempt_run_index_in_txn(&self, wtxn: &mut RwTxn<'_>) -> Result<()> {
