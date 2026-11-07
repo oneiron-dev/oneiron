@@ -311,6 +311,13 @@ pub struct OfferBinding {
 }
 
 impl OfferBinding {
+    /// The same full binding identity that permits and gates compare.
+    /// A fingerprint identifies an offer; it grants no permission to use it.
+    #[must_use]
+    pub fn fingerprint(&self) -> String {
+        identity(self)
+    }
+
     pub(super) fn dispatch_binding(&self) -> DispatchBinding {
         DispatchBinding {
             subject: self.model.as_str().to_owned(),
