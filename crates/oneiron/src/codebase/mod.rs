@@ -6,6 +6,7 @@ mod file_mode;
 mod identity;
 mod ingest;
 mod instructions;
+mod registration;
 mod repo_ref;
 mod residue;
 mod secret_projection;
@@ -32,6 +33,7 @@ pub use self::ingest::{
 };
 pub(crate) use self::instructions::code_instruction_handles_in;
 pub use self::instructions::{CODE_INSTRUCTION_FILE_NAMES, CodeInstructionHandle};
+pub(crate) use self::registration::{CaptureRepository, RegisteredRepository, proposed_file_paths};
 pub use self::repo_ref::{CODEBASE_COMMIT_HASH_HEX_LEN, CODEBASE_REPO_REF_MAX_BYTES, RepoRef};
 pub use self::snapshot::{
     CODEBASE_CONTENT_HASH_LEN, CODEBASE_FILE_ENTRY_KEYS, CODEBASE_FILE_PATH_MAX_BYTES,
