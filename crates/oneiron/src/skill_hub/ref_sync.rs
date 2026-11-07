@@ -262,7 +262,16 @@ impl Vault {
                 tracked.latest_seen = prior.latest_seen;
                 tracked.latest_trusted = prior.latest_trusted;
             }
+            // A frozen ref admits one hash, so a moved pin or policy can
+            // change the model pack the vault follows; the change is recorded
+            // and the owner told, as an install's is (FIX 5369).
+            let model_pack_before = self.model_pack_in_effect_in_txn(txn)?;
             REF_SYNC.put(&self.store, txn, &key, &RefSyncRow::from_tracked(&tracked)?)?;
+            self.note_active_model_pack_in_txn(
+                txn,
+                model_pack_before,
+                crate::llm::model_pack::ModelPackChangeCause::HubRefPin,
+            )?;
             Ok(tracked)
         })
     }

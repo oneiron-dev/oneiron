@@ -22,12 +22,14 @@ pub(super) use self::booking::BookingCaller;
 pub(super) enum SocketMode {
     /// Full replication, for the owner-grade caller its upgrade admitted:
     /// that credential's revocable token id, a managed vault's attested
-    /// owner, whom no token id names, and the actor its sync frames count
-    /// under.
+    /// owner, whom no token id names, the actor its sync frames count
+    /// under, and the session this machine serves it as a peer while their
+    /// home is down (FIX 4748), if it does. A booking socket is never one.
     Replication {
         session_jti: Option<String>,
         owner: Option<CoreAuth>,
         telemetry_actor: String,
+        peer_serve: Option<super::super::peer_serve::PeerServe>,
     },
     /// A stale owner sign-in's socket: the five booking verbs and nothing
     /// more (FIX 11712).
@@ -51,6 +53,7 @@ pub(super) async fn handle_connection(
             session_jti,
             owner,
             telemetry_actor,
+            peer_serve,
         } => {
             replication::handle_connection(
                 socket,
@@ -59,7 +62,7 @@ pub(super) async fn handle_connection(
                 (session_jti, owner),
                 telemetry_actor,
                 locality,
-                machine,
+                (machine, peer_serve),
                 signing_request_transport,
             )
             .await;
