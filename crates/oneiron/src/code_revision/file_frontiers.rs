@@ -32,15 +32,17 @@ pub(super) fn artifact_hash(
         return Ok(body_hash);
     }
     let mut h = Sha256::new();
-    h.update(b"oneiron:code-revision-tested-files:v1");
+    // v2 (FIX 6258): the metadata fold binds the message and modes, never
+    // the erasable author, so an erase leaves every fold unchanged.
+    h.update(b"oneiron:code-revision-tested-files:v2");
     h.update(body_hash);
     if let Some(metadata) = &revision.commit_metadata {
         super::commit_metadata::validate(revision)?;
         let encoded = super::codec::encode_value(
-            &super::commit_metadata::to_value(Some(metadata)),
+            &super::commit_metadata::integrity_value(metadata),
             "commit metadata encode",
         )?;
-        h.update(b"commit-metadata:v1");
+        h.update(b"commit-metadata-content:v1");
         h.update((encoded.len() as u64).to_be_bytes());
         h.update(encoded);
     }

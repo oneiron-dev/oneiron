@@ -18,6 +18,9 @@ use crate::{
 };
 use rmpv::Value;
 
+mod public_admit;
+pub use public_admit::{admit_standing_answer, prepare_standing_answer};
+
 /// One backfill identity: question id + `backfill` family + version, unit and frontier.
 #[derive(Clone, Copy)]
 pub(super) struct BackfillKey {
@@ -176,6 +179,21 @@ fn sources_in_txn(
     evidence: &[EntityId],
     proposals: &[AnswerRecord],
 ) -> Result<([u8; 32], Vec<Source>)> {
+    let (frontier, sources, _) =
+        sources_with_caller_in_txn(vault, txn, record, actor, unit, evidence, proposals, None)?;
+    Ok((frontier, sources))
+}
+
+fn sources_with_caller_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    record: &QuestionRecord,
+    actor: WriteActor,
+    unit: EntityId,
+    evidence: &[EntityId],
+    proposals: &[AnswerRecord],
+    caller: Option<&crate::claim::ScopedRead<'_>>,
+) -> Result<([u8; 32], Vec<Source>, Vec<super::GraphContextSource>)> {
     // Every evidence source is read: their count is no refusal (FIX 9914).
     let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
     // Relationship membership and AccessGrants are the question principal's,
@@ -197,6 +215,9 @@ fn sources_in_txn(
     let home = crate::authority::StandingHome::Vault(vault);
     let principal_reads = Reader::new(home, principal, reader.clone());
     let holder_reads = Reader::new(home, actor.entity_ref(), holder.clone());
+    let caller_reads =
+        caller.map(|lane| Reader::new(home, actor.entity_ref(), lane.actor_key().clone()));
+    let mut context = Vec::new();
     let mut hasher = blake3::Hasher::new();
     let mut sources = Vec::with_capacity(evidence.len() + 1);
     for id in std::iter::once(&unit).chain(evidence.iter()) {
@@ -218,11 +239,17 @@ fn sources_in_txn(
         if !readable {
             return Err(Error::EntityNotFound);
         }
-        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
-            .ok_or(Error::EntityNotFound)?;
-        // A file-plane ASSET's stored row holds its manifest: judge, hash and
-        // scope the body in its place (FIX 5398).
-        let raw = vault.materialized_row_in_txn(txn, id, raw)?;
+        let raw = if let Some(caller) = caller {
+            caller
+                .graph_ask_raw_in_txn(txn, id)?
+                .ok_or(Error::EntityNotFound)?
+        } else {
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
+                .ok_or(Error::EntityNotFound)?;
+            // A file-plane ASSET's stored row holds its manifest: judge, hash and
+            // scope the body in its place (FIX 5398).
+            vault.materialized_row_in_txn(txn, id, raw)?
+        };
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("standing source header"))?;
         // A claim awaiting its owner's answer is a missing required source.
@@ -281,14 +308,25 @@ fn sources_in_txn(
             &reader.world_ceiling().worlds,
             &holder.world_ceiling().worlds,
         ];
-        let scope = crate::federation::record_scope::note_world::source_position(
-            &vault.store,
-            txn,
-            *id,
-            header.entity_type,
-            scope,
-            &held,
-        );
+        let scope = if let Some(caller) = caller {
+            crate::federation::record_scope::note_world::source_position(
+                &vault.store,
+                txn,
+                *id,
+                header.entity_type,
+                scope,
+                &[held[0], held[1], &caller.actor_key().world_ceiling().worlds],
+            )
+        } else {
+            crate::federation::record_scope::note_world::source_position(
+                &vault.store,
+                txn,
+                *id,
+                header.entity_type,
+                scope,
+                &held,
+            )
+        };
         // The shared scoped reader checks NOTE authorship, but its NOTE branch
         // returns before the non-claim record-position grant. Conjoin both.
         if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
@@ -297,9 +335,30 @@ fn sources_in_txn(
         {
             return Err(Error::EntityNotFound);
         }
+        if let Some(caller_reads) = &caller_reads
+            && header.entity_type == crate::registry::ENTITY_TYPE_NOTE
+            && !caller_reads.record_allowed_in_txn(txn, &policy, &scope)?
+        {
+            return Err(Error::EntityNotFound);
+        }
+        if caller.is_some() {
+            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+            if !super::graph_ask::kind_is_graph_evidence(header.entity_type)
+                || body.is_empty()
+                || body.len() > 1_048_576
+            {
+                return Err(Error::EntityNotFound);
+            }
+            context.push(super::GraphContextSource {
+                id: *id,
+                entity_type: header.entity_type,
+                hash: *blake3::hash(body).as_bytes(),
+                body: body.to_vec(),
+            });
+        }
         sources.push(Source::of_row(header.entity_type, &raw, &scope)?);
     }
-    Ok((*hasher.finalize().as_bytes(), sources))
+    Ok((*hasher.finalize().as_bytes(), sources, context))
 }
 
 /// Resolve the complete source set under the principal and writing actor in
@@ -518,6 +577,8 @@ enum Measured {
     Graph(Vec<crate::llm::decision::EvidenceVersion>, f64),
     /// A full ladder decision, its evidence versions already the engine's.
     Decided(Box<TypedDecision>),
+    /// An external measurement over the prior public preparation, never rebound.
+    Admitted(Box<TypedDecision>),
 }
 
 fn backfill_answer(
@@ -529,6 +590,32 @@ fn backfill_answer(
     input: StandingAnswer,
     measurement: Measured,
     proposals: &[AnswerRecord],
+    now: u64,
+) -> Result<AnswerRecord> {
+    backfill_answer_with_caller(
+        vault,
+        principal,
+        question,
+        expected_version,
+        actor,
+        input,
+        measurement,
+        proposals,
+        None,
+        now,
+    )
+}
+
+fn backfill_answer_with_caller(
+    vault: &Vault,
+    principal: EntityId,
+    question: EntityId,
+    expected_version: u32,
+    actor: WriteActor,
+    input: StandingAnswer,
+    measurement: Measured,
+    proposals: &[AnswerRecord],
+    caller: Option<&crate::claim::ScopedRead<'_>>,
     now: u64,
 ) -> Result<AnswerRecord> {
     vault.store.authorization_now()?;
@@ -554,7 +641,7 @@ fn backfill_answer(
         {
             return Err(invalid("invalid standing answer"));
         }
-        let (frontier, sources) = sources_in_txn(
+        let (frontier, sources, context) = sources_with_caller_in_txn(
             vault,
             txn,
             &record,
@@ -562,9 +649,24 @@ fn backfill_answer(
             input.unit,
             &input.evidence,
             proposals,
+            caller,
         )?;
         if frontier != input.source_frontier {
             return Err(Error::ConcurrentWrite("standing source changed"));
+        }
+        if let Measured::Admitted(decision) = &measurement {
+            super::graph_ask::validate_decision(&record.definition.question, principal, decision)?;
+            let ids: Vec<_> = context.iter().skip(1).map(|source| source.id).collect();
+            let versions: Vec<_> = context
+                .iter()
+                .map(|source| crate::llm::decision::EvidenceVersion {
+                    id: source.id,
+                    body_hash: source.hash,
+                })
+                .collect();
+            if decision.evidence != ids || decision.receipt.evidence_versions != versions {
+                return Err(Error::ConcurrentWrite("standing measured sources changed"));
+            }
         }
         let dedup = BackfillKey {
             question,
@@ -631,6 +733,15 @@ fn backfill_answer(
             {
                 return Err(Error::EntityNotFound);
             }
+            // Admit the already-recorded proposal under this caller's live
+            // bounds too; its principal's bare read is not the caller's grant.
+            if let Some(caller) = caller
+                && !caller
+                    .recorded_lane()?
+                    .entities_readable_in_txn(txn, &[id])?[0]
+            {
+                return Err(Error::EntityNotFound);
+            }
             return Ok(answer);
         }
         let mut answer = AnswerRecord {
@@ -686,6 +797,7 @@ fn backfill_answer(
                 answer.decision.in_band = decided.in_band;
                 answer.decision.human_ask = decided.human_ask;
             }
+            Measured::Admitted(decision) => answer.decision = (**decision).clone(),
         }
         let encoded = encode(&answer)?;
         let value = rmpv::decode::read_value(&mut encoded.as_slice())
