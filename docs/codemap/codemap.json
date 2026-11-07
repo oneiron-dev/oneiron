@@ -25974,6 +25974,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/deletion/legal_hold/clone/messages.rs",
+     "purpose": "Exact stored on-record MESSAGE records for an order that names them (LEGAL-HOLD-USE = B as a clone, owner…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/deletion/legal_hold/clone/mod.rs",
      "purpose": "Native source half of an order-scoped legal clone",
      "surface": {
@@ -36216,7 +36226,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "TextField"
@@ -36224,7 +36234,7 @@
      "path": "src/entity_doc/storage.rs",
      "purpose": "Transactional entity-document storage, editable fields and immutable row pointers",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "enum": 1,
       "fn": 1
      }
@@ -92221,7 +92231,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 62,
+     "files": 63,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93355,9 +93365,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 176,
+   "over_bar": 177,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6586,
+   "source_files": 6587,
    "test_files": 895
   },
   "oneiron-android": {
