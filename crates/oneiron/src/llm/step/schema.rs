@@ -128,6 +128,9 @@ pub(super) async fn generate(
             }],
             },
         );
+        // Each message boundary the request marks still names the block it
+        // named before the schema message went first (FIX 5035).
+        crate::code_run::shift_cache_boundaries(&mut wire);
     }
     let max_attempts = if native { 1 } else { 3 };
     let mut usage = LlmUsage::zero();
