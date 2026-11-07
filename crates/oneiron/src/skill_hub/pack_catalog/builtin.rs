@@ -12,7 +12,7 @@ use crate::{EntityId, TimeRange, Vault, error::Result};
 
 /// Marker (engine version string) that the built-in connector packs have been seeded.
 const SEEDED: SideTable<(), String, Raw> = SideTable::new(&side_table::SKILL_HUB_PACK_BUILTIN_SEED);
-const PACKS: [(&str, &str); 7] = [
+const PACKS: [(&str, &str); 8] = [
     (
         "slack",
         include_str!("../../../../../packs/builtin/slack/PACK.md"),
@@ -41,11 +41,15 @@ const PACKS: [(&str, &str); 7] = [
         "telegram",
         include_str!("../../../../../packs/builtin/telegram/PACK.md"),
     ),
+    (
+        "sheets",
+        include_str!("../../../../../packs/builtin/sheets/PACK.md"),
+    ),
 ];
 /// Each built-in pack's guided setup skill (OF-378), at the folder its
 /// PACK.md `setup` names. It ships in the same exact source, so the owner
 /// reads it while the connector is still a Candidate.
-const SETUP_SKILLS: [(&str, &str); 7] = [
+const SETUP_SKILLS: [(&str, &str); 8] = [
     (
         "slack",
         include_str!("../../../../../packs/builtin/slack/skills/setup/SKILL.md"),
@@ -73,6 +77,10 @@ const SETUP_SKILLS: [(&str, &str); 7] = [
     (
         "telegram",
         include_str!("../../../../../packs/builtin/telegram/skills/setup/SKILL.md"),
+    ),
+    (
+        "sheets",
+        include_str!("../../../../../packs/builtin/sheets/skills/setup/SKILL.md"),
     ),
 ];
 const SETUP_SKILL_PATH: &str = "skills/setup/SKILL.md";
