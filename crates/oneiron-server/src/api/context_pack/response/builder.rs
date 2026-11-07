@@ -12,6 +12,7 @@ use super::{
 };
 use crate::error::ApiError;
 use oneiron::context_board::MemorySource;
+use oneiron::limit_ask::EngineLimit;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 
@@ -155,6 +156,13 @@ pub(crate) async fn run_context_pack_builder(
             let mut section = projected_memories
                 .or_else(|| Some(oneiron::MemoriesSection::pins_only(assembly.clone())));
             if let Some(section) = &mut section {
+                // Physical68 ABC17: the submitted explicit refs, measured
+                // once before resolution. Ask-and-serve: the crossing asks,
+                // the pins resolve whole.
+                vault.measure_limit(
+                    EngineLimit::MemoryPinnedRefs,
+                    request.pinned_refs.len() as u64,
+                );
                 pin_narrowing = section
                     .include_pinned_refs_with_disclosure(
                         scoped_read,
