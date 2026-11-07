@@ -1,8 +1,9 @@
 //! The host's loan to the Dreamer's check of a self-written compaction (FIX
 //! 4465 B): the weaver's narrative route, on the pass's own line, and the
-//! rubric this host ships as prompt data. The check reads the agent's
-//! summary against its run's retained span and records a verdict; it never
-//! writes a word of the agent's summary, which stays the agent's own.
+//! rubric. The rubric is the operator's setting, else this host's built-in
+//! prompt data (FIX 4814). The check reads the agent's summary against its
+//! run's retained span and records a verdict; it never writes a word of the
+//! agent's summary, which stays the agent's own.
 
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
@@ -18,10 +19,6 @@ use oneiron::{DreamerAdmittedAttempt, DreamerAttemptExecution, WakeAttemptContex
 use super::extraction_egress;
 use crate::decision_host::DecisionHost;
 
-/// The rubric the judge reads the summary against its span by. Prompt data
-/// beside this host, never engine prose; the policy call names it.
-const COMPACTION_CHECK_RUBRIC: &str = include_str!("compaction_check_rubric.md");
-
 /// The typed support question's wording (FIX 8713): prompt data beside this
 /// host, never engine prose.
 const COMPACTION_SUPPORT_WORDING: &str = "Does the retained span support everything the \
@@ -35,6 +32,9 @@ pub(super) struct CheckLend<'p> {
     pub(super) weaver: &'p RoleBackend,
     pub(super) guard: &'p oneiron::BudgetGuard,
     pub(super) egress: bool,
+    /// The rubric the judge reads the summary against its span by (FIX
+    /// 4814): the effective `DreamerSettings::compaction_check_rubric`.
+    pub(super) rubric: &'p str,
 }
 
 impl CheckLend<'_> {
@@ -73,7 +73,7 @@ impl CheckLend<'_> {
                     extraction_egress: egress.as_deref(),
                 },
                 role: DREAMER_NARRATIVE_ROLE,
-                rubric: COMPACTION_CHECK_RUBRIC,
+                rubric: self.rubric,
                 decisions,
             },
         )
