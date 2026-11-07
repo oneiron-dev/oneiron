@@ -15,7 +15,7 @@ use serde_json::{Map, Value};
 use super::source::{MailProvider, MailSourceRow, MailSourceStatus, SOURCES};
 use super::state::{
     BODY_QUEUE, MailOccurrence, MailPresence, MailStage, OCCURRENCES, SYNC, body_queue_key,
-    occurrence_key, record_occurrence_rows_in_txn,
+    occurrence_key, owe_header_retirements_in_txn, record_occurrence_rows_in_txn,
 };
 use super::wire::{MailFull, MailHeaders};
 use crate::consent::AuthenticatedOwner;
@@ -406,6 +406,19 @@ impl<'v> Landing<'v> {
                 landed_at: self.imported_at,
                 updated_at: self.imported_at,
             });
+            // The body supersedes the header-only revisions before it (FIX
+            // 15413): they leave the message's erase reach, so their delete
+            // does not forget it, and are owed that delete, which runs once
+            // this landing commits.
+            if stage == MailStage::Body && occurrence.stage == MailStage::Headers {
+                owe_header_retirements_in_txn(
+                    vault,
+                    wtxn,
+                    &key,
+                    &occurrence.messages,
+                    self.imported_at,
+                )?;
+            }
             occurrence.messages.push(message);
             occurrence.content_hashes.push(hash.clone());
             if stage == MailStage::Body || occurrence.stage == MailStage::Headers {
@@ -450,7 +463,10 @@ impl<'v> Landing<'v> {
             Ok(())
         });
         match landed {
-            Ok(_) => Ok(LandOutcome::Landed),
+            Ok(_) => {
+                super::header_retire::retire_superseded_headers(vault, source);
+                Ok(LandOutcome::Landed)
+            }
             Err(error) => refused(error),
         }
     }

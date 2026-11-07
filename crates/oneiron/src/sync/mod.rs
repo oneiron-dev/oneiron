@@ -30,6 +30,7 @@
 //! - `server_state` — server-side sync_state persistence (Observer-A-equivalent)
 
 pub mod ask_forward;
+pub mod ask_option_link;
 pub(crate) mod asset_body;
 pub mod bridge;
 pub mod carrier;
