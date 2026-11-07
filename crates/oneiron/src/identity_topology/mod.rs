@@ -29,10 +29,12 @@
 //! Consent (ARCH-0055 r3): `Auto` is the family default and applies
 //! immediately; `Approved` applies; `Proposed` PARKS — the event is
 //! recorded for legibility but carries zero topology effects until
-//! approved; `Rejected` is the consent no-op. The propose lane is an
-//! explicit caller choice, never an engine-imposed gate. Undo is a
-//! counter-event over the ledger, never a rewrite (r1); claim subjects are
-//! never eagerly rewritten (r6) — read-time canonicalization runs through
+//! approved; `Rejected` is the consent no-op. A parked facet records its
+//! specs and map and mints no FACET until its ruling approves it (FIX 7814).
+//! The propose lane is an explicit caller choice, never an engine-imposed
+//! gate. Undo is a counter-event over the ledger, never a rewrite (r1);
+//! claim subjects are never eagerly rewritten (r6) — read-time
+//! canonicalization runs through
 //! the redirect projection in [`crate::identity_redirect`] (ONE-1744).
 //! Reassignment-map application and FACET minting arm in ONE-1745.
 //!

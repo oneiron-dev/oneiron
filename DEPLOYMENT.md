@@ -281,6 +281,16 @@ queue_wait_timeout_ms = 300000    # how long queued work waits for its turn
 paced_verb_wait_secs = 604800     # how long a call a budget window paced waits in its caller's line before it ends unrun
 disk_reserve_bytes = 2147483648   # free bytes the vault's disk keeps; uploads and held pushes stop at it (507)
 keyed_filter_json_bytes = 67108864 # one keyed-memory search filter; past it the search runs whole and the row asks
+keyed_namespace_segments = 65536  # segments of one keyed-memory namespace, prefix or suffix; past it the namespace is kept whole and the row asks
+keyed_namespace_bytes = 1048576   # UTF-8 bytes of one keyed-memory namespace, prefix or suffix; past it the namespace is kept whole and the row asks
+keyed_key_bytes = 1048576         # UTF-8 bytes of one keyed-memory key; past it the key is kept whole and the row asks
+booking_email_bytes = 1048576     # booker email bytes one authenticated booking confirm carries; past it the address is kept whole and the row asks
+booking_intake_answers = 65536    # intake answers one authenticated booking confirm carries; past it every answer is kept and the row asks
+booking_intake_value_bytes = 67108864 # largest intake answer value one authenticated confirm carries; past it the answer is kept whole and the row asks
+booking_local_time_windows = 65536 # distinct local time windows one booking constraint carries; past it every window is solved and the row asks
+claim_input_json_bytes = 67108864 # serialized JSON bytes of one claim input at the vault's claim door; past it the claim is written whole and the row asks
+core_batch_entities = 1048576     # entities one core batch write carries; past it every entity lands in the same one atomic batch and the row asks
+legacy_batch_entities = 1048576   # entities one legacy batch_put_entities call (N-API or C FFI) carries; past it every entity lands in one atomic transaction and the row asks
 code_result_inline_bytes = 1048576 # one code-mode result kept inline in LMDB; a bigger one is a file in the vault's bodies/
 code_result_disk_floor_bytes = 1073741824 # free disk the result body store keeps; below it the row asks and the result is stored whole
 code_result_scan_bytes = 268435456 # bytes one result search or query scans before it answers with a cursor
@@ -293,6 +303,8 @@ maintenance_text_bytes = 65536    # bytes of one text field a maintenance or Coa
 maintenance_scan_rows = 50000     # rows one maintenance or Coach pass reads to find its work; past it the pass reads them all and the row asks
 import_decoded_messages = 1000000 # messages one history import holds decoded; past it the import lands whole and the row asks
 import_decoded_bytes = 1073741824 # bytes those decoded messages hold; past it the import lands whole and the row asks
+witness_metadata_nodes = 1048576  # metadata nodes (keys and values) one MESSAGE carries, each metadata part apart; past it the metadata is kept whole and the row asks
+witness_metadata_bytes = 67108864 # canonical MessagePack bytes of one MESSAGE's metadata, each part apart; past it the metadata is kept whole and the row asks
 signature_decode_bytes = 1073741824 # bytes one signature image decode (POST /sign/image) allocates; a raster past it asks and is decoded whole
 pptx_comment_patches = 10000      # comment edits one PowerPoint comment proposal carries; past it the proposal is written whole and the row asks
 import_xlsx_live_cells = 200000   # cells one workbook import writes into a live office body; past it the workbook is imported whole and the row asks
@@ -513,6 +525,30 @@ protocol = "https"
 host = "github.com"
 username = "x-access-token"
 # path = "owner/repo"       # optional: answer one repository's path alone
+```
+
+`[runtime.seat_model_providers]` sends a seat's model calls through this
+host, with the provider key kept in the vault (T0). Each slot names a
+`[models.providers]` entry with a `key_secret` and the exact wire models a
+seat may ask for. A run whose pinned manifest declares that key gets a fresh
+reference to the slot. Its CLI gets the reference and the slot's loopback URL
+in the variables its SDK reads: `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY`
+for an Anthropic slot, `OPENAI_BASE_URL` and `OPENAI_API_KEY` for an OpenAI
+chat slot. The SDK posts to `/v1/seat/model/<slot>/v1/messages` or
+`/v1/seat/model/<slot>/v1/chat/completions`. The host reads the key at the
+custody door for each call and sends the request through the credential
+broker. The CLI never holds the key. The reference works only from this
+device and only while the run's claim holds. A request that names another
+model is refused. A request with `stream: true` gets the provider's events
+as they come, the key stripped from them. Messages also takes Claude Code's
+`?beta=true`; the door takes no other query. With this slot the CLI calls
+the provider on the key, not on the person's own login. The table is empty
+by default, so no seat is offered the door.
+
+```toml
+[runtime.seat_model_providers.anthropic]
+provider = "anthropic"            # a [models.providers] entry with key_secret
+models = ["claude-sonnet-5-5"]    # the wire models a seat may ask for
 ```
 
 ## Prompt layout
