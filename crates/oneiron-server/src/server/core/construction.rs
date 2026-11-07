@@ -269,7 +269,7 @@ impl SyncServer {
         // (FIX 11157): the read-only door refuses a root held open here.
         vault.register_served();
         let hyde_queue_wait = config.limits.queue_wait();
-        Ok(Self {
+        let server = Self {
             note_editors: super::NoteEditors::default(),
             artifact_previews: super::ArtifactPreviews::default(),
             live_voice: Default::default(),
@@ -385,6 +385,10 @@ impl SyncServer {
             booking_test_now_secs: None,
             #[cfg(test)]
             booking_test_clock_from: None,
-        })
+        };
+        // FIX 2462: a workbook the native formula engine refuses
+        // recalculates through LibreOffice, where this host has it.
+        crate::xlsx_recalc::install(&server);
+        Ok(server)
     }
 }
