@@ -127,12 +127,17 @@ impl PreparedSavedNote {
         ops.extend(edges);
         BatchBuilder::promotion_replay(vault, ops, grant)
             .mask(birth_mask)
-            .apply_actor(txn, &saver)?;
+            .apply_actor(txn, &saver, crate::core_write::CoreWriteLaneRef::Unbound)?;
         if self.head != self.id || self.sequence != 0 {
             super::documents::set_head(&vault.store, txn, self.id, self.head, self.sequence)?;
         }
-        let mut content = crate::federation::ActorContentTxn::new(vault, txn, saver)?;
-        content.update_note(self.id, |txn| -> Result<()> {
+        let mut content = crate::federation::ActorContentTxn::new(
+            vault,
+            txn,
+            saver,
+            crate::core_write::CoreWriteLaneRef::Unbound,
+        )?;
+        content.update_note(self.id, |txn, _| -> Result<()> {
             super::document_store::persist_saved_authoritative(vault, txn, &self.document, grant)
         })?;
         content.finish()

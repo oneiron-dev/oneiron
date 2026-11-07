@@ -92,6 +92,7 @@ fn run_input(scope: DreamerConsolidationScope, local_node_id: u64, now: u64) -> 
         reserve_units: 100,
         now,
         host_scope: None,
+        destination_bound: None,
     }
 }
 
