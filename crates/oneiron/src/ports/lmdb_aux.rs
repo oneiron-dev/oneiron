@@ -50,8 +50,8 @@ impl DependencyIndex for Vault {
 }
 pub(crate) const CHANGE_LOG_KEY_PREFIX: &[u8] = b"ports:change:v1:";
 const CHANGE: &[u8] = CHANGE_LOG_KEY_PREFIX;
-const BY_ENTITY: &[u8] = b"ports:change_entity:v1:";
-const BY_ACTOR: &[u8] = b"ports:change_actor:v1:";
+pub(super) const BY_ENTITY: &[u8] = b"ports:change_entity:v1:";
+pub(super) const BY_ACTOR: &[u8] = b"ports:change_actor:v1:";
 impl ChangeLogStore for Vault {
     fn port_changelog_append(&self, txn: &mut RwTxn<'_>, record: &ChangeLogRecord) -> Result<()> {
         self.store.port_changelog_append(txn, record)
@@ -75,31 +75,7 @@ impl ChangeLogStore for Vault {
 }
 impl ChangeLogStore for crate::store::Store {
     fn port_changelog_append(&self, txn: &mut RwTxn<'_>, record: &ChangeLogRecord) -> Result<()> {
-        recorded_at_in_txn(self, txn)?;
-        let key = [CHANGE, &record.id].concat();
-        let bytes = rmp_serde::to_vec_named(record)
-            .map_err(|_| Error::InvariantViolation("changelog encode"))?;
-        if let Some(prior) = self.vault_meta.get(txn, &key)? {
-            if prior.as_ref() != bytes.as_slice() {
-                return Err(Error::InvariantViolation("changelog rows are immutable"));
-            }
-            return Ok(());
-        }
-        self.vault_meta.put(txn, &key, &bytes)?;
-        for (family, owner) in [
-            (BY_ENTITY, record.entity),
-            (BY_ACTOR, record.actor_principal),
-        ] {
-            let index = [
-                family,
-                owner.as_bytes(),
-                &record.recorded_at.to_be_bytes(),
-                &record.id,
-            ]
-            .concat();
-            self.vault_meta.put(txn, &index, &record.id)?;
-        }
-        Ok(())
+        super::mutation::append_changelog_in_txn(self, txn, record)
     }
     fn port_changelog_list_by_entity(
         &self,

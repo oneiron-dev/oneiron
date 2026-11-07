@@ -9,9 +9,12 @@
 //! none, and its code fix reads the worlds it inferred before. Served rows
 //! also keep their Scope by bridge position; a step capsule projects that
 //! proof only when its complete input and ledger are proved (FIX 7162). A
-//! continued run's ledger begins with its source's proof of the calls it
-//! copies, at the same positions ([`seed_read_world_prefix_in_txn`], FIX
-//! 7085).
+//! row a retained result's origins hold as conflicted keeps a proof of no
+//! scope at the position it was read at (FIX 7084). A continued run's ledger
+//! begins with its source's proof of the calls it copies, at the same
+//! positions ([`seed_read_world_prefix_in_txn`], FIX 7085).
+
+mod origins;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::RangeBounds;
@@ -206,10 +209,12 @@ struct ReadWorldSeen {
     at: BTreeSet<u64>,
 }
 
-/// The scope of one row as the read at one bridge position proved it.
+/// The scope of one row as the read at one bridge position proved it:
+/// `None` when the read served the row through origins that hold it as
+/// conflicted (FIX 7084), which proves no scope of it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct ReadRowScope {
-    scope: Scope,
+    scope: Option<Scope>,
 }
 
 /// The capture epoch a run's host holds while every answer the run was
@@ -255,7 +260,8 @@ pub(crate) fn read_world_snapshot_in_txn(
 /// as the reads before its start proved them (FIX 7162). `None` means any
 /// input or its proof is unknown; an empty vector is only a proved empty
 /// input. A row served under two different scopes in the prefix is unknown
-/// too: choosing the latest could admit an earlier, narrower copy.
+/// too: choosing the latest could admit an earlier, narrower copy. So is a
+/// row with a proof of no scope (FIX 7084).
 pub(crate) fn captured_step_read_scopes_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -280,16 +286,16 @@ pub(crate) fn captured_step_read_scopes_in_txn(
             if key.at >= start.bridge_start {
                 continue;
             }
-            let Some(proof) = ROW_SCOPES.get(&vault.store, txn, &key)? else {
+            let Some(proved) = ROW_SCOPES
+                .get(&vault.store, txn, &key)?
+                .and_then(|proof| proof.scope)
+            else {
                 return Ok(None);
             };
-            if scope
-                .as_ref()
-                .is_some_and(|current| current != &proof.scope)
-            {
+            if scope.as_ref().is_some_and(|current| current != &proved) {
                 return Ok(None);
             }
-            scope = Some(proof.scope);
+            scope = Some(proved);
         }
         let Some(scope) = scope else {
             return Ok(None);
@@ -305,8 +311,9 @@ pub(crate) fn captured_step_read_scopes_in_txn(
 struct ReadWorldRows {
     /// Each world a row was served in, with the positions it was served at.
     worlds: BTreeMap<EntityId, BTreeSet<u64>>,
-    /// Each served row's scope, by row and position.
-    scopes: BTreeMap<(EntityId, u64), Scope>,
+    /// Each served row's scope, by row and position: `None` for a proof of
+    /// no scope (FIX 7084).
+    scopes: BTreeMap<(EntityId, u64), Option<Scope>>,
 }
 
 impl ReadWorldRows {
@@ -477,41 +484,34 @@ impl ExecutorStorage<'_> {
         }
     }
 
-    /// Notes each row's scope as served to `run` at bridge position `at`.
+    /// Notes each row's scope as served to `run` at bridge position `at`,
+    /// and a proof of no scope for each row of `conflicted` (FIX 7084),
+    /// whatever scope `rows` gives it.
     pub(crate) fn note_read_rows(
         &self,
         run: EntityId,
         at: u64,
         rows: &BTreeMap<EntityId, Scope>,
+        conflicted: &BTreeSet<EntityId>,
     ) -> Result<()> {
-        let key_of = |row: &EntityId| RowScopeKey { run, row: *row, at };
+        let proofs: Vec<(RowScopeKey, ReadRowScope)> = rows
+            .iter()
+            .filter(|(row, _)| !conflicted.contains(*row))
+            .map(|(row, scope)| (*row, Some(scope.clone())))
+            .chain(conflicted.iter().map(|row| (*row, None)))
+            .map(|(row, scope)| (RowScopeKey { run, row, at }, ReadRowScope { scope }))
+            .collect();
         match self {
             Self::Canonical(vault) => vault.with_write_txn_grouped(|txn| {
-                for (row, scope) in rows {
-                    let key = key_of(row);
-                    ROW_SCOPES.put(
-                        &vault.store,
-                        txn,
-                        &key,
-                        &ReadRowScope {
-                            scope: scope.clone(),
-                        },
-                    )?;
+                for (key, proof) in &proofs {
+                    ROW_SCOPES.put(&vault.store, txn, key, proof)?;
                 }
                 Ok(())
             }),
             Self::Session(binding) => binding.answered(|| {
                 let session = &binding.session;
-                for (row, scope) in rows {
-                    let key = key_of(row);
-                    session.side_table_put_routed(
-                        &binding.route,
-                        &ROW_SCOPES,
-                        &key,
-                        &ReadRowScope {
-                            scope: scope.clone(),
-                        },
-                    )?;
+                for (key, proof) in &proofs {
+                    session.side_table_put_routed(&binding.route, &ROW_SCOPES, key, proof)?;
                 }
                 Ok(())
             }),
