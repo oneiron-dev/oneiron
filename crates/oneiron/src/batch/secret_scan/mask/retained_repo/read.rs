@@ -15,6 +15,8 @@
 //! entry's name) leaves the blob opaque. Nothing is written: a Git-only
 //! blob the sweep never walks reads masked all the same.
 
+use std::collections::BTreeSet;
+
 use heed::RoTxn;
 use zeroize::Zeroizing;
 
@@ -115,13 +117,15 @@ impl<'a> RepoKnownCheck<'a> {
         if self.owner_kept {
             return Ok(false);
         }
+        // Every match counts, one overlapping a kept value included: the
+        // owner's ruling on one value never hides another.
         let keep = |value: &[u8]| self.keep(value);
-        if !self.known.spans_except(bytes, keep).is_empty() {
+        if !self.known.holders_except(bytes, keep).is_empty() {
             return Ok(true);
         }
         let mut hit = false;
         let mut visit = |_: &[MemberStep], member: &[u8]| -> std::result::Result<(), Stop> {
-            if self.known.spans_except(member, keep).is_empty() {
+            if self.known.holders_except(member, keep).is_empty() {
                 return Ok(());
             }
             hit = true;
@@ -130,6 +134,32 @@ impl<'a> RepoKnownCheck<'a> {
         // A container no reader here reads shows a reader nothing more.
         match walk_retained_repo_members_with_hidden(bytes, &mut visit) {
             Ok(()) | Err(Stop::Refuse(_)) => Ok(hit),
+            Err(Stop::Fail(error)) => Err(error),
+        }
+    }
+
+    /// Each custody record a value that reads in `bytes` is held by, read as
+    /// [`Self::reads_known`] reads: whose keys a release of the stored bytes
+    /// shows (FIX 8966), never a value. Every value counts, one overlapping
+    /// another and each holder of the same bytes included, so a grant judged
+    /// by them covers all the bytes carry.
+    ///
+    /// # Errors
+    /// A walk failure.
+    pub(crate) fn holders(&self, bytes: &[u8]) -> Result<BTreeSet<EntityId>> {
+        let mut holders = BTreeSet::new();
+        if self.owner_kept {
+            return Ok(holders);
+        }
+        let keep = |value: &[u8]| self.keep(value);
+        let mut read = |buffer: &[u8]| holders.extend(self.known.holders_except(buffer, keep));
+        read(bytes);
+        let mut visit = |_: &[MemberStep], member: &[u8]| -> std::result::Result<(), Stop> {
+            read(member);
+            Ok(())
+        };
+        match walk_retained_repo_members_with_hidden(bytes, &mut visit) {
+            Ok(()) | Err(Stop::Refuse(_)) => Ok(holders),
             Err(Stop::Fail(error)) => Err(error),
         }
     }

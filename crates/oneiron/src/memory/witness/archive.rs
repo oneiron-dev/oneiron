@@ -54,6 +54,12 @@ const IMPORT_KEY_SOURCE_TYPE: &str = "source_type";
 /// ids: provenance only, never a local author.
 const IMPORT_KEY_AUTHORED_BY: &str = "authored_by";
 
+/// The refusal of an archived row that carries the source-audience key
+/// (fix list row 16256): an archive restores imported evidence, never a
+/// source landing's row, and never drops the key to make one fit.
+const ARCHIVED_STAMP: &str =
+    "an archived row carries no source_audience_required; only a source landing stamps it";
+
 /// A native TURN's PERSON byline, and the inert key an archive restore
 /// keeps it under.
 const TURN_KEY_ACTOR: &str = "actor";
@@ -155,6 +161,9 @@ fn import_marked(entries: &[(Value, Value)]) -> bool {
 /// [`RecordError::InvalidWitnessMessageBody`] when `source` is not a
 /// canonical envelope, or the marked body is not one (a metadata bound).
 pub(crate) fn archived_message_body(source: &[u8], bylines: &[EntityId]) -> Result<Vec<u8>> {
+    if crate::source_audience::body_names_obligation(source) {
+        return Err(malformed(ARCHIVED_STAMP));
+    }
     crate::gate::validate_canonical_witness_message_body(source)?;
     let mut entries = decode(source).ok_or_else(|| malformed("an archived MESSAGE body"))?;
     if import_marked(&entries) {
@@ -222,6 +231,9 @@ pub(crate) fn archived_message_body(source: &[u8], bylines: &[EntityId]) -> Resu
 /// The archive put's capability for `body`: a canonical envelope an import
 /// marked.
 fn admit_archived_message(body: &[u8]) -> Result<ArchivedMessageAdmission> {
+    if crate::source_audience::body_names_obligation(body) {
+        return Err(malformed(ARCHIVED_STAMP));
+    }
     crate::gate::validate_canonical_witness_message_body(body)?;
     let entries = decode(body).ok_or_else(|| malformed("an archived MESSAGE body"))?;
     if !import_marked(&entries) {
@@ -243,6 +255,9 @@ fn admit_archived_message(body: &[u8]) -> Result<ArchivedMessageAdmission> {
 /// [`RecordError::InvalidConversationBody`] when `source` is not a map, or
 /// its import stamp is malformed.
 pub(crate) fn archived_container_body(entity_type: u8, source: &[u8]) -> Result<Vec<u8>> {
+    if crate::source_audience::body_names_obligation(source) {
+        return Err(container_refused(ARCHIVED_STAMP));
+    }
     match import_stamp(source) {
         ImportStamp::Imported(_) => return Ok(source.to_vec()),
         ImportStamp::Malformed => {

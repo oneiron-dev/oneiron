@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use super::super::tree::OriginTreeFile;
 use crate::error::{Error, Result};
-use crate::git_wire::{GitOid, GitTreeEntry, GitWire, GitWirePlan, GitWireRepo};
+use crate::git_wire::{GitOid, GitTreeEntry, GitWire, GitWirePlan, GitWireRepo, git_path_bytes};
 use crate::store::code_document_values::CodeFilePresence;
 use crate::store::code_tree_blob::CodeTreeBlob;
 
@@ -96,23 +96,28 @@ pub(super) fn rebuild_tree(
         None => BTreeMap::new(),
     };
     let mut nested: BTreeMap<String, BTreeMap<String, Option<(GitOid, u32)>>> = BTreeMap::new();
+    // Each edited path is a Git path's text; the tree's entries are keyed by
+    // their own bytes, which a name outside UTF-8 decodes back to (FIX 21326).
     for (path, edit) in edits {
         match path.split_once('/') {
-            None => match edit {
-                None => {
-                    entries.remove(path.as_bytes());
+            None => {
+                let name = git_path_bytes(path)?.into_owned();
+                match edit {
+                    None => {
+                        entries.remove(&name);
+                    }
+                    Some((oid, mode)) => {
+                        entries.insert(
+                            name.clone(),
+                            GitTreeEntry {
+                                mode: *mode,
+                                name,
+                                oid: oid.clone(),
+                            },
+                        );
+                    }
                 }
-                Some((oid, mode)) => {
-                    entries.insert(
-                        path.as_bytes().to_vec(),
-                        GitTreeEntry {
-                            mode: *mode,
-                            name: path.as_bytes().to_vec(),
-                            oid: oid.clone(),
-                        },
-                    );
-                }
-            },
+            }
             Some((dir, rest)) => {
                 nested
                     .entry(dir.to_owned())
@@ -122,23 +127,24 @@ pub(super) fn rebuild_tree(
         }
     }
     for (dir, sub) in nested {
+        let name = git_path_bytes(&dir)?.into_owned();
         let existing = entries
-            .get(dir.as_bytes())
+            .get(&name)
             .filter(|entry| entry.mode == MODE_TREE)
             .map(|entry| entry.oid.clone());
         match rebuild_tree(wire, repo, existing.as_ref(), &sub, now, false)? {
             Some(oid) => {
                 entries.insert(
-                    dir.as_bytes().to_vec(),
+                    name.clone(),
                     GitTreeEntry {
                         mode: MODE_TREE,
-                        name: dir.into_bytes(),
+                        name,
                         oid,
                     },
                 );
             }
             None => {
-                entries.remove(dir.as_bytes());
+                entries.remove(&name);
             }
         }
     }

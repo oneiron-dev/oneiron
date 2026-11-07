@@ -20,6 +20,7 @@ mod memory_verbs;
 mod program_step;
 mod read_worlds;
 mod reader_spawn;
+mod record_refs;
 mod refusal_output;
 mod repo;
 mod repo_sources;
