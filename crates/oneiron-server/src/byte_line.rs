@@ -110,6 +110,66 @@ impl ByteLine {
             .await
     }
 
+    /// Grows `held`, taken on this line, to `bytes`, as
+    /// [`Self::reserve_alone`] takes them: state larger than the whole line
+    /// grows to all of it, so it runs alone, and asks once as it crosses.
+    /// Work that already holds bytes takes extra bytes that are free at once,
+    /// ahead of those waiting, since they wait for it to end anyway. Extra
+    /// bytes that are not free, and any for work that holds none, wait in
+    /// order, up to `wait`, while `held` keeps what it has, so new work never
+    /// passes those waiting. Never shrinks `held`. `false` when the wait ran
+    /// out, with `held` as it was.
+    pub(crate) async fn grow_alone(
+        &self,
+        held: &mut HeldBytes,
+        bytes: usize,
+        wait: Duration,
+        questions: &LimitQuestions,
+    ) -> bool {
+        debug_assert!(Arc::ptr_eq(&held.line, &self.line));
+        let past = bytes > self.total;
+        let crossing = past && !held.past_line;
+        let target = bytes.min(self.total);
+        if target <= held.bytes {
+            held.past_line |= past;
+            if crossing {
+                questions.ask(self.row, self.total as u64, bytes as u64);
+            }
+            return true;
+        }
+        let extra = target - held.bytes;
+        let holding = held.bytes > 0;
+        // The bytes the rest of the line holds, once the free extra is taken.
+        // The oldest waiter did not fit the free bytes, so it still waits.
+        let others = {
+            let mut line = lock(&self.line);
+            (holding && line.free >= extra).then(|| {
+                line.free -= extra;
+                self.total - line.free - target
+            })
+        };
+        if let Some(others) = others {
+            held.bytes = target;
+            held.past_line = past;
+            if crossing {
+                questions.ask(
+                    self.row,
+                    self.total as u64,
+                    others.saturating_add(bytes) as u64,
+                );
+            }
+            return true;
+        }
+        // Wanting more than the extra it takes is what crosses the line:
+        // `take` asks for it.
+        let Some(mut more) = self.take(extra, bytes - held.bytes, wait, questions).await else {
+            return false;
+        };
+        held.bytes += std::mem::take(&mut more.bytes);
+        held.past_line = past;
+        true
+    }
+
     /// Takes `bytes` for work that wants `wanted`, which is more only when
     /// the work is larger than the line.
     async fn take(
