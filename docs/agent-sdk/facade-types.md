@@ -9188,7 +9188,7 @@ export type SpawnUnappliedReason = "planner_unbound" | "agent_lease_unbound"
 /** `oneiron::agent_dispatch::direct_spawn::SpawnUnapplied` */
 export type SpawnUnapplied = { field: SpawnAskField; reason: SpawnUnappliedReason }
 /** `oneiron::code_run::run_verbs::AgentSpawnOutput` */
-export type AgentSpawnOutput = { state: "queued"; kind: AgentSpawnKind; attempt: string; launch?: LaunchStatement | null; unapplied?: SpawnUnapplied[] } | { state: "proposed_widen"; kind: AgentSpawnKind; proposal: string; unapplied?: SpawnUnapplied[] } | { state: "target_erased"; kind: AgentSpawnKind }
+export type AgentSpawnOutput = { state: "queued"; kind: AgentSpawnKind; attempt: string; launch?: LaunchStatement | null; unapplied?: SpawnUnapplied[] } | { state: "proposed_widen"; kind: AgentSpawnKind; proposal: string; unapplied?: SpawnUnapplied[] } | { state: "target_erased"; kind: AgentSpawnKind } | { state: "asker_erased"; kind: AgentSpawnKind }
 /** `oneiron::code_run::run_verbs::LeaderSplitInput` */
 export type LeaderSplitInput = { leader?: string | null; slice?: ScopeScope | null }
 /** `oneiron::code_run::run_verbs::LeaderSplitOutput` */
