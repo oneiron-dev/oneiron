@@ -2,7 +2,7 @@
 
 use crate::code_run::storage::response_erase::response_erased_in_txn;
 use crate::provenance::body::{owned_body_in_txn, publish_body_in_txn};
-use crate::store::body_descriptor::{BodyState, OwnedBody};
+use crate::store::body_descriptor::{BodyState, CodeRunOutputOrigin, OwnedBody};
 use crate::store::result_manifest::{
     CODE_RUN_REPLAY_MAX_OUTPUT_PATH_BYTES, ResultOccurrence, validate_text,
 };
@@ -32,6 +32,9 @@ impl Vault {
                     occurrence,
                     state: BodyState::Incomplete { retained: None },
                     result: None,
+                    code_run_output: Some(CodeRunOutputOrigin {
+                        path: path.to_owned(),
+                    }),
                 },
             )
         })
