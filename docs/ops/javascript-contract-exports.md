@@ -112,8 +112,17 @@ Replacements apply in source order, including
 each value's unresolved spread or computed-key sites, and the outer store keeps
 the last replacement's keys. The old wrapper `exports` binding remains detached.
 The entire sequence must qualify before any of these effects or reference
-accounting is applied. A final `exports` reference does not qualify, because an
-inner replacement can already have detached it.
+accounting is applied. A final `exports` reference does not qualify after fresh
+replacements, because an inner replacement can already have detached it.
+
+The same flat form also accepts an identity-only prefix, such as
+`module.exports = (module.exports = module.exports, module.exports)`.
+Every prefix assignment must read the current native whole slot. The final
+element must read that same slot or the wrapper `exports` binding when it already
+aliases the current module. Either form preserves the declared keys and the
+existing wrapper alias; it neither replaces the value nor reconnects a detached
+`exports` binding. Mixing current reads and fresh prefix values, or ending a
+current-only prefix with a fresh value, keeps the ordinary fallback.
 
 Other whole-module or wrapper-identifier chains, unknown computed keys, `__proto__`
 property assignments, compound operators and other sequence-valued terminals keep
