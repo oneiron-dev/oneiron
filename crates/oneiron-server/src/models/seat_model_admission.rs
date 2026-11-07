@@ -231,6 +231,7 @@ fn admission_request(offer: &OfferBinding) -> LlmRequest {
             response_format: ResponseFormat::Text,
             locality: offer.locality,
             host_keyless: false,
+            host_paid: false,
         },
         messages: Vec::new(),
         tools: Vec::new(),

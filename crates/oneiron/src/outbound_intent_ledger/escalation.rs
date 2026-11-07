@@ -39,6 +39,11 @@ pub enum IntentEscalationReason {
     /// the send stops before any transport, keeping what it knew of its
     /// delivery.
     GrantNotStanding,
+    /// This machine does not hold its connector-send TASK's send executor
+    /// lease (FIX 4747): it stood down, and its local send, which certainly
+    /// never went, stops here and gives its reserved budget back. The shared
+    /// TASK stays the lease holder's to send.
+    SendExecutorStoodDown,
 }
 
 impl IntentEscalationReason {
@@ -60,6 +65,7 @@ impl IntentEscalationReason {
             Self::RemoteTaskFailed => "remote_task_failed",
             Self::OwnerNotLive => "owner_not_live",
             Self::GrantNotStanding => "grant_not_standing",
+            Self::SendExecutorStoodDown => "send_executor_stood_down",
         }
     }
 
@@ -81,6 +87,7 @@ impl IntentEscalationReason {
             "remote_task_failed" => Some(Self::RemoteTaskFailed),
             "owner_not_live" => Some(Self::OwnerNotLive),
             "grant_not_standing" => Some(Self::GrantNotStanding),
+            "send_executor_stood_down" => Some(Self::SendExecutorStoodDown),
             _ => None,
         }
     }

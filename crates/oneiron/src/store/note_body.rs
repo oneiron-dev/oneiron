@@ -73,45 +73,72 @@ impl NoteKind {
     }
 }
 
-/// Whose act a NOTE row records: an actor, or no one once that actor was
-/// erased (FIX 3520). It reads and writes as the actor's hex id, or as
-/// [`ERASED_CALL_IDENTITY`].
+/// The stored spelling's prefix for [`NoteActor::Imported`]: `imported:`
+/// and the source id in hex.
+const IMPORTED_ACTOR_PREFIX: &str = "imported:";
+
+/// Whose act a NOTE row records: an actor, no one once that actor was
+/// erased (FIX 3520), or the author a source vault recorded, which an
+/// archive import keeps (FIX 7777). It reads and writes as the actor's hex
+/// id, as [`ERASED_CALL_IDENTITY`], or as `imported:` and the source id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoteActor {
     Actor(EntityId),
     Erased,
+    /// A source vault's author, kept by an archive import as provenance
+    /// (FIX 7777). It is never a local actor: it matches no writer, opens
+    /// no author-only read or edit, and resolves through no stamp token.
+    Imported(EntityId),
 }
 
 impl NoteActor {
-    /// Whether this is `actor`. No one is never an actor.
+    /// Whether this is `actor`. No one is never an actor, and an imported
+    /// author is never a local one.
     #[must_use]
     pub fn is(self, actor: EntityId) -> bool {
         self == Self::Actor(actor)
     }
 
-    /// The actor, while it is not erased. No one has no id, so it never
-    /// stands for a live writer (FIX 6072, Engine R2).
+    /// The actor, while it is a local one. No one has no id, so it never
+    /// stands for a live writer (FIX 6072, Engine R2); nor does an imported
+    /// author (FIX 7777).
     #[must_use]
     pub const fn id(self) -> Option<EntityId> {
         match self {
             Self::Actor(id) => Some(id),
-            Self::Erased => None,
+            Self::Erased | Self::Imported(_) => None,
         }
     }
 
-    /// Its stored spelling: the actor's hex id, or [`ERASED_CALL_IDENTITY`].
+    /// The source vault's author an archive import kept, for display and
+    /// provenance only (FIX 7777).
+    #[must_use]
+    pub const fn imported(self) -> Option<EntityId> {
+        match self {
+            Self::Imported(id) => Some(id),
+            Self::Actor(_) | Self::Erased => None,
+        }
+    }
+
+    /// Its stored spelling: the actor's hex id, [`ERASED_CALL_IDENTITY`],
+    /// or `imported:` and the source id.
     #[must_use]
     pub fn to_wire(self) -> String {
         match self {
             Self::Actor(id) => id.to_hex(),
             Self::Erased => ERASED_CALL_IDENTITY.to_owned(),
+            Self::Imported(id) => format!("{IMPORTED_ACTOR_PREFIX}{}", id.to_hex()),
         }
     }
 
-    /// A stored spelling read back: [`ERASED_CALL_IDENTITY`], or a hex id.
+    /// A stored spelling read back: [`ERASED_CALL_IDENTITY`], `imported:`
+    /// and a hex id, or a hex id.
     pub(crate) fn from_wire(value: &str) -> Option<Self> {
         if value == ERASED_CALL_IDENTITY {
             return Some(Self::Erased);
+        }
+        if let Some(source) = value.strip_prefix(IMPORTED_ACTOR_PREFIX) {
+            return EntityId::from_hex(source).ok().map(Self::Imported);
         }
         EntityId::from_hex(value).ok().map(Self::Actor)
     }
@@ -145,6 +172,9 @@ const KEY_SOURCE_REVISION: &str = NOTE_BODY_KEYS[3];
 /// `AuthoredBy` edge. An erased one ([`NoteActor::Erased`], stored as
 /// `"erased"`) names no one and no edge: it reads as an unknown author, never
 /// matches a live writer and opens no author-only read (FIX 6072, Engine R2).
+/// An imported one ([`NoteActor::Imported`], stored as `imported:<hex>`)
+/// names the author a source vault recorded and no edge; it is provenance,
+/// and opens nothing either (FIX 7777).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NoteBody {
     pub kind: NoteKind,
@@ -292,7 +322,9 @@ pub(crate) fn decode_note_body_using(
                         "author_ref must be a UTF-8 string",
                     )))?;
                 author_ref = Some(NoteActor::from_wire(raw).ok_or(Error::Record(
-                    RecordError::InvalidNoteBody("author_ref is not a 32-hex id or erased"),
+                    RecordError::InvalidNoteBody(
+                        "author_ref is not a 32-hex id, erased or imported",
+                    ),
                 ))?);
             }
             KEY_MARKDOWN => {
