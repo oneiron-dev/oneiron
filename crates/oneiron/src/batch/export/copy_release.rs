@@ -12,26 +12,43 @@
 //! recorded. Only then does the copy go to the caller's sink, its vector or
 //! its kept transfer.
 //!
+//! The Owner's own copy of every record is recorded the same way: each pass
+//! holds its records in memory and answers none before the copy is
+//! recorded, its length and digest read from their one encoding
+//! ([`records_digest`]).
+//!
 //! Which rows go is the vault's one rule ([`crate::mail_pack`]), read once
 //! per pass in the pass's own snapshot and judged before a row is read whole:
-//! a removal's records archive and an export a code run calls are not
-//! judged by it.
+//! a removal's records archive, an export a code run calls and a scoped
+//! export of records are not judged by it. An Owner's listing of the rows
+//! the Owner's export carries is judged by it, and is no copy: it uses no
+//! approval, writes no audit row and tells no mailbox's person.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 
 use super::archive_side_tables::SideProvenance;
-use super::{ExportCut, ExportReceiptSource, ReceiptSourceOmission, WholeVaultExportReceipt};
+use super::{
+    ExportCut, ExportReceiptSource, OwnerRecordExport, ReceiptSourceOmission,
+    WholeVaultExportReceipt,
+};
 use crate::Vault;
+use crate::authority::HolderExportRequest;
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::federation::Scope;
+use crate::federation::record_scope::ScopedRecord;
 use crate::mail_pack::{CarriedMemberMailboxes, MailboxExportNotice, MemberMailboxPlan};
-use crate::memory::{ExportCopy, record_export, record_member_mail_export};
+use crate::memory::{
+    ExportCopy, raw_records_copy, record_export, record_member_mail_export, turn_thread_root,
+};
 use crate::settings::ReadDestination;
 use crate::source_audience::{ExportJudge, ExportVerdicts};
 use crate::store::Store;
 use crate::store::receipt_row::ReceiptRecord;
+use crate::workspace_roster::ExportThreadRoots;
 use crate::write_envelope::WriteActor;
 
 /// Why a saved run's output stays home from an Owner's copy: it was made
@@ -142,6 +159,52 @@ impl MailboxLineage {
             }
             Some(_) | None => Ok(false),
         }
+    }
+
+    /// Whether the pass's `judge`, when it has one, carries the stored row
+    /// `id`, of type `entity_type` and bytes `raw` as the snapshot `txn`
+    /// holds it, as an archive judges a row before its body is read: the row
+    /// and what the side ledgers record its body was made from
+    /// ([`Self::admits`]), every row a blob version's ledger claim names
+    /// beside its lineage ([`Self::supplements`]), and every row an epoch
+    /// summary's words came from ([`Self::folds`]). The members' mailbox
+    /// rule's conjunct alone: an epoch whose walk ends for another reason
+    /// is left to the door's own checks. Those rows count as carried only
+    /// once `id` ships ([`Self::outcome`]).
+    ///
+    /// # Errors
+    ///
+    /// Storage failures, and a row shorter than its header.
+    pub(super) fn row_admitted(
+        &mut self,
+        mut judge: Option<&mut ExportJudge<'_, '_, '_>>,
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+        entity_type: u8,
+        raw: &[u8],
+    ) -> Result<bool> {
+        if judge.is_none() {
+            return Ok(true);
+        }
+        if !self.admits(judge.as_deref_mut(), id, Some(raw))? {
+            return Ok(false);
+        }
+        if let Some(names) = version_claim_names(entity_type, raw)
+            && !self.supplements(judge.as_deref_mut(), id, names.as_deref())?
+        {
+            return Ok(false);
+        }
+        let body = raw
+            .get(ENTITY_METADATA_HEADER_LEN..)
+            .ok_or(Error::CorruptedIndex("export entity header"))?;
+        let mut refused = false;
+        crate::compaction::epoch_sources_admitted_in(store, txn, &id, body, |source, _| {
+            let folded = self.folds(judge.as_deref_mut(), id, Some(source))?;
+            refused |= !folded;
+            Ok(folded)
+        })?;
+        Ok(!refused)
     }
 
     /// The rows `rows`, each one the pass's judge carries, went into the copy
@@ -464,17 +527,46 @@ impl Vault {
         admit: impl Fn(&heed::RoTxn<'_>) -> std::result::Result<(), E>,
         account: impl Fn(&mut WholeVaultExportReceipt, u64, &str) -> ExportCopy,
     ) -> std::result::Result<ReleasedCopy, E> {
-        let mut copy = self.prepare_owner_copy(pass, false, &admit)?;
-        let audit = account(&mut copy.receipt, copy.bytes, &copy.digest);
-        let Some(mailboxes) = copy.receipt.member_mail.take() else {
-            copy.receipt.holder_requests = record_export(self, audit);
-            return Ok(copy);
+        let (mut copy, holder_requests) = self.record_owner_copy(
+            |untold| self.prepare_owner_copy(pass, untold, &admit),
+            |copy: &mut ReleasedCopy| {
+                let audit = account(&mut copy.receipt, copy.bytes, &copy.digest);
+                (audit, copy.receipt.member_mail.take())
+            },
+        )?;
+        copy.receipt.holder_requests = holder_requests;
+        Ok(copy)
+    }
+
+    /// The Owner's own copy `make` makes, recorded once and only then handed
+    /// back to be released, with where each custody value it carries as its
+    /// handle stands for its holder as its audit recorded it (fix list row
+    /// 15416): `make` makes one pass of the copy in a snapshot of its own,
+    /// `untold` as [`MemberMailPass::Owner`] reads it, and `audit` takes from
+    /// a pass's copy its audit and the members' mailboxes it carries and
+    /// approvals it uses. A copy that carries one, or uses one, is recorded
+    /// in the one write that tells each person ([`record_member_mail_export`]);
+    /// when that write does not commit, `make` makes the copy once more
+    /// without those mailboxes, each named, and it is recorded as any other
+    /// copy is ([`record_export`]), which never withholds it. Every Owner's
+    /// copy, an archive, an OKF bundle or its records, is recorded here.
+    ///
+    /// # Errors
+    ///
+    /// A pass that failed.
+    fn record_owner_copy<C, E: From<Error>>(
+        &self,
+        make: impl Fn(bool) -> std::result::Result<C, E>,
+        audit: impl Fn(&mut C) -> (ExportCopy, Option<CarriedMemberMailboxes>),
+    ) -> std::result::Result<(C, Vec<HolderExportRequest>), E> {
+        let mut copy = make(false)?;
+        let (recorded, member_mail) = audit(&mut copy);
+        let Some(mailboxes) = member_mail else {
+            let holder_requests = record_export(self, recorded);
+            return Ok((copy, holder_requests));
         };
-        match record_member_mail_export(self, audit, &mailboxes) {
-            Ok(holder_requests) => {
-                copy.receipt.holder_requests = holder_requests;
-                Ok(copy)
-            }
+        match record_member_mail_export(self, recorded, &mailboxes) {
+            Ok(holder_requests) => Ok((copy, holder_requests)),
             // The write did not commit: no audit row, notice or use of it
             // stands, and its copy is dropped unread.
             Err(error) => {
@@ -483,16 +575,16 @@ impl Vault {
                     "export: members' mailboxes left out, their people not told"
                 );
                 drop(copy);
-                let mut copy = self.prepare_owner_copy(pass, true, &admit)?;
-                if copy.receipt.member_mail.is_some() {
+                let mut copy = make(true)?;
+                let (recorded, member_mail) = audit(&mut copy);
+                if member_mail.is_some() {
                     return Err(Error::InvariantViolation(
                         "an export whose mailboxes' people were not told carries a mailbox",
                     )
                     .into());
                 }
-                let audit = account(&mut copy.receipt, copy.bytes, &copy.digest);
-                copy.receipt.holder_requests = record_export(self, audit);
-                Ok(copy)
+                let holder_requests = record_export(self, recorded);
+                Ok((copy, holder_requests))
             }
         }
     }
@@ -524,6 +616,162 @@ impl Vault {
             digest,
             receipt,
         })
+    }
+}
+
+/// One pass of the Owner's own copy of every record: the records as it
+/// answers them, each member's mailbox it left out, the members' mailboxes
+/// it carries and the approvals it uses, the root of each thread a TURN it
+/// carries is of, and the length and BLAKE3 (lowercase hex) of its records
+/// in their one encoding ([`records_digest`]), as its audit records them.
+struct OwnerRecordPass {
+    records: Vec<ScopedRecord>,
+    mailbox_notices: Vec<MailboxExportNotice>,
+    member_mail: Option<CarriedMemberMailboxes>,
+    thread_roots: ExportThreadRoots,
+    bytes: u64,
+    digest: String,
+}
+
+impl Vault {
+    /// The Owner `exporter`'s own copy of every record, toward
+    /// `destination`, recorded once ([`Self::record_owner_copy`]) and only
+    /// then answered (fix list row 15416). Each pass reads the vault's rule
+    /// for the other members' personal mailboxes in its own snapshot, as the
+    /// PERSON `exporter` exports as, and judges each row by it before the
+    /// row's body is read, a separate conjunct beside every check a scoped
+    /// export makes ([`Self::export_records_in_txn`]): a row it leaves out
+    /// is in no record, and the answer names each mailbox it left out.
+    ///
+    /// # Errors
+    ///
+    /// A pass that failed.
+    pub(super) fn release_owner_records(
+        &self,
+        exporter: EntityId,
+        destination: &ReadDestination,
+    ) -> Result<OwnerRecordExport> {
+        let (pass, _) = self.record_owner_copy(
+            |untold| self.owner_records_pass(exporter, destination, untold),
+            |pass: &mut OwnerRecordPass| {
+                let audit = raw_records_copy(
+                    exporter,
+                    pass.bytes,
+                    std::mem::take(&mut pass.digest),
+                    std::mem::take(&mut pass.thread_roots),
+                );
+                (audit, pass.member_mail.take())
+            },
+        )?;
+        Ok(OwnerRecordExport {
+            records: pass.records,
+            mailbox_notices: pass.mailbox_notices,
+        })
+    }
+
+    /// One pass of [`Self::release_owner_records`], in a snapshot of its
+    /// own: with `untold`, it carries no member's mailbox and uses no
+    /// approval. A member's mailbox counts as carried only through a record
+    /// the pass answers, by the stored row it stands for.
+    ///
+    /// # Errors
+    ///
+    /// Storage and codec failures.
+    fn owner_records_pass(
+        &self,
+        exporter: EntityId,
+        destination: &ReadDestination,
+        untold: bool,
+    ) -> Result<OwnerRecordPass> {
+        let txn = self.store.env.read_txn()?;
+        let plan = MemberMailboxPlan::read_in(self, &txn, exporter, untold)?;
+        let dbs = self.store.read();
+        let mut judge = plan
+            .as_ref()
+            .map(|plan| plan.judge(self, &dbs, &txn))
+            .transpose()?;
+        let mut lineage = MailboxLineage::read_in(&self.store, &txn, judge.is_some())?;
+        // The Owner's copy is of every record: its door withholds no
+        // position.
+        let top = Scope::top();
+        let (records, ships) = self.export_records_in_txn(
+            &txn,
+            [&top, &top, &top],
+            destination,
+            |id, entity_type, raw| {
+                lineage.row_admitted(judge.as_mut(), &self.store, &txn, id, entity_type, raw)
+            },
+        )?;
+        // Each carried thread's binding, read in this snapshot, so its
+        // members are told should its root go before the audit (FIX 6427,
+        // 6681).
+        let mut thread_roots = ExportThreadRoots::default();
+        for record in &records {
+            if let Some(header) = EntityMetadataHeader::parse(&record.bytes)
+                && let Some(body) = record.bytes.get(ENTITY_METADATA_HEADER_LEN..)
+            {
+                thread_roots.extend(turn_thread_root(header.entity_type, body));
+            }
+        }
+        thread_roots.capture_in(&dbs, &txn);
+        let verdicts = judge.map(ExportJudge::settle);
+        let (mailbox_notices, member_mail) =
+            lineage.outcome(plan, verdicts, &ships, &BTreeSet::new(), &BTreeSet::new());
+        let (bytes, digest) = records_digest(&records)?;
+        Ok(OwnerRecordPass {
+            records,
+            mailbox_notices,
+            member_mail,
+            thread_roots,
+            bytes,
+            digest,
+        })
+    }
+}
+
+/// The length and BLAKE3 (lowercase hex) of `records`, as one Owner's copy
+/// of them is audited (fix list row 15416), read in their one encoding: each
+/// record in order, as its length, a little-endian u64, then the record
+/// itself, its 16-byte id followed by its bytes, its position and its birth,
+/// each as its length, a little-endian u64, then itself. A position and a
+/// birth are their JSON; an absent one is empty.
+///
+/// # Errors
+///
+/// A position or a birth that does not encode.
+fn records_digest(records: &[ScopedRecord]) -> Result<(u64, String)> {
+    let length =
+        |len: usize| u64::try_from(len).map_err(|_| Error::IndexOverflow("records copy length"));
+    let prefix = std::mem::size_of::<u64>();
+    let mut hasher = blake3::Hasher::new();
+    let mut total = 0_usize;
+    for record in records {
+        let scope = json_field(record.scope.as_ref())?;
+        let birth = json_field(record.birth.as_ref())?;
+        let id = record.id.as_bytes();
+        let fields = [record.bytes.as_slice(), scope.as_slice(), birth.as_slice()];
+        let frame = id.len()
+            + fields
+                .iter()
+                .map(|field| prefix + field.len())
+                .sum::<usize>();
+        hasher.update(&length(frame)?.to_le_bytes());
+        hasher.update(id);
+        for field in fields {
+            hasher.update(&length(field.len())?.to_le_bytes());
+            hasher.update(field);
+        }
+        total += prefix + frame;
+    }
+    Ok((length(total)?, hasher.finalize().to_hex().to_string()))
+}
+
+/// `value` as JSON, for [`records_digest`]; empty when absent.
+fn json_field<T: serde::Serialize>(value: Option<&T>) -> Result<Vec<u8>> {
+    match value {
+        Some(value) => serde_json::to_vec(value)
+            .map_err(|_| Error::InvariantViolation("records copy field encode failed")),
+        None => Ok(Vec::new()),
     }
 }
 

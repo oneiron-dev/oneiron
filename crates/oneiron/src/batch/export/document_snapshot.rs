@@ -169,6 +169,34 @@ impl Vault {
         Ok(copy.receipt)
     }
 
+    /// The embedded owner's own copy of every record the vault holds,
+    /// toward `destination` (fix list row 15416): each record as an export
+    /// of records carries it, through a door that withholds no position.
+    /// Every check that export makes still stands: the world settings of
+    /// each machine it goes to (an on-device destination is read as one
+    /// nobody proved), the causal, epoch and text fences, withdrawn words,
+    /// the release filter, a marked item's masked copy, and each birth
+    /// naming only the rows the copy carries. It carries no custody record,
+    /// no unpublished LFS chunk and no row secret exhaust tainted.
+    ///
+    /// The scoped record doors are never this copy, whatever scopes they
+    /// are given. In a shared vault it leaves out each row of another
+    /// member's personal mailbox the vault's rule does not carry, and each
+    /// row whose words came from one, judged in the copy's own snapshot
+    /// before the row's body is read, and names each such mailbox in its
+    /// answer. The copy is in the vault's export audit before it is answered
+    /// (FIX 6427), and one that carries another member's mailbox, or uses an
+    /// approval of the Owner's request for one, only once each mailbox's
+    /// person is told and each approval used, in one write; when that write
+    /// does not commit, the copy is made again without those mailboxes, each
+    /// named.
+    pub fn export_owner_records(
+        &self,
+        destination: &ReadDestination,
+    ) -> Result<super::OwnerRecordExport> {
+        self.release_owner_records(owner_reader()?.entity_ref(), destination)
+    }
+
     /// The embedded owner's own copy `cut` through a raw `Vault` door, made,
     /// recorded once and ready to release ([`Self::release_owner_copy`]):
     /// its diary reads are the vault owner's (OF-490).
