@@ -10,7 +10,9 @@ use std::io::Read;
 mod body;
 mod spool;
 mod spooled_edit;
-pub use body::{SandboxProposalBody, SandboxProposalBodyReader, SandboxProposalBodyWriter};
+pub use body::{
+    SandboxProposalBody, SandboxProposalBodyReader, SandboxProposalBodyWriter, SandboxProposalText,
+};
 pub use spool::{ProposalSpoolClaim, ProposalSpoolFloor, SpoolAtFloor, SpoolFloorRefusal};
 
 /// Single write intent emitted by a propose-only guest.
@@ -100,17 +102,33 @@ pub struct SandboxDirectoryOpaqueProposal {
     pub path: SandboxVirtualPath,
 }
 
+/// A proposal's Unicode-scalar edit, with immutable body-backed text spans.
+/// Its public JSON has the same fields and string values as a document edit;
+/// ordinary document storage keeps its owned `CodeFileEdit` representation.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(deny_unknown_fields)]
+pub struct SandboxFileEdit {
+    pub path: String,
+    pub start: usize,
+    pub end: usize,
+    pub expected: SandboxProposalText,
+    pub replacement: SandboxProposalText,
+    pub new_path: Option<String>,
+}
+
 /// A whole-file guest output lowered against the exact bytes supplied at boot.
 /// Review sees a bounded document operation, never an implicit replacement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxFileEditProposal {
     pub path: SandboxVirtualPath,
     pub base_content_hash: [u8; 32],
-    pub edit: crate::code_document::CodeFileEdit,
+    pub edit: SandboxFileEdit,
 }
 impl SandboxFileWriteProposal {
     /// Lowers against the exact spooled boot snapshot without reading the base
-    /// file whole. Only the changed spans become the edit's owned strings.
+    /// file whole. Both changed spans retain immutable views of their spools.
     pub(in crate::code_sandbox) fn lower_to_edit_spooled(
         &self,
         base: &SandboxProposalBody,
@@ -122,8 +140,27 @@ impl SandboxFileWriteProposal {
 
     /// The same operation as [`crate::code_document::CodeFileEdit::between`],
     /// read from the body in frames: the shared prefix and suffix are
-    /// compared where they lie, and only the changed span is read whole.
+    /// compared where they lie. Replacement text stays body-backed; the
+    /// borrowed base's expected span is copied because this call cannot retain it.
     pub fn lower_to_edit(&self, base: &[u8]) -> Result<Option<SandboxFileEditProposal>> {
+        self.lower_to_edit_checked(base, || Ok(()))
+    }
+
+    pub(in crate::code_sandbox) fn lower_to_edit_cancellable(
+        &self,
+        base: &[u8],
+        cancel: &crate::engine_executor::StepCancellation,
+        deadline: std::time::Instant,
+    ) -> Result<Option<SandboxFileEditProposal>> {
+        self.lower_to_edit_checked(base, || spooled_edit::checkpoint(cancel, deadline))
+    }
+
+    fn lower_to_edit_checked(
+        &self,
+        base: &[u8],
+        mut checkpoint: impl FnMut() -> Result<()>,
+    ) -> Result<Option<SandboxFileEditProposal>> {
+        checkpoint()?;
         let body = &self.body;
         if body.is(base) {
             return Ok(None);
@@ -135,6 +172,7 @@ impl SandboxFileWriteProposal {
         let mut reader = body.reader();
         let mut prefix = 0;
         while prefix < shared {
+            checkpoint()?;
             let want = LOWER_FRAME.min(shared - prefix);
             reader.read_exact(&mut frame[..want])?;
             let same = frame[..want]
@@ -154,6 +192,7 @@ impl SandboxFileWriteProposal {
         }
         let mut suffix = 0;
         while suffix < shared - prefix {
+            checkpoint()?;
             let want = LOWER_FRAME.min(shared - prefix - suffix);
             let tail = body.read_range(body.len() - (suffix + want) as u64, want)?;
             let same = tail
@@ -170,12 +209,15 @@ impl SandboxFileWriteProposal {
         while !old.is_char_boundary(base.len() - suffix) {
             suffix -= 1;
         }
-        let changed = usize::try_from(body.len() - (prefix + suffix) as u64)
-            .map_err(|_| Error::InvalidClaimBody("code edit span exceeds host memory"))?;
         // The prefix and suffix are the base's own text; the body is UTF-8
         // exactly when its changed span is.
-        let replacement = String::from_utf8(body.read_range(prefix as u64, changed)?)
-            .map_err(|_| Error::InvalidClaimBody("code edit output is not UTF-8"))?;
+        let replacement = SandboxProposalText::from_body(
+            body,
+            prefix as u64,
+            body.len() - (prefix + suffix) as u64,
+            "code edit output is not UTF-8",
+            &mut checkpoint,
+        )?;
         let expected = &old[prefix..old.len() - suffix];
         let start = old[..prefix].chars().count();
         let end = start + expected.chars().count();
@@ -187,11 +229,11 @@ impl SandboxFileWriteProposal {
         Ok(Some(SandboxFileEditProposal {
             path: self.path.clone(),
             base_content_hash: *blake3::hash(base).as_bytes(),
-            edit: crate::code_document::CodeFileEdit {
+            edit: SandboxFileEdit {
                 path: self.path.relative_path().to_owned(),
                 start,
                 end,
-                expected: expected_text,
+                expected: expected_text.into(),
                 replacement,
                 new_path: None,
             },

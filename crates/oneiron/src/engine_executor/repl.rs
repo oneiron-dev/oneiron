@@ -315,6 +315,7 @@ impl EngineNativeExecutor<'_> {
                         recoverable,
                     ),
                 )?
+                .with_file_output_step(completed_steps)
                 .with_skill_executor(&config.model)
                 .with_result_share(&self.result_share)
                 .with_callable_checks(CallableChecks::new(self.code_check, completed_steps));
