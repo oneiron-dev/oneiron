@@ -145,8 +145,11 @@ pub(super) fn capture(
                     }
                 }
                 // A withholding marker names a row the window no longer
-                // carries; the hold it set lives in the vault, not here.
-                Carrier::Withheld { .. } => {}
+                // carries; the hold it set lives in the vault, not here. A
+                // change receipt rides beside its policy from this vault's
+                // own receipts at the window's next export, not in the
+                // artifact.
+                Carrier::Withheld { .. } | Carrier::Event { .. } => {}
             }
         }
         for (id, revisions) in families {
@@ -291,8 +294,9 @@ impl CanonicalSnapshot {
                             .push((row.key, row.value, policy));
                     }
                 }
-                // Capture keeps no marker; one in an artifact restores none.
-                Carrier::Withheld { .. } => {}
+                // Capture keeps no marker and no receipt; one in an artifact
+                // restores none.
+                Carrier::Withheld { .. } | Carrier::Event { .. } => {}
             }
         }
         for (id, current) in held {

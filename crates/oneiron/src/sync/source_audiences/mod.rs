@@ -14,7 +14,13 @@
 //!   Every other holder of the row reads it to no one until its carrier
 //!   comes back with no marker ([`source_audience::HeldBack::Withheld`]); a
 //!   row whose carried binding waits for its policy is held the same way
-//!   meanwhile ([`source_audience::HeldBack::Pending`]).
+//!   meanwhile ([`source_audience::HeldBack::Pending`]);
+//! - `event/<policy>/<revision>`: the receipt of the change that made that
+//!   revision of a carried policy (fix list row 17205), so a replica knows
+//!   who shared a thread and lets its sharer withdraw the share there too. A
+//!   receipt changes only by losing an actor to an erase; two copies that
+//!   tell different changes are refused
+//!   ([`crate::source_audience::merge_event_in_txn`]).
 //!
 //! Each revision a window holds stays beside the others, so the highest
 //! wins however Loro orders them, and two unequal copies of one revision
@@ -39,8 +45,8 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::source_audience::carried::{
-    Carrier, CarrierKey, carrier, encode_binding, encode_policy, encode_withheld, named, parse_key,
-    policy_key, record_key, withheld_key,
+    Carrier, CarrierKey, carrier, encode_binding, encode_event, encode_policy, encode_withheld,
+    event_key, named, parse_key, policy_key, record_key, withheld_key,
 };
 use crate::source_audience::{
     self, HeldBack, ReplicaMerge, SourceAudienceKind, SourceAudiencePolicy,
@@ -146,14 +152,18 @@ fn pass_heads(doc: &LoroDoc, window: &str) -> Rc<Heads> {
 // Admission: the full-window door validates every value an update can leave.
 // ---------------------------------------------------------------------------
 
-/// The bindings and policy revisions met across one admitted range: the
-/// window's held map, a snapshot's latest map and shallow root, and every
-/// retained insert. Two bindings of one row, or two unequal copies of one
-/// policy revision, refuse the range, whichever Loro would keep.
+/// The bindings, policy revisions and change receipts met across one
+/// admitted range: the window's held map, a snapshot's latest map and
+/// shallow root, and every retained insert. Two bindings of one row, two
+/// unequal copies of one policy revision, or two receipts of one change that
+/// tell different changes, refuse the range, whichever Loro would keep.
 #[derive(Debug, Default)]
 pub(crate) struct AdmissionRows {
     bindings: BTreeMap<EntityId, EntityId>,
     versions: BTreeMap<(EntityId, u64), Vec<u8>>,
+    /// The join of the receipts met for each change: every actor any copy
+    /// names, so a later copy naming another is refused.
+    events: BTreeMap<(EntityId, u64), crate::source_audience::SourceAudienceEvent>,
 }
 
 impl AdmissionRows {
@@ -172,6 +182,21 @@ impl AdmissionRows {
                 }
                 Ok(Carrier::Policy { id, policy }) => {
                     self.versions.entry((id, policy.revision)).or_insert(bytes);
+                }
+                Ok(Carrier::Event {
+                    policy,
+                    revision,
+                    event,
+                }) => {
+                    let joined = match self.events.get(&(policy, revision)) {
+                        Some(held) => source_audience::event_join(held, &event),
+                        None => Some(event),
+                    };
+                    // A held map that contradicts itself keeps the first; the
+                    // range's own copies are tested against it.
+                    if let Some(joined) = joined {
+                        self.events.insert((policy, revision), joined);
+                    }
                 }
                 Ok(Carrier::Withheld { .. }) | Err(_) => {}
             }
@@ -229,6 +254,24 @@ pub(crate) fn admit_carrier(
                 }
             }
         }
+        Carrier::Event {
+            policy,
+            revision,
+            event,
+        } => {
+            let joined = match seen.events.get(&(policy, revision)) {
+                Some(held) => source_audience::event_join(held, &event)
+                    .ok_or_else(|| refused("two receipts of one change tell two changes"))?,
+                None => event.clone(),
+            };
+            seen.events.insert((policy, revision), joined);
+            if let Some(vault) = vault {
+                let rtxn = vault.store.env.read_txn()?;
+                if source_audience::event_conflicts_in(vault, &rtxn, &policy, revision, &event)? {
+                    return Err(refused("a change receipt contradicts the one held"));
+                }
+            }
+        }
         // A marker asserts only that a row left: its holders read it to no
         // one, which no held word contradicts.
         Carrier::Withheld { .. } => {}
@@ -278,11 +321,11 @@ pub(crate) fn refuse_foreign_map(doc: &LoroDoc) -> Result<()> {
 }
 
 /// The row a carried key names: `record/<row>`'s and `withheld/<row>`'s
-/// row; a policy key names no row.
+/// row; a policy key and a receipt key name no row.
 pub(crate) fn record_owner(map_key: &str) -> Option<EntityId> {
     match parse_key(map_key)? {
         CarrierKey::Record(row) | CarrierKey::Withheld(row) => Some(row),
-        CarrierKey::Policy(..) => None,
+        CarrierKey::Policy(..) | CarrierKey::Event(..) => None,
     }
 }
 
@@ -419,18 +462,54 @@ pub(crate) fn mirror_record(vault: &Vault, doc: &LoroDoc, id: &EntityId) -> Resu
     if published.is_empty() {
         return Ok(false);
     }
-    write_published(&doc.get_map(SOURCE_AUDIENCES_MAP), &published)
+    let map = doc.get_map(SOURCE_AUDIENCES_MAP);
+    let mut wrote = write_published(&map, &published)?;
+    let policies: BTreeSet<EntityId> = published
+        .iter()
+        .flat_map(|(_, _, closure)| closure.iter().map(|(policy, _)| *policy))
+        .collect();
+    wrote |= write_events(vault, &map, &policies)?;
+    Ok(wrote)
+}
+
+/// Writes this vault's receipt of each change to each of `policies` that
+/// `map` does not carry yet (fix list row 17205), none naming an actor this
+/// vault erased. A key that holds other bytes stays as it is: an unredacted
+/// copy goes in the scrub ([`refresh_and_scrub`]) before this writes, and
+/// another vault's narrower copy or a contradiction admission refused stands.
+/// Whether the map changed.
+fn write_events(vault: &Vault, map: &LoroMap, policies: &BTreeSet<EntityId>) -> Result<bool> {
+    let receipts = {
+        let rtxn = vault.store.env.read_txn()?;
+        let mut receipts = Vec::new();
+        for policy in policies {
+            for (revision, event) in source_audience::events_of_in(vault, &rtxn, policy)? {
+                if !source_audience::event_names_erased_actor_in(vault, &rtxn, &event)? {
+                    receipts.push((event_key(policy, revision), event));
+                }
+            }
+        }
+        receipts
+    };
+    let mut wrote = false;
+    for (map_key, event) in receipts {
+        if map_get_bytes(map, &map_key).is_none() {
+            map_insert_bytes(map, &map_key, &encode_event(&event)?)?;
+            wrote = true;
+        }
+    }
+    Ok(wrote)
 }
 
 /// The policies `map`'s bindings still reach, each thread's source
-/// included, and the keys of every revision of any other policy.
+/// included, and the keys of every revision and receipt of any other policy.
 fn unreferenced_policies(map: &LoroMap) -> Vec<String> {
     let carried = carriers(map);
     let bound: BTreeSet<EntityId> = carried
         .iter()
         .filter_map(|(_, carried)| match carried {
             Carrier::Record { policy, .. } => Some(*policy),
-            Carrier::Policy { .. } | Carrier::Withheld { .. } => None,
+            Carrier::Policy { .. } | Carrier::Withheld { .. } | Carrier::Event { .. } => None,
         })
         .collect();
     let mut reached = bound.clone();
@@ -451,7 +530,11 @@ fn unreferenced_policies(map: &LoroMap) -> Vec<String> {
     let mut keys: Vec<String> = carried
         .into_iter()
         .filter_map(|(map_key, carried)| match carried {
-            Carrier::Policy { id, .. } if !reached.contains(&id) => Some(map_key),
+            Carrier::Policy { id, .. } | Carrier::Event { policy: id, .. }
+                if !reached.contains(&id) =>
+            {
+                Some(map_key)
+            }
             _ => None,
         })
         .collect();
@@ -543,6 +626,12 @@ pub(crate) fn refresh_and_scrub(
                 {
                     gone.push(map_key);
                 }
+                // Its redaction rides under the same key once it went.
+                Carrier::Event { event, .. }
+                    if source_audience::event_names_erased_actor_in(vault, &rtxn, &event)? =>
+                {
+                    gone.push(map_key);
+                }
                 // This machine's own marker lifts once the row rides again
                 // (its holders lift their hold as its carrier lands), or once
                 // the row is gone here. It names no actor: no pin.
@@ -558,7 +647,10 @@ pub(crate) fn refresh_and_scrub(
                 {
                     lifted.push(map_key);
                 }
-                Carrier::Record { .. } | Carrier::Policy { .. } | Carrier::Withheld { .. } => {}
+                Carrier::Record { .. }
+                | Carrier::Policy { .. }
+                | Carrier::Withheld { .. }
+                | Carrier::Event { .. } => {}
             }
         }
     }
@@ -585,6 +677,10 @@ pub(crate) fn refresh_and_scrub(
         }
         changed = true;
     }
+    // Last: the receipts of the policies the map still carries, so a
+    // redaction rides where its unredacted copy went.
+    let carried: BTreeSet<EntityId> = carried_heads(&map).into_keys().collect();
+    changed |= write_events(vault, &map, &carried)?;
     if changed {
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
@@ -725,17 +821,23 @@ pub(crate) fn apply_map(vault: &Vault, doc: &LoroDoc) -> Result<Vec<EntityId>> {
         .iter()
         .filter_map(|(_, carried)| match carried {
             Carrier::Record { row, policy } => Some((*row, *policy)),
-            Carrier::Policy { .. } | Carrier::Withheld { .. } => None,
+            Carrier::Policy { .. } | Carrier::Withheld { .. } | Carrier::Event { .. } => None,
         })
         .collect();
-    let markers: Vec<(EntityId, Option<EntityId>)> = carried
-        .into_iter()
-        .filter_map(|(_, carried)| match carried {
-            Carrier::Withheld { row, by } => Some((row, by)),
-            Carrier::Record { .. } | Carrier::Policy { .. } => None,
-        })
-        .collect();
-    if heads.is_empty() && records.is_empty() && markers.is_empty() {
+    let mut markers: Vec<(EntityId, Option<EntityId>)> = Vec::new();
+    let mut receipts = Vec::new();
+    for (_, carried) in carried {
+        match carried {
+            Carrier::Withheld { row, by } => markers.push((row, by)),
+            Carrier::Event {
+                policy,
+                revision,
+                event,
+            } => receipts.push((policy, revision, event)),
+            Carrier::Record { .. } | Carrier::Policy { .. } => {}
+        }
+    }
+    if heads.is_empty() && records.is_empty() && markers.is_empty() && receipts.is_empty() {
         return Ok(Vec::new());
     }
     let rows = carried_rows(doc);
@@ -762,6 +864,7 @@ pub(crate) fn apply_map(vault: &Vault, doc: &LoroDoc) -> Result<Vec<EntityId>> {
                 ReplicaMerge::Held | ReplicaMerge::Pending => {}
             }
         }
+        merge_receipts_in_txn(vault, txn, &receipts, &refused_policies)?;
         let mut affected = Vec::new();
         // A row another machine withheld after it travelled reads to no one
         // here (REVIEW-5911): its holders are told, not left reading it
@@ -834,6 +937,38 @@ pub(crate) fn apply_map(vault: &Vault, doc: &LoroDoc) -> Result<Vec<EntityId>> {
         }
         Ok(affected)
     })
+}
+
+/// Merges each carried change receipt of a policy this vault holds whose
+/// carried revision did not conflict, in `txn` (fix list row 17205): a
+/// receipt waits beside the window for its policy, never filed without it.
+/// A receipt that tells another change than the one held is logged and
+/// left, the held one standing.
+fn merge_receipts_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    receipts: &[(EntityId, u64, source_audience::SourceAudienceEvent)],
+    refused_policies: &BTreeSet<EntityId>,
+) -> Result<()> {
+    for (policy, revision, event) in receipts {
+        if refused_policies.contains(policy)
+            || source_audience::policy_in(vault, txn, policy)?
+                .is_none_or(|held| held.revision < *revision)
+        {
+            continue;
+        }
+        if source_audience::merge_event_in_txn(vault, txn, policy, *revision, event)?
+            == ReplicaMerge::Conflict
+        {
+            tracing::warn!(
+                reason = "source_audience_receipt_conflict",
+                policy = %policy.to_hex(),
+                revision,
+                "a carried change receipt contradicts the one held; the held one stands"
+            );
+        }
+    }
+    Ok(())
 }
 
 /// The bytes this vault stores for `row`, in `txn`.

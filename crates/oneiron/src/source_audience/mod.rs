@@ -47,9 +47,10 @@ use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 
 pub(crate) use replica::{
-    ReplicaMerge, bind_replicated_in_txn, merge_policy_in_txn, names_erased_actor_in,
-    policy_closure_in, policy_conflicts_in, policy_in, publishable_in, published_closure_in,
-    redacted_successor_in, thread_source_in,
+    ReplicaMerge, bind_replicated_in_txn, event_conflicts_in, event_join,
+    event_names_erased_actor_in, event_without_erased_actors, merge_event_in_txn,
+    merge_policy_in_txn, names_erased_actor_in, policy_closure_in, policy_conflicts_in, policy_in,
+    publishable_in, published_closure_in, redacted_successor_in, thread_source_in,
 };
 pub(crate) use walk::{
     ReplicationScope, lineage_held_in, readable_with_read_in, withheld_by_lineage_in,
@@ -66,7 +67,11 @@ const RECORDS: SideTable<EntityId, EntityId, Named> =
 const HELD: SideTable<EntityId, HeldBack, Named> =
     SideTable::new(&side_table::SOURCE_AUDIENCE_HELD);
 /// The thread policy of one thread of a source policy, by the source policy
-/// and the BLAKE3 of the source's own thread key.
+/// and the BLAKE3 of the source's own thread key. A second policy another
+/// install minted for the same thread before the two met is filed beside it,
+/// under the BLAKE3 of that key and its own id, so every merged thread
+/// policy of a source is found by a scan of the source's rows; the thread's
+/// own key keeps the first.
 const THREADS: SideTable<(EntityId, [u8; 32]), EntityId, Named> =
     SideTable::new(&side_table::SOURCE_AUDIENCE_THREAD);
 /// Every change to a policy's readers, by the policy and the revision the
@@ -88,6 +93,10 @@ pub(crate) enum SourceAudienceKind {
     /// thread was shared with.
     Thread {
         source: EntityId,
+        /// The BLAKE3 of the source's own thread key: where the thread index
+        /// files it, here and on every replica that merges it (fix list row
+        /// 17204).
+        thread: [u8; 32],
         shared_with: BTreeSet<EntityId>,
     },
 }
@@ -229,6 +238,7 @@ pub(crate) fn readers_in(
         SourceAudienceKind::Thread {
             source,
             shared_with,
+            ..
         } => {
             let Some(parent) = POLICIES.get(&vault.store, txn, &source)? else {
                 return Ok(None);
@@ -505,6 +515,7 @@ pub(crate) fn thread_policy_in_txn(
         &SourceAudiencePolicy {
             kind: SourceAudienceKind::Thread {
                 source: *source,
+                thread: key.1,
                 shared_with: BTreeSet::new(),
             },
             created_by: Some(by),
@@ -597,6 +608,7 @@ pub(crate) fn thread_shares_in(
                 SourceAudienceKind::Thread {
                     source,
                     shared_with,
+                    ..
                 },
             ..
         }) => Some((source, shared_with)),
@@ -658,6 +670,26 @@ pub(crate) fn events_in(
                 by_ref: event.by.map(|id| id.to_hex()),
                 at: event.at,
             })
+        })
+        .collect()
+}
+
+/// Every receipt of `policy`'s changes, by the revision each made: what
+/// travels beside the policy (fix list row 17205).
+///
+/// # Errors
+///
+/// Storage and codec failures.
+pub(crate) fn events_of_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    policy: &EntityId,
+) -> Result<Vec<(u64, SourceAudienceEvent)>> {
+    EVENTS
+        .iter_from(&vault.store, txn, policy.as_bytes())?
+        .map(|row| {
+            let ((_, revision), event) = row?;
+            Ok((revision, event))
         })
         .collect()
 }
