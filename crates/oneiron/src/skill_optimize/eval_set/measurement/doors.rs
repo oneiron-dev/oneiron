@@ -290,6 +290,15 @@ impl Vault {
         measurement_in_txn(self, &txn, digest)
     }
 
+    /// One measurement on the caller's snapshot.
+    pub(crate) fn eval_measurement_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        digest: &[u8; 32],
+    ) -> Result<Option<EvalMeasurement>> {
+        measurement_in_txn(self, txn, digest)
+    }
+
     /// Claim a Pending measurement before any paid work: count three
     /// Candidate servings of its cohort (incumbent, candidate, retest) and
     /// freeze its members, in one transaction. A claimed or settled row

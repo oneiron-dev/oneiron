@@ -98,6 +98,10 @@ pub struct OfferEvidence {
     pub rubric_revision: Option<String>,
     /// `None` reads as unknown: nothing was measured yet.
     pub card: Option<SufficiencyCard>,
+    /// The native Final paired measurement that supplied this card, when its
+    /// model/revision arms, exposures and card were verified in the offer's writer.
+    /// This is historical provenance, not current auto-approval authority.
+    pub paired_measurement: Option<[u8; 32]>,
     /// Losses shown beside the gains (a general skill, a language, calibration).
     pub losses: Vec<String>,
     pub risk: Option<String>,

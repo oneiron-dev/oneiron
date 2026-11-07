@@ -105,6 +105,8 @@ pub fn validate_catalog(catalog: &LensCatalog) -> Result<()> {
             "unsupported critic lens catalog schema_version",
         ));
     }
+    // No count of lenses refuses a valid catalog (FIX 8517): each lens is
+    // checked on its own.
     if catalog.lenses.is_empty() {
         return Err(invalid_critic_config(
             "critic lens catalog must contain at least one lens",
