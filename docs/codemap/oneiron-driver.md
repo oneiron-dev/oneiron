@@ -13,6 +13,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `src/lib.rs` | src | s | 6 re-export | — | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) |
 | `src/session.rs` | src | m | 2 struct · 2 enum · 7 fn · 1 const · 1 re-export · 1 crate-vis | SessionHint, SessionHintEffect, SessionLifecycleDriver, SessionTicks | RT-03 (ONE-1685): the driver owns the SESSION lifecycle; apps send hints |
+| `src/session/pending.rs` | src | s | 5 crate-vis | — | Caller-retained session opens and causal queues for their actor/machine key |
 | `src/session/policy.rs` | src | s | 1 struct · 3 fn · 3 crate-vis | SessionLifecycleConfig | The host's side of the sitting policy (FIX 8600) |
 | `src/session/tests.rs` | test | L | — | — | — |
 | `src/supervisor/arbiter.rs` | src | s | 7 crate-vis | — | The supervisor's one arbitration point (FIX 8601) |
