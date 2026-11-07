@@ -5298,6 +5298,7 @@ class InboxLensRow(TypedDict):
     occurred_at: int
     receipt_ref: NotRequired[str | None]
     payload_ref: NotRequired[str | None]
+    approval_digest: NotRequired[str | None]
     concern: NotRequired[InboxLensConcern | None]
     diary_review: NotRequired[InboxLensDiaryReview | None]
     sender: NotRequired[str | None]
@@ -14343,8 +14344,10 @@ class RepoAnchorBindOutput(TypedDict):
     repo: str
     anchor: GitPushRepo
     changed: bool
+RepoPortableId = str
 class RepoSnapshotsGetInput(TypedDict):
     repo: EntityId
+    portable_repo: NotRequired[RepoPortableId | None]
     ref: str
     snapshot: str
 class RepoSnapshotView(TypedDict):
@@ -14357,6 +14360,7 @@ class RepoSnapshotView(TypedDict):
 RepoSnapshotsGetOutput = RepoSnapshotView
 class RepoSnapshotsReadInput(TypedDict):
     repo: EntityId
+    portable_repo: NotRequired[RepoPortableId | None]
     ref: str
     snapshot: str
     path: str
@@ -14370,6 +14374,7 @@ class RepoSnapshotsReadOutput(TypedDict):
     text_sha256: str
 class RepoSymbolsDefinitionsInput(TypedDict):
     repo: EntityId
+    portable_repo: NotRequired[RepoPortableId | None]
     ref: str
     snapshot: str
     name: str
@@ -14425,10 +14430,12 @@ class RepoMergeQueueObserveOutput(TypedDict):
     entries: list[RepoQueueEntryView]
 class RepoSnapshotsIngestInput(TypedDict):
     repo: EntityId
+    portable_repo: NotRequired[RepoPortableId | None]
     ref: str
 RepoSnapshotsIngestOutput = RepoSnapshotView
 class RepoWorkOpenInput(TypedDict):
     repo: EntityId
+    portable_repo: NotRequired[RepoPortableId | None]
     ref: str
 RepoWorkOpenOutput = RepoWorkView
 class RepoSymbolsDeclareInput(TypedDict):
@@ -23397,7 +23404,6 @@ class FilesSourceConvertRequest(TypedDict):
 class RepoManifestConflictReviewRequest(TypedDict):
     window: str
     portable_repo: str
-RepoPortableId = str
 class RepoManifestWriter(TypedDict):
     machine: EntityId
     signature: list[int]

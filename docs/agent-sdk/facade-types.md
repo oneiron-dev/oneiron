@@ -2058,7 +2058,7 @@ export type InboxLensDiaryReview = { request: string; reader: string; reader_cla
 /** `oneiron::agent_inbox_lens::read_state::AgentInboxReadState` */
 export type AgentInboxReadState = "new" | "open" | "later" | "done"
 /** `oneiron::agent_inbox_lens::serve::InboxLensRow` */
-export type InboxLensRow = { item_id: string; kind: InboxLensKind; pile: InboxLensPile; thread_ref?: string | null; identity?: string | null; actor: string; facet?: string | null; participants: InboxLensParticipant[]; impact: number; occurred_at: number; receipt_ref?: string | null; payload_ref?: string | null; concern?: InboxLensConcern | null; diary_review?: InboxLensDiaryReview | null; sender?: string | null; widening?: ConsultWidening | null; read_state?: AgentInboxReadState | null }
+export type InboxLensRow = { item_id: string; kind: InboxLensKind; pile: InboxLensPile; thread_ref?: string | null; identity?: string | null; actor: string; facet?: string | null; participants: InboxLensParticipant[]; impact: number; occurred_at: number; receipt_ref?: string | null; payload_ref?: string | null; approval_digest?: string | null; concern?: InboxLensConcern | null; diary_review?: InboxLensDiaryReview | null; sender?: string | null; widening?: ConsultWidening | null; read_state?: AgentInboxReadState | null }
 /** `oneiron::agent_inbox_lens::serve::InboxConcernGroup` */
 export type InboxConcernGroup = { agent: string; items: string[] }
 /** `oneiron::agent_inbox_lens::serve::InboxLensPage` */
@@ -5753,18 +5753,20 @@ export type ConnectorWitnessReadGrantRevoked = { grant_ref: EntityId; changed: b
 export type RepoAnchorBindInput = { repo: string; project: EntityId }
 /** `oneiron::verbs::git_push_grant::RepoAnchorBindOutput` */
 export type RepoAnchorBindOutput = { repo: string; anchor: GitPushRepo; changed: boolean }
+/** `oneiron::origin::repo_manifest::RepoPortableId` */
+export type RepoPortableId = string
 /** `oneiron::memory::repo_doors::types::RepoSnapshotsGetInput` */
-export type RepoSnapshotsGetInput = { repo: EntityId; ref: string; snapshot: string }
+export type RepoSnapshotsGetInput = { repo: EntityId; portable_repo?: RepoPortableId | null; ref: string; snapshot: string }
 /** `oneiron::memory::repo_doors::types::RepoSnapshotView` */
 export type RepoSnapshotView = { repo: EntityId; ref: string; commit: string; snapshot: string; artifact: EntityId; files: CodeSnapshotFile[] }
 /** `oneiron::memory::repo_doors::types::RepoSnapshotsGetOutput` */
 export type RepoSnapshotsGetOutput = RepoSnapshotView
 /** `oneiron::memory::repo_doors::types::RepoSnapshotsReadInput` */
-export type RepoSnapshotsReadInput = { repo: EntityId; ref: string; snapshot: string; path: string; why?: string | null }
+export type RepoSnapshotsReadInput = { repo: EntityId; portable_repo?: RepoPortableId | null; ref: string; snapshot: string; path: string; why?: string | null }
 /** `oneiron::memory::repo_doors::types::RepoSnapshotsReadOutput` */
 export type RepoSnapshotsReadOutput = { repo: EntityId; ref: string; snapshot: string; file: CodeSnapshotFile; content: string; text_sha256: string }
 /** `oneiron::memory::repo_doors::types::RepoSymbolsDefinitionsInput` */
-export type RepoSymbolsDefinitionsInput = { repo: EntityId; ref: string; snapshot: string; name: string }
+export type RepoSymbolsDefinitionsInput = { repo: EntityId; portable_repo?: RepoPortableId | null; ref: string; snapshot: string; name: string }
 /** `oneiron::memory::repo_doors::types::RepoSymbolsDefinitionsOutput` */
 export type RepoSymbolsDefinitionsOutput = { repo: EntityId; ref: string; snapshot: string; definitions: CodeSnapshotDefinition[] }
 /** `oneiron::memory::repo_doors::types::RepoViewsGetInput` */
@@ -5786,11 +5788,11 @@ export type RepoQueueEntryView = { batch: string; work: EntityId; proposals: Ent
 /** `oneiron::memory::repo_doors::types::RepoMergeQueueObserveOutput` */
 export type RepoMergeQueueObserveOutput = { work: EntityId; repo: EntityId; ref: string; base_green: string; head_commit: string; green_commit: string; green_moved: boolean; entries: RepoQueueEntryView[] }
 /** `oneiron::memory::repo_doors::types::RepoSnapshotsIngestInput` */
-export type RepoSnapshotsIngestInput = { repo: EntityId; ref: string }
+export type RepoSnapshotsIngestInput = { repo: EntityId; portable_repo?: RepoPortableId | null; ref: string }
 /** `oneiron::memory::repo_doors::types::RepoSnapshotsIngestOutput` */
 export type RepoSnapshotsIngestOutput = RepoSnapshotView
 /** `oneiron::memory::repo_doors::types::RepoWorkOpenInput` */
-export type RepoWorkOpenInput = { repo: EntityId; ref: string }
+export type RepoWorkOpenInput = { repo: EntityId; portable_repo?: RepoPortableId | null; ref: string }
 /** `oneiron::memory::repo_doors::types::RepoWorkOpenOutput` */
 export type RepoWorkOpenOutput = RepoWorkView
 /** `oneiron::memory::repo_doors::types::RepoSymbolsDeclareInput` */
@@ -8989,8 +8991,6 @@ export type MailComplianceSearchReply = { log_sequence: number; hits: MailCompli
 export type FilesSourceConvertRequest = { path: string; exclude?: string[] | null }
 /** `oneiron::verbs::repo_manifest_conflict::RepoManifestConflictReviewRequest` */
 export type RepoManifestConflictReviewRequest = { window: string; portable_repo: string }
-/** `oneiron::origin::repo_manifest::RepoPortableId` */
-export type RepoPortableId = string
 /** `oneiron::origin::repo_manifest::RepoManifestWriter` */
 export type RepoManifestWriter = { machine: EntityId; signature: number[] }
 /** `oneiron::origin::repo_manifest::RepoManifest` */

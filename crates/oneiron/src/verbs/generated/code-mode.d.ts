@@ -1047,7 +1047,7 @@ declare namespace Sdk {
   type InboxLensConcern = { agent: string; signal: string; tone: string };
   type InboxLensDiaryReview = { request: string; reader: string; reader_class: string; reason: string };
   type AgentInboxReadState = "new" | "open" | "later" | "done";
-  type InboxLensRow = { item_id: string; kind: InboxLensKind; pile: InboxLensPile; thread_ref?: string | null; identity?: string | null; actor: string; facet?: string | null; participants: InboxLensParticipant[]; impact: number; occurred_at: number; receipt_ref?: string | null; payload_ref?: string | null; concern?: InboxLensConcern | null; diary_review?: InboxLensDiaryReview | null; sender?: string | null; widening?: ConsultWidening | null; read_state?: AgentInboxReadState | null };
+  type InboxLensRow = { item_id: string; kind: InboxLensKind; pile: InboxLensPile; thread_ref?: string | null; identity?: string | null; actor: string; facet?: string | null; participants: InboxLensParticipant[]; impact: number; occurred_at: number; receipt_ref?: string | null; payload_ref?: string | null; approval_digest?: string | null; concern?: InboxLensConcern | null; diary_review?: InboxLensDiaryReview | null; sender?: string | null; widening?: ConsultWidening | null; read_state?: AgentInboxReadState | null };
   type InboxConcernGroup = { agent: string; items: string[] };
   type InboxLensPage = { items: InboxLensRow[]; concern_groups: InboxConcernGroup[] };
   type InboxRunGroupsRequest = { limit?: number | null; after?: string | null };
@@ -2895,12 +2895,13 @@ declare namespace Sdk {
   type ConnectorWitnessReadGrantRevoked = { grant_ref: EntityId; changed: boolean; agent: EntityId; conversation: EntityId; reason: string; revoked_at: number };
   type RepoAnchorBindInput = { repo: string; project: EntityId };
   type RepoAnchorBindOutput = { repo: string; anchor: GitPushRepo; changed: boolean };
-  type RepoSnapshotsGetInput = { repo: EntityId; ref: string; snapshot: string };
+  type RepoPortableId = string;
+  type RepoSnapshotsGetInput = { repo: EntityId; portable_repo?: RepoPortableId | null; ref: string; snapshot: string };
   type RepoSnapshotView = { repo: EntityId; ref: string; commit: string; snapshot: string; artifact: EntityId; files: CodeSnapshotFile[] };
   type RepoSnapshotsGetOutput = RepoSnapshotView;
-  type RepoSnapshotsReadInput = { repo: EntityId; ref: string; snapshot: string; path: string; why?: string | null };
+  type RepoSnapshotsReadInput = { repo: EntityId; portable_repo?: RepoPortableId | null; ref: string; snapshot: string; path: string; why?: string | null };
   type RepoSnapshotsReadOutput = { repo: EntityId; ref: string; snapshot: string; file: CodeSnapshotFile; content: string; text_sha256: string };
-  type RepoSymbolsDefinitionsInput = { repo: EntityId; ref: string; snapshot: string; name: string };
+  type RepoSymbolsDefinitionsInput = { repo: EntityId; portable_repo?: RepoPortableId | null; ref: string; snapshot: string; name: string };
   type RepoSymbolsDefinitionsOutput = { repo: EntityId; ref: string; snapshot: string; definitions: CodeSnapshotDefinition[] };
   type RepoViewsGetInput = { work: EntityId };
   type RepoWorkFile = { path: string; content_hash_blake3: string; projection?: RepoFileProjectionView | null };
@@ -2911,9 +2912,9 @@ declare namespace Sdk {
   type RepoMergeQueueObserveInput = { work: EntityId };
   type RepoQueueEntryView = { batch: string; work: EntityId; proposals: EntityId[]; declaration?: EntityId | null; state: BatchState; base_green: string; expected_head: string; landed_head?: string | null; blockers: EntityId[] };
   type RepoMergeQueueObserveOutput = { work: EntityId; repo: EntityId; ref: string; base_green: string; head_commit: string; green_commit: string; green_moved: boolean; entries: RepoQueueEntryView[] };
-  type RepoSnapshotsIngestInput = { repo: EntityId; ref: string };
+  type RepoSnapshotsIngestInput = { repo: EntityId; portable_repo?: RepoPortableId | null; ref: string };
   type RepoSnapshotsIngestOutput = RepoSnapshotView;
-  type RepoWorkOpenInput = { repo: EntityId; ref: string };
+  type RepoWorkOpenInput = { repo: EntityId; portable_repo?: RepoPortableId | null; ref: string };
   type RepoWorkOpenOutput = RepoWorkView;
   type RepoSymbolsDeclareInput = { work: EntityId; symbols: EntityId[]; ttl_seconds: number };
   type RepoSymbolDeclarationView = { work: EntityId; declaration: EntityId; task: EntityId; symbols: EntityId[]; expires_at: number; held: boolean; blockers: EntityId[] };
@@ -4600,7 +4601,6 @@ declare namespace Sdk {
   type MailComplianceSearchReply = { log_sequence: number; hits: MailComplianceHit[] };
   type FilesSourceConvertRequest = { path: string; exclude?: string[] | null };
   type RepoManifestConflictReviewRequest = { window: string; portable_repo: string };
-  type RepoPortableId = string;
   type RepoManifestWriter = { machine: EntityId; signature: number[] };
   type RepoManifest = { portable: RepoPortableId; version: number; code: EntityId; minted_at: number; origin_name?: string | null; visible_refs: [string, string][]; lfs_pointers: string[]; epoch: number; updated_at: number; writer?: RepoManifestWriter | null };
   type RepoManifestConflictReviewView = { window: string; portable_repo: string; held: RepoManifest; carried: RepoManifest; binding: string };
