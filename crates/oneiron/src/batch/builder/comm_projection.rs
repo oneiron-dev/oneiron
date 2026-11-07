@@ -10,7 +10,7 @@ use crate::{Vault, WriteActor};
 use std::collections::BTreeSet;
 
 enum Bound<'a, 'read> {
-    Actor(&'a WriteActor),
+    Actor(&'a WriteActor, crate::core_write::CoreWriteLaneRef<'read>),
     Reader(&'a ScopedRead<'read>),
 }
 
@@ -21,9 +21,12 @@ pub(super) struct CommHeadWrites<'a, 'read> {
 }
 
 impl<'a, 'read> CommHeadWrites<'a, 'read> {
-    pub(super) fn actor(actor: &'a WriteActor) -> Self {
+    pub(super) fn actor_in_lane(
+        actor: &'a WriteActor,
+        lane: crate::core_write::CoreWriteLaneRef<'read>,
+    ) -> Self {
         Self {
-            bound: Bound::Actor(actor),
+            bound: Bound::Actor(actor, lane),
             effects: None,
             heads: BTreeSet::new(),
         }
@@ -55,8 +58,19 @@ impl ProjectedHeadAdmission for CommHeadWrites<'_, '_> {
         local_puts: &[EntityId],
     ) -> Result<()> {
         match self.bound {
-            Bound::Actor(actor) => {
+            Bound::Actor(actor, lane) => {
                 self.effects = ContentWriteSet::before_heads(vault, txn, actor, ids, local_puts)?;
+                if let crate::core_write::CoreWriteLaneRef::Read(reader)
+                | crate::core_write::CoreWriteLaneRef::Target(reader) = lane
+                    && !reference_read::head_targets_admitted(
+                        vault,
+                        reader,
+                        txn,
+                        ids.iter().copied(),
+                    )?
+                {
+                    return Err(Error::EntityNotFound);
+                }
             }
             Bound::Reader(reader) => {
                 if !reference_read::head_targets_admitted(vault, reader, txn, ids.iter().copied())?
@@ -69,7 +83,7 @@ impl ProjectedHeadAdmission for CommHeadWrites<'_, '_> {
     }
 
     fn after(&mut self, vault: &Vault, txn: &mut heed::RwTxn<'_>, _ids: &[EntityId]) -> Result<()> {
-        if let Bound::Actor(actor) = self.bound {
+        if let Bound::Actor(actor, _) = self.bound {
             if let Some(effects) = self.effects.take() {
                 effects.after(vault, txn, actor)?;
             }

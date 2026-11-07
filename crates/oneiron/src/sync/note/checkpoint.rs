@@ -81,9 +81,14 @@ fn workflow(note: EntityId, actor: Option<EntityId>, no_one: Option<Vec<u8>>) ->
     ))
 }
 
-/// Moves a record's actor out, leaving no one.
+/// Moves a record's local actor out, leaving no one. An imported actor is
+/// source provenance and stays (FIX 7777).
 fn take_actor(slot: &mut NoteActor) -> Option<EntityId> {
-    std::mem::replace(slot, NoteActor::Erased).id()
+    let NoteActor::Actor(id) = *slot else {
+        return None;
+    };
+    *slot = NoteActor::Erased;
+    Some(id)
 }
 
 /// A proposal document's text, its NOTE's; the format marker is structure.
