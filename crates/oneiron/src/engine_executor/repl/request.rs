@@ -55,7 +55,10 @@ impl EngineNativeExecutor<'_> {
         self.output_run = Some(record.run_id);
         let coverage = self.storage.code_run_compaction_coverage(record.run_id)?;
         let mut steps = HashMap::new();
-        for (seq, _, observation) in self.observation_refs(record)? {
+        for (seq, output, mut observation) in self.observation_refs(record)? {
+            if !clean_for_context(&self.storage, Some(record.run_id), &output)? {
+                observation.overview = CODE_RUN_OUTPUT_PREVIEW_WITHHELD.to_owned();
+            }
             self.output_context
                 .record_referenced(seq, observation.source, observation.overview)?;
             if coverage.iter().any(|row| row.covers(record.run_id, seq)) {
@@ -362,6 +365,7 @@ impl EngineNativeExecutor<'_> {
                 response_format: ResponseFormat::Text,
                 locality: config.model_locality,
                 host_keyless: false,
+                host_paid: false,
             },
             messages,
             tools: Vec::new(),
