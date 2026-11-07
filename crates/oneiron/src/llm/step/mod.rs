@@ -22,6 +22,8 @@ mod schema_guard;
 mod schema_runtime;
 pub use schema::validate_json_schema;
 mod peer_wait;
+// FIX 4816: a durable step's recovery from its saved work.
+mod recovery;
 mod response_bodies;
 // FIX 6225: a step claim holds its oversize response's exact version.
 mod response_pins;
@@ -29,6 +31,8 @@ mod response_pins;
 mod retry;
 mod settled;
 mod step_claim;
+// FIX 4816: the memo index's keys, admission, lookup and deindex.
+mod step_index;
 mod step_only;
 mod step_state;
 // FIX 9929: a public submission's kept copies under body custody.
