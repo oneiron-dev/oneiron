@@ -56,19 +56,18 @@ impl DecisionReadGate for HouseGate {
         run.dispatch_paid(permit.lease(), &self.connector)
             .map_err(|_| refused("refused at dispatch"))?;
         let gated = read(permit.lease());
-        let unread = oneiron::llm::LlmUsage::zero();
         // A read that went out and failed keeps its reservation as spend.
-        let outcome = match &gated {
-            GatedRead::NotStarted => CallOutcome::Answered(&unread),
+        let settled = match &gated {
+            GatedRead::NotStarted => permit.settle_unsent(),
             GatedRead::Read(Ok(answer))
             | GatedRead::ReadOnRun {
                 read: Ok(answer), ..
-            } => CallOutcome::Answered(&answer.usage),
+            } => permit.settle(CallOutcome::Answered(&answer.usage)),
             GatedRead::Read(Err(_)) | GatedRead::ReadOnRun { read: Err(_), .. } => {
-                CallOutcome::Failed
+                permit.settle(CallOutcome::Failed)
             }
         };
-        if let Err(denied) = permit.settle(outcome) {
+        if let Err(denied) = settled {
             tracing::error!(%denied, "a house decision read's settlement was refused");
         }
         Ok(match gated {
@@ -118,19 +117,18 @@ impl DecisionReadGate for RunHouseGate<'_> {
             .dispatch_paid(permit.lease(), &self.gate.connector)
             .map_err(|_| refused("refused at dispatch"))?;
         let gated = read(permit.lease());
-        let unread = oneiron::llm::LlmUsage::zero();
         // A read that went out and failed keeps its reservation as spend.
-        let outcome = match &gated {
-            GatedRead::NotStarted => CallOutcome::Answered(&unread),
+        let settled = match &gated {
+            GatedRead::NotStarted => permit.settle_unsent(),
             GatedRead::Read(Ok(answer))
             | GatedRead::ReadOnRun {
                 read: Ok(answer), ..
-            } => CallOutcome::Answered(&answer.usage),
+            } => permit.settle(CallOutcome::Answered(&answer.usage)),
             GatedRead::Read(Err(_)) | GatedRead::ReadOnRun { read: Err(_), .. } => {
-                CallOutcome::Failed
+                permit.settle(CallOutcome::Failed)
             }
         };
-        if let Err(denied) = permit.settle(outcome) {
+        if let Err(denied) = settled {
             tracing::error!(%denied, "a house decision read's settlement was refused");
         }
         Ok(gated)
@@ -236,6 +234,7 @@ impl DecisionProvider for SystemOneRung {
             paired: None,
             person: None,
             served: None,
+            cost_per_thousand: None,
         };
         let score_levels = call.score_levels().unwrap_or_default();
         if matches!(call.question.contract, AnswerContract::Score { .. }) && score_levels.is_empty()
@@ -325,6 +324,7 @@ impl DecisionProvider for SystemOneRung {
             paired: None,
             person: None,
             served: None,
+            cost_per_thousand: None,
         })
     }
 }
@@ -358,11 +358,28 @@ impl SystemOneRung {
             self.vault
                 .model_call_keeps_no_record_for(caller.session.as_deref(), Some(caller.principal))
         });
-        let asked = self.runtime.block_on(self.seat.ask_recorded(
-            request,
-            permit.lease(),
-            call.deadline.decision_time_left(),
-        ));
+        let asked = self.runtime.block_on(async {
+            let cancel = call.deadline.work_cancel();
+            tokio::select! {
+                biased;
+                () = cancel.cancelled() => Err(failed("the seat call was cancelled")),
+                result = self.seat.ask_recorded(
+                    request,
+                    permit.lease(),
+                    call.deadline.decision_time_left(),
+                ) => Ok(result),
+            }
+        });
+        let asked = match asked {
+            Ok(read) => read,
+            Err(error) => {
+                // The seat may still bill a cancelled call.
+                permit
+                    .settle(CallOutcome::Failed)
+                    .map_err(|_| failed("settlement refused"))?;
+                return Err(error);
+            }
+        };
         // Observe only after the original settlement attempt. Its failure
         // still wins over the provider result exactly as before.
         let settled = match &asked.result {
@@ -383,6 +400,7 @@ impl SystemOneRung {
             paired: None,
             person: None,
             served: None,
+            cost_per_thousand: None,
         })
     }
 
