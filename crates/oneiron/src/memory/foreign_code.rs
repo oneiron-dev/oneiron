@@ -8,6 +8,8 @@
 //! the check and nothing is refused for it.
 use serde::{Deserialize, Serialize};
 
+mod outputs;
+
 use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::code_run::{ProgramStepFeedback, ProgramStepFeedbackRelease};
 use crate::code_sandbox::foreign::{ForeignCodeArtifact, execute_foreign_code};
@@ -270,9 +272,13 @@ impl Memory<'_> {
             workspace.path(),
             workspace.path(),
         );
-        let outcome = execute_foreign_code(prepared, mounts, artifact, budget, spool)?;
-        let output: StepOutput = serde_json::from_str(&outcome.result_json)
+        let mut streamed =
+            crate::code_sandbox::microvm::MicroVmOutputSpool::new(std::sync::Arc::clone(&spool));
+        let outcome =
+            execute_foreign_code(prepared, mounts, artifact, budget, spool, &mut streamed)?;
+        let mut output: StepOutput = serde_json::from_str(&outcome.result_json)
             .map_err(|_| MemoryError::bad_request("foreign step returned invalid typed output"))?;
+        outputs::merge(streamed, &mut output)?;
         for file in &output.outputs {
             let path = crate::store::sandbox_path::SandboxVirtualPath::try_new(&file.path)?;
             if path.mount() != crate::store::sandbox_path::SandboxMount::Outputs {

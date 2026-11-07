@@ -36,8 +36,10 @@ fn event_receipt(
     txn: &heed::RoTxn<'_>,
     event: EntityId,
 ) -> MemoryResult<IdentityTopologyReceipt> {
+    // The decision read whole (FIX 10188): a large merge, split or facet is
+    // stored as a manifest plus parts, and its receipt shows all of it.
     let record = vault
-        .identity_topology_event_in_txn(txn, &event)?
+        .identity_topology_decision_in_txn(txn, &event)?
         .ok_or(Error::EntityNotFound)?;
     let action = match record.action {
         StoredIdentityOpAction::Merge { sources, survivor } => {
@@ -71,6 +73,15 @@ fn event_receipt(
             applied_residue,
             forked,
         },
+        StoredIdentityOpAction::ParkedFacet {
+            entity,
+            specs,
+            reassignment,
+        } => IdentityEventAction::ParkedFacet {
+            entity,
+            specs: facet_specs(specs),
+            reassignment_map: reassignment.entries.into_iter().map(Into::into).collect(),
+        },
         StoredIdentityOpAction::AssertDistinct { a, b, claim } => {
             IdentityEventAction::AssertDistinct { a, b, claim }
         }
@@ -103,7 +114,9 @@ fn event_receipt(
         },
         StoredIdentityOpAction::AdmissionDisposition(_)
         | StoredIdentityOpAction::AuthorAttribution { .. }
-        | StoredIdentityOpAction::AuthorRedaction { .. } => {
+        | StoredIdentityOpAction::AuthorRedaction { .. }
+        | StoredIdentityOpAction::OperationManifest { .. }
+        | StoredIdentityOpAction::OperationPart { .. } => {
             return Err(MemoryError::bad_request(
                 "event must name a topology decision, not an admission or attribution sidecar",
             ));
@@ -142,10 +155,27 @@ fn amendment_op(op: IdentityTopologyOp) -> MemoryResult<IdentityAmendment> {
                 .map(Into::into)
                 .collect(),
         }),
-        IdentityTopologyOp::Facet(_) | IdentityTopologyOp::AssertDistinct(_) => Err(
-            MemoryError::bad_request("only merge and split may be amended"),
-        ),
+        IdentityTopologyOp::Facet(op) => Ok(IdentityAmendment::Facet {
+            entity: op.entity,
+            facets: facet_specs(op.facets),
+            reassignment_map: op
+                .reassignment
+                .entries
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+        }),
+        IdentityTopologyOp::AssertDistinct(_) => Err(MemoryError::bad_request(
+            "only merge, split and facet may be amended",
+        )),
     }
+}
+
+fn facet_specs(specs: Vec<topology::FacetSpec>) -> Vec<IdentityFacetSpec> {
+    specs
+        .into_iter()
+        .map(|spec| IdentityFacetSpec { label: spec.label })
+        .collect()
 }
 
 fn result_in_txn(
