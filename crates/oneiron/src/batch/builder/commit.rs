@@ -543,10 +543,12 @@ fn apply_admitted(
     wtxn: &mut RwTxn<'_>,
     mut batch: AdmittedBatch<'_>,
     after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
-    admission: Option<&mut dyn crate::comm::ProjectedHeadAdmission>,
+    mut admission: Option<&mut dyn crate::comm::ProjectedHeadAdmission>,
 ) -> Result<Applied> {
-    let routed_rows = match batch.routed {
-        Some(routed) => {
+    let mut born_touches = crate::comm::DeferredBornTouches::default();
+    let mut routed_rows = match batch.routed {
+        Some(mut routed) => {
+            born_touches = routed.take_born_touches();
             if batch.bound_inputs {
                 super::comm_input::admit_routed_inputs(
                     vault,
@@ -555,7 +557,13 @@ fn apply_admitted(
                     &mut batch.gate_mode,
                 )?;
             }
-            routed.record_with_admission_in_txn(vault, wtxn, admission)?
+            routed.record_with_admission_in_txn(
+                vault,
+                wtxn,
+                admission.as_mut().map(|bound| {
+                    &mut **bound as &mut dyn crate::comm::ProjectedHeadAdmission
+                }),
+            )?
         }
         None => BTreeSet::new(),
     };
@@ -595,6 +603,8 @@ fn apply_admitted(
         batch.gate_mode,
         batch.origin,
     )?;
+    routed_rows.extend(born_touches.record_with_admission_in_txn(vault, wtxn, admission)?);
+    let changes_claims = changes_claims || !routed_rows.is_empty();
     let pad_windows = pad_scope.finish().pad_windows;
     after_apply(wtxn)?;
     derived.include_source_dependents_in(&vault.store, wtxn, &put_roots)?;

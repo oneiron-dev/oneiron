@@ -475,6 +475,22 @@ where
     )?;
     let kind = header.entity_type;
     let bytes = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+    if kind == crate::registry::ENTITY_TYPE_COMM_RECORD {
+        use crate::federation::record_scope::{ScopedCommRead, read_scoped_comm_in_txn};
+        match read_scoped_comm_in_txn(store, txn, *id, bytes)? {
+            ScopedCommRead::Ordinary => {}
+            ScopedCommRead::Unavailable => return Ok(RelationshipRead::Decided(false)),
+            ScopedCommRead::Claim { body, record, .. } => {
+                let (space, private) = claim_access_axes(&body);
+                return Ok(RelationshipRead::Gated {
+                    kind: ENTITY_TYPE_CLAIM,
+                    space,
+                    private,
+                    record,
+                });
+            }
+        }
+    }
     if kind == ENTITY_TYPE_CLAIM {
         if bytes.is_empty() {
             return Ok(RelationshipRead::Decided(false));
