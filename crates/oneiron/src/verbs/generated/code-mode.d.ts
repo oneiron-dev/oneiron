@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1338 code-mode rows (1297 host rows, 41 run rows), 4713 declarations.
+// Census: 1338 code-mode rows (1297 host rows, 41 run rows), 4717 declarations.
 // Replies: 1146 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
@@ -3464,11 +3464,15 @@ declare namespace Sdk {
   type LiveVoiceProcessed = { session_ref: string; cursor: number; ended: boolean };
   type LiveVoiceEventsRequest = { session_ref: string; after?: number; limit?: number | null };
   type LiveVoiceStopReason = "user_barge_in" | "safeguard" | "roster_changed" | "output_failed" | "session_end";
-  type LiveVoiceEventKind = { kind: "generation_started"; run: string; context_sources: string[] } | { kind: "pcm"; sample_rate: number; pcm_base64: string } | { kind: "playout_end" } | { kind: "flush" } | { kind: "playout_stop"; reason: LiveVoiceStopReason } | { kind: "media_cancelled" } | { kind: "safeguard"; action: PolicyEnforcementAction; receipt_ref?: string | null; custom_tier_skipped: boolean } | { kind: "notice"; notice: GateSystemNoticeRecord } | { kind: "memories"; found: number; heard: number; receipts: ScopedReadReceipt[] } | { kind: "tool_context"; source: string } | { kind: "finished" } | { kind: "error"; code: string } | { kind: "session_ended" };
+  type HeardCoverage = "full" | "partial" | "unplayed";
+  type HeardUtterance = { submission: number; text: string; sample_rate: number; samples: number; played_samples: number; coverage: HeardCoverage; heard_text?: string | null };
+  type HeardBasis = "client_report" | "sent_upper_bound";
+  type HeardPlayback = { session_ref: string; generation: number; utterances: HeardUtterance[]; basis: HeardBasis };
+  type LiveVoiceEventKind = { kind: "generation_started"; run: string; context_sources: string[] } | { kind: "pcm"; sample_rate: number; pcm_base64: string } | { kind: "playout_end" } | { kind: "flush" } | { kind: "playout_stop"; reason: LiveVoiceStopReason } | { kind: "media_cancelled" } | { kind: "safeguard"; action: PolicyEnforcementAction; receipt_ref?: string | null; custom_tier_skipped: boolean } | { kind: "notice"; notice: GateSystemNoticeRecord } | { kind: "memories"; found: number; heard: number; receipts: ScopedReadReceipt[] } | { kind: "tool_context"; source: string } | { kind: "heard"; playback: HeardPlayback } | { kind: "finished" } | { kind: "error"; code: string } | { kind: "session_ended" };
   type LiveVoiceEvent = { sequence: number; utterance_id?: string | null; generation?: number | null; event: LiveVoiceEventKind };
   type LiveVoiceEvents = { session_ref: string; cursor: number; ended: boolean; events: LiveVoiceEvent[] };
   type LiveVoiceAckKind = "drained" | "stopped";
-  type LiveVoiceAckRequest = { session_ref: string; generation: number; event_sequence: number; kind: LiveVoiceAckKind };
+  type LiveVoiceAckRequest = { session_ref: string; generation: number; event_sequence: number; kind: LiveVoiceAckKind; played_samples?: number | null };
   type LiveVoiceUsageRequest = { session_ref: string; generation: number };
   type LiveVoiceUsage = { session_ref: string; utterance_id: string; generation: number; run: string; terminal: boolean; metering_enabled: boolean; settlements: RunRungSettlement[] };
   type MutationIntent = "preview" | "explicit_mutation";
@@ -4784,7 +4788,7 @@ declare const ai: {
     poll(input: Sdk.AiVideoJobRequest): Promise<Sdk.AiVideoJob | StoredResult>;
   };
   voice: {
-    /** Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed. */
+    /** Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed, with the samples it played, which the epoch's heard-playback record rests on. */
     ack(input: Sdk.LiveVoiceAckRequest): Promise<Sdk.LiveVoiceProcessed | StoredResult>;
     asr: {
       /** Closes an unfinished ASR utterance under its opening credential and releases its warm candidates without a final retrieval. */
@@ -4796,13 +4800,13 @@ declare const ai: {
       /** Opens one credential-bound utterance for host-enriched ASR speculative recall, with fixed scope, at most four fires and a call-mode deadline. */
       open(input: Sdk.AsrOpenRequest): Promise<Sdk.AsrSession | StoredResult>;
     };
-    /** Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech retires old output through the shared cancellation path. */
+    /** Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech, or words that are not a backchannel, retire old output through the shared cancellation path, and a backchannel starts no reply. */
     audio(input: Sdk.LiveVoiceAudioRequest): Promise<Sdk.LiveVoiceProcessed | StoredResult>;
     /** Ends and releases a live voice session and its retained events; read terminal usage and acknowledge playout before closing. */
     close(input: Sdk.LiveVoiceSessionRequest): Promise<Sdk.LiveVoiceProcessed | StoredResult>;
     /** Ends live voice through the shared cancellation path; keeps the session available for final playout acknowledgment and usage observation. */
     end(input: Sdk.LiveVoiceSessionRequest): Promise<Sdk.LiveVoiceProcessed | StoredResult>;
-    /** Reads ordered utterance and epoch events, PCM, flushes, playout stops, safeguard receipts and notices; advancing the cursor releases consumed events. */
+    /** Reads ordered utterance and epoch events, PCM, flushes, playout stops, safeguard receipts, notices and heard-playback records; advancing the cursor releases consumed events. */
     events(input: Sdk.LiveVoiceEventsRequest): Promise<Sdk.LiveVoiceEvents | StoredResult>;
     /** Opens an owner-bound live media session on the configured voice routes, using the caller credential, room audience and existing budget gates. */
     start(input: Sdk.LiveVoiceStartRequest): Promise<Sdk.LiveVoiceSession | StoredResult>;

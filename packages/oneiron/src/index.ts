@@ -3696,11 +3696,11 @@ export class Oneiron {
       },
       /** Opens an owner-bound live media session on the configured voice routes, using the caller credential, room audience and existing budget gates. */
       start: (input: Facade.LiveVoiceStartRequest): Facade.LiveVoiceSession => this.#call(() => this.#client.aiVoiceStart(input) as Facade.LiveVoiceSession),
-      /** Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech retires old output through the shared cancellation path. */
+      /** Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech, or words that are not a backchannel, retire old output through the shared cancellation path, and a backchannel starts no reply. */
       audio: (input: Facade.LiveVoiceAudioRequest): Facade.LiveVoiceProcessed => this.#call(() => this.#client.aiVoiceAudio(input) as Facade.LiveVoiceProcessed),
-      /** Reads ordered utterance and epoch events, PCM, flushes, playout stops, safeguard receipts and notices; advancing the cursor releases consumed events. */
+      /** Reads ordered utterance and epoch events, PCM, flushes, playout stops, safeguard receipts, notices and heard-playback records; advancing the cursor releases consumed events. */
       events: (input: Facade.LiveVoiceEventsRequest): Facade.LiveVoiceEvents => this.#call(() => this.#client.aiVoiceEvents(input) as Facade.LiveVoiceEvents),
-      /** Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed. */
+      /** Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed, with the samples it played, which the epoch's heard-playback record rests on. */
       ack: (input: Facade.LiveVoiceAckRequest): Facade.LiveVoiceProcessed => this.#call(() => this.#client.aiVoiceAck(input) as Facade.LiveVoiceProcessed),
       /** Observes actual voice-brain run settlements and a terminal boundary after producer teardown, epoch retirement, TTS cancel and client playout acknowledgment. */
       usage: (input: Facade.LiveVoiceUsageRequest): Facade.LiveVoiceUsage => this.#call(() => this.#client.aiVoiceUsage(input) as Facade.LiveVoiceUsage),
