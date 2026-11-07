@@ -149,6 +149,43 @@ pub fn receipt_attribution_trace_sourced(
     Ok(Some((trace, rows)))
 }
 
+/// Every row `receipt` is known to stand on (FIX 7824): its recorded pack
+/// read set where it records one, its run, its bound actor, each skill
+/// revision it pinned, and each skill its trace loaded when the trace
+/// resolves. Unlike [`receipt_attribution_trace_sourced`], a part that is
+/// missing leaves the rest known rather than the whole set unknown, so an
+/// erase of any of them still reaches a note written from them.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn receipt_attribution_known_rows(
+    vault: &Vault,
+    receipt: &ReceiptRecord,
+) -> Result<Vec<EntityId>> {
+    let mut rows = receipt.pack_source_rows().unwrap_or_default();
+    rows.extend(
+        receipt_attempt(&receipt.receipt_id)
+            .and_then(|attempt| EntityId::from_bytes(*attempt.as_bytes()).ok()),
+    );
+    rows.extend(crate::skill::resident::receipt_resident(
+        vault,
+        &receipt.receipt_id,
+    )?);
+    rows.extend(
+        crate::skill::pinned_skill_revisions(vault, receipt)?
+            .into_iter()
+            .map(|(_, id, _)| id),
+    );
+    if let Some(trace) = receipt_attribution_trace(vault, receipt)? {
+        rows.extend(trace.skills.iter().map(|skill| skill.skill));
+        rows.push(trace.actor);
+    }
+    rows.sort_unstable();
+    rows.dedup();
+    Ok(rows)
+}
+
 /// The SKILL record each wire names, at most one per wire. A wire the load
 /// pinned resolves to the exact revision it read, even after an in-place
 /// update (FIX 10110); only the others are matched against today's records.
