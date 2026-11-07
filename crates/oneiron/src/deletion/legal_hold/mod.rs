@@ -23,6 +23,7 @@ pub(super) mod clone;
 mod confirmation;
 mod held_scrubs;
 mod pending_delete;
+pub(crate) mod prospective;
 mod types;
 
 use std::collections::BTreeSet;
@@ -420,6 +421,9 @@ impl Vault {
     pub fn maintain_legal_holds(&self) -> Result<LegalHoldMaintenance> {
         let lapsed = self.with_write_txn_grouped(|txn| {
             let now = self.store.clock.now_recorded_at();
+            // A prospective capture order whose term passed ends with its
+            // outbox, even with no live connection (FIX 13867).
+            prospective::end_lapsed_in_txn(&self.store, txn, now)?;
             let mut lapsed = 0_u64;
             for mut hold in hold_store::holds_in_txn(&self.store, txn)? {
                 if hold.kind != LegalHoldKind::HostOrder || !hold.stands() {

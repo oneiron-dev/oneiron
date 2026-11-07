@@ -105,7 +105,10 @@ pub struct DueRemoteTask {
 impl fmt::Debug for DueRemoteTask {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DueRemoteTask")
-            .field("task_id", &format_args!("[{} bytes redacted]", self.task_id.len()))
+            .field(
+                "task_id",
+                &format_args!("[{} bytes redacted]", self.task_id.len()),
+            )
             .field("poll", &self.poll)
             .field("polls", &self.polls)
             .finish_non_exhaustive()
