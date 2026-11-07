@@ -1,8 +1,9 @@
 //! What a captured step's result reads saw of reader state (FIX 6352): the
 //! reader binding its run read under, whether a reader child's job was live
 //! at each read of its source, a parent's settled findings at each lookup of
-//! a handle that named none of its own results, and the fold receipt each
-//! whole result's card carried. These rows belong to other runs and change
+//! a handle that named none of its own results, the fold receipt each whole
+//! result's card carried, and the verdict the door's row check gave each
+//! read of another run's result. These rows belong to other runs and change
 //! while the step runs, so the step's host keeps each answer as the read saw
 //! it, at the bridge position the read was at. A shadow arm reads these
 //! answers, never the rows as they are later.
@@ -11,7 +12,9 @@
 //! selected, and a job that is no longer live is never live again. So a
 //! final answer seen before a position holds there, an answer that is not
 //! final and was seen after a position held before it, and reads at one
-//! position that agree hold at it. Nothing else is established.
+//! position that agree hold at it. Nothing else is established. A row
+//! check's verdict is never final: the door's caller and the rows it
+//! withholds change.
 
 use std::collections::BTreeMap;
 
@@ -22,6 +25,7 @@ use crate::code_run::dispatcher::{delegated_input, delegated_occurrence_input};
 use crate::code_run::{
     DelegatedSource, OccurrenceRef, ReaderFindingRef, ReaderFoldReceipt, ReaderRoute,
 };
+use crate::engine_executor::JsResultRef;
 
 /// The reader binding a reader child's run reads under, as its host held it
 /// from the step's start: its job's task, the generation its runner claimed
@@ -113,6 +117,42 @@ pub(crate) struct CapturedFoldCard {
     pub(crate) receipt: Option<ReaderFoldReceipt>,
 }
 
+/// The verdict the door's row check gave one read of another run's result
+/// (FIX 6352): the rows it was served from may reach the door's caller,
+/// they stay on this device, or the door refused the read with the code it
+/// named.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RetainedReadVerdict {
+    Admitted,
+    Withheld,
+    Refused(String),
+}
+
+impl RetainedReadVerdict {
+    /// The verdict a row check's answer gives: `Ok(withheld)`, or the code
+    /// of the refusal the door named.
+    pub(crate) fn of(answer: std::result::Result<bool, &str>) -> Self {
+        match answer {
+            Ok(false) => Self::Admitted,
+            Ok(true) => Self::Withheld,
+            Err(code) => Self::Refused(code.to_owned()),
+        }
+    }
+}
+
+/// One read of another run's result (a delegated source or a settled
+/// finding) as the door's row check answered it: the bridge position the
+/// read was at, the reference it was made by, whether the check counted the
+/// run's callable rows beside its verb rows, and the verdict.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct RetainedReadAdmission {
+    pub(crate) at: u64,
+    pub(crate) reference: JsResultRef,
+    pub(crate) callable: bool,
+    pub(crate) verdict: RetainedReadVerdict,
+}
+
 /// What one step's result reads saw of reader state (FIX 6352), each list
 /// in the order the reads saw it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -127,6 +167,10 @@ pub(crate) struct ReaderReadCapture {
     pub(crate) findings: Vec<ObservedAnswer<ReaderFindingSelection>>,
     /// The fold receipt, or none, the card of each whole result carried.
     pub(crate) fold_cards: Vec<CapturedFoldCard>,
+    /// The row check's verdict, at each read of another run's result that
+    /// reached it; a read seen again with the same verdict at the same
+    /// position is kept once.
+    pub(crate) retained_reads: Vec<RetainedReadAdmission>,
 }
 
 impl ReaderReadCapture {
@@ -137,6 +181,34 @@ impl ReaderReadCapture {
             job_live: Vec::new(),
             findings: Vec::new(),
             fold_cards: Vec::new(),
+            retained_reads: Vec::new(),
+        }
+    }
+
+    /// Keeps the row check's `verdict` on a read of another run's result by
+    /// `reference` at bridge position `at`, under the run's callable rows
+    /// when `callable`.
+    pub(crate) fn observe_retained_read(
+        &mut self,
+        at: u64,
+        reference: &JsResultRef,
+        callable: bool,
+        verdict: RetainedReadVerdict,
+    ) {
+        let read = RetainedReadAdmission {
+            at,
+            reference: reference.clone(),
+            callable,
+            verdict,
+        };
+        let kept = self
+            .retained_reads
+            .iter()
+            .rev()
+            .take_while(|held| held.at == at)
+            .any(|held| *held == read);
+        if !kept {
+            self.retained_reads.push(read);
         }
     }
 
@@ -168,12 +240,41 @@ impl ReaderReadCapture {
     }
 
     /// Whether every read it keeps is one of step `run`'s: its child binding
-    /// is for `run`, and each answer was seen inside the step's window, from
-    /// `bridge_start` to `bridge_end`, in order.
+    /// is for `run`, and each answer and each row check's verdict was seen
+    /// inside the step's window, from `bridge_start` to `bridge_end`, in
+    /// order.
     pub(crate) fn held_within(&self, run: EntityId, bridge_start: u64, bridge_end: u64) -> bool {
         self.child.as_ref().is_none_or(|child| child.run == run)
             && seen_in_order(&self.job_live, bridge_start, bridge_end)
             && seen_in_order(&self.findings, bridge_start, bridge_end)
+            && self
+                .retained_reads
+                .iter()
+                .try_fold(bridge_start, |from, held| {
+                    (from <= held.at && held.at <= bridge_end).then_some(held.at)
+                })
+                .is_some()
+    }
+
+    /// The verdict the row check gave the reads of another run's result by
+    /// `reference` at bridge position `cut`, under the run's callable rows
+    /// when `callable` (FIX 6352): `None` unless reads at `cut` kept one and
+    /// every verdict kept there agrees.
+    pub(crate) fn retained_read_at(
+        &self,
+        reference: &JsResultRef,
+        callable: bool,
+        cut: u64,
+    ) -> Option<&RetainedReadVerdict> {
+        let mut verdicts = self
+            .retained_reads
+            .iter()
+            .filter(|held| {
+                held.at == cut && held.callable == callable && held.reference == *reference
+            })
+            .map(|held| &held.verdict);
+        let first = verdicts.next()?;
+        verdicts.all(|verdict| verdict == first).then_some(first)
     }
 
     /// Whether the child's job was live at bridge position `cut`: `None`

@@ -88,7 +88,7 @@ pub enum Op {
     /// The slides and shapes a deck transaction addresses, and the id marks.
     #[serde(rename = "deck.read")]
     DeckRead(DeckReadArgs),
-    /// One checked deck transaction (schema 1) over a base deck.
+    /// One checked deck transaction (schema 2) over a base deck.
     #[serde(rename = "deck.transaction")]
     DeckTransaction(DeckTransactionArgs),
     /// A new deck from a kept brief over a template.
@@ -273,7 +273,7 @@ pub struct DeckReadArgs {
 #[serde(deny_unknown_fields)]
 pub struct DeckTransactionArgs {
     pub deck: u32,
-    /// The deck transaction grammar (schema 1). Its `base` is the BLAKE3 of
+    /// The deck transaction grammar (schema 2). Its `base` is the BLAKE3 of
     /// the deck input; another base refuses `stale`.
     pub transaction: Value,
     /// The pictures a `set_picture` step names, by artifact and version.
@@ -464,7 +464,7 @@ pub enum Reply {
     },
     Deck(DeckRead),
     DeckTransaction {
-        /// The deck transaction report (schema 1): candidate hash, part diff,
+        /// The deck transaction report (schema 2): candidate hash, part diff,
         /// per-step effects, the marks after the run and the handoff hash.
         report: Value,
     },

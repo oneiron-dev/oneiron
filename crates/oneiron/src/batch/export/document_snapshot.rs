@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek, SeekFrom, Write};
 
-use super::snapshot_body::{asset_folded, row_body, row_live_in_txn};
+use super::snapshot_body::{asset_folded, row_body, row_exported_in_txn, row_live_in_txn};
 use super::{
     ArchiveSecretCustody, ExportAdapterDescriptor, ExportCut, ExportDiaryLedger, ExportEdge,
     ExportManifest, ExportScope, ExportSecretsNulledManifest, ExportSnapshotEntityBody,
@@ -82,7 +82,8 @@ impl Vault {
     /// that answers in one frame. [`Self::export_whole_vault_to`] writes it
     /// to a file instead. Live off-record overlay rows, deleted shells,
     /// archive tombstones, credential custody rows and unpublished LFS chunks
-    /// are excluded. No caller can disable nulling.
+    /// are excluded; a record a cleanup archive filed away goes with its
+    /// retained body (FIX 21912). No caller can disable nulling.
     ///
     /// The owner's own archive carries custody secret values unless
     /// `include_secrets` is false (owner ruling 2026-10-17: "all your data is
@@ -370,8 +371,11 @@ impl Vault {
                 &rtxn,
                 &id,
                 header.entity_type,
-            )? || !row_live_in_txn(&self.store, &rtxn, &id)?
-            {
+            )? || !(if scope == ExportScope::WholeVault {
+                row_exported_in_txn(&self.store, &rtxn, &id)?
+            } else {
+                row_live_in_txn(&self.store, &rtxn, &id)?
+            }) {
                 continue;
             }
             // FIX 1496 S5: an epoch summary stays home when any transitive
