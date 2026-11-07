@@ -17,14 +17,16 @@
 //! The context is a typed body with named members. Beside the responses, it
 //! holds what the step's result reads saw of reader state (FIX 6352,
 //! `reads`): a reader child's binding, whether its job was live, a parent's
-//! settled findings and the fold receipt each whole result's card carried.
+//! settled findings, the fold receipt each whole result's card carried and
+//! the verdict the door's row check gave each read of another run's result.
 
 mod reads;
 
 use serde::{Deserialize, Serialize};
 
 pub(crate) use self::reads::{
-    CapturedReaderChild, ReaderFindingSelection, ReaderReadCapture, SelectedFinding,
+    CapturedReaderChild, ReaderFindingSelection, ReaderReadCapture, RetainedReadVerdict,
+    SelectedFinding,
 };
 use super::payload::{answer_fold_words, push_fold_word};
 use super::replay::CodeRunBridgeCall;
