@@ -124,6 +124,40 @@ impl VerbAskCredentialWitness {
     }
 }
 
+/// The MCP registration a paused call was admitted under. This is a ceiling
+/// record, not a credential; the host still resolves and proves the live one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VerbAskMcpCeiling {
+    pub actor_ref: EntityId,
+    #[serde(with = "mcp_actor_class")]
+    pub actor_class: EdgeActorClass,
+    pub world: Option<EntityId>,
+    pub facets: crate::federation::ScopeAxis<crate::federation::ScopeId>,
+    pub write_facet: Option<EntityId>,
+    pub bound_verbs: Option<std::collections::BTreeSet<String>>,
+}
+
+mod mcp_actor_class {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    use crate::EdgeActorClass;
+
+    pub(super) fn serialize<S: Serializer>(
+        class: &EdgeActorClass,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        serializer.serialize_u8(*class as u8)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<EdgeActorClass, D::Error> {
+        let byte = u8::deserialize(deserializer)?;
+        EdgeActorClass::try_from_u8(byte)
+            .ok_or_else(|| serde::de::Error::custom("invalid MCP actor class"))
+    }
+}
+
 /// The door a credential call came in by, and what it carried beside the
 /// call's input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -132,11 +166,11 @@ pub enum VerbAskDoor {
     /// A facade row, in the room turn the call named, if any.
     Facade { room: Option<EntityId> },
     /// A tool-first MCP row, through the connector registration whose STREAM
-    /// connection is `connection`, admitted under that registration's
-    /// `ceiling` (BLAKE3).
+    /// connection is `connection`, capped by both that registration's saved
+    /// `ceiling` and its live authority at settlement.
     Mcp {
         connection: String,
-        ceiling: [u8; 32],
+        ceiling: VerbAskMcpCeiling,
     },
     /// A tool-first MCP row the managed vault's console owner called on his
     /// own STREAM `connection`, which no connector registration stands
@@ -354,6 +388,7 @@ pub trait VerbAskCredentialCheck: Send + Sync {
 #[derive(Debug, Clone)]
 pub struct VerbAskDrainPermit {
     invocation: InvocationId,
+    credential_door: Option<VerbAskDoor>,
     /// The call is a paced call's turn (FIX 8753): its verb runs it rather
     /// than holding it again.
     paced: bool,
@@ -363,6 +398,7 @@ impl VerbAskDrainPermit {
     const fn new(invocation: InvocationId) -> Self {
         Self {
             invocation,
+            credential_door: None,
             paced: false,
         }
     }
@@ -371,6 +407,7 @@ impl VerbAskDrainPermit {
     pub(super) const fn paced(invocation: InvocationId) -> Self {
         Self {
             invocation,
+            credential_door: None,
             paced: true,
         }
     }
@@ -378,6 +415,18 @@ impl VerbAskDrainPermit {
     #[must_use]
     pub const fn invocation(&self) -> InvocationId {
         self.invocation
+    }
+
+    /// The original door of this drain's credential call, not authority to
+    /// run it. A host uses it only for this permit's invocation identity.
+    #[must_use]
+    pub const fn credential_door(&self) -> Option<&VerbAskDoor> {
+        self.credential_door.as_ref()
+    }
+
+    pub(super) fn with_credential_door(mut self, door: VerbAskDoor) -> Self {
+        self.credential_door = Some(door);
+        self
     }
 
     /// Marks this thread as the drain's run of the call until the scope
@@ -514,7 +563,9 @@ pub(super) fn resume(
         witness: witness.binding,
     };
     let _draining = DrainScope::enter(invocation);
-    Ok(check.resume(call, VerbAskDrainPermit::new(invocation)))
+    let drain =
+        VerbAskDrainPermit::new(invocation).with_credential_door(call.reference.door.clone());
+    Ok(check.resume(call, drain))
 }
 
 /// What one ended credential call's refusal receipt names: the call, its
