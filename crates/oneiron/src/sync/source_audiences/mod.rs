@@ -164,9 +164,20 @@ pub(crate) struct AdmissionRows {
     /// The join of the receipts met for each change: every actor any copy
     /// names, so a later copy naming another is refused.
     events: BTreeMap<(EntityId, u64), crate::source_audience::SourceAudienceEvent>,
+    /// A policy revision or a change receipt the range carries names an
+    /// actor this vault erased (fix list row 17238).
+    names_erased: bool,
 }
 
 impl AdmissionRows {
+    /// Whether a policy revision or a change receipt the admitted range
+    /// carries, in any part of it, names an actor this vault erased: the
+    /// window it lands in is pinned history-free, so no export ships that
+    /// copy again (fix list row 17238).
+    pub(crate) const fn names_erased(&self) -> bool {
+        self.names_erased
+    }
+
     /// Notes what `doc`'s own map holds, admitted already.
     pub(crate) fn note_held(&mut self, doc: &LoroDoc) {
         if !holds_map(doc) {
@@ -252,6 +263,7 @@ pub(crate) fn admit_carrier(
                 if source_audience::policy_conflicts_in(vault, &rtxn, &id, &policy)? {
                     return Err(refused("a policy revision contradicts the one held"));
                 }
+                seen.names_erased |= source_audience::names_erased_actor_in(vault, &rtxn, &policy)?;
             }
         }
         Carrier::Event {
@@ -270,6 +282,8 @@ pub(crate) fn admit_carrier(
                 if source_audience::event_conflicts_in(vault, &rtxn, &policy, revision, &event)? {
                     return Err(refused("a change receipt contradicts the one held"));
                 }
+                seen.names_erased |=
+                    source_audience::event_names_erased_actor_in(vault, &rtxn, &event)?;
             }
         }
         // A marker asserts only that a row left: its holders read it to no
