@@ -2614,6 +2614,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.coach.training_runs.cancel",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::offer_doors::TrainingRunRef,
+                >(),
+            ),
+            (
                 "vault.drafters.list",
                 crate::code_run::vault_read::request_schema::<crate::drafter::DrafterListRequest>(),
             ),
@@ -3809,6 +3815,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.corrections",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_run_doors::CodeRunCorrectionsRequest,
+                >(),
+            ),
+            (
                 "vault.code.type_diagnostics",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::code_run_doors::CodeRunTypeDiagnosticsRequest,
@@ -4698,6 +4710,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "tasks.answer",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::TaskAnswerRequest,
+                >(),
+            ),
+            (
+                "tasks.answer.forward.challenge",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::TaskAnswerForwardChallengeRequest,
+                >(),
+            ),
+            (
+                "tasks.answer.forward",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::TaskAnswerForwardRequest,
+                >(),
+            ),
+            (
+                "tasks.answer.forward.status",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::TaskAnswerForwardStatusRequest,
                 >(),
             ),
             (
@@ -7684,6 +7714,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.coach.training_offers.pilots.complete",
     "vault.coach.training_offers.pilots.get",
     "vault.coach.training_offers.sources",
+    "vault.coach.training_runs.cancel",
     "vault.drafters.list",
     "vault.drafters.list_as",
     "vault.drafters.status",
@@ -7830,6 +7861,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.proposal_settlement",
     "execute_code",
     "vault.code.model_heal_count",
+    "vault.code.corrections",
     "vault.code.type_diagnostics",
     "vault.code.waits.resolve",
     "vault.code.waits.receipt",
@@ -9293,6 +9325,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.coach.training_offers.sources" => crate::code_run::vault_read::request_schema::<
             crate::edit_distance::reservoir::ReservoirSourcePreview,
         >(),
+        "vault.coach.training_runs.cancel" => {
+            crate::code_run::vault_read::request_schema::<crate::embed::PendingEmbedderBinding>()
+        }
         "vault.drafters.list" => {
             crate::code_run::vault_read::request_schema::<Vec<crate::drafter::DrafterVersionView>>()
         }
@@ -9734,6 +9769,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.code.model_heal_count" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_run_doors::CodeRunModelHealCountView,
+        >(),
+        "vault.code.corrections" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_run_doors::CodeRunCorrectionsView,
         >(),
         "vault.code.type_diagnostics" => crate::code_run::vault_read::request_schema::<
             Option<crate::code_run::ProgramStepFeedbackRelease>,
@@ -14371,6 +14409,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.coach.training_runs.cancel" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.drafters.list" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -15779,6 +15824,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.corrections" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.code.type_diagnostics" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -16783,6 +16835,27 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "tasks.answer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "tasks.answer.forward.challenge" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "tasks.answer.forward" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "tasks.answer.forward.status" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -20507,6 +20580,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.coach.training_offers.sources" => {
             validate_input_vault_coach_training_offers_sources(value)?
         }
+        "vault.coach.training_runs.cancel" => {
+            validate_input_vault_coach_training_runs_cancel(value)?
+        }
         "vault.drafters.list" => validate_input_vault_drafters_list(value)?,
         "vault.drafters.list_as" => validate_input_vault_drafters_list_as(value)?,
         "vault.drafters.status" => validate_input_vault_drafters_status(value)?,
@@ -20791,6 +20867,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.code.oplog" => validate_input_vault_code_oplog(value)?,
         "execute_code" => validate_input_execute_code(value)?,
         "vault.code.model_heal_count" => validate_input_vault_code_model_heal_count(value)?,
+        "vault.code.corrections" => validate_input_vault_code_corrections(value)?,
         "vault.code.type_diagnostics" => validate_input_vault_code_type_diagnostics(value)?,
         "vault.code.waits.resolve" => validate_input_vault_code_waits_resolve(value)?,
         "vault.code.waits.receipt" => validate_input_vault_code_waits_receipt(value)?,
@@ -20969,6 +21046,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "ask" => validate_input_ask(value)?,
         "wait" => validate_input_wait(value)?,
         "tasks.answer" => validate_input_tasks_answer(value)?,
+        "tasks.answer.forward.challenge" => validate_input_tasks_answer_forward_challenge(value)?,
+        "tasks.answer.forward" => validate_input_tasks_answer_forward(value)?,
+        "tasks.answer.forward.status" => validate_input_tasks_answer_forward_status(value)?,
         "tasks.outcomes" => validate_input_tasks_outcomes(value)?,
         "vault.rooms.list" => validate_input_vault_rooms_list(value)?,
         "vault.rooms.messages" => validate_input_vault_rooms_messages(value)?,
@@ -24176,6 +24256,11 @@ fn validate_input_vault_coach_training_offers_sources(
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_coach_training_runs_cancel(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::skill_optimize::offer_doors::TrainingRunRef = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_vault_drafters_list(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::drafter::DrafterListRequest = decode(value.clone())?;
     Ok(())
@@ -25295,6 +25380,11 @@ fn validate_input_vault_code_model_heal_count(value: &serde_json::Value) -> Memo
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_code_corrections(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::memory::code_run_doors::CodeRunCorrectionsRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_vault_code_type_diagnostics(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::memory::code_run_doors::CodeRunTypeDiagnosticsRequest =
         decode(value.clone())?;
@@ -26080,6 +26170,21 @@ fn validate_input_wait(value: &serde_json::Value) -> MemoryResult<()> {
 #[inline(never)]
 fn validate_input_tasks_answer(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::task_verb::sdk::TaskAnswerRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_tasks_answer_forward_challenge(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::TaskAnswerForwardChallengeRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_tasks_answer_forward(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::TaskAnswerForwardRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_tasks_answer_forward_status(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::TaskAnswerForwardStatusRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -29306,6 +29411,9 @@ pub fn invoke(
         "vault.coach.training_offers.sources" => {
             invoke_vault_coach_training_offers_sources(memory, value)
         }
+        "vault.coach.training_runs.cancel" => {
+            invoke_vault_coach_training_runs_cancel(memory, value)
+        }
         "vault.drafters.list" => invoke_vault_drafters_list(memory, value),
         "vault.drafters.list_as" => invoke_vault_drafters_list_as(memory, value),
         "vault.drafters.status" => invoke_vault_drafters_status(memory, value),
@@ -29590,6 +29698,7 @@ pub fn invoke(
         "vault.code.oplog" => invoke_vault_code_oplog(memory, value),
         "execute_code" => invoke_execute_code(memory, value),
         "vault.code.model_heal_count" => invoke_vault_code_model_heal_count(memory, value),
+        "vault.code.corrections" => invoke_vault_code_corrections(memory, value),
         "vault.code.type_diagnostics" => invoke_vault_code_type_diagnostics(memory, value),
         "vault.code.waits.resolve" => invoke_vault_code_waits_resolve(memory, value),
         "vault.code.waits.receipt" => invoke_vault_code_waits_receipt(memory, value),
@@ -29768,6 +29877,9 @@ pub fn invoke(
         "ask" => invoke_ask(memory, value),
         "wait" => invoke_wait(memory, value),
         "tasks.answer" => invoke_tasks_answer(memory, value),
+        "tasks.answer.forward.challenge" => invoke_tasks_answer_forward_challenge(memory, value),
+        "tasks.answer.forward" => invoke_tasks_answer_forward(memory, value),
+        "tasks.answer.forward.status" => invoke_tasks_answer_forward_status(memory, value),
         "tasks.outcomes" => invoke_tasks_outcomes(memory, value),
         "vault.rooms.list" => invoke_vault_rooms_list(memory, value),
         "vault.rooms.messages" => invoke_vault_rooms_messages(memory, value),
@@ -33821,6 +33933,13 @@ fn invoke_vault_coach_training_offers_sources(
     encode(vault_coach_training_offers_sources(memory, decode(value)?)?)
 }
 #[inline(never)]
+fn invoke_vault_coach_training_runs_cancel(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_coach_training_runs_cancel(memory, decode(value)?)?)
+}
+#[inline(never)]
 fn invoke_vault_drafters_list(
     memory: &Memory<'_>,
     value: serde_json::Value,
@@ -35307,6 +35426,13 @@ fn invoke_vault_code_model_heal_count(
     encode(vault_code_model_heal_count(memory, decode(value)?)?)
 }
 #[inline(never)]
+fn invoke_vault_code_corrections(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_code_corrections(memory, decode(value)?)?)
+}
+#[inline(never)]
 fn invoke_vault_code_type_diagnostics(
     memory: &Memory<'_>,
     value: serde_json::Value,
@@ -36327,6 +36453,27 @@ fn invoke_tasks_answer(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(tasks_answer(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_tasks_answer_forward_challenge(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(tasks_answer_forward_challenge(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_tasks_answer_forward(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(tasks_answer_forward(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_tasks_answer_forward_status(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(tasks_answer_forward_status(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_tasks_outcomes(
@@ -43764,6 +43911,17 @@ pub fn vault_coach_training_offers_sources(
         input,
     )
 }
+pub fn vault_coach_training_runs_cancel(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::offer_doors::TrainingRunRef,
+) -> MemoryResult<crate::embed::PendingEmbedderBinding> {
+    crate::skill_optimize::offer_doors::cancel_training_run(
+        memory.vault(),
+        &memory.embedded_owner("vault.coach.training_runs.cancel")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
 pub fn vault_drafters_list(
     memory: &Memory<'_>,
     input: crate::drafter::DrafterListRequest,
@@ -45493,6 +45651,12 @@ pub fn vault_code_model_heal_count(
         input,
     )
 }
+pub fn vault_code_corrections(
+    memory: &Memory<'_>,
+    input: crate::memory::code_run_doors::CodeRunCorrectionsRequest,
+) -> MemoryResult<crate::memory::code_run_doors::CodeRunCorrectionsView> {
+    memory.code_run_corrections_as(&memory.embedded_owner("vault.code.corrections")?, input)
+}
 pub fn vault_code_type_diagnostics(
     memory: &Memory<'_>,
     input: crate::memory::code_run_doors::CodeRunTypeDiagnosticsRequest,
@@ -46724,6 +46888,37 @@ pub fn tasks_answer(
         ],
     )?;
     memory.tasks_answer(&input.handle, &input.word)
+}
+pub fn tasks_answer_forward_challenge(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::TaskAnswerForwardChallengeRequest,
+) -> MemoryResult<crate::task_verb::sdk::TaskAnswerForwardChallenge> {
+    Ok(
+        crate::task_verb::sdk::TaskAnswerForwardChallenge::from_bytes(
+            &memory.tasks_answer_forward_challenge(&input.handle, &input.intent_key, &input.act)?,
+        ),
+    )
+}
+pub fn tasks_answer_forward(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::TaskAnswerForwardRequest,
+) -> MemoryResult<crate::task_verb::AskForwardReceipt> {
+    crate::task_verb::admit_ask_references(
+        memory,
+        "tasks.answer.forward",
+        &input,
+        &[
+            "/act/word/provenance_refs/*/claim",
+            "/act/word/provenance_refs/*/turn",
+        ],
+    )?;
+    memory.tasks_answer_forward(&input.handle, &input.intent_key, &input.act, &input.proof)
+}
+pub fn tasks_answer_forward_status(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::TaskAnswerForwardStatusRequest,
+) -> MemoryResult<crate::task_verb::AskForwardReceipt> {
+    memory.tasks_answer_forward_status(input.intent_ref)
 }
 pub fn tasks_outcomes(
     memory: &Memory<'_>,
