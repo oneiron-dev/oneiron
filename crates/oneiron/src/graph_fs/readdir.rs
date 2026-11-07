@@ -165,6 +165,52 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             ["claims", claim] | ["claims", "by-id", claim] => Ok(self
                 .read_claim_file(&normalized, &parse_entity_id(claim)?)?
                 .into()),
+            // Every claim leaf a listing names reads where it is listed
+            // (FIX 7973), kept only while it is still a member there.
+            ["entities", entity, "claims", claim] => {
+                let subject = parse_entity_id(entity)?;
+                if !self.scoped_read.is_entity_readable(&subject)? {
+                    return Ok(GraphFsFileRead {
+                        value: None,
+                        receipt: None,
+                    });
+                }
+                let claim = parse_entity_id(claim)?;
+                let store = &self.scoped_read.vault().store;
+                Ok(self
+                    .read_listed_claim_file(&normalized, &claim, |_| {
+                        let rtxn = store.env.read_txn()?;
+                        Ok(crate::ports::EdgeStoreRead::port_edge_get(
+                            store,
+                            &rtxn,
+                            &claim,
+                            crate::edge::EdgeKind::ClaimOf,
+                            &subject,
+                        )?
+                        .is_some())
+                    })?
+                    .into())
+            }
+            ["worlds", world, "claims", claim] => {
+                let world = parse_world_scope(world)?;
+                let claim = parse_entity_id(claim)?;
+                let store = &self.scoped_read.vault().store;
+                Ok(self
+                    .read_listed_claim_file(&normalized, &claim, |_| {
+                        let rtxn = store.env.read_txn()?;
+                        claim_matches_world_in(store, &rtxn, &claim, world)
+                    })?
+                    .into())
+            }
+            ["claims", "by-time", day, claim] => {
+                let day = parse_day_shard(day)?;
+                let claim = parse_entity_id(claim)?;
+                Ok(self
+                    .read_listed_claim_file(&normalized, &claim, |row| {
+                        Ok(row.learned_at / 86_400 == day)
+                    })?
+                    .into())
+            }
             ["entities", entity, "body"] => {
                 let id = parse_entity_id(entity)?;
                 let mount = self.options.mount;
@@ -255,13 +301,45 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         path: &str,
         claim_id: &EntityId,
     ) -> Result<ScopedReadResult<Option<GraphFsFile>>> {
+        self.read_listed_claim_file(path, claim_id, |_| Ok(true))
+    }
+
+    /// [`Self::read_claim_file`] for a leaf a listing names under its parent
+    /// (FIX 7973): read through the same scoped claim read, then kept only
+    /// while `member` holds for the row the reader was admitted to. A claim
+    /// the reader may not read is never judged, so the answer says nothing of
+    /// its membership; one no longer listed there reads as no file.
+    fn read_listed_claim_file(
+        &self,
+        path: &str,
+        claim_id: &EntityId,
+        member: impl FnOnce(&ReadRow) -> Result<bool>,
+    ) -> Result<ScopedReadResult<Option<GraphFsFile>>> {
         let ScopedReadResult { value, receipt } = self.file_row(*claim_id)?;
-        let Some(ReadRow {
-            entity_type: ENTITY_TYPE_CLAIM,
+        let Some(
+            row @ ReadRow {
+                entity_type: ENTITY_TYPE_CLAIM,
+                body: Some(_),
+                ..
+            },
+        ) = value
+        else {
+            return Ok(ScopedReadResult {
+                value: None,
+                receipt,
+            });
+        };
+        if !member(&row)? {
+            return Ok(ScopedReadResult {
+                value: None,
+                receipt,
+            });
+        }
+        let ReadRow {
             learned_at,
             body: Some(body),
             ..
-        }) = value
+        } = row
         else {
             return Ok(ScopedReadResult {
                 value: None,
