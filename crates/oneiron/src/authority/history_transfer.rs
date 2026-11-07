@@ -509,15 +509,14 @@ impl Vault {
     /// while that transaction is open, so it must not write to this vault.
     ///
     /// A main-log frontier wider than one entry names is joined first (FIX
-    /// 11867): the root signs each join through the callback, in the host
+    /// 11867): the root signs the join through the callback, in the host
     /// family, whose rule (a live owner roster key) is the standing the move
-    /// itself stands on, and the move names the join tips. An Ed25519 and a
-    /// P-256 root join alike (FIX 11993). The joins cover every head in this
-    /// call, in groups of [`AUTHORITY_FRONTIER_JOIN_ARITY`] until at most
-    /// [`MAX_PARENTS`] tips are left, so no head count refuses and every head
-    /// stays in the move's causal past, inside its fence. The joins and the
-    /// move are marked for the vault's loaded windows in the write and
-    /// announced once it commits.
+    /// itself stands on, and the move names the join. An Ed25519 and a
+    /// P-256 root join alike (FIX 11993). One join names every head in this
+    /// call (FIX 8527), so no head count refuses and every head stays in the
+    /// move's causal past, inside its fence. The join and the move are
+    /// marked for the vault's loaded windows in the write and announced once
+    /// it commits.
     pub fn re_root_authority<S>(
         &self,
         new_device: DeviceAuthority,
@@ -547,8 +546,8 @@ impl Vault {
     /// frontier wider than one entry names is joined first by `joiner`, the
     /// key the move retires: the host signer, as its host-issued ops are
     /// (FIX 8498, Engine 09:31 (3)), or the root through the move's callback
-    /// (FIX 11867, 11993); the move then names the join tips. With no
-    /// `joiner` the move names the heads alone. The joins and the move are
+    /// (FIX 11867, 11993); the move then names the join. With no `joiner`
+    /// the move names the heads alone. The join and the move are
     /// marked for the vault's loaded windows in `txn`; the rows come back for
     /// the caller to announce once its own commit lands
     /// ([`Self::note_committed_authority_rows`]).
@@ -728,123 +727,58 @@ pub fn recover_vaults_independently(
         .collect()
 }
 
+/// What a leave handoff proves of this vault's roster
+/// ([`Vault::roster_through_handoff`], FIX 7919).
+#[cfg(feature = "sync")]
+pub(crate) enum HandoffRoster {
+    /// The authority vault id and the roster whole evidence folds to.
+    Proved(AuthorityVaultId, BTreeMap<AuthorityKey, FoldedDevice>),
+    /// The evidence does not close: the authority vault id this vault
+    /// folds, and the rows the handoff and this vault's rows still lack,
+    /// ascending. No roster stands on it, so it proves nobody's standing.
+    Pending(AuthorityVaultId, BTreeSet<AuthorityEntryHash>),
+    /// The fold holds the root in conflict, or refuses the handoff.
+    Refused,
+}
+
 #[cfg(feature = "sync")]
 impl Vault {
-    /// This vault's folded roster carried on, in memory, by `handoff`: signed
-    /// ReRoot rows in chain order that hand the root on from where this
-    /// vault's fold stands (FIX 2053). Each row is judged as the fold judges
-    /// a ReRoot ([`handoff_row_stands`]) against the roster the rows before
-    /// it leave, and applied as the fold applies one: every key it stood on
-    /// is revoked and its successor stands. A row this fold already holds is
-    /// skipped while no new row has landed. Nothing is written, and the
-    /// folded roster is only ever extended, never replaced. A handoff that
-    /// carries the rows its edges stand on folds whole with this vault's
-    /// rows instead, in memory ([`handoff::through_closure`], FIX 3797).
+    /// This vault's folded roster carried on, in memory, by `handoff`: the
+    /// signed rows that hand the root on from where this vault's fold
+    /// stands, and every row they stand on that this vault did not fold
+    /// (FIX 2053, FIX 3797). They fold whole with this vault's rows by the
+    /// fold that folds its own log, or past the checkpoint image this vault
+    /// adopted as its own tail folds ([`handoff::through_closure`]). Nothing
+    /// is written.
     ///
-    /// The authority vault id and the roster; `None` when the fold is in
-    /// conflict or the handoff does not carry it on: a row out of chain, one
-    /// a key this fold retired signed (a fork), or any other refusal.
+    /// Only evidence that closes proves a roster (FIX 7919). Where a row
+    /// names a parent neither held, carried nor covered by that image, no
+    /// chain cut out of the carried rows stands in for the fold, so no
+    /// sibling fork or retirement they carry is dropped: the answer is
+    /// pending and names the rows still lacking. Refused when this vault's
+    /// fold holds the root in conflict, or the handoff does not carry it
+    /// on: a row that does not decode, one of another vault, or a fold that
+    /// refuses it.
     ///
     /// # Errors
     ///
     /// Storage errors.
-    pub(crate) fn roster_through_handoff(
-        &self,
-        handoff: &[Vec<u8>],
-    ) -> Result<Option<(AuthorityVaultId, BTreeMap<AuthorityKey, FoldedDevice>)>> {
+    pub(crate) fn roster_through_handoff(&self, handoff: &[Vec<u8>]) -> Result<HandoffRoster> {
         let txn = self.store.env.read_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         drop(txn);
         if fold.vault_root_is_conflicted() {
-            return Ok(None);
+            return Ok(HandoffRoster::Refused);
         }
         let Some(vault_id) = fold.vault_id else {
-            return Ok(None);
+            return Ok(HandoffRoster::Refused);
         };
-        let handoff = match handoff::through_closure(self, vault_id, handoff)? {
-            handoff::HandoffClosure::Folded(verdict) => return Ok(verdict),
-            handoff::HandoffClosure::Edges(edges) => edges,
-        };
-        let mut roster = fold.roster.clone();
-        let mut landed = false;
-        for bytes in &handoff {
-            let Ok(entry) = decode_authority_log_entry_body(bytes) else {
-                return Ok(None);
-            };
-            let Ok(hash) = authority_entry_hash(&entry) else {
-                return Ok(None);
-            };
-            if !landed && fold.valid_entries.contains(&hash) {
-                continue;
+        Ok(match handoff::through_closure(self, vault_id, handoff)? {
+            handoff::HandoffClosure::Folded(Some((vault_id, roster))) => {
+                HandoffRoster::Proved(vault_id, roster)
             }
-            let AuthorityOp::ReRoot { new_device } = &entry.op else {
-                return Ok(None);
-            };
-            if !handoff_row_stands(&fold, &roster, vault_id, &entry, new_device) {
-                return Ok(None);
-            }
-            for device in roster.values_mut() {
-                device.revoked = true;
-            }
-            roster.insert(
-                new_device.key.clone(),
-                FoldedDevice {
-                    key: new_device.key.clone(),
-                    tier: new_device.tier,
-                    roles: new_device.roles,
-                    revoked: false,
-                },
-            );
-            landed = true;
-        }
-        Ok(Some((vault_id, roster)))
+            handoff::HandoffClosure::Folded(None) => HandoffRoster::Refused,
+            handoff::HandoffClosure::Pending(missing) => HandoffRoster::Pending(vault_id, missing),
+        })
     }
-}
-
-/// Whether `entry`, a ReRoot to `new_device`, stands on `roster` as the fold
-/// judges a ReRoot (FIX 2053): well formed and well signed, in this vault,
-/// signed by a live Owner key of `roster` that `fold` never retired, its
-/// cosigners live there too, a sequence past every row its signer signed in
-/// `fold`, and a successor no wider than its signer and new to the roster.
-/// The rows between `fold`'s heads and the handoff do not ride with it, so
-/// its signer's standing in `roster` is the ancestry it is judged on.
-#[cfg(feature = "sync")]
-fn handoff_row_stands(
-    fold: &AuthorityFold,
-    roster: &BTreeMap<AuthorityKey, FoldedDevice>,
-    vault_id: AuthorityVaultId,
-    entry: &AuthorityLogEntry,
-    new_device: &DeviceAuthority,
-) -> bool {
-    if entry.validate_shape().is_err()
-        || verify_entry_signatures(entry).is_err()
-        || entry.vault_id != Some(vault_id)
-    {
-        return false;
-    }
-    let signer = entry.signer_key();
-    let Some(old_root) = roster.get(signer).filter(|device| !device.revoked) else {
-        return false;
-    };
-    if old_root.roles & ROLE_OWNER == 0
-        || new_device.roles & !(old_root.roles | ROLE_CLOUD) != 0
-        || fold.retired_keys.contains(signer)
-        || roster.contains_key(&new_device.key)
-        || fold
-            .append_sequences
-            .get(signer)
-            .is_some_and(|prior| entry.seq <= *prior)
-    {
-        return false;
-    }
-    let live = |key: &AuthorityKey| {
-        roster
-            .get(key)
-            .is_some_and(|device| !device.revoked && device.roles != 0)
-    };
-    let participants: BTreeSet<&AuthorityKey> = std::iter::once(&entry.signer)
-        .chain(&entry.cosigns)
-        .map(|signature| &signature.public_key)
-        .collect();
-    participants.iter().all(|&key| live(key))
 }
