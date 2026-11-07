@@ -246,6 +246,21 @@ impl Vault {
         ask::wait_status(self, invocation, verb, actor, class, ask)
     }
 
+    /// The rows the result settlement's drain saved under `invocation` was
+    /// derived from, as its door listed them (FIX 1435). The door that
+    /// answers the caller's retry with that result releases it by them.
+    /// `None` when no result is saved there, or its door listed none.
+    ///
+    /// # Errors
+    ///
+    /// Reading the saved call.
+    pub fn verb_hook_saved_producers(
+        &self,
+        invocation: InvocationId,
+    ) -> Result<Option<Vec<EntityId>>> {
+        ask::saved_producers(self, invocation)
+    }
+
     /// Runs the pre chain of `call` over `args`: the matching pre-hooks in
     /// priority order, each outcome validated. `Err(stop)` when a hook
     /// skipped or asked, or a blocking one failed safe. At hook depth 1 it

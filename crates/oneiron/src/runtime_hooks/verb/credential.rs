@@ -354,8 +354,28 @@ pub struct VerbAskSavedCall {
 pub enum VerbAskResumed {
     /// The door ran the call: what it returned, or its error.
     Ran(MemoryResult<Value>),
+    /// The door ran the call and listed the rows its answer was derived
+    /// from, as an MCP door does (FIX 1435, FIX 21054). They are saved with
+    /// the answer, and the door that answers the caller's retry releases it
+    /// by them.
+    RanWithProducers {
+        result: MemoryResult<Value>,
+        producers: Vec<EntityId>,
+    },
     /// The call was refused before it ran.
     Refused(VerbAskRefusal),
+}
+
+impl VerbAskResumed {
+    /// What the call returned, or its refusal as its error, beside the rows
+    /// its answer was derived from when its door listed them (FIX 1435).
+    pub(super) fn into_outcome(self) -> (MemoryResult<Value>, Option<Vec<EntityId>>) {
+        match self {
+            Self::Ran(ran) => (ran, None),
+            Self::RanWithProducers { result, producers } => (result, Some(producers)),
+            Self::Refused(refusal) => (Err(refusal.error()), None),
+        }
+    }
 }
 
 /// The host's check for credential calls (ARCH-0080 §3 Ask): only it verifies

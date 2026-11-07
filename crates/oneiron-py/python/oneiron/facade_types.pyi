@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1272 facade rows, 4610 declarations.
-Inputs: 1201 of 1272 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1101 of 1272 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1273 facade rows, 4613 declarations.
+Inputs: 1202 of 1273 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1102 of 1273 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -12124,6 +12124,18 @@ class HostBudgetHitResult(TypedDict):
     seat: str
     policy: BudgetExhaustionPolicy
     accounting: HostBudgetAccounting
+HookCheckReason = Literal["cycle", "depth"]
+class LineageLink(TypedDict):
+    binding: str
+    run_key: str
+    entity: str
+    position: str
+class HookCheck(TypedDict):
+    binding: str
+    run_key: str
+    reason: HookCheckReason
+    chain: list[LineageLink]
+    raised_at: int
 class HooksReplayRequest(TypedDict):
     binding: str
     since: NotRequired[str | None]
