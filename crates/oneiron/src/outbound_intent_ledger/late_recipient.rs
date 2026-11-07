@@ -19,12 +19,12 @@ use std::io::Cursor;
 use heed::{RoTxn, RwTxn};
 use rmpv::Value;
 
+use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
-use crate::Vault;
 
 /// A frozen send's counterparty field, as the pipeline freezes it.
 const FROZEN_COUNTERPARTY_FIELD: &str = "counterparty_ref";
@@ -60,7 +60,11 @@ fn payload_party(payload: &[u8]) -> Option<String> {
 
 /// The party key a PERSON body names, whatever the PERSON's lifecycle: a
 /// deleted person's body is read before it goes.
-fn person_party_key(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> crate::Result<Option<String>> {
+fn person_party_key(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> crate::Result<Option<String>> {
     let Some(raw) = store.port_entity_record(txn, id)? else {
         return Ok(None);
     };
@@ -72,7 +76,12 @@ fn person_party_key(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> crate::Res
     };
     Ok(entries.into_iter().find_map(|(key, value)| {
         (key.as_str() == Some(PERSON_PARTY_KEY_FIELD))
-            .then(|| value.as_str().filter(|party| !party.is_empty()).map(str::to_owned))
+            .then(|| {
+                value
+                    .as_str()
+                    .filter(|party| !party.is_empty())
+                    .map(str::to_owned)
+            })
             .flatten()
     }))
 }
