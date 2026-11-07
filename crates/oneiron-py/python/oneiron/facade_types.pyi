@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1301 facade rows, 4712 declarations.
-Inputs: 1230 of 1301 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1130 of 1301 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1302 facade rows, 4717 declarations.
+Inputs: 1231 of 1302 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1131 of 1302 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -19567,6 +19567,36 @@ class NeighborHit(TypedDict):
     weight: float
     direction: str
     record: NotRequired[RecordRef | None]
+class EdgeProvenanceRequest(TypedDict):
+    source_ref: str
+    edge_kind: str
+    target_ref: str
+    filter: NotRequired[ReadFilterInput | None]
+EdgeProvenanceActorClass = Literal["human", "agent", "system"]
+EdgeProvenanceSupersession = Literal["proposed", "confirmed", "disputed", "retracted"]
+EdgeProvenanceLifecycle = Literal["active", "superseded", "retracted"]
+class EdgeProvenanceView(TypedDict):
+    claim_ref: str
+    short_ref: NotRequired[str | None]
+    source_ref: str
+    edge_kind: str
+    target_ref: str
+    actor_entity_ref: str
+    actor_class: EdgeProvenanceActorClass
+    source_revision_ref: NotRequired[str | None]
+    body_snapshot_ref: NotRequired[str | None]
+    confidence: float
+    supersession_status: EdgeProvenanceSupersession
+    valid_from: NotRequired[int | None]
+    valid_to: NotRequired[int | None]
+    substrate_ref: NotRequired[str | None]
+    reasoning_effort: NotRequired[str | None]
+    lifecycle: EdgeProvenanceLifecycle
+    stale: bool
+    learned_at: int
+    occurred_start: int
+    occurred_end: int
+    winner: bool
 class TextIndexField(TypedDict):
     field: str
     value: str
@@ -22802,6 +22832,7 @@ AuthorTakeTarget = AuthorTakeTargetSubject | AuthorTakeTargetClaim
 class AuthorTakeRequest(TypedDict):
     target: AuthorTakeTarget
     markdown: str
+    source_ref: NotRequired[str | None]
 class CreateNoteFromEntityRequest(TypedDict):
     source_ref: str
     kind: str

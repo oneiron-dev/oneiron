@@ -6049,6 +6049,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<NeighborsRequest>(),
             ),
             (
+                "vault.edges.provenance",
+                crate::code_run::vault_read::request_schema::<crate::memory::EdgeProvenanceRequest>(
+                ),
+            ),
+            (
                 "vault.structural.put",
                 crate::code_run::vault_read::request_schema::<crate::memory::StructuralPutInput>(),
             ),
@@ -8228,6 +8233,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.vectors.put",
     "vault.search.hybrid",
     "vault.search.temporal",
+    "vault.edges.provenance",
     "vault.productivity.create",
     "vault.productivity.tree",
     "vault.esign.notices.dispatch",
@@ -10642,6 +10648,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.search.temporal" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<crate::memory::TemporalSearchResult>,
+        >(),
+        "vault.edges.provenance" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Vec<crate::memory::EdgeProvenanceView>>,
         >(),
         "vault.productivity.create" => {
             crate::code_run::vault_read::request_schema::<crate::memory::EntityRefReceipt>()
@@ -18728,6 +18737,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.edges.provenance" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.structural.put" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -21727,6 +21743,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.search.temporal" => validate_input_vault_search_temporal(value)?,
         "vault.search.bm25" => validate_input_vault_search_bm25(value)?,
         "vault.neighbors" => validate_input_vault_neighbors(value)?,
+        "vault.edges.provenance" => validate_input_vault_edges_provenance(value)?,
         "vault.structural.put" => validate_input_vault_structural_put(value)?,
         "vault.habits.checkin" => validate_input_vault_habits_checkin(value)?,
         "vault.productivity.create" => validate_input_vault_productivity_create(value)?,
@@ -27930,6 +27947,11 @@ fn validate_input_vault_neighbors(value: &serde_json::Value) -> MemoryResult<()>
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_edges_provenance(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::memory::EdgeProvenanceRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_vault_structural_put(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::memory::StructuralPutInput = decode(value.clone())?;
     Ok(())
@@ -30695,6 +30717,7 @@ pub fn invoke(
         "vault.search.temporal" => invoke_vault_search_temporal(memory, value),
         "vault.search.bm25" => invoke_vault_search_bm25(memory, value),
         "vault.neighbors" => invoke_vault_neighbors(memory, value),
+        "vault.edges.provenance" => invoke_vault_edges_provenance(memory, value),
         "vault.structural.put" => invoke_vault_structural_put(memory, value),
         "vault.habits.checkin" => invoke_vault_habits_checkin(memory, value),
         "vault.productivity.create" => invoke_vault_productivity_create(memory, value),
@@ -38690,6 +38713,13 @@ fn invoke_vault_neighbors(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_neighbors(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_edges_provenance(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_edges_provenance(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_structural_put(
@@ -49562,6 +49592,12 @@ pub fn vault_neighbors(
     crate::memory::caps::check_limit_nonzero(input.opts.limit)?;
     memory.neighbors(&input.entity_ref, &input.opts)
 }
+pub fn vault_edges_provenance(
+    memory: &Memory<'_>,
+    input: crate::memory::EdgeProvenanceRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::memory::EdgeProvenanceView>>> {
+    memory.edge_provenance(&input)
+}
 pub fn vault_structural_put(
     memory: &Memory<'_>,
     input: crate::memory::StructuralPutInput,
@@ -50710,7 +50746,7 @@ pub fn vault_notes_author_take(
         memory,
         "vault.notes.author_take",
         &input,
-        &["/target/subject", "/target/claim"],
+        &["/target/subject", "/target/claim", "/source_ref"],
     )?;
     memory_requests::author_take(memory, input)
 }

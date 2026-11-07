@@ -33832,6 +33832,28 @@ async fn vault_neighbors(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_edges_provenance(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.edges.provenance",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_structural_put(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -49841,6 +49863,14 @@ fn boxed_vault_neighbors<'a>(
     Box::pin(vault_neighbors(server, call, input))
 }
 #[inline(never)]
+fn boxed_vault_edges_provenance<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_edges_provenance(server, call, input))
+}
+#[inline(never)]
 fn boxed_vault_structural_put<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
@@ -53609,6 +53639,7 @@ async fn call_verb_row(
         "vault.search.temporal" => boxed_vault_search_temporal(server, call, input).await,
         "vault.search.bm25" => boxed_vault_search_bm25(server, call, input).await,
         "vault.neighbors" => boxed_vault_neighbors(server, call, input).await,
+        "vault.edges.provenance" => boxed_vault_edges_provenance(server, call, input).await,
         "vault.structural.put" => boxed_vault_structural_put(server, call, input).await,
         "vault.habits.checkin" => boxed_vault_habits_checkin(server, call, input).await,
         "vault.productivity.create" => boxed_vault_productivity_create(server, call, input).await,
