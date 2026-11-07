@@ -9,13 +9,14 @@ use super::*;
 
 /// What the answer's breakpoint holds until the answer ends (FIX 4933):
 /// the breakpoint, the answer's own admitted call for a turn that compacts
-/// its log, its reply's MESSAGE and its meter; and whether its own captured
-/// call answered it.
+/// its log, its reply's MESSAGE, its meter and the rows that call was read
+/// from; and whether its own captured call answered it.
 pub(in crate::api::ai::chat) struct PendingSeed {
     breakpoint: AnswerBreakpoint,
     admitted: Option<RoleCall>,
     message: EntityId,
     meter: TurnMeter,
+    sources: Option<Vec<EntityId>>,
     pub(super) live: Arc<AtomicBool>,
 }
 
@@ -39,12 +40,14 @@ pub(in crate::api::ai::chat) struct TurnMeter {
 /// ends, when [`keep`] binds the rung that answered it (FIX 4933), never the
 /// rung its walk would take now. A chat turn that compacts its log keeps a
 /// copy of its own `admitted` call for its flight. `message` is the reply's
-/// MESSAGE.
+/// MESSAGE; `sources` every row `admitted` was read from, `None` when not
+/// all were witnessed.
 pub(in crate::api::ai::chat) fn enter(
     breakpoint: AnswerBreakpoint,
     admitted: &RoleCall,
     message: EntityId,
     meter: TurnMeter,
+    sources: Option<Vec<EntityId>>,
 ) -> PendingSeed {
     let admitted = matches!(breakpoint.log, Some(BreakpointLog::Compact(_))).then(|| RoleCall {
         request: admitted.request.clone(),
@@ -55,6 +58,7 @@ pub(in crate::api::ai::chat) fn enter(
         admitted,
         message,
         meter,
+        sources,
         live: Arc::new(AtomicBool::new(true)),
     }
 }
@@ -119,6 +123,7 @@ pub(in crate::api::ai::chat) fn keep(
         admitted,
         message,
         meter,
+        sources,
         live,
     }) = pending
     else {
@@ -168,6 +173,7 @@ pub(in crate::api::ai::chat) fn keep(
             funding: meter.funding,
             budget_units: meter.budget_units,
             message,
+            sources,
         };
         match crate::server::blocking(|| ai.enter_chat_breakpoint(call, &admitted, answering)) {
             Ok(()) | Err(ConversationCompactionUnavailable::Quiet) => {}
