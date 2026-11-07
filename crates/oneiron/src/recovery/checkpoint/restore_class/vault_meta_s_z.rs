@@ -19,6 +19,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SCOPE_RECORD_REVISION, CONTENT),
     (&t::SCOPE_RECORD_V1, CONTENT),
     (&t::SCOPE_RECORD, CONTENT),
+    // A source-free text's birth record stands with its stamp (FIX 8741).
+    (&t::SCOPE_SOURCE_FREE_TEXT, CONTENT),
     (&t::SCOPE_SUMMARY_ARC_WORK, CONTENT),
     (&t::SCOPE_SUMMARY_PROJECTION, CONTENT),
     (&t::SCOPE_SUMMARY_PURPOSE, LIVE),
