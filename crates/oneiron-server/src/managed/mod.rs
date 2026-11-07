@@ -71,8 +71,8 @@ mod shed;
 pub(crate) use self::peer::UnixPeer;
 mod state_serve;
 pub(crate) use state_serve::{
-    ManagedCarrierContext, ManagedIngress, ManagedOwnerHolder, ManagedOwnerSession,
-    ManagedPersonHolder, ManagedPersonSession, ManagedWidenHolder,
+    CarrierAdmission, ManagedCarrierContext, ManagedIngress, ManagedOwnerHolder,
+    ManagedOwnerSession, ManagedPersonHolder, ManagedPersonSession, ManagedWidenHolder,
 };
 mod vault_gates;
 #[cfg(target_os = "linux")]
@@ -81,6 +81,8 @@ mod vm_guest;
 mod vm_host;
 #[cfg(target_os = "linux")]
 mod vm_init;
+#[cfg(target_os = "linux")]
+mod vm_source_control;
 #[cfg(target_os = "linux")]
 mod vm_outbox;
 #[cfg(target_os = "linux")]

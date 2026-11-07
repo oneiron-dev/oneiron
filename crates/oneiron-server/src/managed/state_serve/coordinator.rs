@@ -185,8 +185,10 @@ async fn serve_with_handles(
     // The one credential-broker context, built from the opened vault: the
     // `[models]` providers, the System One seat, the embedder and the GPU
     // pods read their `key_secret` keys at its custody door, call by call.
-    // Its broker is the same-user child beside this binary; a missing broker
-    // or secret leaves those calls refused before they start, as on any host.
+    // Its default broker is the same-user child beside this binary. Explicit
+    // trusted bindings may name a separate-user socket or custom program/roots.
+    // A missing broker or secret leaves those calls refused before they start,
+    // as on any host.
     let broker = crate::models::BrokerContext::for_serve(&vault, &config);
     // The embedder slot and the pods' health poller, as plain serve builds
     // them; the worker that fills the slot starts under the write admission.
