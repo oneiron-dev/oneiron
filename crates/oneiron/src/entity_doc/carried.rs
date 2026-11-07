@@ -335,6 +335,7 @@ impl Vault {
                     generation: 0,
                     pending: 0,
                     birth_frontier: None,
+                    restored: None,
                 };
                 storage::persist(self, txn, &message, &mut head, &incoming, None)?;
                 if incoming.doc.is_shallow() {

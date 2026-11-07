@@ -36,6 +36,7 @@ pub(super) struct SummaryCounts {
     pub(super) batch_first_ordinal: u64,
     pub(super) batch_entries: u64,
     pub(super) missed_messages: Vec<[u8; 16]>,
+    pub(super) absent_result_bodies: Vec<[u8; 16]>,
 }
 
 impl<'stream> Collector<'stream> {
@@ -180,6 +181,7 @@ impl<'stream> Collector<'stream> {
             batch_first_ordinal: counts.batch_first_ordinal,
             batch_entries: counts.batch_entries,
             missed_messages: counts.missed_messages,
+            absent_result_bodies: counts.absent_result_bodies,
             extent,
             components: self.components,
             plaintext_bytes: self.plaintext_bytes,
