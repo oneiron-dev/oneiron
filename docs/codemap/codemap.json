@@ -86770,6 +86770,7 @@
       "FilesRescanView",
       "FilesSourceAttachAnswer",
       "FilesSourceAttachRequest",
+      "FilesSourceConvertRequest",
       "FilesSourceDetachAnswer",
       "FilesSourceDetachRequest",
       "FilesSourceFiles",
@@ -86781,11 +86782,11 @@
       "FilesWorldView"
      ],
      "path": "src/verbs/files.rs",
-     "purpose": "The inputs and answers of the Files world's source rows (FIX 6942): `vault.files.sources.attach`, `.rescan`…",
+     "purpose": "The inputs and answers of the Files world's source rows (FIX 6942): `vault.files.sources.attach`…",
      "surface": {
       "enum": 1,
-      "fn": 9,
-      "struct": 17
+      "fn": 10,
+      "struct": 18
      }
     },
     {
@@ -86830,7 +86831,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1305
+      "fn": 1306
      }
     },
     {
@@ -108925,7 +108926,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1273
+      "fn": 1274
      }
     },
     {
@@ -110718,7 +110719,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1274
+      "fn": 1275
      }
     },
     {
@@ -116035,9 +116036,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/files_doors.rs",
-     "purpose": "The host doors of the Files world's source rows (FIX 6942): `vault.files.sources.attach`, `.rescan`…",
+     "purpose": "The host doors of the Files world's source rows (FIX 6942): `vault.files.sources.attach`, `.convert`…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -145147,6 +145148,7 @@
       "FilesRescanView",
       "FilesSourceAttachAnswer",
       "FilesSourceAttachRequest",
+      "FilesSourceConvertRequest",
       "FilesSourceDetachAnswer",
       "FilesSourceDetachRequest",
       "FilesSourceFiles",
@@ -148146,7 +148148,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1140,
-      "struct": 3472
+      "struct": 3473
      }
     },
     {
