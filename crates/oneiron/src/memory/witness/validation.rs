@@ -242,7 +242,7 @@ pub(crate) fn taken_witness_message_order(
 /// The first order after every MESSAGE a stored TURN holds (0 for a turn not
 /// stored yet), so a writer that appends later can give each new message a
 /// slot no sibling occupies, whatever positions earlier writes chose.
-pub(crate) fn next_witness_message_order(
+pub fn next_witness_message_order(
     dbs: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     turn_id: &EntityId,

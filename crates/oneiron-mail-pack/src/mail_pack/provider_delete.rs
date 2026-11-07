@@ -10,6 +10,8 @@
 use super::source::{MailProviderDeleteSetting, MailSourceRow};
 use super::state::{BODY_QUEUE, MailPresence, OCCURRENCES, SYNC, body_queue_key, occurrence_key};
 use crate::deletion::DeleteReason;
+#[allow(unused_imports)]
+use crate::ext::*;
 use crate::{EntityId, Result, Vault};
 
 /// What applying one provider delete did.

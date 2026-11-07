@@ -1,0 +1,24 @@
+[package]
+name = "oneiron-mail-pack"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The mail_pack half of the oneiron engine, lifted above the core crate"
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+oneiron = { version = "0.1.0", path = "../oneiron" }
+blake3 = { workspace = true, features = ["zeroize"] }
+heed = { workspace = true }
+rmpv = { workspace = true, features = ["with-serde"] }
+schemars = "=0.8.22"
+serde = { workspace = true }
+serde_json = { workspace = true, features = ["raw_value"] }
+
+[lints]
+workspace = true

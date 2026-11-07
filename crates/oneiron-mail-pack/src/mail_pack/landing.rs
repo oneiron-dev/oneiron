@@ -6,6 +6,8 @@
 //! bound to its thread's source audience, so it reads to the source's people
 //! alone from its first moment.
 
+#[allow(unused_imports)]
+use crate::ext::*;
 use rmpv::Value as Msgpack;
 use serde_json::{Map, Value};
 

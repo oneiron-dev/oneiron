@@ -158,7 +158,8 @@ mod transcript;
 pub mod usage_repair;
 pub use oneiron_web_fetch::web_acquisition;
 mod web_fetch;
-mod witness;
+#[doc(hidden)]
+pub mod witness;
 
 #[cfg(test)]
 mod tests;
@@ -410,13 +411,14 @@ pub(crate) use support::{
     facade_provenance, hard_deleted_refusal, verify_actor_binding, verify_actor_binding_in_txn,
     verify_deletion_authority_in_txn, verify_owner_actor_binding_in_txn,
 };
+pub use witness::IMPORTED_SOURCE_KEY;
+pub use witness::ImportedTurnStamp;
+pub(crate) use witness::guard_import_stamp;
+pub(crate) use witness::turn_admits_message_bodies;
+pub(crate) use witness::witness_message_body;
 pub(crate) use witness::{
     ArchivedMessage, ArchivedMessageAdmission, ArchivedMessageLink, archived_container_body,
     archived_message_body,
-};
-pub(crate) use witness::{
-    IMPORTED_SOURCE_KEY, ImportedTurnStamp, guard_import_stamp, turn_admits_message_bodies,
-    witness_message_body,
 };
 pub(crate) use witness::{
     next_witness_message_order, sole_edge_target, taken_witness_message_order,

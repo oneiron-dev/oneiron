@@ -5,6 +5,8 @@
 //! the source's credential at its own door, from the custody record the
 //! source names.
 
+#[allow(unused_imports)]
+use crate::ext::*;
 use serde::{Deserialize, Serialize};
 
 use super::source::{MailProvider, MailSourceRow};

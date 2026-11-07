@@ -237,7 +237,7 @@ impl Memory<'_> {
     /// Lands one turn of an imported transcript (ARCH-0027) through the same
     /// program and ceiling door as [`Self::witness`], with `effect` (the import
     /// ledger) in its transaction. See [`ImportedTurnStamp`] for what differs.
-    pub(crate) fn witness_imported(
+    pub fn witness_imported(
         &self,
         turn: &WitnessTurn,
         stamp: &ImportedTurnStamp,

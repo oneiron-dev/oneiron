@@ -88,7 +88,7 @@ pub(super) enum WitnessTarget<'a, 'v> {
 /// rows are learned at the import time and occurred when the source says, so
 /// the Dreamer sees them as new evidence about the past.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ImportedTurnStamp {
+pub struct ImportedTurnStamp {
     pub(crate) source: &'static str,
     pub(crate) imported_at: u64,
     pub(crate) conversation_body: Vec<u8>,

@@ -308,7 +308,7 @@ fn prefix_end(prefix: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// A typed view of one declared table.
-pub(crate) struct SideTable<K, V, C> {
+pub struct SideTable<K, V, C> {
     decl: &'static SideTableDecl,
     _types: TableTypes<K, V, C>,
 }
@@ -385,12 +385,7 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
         self.put_raw(dbs, txn, &self.key_bytes(key), bytes)
     }
 
-    pub(crate) fn get(
-        &self,
-        dbs: &impl SideTableDbs,
-        txn: &RoTxn<'_>,
-        key: &K,
-    ) -> Result<Option<V>> {
+    pub fn get(&self, dbs: &impl SideTableDbs, txn: &RoTxn<'_>, key: &K) -> Result<Option<V>> {
         self.get_raw(dbs, txn, &self.key_bytes(key))?
             .map(|bytes| self.decode_value(&bytes))
             .transpose()
@@ -434,16 +429,11 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
             .and_then(|bytes| self.decode_value(&bytes).ok()))
     }
 
-    pub(crate) fn contains(
-        &self,
-        dbs: &impl SideTableDbs,
-        txn: &RoTxn<'_>,
-        key: &K,
-    ) -> Result<bool> {
+    pub fn contains(&self, dbs: &impl SideTableDbs, txn: &RoTxn<'_>, key: &K) -> Result<bool> {
         Ok(self.get_raw(dbs, txn, &self.key_bytes(key))?.is_some())
     }
 
-    pub(crate) fn put(
+    pub fn put(
         &self,
         dbs: &impl SideTableDbs,
         txn: &mut RwTxn<'_>,
@@ -495,12 +485,7 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
     }
 
     /// Deletes one row; `true` when a row was present.
-    pub(crate) fn delete(
-        &self,
-        dbs: &impl SideTableDbs,
-        txn: &mut RwTxn<'_>,
-        key: &K,
-    ) -> Result<bool> {
+    pub fn delete(&self, dbs: &impl SideTableDbs, txn: &mut RwTxn<'_>, key: &K) -> Result<bool> {
         let full = self.key_bytes(key);
         match self.decl.db {
             SideDb::VaultMeta => dbs.side_vault_meta().delete(txn, &full),
@@ -524,7 +509,7 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
     }
 
     /// The keys of every row under `key_prefix`, without decoding values.
-    pub(crate) fn scan_keys(
+    pub fn scan_keys(
         &self,
         dbs: &impl SideTableDbs,
         txn: &RoTxn<'_>,
@@ -537,7 +522,7 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
 
     /// The rows under `key_prefix` in key order, decoded as the caller pulls them, so a scan
     /// that stops early reads no further.
-    pub(crate) fn iter_from<'txn>(
+    pub fn iter_from<'txn>(
         &self,
         dbs: &impl SideTableDbs,
         txn: &'txn RoTxn<'_>,

@@ -34,13 +34,13 @@ mod compliance;
 mod doors;
 mod importer;
 mod inbox;
-mod landing;
-mod pack;
-mod provider_delete;
+#[doc(hidden)]
+pub mod pack;
 mod share;
-mod source;
-mod state;
-mod wire;
+#[doc(hidden)]
+pub mod source;
+#[doc(hidden)]
+pub mod state;
 
 pub use crate::source_audience::{SourceAudienceEventView, SourceAudienceOp};
 pub(crate) use compliance::erase_compliance_actor_in_txn;
@@ -53,7 +53,6 @@ pub use doors::{
     MailSourceConnectReceipt, MailSourceConnectRequest, MailSourceMembersRequest, MailSourceRef,
     MailSourceSettingsRequest,
 };
-pub use importer::{MailSyncBudget, MailSyncReport};
 pub use inbox::{
     MailInboxItem, MailInboxPage, MailInboxRequest, MailThreadRequest, MailThreadView,
 };
@@ -67,7 +66,3 @@ pub use source::{
 };
 pub(crate) use state::erase_occurrence_rows_in_txn;
 pub use state::{MailPresence, MailStage, MailSyncStatusView};
-pub use wire::{
-    MailAttachmentRef, MailFull, MailHeaders, MailHistoryChange, MailHistoryPage, MailHistoryRead,
-    MailIdPage, MailListQuery, MailMessageRef, MailProviderWire, MailSyncSource,
-};

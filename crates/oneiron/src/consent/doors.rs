@@ -194,11 +194,7 @@ impl AuthenticatedOwner {
     /// shows a live person, not whose vault this is, so every door asks for
     /// both unless it is one of the few a person uses on their own behalf
     /// ([`Self::revalidate_person_in_txn`]).
-    pub(crate) fn revalidate_in_txn(
-        &self,
-        vault: &Vault,
-        txn: &heed::RoTxn<'_>,
-    ) -> Result<EntityId> {
+    pub fn revalidate_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<EntityId> {
         let actor = self.revalidate_person_in_txn(vault, txn)?;
         // A person credential carries no owner authority, even an owner's:
         // a narrowed slip of his never acts at an owner-tier door through

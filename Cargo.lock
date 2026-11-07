@@ -8562,6 +8562,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-mail-pack"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "heed",
+ "oneiron",
+ "rmpv",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "oneiron-mesh-transport"
 version = "0.1.0"
 dependencies = [

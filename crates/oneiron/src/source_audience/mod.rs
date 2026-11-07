@@ -390,7 +390,7 @@ fn set_source_open_row_in_txn(
 /// `source`, written in `txn` the first time a row of that thread lands.
 /// Every later row of the same thread lands under the same policy, so a
 /// share of the thread reaches its later messages too.
-pub(crate) fn thread_policy_in_txn(
+pub fn thread_policy_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     source: &EntityId,
@@ -436,7 +436,7 @@ pub(crate) fn thread_policy_in_txn(
 /// Binds the row `record` to `policy` at its birth, in the writer that
 /// lands it. A row bound already stays where it was born: a second bind to
 /// the same policy changes nothing, and one to another policy is refused.
-pub(crate) fn bind_record_in_txn(
+pub fn bind_record_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     record: &EntityId,

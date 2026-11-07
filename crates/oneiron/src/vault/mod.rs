@@ -119,7 +119,7 @@ pub struct Vault {
     pub(crate) housekeeping:
         std::sync::Mutex<crate::store::housekeeping_schedule::HousekeepingHandle>,
     pub(crate) entity_docs: std::sync::Mutex<crate::entity_doc::EntityDocRegistry>,
-    pub(crate) store: Store,
+    pub store: Store,
     pub(crate) config: VaultConfig,
     /// The late tagging arming first-run setup installs after open: read
     /// beside the open config by [`Vault::tagging_marker_config`]. In memory

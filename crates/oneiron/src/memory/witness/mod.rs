@@ -5,9 +5,11 @@
 mod archive;
 mod assertions;
 mod base;
-mod codec;
+#[doc(hidden)]
+pub mod codec;
 mod linked;
-mod program;
+#[doc(hidden)]
+pub mod program;
 mod reply_assertions;
 mod session;
 mod stream;
@@ -19,7 +21,8 @@ pub(crate) use stream::{
     MessageStreamRuntime, erase_stream_seeds_in_txn, message_completion_in_txn,
     message_stream_finality_in_txn, scrub_stream_seed_actor_in_txn,
 };
-mod validation;
+#[doc(hidden)]
+pub mod validation;
 
 pub use self::reply_assertions::MessageReplyAssertions;
 pub(crate) use self::reply_assertions::{
@@ -37,10 +40,11 @@ pub(crate) use self::archive::{
     ArchivedMessage, ArchivedMessageAdmission, ArchivedMessageLink, archived_container_body,
     archived_message_body,
 };
-pub(crate) use self::codec::{
-    IMPORTED_SOURCE_KEY, guard_import_stamp, turn_admits_message_bodies, witness_message_body,
-};
-pub(crate) use self::program::ImportedTurnStamp;
+pub use self::codec::IMPORTED_SOURCE_KEY;
+pub(crate) use self::codec::guard_import_stamp;
+pub(crate) use self::codec::turn_admits_message_bodies;
+pub(crate) use self::codec::witness_message_body;
+pub use self::program::ImportedTurnStamp;
 pub use self::program::{SessionWitnessBinding, SessionWitnessContext, SessionWitnessOutcome};
 
 pub(super) use self::validation::validate_witness_occurrence;
