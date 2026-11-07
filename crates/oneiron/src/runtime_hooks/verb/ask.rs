@@ -60,6 +60,17 @@ pub(super) const MAX_SAVED_VERB_ERROR_BYTES: usize = 4_096;
 /// The error a retry gets when a completed call's result was not retained.
 /// The call ran, and must not be sent again.
 pub const HOOK_RESULT_NOT_RETAINED: &str = "HOOK_RESULT_NOT_RETAINED";
+/// The error code a retry gets when its ask was used up but no outcome was
+/// ever saved (FIX 1996): something stopped between the resumed chain's
+/// commit and the outcome's, so the engine cannot tell whether the verb
+/// ran, and never runs it again under this invocation. The caller decides
+/// from what the verb would have changed.
+pub const HOOK_OUTCOME_UNCERTAIN: &str = "HOOK_OUTCOME_UNCERTAIN";
+/// The most unsettled open rows one prune pass reads through their asks.
+/// This budget is separate from the deletion cap: a row whose ask cannot be
+/// read is kept (it is not provably dead), and must not starve deletions of
+/// rows already known dead (FIX 2185).
+const PRUNE_UNSETTLED_READ_MAX: usize = 32;
 
 /// One stopped call.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -235,12 +246,18 @@ pub(super) fn retry(
             }
             return skipped(USED);
         }
-        // FIX 1443: a consumed-but-unfinished READ re-opens inline and
-        // resumes, while the same state on a WRITE answers Skipped with an
-        // honest unknown-outcome reason instead of "already used".
         if row.domain == VerbDomain::Write {
-            return skipped(UNKNOWN);
+            return Ok(Retry::Stop(VerbHookStop::CompletedWithError {
+                invocation: call.invocation.to_hex(),
+                code: HOOK_OUTCOME_UNCERTAIN.to_owned(),
+                message: "this invocation's ask was used but no outcome was saved; the verb \
+                          may or may not have run, and it will not run again under this \
+                          invocation"
+                    .to_owned(),
+                receipt_ref: None,
+            }));
         }
+        // A consumed-but-unfinished read can resume without repeating a write.
         let token = AskToken {
             key,
             ask: row.ask,
@@ -681,7 +698,7 @@ pub(super) fn prune(vault: &Vault, cutoff: u64, max: usize) -> Result<usize> {
     {
         let rtxn = vault.store.env.read_txn()?;
         for entry in ASKS.iter_raw_from(&vault.store, &rtxn, &[])? {
-            if old.len() + unsettled.len() >= max {
+            if old.len() >= max && unsettled.len() >= PRUNE_UNSETTLED_READ_MAX {
                 break;
             }
             let (key, value) = entry?;
@@ -692,10 +709,13 @@ pub(super) fn prune(vault: &Vault, cutoff: u64, max: usize) -> Result<usize> {
                 continue;
             };
             if outlived(&row, cutoff) {
-                old.push(key);
+                if old.len() < max {
+                    old.push(key);
+                }
             } else if row.state == VerbAskState::Open
                 && row.created_at < cutoff
                 && row.settled_at.is_none()
+                && unsettled.len() < PRUNE_UNSETTLED_READ_MAX
             {
                 unsettled.push((key, row.author, row.author_class, row.ask));
             }
@@ -704,7 +724,7 @@ pub(super) fn prune(vault: &Vault, cutoff: u64, max: usize) -> Result<usize> {
     for (key, author, class, ask) in unsettled {
         let status = author_memory(vault, author, class, None)
             .tasks_ask_status(TaskAskHandle { group_ref: ask });
-        if matches!(status, Ok(TaskAskStatus::Settled(_))) {
+        if matches!(status, Ok(TaskAskStatus::Settled(_))) && old.len() < max {
             old.push(key);
         }
     }

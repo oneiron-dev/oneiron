@@ -463,9 +463,11 @@ members disagree with it. It is plaintext and re-imports into a fresh vault
 Credentials inside records are nulled by the serializer. Result bodies go through the release
 scan: a text or binary body that passes is a file under `files/<blake3>`; tainted, secret-marked
 and credential-bearing bodies are withheld and named in `result_body.jsonl`.
-`epoch_floor.jsonl` has a row `{session, epoch, turn_end}` for each session whose epoch summary a
-purge removed: where that summary left the count, and nothing it said. An import only raises a
-session's floor to its row, so a re-imported vault never numbers an epoch under a removed one.
+`epoch_floor.jsonl` has a row `{session, conversation, epoch, turn_end}` for each epoch lineage
+whose summary a purge removed: a conversation's lineage inside its session, or the session's own
+when `conversation` is absent. The row says where that summary left the count, and nothing it
+said. An import only raises a lineage's floor to its row, so a re-imported vault never numbers an
+epoch under a removed one.
 
 Your own archive also carries your keys, by default: each active secret-custody record's value,
 in `records/secret_custody.jsonl` (the custody codec, base64), so a re-import keeps them. Keep
