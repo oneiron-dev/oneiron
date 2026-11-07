@@ -9,6 +9,7 @@ use crate::blob_artifact::{
     encode_blob_artifact_body, read_blob_artifact_head_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
+use crate::core_write::CoreWriteLaneRef;
 use crate::edge::EdgeActorClass;
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::write_envelope::WriteActor;
@@ -74,7 +75,7 @@ impl Vault {
     ) -> Result<StoredMeetingTranscript> {
         let actor = WriteActor::new(owner.revalidate(self)?, EdgeActorClass::Human);
         let artifact = self.new_entity_id()?;
-        self.try_with_actor_content_write_txn(actor, |content| {
+        self.try_with_actor_content_write_txn(actor, CoreWriteLaneRef::Unbound, |content| {
             owner.revalidate_in_txn(self, content.read())?;
             let (source_version, audio) = pinned_version(self, content.read(), source_audio)?;
             check_source_audio(transcript, &audio)?;
@@ -94,7 +95,7 @@ impl Vault {
                 &data,
             ))?;
             let made_by = storage_provenance(actor, &[source_version.claim_id], transcript, at);
-            let version = content.update_artifact(artifact, |txn| {
+            let version = content.update_artifact(artifact, |txn, _lane| {
                 self.append_blob_artifact_version_made_by_in_txn(
                     txn,
                     &artifact,
@@ -125,8 +126,8 @@ impl Vault {
         labels: &BTreeMap<String, String>,
     ) -> Result<StoredMeetingTranscript> {
         let actor = WriteActor::new(owner.revalidate(self)?, EdgeActorClass::Human);
-        self.try_with_actor_content_write_txn(actor, |content| {
-            content.update_artifact(stored.transcript.artifact, |txn| {
+        self.try_with_actor_content_write_txn(actor, CoreWriteLaneRef::Unbound, |content| {
+            content.update_artifact(stored.transcript.artifact, |txn, _lane| {
                 owner.revalidate_in_txn(self, txn)?;
                 let (base, source, transcript) = stored_transcript(self, txn, stored)?;
                 let labeled = transcript

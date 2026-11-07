@@ -145,8 +145,8 @@ pub(super) async fn handle_sync_message(
             // (rule 5, row 19).
             let mut presence = server.presence.lock();
             presence.expire(&server.ephemeral_store);
-            let states = validate_ephemeral_payload(server, &payload)?;
-            if !presence.fit(ephemeral_hub_candidate(server, &payload, &states)?) {
+            let states = validate_ephemeral_payload(&payload)?;
+            if !presence.fit(ephemeral_hub_candidate(server, &payload)?) {
                 tracing::warn!(
                     conn_id,
                     kind = "memory_floor",
@@ -295,6 +295,7 @@ pub(super) enum VerbCall {
         conn: u32,
     },
     Residence(crate::livequery::ResidenceWorkCall),
+    AskOptionLink(crate::livequery::ask_option_link::AskOptionLinkCall),
 }
 
 impl VerbCall {
@@ -311,6 +312,7 @@ impl VerbCall {
                 conn,
             } => (auth, request, context, conn),
             Self::Residence(call) => return call.answer(server, direct_tx).await,
+            Self::AskOptionLink(call) => return call.answer(server, direct_tx).await,
         };
         let reply = crate::livequery::rpc_reply(&server, &auth, request, context).await?;
         for frame in reply.queued(conn) {
@@ -453,6 +455,31 @@ fn answer_app_message(
                     .map_err(|_| ProtocolError::InvalidPayload("reply channel closed"))?;
             }
             return Ok(None);
+        }
+        // This bearer lane is independent of any bound actor. The proof
+        // names its carrying machine; the original link methods admit it.
+        if request.method == "residence.ask.option_link" {
+            if context.is_some() {
+                return Err(ProtocolError::InvalidPayload(
+                    "a call context rides only a facade verb RPC",
+                ));
+            }
+            let peer = state.peer_machine(&server.vault);
+            let actor = match &peer {
+                oneiron::authority::PeerMachine::Proven { machine, .. } => machine.to_hex(),
+                oneiron::authority::PeerMachine::Unknown => "unauthenticated".to_owned(),
+            };
+            let _ = server.wire_telemetry.record(
+                &request.method,
+                &actor,
+                oneiron_vault_contract::now_ts(),
+            );
+            let conn = connection
+                .as_deref()
+                .map_or(0, crate::livequery::connection::Connection::conn_id);
+            return Ok(Some(VerbCall::AskOptionLink(
+                crate::livequery::ask_option_link::AskOptionLinkCall::new(peer, request, conn),
+            )));
         }
         // Home handoff and exact pad calls can run without a bound actor,
         // under the owner-grade upgrade and the machine it proves now.

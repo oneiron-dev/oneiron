@@ -28,6 +28,7 @@ fn wake_input(node_id: u64, now: u64) -> RunWakePass {
         reserve_units: 500,
         now,
         host_scope: None,
+        destination_bound: None,
     }
 }
 

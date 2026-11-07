@@ -82,6 +82,13 @@ pub struct Memory<'v> {
     /// The logical verb's id a host carried in (`with_invocation`): verb
     /// hooks run once per id, across wrappers (ARCH-0080 §3).
     pub(super) invocation: Option<crate::store::verb_invocation::InvocationId>,
+    /// The verb-ask drain's permit for this surface's invocation, set only
+    /// on the handle the drain itself rebuilds for one settled call (FIX
+    /// 2183): a nested call of that invocation made from another thread
+    /// enters it at the row boundary and so runs as the drain's own, as a
+    /// credential door's thread does. It grants nothing without the
+    /// drain's hold and is never saved with the call.
+    pub(super) drain_permit: Option<crate::runtime_hooks::verb::VerbAskDrainPermit>,
     /// The hook pause a transport's call names as the one it resumes, by
     /// its ask handle (`with_hook_ask`, L13 PR-D): a session-only call's
     /// pause the keep no longer holds then refuses, never running as a new
