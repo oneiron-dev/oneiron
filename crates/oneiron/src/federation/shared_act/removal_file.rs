@@ -78,11 +78,13 @@ pub(crate) fn removal_archive_owner(row: ArchiveRow) -> Result<EntityId> {
 
 /// A writer that hashes every byte it passes on, so a copy is checked as it
 /// is written rather than read again.
+#[cfg(unix)]
 struct HashingWriter<W> {
     inner: W,
     hasher: blake3::Hasher,
 }
 
+#[cfg(unix)]
 impl<W: std::io::Write> std::io::Write for HashingWriter<W> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let written = self.inner.write(buf)?;
