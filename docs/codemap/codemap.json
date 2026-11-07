@@ -4680,7 +4680,7 @@
      "path": "src/authority/machine_write.rs",
      "purpose": "MACHINE origin signatures for claim writes; enrollment is `machine_enroll`",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 4
      }
     },
@@ -14627,7 +14627,7 @@
      "path": "src/claim/history_projection/chain.rs",
      "purpose": "Reading and verifying a pinned history: its rows, its handoff chain and its projection",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -14669,7 +14669,7 @@
      "path": "src/claim/history_store.rs",
      "purpose": "Scoped, engine-owned CLAIM carriers for immutable MACHINE birth and transition evidence",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -14851,7 +14851,7 @@
      "path": "src/claim/read.rs",
      "purpose": "`Vault` claim read doors: targeted `get_claim`, the subject/predicate scans, the session-bundle projection…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 3
      }
     },
@@ -44651,7 +44651,7 @@
      "path": "src/learning/project.rs",
      "purpose": "The one projector: anchored evidence, a prior and a window in, one superseding `learning.*` head per cell out",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 1,
       "struct": 1
      }
@@ -49211,7 +49211,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ClaimInput",
@@ -52858,7 +52858,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/web_fetch.rs",
@@ -100505,6 +100505,7 @@
       "BrowserBody",
       "BrowserRequestHandler",
       "DestinationRefusal",
+      "NavigationFrame",
       "RenderedDocument",
       "SpooledResponse"
      ],
@@ -100512,6 +100513,7 @@
      "purpose": "A host's custody of a browser session's requests (FIX 7122)",
      "surface": {
       "crate-vis": 6,
+      "enum": 1,
       "struct": 3,
       "trait": 2
      }
@@ -129981,7 +129983,7 @@
      "path": "src/models/openai.rs",
      "purpose": "The OpenAI-compatible transport: any `/v1/chat/completions` server",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 11
      }
     },
     {
@@ -130485,6 +130487,16 @@
      "notable": [],
      "path": "src/models/worker_host/process/guarded/controller.rs",
      "purpose": "One native thread owns each private G child, independently of Tokio teardown",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/worker_host/replacement.rs",
+     "purpose": "Replacement cleanup outlives the serving runtime that configured it",
      "surface": {
       "crate-vis": 2
      }
@@ -132949,7 +132961,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/server/web_fetch/headless/handler.rs",
@@ -134441,7 +134453,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 138,
+     "files": 139,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -134611,7 +134623,7 @@
    },
    "over_bar": 61,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1735,
+   "source_files": 1736,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -151357,7 +151369,7 @@
       "const": 2,
       "crate-vis": 3,
       "enum": 6,
-      "fn": 10,
+      "fn": 11,
       "re-export": 2,
       "struct": 7,
       "trait": 1,
@@ -151373,10 +151385,10 @@
      "path": "src/web_acquisition/refusal.rs",
      "purpose": "—",
      "surface": {
-      "const": 2,
+      "const": 3,
       "crate-vis": 2,
       "enum": 1,
-      "fn": 6
+      "fn": 8
      }
     },
     {
@@ -151417,7 +151429,7 @@
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…",
      "surface": {
       "fn": 12,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 6,
       "trait": 2
      }
@@ -151425,11 +151437,32 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "SingleHopClient"
+     ],
      "path": "src/web_fetch/client.rs",
-     "purpose": "The readability rung's HTTP client as a host builds it (FIX 7123)",
+     "purpose": "The readability rung's HTTP client as a host builds it (FIX 7123, FIX 4734)",
      "surface": {
-      "fn": 3
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AcquisitionMode",
+      "PinnedOrigin",
+      "RenderContext"
+     ],
+     "path": "src/web_fetch/context.rs",
+     "purpose": "The context one page's render runs in (FIX 4734): how the page is acquired, the origin a same-site crawl…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 12,
+      "struct": 2
      }
     },
     {
@@ -151452,7 +151485,7 @@
      "path": "src/web_fetch/egress.rs",
      "purpose": "The managed (hosted) node's web-fetch egress guard (SCAN C447)",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 7,
       "re-export": 3,
       "struct": 2
@@ -151475,7 +151508,7 @@
      "path": "src/web_fetch/render.rs",
      "purpose": "Private rendering support for the OF-444 ladder: URL parsing, normalization, validation, and credential…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 15
      }
     },
     {
@@ -151504,7 +151537,7 @@
      "purpose": "Web acquisition values and the host-supplied acquisition port"
     },
     "web_fetch": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -151513,7 +151546,7 @@
    },
    "over_bar": 0,
    "purpose": "Web acquisition of the oneiron engine",
-   "source_files": 13,
+   "source_files": 14,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {
