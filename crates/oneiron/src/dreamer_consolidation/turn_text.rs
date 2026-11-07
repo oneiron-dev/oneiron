@@ -516,11 +516,10 @@ fn collect_with(
             frontier,
             stream,
         });
-        // The user side of an imported subagent or sidechain thread is the
-        // agent that delegated it, not the owner, and words whose speaker the
-        // source did not say may be an agent's: they never reach extraction,
-        // so they cannot become what the owner said.
-        if !(facts.imported && message.not_the_owners) {
+        // Imported words another speaker said are read only under their own
+        // label ([`MessageText::withheld_import_words`], shared with the
+        // retained-citation rebind): never what the owner said.
+        if !message.withheld_import_words(facts.imported) {
             children.push((id, message, words));
         }
     }
@@ -683,9 +682,43 @@ struct MessageText {
     content: String,
     is_visible: bool,
     order: u64,
-    /// An imported row that names a speaker other than the owner, or says
-    /// the speaker is unknown.
-    not_the_owners: bool,
+    /// What the row's import provenance says of its speaker.
+    import: ImportSpeaker,
+}
+
+/// What a MESSAGE's import provenance (`metadata.import`) says of who spoke.
+#[derive(Default)]
+struct ImportSpeaker {
+    /// `import.said_by`: who the source says spoke, named because it was not
+    /// the owner (`ingest::history`) or because the source names its sender
+    /// (`ingest::connector_conversation`).
+    said_by: Option<String>,
+    /// `import.source` is an owner history import's
+    /// ([`HistorySource`](crate::ingest::history::HistorySource)).
+    history: bool,
+}
+
+impl MessageText {
+    /// Whether an imported row's words stay out of extraction: the ONE test
+    /// the fresh projection and the retained-citation rebind share (FIX
+    /// 15412). A row whose provenance names no `said_by` speaks as its own
+    /// bucket: the owner's prompt, a counterparty or an external assistant.
+    /// A counterparty row whose source names its sender (a connector's
+    /// provider user) is that outside speaker's words, Imported evidence read
+    /// under its counterparty label. Two kinds stay out, so they never become
+    /// what the owner said: a history prompt the source says the owner did
+    /// not speak (the agent that delegated a subagent's task, or a speaker
+    /// it did not say, which may be an agent), and a user or companion row
+    /// that names another speaker. A native row is never withheld here.
+    fn withheld_import_words(&self, imported: bool) -> bool {
+        use crate::ingest::history::{DELEGATING_AGENT, UNKNOWN_SPEAKER};
+        let Some(said_by) = self.import.said_by.as_deref() else {
+            return false;
+        };
+        imported
+            && (self.author != WITNESS_AUTHOR_COUNTERPARTY
+                || (self.import.history && matches!(said_by, DELEGATING_AGENT | UNKNOWN_SPEAKER)))
+    }
 }
 
 /// Strict reader of the four fields the projection uses. The logical body of
@@ -700,7 +733,7 @@ fn decode_message(body: &[u8]) -> Option<MessageText> {
         return None;
     }
     let (mut author, mut content, mut is_visible, mut order) = (None, None, None, None);
-    let mut not_the_owners = false;
+    let mut import = ImportSpeaker::default();
     for (key, value) in entries {
         let fresh = match key.as_str() {
             Some("author") => author.replace(value.as_str()?.to_owned()).is_none(),
@@ -708,7 +741,7 @@ fn decode_message(body: &[u8]) -> Option<MessageText> {
             Some("is_visible") => is_visible.replace(value.as_bool()?).is_none(),
             Some("order") => order.replace(value.as_u64()?).is_none(),
             Some("metadata") => {
-                not_the_owners = said_by_another(&value);
+                import = import_speaker(&value);
                 true
             }
             _ => true,
@@ -722,14 +755,13 @@ fn decode_message(body: &[u8]) -> Option<MessageText> {
         content: content?,
         is_visible: is_visible?,
         order: order?,
-        not_the_owners,
+        import,
     })
 }
 
-/// Whether an imported MESSAGE's `import.said_by` names anyone but the owner
-/// (`ingest::history`): the agent that delegated a subagent's task, or a
-/// speaker the source did not say. The owner's words carry none.
-fn said_by_another(metadata: &rmpv::Value) -> bool {
+/// An imported MESSAGE's `import.said_by` (when a string) and whether its
+/// `import.source` is an owner history import's.
+fn import_speaker(metadata: &rmpv::Value) -> ImportSpeaker {
     let field = |value: &rmpv::Value, name: &str| match value {
         rmpv::Value::Map(entries) => entries
             .iter()
@@ -737,9 +769,18 @@ fn said_by_another(metadata: &rmpv::Value) -> bool {
             .map(|(_, value)| value.clone()),
         _ => None,
     };
-    field(metadata, "import")
-        .and_then(|import| field(&import, "said_by"))
-        .is_some_and(|said_by| said_by.is_str())
+    let Some(import) = field(metadata, "import") else {
+        return ImportSpeaker::default();
+    };
+    let text =
+        |name: &str| field(&import, name).and_then(|value| value.as_str().map(str::to_owned));
+    ImportSpeaker {
+        said_by: text("said_by"),
+        history: text("source")
+            .as_deref()
+            .and_then(crate::ingest::history::HistorySource::parse)
+            .is_some(),
+    }
 }
 
 fn peers(

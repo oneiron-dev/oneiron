@@ -63,7 +63,9 @@ pub struct TranscriptMessage {
     pub id: String,
     /// The short ref recall cites the message by, when it has one.
     pub short_id: Option<String>,
-    /// Who wrote it: `user`, `companion` or `system`.
+    /// Who wrote it: `user` (the vault's own person), `companion` (its own
+    /// assistant), `counterparty` (words brought in from outside that
+    /// neither spoke) or `system`.
     pub role: String,
     /// The message type its writer gave it.
     pub message_type: Option<String>,
