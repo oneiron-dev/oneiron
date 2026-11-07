@@ -401,14 +401,15 @@ impl Vault {
     /// owner's agent Grant, in the caller's snapshot `txn`: the shipped
     /// principal rule first ([`principal_standing_or_lapse_in_txn`]), then
     /// the first live Grant, in id order, that alone stands for the actor and
-    /// `verb` ([`AgentGrantStanding::stands_in_txn`]), stands under this
+    /// `verb` ([`AgentGrantStanding::stands_for`]), stands under this
     /// vault's own rule, and carries no repo bounds: a vault setting is no
     /// one repo's. Grants are never unioned and a repo Grant is not this
     /// authority. The Owner's own proof never comes here.
     ///
     /// `Ok(Ok(grant))` names the admitting Grant; `Ok(Err(reason))` is
     /// [`PACT_STANDING_LAPSED`] when a shared vault's pact lapse alone took
-    /// the Grant, else [`QUEUE_REVIEW_POLICY_NOT_GRANTED`].
+    /// the Grant, the membership-held reason when the root holds an otherwise
+    /// standing Grant, else [`QUEUE_REVIEW_POLICY_NOT_GRANTED`].
     ///
     /// # Errors
     /// A store, fold or clock failure; never a refusal.
@@ -419,25 +420,36 @@ impl Vault {
         class: EdgeActorClass,
         verb: &str,
     ) -> Result<std::result::Result<EntityId, &'static str>> {
-        match principal_standing_or_lapse_in_txn(self, txn, actor, class, verb)? {
-            Ok(_) => {}
-            Err(NoStanding::PactStandingLapsed) => return Ok(Err(PACT_STANDING_LAPSED)),
+        let pact_lapsed = match principal_standing_or_lapse_in_txn(self, txn, actor, class, verb)? {
+            Ok(_) => false,
+            Err(NoStanding::PactStandingLapsed) => true,
             Err(NoStanding::NotStanding) => return Ok(Err(QUEUE_REVIEW_POLICY_NOT_GRANTED)),
-        }
+        };
         let now = self.instant_in_txn(txn)?.secs();
         let owners = crate::policy_model::owners_in_txn(self, txn)?;
         let shared = self
             .shared_vault_creation_in_txn(txn)?
             .map(|creation| creation.vault_id);
+        let mut held = false;
         for standing in self.agent_grants_in_txn(txn)? {
-            if standing.grant.repo_bounds.is_none()
-                && standing.stands_in_txn(self, txn, actor, verb, now, &owners)
-                && self.agent_grant_gate_in_txn(txn, &standing, shared)? == GrantGate::Stands
+            if standing.grant.repo_bounds.is_some()
+                || !standing.stands_for(actor, verb, now, &owners)
             {
-                return Ok(Ok(standing.id));
+                continue;
+            }
+            match self.agent_grant_gate_in_txn(txn, &standing, shared)? {
+                GrantGate::Stands => return Ok(Ok(standing.id)),
+                GrantGate::Held => held = true,
+                GrantGate::Refused => {}
             }
         }
-        Ok(Err(QUEUE_REVIEW_POLICY_NOT_GRANTED))
+        Ok(Err(if held {
+            RepoAccessRefusal::MembershipHeld.public_code()
+        } else if pact_lapsed {
+            PACT_STANDING_LAPSED
+        } else {
+            QUEUE_REVIEW_POLICY_NOT_GRANTED
+        }))
     }
 }
 

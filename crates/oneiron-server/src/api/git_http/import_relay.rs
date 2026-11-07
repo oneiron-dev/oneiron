@@ -18,7 +18,11 @@
 //!   invocation alone: a loopback listener on an OS-assigned port under an
 //!   unguessable in-memory path, serving the receive-pack advertisement
 //!   and RPC of the one selected repository and route. Each request carries
-//!   the ORIGINAL verified credential, checked again for revocation, through
+//!   the relay's own ticket, which the Git child holds in its environment
+//!   alone (FIX 19233): the URL rides the child's argv, which another local
+//!   user can read, so a request without the ticket is not found, before
+//!   any credential or body is touched. A ticketed request carries the
+//!   ORIGINAL verified credential, checked again for revocation, through
 //!   the ordinary receive-pack gate (Write, unrestricted record scope, a
 //!   registered principal), and is served by [`run_serve`] exactly as a
 //!   `/git` push is: the same push decision, transfer permits, push turn,
@@ -48,10 +52,12 @@ use oneiron::repo_mutation::external_import::{
 };
 use tokio::runtime::Handle;
 use tokio::sync::oneshot;
+use zeroize::Zeroizing;
 
 use super::gate::{
     admit_import_relay, advertised_service, header_value, push_caller, remote_user, text_response,
 };
+use super::import_source_relay::{carries_relay_ticket, mint_relay_ticket};
 use super::routes::{GitService, advertisement_request};
 use super::serve::run_serve;
 use crate::auth::{CoreAuth, is_revoked_or_unreadable};
@@ -157,7 +163,14 @@ impl ExternalGitSourceHost for GitImportRelayHost {
         commit: &GitOid,
     ) -> oneiron::Result<GitImportPushOutcome> {
         let relay = ImportRelay::start(self, lookup)?;
-        let pushed = wire.push_external_to_door(fetched, &relay.url, name, commit, expected);
+        let pushed = wire.push_external_to_door(
+            fetched,
+            &relay.url,
+            relay.state.relay_ticket.as_str(),
+            name,
+            commit,
+            expected,
+        );
         let refused = relay.stop();
         Ok(match (pushed?, refused) {
             (GitImportPushOutcome::Applied, _) => GitImportPushOutcome::Applied,
@@ -234,11 +247,21 @@ struct RelayState {
     server: Arc<SyncServer>,
     auth: CoreAuth,
     repo: String,
+    /// The checkout lease a checkout route's push names, never the relay's
+    /// own ticket.
     ticket: Option<String>,
+    /// The relay's own ticket, which every request must carry (FIX 19233).
+    relay_ticket: Zeroizing<String>,
     refused: Mutex<Option<u16>>,
 }
 
 impl RelayState {
+    /// Whether `parts` carries this relay's own ticket, compared in constant
+    /// time (FIX 19233).
+    fn ticketed(&self, parts: &Parts) -> bool {
+        carries_relay_ticket(parts, &self.relay_ticket)
+    }
+
     /// The original credential, checked again and admitted by the ordinary
     /// receive-pack gate.
     fn admitted(&self) -> Result<CoreAuth, Box<Response>> {
@@ -275,7 +298,13 @@ fn relay_read_context() -> smart_http::RepoGitReadContext {
 async fn relay_info_refs(
     State(relay): State<Arc<RelayState>>,
     RawQuery(query): RawQuery,
+    parts: Parts,
 ) -> Response {
+    // Before anything else, and never noted as the import's refusal: a
+    // request without the ticket is not this invocation's Git child.
+    if !relay.ticketed(&parts) {
+        return text_response(StatusCode::NOT_FOUND, "not found");
+    }
     match advertised_service(&query.unwrap_or_default()) {
         Ok(GitService::ReceivePack) => {}
         Ok(GitService::UploadPack) => {
@@ -316,6 +345,9 @@ async fn relay_receive_pack(
     parts: Parts,
     body: Body,
 ) -> Response {
+    if !relay.ticketed(&parts) {
+        return text_response(StatusCode::NOT_FOUND, "not found");
+    }
     let auth = match relay.admitted() {
         Ok(auth) => auth,
         Err(response) => return relay.observed(*response),
@@ -372,6 +404,7 @@ impl ImportRelay {
             auth: host.auth.clone(),
             repo: lookup.repo.clone(),
             ticket,
+            relay_ticket: mint_relay_ticket(),
             refused: Mutex::new(None),
         });
         let base = format!("/{secret}/{RELAY_REPO_SEGMENT}");

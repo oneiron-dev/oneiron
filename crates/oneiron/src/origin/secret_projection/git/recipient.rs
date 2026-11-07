@@ -21,14 +21,23 @@
 //! the shipped file reveal (`recipient_serve::delivery`), and a file whose
 //! grant is gone by then is masked in another sibling. Checkout, index,
 //! sync, hydrate and every other masked reader keep the masked copy.
+//!
+//! A file's keys are its marks' and, past them, each custody record whose
+//! value custody knows now reads in its stored bytes (FIX 8966): a grant
+//! must cover every class among them before the file is released, so a
+//! value learned after the grant leaves the file masked. Planning reads
+//! each planned file's stored bytes once for this, and nothing else.
 
 use std::collections::{BTreeSet, HashSet};
+
+use zeroize::Zeroizing;
 
 use super::super::claims::{
     RepoProjectionAudience, RepoProjectionClaim, RepoProjectionPlace, RepoProjectionRecord,
 };
 use super::super::graph_objects::{RepoProjectionRelease, copy_repo_projection_objects};
 use super::super::recipient::RepoProjectionRevealBinding;
+use super::super::repo_file_keys_in_txn;
 use super::{
     RepoGitProjection, RepoGitProjectionRoots, building_dir, building_lock,
     closure_marks_stand_in_txn, land_copy, require_store_not_erased, standing_projection,
@@ -47,13 +56,15 @@ use crate::secret_custody::RepoFileRevealTarget;
 use crate::secret_record::{RepoFileKeys, RepoFileOriginal};
 
 /// One marked file a recipient's live grant covers: its exact byte path
-/// and ORIGINAL blob, the ORIGINAL its grant target names and its marks.
+/// and ORIGINAL blob, the ORIGINAL its grant target names, its marks, and
+/// the keys a release of its stored bytes shows (FIX 8966), value-free.
 #[derive(Debug, Clone)]
 pub(crate) struct RepoGitReleasedFile {
     pub(crate) path: Vec<u8>,
     pub(crate) blob: GitOid,
     pub(crate) original: RepoFileOriginal,
     pub(crate) marks: RepoBlobMarks,
+    pub(crate) keys: RepoFileKeys,
 }
 
 impl RepoGitReleasedFile {
@@ -62,12 +73,9 @@ impl RepoGitReleasedFile {
         RepoFileRevealTarget::new(&self.original, &binding.asker())
     }
 
-    /// Its keys, value-free.
+    /// Its keys, value-free: its marks' and each known holder past them.
     pub(crate) fn keys(&self) -> RepoFileKeys {
-        RepoFileKeys {
-            custody: self.marks.custody(),
-            opaque: self.marks.opaque(),
-        }
+        self.keys.clone()
     }
 }
 
@@ -110,14 +118,18 @@ impl RepoGitReleasePlan {
     }
 }
 
-/// The files of the masked copy `masked` a live standing grant covers for
-/// `binding` now, each its exact path and blob (module docs); `None` when
-/// it covers none, which keeps the masked read.
+/// The files of the masked copy `masked` of `canonical` a live standing
+/// grant covers for `binding` now, each its exact path and blob, judged by
+/// its marks' keys and the holders of the values custody knows in its
+/// stored bytes (module docs); `None` when it covers none, which keeps the
+/// masked read.
 ///
 /// # Errors
-/// A store failure, or a record or mark that does not decode.
+/// A store or git failure, or a record or mark that does not decode.
 pub(crate) fn plan_repo_git_release(
     vault: &Vault,
+    wire: &GitWire<'_>,
+    canonical: &GitWireRepo,
     masked: &RepoGitProjection,
     binding: RepoProjectionRevealBinding,
 ) -> Result<Option<RepoGitReleasePlan>> {
@@ -177,38 +189,50 @@ pub(crate) fn plan_repo_git_release(
             }
         }
     }
-    let mut files = Vec::new();
-    for (path, blob) in occurrences {
-        let Ok(text_path) = std::str::from_utf8(&path) else {
-            continue;
-        };
-        let marks = facts.for_blob(&RepoBlobAddress {
-            store: *store_id,
-            blob: blob.clone(),
-        });
-        if marks.is_empty() {
-            continue;
+    let files = vault.with_known_values(|known| {
+        let mut files = Vec::new();
+        for (path, blob) in occurrences {
+            let Ok(text_path) = std::str::from_utf8(&path) else {
+                continue;
+            };
+            let marks = facts.for_blob(&RepoBlobAddress {
+                store: *store_id,
+                blob: blob.clone(),
+            });
+            if marks.is_empty() {
+                continue;
+            }
+            let keys = match known {
+                Some(known) => {
+                    let object = wire.read_object_to_spool(canonical, &blob)?;
+                    let bytes = Zeroizing::new(object.read_bytes()?);
+                    repo_file_keys_in_txn(vault, &txn, &marks, &bytes, Some(known))?
+                }
+                None => repo_file_keys_in_txn(vault, &txn, &marks, &[], None)?,
+            };
+            let original = RepoFileOriginal {
+                repo: binding.repo,
+                store: store_identity.clone(),
+                snapshot: None,
+                path: text_path.to_owned(),
+                blob: blob.clone(),
+                source: None,
+                marks: marks.ids()?,
+            };
+            let file = RepoGitReleasedFile {
+                path,
+                blob,
+                original,
+                marks,
+                keys,
+            };
+            let target = RepoFileRevealTarget::new(&file.original, &asker);
+            if vault.repo_file_reveal_granted_in_txn(&txn, &asker, &target, &file.keys())? {
+                files.push(file);
+            }
         }
-        let original = RepoFileOriginal {
-            repo: binding.repo,
-            store: store_identity.clone(),
-            snapshot: None,
-            path: text_path.to_owned(),
-            blob: blob.clone(),
-            source: None,
-            marks: marks.ids()?,
-        };
-        let file = RepoGitReleasedFile {
-            path,
-            blob,
-            original,
-            marks,
-        };
-        let target = RepoFileRevealTarget::new(&file.original, &asker);
-        if vault.repo_file_reveal_granted_in_txn(&txn, &asker, &target, &file.keys())? {
-            files.push(file);
-        }
-    }
+        Ok(files)
+    })?;
     Ok((!files.is_empty()).then_some(RepoGitReleasePlan { binding, files }))
 }
 
@@ -235,6 +259,7 @@ pub(crate) fn materialize_recipient_git_graph(
         roots,
         private_root,
         marks,
+        known_history,
         ..
     } = &masked.graph.record
     else {
@@ -248,6 +273,7 @@ pub(crate) fn materialize_recipient_git_graph(
         roots: roots.clone(),
         private_root: private_root.clone(),
         marks: marks.clone(),
+        known_history: *known_history,
         audience: RepoProjectionAudience::Recipient {
             binding: plan.binding.clone(),
             released: plan.release().into_iter().collect(),
@@ -265,7 +291,11 @@ pub(crate) fn materialize_recipient_git_graph(
     let facts = {
         let txn = vault.store.env.read_txn()?;
         let facts = RepoMarkFacts::read_in_txn(vault, &txn, RepoSecretMarkLookup::ReadableClaims)?;
-        if !closure_marks_stand_in_txn(vault, &txn, &masked.graph, &facts)? {
+        // FIX 8966: the sibling is masked against the values custody knows
+        // now; the masked copy's own witness must still name them.
+        if *known_history != vault.store.known_history_witness_in_txn(&txn)?
+            || !closure_marks_stand_in_txn(vault, &txn, &masked.graph, &facts)?
+        {
             return Ok(None);
         }
         facts
@@ -277,16 +307,19 @@ pub(crate) fn materialize_recipient_git_graph(
     }
     let copy_store = wire.init_projection_store(&building)?;
     let release = plan.release();
-    let copy = copy_repo_projection_objects(
-        vault,
-        wire,
-        canonical,
-        &copy_store,
-        &roots.tips(),
-        &facts,
-        store_id,
-        Some(&release),
-    )?;
+    let copy = vault.with_known_values(|known| {
+        copy_repo_projection_objects(
+            vault,
+            wire,
+            canonical,
+            &copy_store,
+            &roots.tips(),
+            &facts,
+            store_id,
+            Some(&release),
+            known,
+        )
+    })?;
     land_copy(vault, wire, &building, &graph, store_id, &roots, &copy, now).map(Some)
 }
 
