@@ -29,6 +29,14 @@ pub const MULTI_CARDINALITY_PREDICATES: [&str; 1] = ["companion.onboarding.answe
 
 const MULTI_CARDINALITY_VALUE_KEY: &str = "question_id";
 
+/// Set-cardinality base predicates retain distinct answers on the same key.
+const SET_CARDINALITY_PREDICATES: [&str; 4] = [
+    "preference.food",
+    "boundary.topic",
+    "goal.financial",
+    "commitment.promise",
+];
+
 /// One claim to commit. `approval` is deliberately NOT settable by callers
 /// (pin 2); the facade computes the request and the gate decides.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

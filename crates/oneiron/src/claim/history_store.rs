@@ -477,8 +477,21 @@ pub(crate) fn machine_history_present_for_target(
     txn: &heed::RoTxn<'_>,
     target: EntityId,
 ) -> Result<bool> {
+    machine_history_present_for_target_observing(store, txn, target, |_| {})
+}
+
+/// The same complete presence walk, also naming each id it actually visits.
+pub(crate) fn machine_history_present_for_target_observing(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    target: EntityId,
+    mut observe: impl FnMut(EntityId),
+) -> Result<bool> {
     let mut present = false;
-    for_each_machine_history_id_for_target(store, txn, target, |_| present = true)?;
+    for_each_machine_history_id_for_target(store, txn, target, |id| {
+        present = true;
+        observe(id);
+    })?;
     Ok(present)
 }
 
