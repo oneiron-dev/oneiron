@@ -31,7 +31,11 @@ pub struct LimitsConfig {
     /// Connections the listener holds open at once, from every peer together:
     /// the descriptor floor. Past it, new sockets wait in the backlog. Guests'
     /// network work draws on the same floor; past it, a guest's socket call
-    /// waits or gets EAGAIN (FIX 5978, FIX 5979).
+    /// waits or gets EAGAIN (FIX 5978, FIX 5979). By default half the
+    /// process's open-file limit, at least 64; the other half stays for the
+    /// vault, spools and git children, and the transfer rows are held to
+    /// what it leaves (`Transfers::new`). One floor per process: the serving
+    /// host's value sizes it (FIX 6299).
     pub max_connections: usize,
     /// Connections one off-device peer address may hold before any of them
     /// has authenticated, and never more than half of `max_connections`. A
@@ -196,7 +200,7 @@ pub struct LimitsConfig {
 impl Default for LimitsConfig {
     fn default() -> Self {
         Self {
-            max_connections: descriptor_floor(),
+            max_connections: oneiron::host_descriptors::descriptor_floor(),
             max_unauthenticated_connections_per_peer: 256,
             header_read_timeout_ms: 30_000,
             body_idle_timeout_ms: 60_000,
@@ -239,15 +243,6 @@ impl Default for LimitsConfig {
             engine: EngineLimits::default(),
         }
     }
-}
-
-/// Half the descriptors this process may open, for sockets; the other half
-/// stays for the vault, spools and git children, and the transfer rows are
-/// held to what it leaves (`Transfers::new`). Raising the open-file limit
-/// (`LimitNOFILE=`) raises it.
-fn descriptor_floor() -> usize {
-    let limit = crate::machine::open_file_limit().unwrap_or(8_192);
-    usize::try_from(limit / 2).unwrap_or(usize::MAX).max(64)
 }
 
 /// An eighth of the machine's memory for what LFS transfers hold in memory,
