@@ -53,9 +53,11 @@ use loro::{CommitOptions, LoroDoc};
 /// A file-plane ASSET packs as the carrier of its manifest, its body
 /// reference beside it (FIX 5489, `asset_body::references::mirror_ref`).
 ///
-/// A row bound to a source audience, or whose words came from one, stays on
-/// this vault: its binding does not travel (FIX 12559,
-/// `source_audience::withheld_from_replication_in`).
+/// A row bound to a source audience packs on this full window when its own
+/// binding and policy closure resolve, and rides beside them
+/// (`source_audiences::mirror_record`); one whose binding does not resolve,
+/// or whose words came from a row bound otherwise, stays on this vault
+/// (Engine A, 6 Nov 03:46; `source_audience::withheld_from_replication_in`).
 pub(super) fn window_packing_excludes_entity(
     vault: &Vault,
     device_only: &std::collections::BTreeSet<EntityId>,
@@ -64,7 +66,12 @@ pub(super) fn window_packing_excludes_entity(
     let rtxn = vault.store.env.read_txn()?;
     if crate::origin::lfs::is_lfs_chunk_asset_in_txn(&vault.store, &rtxn, id)?
         || crate::settings::device_only_withholds(&vault.store, &rtxn, device_only, id)?
-        || crate::source_audience::withheld_from_replication_in(vault, &rtxn, id)?
+        || crate::source_audience::withheld_from_replication_in(
+            vault,
+            &rtxn,
+            id,
+            crate::source_audience::ReplicationScope::FullOwnerWindow,
+        )?
     {
         return Ok(true);
     }
@@ -542,6 +549,9 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
     crate::workspace_roster::scrub_audience_edits(vault, doc, Some(key))?;
     // And a removed session's epoch floor.
     crate::sync::withdrawn_cutoffs::scrub_removed_epoch_floors(vault, doc, Some(key))?;
+    // Last of the removals: the source audiences the rows left carried need,
+    // each at this vault's current revision (Engine A, 6 Nov 03:46).
+    crate::sync::source_audiences::refresh_and_scrub(vault, doc, Some(key))?;
     // A persisted or returned snapshot carries the same project history as
     // a delta does (Astra #1434 r9 F5).
     if super::project_history::carry_project_history(vault, doc)? {
@@ -766,6 +776,10 @@ fn replay_mirrors(
             if crate::sync::row_birth::mirror_local_birth(vault, doc, id)? {
                 wrote_edges = true;
             }
+            // And between the entity and its binding and policy closure.
+            if crate::sync::source_audiences::mirror_record(vault, doc, id)? {
+                wrote_edges = true;
+            }
             if wrote_edges {
                 doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
                 replayed += 1;
@@ -813,6 +827,8 @@ fn replay_mirrors(
         }
         // Rule A: the birth rides in the same bridge commit as its row.
         crate::sync::row_birth::mirror_local_birth(vault, doc, id)?;
+        // Engine A: so do its binding and policy closure.
+        crate::sync::source_audiences::mirror_record(vault, doc, id)?;
 
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
 
@@ -860,4 +876,75 @@ pub(super) fn push_terminal_quarantine_marker(
     if let Some(id) = quarantine::remat_marker_entity_for_quarantine(container, crdt_key) {
         terminal_quarantines.push(id);
     }
+}
+
+/// Takes out of `doc` each row it carries that the owner's full window would
+/// not pack now (Engine A; Sol AUD-2): a row whose binding no longer
+/// publishes, or one a later DerivedFrom edge made the words of a row bound
+/// otherwise. Its carrier, edges, birth and binding go, and a withholding
+/// marker naming this machine takes their place, so a peer that already
+/// holds the row reads it to no one; the row stays here. `pin` names the
+/// window pinned history-free before anything goes; the sweep passes
+/// `None`. A vault that holds no policy carries no such row. Whether
+/// anything went, committed.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(in crate::sync) fn withhold_audience_carriers(
+    vault: &Vault,
+    doc: &LoroDoc,
+    pin: Option<&WindowKey>,
+) -> Result<bool> {
+    let (withheld, by) = {
+        let rtxn = vault.store.env.read_txn()?;
+        if !crate::source_audience::any_policy_in(vault, &rtxn)? {
+            return Ok(false);
+        }
+        let mut carried = Vec::new();
+        map_for_each_value_bytes(&doc.get_map("entities"), |key, _| {
+            if let Ok(id) = EntityId::from_hex(key)
+                && id.to_hex() == key
+            {
+                carried.push(id);
+            }
+        });
+        // By this vault's own lineage, not its holds: a row held back here,
+        // or one whose words came from a held row, stays as its source
+        // carried it, and its holders are not told (Sol AUD-3).
+        let mut withheld = Vec::new();
+        for id in carried {
+            if !crate::source_audience::lineage_held_in(vault, &rtxn, &id)?
+                && crate::source_audience::withheld_by_lineage_in(
+                    vault,
+                    &rtxn,
+                    &id,
+                    crate::source_audience::ReplicationScope::FullOwnerWindow,
+                )?
+            {
+                withheld.push(id);
+            }
+        }
+        (
+            withheld,
+            crate::identity::read_machine_id_in_txn(vault, &rtxn)?,
+        )
+    };
+    if withheld.is_empty() {
+        return Ok(false);
+    }
+    if let Some(key) = pin {
+        require_history_free_window(vault, key)?;
+    }
+    let entities = doc.get_map("entities");
+    let edges = doc.get_map("edges");
+    for id in &withheld {
+        remove_entity_crdt_carriers(&entities, &edges, id)?;
+    }
+    // A peer that already holds one of these rows reads it to no one once
+    // it lands this marker (REVIEW-5911), rather than under the binding it
+    // travelled with.
+    crate::sync::source_audiences::mark_withheld(doc, &withheld, by.as_ref())?;
+    doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+    Ok(true)
 }
