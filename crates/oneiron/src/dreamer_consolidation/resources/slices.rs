@@ -42,12 +42,14 @@ impl BranchResources<'_> {
     ) -> Result<(Vec<ExtractionSlice>, bool)> {
         type Group = Vec<(EntityId, TurnBodyFacts)>;
         let mut groups = BTreeMap::<(u32, Vec<EntityId>), Group>::new();
-        let lines: BTreeMap<EntityId, u32> = self
-            .branch
-            .parts
-            .iter()
-            .flat_map(|part| part.turns.iter().map(move |turn| (*turn, part.line)))
-            .collect();
+        let lines: BTreeMap<EntityId, u32> = match &self.origin {
+            ResourceOrigin::Branch(branch) => branch
+                .parts
+                .iter()
+                .flat_map(|part| part.turns.iter().map(move |turn| (*turn, part.line)))
+                .collect(),
+            ResourceOrigin::Root(_) => self.turns.keys().map(|turn| (*turn, 0)).collect(),
+        };
         let mut low_trust = self.priors.values().any(low_trust_prior);
         for id in turns {
             let facts = self.turn(self.scope(), id)?;
