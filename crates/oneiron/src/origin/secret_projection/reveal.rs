@@ -19,13 +19,13 @@
 
 use super::{
     RepoBodyProjection, RepoGrantedFileProof, RepoSecretAudience, project_repo_blob,
-    project_repo_bytes_in_txn,
+    project_repo_bytes_in_txn, repo_file_keys_in_txn,
 };
 use crate::Vault;
 use crate::error::Result;
 use crate::origin::secret_marks::RepoBlobMarks;
 use crate::secret_custody::{RepoFileReadDisclosure, RepoFileRevealTarget, RepoFileSight};
-use crate::secret_record::{RepoFileKeys, RepoFileOriginal};
+use crate::secret_record::RepoFileOriginal;
 
 /// CALL 4: what a text door names when the bytes a grant would open are not
 /// text. The byte-valued doors deliver granted bytes with their receipts.
@@ -109,15 +109,16 @@ where
         return project_repo_blob(vault, marks, &RepoSecretAudience::Masked, read_exact)
             .map(RepoFileRevealRead::projected);
     };
+    // A file no mark names has no grant to ask for (FIX 8966): it reads as
+    // a masked reader reads it, each value custody knows masked.
     if marks.is_empty() {
-        return read_exact()
-            .map(|bytes| RepoFileRevealRead::projected(RepoBodyProjection::Exact(bytes)));
+        return project_repo_blob(vault, marks, &RepoSecretAudience::Masked, read_exact)
+            .map(RepoFileRevealRead::projected);
     }
     let bytes = read_exact()?;
     let masked = |bytes: Vec<u8>| -> Result<RepoBodyProjection> {
-        vault.with_known_values(|known| {
-            let txn = vault.store.env.read_txn()?;
-            project_repo_bytes_in_txn(vault, &txn, marks, bytes, known)
+        vault.with_known_snapshot(|known, txn| {
+            project_repo_bytes_in_txn(vault, txn, marks, bytes, known)
         })
     };
     let raw_blake3 = *blake3::hash(&bytes).as_bytes();
@@ -131,10 +132,14 @@ where
         return Ok(read);
     }
     let target = RepoFileRevealTarget::new(original, &asker);
-    let keys = RepoFileKeys {
-        custody: marks.custody(),
-        opaque: marks.opaque(),
-    };
+    // The grant must cover each value custody knows in the bytes too, as
+    // custody knew them in the snapshot the keys were read in (FIX 8966).
+    let (keys, witness) = vault.with_known_snapshot(|known, txn| {
+        Ok((
+            repo_file_keys_in_txn(vault, txn, marks, &bytes, known)?,
+            vault.store.known_history_witness_in_txn(txn)?,
+        ))
+    })?;
     let delivery = match vault.repo_file_sight(&asker, &target, &raw_blake3, &keys, &why)? {
         RepoFileSight::Delivered(delivery) => delivery,
         RepoFileSight::Masked => return masked(bytes).map(RepoFileRevealRead::projected),
@@ -142,6 +147,16 @@ where
     // The receipts are committed: the door's pins stand again before a
     // byte goes out, and the proof must name the very blob read.
     readmit()?;
+    // FIX 8966: a value custody learned after the keys were read was judged
+    // by no grant; the authorization writer may have seen it, so the bytes
+    // read masked and the committed delivery releases none of them.
+    let current = {
+        let txn = vault.store.env.read_txn()?;
+        vault.store.known_history_witness_in_txn(&txn)?
+    };
+    if current != witness {
+        return masked(bytes).map(RepoFileRevealRead::projected);
+    }
     let proof = RepoGrantedFileProof::from_delivery(&delivery)?;
     let projection = project_repo_blob(
         vault,

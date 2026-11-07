@@ -64,6 +64,7 @@ mod recovery;
 mod threads;
 mod verbs;
 mod wire;
+pub(crate) use self::recovery::discard_snapshot_payload_in_txn;
 pub use self::recovery::{ReattachOffer, UnattachedThread};
 pub use self::wire::{
     AnnotationAnchorView, AnnotationAssignRequest, AnnotationBodyAnchorView, AnnotationBriefView,

@@ -5,7 +5,7 @@ pub(crate) use oneiron_store::git_wire::bundle_tree::*;
 
 use super::mutation_commands::{path_arg, run_git, utf8_trimmed};
 use crate::error::{Error, Result};
-use crate::git_wire::GitOid;
+use crate::git_wire::{GitOid, git_path_text};
 use crate::store::code_tree_blob::MODE_GITLINK;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -37,14 +37,15 @@ pub(crate) fn gitlink_index_entries(root: &Path) -> Result<BTreeMap<String, Vec<
                 "Git index holds an unresolved gitlink",
             ));
         }
-        let path = std::str::from_utf8(
+        // A path outside UTF-8 keeps its bytes as a Git path's text
+        // (FIX 21326).
+        let path = git_path_text(
             parts
                 .next()
                 .ok_or(Error::InvalidClaimBody("gitlink index path missing"))?,
-        )
-        .map_err(|_| Error::InvalidClaimBody("gitlink index path must be UTF-8"))?;
+        )?;
         links.insert(
-            path.to_owned(),
+            path.into_owned(),
             GitOid::parse_hex(oid)?.as_str().as_bytes().to_vec(),
         );
     }
@@ -75,13 +76,12 @@ pub(crate) fn gitlink_paths_at(
         if !header.starts_with(b"160000 ") {
             continue;
         }
-        let path = std::str::from_utf8(
+        let path = git_path_text(
             parts
                 .next()
                 .ok_or(Error::InvalidClaimBody("gitlink tree path missing"))?,
-        )
-        .map_err(|_| Error::InvalidClaimBody("gitlink tree path must be UTF-8"))?;
-        paths.insert(path.to_owned());
+        )?;
+        paths.insert(path.into_owned());
     }
     Ok(paths)
 }
