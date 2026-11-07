@@ -2420,6 +2420,34 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_skill_hubs_clawhub_search(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skill_hubs.clawhub.search")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.skill_hubs.clawhub.search", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_skill_hubs_clawhub_import(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skill_hubs.clawhub.import")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.skill_hubs.clawhub.import", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_skill_hubs_publishers_admit(
         &self,
         py: Python<'_>,
@@ -4174,6 +4202,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.files.sources.files")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.files.sources.files", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_files_sources_exclude(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.files.sources.exclude")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.files.sources.exclude", input))
             .map_err(raise)?;
         encode(&output)
     }
