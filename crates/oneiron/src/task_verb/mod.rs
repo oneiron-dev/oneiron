@@ -6,6 +6,7 @@
 mod ask_band;
 mod ask_effect;
 mod ask_facade;
+mod ask_forward;
 mod ask_guest;
 mod ask_limits;
 mod ask_option_link;
@@ -435,6 +436,13 @@ mod ask_outcome_tests;
 mod ask_tests;
 
 pub(crate) use ask_facade::settle_waiting_asks;
+pub use ask_forward::{
+    AskForwardAct, AskForwardHolderProof, AskForwardReceipt, ask_forward_challenge,
+};
+pub(crate) use ask_forward::{
+    AskForwardArrivals, drain_ask_forward_intents, retire_holder_ask_forward_rows_in_txn,
+    settle_held_ask_forward_rows_in_txn,
+};
 pub(crate) use ask_guest::{ask_guest_grant_in, ask_member_task_in};
 pub(crate) use ask_option_link::deliver_ask_change_in_txn;
 pub(crate) use ask_option_link::{

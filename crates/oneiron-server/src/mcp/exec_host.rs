@@ -6,7 +6,7 @@ use crate::ai_host::live_lease::{LeaseLine, LiveLeaseState};
 use crate::ai_host::payer_funding::{PayerFault, scope_funding};
 use oneiron::agent_def::AgentModel;
 use oneiron::agent_dispatch::{AgentDispatcher, SpawnPlanReceipt, SpendScopeId};
-use oneiron::code_run::{CompactionHostBinding, GatedActorWrite};
+use oneiron::code_run::{CompactionHostBinding, GatedActorWrite, ScopedChildProfile};
 use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorOutcome, EngineNativeExecutor, JsCodeModeRuntime,
     RunCompaction, SelfBriefPort,
@@ -379,6 +379,16 @@ pub trait McpCodeModeProvider: Send + Sync {
     ) -> Option<RunCompaction> {
         None
     }
+    /// A host-profiled child's compaction, on its original generation and
+    /// parent guard. An absent factory keeps the existing raw window.
+    fn profiled_compaction(
+        &self,
+        _host: CompactionHostBinding,
+        _credential: &str,
+        _profile: &ScopedChildProfile,
+    ) -> Option<RunCompaction> {
+        None
+    }
     /// The host's typed seat pick, above the raw backend; absent for legacy vaults.
     fn seat_decisions(&self) -> Option<&SeatDecisions> {
         None
@@ -507,6 +517,11 @@ pub type PlannedMeter = Arc<
 /// connection) and the spend scope its calls spend under, if any.
 pub type RunCompactionSeat =
     Arc<dyn Fn(CompactionHostBinding, &str, Option<&SpendScopeId>) -> RunCompaction + Send + Sync>;
+
+/// Builds a scoped child's compaction on the generation its host supplied.
+pub type RunProfiledCompactionSeat = Arc<
+    dyn Fn(CompactionHostBinding, &str, &ScopedChildProfile) -> Option<RunCompaction> + Send + Sync,
+>;
 
 /// Copies the ordinary backend with one run's actual frozen model list.
 pub(crate) type ModelListBackend =

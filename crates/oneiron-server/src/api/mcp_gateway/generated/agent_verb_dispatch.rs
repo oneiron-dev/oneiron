@@ -844,6 +844,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.code.oplog" => a.spec.clone().ok_or_else(invalid),
         "execute_code" => a.spec.clone().ok_or_else(invalid),
         "vault.code.model_heal_count" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.corrections" => a.spec.clone().ok_or_else(invalid),
         "vault.code.type_diagnostics" => a.spec.clone().ok_or_else(invalid),
         "vault.code.waits.resolve" => a.spec.clone().ok_or_else(invalid),
         "vault.code.waits.receipt" => a.spec.clone().ok_or_else(invalid),
@@ -990,6 +991,9 @@ pub(crate) fn mcp_agent_verb_input(
         "ask" => a.spec.clone().ok_or_else(invalid),
         "wait" => a.spec.clone().ok_or_else(invalid),
         "tasks.answer" => a.spec.clone().ok_or_else(invalid),
+        "tasks.answer.forward.challenge" => a.spec.clone().ok_or_else(invalid),
+        "tasks.answer.forward" => a.spec.clone().ok_or_else(invalid),
+        "tasks.answer.forward.status" => a.spec.clone().ok_or_else(invalid),
         "tasks.outcomes" => a.spec.clone().ok_or_else(invalid),
         "vault.rooms.list" => Ok(Value::Object(serde_json::Map::new())),
         "vault.rooms.messages" => {
@@ -3681,6 +3685,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.code.model_heal_count" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.code.corrections" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.code.type_diagnostics" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -4113,6 +4120,15 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "tasks.answer" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "tasks.answer.forward.challenge" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "tasks.answer.forward" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "tasks.answer.forward.status" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "tasks.outcomes" => {
@@ -6948,6 +6964,7 @@ async fn execute_agent_verb_row_on(
         "vault.code.oplog" => boxed_mcp_verb_row_vault_code_oplog(row).await,
         "execute_code" => boxed_mcp_verb_row_execute_code(row).await,
         "vault.code.model_heal_count" => boxed_mcp_verb_row_vault_code_model_heal_count(row).await,
+        "vault.code.corrections" => boxed_mcp_verb_row_vault_code_corrections(row).await,
         "vault.code.type_diagnostics" => boxed_mcp_verb_row_vault_code_type_diagnostics(row).await,
         "vault.code.waits.resolve" => boxed_mcp_verb_row_vault_code_waits_resolve(row).await,
         "vault.code.waits.receipt" => boxed_mcp_verb_row_vault_code_waits_receipt(row).await,
@@ -7196,6 +7213,11 @@ async fn execute_agent_verb_row_on(
         "ask" => boxed_mcp_verb_row_ask(row).await,
         "wait" => boxed_mcp_verb_row_wait(row).await,
         "tasks.answer" => boxed_mcp_verb_row_tasks_answer(row).await,
+        "tasks.answer.forward.challenge" => {
+            boxed_mcp_verb_row_tasks_answer_forward_challenge(row).await
+        }
+        "tasks.answer.forward" => boxed_mcp_verb_row_tasks_answer_forward(row).await,
+        "tasks.answer.forward.status" => boxed_mcp_verb_row_tasks_answer_forward_status(row).await,
         "tasks.outcomes" => boxed_mcp_verb_row_tasks_outcomes(row).await,
         "vault.rooms.list" => boxed_mcp_verb_row_vault_rooms_list(row).await,
         "vault.rooms.messages" => boxed_mcp_verb_row_vault_rooms_messages(row).await,
@@ -43118,6 +43140,57 @@ async fn mcp_verb_row_vault_code_model_heal_count(row: McpVerbRow<'_>) -> McpVer
     mcp_agent_verb_output(output, source)
 }
 #[inline(never)]
+fn boxed_mcp_verb_row_vault_code_corrections<'a>(row: McpVerbRow<'a>) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_code_corrections(row))
+}
+async fn mcp_verb_row_vault_code_corrections(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("vault.code.corrections", &input)
+        .map_err(mcp_facade_error)?;
+    let input: oneiron::memory::code_run_doors::CodeRunCorrectionsRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_code_corrections(
+        server, auth, input,
+    ))
+    .await;
+    // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+    served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+        listed,
+    ));
+    let output = output.map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
 fn boxed_mcp_verb_row_vault_code_type_diagnostics<'a>(row: McpVerbRow<'a>) -> McpVerbRowFuture<'a> {
     Box::pin(mcp_verb_row_vault_code_type_diagnostics(row))
 }
@@ -50730,6 +50803,134 @@ async fn mcp_verb_row_tasks_answer(row: McpVerbRow<'_>) -> McpVerbRowResult {
         serde_json::from_value(input).map_err(|_| invalid())?;
     served.extend([input.handle.group_ref]);
     let output = oneiron::task_verb::sdk::tasks_answer(&memory, input).map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_tasks_answer_forward_challenge<'a>(
+    row: McpVerbRow<'a>,
+) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_tasks_answer_forward_challenge(row))
+}
+async fn mcp_verb_row_tasks_answer_forward_challenge(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let input: oneiron::task_verb::sdk::TaskAnswerForwardChallengeRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    served.extend([input.handle.group_ref]);
+    let output = oneiron::task_verb::sdk::tasks_answer_forward_challenge(&memory, input)
+        .map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_tasks_answer_forward<'a>(row: McpVerbRow<'a>) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_tasks_answer_forward(row))
+}
+async fn mcp_verb_row_tasks_answer_forward(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let input: oneiron::task_verb::sdk::TaskAnswerForwardRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    served.extend([input.handle.group_ref]);
+    let output =
+        oneiron::task_verb::sdk::tasks_answer_forward(&memory, input).map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_tasks_answer_forward_status<'a>(row: McpVerbRow<'a>) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_tasks_answer_forward_status(row))
+}
+async fn mcp_verb_row_tasks_answer_forward_status(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let input: oneiron::task_verb::sdk::TaskAnswerForwardStatusRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    served.extend([input.intent_ref]);
+    let output = oneiron::task_verb::sdk::tasks_answer_forward_status(&memory, input)
+        .map_err(mcp_facade_error)?;
     let source = crate::mcp::McpPageSource::complete(1);
     mcp_agent_verb_output(output, source)
 }

@@ -9,10 +9,17 @@
 //! ([`HostSelfDispatcher::read_world_seal`]). Instrumentation never refuses or
 //! fails the call it watches. A search also freezes each served row's Scope
 //! at its bridge position for a later step-capsule projection (FIX 7162).
+//! A descriptor of one of the run's results that another run reads freezes
+//! the ledger's origins under the same clean epoch, and a read of another
+//! run's result notes the origins its descriptor froze, or, with none,
+//! marks the ledger unknown (FIX 7084). A delivered wait's reply notes the
+//! origins its settler froze with it, at the position of the call parked on
+//! the wait, or, with none, marks the ledger unknown (FIX 7083).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
+use crate::code_run::ResultOrigins;
 use crate::code_run::storage::{ReadWorldSeal, ReadWorldUnknown};
 use crate::code_run::types::{AgentVerbAnswer, SelfDispatchOutcome};
 use crate::federation::Scope;
@@ -179,6 +186,64 @@ impl HostSelfDispatcher<'_> {
         Some(ReadWorldSeal { epoch })
     }
 
+    /// The origins of `run`'s results as its ledger stands now, frozen for a
+    /// descriptor another run reads one of them by (FIX 7084): read under the
+    /// entry's seal, while every ledger write of the entry landed. `None`
+    /// when the ledger is not complete, or cannot be read.
+    pub(crate) fn frozen_result_origins(&self, run: EntityId) -> Option<ResultOrigins> {
+        let seal = self.read_world_seal(Some(run))?;
+        self.storage.result_origins(run, seal).ok().flatten()
+    }
+
+    /// Notes what a read of another run's result serves `run` at bridge
+    /// position `at` (FIX 7084): the worlds and row scopes its descriptor
+    /// froze, and a proof of no scope for each row it froze as conflicted,
+    /// so no other proof gives that row a scope. A result whose origins are
+    /// unknown marks the ledger `RetainedResult`. The source run's ledger as
+    /// it stands now is never read here.
+    pub(crate) fn read_worlds_retained(
+        &self,
+        run: EntityId,
+        at: u64,
+        origins: Option<&ResultOrigins>,
+    ) {
+        self.note_served_origins(run, at, origins, ReadWorldUnknown::RetainedResult);
+    }
+
+    /// Notes what a delivered wait's reply serves `run` at bridge position
+    /// `at`, the position of the call parked on the wait (FIX 7083): the
+    /// worlds and row scopes its settler froze with it, and a proof of no
+    /// scope for each row they hold as conflicted. A reply whose origins are
+    /// unknown marks the ledger `WaitReply`. A ledger write that fails marks
+    /// it unknown and never fails the resume.
+    pub(crate) fn read_worlds_wait_reply(
+        &self,
+        run: EntityId,
+        at: u64,
+        origins: Option<&ResultOrigins>,
+    ) {
+        self.note_served_origins(run, at, origins, ReadWorldUnknown::WaitReply);
+    }
+
+    /// Notes `origins` as served to `run` at bridge position `at`: their
+    /// worlds, then their row scopes and conflicted rows once the worlds
+    /// landed. Unknown origins mark the ledger for `unknown`.
+    fn note_served_origins(
+        &self,
+        run: EntityId,
+        at: u64,
+        origins: Option<&ResultOrigins>,
+        unknown: ReadWorldUnknown,
+    ) {
+        let Some(origins) = origins else {
+            self.read_worlds_unknown(run, unknown);
+            return;
+        };
+        if self.read_worlds_noted(run, at, &origins.worlds) {
+            self.read_rows_noted(run, at, &origins.row_scopes, &origins.conflicted_rows);
+        }
+    }
+
     /// Notes the worlds of `hits`, the hits a canonical executor run's search
     /// serves at `site`, in the run's ledger: each as `scored` proves it in
     /// the read that scored it and, for a keyed search, as `admitted` proves
@@ -224,7 +289,7 @@ impl HostSelfDispatcher<'_> {
             }
         }
         let worlds_noted = self.read_worlds_noted(site.run_id, site.seq, &worlds);
-        let rows_noted = self.read_rows_noted(site.run_id, site.seq, &rows);
+        let rows_noted = self.read_rows_noted(site.run_id, site.seq, &rows, &BTreeSet::new());
         if worlds_noted && rows_noted {
             let mut live = self.read_worlds.get();
             live.covered = true;
@@ -284,7 +349,7 @@ impl HostSelfDispatcher<'_> {
             }
         }
         let worlds_noted = self.read_worlds_noted(site.run_id, site.seq, &worlds);
-        let rows_noted = self.read_rows_noted(site.run_id, site.seq, &rows);
+        let rows_noted = self.read_rows_noted(site.run_id, site.seq, &rows, &BTreeSet::new());
         if worlds_noted && rows_noted {
             let mut live = self.read_worlds.get();
             live.covered = true;
@@ -310,14 +375,24 @@ impl HostSelfDispatcher<'_> {
     }
 
     /// Notes `rows` and their scopes as served to `run` at bridge position
-    /// `at`: `true` once the ledger holds them. A write that fails marks the
+    /// `at`, and each row of `conflicted` with a proof of no scope (FIX
+    /// 7084): `true` once the ledger holds them. A write that fails marks the
     /// ledger unknown and leaves the epoch open.
-    fn read_rows_noted(&self, run: EntityId, at: u64, rows: &BTreeMap<EntityId, Scope>) -> bool {
-        if rows.is_empty() {
+    fn read_rows_noted(
+        &self,
+        run: EntityId,
+        at: u64,
+        rows: &BTreeMap<EntityId, Scope>,
+        conflicted: &BTreeSet<EntityId>,
+    ) -> bool {
+        if rows.is_empty() && conflicted.is_empty() {
             return true;
         }
         let mut live = self.live_for(run);
-        let noted = self.storage.note_read_rows(run, at, rows).is_ok();
+        let noted = self
+            .storage
+            .note_read_rows(run, at, rows, conflicted)
+            .is_ok();
         live.clean &= noted;
         self.read_worlds.set(live);
         if !noted {

@@ -1559,6 +1559,18 @@ participates, the vault keeps a standing grant on that channel for the sender, s
 you; turning participation off revokes it. A record leaves the vault only once the publisher took
 it: a failed send keeps it for the next one.
 
+`GET /v1/owner/status` includes `failure_signals`: the configured `destination_host`
+(host only, never its URL path or credentials), `exports_enabled`, stored `waiting` quantities
+(`count_rows`, `signal_count`, `code_fix_records`), and an optional `last_batch_receipt`
+(`occurred_at`, `outcome`). Waiting quantities include a carried batch's shares once, not twice.
+They count stored work, even with exports off, not only work currently eligible to leave.
+An ambiguous send settles its counts but leaves its code-fix records queued for deduplicated retry.
+The receipt is the newest durable material result in native receipt order (timestamp descending,
+then kind and id ascending); equal timestamps do not establish sub-second order. Repeated material
+results retain their first observation. It is historical evidence, not current connectivity, and
+idle passes or failures before receipt persistence do not replace it. Reading status sends,
+settles, purges and approves nothing, and reveals no batch body or receipt free-text fields.
+
 The counts come from the Coach's detectors. Each diagnostic they raise counts once, ever: a missed
 recall is `memory_miss`, a consolidation error `task_failure`, a consent storm or predicate drift
 `other` with its detector named. Your own refusal of a single consent ask is never counted. A
