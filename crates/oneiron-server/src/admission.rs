@@ -125,6 +125,15 @@ impl<K: Eq + Hash + Clone + Send + 'static> Admission<K> {
         self.line.admit_background_blocking_for(wait)
     }
 
+    /// The same background line and wait, also ending when `cancel` completes.
+    pub(crate) fn admit_background_blocking_for_cancel(
+        &self,
+        wait: Duration,
+        cancel: impl Future<Output = ()>,
+    ) -> Result<Permit, WaitTimedOut> {
+        self.line.admit_background_blocking_for_cancel(wait, cancel)
+    }
+
     /// A free permit for the host's own work, or `None` with nothing put in
     /// line: the work waits for a later look rather than for a turn.
     pub(crate) fn try_admit_background(&self) -> Option<Permit> {
