@@ -115,6 +115,7 @@ pub(super) struct LaunchAdmission {
     pub plan: LaunchPlan,
     pub statement: LaunchStatement,
     reserve: LaunchReserve,
+    ceiling_units: Option<u64>,
 }
 
 enum LaunchReserve {
@@ -141,7 +142,7 @@ impl LaunchAdmission {
         agent: Option<EntityId>,
         now: u64,
     ) -> Result<Option<SpendScope>> {
-        Ok(match &self.reserve {
+        let mut scope = match &self.reserve {
             LaunchReserve::Unmetered => None,
             LaunchReserve::Pinned { unit, cap_units } => {
                 Some(dispatcher.open_pinned_scope_in_txn(
@@ -156,7 +157,14 @@ impl LaunchAdmission {
             LaunchReserve::Child { parent, ask } => {
                 Some(dispatcher.reserve_agent_in_txn(txn, parent, &attempt, agent, *ask, now)?)
             }
-        })
+        };
+        if let Some(scope) = &mut scope
+            && let Some(ceiling) = self.ceiling_units
+        {
+            scope.ceiling_units = Some(ceiling);
+            SCOPE.put(&dispatcher.vault.store, txn, &scope.scope.0, scope)?;
+        }
+        Ok(scope)
     }
 }
 
@@ -195,6 +203,7 @@ impl AgentDispatcher<'_> {
                 input.parent_attempt,
                 spawn.spend.as_ref(),
                 budget,
+                spawn.token_ceiling,
                 &input.target,
                 spawn.plan.as_ref().map(|plan| &plan.plan.model),
                 input.now,
@@ -215,6 +224,7 @@ impl AgentDispatcher<'_> {
         parent: Option<AttemptId>,
         spend: Option<&SpawnSpend>,
         budget: Option<u64>,
+        token_ceiling: Option<u64>,
         target: &AgentDispatchTarget,
         model: Option<&crate::llm::ModelId>,
         now: u64,
@@ -224,7 +234,7 @@ impl AgentDispatcher<'_> {
             .as_ref()
             .map_or_else(LeaseUnit::tokens, |scope| scope.unit.clone());
         let nodes = self.launch_nodes_in_txn(txn, target, &unit, model)?;
-        self.admit_nodes_in_txn(txn, tree, budget, nodes, unit, now)
+        self.admit_nodes_in_txn(txn, tree, budget, token_ceiling, nodes, unit, now)
     }
 
     /// The scope a caller spends under: its parent attempt's own, open or
@@ -303,7 +313,7 @@ impl AgentDispatcher<'_> {
                 model,
             )?,
         };
-        self.admit_nodes_in_txn(txn, tree, None, vec![node], unit, now)
+        self.admit_nodes_in_txn(txn, tree, None, None, vec![node], unit, now)
     }
 
     pub(super) fn launch_nodes_in_txn(
@@ -344,13 +354,18 @@ impl AgentDispatcher<'_> {
         txn: &heed::RoTxn<'_>,
         tree: Option<SpendScope>,
         budget: Option<u64>,
+        token_ceiling: Option<u64>,
         nodes: Vec<LaunchNode>,
         unit: LeaseUnit,
         now: u64,
     ) -> Result<LaunchAdmission> {
         let expected = ExpectedSpend::sum(nodes.iter().map(|node| node.expected));
         let agent_count = u64::try_from(nodes.len()).unwrap_or(u64::MAX);
-        let terms = self.spend_terms_in_txn(txn, tree, budget, expected.units, &unit)?;
+        let ceiling_units = token_ceiling
+            .filter(|_| unit == LeaseUnit::tokens())
+            .map(|ceiling| budget.map_or(ceiling, |budget| ceiling.min(budget)));
+        let terms =
+            self.spend_terms_in_txn(txn, tree, budget, ceiling_units, expected.units, &unit)?;
         let (over_available, more_would_buy) = terms.shortfall(
             expected,
             &unit,
@@ -387,6 +402,7 @@ impl AgentDispatcher<'_> {
             },
             statement,
             reserve,
+            ceiling_units,
         })
     }
 
@@ -397,11 +413,25 @@ impl AgentDispatcher<'_> {
         txn: &heed::RoTxn<'_>,
         tree: Option<SpendScope>,
         budget: Option<u64>,
+        token_ceiling: Option<u64>,
         expected_units: u64,
         unit: &LeaseUnit,
     ) -> Result<SpendTerms> {
         if budget == Some(0) {
             return Err(invalid("a spawn budget is more than zero units"));
+        }
+        if let Some(ceiling) = token_ceiling.filter(|_| *unit == LeaseUnit::tokens()) {
+            if ceiling == 0 {
+                return Err(invalid("a task reservation is more than zero tokens"));
+            }
+            return self.capped_spend_terms_in_txn(
+                txn,
+                tree,
+                budget,
+                ceiling,
+                expected_units,
+                unit,
+            );
         }
         Ok(match (tree, budget) {
             (None, None) => SpendTerms {
@@ -431,6 +461,7 @@ impl AgentDispatcher<'_> {
             // drawing through each closed hard scope above it.
             (Some(tree), budget) => {
                 let (available, binding) = self.reservable_in_txn(txn, &tree.scope)?;
+                let binding_limit = binding.limit_units();
                 let parent = tree.scope;
                 match budget {
                     Some(cap_units) => SpendTerms {
@@ -453,7 +484,7 @@ impl AgentDispatcher<'_> {
                         cap: Some(SpendCapView {
                             scope: Some(binding.scope),
                             unit: unit.clone(),
-                            cap_units: binding.cap_units,
+                            cap_units: binding_limit,
                             available_units: available,
                             hard: false,
                         }),
@@ -467,6 +498,72 @@ impl AgentDispatcher<'_> {
                     },
                 }
             }
+        })
+    }
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the reservation narrows the existing launch terms"
+    )]
+    fn capped_spend_terms_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        tree: Option<SpendScope>,
+        budget: Option<u64>,
+        ceiling: u64,
+        expected_units: u64,
+        unit: &LeaseUnit,
+    ) -> Result<SpendTerms> {
+        let ceiling = budget.map_or(ceiling, |budget| ceiling.min(budget));
+        let Some(tree) = tree else {
+            return Ok(SpendTerms {
+                cap: Some(SpendCapView {
+                    scope: None,
+                    unit: unit.clone(),
+                    cap_units: ceiling,
+                    available_units: ceiling,
+                    hard: true,
+                }),
+                reserve: LaunchReserve::Pinned {
+                    unit: unit.clone(),
+                    cap_units: ceiling,
+                },
+                reserved_units: ceiling,
+                parent_scope: None,
+                spendable: Some(ceiling),
+            });
+        };
+        let (available, binding) = self.reservable_in_txn(txn, &tree.scope)?;
+        let room = available.min(ceiling);
+        let (ask, reserved_units, hard) = if budget.is_some() {
+            (ChildSpend::Carve { cap_units: ceiling }, ceiling, true)
+        } else {
+            (
+                ChildSpend::Hold {
+                    expected_units: expected_units.min(ceiling),
+                },
+                expected_units.min(room),
+                false,
+            )
+        };
+        Ok(SpendTerms {
+            cap: Some(SpendCapView {
+                scope: Some(binding.scope.clone()),
+                unit: unit.clone(),
+                cap_units: if hard {
+                    ceiling
+                } else {
+                    ceiling.min(binding.limit_units())
+                },
+                available_units: room,
+                hard,
+            }),
+            reserve: LaunchReserve::Child {
+                parent: tree.scope.clone(),
+                ask,
+            },
+            reserved_units,
+            parent_scope: Some(tree.scope),
+            spendable: Some(room),
         })
     }
 }

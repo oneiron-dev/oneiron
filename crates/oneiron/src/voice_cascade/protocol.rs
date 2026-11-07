@@ -10,7 +10,7 @@ use crate::policy_model::PolicyEnforcementAction;
 use crate::store::GateSystemNoticeRecord;
 
 use super::retrieval::invalid;
-use super::{SafeguardRequest, StopReason};
+use super::{HeardPlayback, SafeguardRequest, StopReason};
 
 /// A session-local generation token. Pair with the session ref across processes.
 /// Only the session mints tokens; adapters echo the token of the request they got.
@@ -234,6 +234,13 @@ pub enum ControlEvent {
         generation: GenerationEpoch,
         memories: TurnMemories,
     },
+    /// What the person heard of a stopped or drained generation (FIX
+    /// 4899), apart from the text it generated: for the owner's client and
+    /// the call's journal; never said.
+    Heard {
+        generation: GenerationEpoch,
+        playback: HeardPlayback,
+    },
 }
 
 /// What one turn's memories read found and what its audience heard: the
@@ -272,6 +279,15 @@ pub trait Brain {
         notice: &GateSystemNoticeRecord,
     ) -> Result<()> {
         let _ = (generation, notice);
+        Ok(())
+    }
+
+    /// What the person heard of `generation`'s answer (FIX 4899), kept
+    /// apart from the text it generated: a brain that keeps the call's
+    /// history notes it there, so its next turn knows what the person
+    /// heard. A turn already answering is not interrupted for it.
+    fn heard(&mut self, generation: GenerationEpoch, playback: &HeardPlayback) -> Result<()> {
+        let _ = (generation, playback);
         Ok(())
     }
 }
