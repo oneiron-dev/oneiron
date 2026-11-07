@@ -3709,15 +3709,19 @@ class Oneiron:
         @property
         def threads(self) -> "Oneiron._VaultMailThreadsVerbs": ...
         @property
+        def reply(self) -> "Oneiron._VaultMailReplyVerbs": ...
+        @property
         def compliance(self) -> "Oneiron._VaultMailComplianceVerbs": ...
         def inbox(self, spec: Facade.MailInboxRequest) -> Facade.MailInboxPage:
             """The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence."""
+        @property
+        def attachments(self) -> "Oneiron._VaultMailAttachmentsVerbs": ...
     class _VaultMailPackVerbs:
         def install(self, spec: Facade.EmptyRequest | None = None) -> Facade.PackPutReceipt:
-            """The vault's owner installs the engine's own Mail & Calendar pack folder; it connects no source and grants nothing."""
+            """The vault's owner installs the engine's own Mail & Calendar pack folder, on a served vault under the owner's proof; it connects no source and grants nothing."""
     class _VaultMailSourcesVerbs:
         def connect(self, spec: Facade.MailSourceConnectRequest) -> Facade.MailSourceConnectReceipt:
-            """Connects a mailbox, group address or calendar: a personal mailbox or calendar is the caller's own and reads to them alone; an Owner or Admin connects a group address for the members it names."""
+            """Connects a mailbox, group address or calendar: a personal mailbox or calendar reads to its person alone, connected by them or by an Owner or Admin for them; an Owner or Admin connects a group address for its members."""
         def list(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.MailSourceView]:
             """The mail and calendar sources the caller sees: its own, the group addresses it reads or manages, and every calendar as busy/free. Another person's mailbox is neither listed nor counted."""
         @property
@@ -3728,6 +3732,10 @@ class Oneiron:
             """Every change to a source's readers, oldest first, to its readers and, for a group address, its Owner or Admins."""
         def sync_status(self, spec: Facade.MailSourceRef) -> Facade.MailSyncStatusView:
             """Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers."""
+        def import_mbox(self, spec: Facade.MailMboxImportRequest) -> Facade.MailMboxImportReport:
+            """The vault's owner imports the next messages of an mbox file or a Google Takeout .zip on this device into a Google or IMAP mailbox, each bound to its thread's audience; a call keeps its place."""
+        def sync(self, spec: Facade.MailSourceSyncRequest) -> Facade.MailSyncReport:
+            """The vault's owner runs one bounded import step of a mail or calendar source, on this device or a served vault: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner."""
     class _VaultMailSourcesSettingsVerbs:
         def set(self, spec: Facade.MailSourceSettingsRequest) -> Facade.MailSourceView:
             """Sets what a source keeps (mail copy, provider delete rule), a calendar's detail sharing and its sync status: by its own person, or an Owner or Admin for a group address."""
@@ -3741,6 +3749,15 @@ class Oneiron:
             """Withdraws a mail thread's share with a person: by a reader of its source, the person who shared it, or the person leaving."""
         def read(self, spec: Facade.MailThreadRequest) -> Facade.MailThreadView:
             """One mail thread's messages, oldest first, to a reader of its source or someone it was shared with."""
+    class _VaultMailReplyVerbs:
+        def draft(self, spec: Facade.MailReplyDraftRequest) -> Facade.MailReplyDraftView:
+            """Drafts a reply to a mail thread the caller reads, in plain text with optional simple HTML, to its sender (reply_all adds its To and Cc; cc names more), or its next revision under the same key. Nothing sends until the mailbox owner approves."""
+        def drafts(self, spec: Facade.MailReplyDraftsRequest) -> Facade.MailReplyDraftPage:
+            """The drafted replies on the mail threads the caller reads, newest first, each with its words, every To and Cc recipient, frozen plan and state."""
+        def discard(self, spec: Facade.MailReplyDraftRef) -> Facade.MailReplyDraftView:
+            """Discards a drafted reply that was not approved; its drafter or the mailbox owner may. It never sends."""
+        def approve(self, spec: Facade.MailReplyApproveRequest) -> Facade.MailReplyDraftView:
+            """The mailbox owner approves one reviewed revision of a drafted reply from their own mailbox, and it sends threaded on the provider; approving again replays the ledger, never sending twice."""
     class _VaultMailComplianceVerbs:
         def setting(self, spec: Facade.EmptyRequest | None = None) -> Facade.MailComplianceSettingView:
             """Whether org compliance search across mailboxes is on; off by default."""
@@ -3750,6 +3767,9 @@ class Oneiron:
             """The compliance log, oldest first: each change to the setting and each search made under it. The Owner and Admins read it."""
         def search(self, spec: Facade.MailComplianceSearchRequest) -> Facade.MailComplianceSearchReply:
             """Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers."""
+    class _VaultMailAttachmentsVerbs:
+        def open(self, spec: Facade.MailAttachmentOpenRequest) -> Facade.MailAttachmentView:
+            """A reader of a mail thread opens one attachment of its message: its fetch waits for the source's next import step, then its bytes are in an artifact that reads only to the thread's readers."""
     class _FeedbackVerbs:
         def preview(self, spec: Facade.FeedbackPreviewRequest) -> Facade.FeedbackSubjectPreview:
             """The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval."""

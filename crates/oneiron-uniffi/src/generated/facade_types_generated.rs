@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1289 facade rows, 4668 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1241.
+// UniFFI census: 1296 facade rows, 4683 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1248.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -71915,6 +71915,12 @@ pub struct MailSourceConnectRequest {
     #[serde(rename = "members", default, skip_serializing_if = "Option::is_none")]
     pub members: Option<Vec<String>>,
     #[serde(
+        rename = "for_person",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub for_person: Option<String>,
+    #[serde(
         rename = "channel_identity_ref",
         default,
         skip_serializing_if = "Option::is_none"
@@ -71959,6 +71965,12 @@ pub struct MailSourceView {
     pub kind: MailSourceKind,
     #[serde(rename = "address", default, skip_serializing_if = "Option::is_none")]
     pub address: Option<String>,
+    #[serde(
+        rename = "own_addresses",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub own_addresses: Option<Vec<String>>,
     #[serde(rename = "owner_ref", default, skip_serializing_if = "Option::is_none")]
     pub owner_ref: Option<String>,
     #[serde(rename = "reads")]
@@ -72011,6 +72023,12 @@ pub struct MailSourceSettingsRequest {
     pub calendar_details: Option<CalendarDetailSetting>,
     #[serde(rename = "status", default, skip_serializing_if = "Option::is_none")]
     pub status: Option<MailSourceStatus>,
+    #[serde(
+        rename = "own_addresses",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub own_addresses: Option<Vec<String>>,
 }
 
 /// `oneiron::mail_pack::doors::MailSourceMembersRequest`.
@@ -72092,6 +72110,125 @@ pub struct MailThreadShareReceipt {
     pub changed: bool,
     #[serde(rename = "shared_with")]
     pub shared_with: Vec<String>,
+}
+
+/// `oneiron::mail_pack::reply::MailReplyDraftRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MailReplyDraftRequest {
+    #[serde(rename = "thread_ref")]
+    pub thread_ref: String,
+    #[serde(
+        rename = "parent_turn_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub parent_turn_ref: Option<String>,
+    #[serde(rename = "body")]
+    pub body: String,
+    #[serde(rename = "body_html", default, skip_serializing_if = "Option::is_none")]
+    pub body_html: Option<String>,
+    #[serde(rename = "reply_all", default, skip_serializing_if = "Option::is_none")]
+    pub reply_all: Option<bool>,
+    #[serde(rename = "cc", default, skip_serializing_if = "Option::is_none")]
+    pub cc: Option<Vec<String>>,
+    #[serde(rename = "request_key")]
+    pub request_key: String,
+}
+
+/// `oneiron::mail_pack::reply::MailReplyDraftState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum MailReplyDraftState {
+    #[serde(rename = "proposed")]
+    Proposed,
+    #[serde(rename = "approved")]
+    Approved,
+    #[serde(rename = "sent")]
+    Sent,
+    #[serde(rename = "unsettled")]
+    Unsettled,
+    #[serde(rename = "discarded")]
+    Discarded,
+}
+
+/// `oneiron::mail_pack::reply::MailReplyDraftView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MailReplyDraftView {
+    #[serde(rename = "draft_ref")]
+    pub draft_ref: String,
+    #[serde(rename = "revision")]
+    pub revision: u64,
+    #[serde(rename = "source_ref")]
+    pub source_ref: String,
+    #[serde(rename = "thread_ref")]
+    pub thread_ref: String,
+    #[serde(rename = "parent_turn_ref")]
+    pub parent_turn_ref: String,
+    #[serde(rename = "to")]
+    pub to: Vec<String>,
+    #[serde(rename = "cc", default, skip_serializing_if = "Option::is_none")]
+    pub cc: Option<Vec<String>>,
+    #[serde(rename = "subject")]
+    pub subject: String,
+    #[serde(rename = "body")]
+    pub body: String,
+    #[serde(rename = "body_html", default, skip_serializing_if = "Option::is_none")]
+    pub body_html: Option<String>,
+    #[serde(rename = "plan_ref")]
+    pub plan_ref: String,
+    #[serde(rename = "state")]
+    pub state: MailReplyDraftState,
+    #[serde(rename = "outcome", default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<String>,
+    #[serde(rename = "drafted_at")]
+    pub drafted_at: u64,
+    #[serde(rename = "updated_at")]
+    pub updated_at: u64,
+}
+
+/// `oneiron::mail_pack::reply::MailReplyDraftsRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MailReplyDraftsRequest {
+    #[serde(
+        rename = "thread_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub thread_ref: Option<String>,
+    #[serde(
+        rename = "include_settled",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub include_settled: Option<bool>,
+}
+
+/// `oneiron::mail_pack::reply::MailReplyDraftPage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MailReplyDraftPage {
+    #[serde(rename = "drafts")]
+    pub drafts: Vec<MailReplyDraftView>,
+}
+
+/// `oneiron::mail_pack::reply::MailReplyDraftRef`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MailReplyDraftRef {
+    #[serde(rename = "draft_ref")]
+    pub draft_ref: String,
+}
+
+/// `oneiron::mail_pack::reply::MailReplyApproveRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MailReplyApproveRequest {
+    #[serde(rename = "draft_ref")]
+    pub draft_ref: String,
+    #[serde(rename = "revision")]
+    pub revision: u64,
 }
 
 /// `oneiron::mail_pack::compliance::MailComplianceSettingView`.
@@ -72191,6 +72328,88 @@ pub struct MailSyncStatusView {
     pub last_error: Option<String>,
 }
 
+/// `oneiron::mail_pack::mbox_import::MailMboxImportRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MailMboxImportRequest {
+    #[serde(rename = "source_ref")]
+    pub source_ref: String,
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "messages", default, skip_serializing_if = "Option::is_none")]
+    pub messages: Option<u32>,
+}
+
+/// `oneiron::mail_pack::mbox_import::MailMboxImportReport`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MailMboxImportReport {
+    #[serde(rename = "source_ref")]
+    pub source_ref: String,
+    #[serde(rename = "landed")]
+    pub landed: u64,
+    #[serde(rename = "same")]
+    pub same: u64,
+    #[serde(rename = "refused")]
+    pub refused: u64,
+    #[serde(
+        rename = "refusal_reasons",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub refusal_reasons: Option<Vec<String>>,
+    #[serde(rename = "skipped")]
+    pub skipped: u64,
+    #[serde(rename = "read_total")]
+    pub read_total: u64,
+    #[serde(rename = "done")]
+    pub done: bool,
+}
+
+/// `oneiron::mail_pack::local_sync::MailSourceSyncRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MailSourceSyncRequest {
+    #[serde(rename = "source_ref")]
+    pub source_ref: String,
+    #[serde(rename = "bodies", default, skip_serializing_if = "Option::is_none")]
+    pub bodies: Option<u32>,
+}
+
+/// `oneiron::mail_pack::importer::MailSyncReport`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MailSyncReport {
+    #[serde(rename = "source_ref")]
+    pub source_ref: String,
+    #[serde(rename = "landed")]
+    pub landed: u64,
+    #[serde(rename = "same")]
+    pub same: u64,
+    #[serde(rename = "refused")]
+    pub refused: u64,
+    #[serde(
+        rename = "refusal_reasons",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub refusal_reasons: Option<Vec<String>>,
+    #[serde(rename = "kept_deleted")]
+    pub kept_deleted: u64,
+    #[serde(rename = "forgotten")]
+    pub forgotten: u64,
+    #[serde(rename = "anchor_expired")]
+    pub anchor_expired: bool,
+    #[serde(rename = "copy_done")]
+    pub copy_done: bool,
+    #[serde(
+        rename = "attachments_stored",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub attachments_stored: Option<u64>,
+}
+
 /// `oneiron::mail_pack::inbox::MailInboxRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -72239,6 +72458,25 @@ pub enum MailPresence {
     },
 }
 
+/// `oneiron::mail_pack::wire::MailAttachmentRef`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct MailAttachmentRef {
+    #[serde(rename = "part_id")]
+    pub part_id: String,
+    #[serde(
+        rename = "provider_attachment_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub provider_attachment_id: Option<String>,
+    #[serde(rename = "filename", default, skip_serializing_if = "Option::is_none")]
+    pub filename: Option<String>,
+    #[serde(rename = "media_type")]
+    pub media_type: String,
+    #[serde(rename = "size_bytes")]
+    pub size_bytes: u64,
+}
+
 /// `oneiron::mail_pack::inbox::MailInboxItem`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -72265,6 +72503,12 @@ pub struct MailInboxItem {
     pub presence: MailPresence,
     #[serde(rename = "shared_with_reader")]
     pub shared_with_reader: bool,
+    #[serde(
+        rename = "attachments",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub attachments: Option<Vec<MailAttachmentRef>>,
 }
 
 /// `oneiron::mail_pack::inbox::MailInboxPage`.
@@ -72305,6 +72549,53 @@ pub struct MailThreadView {
         skip_serializing_if = "Option::is_none"
     )]
     pub shared_with: Option<Vec<String>>,
+}
+
+/// `oneiron::mail_pack::attachments::MailAttachmentOpenRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MailAttachmentOpenRequest {
+    #[serde(rename = "source_ref")]
+    pub source_ref: String,
+    #[serde(rename = "turn_ref")]
+    pub turn_ref: String,
+    #[serde(rename = "part_id")]
+    pub part_id: String,
+}
+
+/// `oneiron::mail_pack::attachments::MailAttachmentState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum MailAttachmentState {
+    #[serde(rename = "waiting")]
+    Waiting,
+    #[serde(rename = "stored")]
+    Stored,
+    #[serde(rename = "failed")]
+    Failed,
+}
+
+/// `oneiron::mail_pack::attachments::MailAttachmentView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MailAttachmentView {
+    #[serde(rename = "state")]
+    pub state: MailAttachmentState,
+    #[serde(rename = "filename", default, skip_serializing_if = "Option::is_none")]
+    pub filename: Option<String>,
+    #[serde(rename = "media_type")]
+    pub media_type: String,
+    #[serde(rename = "size_bytes")]
+    pub size_bytes: u64,
+    #[serde(
+        rename = "artifact_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub artifact_ref: Option<String>,
+    #[serde(rename = "version", default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<u64>,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// `oneiron::mail_pack::compliance::MailComplianceSearchRequest`.

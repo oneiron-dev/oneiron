@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1289 facade rows, 4672 declarations.
-Inputs: 1218 of 1289 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1118 of 1289 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1296 facade rows, 4687 declarations.
+Inputs: 1225 of 1296 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1125 of 1296 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -23200,6 +23200,7 @@ class MailSourceConnectRequest(TypedDict):
     provider_account: str
     custody_ref: str
     members: NotRequired[list[str]]
+    for_person: NotRequired[str | None]
     channel_identity_ref: NotRequired[str | None]
     copy: NotRequired[MailCopySetting | None]
     on_provider_delete: NotRequired[MailProviderDeleteSetting | None]
@@ -23210,6 +23211,7 @@ class MailSourceView(TypedDict):
     provider: MailProvider
     kind: MailSourceKind
     address: NotRequired[str | None]
+    own_addresses: NotRequired[list[str]]
     owner_ref: NotRequired[str | None]
     reads: bool
     members: NotRequired[list[str]]
@@ -23228,6 +23230,7 @@ class MailSourceSettingsRequest(TypedDict):
     on_provider_delete: NotRequired[MailProviderDeleteSetting | None]
     calendar_details: NotRequired[CalendarDetailSetting | None]
     status: NotRequired[MailSourceStatus | None]
+    own_addresses: NotRequired[list[str] | None]
 class MailSourceMembersRequest(TypedDict):
     source_ref: str
     members: list[str]
@@ -23249,6 +23252,41 @@ class MailThreadShareReceipt(TypedDict):
     shared: bool
     changed: bool
     shared_with: list[str]
+class MailReplyDraftRequest(TypedDict):
+    thread_ref: str
+    parent_turn_ref: NotRequired[str | None]
+    body: str
+    body_html: NotRequired[str | None]
+    reply_all: NotRequired[bool]
+    cc: NotRequired[list[str]]
+    request_key: str
+MailReplyDraftState = Literal["proposed", "approved", "sent", "unsettled", "discarded"]
+class MailReplyDraftView(TypedDict):
+    draft_ref: str
+    revision: int
+    source_ref: str
+    thread_ref: str
+    parent_turn_ref: str
+    to: list[str]
+    cc: NotRequired[list[str]]
+    subject: str
+    body: str
+    body_html: NotRequired[str | None]
+    plan_ref: str
+    state: MailReplyDraftState
+    outcome: NotRequired[str | None]
+    drafted_at: int
+    updated_at: int
+class MailReplyDraftsRequest(TypedDict):
+    thread_ref: NotRequired[str | None]
+    include_settled: NotRequired[bool]
+class MailReplyDraftPage(TypedDict):
+    drafts: list[MailReplyDraftView]
+class MailReplyDraftRef(TypedDict):
+    draft_ref: str
+class MailReplyApproveRequest(TypedDict):
+    draft_ref: str
+    revision: int
 class MailComplianceSettingView(TypedDict):
     enabled: bool
     set_by_ref: NotRequired[str | None]
@@ -23275,6 +23313,33 @@ class MailSyncStatusView(TypedDict):
     deleted_at_provider: int
     last_step_at: NotRequired[int | None]
     last_error: NotRequired[str | None]
+class MailMboxImportRequest(TypedDict):
+    source_ref: str
+    path: str
+    messages: NotRequired[int | None]
+class MailMboxImportReport(TypedDict):
+    source_ref: str
+    landed: int
+    same: int
+    refused: int
+    refusal_reasons: NotRequired[list[str]]
+    skipped: int
+    read_total: int
+    done: bool
+class MailSourceSyncRequest(TypedDict):
+    source_ref: str
+    bodies: NotRequired[int | None]
+class MailSyncReport(TypedDict):
+    source_ref: str
+    landed: int
+    same: int
+    refused: int
+    refusal_reasons: NotRequired[list[str]]
+    kept_deleted: int
+    forgotten: int
+    anchor_expired: bool
+    copy_done: bool
+    attachments_stored: NotRequired[int]
 class MailInboxRequest(TypedDict):
     source_ref: NotRequired[str | None]
     include_source_deleted: NotRequired[bool]
@@ -23290,7 +23355,13 @@ class MailPresenceForgottenBody(TypedDict):
 class MailPresenceForgotten(TypedDict):
     forgotten: MailPresenceForgottenBody
 MailPresence = Literal["present"] | MailPresenceSourceDeleted | MailPresenceForgotten
-MailInboxItem = TypedDict("MailInboxItem", {"source_ref": str, "thread_ref": str, "turn_ref": str, "message_ref": str, "from": NotRequired[str | None], "subject": NotRequired[str | None], "received_at": int, "labels": list[str], "stage": MailStage, "presence": MailPresence, "shared_with_reader": bool})
+class MailAttachmentRef(TypedDict):
+    part_id: str
+    provider_attachment_id: NotRequired[str | None]
+    filename: NotRequired[str | None]
+    media_type: str
+    size_bytes: int
+MailInboxItem = TypedDict("MailInboxItem", {"source_ref": str, "thread_ref": str, "turn_ref": str, "message_ref": str, "from": NotRequired[str | None], "subject": NotRequired[str | None], "received_at": int, "labels": list[str], "stage": MailStage, "presence": MailPresence, "shared_with_reader": bool, "attachments": NotRequired[list[MailAttachmentRef]]})
 class MailInboxPage(TypedDict):
     items: list[MailInboxItem]
     next_cursor: NotRequired[str | None]
@@ -23301,6 +23372,19 @@ class MailThreadView(TypedDict):
     source_ref: str
     messages: list[MailInboxItem]
     shared_with: NotRequired[list[str]]
+class MailAttachmentOpenRequest(TypedDict):
+    source_ref: str
+    turn_ref: str
+    part_id: str
+MailAttachmentState = Literal["waiting", "stored", "failed"]
+class MailAttachmentView(TypedDict):
+    state: MailAttachmentState
+    filename: NotRequired[str | None]
+    media_type: str
+    size_bytes: int
+    artifact_ref: NotRequired[str | None]
+    version: NotRequired[int | None]
+    reason: NotRequired[str | None]
 class MailComplianceSearchRequest(TypedDict):
     query: str
     purpose: str

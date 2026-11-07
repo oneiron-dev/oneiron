@@ -3850,6 +3850,18 @@ impl OneironClient {
                 "vault.mail.threads.unshare" => remote_agent_verb_output::<
                     oneiron::mail_pack::MailThreadShareReceipt,
                 >(client, verb, &input),
+                "vault.mail.reply.draft" => remote_agent_verb_output::<
+                    oneiron::mail_pack::MailReplyDraftView,
+                >(client, verb, &input),
+                "vault.mail.reply.drafts" => remote_agent_verb_output::<
+                    oneiron::mail_pack::MailReplyDraftPage,
+                >(client, verb, &input),
+                "vault.mail.reply.discard" => remote_agent_verb_output::<
+                    oneiron::mail_pack::MailReplyDraftView,
+                >(client, verb, &input),
+                "vault.mail.reply.approve" => remote_agent_verb_output::<
+                    oneiron::mail_pack::MailReplyDraftView,
+                >(client, verb, &input),
                 "vault.mail.compliance.setting" => remote_agent_verb_output::<
                     oneiron::mail_pack::MailComplianceSettingView,
                 >(client, verb, &input),
@@ -3862,6 +3874,12 @@ impl OneironClient {
                 "vault.mail.sources.sync_status" => remote_agent_verb_output::<
                     oneiron::mail_pack::MailSyncStatusView,
                 >(client, verb, &input),
+                "vault.mail.sources.import_mbox" => remote_agent_verb_output::<
+                    oneiron::mail_pack::MailMboxImportReport,
+                >(client, verb, &input),
+                "vault.mail.sources.sync" => remote_agent_verb_output::<
+                    oneiron::mail_pack::MailSyncReport,
+                >(client, verb, &input),
                 "vault.mail.inbox" => {
                     remote_agent_verb_output::<oneiron::mail_pack::MailInboxPage>(
                         client, verb, &input,
@@ -3869,6 +3887,9 @@ impl OneironClient {
                 }
                 "vault.mail.threads.read" => remote_agent_verb_output::<
                     oneiron::mail_pack::MailThreadView,
+                >(client, verb, &input),
+                "vault.mail.attachments.open" => remote_agent_verb_output::<
+                    oneiron::mail_pack::MailAttachmentView,
                 >(client, verb, &input),
                 "vault.mail.compliance.search" => remote_agent_verb_output::<
                     oneiron::mail_pack::MailComplianceSearchReply,
@@ -19279,6 +19300,54 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.mail.threads.unshare", value)
     }
+    pub fn vault_mail_reply_draft(
+        &self,
+        input: &oneiron::mail_pack::MailReplyDraftRequest,
+    ) -> Result<oneiron::mail_pack::MailReplyDraftView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.mail.reply.draft", value)
+    }
+    pub fn vault_mail_reply_drafts(
+        &self,
+        input: &oneiron::mail_pack::MailReplyDraftsRequest,
+    ) -> Result<oneiron::mail_pack::MailReplyDraftPage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.mail.reply.drafts", value)
+    }
+    pub fn vault_mail_reply_discard(
+        &self,
+        input: &oneiron::mail_pack::MailReplyDraftRef,
+    ) -> Result<oneiron::mail_pack::MailReplyDraftView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.mail.reply.discard", value)
+    }
+    pub fn vault_mail_reply_approve(
+        &self,
+        input: &oneiron::mail_pack::MailReplyApproveRequest,
+    ) -> Result<oneiron::mail_pack::MailReplyDraftView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.mail.reply.approve", value)
+    }
     pub fn vault_mail_compliance_setting(
         &self,
         input: &oneiron::task_verb::sdk::EmptyRequest,
@@ -19327,6 +19396,30 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.mail.sources.sync_status", value)
     }
+    pub fn vault_mail_sources_import_mbox(
+        &self,
+        input: &oneiron::mail_pack::MailMboxImportRequest,
+    ) -> Result<oneiron::mail_pack::MailMboxImportReport, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.mail.sources.import_mbox", value)
+    }
+    pub fn vault_mail_sources_sync(
+        &self,
+        input: &oneiron::mail_pack::MailSourceSyncRequest,
+    ) -> Result<oneiron::mail_pack::MailSyncReport, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.mail.sources.sync", value)
+    }
     pub fn vault_mail_inbox(
         &self,
         input: &oneiron::mail_pack::MailInboxRequest,
@@ -19350,6 +19443,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.mail.threads.read", value)
+    }
+    pub fn vault_mail_attachments_open(
+        &self,
+        input: &oneiron::mail_pack::MailAttachmentOpenRequest,
+    ) -> Result<oneiron::mail_pack::MailAttachmentView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.mail.attachments.open", value)
     }
     pub fn vault_mail_compliance_search(
         &self,
