@@ -13,7 +13,7 @@ mod deployment_args;
 pub use deployment_args::HostRelayArgs;
 mod files_args;
 pub use files_args::{
-    FilesAttachArgs, FilesCommand, FilesListArgs, FilesPathArgs, FilesRescanArgs,
+    FilesAttachArgs, FilesCommand, FilesConvertArgs, FilesListArgs, FilesPathArgs, FilesRescanArgs,
 };
 mod graph_fs_args;
 mod hook_args;
@@ -68,7 +68,8 @@ pub use owner_args::{
 pub use recovery_kit_args::{
     KitPieceArgs, RecoveryKitAnchorArgs, RecoveryKitAuthorityArgs, RecoveryKitCommand,
     RecoveryKitConfirmArgs, RecoveryKitIssueArgs, RecoveryKitPadAccessArgs, RecoveryKitPinArgs,
-    RecoveryKitRestoreArgs, RecoveryKitRootsArgs, RecoveryKitStatusArgs, RunningServerArgs,
+    RecoveryKitRecoverAuthorityArgs, RecoveryKitRestoreArgs, RecoveryKitRootsArgs,
+    RecoveryKitStatusArgs, RunningServerArgs,
 };
 pub use reminder_route_args::{
     ReminderRouteClearArgs, ReminderRouteCommand, ReminderRouteGetArgs, ReminderRouteSetArgs,
