@@ -320,13 +320,24 @@ pub(super) fn land(
     // FIX 4192 review fix: a start piece's file row holds its bytes only
     // when the image carries its file.
     let files: BTreeSet<[u8; 32]> = image.bodies.iter().map(|(digest, _)| *digest).collect();
+    // The rows a census carried without their bytes, found before any
+    // start lands again (FIX 11415 finds them the same way).
+    let stripped = image
+        .databases
+        .get("vault_meta")
+        .map(|rows| stripped_digests(image, rows))
+        .unwrap_or_default();
     let rows = image
         .databases
         .get_mut("vault_meta")
         .ok_or_else(codec_error)?;
     let (mut rested, mut landed) = (BTreeSet::new(), BTreeSet::new());
+    let (mut starts_landed, mut starts_kept) = (Vec::new(), Vec::new());
     for (row, destination) in &destinations {
         let Some((rest_at, rest)) = destination.rest else {
+            if crate::code_run::step_capsule_row(row) {
+                starts_kept.push(row.clone());
+            }
             continue;
         };
         let mut requests = Vec::with_capacity(destination.requests.len());
@@ -343,6 +354,7 @@ pub(super) fn land(
             *value = crate::code_run::recompose_replay_row(&value[..], rest, &requests)?;
             continue;
         }
+        starts_landed.push(row.clone());
         match rest {
             Some(rest) => {
                 let bytes = crate::code_run::recompose_step_start(rest, &requests)?;
@@ -356,6 +368,15 @@ pub(super) fn land(
             None => rested.extend(crate::code_run::drop_step_start_in_rows(rows, row, &files)?),
         }
     }
+    // FIX 4192 review fix: every start piece the census stripped rests, so
+    // one whose old manifest retired before this restore walked it is
+    // pruned too, unless a live start landed it again.
+    rested.extend(crate::code_run::StrippedPieces::at_start_paths_in_rows(
+        rows,
+        &stripped,
+        &starts_landed,
+        &starts_kept,
+    )?);
     crate::code_run::settle_start_bodies_in_rows(rows, &rested, &landed)?;
     // Their body rows are gone. After reopening, the destination can
     // journal their actual instances before removing unheld inline keys.
