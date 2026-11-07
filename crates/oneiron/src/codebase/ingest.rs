@@ -52,6 +52,28 @@ impl RepoIngestConfig {
 pub struct RepoIngestResult {
     pub code_artifact_id: EntityId,
     pub snapshot: CodebaseSnapshot,
+    /// The retained receipt of an authenticated owner's committed capture.
+    pub capture_receipt_ref: Option<String>,
+}
+
+pub(crate) const CODE_SNAPSHOT_CAPTURE_CONTENT_KIND: &str = "code_snapshot_capture";
+
+pub(crate) fn code_snapshot_capture_receipt_fields(
+    record: &crate::store::GateDecisionRecord,
+) -> std::collections::BTreeMap<String, String> {
+    let mut fields = std::collections::BTreeMap::new();
+    if record.content_kind == CODE_SNAPSHOT_CAPTURE_CONTENT_KIND
+        && record.redacted_at.is_none()
+        && let Some(id) = record.claim_id.and_then(|id| EntityId::from_bytes(id).ok())
+        && !record.diff_handle.is_empty()
+    {
+        fields.insert("repo".to_owned(), id.to_hex());
+        fields.insert(
+            "snapshot".to_owned(),
+            bytes_to_hex_lower(&record.diff_handle),
+        );
+    }
+    fields
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
