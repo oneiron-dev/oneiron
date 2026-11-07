@@ -47,9 +47,12 @@ use super::doors::{edge_actor_class_str, enforce_gate_decision};
 use super::input::{GateActor, GateContentKind, GateEvaluatorInput, GateProvenanceHandles};
 use super::resolution::PolicyManifestResolution;
 
-use crate::store::witness_message_body::witness_message_envelope_denial;
+use crate::source_audience::SourceAudienceBirth;
 pub(crate) use crate::store::witness_message_body::{
     WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WITNESS_AUTHOR_USER, WitnessMessageEnvelope,
+};
+use crate::store::witness_message_body::{
+    source_bound_witness_message_envelope_denial, witness_message_envelope_denial,
 };
 
 /// One authorized MESSAGE write.
@@ -146,6 +149,46 @@ pub(crate) fn check_witness_message_ceiling_with_permit<'a>(
     Ok(WitnessMessageAuthorization {
         body,
         binding: witness_message_binding(actor, body),
+    })
+}
+
+/// [`check_witness_message_ceiling`] for a SOURCE-BOUND MESSAGE (fix list
+/// row 16256): the row a source landing writes under its
+/// [`SourceAudienceBirth`], whose stored bytes `stamped` carry the
+/// source-audience obligation as their last key.
+///
+/// The existing ceiling runs whole over the envelope's PLAIN encoding, so
+/// every axis, author and policy check is the one every MESSAGE meets; then
+/// `stamped` must be exactly the envelope's source-bound encoding. The
+/// authorization it answers covers `stamped` and binds those bytes, so the
+/// put writes the stamp and nothing else. Only a holder of the proof reaches
+/// this door; every other door binds the plain encoding and so refuses a
+/// stamped body.
+///
+/// # Errors
+///
+/// As [`check_witness_message_ceiling`], and
+/// [`GateError::GateWriteRejected`](crate::error::GateError::GateWriteRejected)
+/// when `stamped` is not the envelope's source-bound encoding.
+pub(crate) fn check_source_bound_witness_message_ceiling<'a>(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    actor: WriteActor,
+    envelope: &WitnessMessageEnvelope<'_>,
+    stamped: &'a [u8],
+    policy: &PolicyManifestResolution,
+    _birth: &SourceAudienceBirth,
+) -> Result<WitnessMessageAuthorization<'a>> {
+    let plain = envelope.encode_body()?;
+    check_witness_message_ceiling(store, txn, actor, envelope, &plain, policy)?;
+    if let Some(reason_code) = source_bound_witness_message_envelope_denial(envelope, stamped) {
+        let decision = GateDecision::deny(reason_code);
+        store.diagnostics.gate.record_decision(&decision);
+        enforce_gate_decision(decision)?;
+    }
+    Ok(WitnessMessageAuthorization {
+        body: stamped,
+        binding: witness_message_binding(actor, stamped),
     })
 }
 
@@ -311,6 +354,12 @@ pub(crate) fn canonical_witness_message_body_for_test(
 ///   that has not landed here yet, and is not deleted, merged or split, makes
 ///   the row wait for it (FIX 21271): its refusal keeps the row's retry
 ///   (`companion_author_pending`).
+/// * `user` or `companion` on a shared vault: a member's own words (FIX
+///   21272), when the row's window names, by its `AuthoredBy` edge,
+///   `authored_by`: a live PERSON with a live grant over this vault that
+///   writes content, and `machine` stands on this vault's machine roster on a
+///   profile that PERSON answered for. One member's machine never names
+///   another member, and an agent's row stays refused here.
 /// * `system`: the engine's own voice, never a replay's.
 ///
 /// Every row it does not admit, a body that is no canonical envelope first
@@ -329,6 +378,19 @@ pub(crate) fn validate_own_device_witness_message_body(
     body: &[u8],
 ) -> Result<()> {
     let author = validate_canonical_witness_message_body(body);
+    if let (Ok(WitnessMessageBodyAuthor::User | WitnessMessageBodyAuthor::Companion), Some(actor)) =
+        (&author, authored_by)
+    {
+        // As below, a store fault admits nothing and refuses.
+        match member_speaks_from(store, txn, machine, actor) {
+            Ok(true) => return Ok(()),
+            Ok(false) => {}
+            Err(error) => tracing::warn!(
+                kind = ?error.kind(),
+                "an own machine's MESSAGE on a shared vault: its author, membership and machine did not read; refused as a replay"
+            ),
+        }
+    }
     if let (Ok(WitnessMessageBodyAuthor::Companion), Some(actor)) = (&author, authored_by) {
         // As for `user` below, a store fault admits nothing and refuses.
         match companion_speaks_from(store, txn, machine, actor) {
@@ -429,6 +491,36 @@ fn companion_speaks_from(
     } else {
         CompanionAuthor::NotArrived
     })
+}
+
+/// Whether `actor`, the author a row's window names, speaks here as a member
+/// of this shared vault, all read in `txn` (FIX 21272): a live PERSON with a
+/// live grant over this vault that writes content, and the PERSON who
+/// answered for `machine` on the profile it proves its key by. `false` on a
+/// personal vault.
+fn member_speaks_from(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    machine: EntityId,
+    actor: EntityId,
+) -> Result<bool> {
+    if crate::federation::shared_vault_creation_for_store_in_txn(store, txn)?.is_none() {
+        return Ok(false);
+    }
+    let fold = crate::authority::authority_fold_readonly_for_store_in_txn(
+        store,
+        store.privacy_posture,
+        txn,
+    )?;
+    if fold.machine_proof_owner(machine) != Some(actor) {
+        return Ok(false);
+    }
+    crate::policy_model::is_live_writing_member_for_store_in_txn(
+        store,
+        store.privacy_posture,
+        txn,
+        &actor,
+    )
 }
 
 /// Whether `machine` stands on this vault's machine roster and this is a

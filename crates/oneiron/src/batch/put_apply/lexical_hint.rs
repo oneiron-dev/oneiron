@@ -16,13 +16,6 @@ pub(super) fn validate_lexical_query_hint(
     body: &ClaimBody,
     replicated: bool,
 ) -> Result<()> {
-    if !id.as_bytes().starts_with(
-        &crate::write_envelope::claim_body::lexical_query_hint::LEXICAL_QUERY_HINT_ID_PREFIX,
-    ) {
-        return Err(Error::InvalidClaimBody(
-            "lexical query hint claim id must use LH prefix",
-        ));
-    }
     let hint_value =
         crate::write_envelope::claim_body::lexical_query_hint::decode_lexical_query_hint_value(
             &body.value,

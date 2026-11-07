@@ -2,7 +2,13 @@
 //! the rows each receipt names, by its family's explicit set, and the page
 //! of receipts such a caller reads, each screened whole on those rows before
 //! any is mapped, and refilled past the ones withheld.
+//!
+//! A page read in a room (FIX 7355) collects its served forms from the
+//! room's content target, and places the rows each served form names there
+//! too: a room's own ASSET, or one it restaged, is judged as the room holds
+//! it. The world settings that judge them stay the vault's.
 
+use super::content::ReceiptContent;
 use super::family::collect_receipt_records;
 use super::kernel::{
     MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptQuery, ReceiptRecord, ReceiptScanPosition,
@@ -28,6 +34,8 @@ const ROW_FIELDS: &[(ReceiptKind, &[&str])] = &[
         ReceiptKind::Share,
         &[
             "recipient_ref",
+            "grant",
+            "recipient",
             "subject_ref",
             "audience_ref",
             "share_id",
@@ -160,6 +168,18 @@ fn referenced_rows(vault: &Vault, receipt: &ReceiptRecord) -> Result<Option<Vec<
             rows.extend(value.split(',').filter_map(row_of));
         }
     }
+    if receipt.receipt_kind == ReceiptKind::Share
+        && receipt.outcome == "prepared"
+        && let Some(sequence) = receipt.receipt_id.strip_prefix("share:export:")
+    {
+        let Ok(sequence) = sequence.parse() else {
+            return Ok(None);
+        };
+        let Some(source) = crate::share_travel::export_travel_source_rows(vault, sequence)? else {
+            return Ok(None);
+        };
+        rows.extend(source);
+    }
     if receipt.receipt_kind == ReceiptKind::Hook {
         let read = match receipt.fields.get(HOOK_RUN_KEY) {
             Some(key) => crate::runtime_hooks::hook_run_read_rows(vault, key)?,
@@ -173,6 +193,20 @@ fn referenced_rows(vault: &Vault, receipt: &ReceiptRecord) -> Result<Option<Vec<
     Ok(Some(rows))
 }
 
+/// The rows a served-form receipt names: the ASSET it served and the
+/// ASSET_TEXT it read in place of the body ([`ROW_FIELDS`]). A read of a
+/// room's own served forms withholds one whose rows its key does not read
+/// (FIX 7355).
+pub(crate) fn served_form_rows(receipt: &ReceiptRecord) -> Vec<EntityId> {
+    ROW_FIELDS
+        .iter()
+        .filter(|(kind, _)| *kind == ReceiptKind::ServedForm)
+        .flat_map(|(_, names)| names.iter())
+        .filter_map(|name| receipt.fields.get(*name))
+        .flat_map(|value| value.split(',').filter_map(row_of).collect::<Vec<_>>())
+        .collect()
+}
+
 /// The row `value` names: 32 hex, after any `<kind>:` prefixes.
 fn row_of(value: &str) -> Option<EntityId> {
     let hex = value.trim().rsplit(':').next()?;
@@ -181,9 +215,12 @@ fn row_of(value: &str) -> Option<EntityId> {
 
 /// Whether a caller off this device reads `receipt`: its rows are known and
 /// no world withheld from `destination` keeps any of them
-/// ([`Vault::off_device_readable_for`], mesh PR2b).
+/// ([`Vault::off_device_readable_for`], mesh PR2b). A served form's rows are
+/// placed as `content` holds them (FIX 7355); every other family's as base
+/// does.
 fn off_device_admits(
     vault: &Vault,
+    content: ReceiptContent<'_>,
     receipt: &ReceiptRecord,
     destination: &ReadDestination,
 ) -> Result<bool> {
@@ -194,14 +231,20 @@ fn off_device_admits(
         return Ok(true);
     }
     let named = rows.len();
-    Ok(vault.off_device_readable_for(rows, destination)?.len() == named)
+    let readable = if receipt.receipt_kind == ReceiptKind::ServedForm {
+        content.off_device_readable(vault, rows, destination)?
+    } else {
+        vault.off_device_readable_for(rows, destination)?
+    };
+    Ok(readable.len() == named)
 }
 
 impl Vault {
     /// The family receipts of `query` a caller toward `destination` reads, newest
-    /// first, at most `query.limit` of them: on this device, those
-    /// [`Vault::receipts`] answers. Off it, each receipt is screened whole on
-    /// the rows it names ([`referenced_rows`]) before it takes a place, and
+    /// first, at most `query.limit` of them, served forms read from `content`:
+    /// on this device, those [`Vault::receipts_in`] answers. Off it, each
+    /// receipt is screened whole on the rows it names ([`referenced_rows`],
+    /// a served form's placed in `content`) before it takes a place, and
     /// the page refills past the ones withheld: the family's projectors run
     /// again over [`REFILL_GROWTH`] times the rows until the page fills
     /// within receipts no projector's bound could have cut, the receipts run
@@ -212,8 +255,9 @@ impl Vault {
         &self,
         query: ReceiptQuery,
         destination: &ReadDestination,
+        content: ReceiptContent<'_>,
     ) -> Result<Vec<ReceiptRecord>> {
-        self.receipts_walk_for_caller(query, destination)
+        self.receipts_walk_for_caller(query, destination, content)
             .map(|(page, _)| page)
     }
 
@@ -225,15 +269,16 @@ impl Vault {
         &self,
         query: ReceiptQuery,
         destination: &ReadDestination,
+        content: ReceiptContent<'_>,
     ) -> Result<(Vec<ReceiptRecord>, Option<ReceiptScanPosition>, bool)> {
         let limit = query.limit;
-        let records = self.receipts(query)?;
+        let records = self.receipts_in(query, content)?;
         let exhausted = records.len() < limit;
         let walked = records.last().map(ReceiptScanPosition::of);
         let records = if destination.is_off_device() {
             let mut kept = Vec::new();
             for record in records {
-                if off_device_admits(self, &record, destination)? {
+                if off_device_admits(self, content, &record, destination)? {
                     kept.push(record);
                 }
             }
@@ -253,13 +298,18 @@ impl Vault {
         &self,
         query: ReceiptQuery,
         destination: &ReadDestination,
+        content: ReceiptContent<'_>,
     ) -> Result<(Vec<ReceiptRecord>, Option<ReceiptScanPosition>)> {
         if !destination.is_off_device() || query.limit == 0 {
-            return self.receipts(query).map(|page| (page, None));
+            return self.receipts_in(query, content).map(|page| (page, None));
         }
         let limit = query.limit;
         let lineage = match query.job_ref {
-            Some(_) => Some(collect_receipt_records(self, &lineage_scan_query())?),
+            Some(_) => Some(collect_receipt_records(
+                self,
+                &lineage_scan_query(),
+                content,
+            )?),
             None => None,
         };
         // Every collected receipt in the family's order, none cut yet.
@@ -274,7 +324,7 @@ impl Vault {
                 ..query.clone()
             };
             let ordered = finalize_receipt_query_records(
-                collect_receipt_records(self, &pass)?,
+                collect_receipt_records(self, &pass, content)?,
                 &whole,
                 lineage.as_deref(),
             );
@@ -288,7 +338,7 @@ impl Vault {
                 }
                 walked += 1;
                 last_walked = Some(ReceiptScanPosition::of(&receipt));
-                if off_device_admits(self, &receipt, destination)? {
+                if off_device_admits(self, content, &receipt, destination)? {
                     page.push(receipt);
                 }
             }

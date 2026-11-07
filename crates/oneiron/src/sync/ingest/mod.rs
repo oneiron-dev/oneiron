@@ -25,7 +25,8 @@ pub(in crate::sync) use self::delivery::{
 #[cfg(test)]
 pub(in crate::sync) use self::entity::ingest_entity_in_savepoint;
 pub(in crate::sync) use self::entity::{
-    EntityStep, IngestCtx, RefusalRetry, Residence, ingest_entity_in_txn, waits_for_sibling_row,
+    EntityStep, IngestCtx, RefusalRetry, Residence, ingest_entity_in_txn, land_source_audience_in,
+    waits_for_sibling_row,
 };
 pub(in crate::sync) use self::message_writer::{
     MESSAGE_WRITER_MAP, admit_writer_proof_carrier, admit_writer_proof_map, copy_writer_proofs,

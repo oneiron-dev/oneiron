@@ -101,8 +101,13 @@ fn transport_fetch(uri: &str) -> Result<String, ApiError> {
     // it is built or dropped inside an async runtime (FIX 9529). A thread of
     // its own keeps it outside whatever runtime the caller is on; a panic
     // there is an unauthorized answer, never a poisoned cache.
-    std::thread::scope(|scope| scope.spawn(|| https_fetch(uri)).join())
-        .unwrap_or_else(|_| Err(ApiError::unauthorized()))
+    std::thread::scope(|scope| {
+        crate::engine_thread("oauth-key-fetch".into())
+            .spawn_scoped(scope, || https_fetch(uri))
+            .expect("failed to spawn thread")
+            .join()
+    })
+    .unwrap_or_else(|_| Err(ApiError::unauthorized()))
 }
 
 /// One bounded HTTPS GET of `uri`'s key set, on the calling thread, which
