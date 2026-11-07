@@ -59,6 +59,16 @@ pub(super) enum RawPutDoor {
     /// whose sole constructor proves the body a canonical envelope an import
     /// marked: a capability, like the witness arm, never a caller's flag.
     ArchivedMessage,
+    /// The source-bound TURN and CONVERSATION door (fix list row 16256,
+    /// [`super::BatchBuilder::put_source_bound`]).
+    ///
+    /// Reachable only by presenting a source landing's
+    /// `source_audience::SourceAudienceBirth`, whose one constructor reads a
+    /// live source policy: a capability, like the witness arm. It is the one
+    /// raw door besides the witness arm whose early check lets the
+    /// source-audience key through; the write transaction admits it only on
+    /// a row the landing marked born.
+    SourceBound,
 }
 
 /// [`validate_public_raw_put`] through the public door, for a bound raw
@@ -74,6 +84,12 @@ pub(super) fn validate_public_raw_put(
     learned_at: u64,
     door: RawPutDoor,
 ) -> Result<()> {
+    // Fix list row 16256: a raw body never carries the source-audience key,
+    // whatever its value, but through the two doors a source landing writes
+    // its stamped rows by, each reached only with that landing's proof.
+    if !matches!(door, RawPutDoor::WitnessMessage | RawPutDoor::SourceBound) {
+        crate::source_audience::refuse_written_obligation(entity_type, data)?;
+    }
     match entity_type {
         crate::registry::ENTITY_TYPE_CLAIM => {
             // The actual write transaction validates the class descriptor;

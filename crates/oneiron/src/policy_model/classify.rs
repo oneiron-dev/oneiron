@@ -147,6 +147,7 @@ impl Vault {
         {
             return Ok(OwnerPlanePass {
                 verdict: decisions.classify(
+                    self,
                     request,
                     &prompt,
                     AnswerPlane::Owner,
@@ -440,6 +441,7 @@ impl Vault {
         if let Some(decisions) = config.owner_decisions.as_deref() {
             return Ok(OwnerPlanePass {
                 verdict: decisions.classify(
+                    self,
                     request,
                     &prompt,
                     AnswerPlane::Owner,
@@ -469,9 +471,13 @@ impl Vault {
             clock,
         )
         .await?;
-        // The guard refused the pass: `host.budget.hit` on its line.
+        // The guard refused the pass or its notes: `host.budget.hit` on its line.
         if let SafeguardModel::Budgeted { budget, .. } = safeguard
-            && verdict.decision.skip_reason() == Some(PolicySkipReason::BudgetExhausted)
+            && (verdict.decision.skip_reason() == Some(PolicySkipReason::BudgetExhausted)
+                || verdict
+                    .audit
+                    .as_deref()
+                    .is_some_and(|audit| audit.model_notes_budget_exhausted))
         {
             let line = budget.read().attempt_id;
             self.budget_denied_hooks(
