@@ -21,12 +21,14 @@ const MAX_STORED_LINKS: usize = 32;
 const MAX_CHECKS_LISTED: usize = 1_000;
 
 /// One hop of a chain: a run of one binding on one fact.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LineageLink {
     #[serde(with = "crate::serialize::entity_ref")]
+    #[schemars(with = "String")]
     pub binding: EntityId,
     pub run_key: String,
     #[serde(with = "crate::serialize::entity_ref")]
+    #[schemars(with = "String")]
     pub entity: EntityId,
     pub position: String,
 }
@@ -37,7 +39,7 @@ struct HookLineage {
 }
 
 /// Why a check was raised.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HookCheckReason {
     /// The same hook fired again inside its own causal chain.
@@ -57,9 +59,10 @@ impl HookCheckReason {
 }
 
 /// An "is everything okay" check for the owner, with the chain shown.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HookCheck {
     #[serde(with = "crate::serialize::entity_ref")]
+    #[schemars(with = "String")]
     pub binding: EntityId,
     pub run_key: String,
     pub reason: HookCheckReason,
@@ -131,8 +134,23 @@ impl Vault {
     /// first.
     pub fn hook_checks(&self) -> Result<Vec<HookCheck>> {
         let rtxn = self.store.env.read_txn()?;
+        self.hook_checks_in_txn(&rtxn)
+    }
+
+    /// Reads the existing cycle and depth checks under the owner's live
+    /// proof, in the same snapshot that reads the checks. Changes nothing.
+    pub fn hook_checks_as_owner(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+    ) -> Result<Vec<HookCheck>> {
+        let rtxn = self.store.env.read_txn()?;
+        owner.revalidate_in_txn(self, &rtxn)?;
+        self.hook_checks_in_txn(&rtxn)
+    }
+
+    fn hook_checks_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<Vec<HookCheck>> {
         CHECKS
-            .iter_from(&self.store, &rtxn, &[])?
+            .iter_from(&self.store, txn, &[])?
             .take(MAX_CHECKS_LISTED)
             .map(|row| row.map(|(_, check)| check))
             .collect()
