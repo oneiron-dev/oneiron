@@ -27,11 +27,12 @@
 use oneiron::connector_key::CONNECTOR_ISSUER_HOLD_REASON;
 use oneiron::outbound_consent::{
     ConnectorElicitationReceipt, ElicitationDisposition, ElicitationEgress,
-    OutboundBindingAuthority, OutboundBindingValidation, zeroize_json,
+    OutboundBindingAuthority, OutboundBindingValidation, SentGeneration, zeroize_json,
 };
 use oneiron::outbound_intent_ledger::IntentLedgerError;
 use zeroize::Zeroizing;
 
+use super::presenting::{Both, Clears};
 use super::reply_read::{EventStream, read_retry_reply, terminal};
 use super::stream_pump::{Pump, Waited};
 use super::*;
@@ -98,6 +99,7 @@ pub(super) fn hand_over(
         generation: 0,
         asked: awaiting.questions.len(),
         kept,
+        history: Vec::new(),
         aliases,
         receipts,
     };
@@ -414,6 +416,10 @@ pub(super) struct Worker {
     /// The value the send presented, kept as the session keeps its header:
     /// each later question and the terminal reply are cleared of it.
     pub(super) kept: Option<KeptSentValue>,
+    /// What a resumed exchange presented before its restart, value-free
+    /// (fix list row 10550): each later question and the terminal reply are
+    /// cleared of those too, through their records' known-value histories.
+    pub(super) history: Vec<SentGeneration>,
     /// The current round's aliases: its answer goes on the wire under the
     /// connector's own keys (FIX 8051).
     pub(super) aliases: KeyAliases,
@@ -421,11 +427,36 @@ pub(super) struct Worker {
     pub(super) receipts: AnswerReceipts,
 }
 
+/// Why a resumed exchange's words were withheld: the known-value history of
+/// a value it presented before its restart did not read whole (fix list
+/// row 10550).
+const CREDENTIAL_HISTORY_UNREAD: &str = "connector_credential_history_unread";
+
 impl Worker {
+    /// Runs `clear` with what clears this exchange's words: the value kept
+    /// now, and each presentation made before a restart through its
+    /// record's known-value history (fix list row 10550). `None` when that
+    /// history did not read whole: nothing is cleared of the value now
+    /// alone.
+    fn clear<R>(&self, clear: impl FnOnce(&dyn Clears) -> R) -> Option<R> {
+        let now = self.kept.as_ref().map(KeptSentValue::sent);
+        if self.history.is_empty() {
+            return Some(clear(&Both { now, before: None }));
+        }
+        let vault = self.receipts.vault.upgrade()?;
+        vault
+            .with_connector_sent_clearer(&self.history, |before| {
+                clear(&Both {
+                    now,
+                    before: Some(before),
+                })
+            })
+            .ok()
+    }
+
     /// Runs the worker on its own thread; `false` when it could not start.
     pub(super) fn start(self) -> bool {
-        std::thread::Builder::new()
-            .name("connector-elicitation".to_owned())
+        crate::engine_thread("connector-elicitation".to_owned())
             .spawn(move || self.run())
             .is_ok()
     }
@@ -465,11 +496,19 @@ impl Worker {
             match self.answer(&command.responses) {
                 Next::Asked(mut questions) => {
                     // Cleared before the registry or the caller sees them;
-                    // this round's aliases replace the last round's.
-                    self.aliases = match &self.kept {
-                        Some(kept) => clear_questions(&mut questions, &kept.sent()),
-                        None => KeyAliases::default(),
+                    // this round's aliases replace the last round's. Words
+                    // that cannot be cleared whole are never shown.
+                    let Some(aliases) =
+                        self.clear(|clears| clear_questions(&mut questions, clears))
+                    else {
+                        let _ = command.reply.send(WorkerEvent::Failed {
+                            sent: true,
+                            reason: CREDENTIAL_HISTORY_UNREAD,
+                        });
+                        self.cancel(ElicitationDisposition::Cancel);
+                        break;
                     };
+                    self.aliases = aliases;
                     self.generation += 1;
                     self.asked = questions.len();
                     let advanced = self.registry.upgrade().and_then(|registry| {
@@ -502,8 +541,16 @@ impl Worker {
                     });
                 }
                 Next::Over(mut event) => {
-                    if let Some(kept) = &self.kept {
-                        clear_event(&mut event, &kept.sent());
+                    // A reply that cannot be cleared whole is withheld; the
+                    // round stays uncertain.
+                    if self
+                        .clear(|clears| clear_event(&mut event, clears))
+                        .is_none()
+                    {
+                        event = WorkerEvent::Failed {
+                            sent: true,
+                            reason: CREDENTIAL_HISTORY_UNREAD,
+                        };
                     }
                     let (call_ref, handle) = (self.bound_call(), self.handle.as_str());
                     if matches!(event, WorkerEvent::Result(_)) {
