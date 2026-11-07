@@ -130,14 +130,17 @@ impl ConversationCompactionUnavailable {
 /// agent: a row on the retained turns, or a row on `auto` whose live prefix
 /// is cold here (FIX 6029). Why none can be bound, for a row that selects
 /// the live fork. Called before the answer is sent, so the rung is the one
-/// its walk takes now.
+/// its walk takes now. `sources` is every row the answer's request was read
+/// from, `None` when not all were witnessed: then no fork is captured
+/// (FIX 9463).
 pub fn capture_conversation_fork(
     driver: &CompactionDriver,
     live: &LlmRequest,
+    sources: Option<Vec<EntityId>>,
 ) -> Option<Result<LiveCompactionFork, SelfCompactionUnavailable>> {
     driver
         .backend()
-        .capture_live_fork(live, driver.summary_token_budget())
+        .capture_live_fork(live, sources, driver.summary_token_budget())
 }
 
 /// One sealed conversation flight: the driver that sealed it, its window's
