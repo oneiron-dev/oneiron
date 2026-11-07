@@ -48,6 +48,7 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
         fork_parent: Option<u64>,
+        lane: crate::core_write::CoreWriteLaneRef<'_>,
     ) -> Result<BlobArtifactVersion> {
         self.append_blob_artifact_version_with_parent_and_engine_in_txn(
             wtxn,
@@ -60,6 +61,7 @@ impl Vault {
             fork_parent,
             None,
             None,
+            lane,
         )
     }
 
@@ -76,6 +78,7 @@ impl Vault {
         fork_parent: Option<u64>,
         calc_engine: Option<&CalcEngineStamp>,
         made_by: Option<&MadeBy>,
+        lane: crate::core_write::CoreWriteLaneRef<'_>,
     ) -> Result<BlobArtifactVersion> {
         self.append_blob_artifact_version_body_in_txn(
             wtxn,
@@ -90,6 +93,7 @@ impl Vault {
             made_by,
             false,
             true,
+            lane,
         )
     }
 
@@ -113,6 +117,7 @@ impl Vault {
         made_by: Option<&MadeBy>,
         preserve_made_by: bool,
         reanchor_html: bool,
+        lane: crate::core_write::CoreWriteLaneRef<'_>,
     ) -> Result<BlobArtifactVersion> {
         self.append_blob_artifact_version_body_with_authority_in_txn(
             wtxn,
@@ -128,6 +133,7 @@ impl Vault {
             preserve_made_by,
             reanchor_html,
             BirthPosition::default(),
+            lane,
         )
     }
 
@@ -151,6 +157,7 @@ impl Vault {
         preserve_made_by: bool,
         reanchor_html: bool,
         producer_position: BirthPosition,
+        lane: crate::core_write::CoreWriteLaneRef<'_>,
     ) -> Result<BlobArtifactVersion> {
         let actor = match &authority {
             VersionAuthority::Actor(actor) => *actor,
@@ -255,7 +262,7 @@ impl Vault {
             .batch_in()
             .claim_candidate(&claim_id, candidate, &envelope, occurred, learned_at);
         match &authority {
-            VersionAuthority::Actor(actor) => claim.apply_actor(wtxn, actor)?,
+            VersionAuthority::Actor(actor) => claim.apply_actor(wtxn, actor, lane)?,
             VersionAuthority::QueueCheck(_) => claim.apply(wtxn)?,
         }
 

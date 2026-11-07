@@ -32,6 +32,7 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
         producer_position: BirthPosition,
+        lane: crate::core_write::CoreWriteLaneRef<'_>,
     ) -> Result<(
         Option<BlobArtifactVersion>,
         Option<(u64, [u8; BLOB_ARTIFACT_CONTENT_HASH_LEN])>,
@@ -84,12 +85,14 @@ impl Vault {
             false,
             true,
             producer_position,
+            lane,
         )?;
         Ok((Some(version), None))
     }
 
     /// Memory's checked append on its existing content writer. This door has
-    /// no caller-supplied made_by or reader: its proposal names only its writer.
+    /// no caller-supplied made_by: its proposal names only its writer, and a
+    /// landed append uses the content writer's actual credential lane.
     /// `producer_position` is the position the producing Memory's host bound
     /// (FIX 3171). A landed version's claim is born there. A proposal keeps
     /// it for Keep, so the claim is born at the producer's position, never
@@ -105,6 +108,7 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
         producer_position: BirthPosition,
+        lane: crate::core_write::CoreWriteLaneRef<'_>,
     ) -> Result<BlobArtifactAppendOutcome> {
         let (version, fork_base) = self.decide_blob_artifact_append_in_txn(
             wtxn,
@@ -117,6 +121,7 @@ impl Vault {
             occurred,
             learned_at,
             producer_position,
+            lane,
         )?;
         if let Some(version) = version {
             return Ok(BlobArtifactAppendOutcome::Landed(version));
