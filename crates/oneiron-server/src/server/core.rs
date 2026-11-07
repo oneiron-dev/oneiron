@@ -142,6 +142,9 @@ pub struct SyncServer {
     pub(crate) retained: Arc<crate::byte_line::ByteLine>,
     /// The presence hub's charge on `retained`.
     pub(crate) presence: Arc<super::presence::PresenceCharge>,
+    /// Authenticated booking calls per actor this minute (FIX 128-131),
+    /// measured against their `[limits]` rows; never a window.
+    pub(crate) booking_calls: super::booking_calls::AuthenticatedBookingCalls,
     /// The wakes of removed holders' archive delivery sessions (FIX 3396).
     pub(crate) removal_deliveries: super::removal_delivery::RemovalDeliveries,
     /// Dedicated shared environments retained for leave checks and their own
@@ -343,6 +346,14 @@ fn live_rows(
 }
 
 impl SyncServer {
+    /// The most bytes one WebSocket message this server reads may reassemble
+    /// to (ABC transport row T25): its request floor,
+    /// `limits.request_body_bytes`, set at every upgrade in place of
+    /// tungstenite's implicit 64 MiB. A frame keeps its own bound.
+    pub(crate) fn socket_message_bytes(&self) -> usize {
+        usize::try_from(self.config.limits.request_body_bytes).unwrap_or(usize::MAX)
+    }
+
     // ─── Device-lease registry (ONE-1140, OD-3) ──────────────────────────
 
     /// Install an already resolved run snapshot from the trusted host. The
