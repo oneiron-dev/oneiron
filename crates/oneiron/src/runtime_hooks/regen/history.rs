@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_hub::pack_catalog::PackHookBinding;
-use crate::{EntityId, Error, Result, Vault};
+// No bare `Result` import: schemars' JsonSchema derive writes an unqualified
+// `Result<_, S::Error>` for a defaulted field, which the crate alias breaks.
+use crate::{EntityId, Error, Vault};
 
 use super::{
     HookContractStamp, HookGoldenDiff, HookGoldenManifest, HookRegenFailure, HookRegenOutcome,
@@ -190,7 +192,7 @@ pub(super) fn append_in_txn(
     body_hash: &str,
     actor: &HookRegenActor,
     event: HookRegenEvent,
-) -> Result<()> {
+) -> crate::Result<()> {
     let key = hook_key(&row.pack, &row.hook);
     let sequence = {
         let mut newest = RECEIPTS.iter_rev_from(&vault.store, txn, &key)?;
@@ -229,7 +231,7 @@ impl Vault {
         binding: EntityId,
         before: Option<u64>,
         limit: usize,
-    ) -> Result<Vec<HookRegenReceipt>> {
+    ) -> crate::Result<Vec<HookRegenReceipt>> {
         let (_, row) = self
             .pack_hook_bindings()?
             .into_iter()
