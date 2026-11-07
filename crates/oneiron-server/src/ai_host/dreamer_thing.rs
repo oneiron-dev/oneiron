@@ -11,6 +11,7 @@
 //! `reader_parent_for_wake`, `ReaderSeats::seat_with_parent`); nothing here
 //! makes a second clock, queue or store.
 
+mod compaction;
 mod generation;
 mod ports;
 mod profile;
@@ -206,6 +207,11 @@ impl ThingChildHost for ServedThingChildHost {
                 parent_admission,
                 ..Default::default()
             });
+        let generation = Arc::new(compaction::Generation::new(
+            Arc::clone(&count),
+            stop.clone(),
+            run.work_context(),
+        ));
         let backend = CountedBackend::new(
             RunBackend::new(Arc::clone(&self.route.ladder), run),
             Arc::clone(&count),
@@ -226,6 +232,7 @@ impl ThingChildHost for ServedThingChildHost {
                     seat.deadline.child_cutoff(),
                 )),
                 stop: stop.clone(),
+                generation: Some(generation),
             },
         );
         let mut session = ThingSession::new(

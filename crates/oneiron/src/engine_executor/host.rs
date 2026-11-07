@@ -140,8 +140,9 @@ pub(super) struct RecordingJsHost<'a, 's> {
 /// Whether the gate an act takes over the run's results (a store, a fold, a
 /// summary, a spawn) counts the stored skills its callables loaded and the
 /// other runs' results they read, as each read's gate does (FIX 5460). Off:
-/// such an act runs as it did before those rows were counted.
-const ACT_GATES_COUNT_CALLABLE_ROWS: bool = false;
+/// such an act runs as it did before those rows were counted. A shadow arm's
+/// store reads its sources under the same gate (FIX 6352).
+pub(crate) const ACT_GATES_COUNT_CALLABLE_ROWS: bool = false;
 
 /// A result a reference names for this run: one of its own, the source a
 /// reader child reads in its parent's record, or a finding of one of the
@@ -154,6 +155,10 @@ struct ResolvedResult {
     /// The rows a read of it is withheld by beside the run's own, when it is
     /// not the run's: `Some(None)` when they are not known.
     rows: Option<Option<Vec<EntityId>>>,
+    /// The origins its descriptor froze when it is another run's, which a
+    /// read of it notes in this run's ledger (FIX 7084): `None` when they
+    /// are unknown, and for the run's own result.
+    origins: Option<crate::code_run::ResultOrigins>,
     /// The range of its body a read of it must stay inside, and reads by
     /// default, in the owner's offsets.
     within: Option<(u64, u64)>,
@@ -330,6 +335,17 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
 
     fn caller_entity(&self) -> Option<EntityId> {
         Some(self.gated_write.actor().entity_ref())
+    }
+
+    /// The run's custody and PERSON values, as its output sweep reads them.
+    fn mask_guest_error(&self, body: &str) -> Result<String> {
+        match self.storage {
+            Some(storage) => crate::code_sandbox::guest_error::mask_run_known_values(
+                storage.code_run_known_source(self.run_id)?,
+                body,
+            ),
+            None => Ok(body.to_owned()),
+        }
     }
 
     fn write_output(&mut self, stream: JsCodeModeStream<'_>, frame: &[u8]) -> Result<bool> {
