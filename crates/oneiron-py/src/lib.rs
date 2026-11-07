@@ -2488,6 +2488,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_skills_proposal_settle(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skills.proposal.settle")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.skills.proposal.settle", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_skills_receipts(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.skills.receipts")?;
         let output = py
@@ -11308,6 +11315,36 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.files.sources.convert")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.files.sources.convert", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_sync_repo_manifests_conflict_review(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value =
+            decode(input_json, "vault.sync.repo_manifests.conflict.review")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.sync.repo_manifests.conflict.review", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_sync_repo_manifests_conflict_discard(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value =
+            decode(input_json, "vault.sync.repo_manifests.conflict.discard")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.sync.repo_manifests.conflict.discard", input)
+            })
             .map_err(raise)?;
         encode(&output)
     }
