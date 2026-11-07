@@ -207,6 +207,7 @@ fn missing_recipe_input_cannot_complete_dispatch_receipt() -> Result<()> {
             reserve_units: 10,
             now: 3601,
             host_scope: None,
+            destination_bound: None,
         },
         &mut NoPartitionExecutor,
         &crate::dreamer_wake::WakeCancellation::new(),
