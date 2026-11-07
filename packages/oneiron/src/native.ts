@@ -386,6 +386,7 @@ vaultMembersDelegate(input: unknown): unknown
 vaultMembersProjection(input: unknown): unknown
 vaultMembersAdd(input: unknown): unknown
 vaultMembersInvitationSlip(input: unknown): unknown
+vaultMembersInvitationCode(input: unknown): unknown
 vaultMembersChange(input: unknown): unknown
 vaultMembersRemove(input: unknown): unknown
 vaultMembersLeave(input: unknown): unknown
@@ -627,6 +628,7 @@ vaultSettingsLearning(input: unknown): unknown
 vaultSettingsLearningPut(input: unknown): unknown
 vaultSettingsLearningClear(input: unknown): unknown
 vaultSecretsCodeRunLifts(input: unknown): unknown
+vaultSecretsCodeRunRoomLifts(input: unknown): unknown
 vaultSecretsLiftHistory(input: unknown): unknown
 vaultSecretsRegister(input: unknown): unknown
 vaultSecretsRotate(input: unknown): unknown

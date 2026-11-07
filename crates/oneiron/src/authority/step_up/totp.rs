@@ -16,7 +16,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
 
-pub use oneiron_crypto::totp::{TOTP_DIGITS, TOTP_DRIFT_STEPS, TOTP_PERIOD_SECS};
+use oneiron_crypto::totp::{TOTP_DIGITS, TOTP_PERIOD_SECS};
 
 const BASE32: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 const REFUSED: &str = "step_up_totp_refused: the code did not verify or its step was already spent";
