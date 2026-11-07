@@ -376,6 +376,7 @@ fn resolve_hosted_violation(
             jurisdiction: policy.jurisdiction.clone(),
             policy_version: policy.version.clone(),
             row_ref: row.row_ref.clone(),
+            basis: row.basis.clone(),
         },
     ))
 }

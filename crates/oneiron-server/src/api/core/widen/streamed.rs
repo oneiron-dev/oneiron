@@ -5,6 +5,7 @@
 //! keeps its existing holder-before-reference order. No new gate or cap.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use axum::Json;
 
@@ -100,6 +101,15 @@ fn join_bulk(decoded: Result<BulkDecoded, Unspooled>) -> Result<AcceptBulk, ApiE
     })
 }
 
+/// Cancels only the queued native memory wait when its HTTP future leaves.
+struct StopNativeReadOnDrop(Arc<AtomicBool>);
+
+impl Drop for StopNativeReadOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
 /// Answers a spooled accept off the runtime, `bulk` whole into the worker:
 /// the holder's owner proof first, then the native file-backed accept over
 /// the spooled bytes, with the same refusals and response as the small path.
@@ -112,7 +122,9 @@ pub(super) async fn answer_bulk(
     decoded: Result<BulkDecoded, Unspooled>,
 ) -> Result<Json<CoreAcceptWidenResponse>, EnvelopedApiError> {
     let bulk = join_bulk(decoded)?;
-    clock_ingress::run_blocking(move || run_bulk(server, holder, bulk))
+    let stopped = Arc::new(AtomicBool::new(false));
+    let _stop = StopNativeReadOnDrop(Arc::clone(&stopped));
+    clock_ingress::run_transfer_worker(move || run_bulk(server, holder, bulk, stopped))
         .await
         .map_err(|_| ApiError::internal_server_error("widen approval failed"))?
 }
@@ -124,13 +136,23 @@ fn run_bulk(
     server: Arc<SyncServer>,
     holder: WidenHolder,
     bulk: AcceptBulk,
+    stopped: Arc<AtomicBool>,
 ) -> Result<Json<CoreAcceptWidenResponse>, EnvelopedApiError> {
     let (owner, credential) = holder.owner(&server)?;
     let (reference, reference_len) = bulk.reference.file();
     let (file, len) = bulk.field.file();
     let receipt = server
         .vault()
-        .accept_widen_readers(&owner, credential, reference, reference_len, file, len)
+        .accept_widen_readers_admitted(
+            &owner,
+            credential,
+            reference,
+            reference_len,
+            file,
+            len,
+            &|| stopped.load(Ordering::Relaxed),
+        )
+        .map_err(canonical_memory_refused)?
         .map_err(|error| widen_refusal(&error, "widen approval failed"))?;
     Ok(Json(CoreAcceptWidenResponse {
         decision_id: receipt.decision_id().to_hex(),
@@ -138,4 +160,14 @@ fn run_bulk(
             .grant_ref()
             .ok_or_else(|| ApiError::invalid_state(Some("consent_widen_receipt")))?,
     }))
+}
+
+/// An allowance refusal is memory capacity, never malformed input or disk.
+fn canonical_memory_refused(refusal: MemoryRefusal) -> ApiError {
+    match refusal {
+        MemoryRefusal::Floor { .. } => ApiError::internal_server_error(
+            "this machine cannot reserve the widen proposal's canonical byte allowance",
+        ),
+        MemoryRefusal::WaitedOut { .. } => Unspooled::Failed.refusal(),
+    }
 }
