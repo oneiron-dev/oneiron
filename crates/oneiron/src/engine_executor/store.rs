@@ -1,7 +1,9 @@
 //! Output envelope and path helpers for the routed raw-output store.
 
+mod agent_verb;
 mod reply_evidence;
 mod script_context;
+pub(crate) use agent_verb::{store_agent_verb_write_answer, write_receipt_result_output_path};
 pub(super) use script_context::load_script_context;
 pub(crate) use script_context::mask_known_text;
 
@@ -809,11 +811,11 @@ pub(super) fn resumed_output_wait(path: &str) -> Option<(u64, &str)> {
     Some((seq.parse().ok()?, wait))
 }
 
-pub(super) fn script_output_path(seq: u64) -> String {
+pub(crate) fn script_output_path(seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.generated.js")
 }
 
-pub(super) fn observation_output_path(seq: u64) -> String {
+pub(crate) fn observation_output_path(seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.observation.txt")
 }
 
