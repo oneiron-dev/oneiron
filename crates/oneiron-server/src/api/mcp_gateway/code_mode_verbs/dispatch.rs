@@ -485,6 +485,11 @@ fn completed_answer(
 ) -> Result<(Value, Option<Vec<oneiron::EntityId>>), McpGatewayError> {
     let rows = super::served_rows::stop_release_rows(server, actor, &stop, served)
         .map(<[oneiron::EntityId]>::to_vec);
+    // The drain read that answer, not this guest call (FIX 21614).
+    if super::served_rows::drained_rows_lapsed(server, actor, &stop, rows.as_deref()) {
+        let ran = oneiron::task_verb::sdk::ActAnswer::<()>::details_on_device();
+        return Ok((serde_json::json!(ran), Some(Vec::new())));
+    }
     match stop {
         VerbHookStop::Completed { result, .. } => {
             let released =
@@ -509,10 +514,10 @@ const LINE_VERBS: [&str; 9] = [
     "connector.call",
 ];
 
-/// The line a code-mode run's `ai.*` media call spends on (FIX 780): code
-/// mode's own meter, the one the run's steps spend on, under the run's own
-/// name. `None` for any other verb, or where code mode lends no meter: that
-/// call takes the owner's door, as a direct tool call does.
+/// The line a code-mode run's `ai.*` media call spends on (FIX 780): the
+/// run's code-mode line ([`code_mode_line`]). `None` for any other verb, or
+/// where code mode lends no meter: that call takes the owner's door, as a
+/// direct tool call does.
 fn media_line(
     server: &SyncServer,
     verb: &str,
@@ -521,6 +526,17 @@ fn media_line(
     if !LINE_VERBS.contains(&verb) {
         return None;
     }
+    code_mode_line(server, run_id)
+}
+
+/// Code-mode durable run `run_id`'s line: code mode's own meter, the one the
+/// run's steps spend on, under the run's own name. Its media calls spend on
+/// it, and its self brief states its budget from it (FIX 17594 D5). `None`
+/// where code mode lends no meter.
+pub(crate) fn code_mode_line(
+    server: &SyncServer,
+    run_id: oneiron::EntityId,
+) -> Option<oneiron::llm::run_admission::RunAdmission> {
     let meter = server
         .code_execution_host()?
         .engine_native()?

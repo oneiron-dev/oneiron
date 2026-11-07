@@ -147,6 +147,25 @@ pub(super) fn stop_release_rows<'s>(
     served.rows()
 }
 
+/// Whether a retry's `Completed` stop carries an answer derived from a row
+/// of `rows` that `actor`'s credential no longer reads, or that was erased
+/// since (FIX 21614). The drain read those rows, not this retry, so the
+/// answer is released only as a claimed invocation's waiter is
+/// ([`crate::api::facade::rows_still_admitted`]); a lapsed one answers only
+/// that the call ran. Any other stop, or rows that are unknown, is not
+/// judged here.
+pub(super) fn drained_rows_lapsed(
+    server: &SyncServer,
+    actor: &McpCallContext,
+    stop: &VerbHookStop,
+    rows: Option<&[EntityId]>,
+) -> bool {
+    matches!(stop, VerbHookStop::Completed { .. })
+        && rows.zip(actor.auth.as_ref()).is_some_and(|(rows, auth)| {
+            !crate::api::facade::rows_still_admitted(&server.vault, auth, rows)
+        })
+}
+
 /// The acts that answer the word that they ran when the off-device
 /// release holds their known rows, never a withheld error after their commit
 /// (FIX 8171, FIX 8526): the pilot prepare whose producers started listing
