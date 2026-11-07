@@ -34818,7 +34818,7 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ReaskShape",
@@ -34832,7 +34832,7 @@
      "surface": {
       "crate-vis": 10,
       "enum": 3,
-      "fn": 4,
+      "fn": 3,
       "struct": 2
      }
     },
@@ -34854,6 +34854,26 @@
      "purpose": "Source revisions that bind a sheet answer split to its settlement transaction",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_settle/carry/split.rs",
+     "purpose": "Splitting carried editor answers into their native units",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_settle/carry/wake.rs",
+     "purpose": "Re-asking carried editor answers after their original wake",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -93004,9 +93024,9 @@
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline"
     },
     "edit_settle": {
-     "files": 19,
+     "files": 21,
      "impl_vault": true,
-     "largest_src_bucket": "XL",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts"
     },
@@ -94033,9 +94053,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 186,
+   "over_bar": 185,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6642,
+   "source_files": 6644,
    "test_files": 895
   },
   "oneiron-android": {
