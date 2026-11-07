@@ -328,9 +328,15 @@ impl<'v> DocumentWriter<'v> {
             Ok(reader) => {
                 let files = &mut self.files;
                 let staged = files.stage(body.bytes, |out| reader.copy_checked(out))?;
-                let found = files.scan_staged(&staged, |spooled| {
+                let found = match files.scan_staged(&staged, |spooled| {
                     crate::batch::secret_scan::scan_file_content_from("", spooled)
-                })?;
+                }) {
+                    Ok(found) => found,
+                    Err(error) => {
+                        files.discard_staged(staged)?;
+                        return Err(error);
+                    }
+                };
                 match found {
                     Some(_) => {
                         files.discard_staged(staged)?;
@@ -349,7 +355,17 @@ impl<'v> DocumentWriter<'v> {
             content: None,
             withheld: withheld.map(str::to_owned),
         };
-        let mut row = nulled(&row, "", 3)?;
+        // FIX 7239: a failed scan or nulling cuts the staged copy off again
+        // before the error returns, so no unindexed body outlives it.
+        let mut row = match nulled(&row, "", 3) {
+            Ok(row) => row,
+            Err(error) => {
+                if let Some(staged) = clean {
+                    self.files.discard_staged(staged)?;
+                }
+                return Err(error);
+            }
+        };
         let mut keep = None;
         if let Some(fields) = row.as_object_mut() {
             let content = fields.get_mut("content").map(Value::take);

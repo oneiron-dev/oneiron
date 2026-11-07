@@ -90,19 +90,23 @@ impl ExecutorStorage<'_> {
     /// it captured at entry: in its room's overlay, or, for a room on record,
     /// in base under the room's saver, as its epoch summaries do. A room's
     /// overlay fold declares no check: nothing of the room reaches base.
+    /// Returns each fold the write committed, in landing order (FIX 17594):
+    /// a fold the ledger already held is no new one.
     pub(crate) fn land_code_run_folds(
         &self,
         run_id: EntityId,
         landed: Vec<FoldRecord>,
         failed: &[(u64, String)],
-    ) -> Result<()> {
+    ) -> Result<Vec<u64>> {
         match self {
             Self::Canonical(vault) => vault.with_write_txn_grouped(|wtxn| {
                 let mut ledger = FOLDS.get(&vault.store, wtxn, &run_id)?.unwrap_or_default();
+                let before = ledger.folds.len();
                 let checked = self_written(&ledger, &landed);
                 land_folds_in_base(&vault.store, wtxn, run_id, &mut ledger, landed, failed)?;
                 declare_fold_checks_in_txn(vault, wtxn, &ledger, &checked)?;
-                FOLDS.put(&vault.store, wtxn, &run_id, &ledger)
+                FOLDS.put(&vault.store, wtxn, &run_id, &ledger)?;
+                Ok(committed_folds(&ledger, before))
             }),
             Self::Session(binding) => binding.answered(|| match binding.route.target() {
                 RouteTarget::Overlay => {
@@ -111,8 +115,10 @@ impl ExecutorStorage<'_> {
                         .overlay_write_routed(&binding.route, |wtxn, _| {
                             let view = binding.session.read_view()?;
                             let mut ledger = FOLDS.get(&view, wtxn, &run_id)?.unwrap_or_default();
+                            let before = ledger.folds.len();
                             land_folds_in_overlay(&view, wtxn, &mut ledger, landed, failed)?;
-                            FOLDS.put(&view, wtxn, &run_id, &ledger)
+                            FOLDS.put(&view, wtxn, &run_id, &ledger)?;
+                            Ok(committed_folds(&ledger, before))
                         })
                 }
                 RouteTarget::Base | RouteTarget::Discard => binding
@@ -125,6 +131,7 @@ impl ExecutorStorage<'_> {
                             // same room wrote.
                             let view = binding.session.read_view()?;
                             let mut ledger = FOLDS.get(&view, wtxn, &run_id)?.unwrap_or_default();
+                            let before = ledger.folds.len();
                             let checked = self_written(&ledger, &landed);
                             land_folds_in_base(
                                 &vault.store,
@@ -135,7 +142,8 @@ impl ExecutorStorage<'_> {
                                 failed,
                             )?;
                             declare_fold_checks_in_txn(vault, wtxn, &ledger, &checked)?;
-                            FOLDS.put(&vault.store, wtxn, &run_id, &ledger)
+                            FOLDS.put(&vault.store, wtxn, &run_id, &ledger)?;
+                            Ok(committed_folds(&ledger, before))
                         })
                     }),
             }),
@@ -181,6 +189,17 @@ pub(super) fn seed_code_run_folds_in_txn(
         return Ok(());
     }
     FOLDS.put(store, txn, &child, &inherited)
+}
+
+/// The folds a landing added to `ledger` past its first `before`: what the
+/// write committed, in landing order. [`FoldLedger::land`] only appends.
+fn committed_folds(ledger: &FoldLedger, before: usize) -> Vec<u64> {
+    ledger
+        .folds
+        .iter()
+        .skip(before)
+        .map(|record| record.fold)
+        .collect()
 }
 
 /// The folds of `landed` this write adds that a self writer wrote.
