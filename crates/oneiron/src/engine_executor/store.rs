@@ -242,6 +242,9 @@ pub(crate) fn result_handle_json(owner: EntityId, output: &CodeRunRawOutput) -> 
     if let Some(occurrence) = occurrence.as_ref() {
         card["ref"] = json!(format!("occurrence:{}", occurrence.id().to_hex()));
     }
+    if let Some(step_start) = output.producing_step_start {
+        card["producing_step_start"] = json!(step_start);
+    }
     card
 }
 

@@ -31,7 +31,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
 
-const AGENT_VERB_RECEIPT_DOMAIN: &[u8] = b"oneiron:executor-agent-verb-receipt:v1";
+const AGENT_VERB_RECEIPT_DOMAIN: &[u8] =
+    crate::entity_id::derived_domains::EXECUTOR_AGENT_VERB_RECEIPT;
 
 /// The reason a receipt's refusal row carries, so that no row read back from
 /// the receipt's answer, a refusal or not, is ever taken for one.
