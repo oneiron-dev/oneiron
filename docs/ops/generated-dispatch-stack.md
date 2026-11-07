@@ -30,6 +30,7 @@ ID 7be05911836b3be822994c65b45d8514e49d1337) finds three frames over 2 MiB:
 | core `verbs::invoke` | 3,877,880 B (3.70 MiB) |
 
 Core `verbs::validate_input` was 1,421,752 B (1.36 MiB).
+
 FIX 19837 records the old dev artifact's measured 11.49 MiB server-dispatch poll
 frame and 3.70 MiB core-invoke frame. Those are measurements of the old artifact,
 not frame sizes of the outlined source. The existing 32 MiB engine-thread stack
