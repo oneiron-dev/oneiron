@@ -83,6 +83,11 @@ pub(crate) fn imported_speakers_in(
     let Some(body) = body_in(vault, rtxn, &conversation)? else {
         return Ok(ImportedConversationSpeakers::Others);
     };
+    // A foreign archive's copy is other people's, whatever stamp or source
+    // it keeps and whatever of it still lives (FIX 15412).
+    if crate::memory::admitted_foreign(ENTITY_TYPE_CONVERSATION, &body) {
+        return Ok(ImportedConversationSpeakers::Others);
+    }
     let facts = decode_turn_body(&body);
     if !facts.imported {
         return Ok(ImportedConversationSpeakers::NotImported);
@@ -91,10 +96,8 @@ pub(crate) fn imported_speakers_in(
         return Ok(ImportedConversationSpeakers::Others);
     };
     // An owner history import, whose recorded assistant may speak as a
-    // counterparty; never a foreign archive's copy, whatever source it keeps
-    // (FIX 15412).
-    let own_history = HistorySource::parse(&source).is_some()
-        && !crate::memory::admitted_foreign(ENTITY_TYPE_CONVERSATION, &body);
+    // counterparty.
+    let own_history = HistorySource::parse(&source).is_some();
     // All ChildOf TURN targets, live or not (childof_turns_in is live-only):
     // a shelled or absent turn gives no verdict itself; its live MESSAGEs
     // still decide said_by below.
