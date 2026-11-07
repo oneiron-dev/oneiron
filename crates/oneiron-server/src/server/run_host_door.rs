@@ -735,9 +735,12 @@ pub(super) fn answer_as_agent_in_step(
 ) -> MemoryResult<(Value, Option<Vec<EntityId>>)> {
     // The agent's task work waits its turn in the vault's line (Rule 5), as
     // a served caller's does, and runs on it.
-    let turn = verb
-        .is_task_work()
-        .then(|| Arc::new(server.vault.admit_task_work_blocking(actor.entity_ref())));
+    let turn = verb.is_task_work().then(|| {
+        Arc::new(server.vault.admit_task_work_blocking_observed(
+            actor.entity_ref(),
+            crate::api::admission_observer(),
+        ))
+    });
     let producers = ProducerRows::default();
     let memory = agent_memory(server, actor, origin, invocation)
         .with_task_decisions(server.decision_host().task_decisions()?)

@@ -6752,7 +6752,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def list(self, spec):
-            """Every live catalogued connector whose name or summary matches the query."""
+            """Every matching live catalogued connector and first-party web interface, distinguished by source."""
             return json.loads(_translate(lambda: self._client.connector_list(json.dumps(spec))))
         def status(self, spec):
             """One catalogued connector by name, removed ones included."""

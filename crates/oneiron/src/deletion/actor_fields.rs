@@ -110,7 +110,8 @@ const ACTOR_STAMP_TOKENS: ActorScrub = crate::provenance::erase_actor_stamp_toke
 
 /// Runs in the purge's transaction: the identity ops first, then origin's
 /// claims and the actor's stamp tokens, then every declared table's scrub in
-/// catalog order. Behind the
+/// catalog order; a marker-only hard erase then soft-erases the witnessed
+/// exchange of each reply job naming the actor (FIX 10897). Behind the
 /// permanent hard-delete marker, the dispatch text the actor owns leaves the
 /// attempt payloads too (FIX 7076), and the planned intents' declared scrub
 /// leaves each intent it asked or whose plan seats it in its erased form
@@ -157,7 +158,18 @@ pub(super) fn erase_actor_fields_in_txn(
             &BTreeSet::from([*actor]),
         )?;
     }
+    // A reply job naming the actor takes its witnessed exchange with its
+    // event (FIX 10897). A purge or an erase's scrub erased it before its
+    // provenance pass; a marker-only hard path never reaches that pass, so
+    // its rows are found now, before the payload erase below clears them.
+    let witnessed = if hard && !accepted_hard_purge {
+        crate::outbound::connector_witness_rows_in_txn(vault, wtxn, &BTreeSet::from([*actor]))?
+    } else {
+        BTreeSet::new()
+    };
     scrub_actor_fields_in_txn(&mut erase, act)?;
+    let (vault, wtxn, _) = erase.parts();
+    super::connector_witness::erase_connector_witness_rows_in_txn(vault, wtxn, &witnessed, act)?;
     if hard || accepted_hard_purge {
         return crate::attempt_queue::ForceCancelAuthority::erase_actor_payloads_in_txn(
             &mut erase, act,
@@ -273,6 +285,11 @@ pub(crate) fn rerun_actor_scrubs_in_txn(
         .store
         .rerun_gate_claim_scrubs_in_txn(wtxn, &erased, now)?;
     crate::outbound::erase_connector_reply_bodies_by_authors_in_txn(vault, wtxn, &erased)?;
+    // So do the witnessed exchanges of the reply jobs the image brings back
+    // naming any of them, read while those jobs still carry their events
+    // (FIX 10897).
+    let witnessed = crate::outbound::connector_witness_rows_in_txn(vault, wtxn, &erased)?;
+    super::connector_witness::erase_connector_witness_rows_in_txn(vault, wtxn, &witnessed, None)?;
     for actor in &erased {
         {
             let mut erase = ActorErasureWriter::new(vault, wtxn, *actor);

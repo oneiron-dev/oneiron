@@ -3597,7 +3597,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.decisions.asks.climb": { description: "", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.decisions.asks.confirm_grant": { description: "", scope: "Write", proposes: false, hostDoor: true, section: false },
   "self.decisions.asks": { description: "", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "connector.list": { description: "Every live catalogued connector whose name or summary matches the query.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "connector.list": { description: "Every matching live catalogued connector and first-party web interface, distinguished by source.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "connector.status": { description: "One catalogued connector by name, removed ones included.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "connector.call": { description: "Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "connector.schema": { description: "One catalogued connector tool's approved input schema, as the caller's own grant resolves it.", scope: "Read", proposes: false, hostDoor: false, section: false },
@@ -7247,7 +7247,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
     /** Waits on an ask, or on a world-privacy request its caller opened, at a step with no other work: pending, changed, ready with its result or the request's applied or declined state, or a park for code mode. */
     wait: (input: Facade.TaskWaitRequest, options?: O): FacadeReturns<"wait">[K] => invoke("wait", input, options, newInvocation()),
     connector: {
-      /** Every live catalogued connector whose name or summary matches the query. */
+      /** Every matching live catalogued connector and first-party web interface, distinguished by source. */
       list: (input: Facade.ConnectorListRequest, options?: O): FacadeReturns<"connector.list">[K] => invoke("connector.list", input, options, newInvocation()),
       /** One catalogued connector by name, removed ones included. */
       status: (input: Facade.ConnectorNameRequest, options?: O): FacadeReturns<"connector.status">[K] => invoke("connector.status", input, options, newInvocation()),
