@@ -126,6 +126,7 @@ impl HeldLiveRun {
                 response_format: input.response_format,
                 locality: seat.locality(),
                 host_keyless: false,
+                host_paid: false,
                 seat_effort: None,
             },
             messages: input.messages,
