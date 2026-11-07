@@ -115,6 +115,34 @@ impl WindowManager {
         )
     }
 
+    /// A thin read's document and its optional source-world evidence. The
+    /// evidence is captured in the document's own exporting transaction;
+    /// projected copies or a different stored row leave it unknown.
+    pub fn export_read_cache_document_in_window_with(
+        self: &Arc<Self>,
+        id: crate::EntityId,
+        window: &WindowKey,
+        scope: crate::FederationGrantScope,
+        selector: &selector::SyncSelector,
+        withhold: crate::sync::window::Withhold<'_>,
+        remote_vv: &[u8],
+        blob: &[u8],
+    ) -> Result<(Vec<u8>, Option<crate::sync::residence::CachedItemWorlds>)> {
+        selector::authorize_sync_selector(&self.vault, scope, selector)?;
+        let source_id = selector::repo_document_source(&self.vault, id)?;
+        let source = self.open_window(window)?;
+        self.documents.export_selected_with_cache(
+            source_id,
+            &source.doc,
+            window,
+            scope,
+            selector,
+            withhold,
+            remote_vv,
+            Some((id, blob)),
+        )
+    }
+
     /// Grant-backed text-plane export. The entity's canonical ledger supplies
     /// all world/facet/band decisions, never a peer-supplied substitute.
     pub fn export_document(

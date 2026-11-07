@@ -58,7 +58,7 @@ pub enum EngineScan {
     /// The sync rematerialization markers and quarantine rows a pack's
     /// exclusion index reads.
     PackQuarantineRows,
-    /// The legacy lexical-hint claims a target's hint lookup walks.
+    /// The CLAIM rows a target's lexical-hint lookup walks.
     LexicalHintRows,
     /// The graduation answer log a gate receipt query projects.
     AnswerReceiptRows,
