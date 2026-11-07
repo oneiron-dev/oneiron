@@ -75,6 +75,10 @@ pub(super) struct FacadeRowDoor {
     /// each row runs on a spawned task, and a live-run hold in it reaches the
     /// action's receipt only through this (FIX 8107).
     collector: Option<std::sync::mpsc::Sender<CallAttemptWitness>>,
+    /// The action call's admission observer, taken where the door is built
+    /// as its collector is: a row's wait in a line shows on the action's
+    /// admission receipt (FIX 4735).
+    observer: Option<Arc<dyn oneiron::work_line::LineObserver>>,
     /// The action's own live-run hold, as the hold witnessed it, once taken.
     outer: Mutex<Option<CallAttemptWitness>>,
 }
@@ -127,6 +131,7 @@ impl FacadeRowDoor {
             refused: Mutex::new(None),
             stamp: Mutex::new(CallStamp::Unrecorded),
             collector: attempt_collector(),
+            observer: crate::api::admission_observer(),
             outer: Mutex::new(None),
         }
     }
@@ -298,7 +303,10 @@ impl FacadeRowDoor {
             };
             self.runtime.spawn(with_attempt_collector(
                 self.collector.clone(),
-                with_calling_run_writes(run_writes, row),
+                crate::api::facade::with_admission_observer(
+                    self.observer.clone(),
+                    with_calling_run_writes(run_writes, row),
+                ),
             ));
             let Ok((stamp, answer)) = receiver.recv() else {
                 return Ok(Err(refused()));
@@ -339,7 +347,10 @@ impl FacadeRowDoor {
         };
         self.runtime.spawn(with_attempt_collector(
             self.collector.clone(),
-            with_calling_run_writes(run_writes, row),
+            crate::api::facade::with_admission_observer(
+                self.observer.clone(),
+                with_calling_run_writes(run_writes, row),
+            ),
         ));
         let Ok((stamp, answer)) = receiver.recv() else {
             return Ok(Err(refused()));
