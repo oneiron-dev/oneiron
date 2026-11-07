@@ -70,8 +70,10 @@ use crate::connector_call_host::elicitation_response;
 use crate::server::SyncServer;
 
 mod owner;
+mod results;
 pub(crate) use owner::press_owner_consent;
 use owner::{owner_rules, spend_owner_consent, withdraw_owner_ask};
+pub(crate) use results::ConnectorResultInterest;
 
 /// A round's live lease, from when it arrived: how long one answer call
 /// waits on the owner's ruling. Never an expiry (FIX 3837).
@@ -175,6 +177,7 @@ struct LiveQuestions {
 #[derive(Default)]
 pub(crate) struct ConnectorElicitationRegistry {
     live: Mutex<HashMap<String, LiveQuestions>>,
+    live_results: Mutex<HashMap<(EntityId, EntityId), results::ObservedResult>>,
 }
 
 impl ConnectorElicitationRegistry {
