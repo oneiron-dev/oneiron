@@ -253,6 +253,7 @@ impl LimitRow {
         Self::Engine(EngineLimit::ConnectorManifestEntries),
         Self::Engine(EngineLimit::SharedMergeEvidenceRows),
         Self::Engine(EngineLimit::CodebaseManifestFiles),
+        Self::Engine(EngineLimit::RecallQueryBytes),
         Self::Engine(EngineLimit::RequestedResultRows),
         Self::Engine(EngineLimit::EmbeddingDimensions),
         Self::Engine(EngineLimit::MemoryReasonEvidenceRows),

@@ -3,9 +3,15 @@
 
 use super::{EngineLimit, memory_share};
 
+macro_rules! engine_limit_rows {
+    ($($row:expr),+ $(,)?) => {
+        /// Every engine row.
+        pub const ALL: [Self; [$(stringify!($row)),+].len()] = [$($row),+];
+    };
+}
+
 impl EngineLimit {
-    /// Every engine row.
-    pub const ALL: [Self; 162] = [
+    engine_limit_rows![
         Self::KeyedFilterJsonBytes,
         Self::KeyedNamespaceSegments,
         Self::KeyedNamespaceBytes,
@@ -161,6 +167,7 @@ impl EngineLimit {
         Self::ConnectorManifestEntries,
         Self::SharedMergeEvidenceRows,
         Self::CodebaseManifestFiles,
+        Self::RecallQueryBytes,
         Self::RequestedResultRows,
         Self::EmbeddingDimensions,
         Self::MemoryReasonEvidenceRows,
@@ -330,6 +337,7 @@ impl EngineLimit {
             Self::ConnectorManifestEntries => "limits.connector_manifest_entries",
             Self::SharedMergeEvidenceRows => "limits.shared_merge_evidence_rows",
             Self::CodebaseManifestFiles => "limits.codebase_manifest_files",
+            Self::RecallQueryBytes => "limits.recall_query_bytes",
             Self::RequestedResultRows => "limits.requested_result_rows",
             Self::EmbeddingDimensions => "limits.embedding_dimensions",
             Self::MemoryReasonEvidenceRows => "limits.memory_reason_evidence_rows",
@@ -566,6 +574,7 @@ impl EngineLimit {
             Self::SharedMergeEvidenceRows => 4_096,
             // The legacy codebase snapshot manifest's threshold (FIX 74).
             Self::CodebaseManifestFiles => 10_000_000,
+            Self::RecallQueryBytes => 8_388_608,
             // Two to the twentieth: far above any page a door serves in
             // ordinary use. Past it the row asks, and the whole requested
             // count is served.

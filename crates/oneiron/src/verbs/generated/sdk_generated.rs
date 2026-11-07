@@ -22019,7 +22019,6 @@ fn validate_input_vault_claims_upsert(value: &serde_json::Value) -> MemoryResult
 #[inline(never)]
 fn validate_input_vault_recall(value: &serde_json::Value) -> MemoryResult<()> {
     let input: RecallRequest = decode(value.clone())?;
-    crate::memory::caps::check_query(&input.query)?;
     crate::memory::caps::check_limit_nonzero(
         input
             .limit
@@ -27123,7 +27122,6 @@ fn validate_input_vault_search_temporal(value: &serde_json::Value) -> MemoryResu
 #[inline(never)]
 fn validate_input_vault_search_bm25(value: &serde_json::Value) -> MemoryResult<()> {
     let input: QueryBm25Request = decode(value.clone())?;
-    crate::memory::caps::check_query(&input.query)?;
     crate::memory::caps::check_limit_nonzero(input.limit)?;
     Ok(())
 }
@@ -40399,7 +40397,6 @@ pub fn vault_recall(
     memory: &Memory<'_>,
     input: RecallRequest,
 ) -> MemoryResult<crate::memory::MemoryPack> {
-    crate::memory::caps::check_query(&input.query)?;
     crate::memory::caps::check_limit_nonzero(
         input
             .limit
@@ -48161,7 +48158,6 @@ pub fn vault_search_bm25(
     memory: &Memory<'_>,
     input: QueryBm25Request,
 ) -> MemoryResult<crate::task_verb::sdk::Bm25Search> {
-    crate::memory::caps::check_query(&input.query)?;
     crate::memory::caps::check_limit_nonzero(input.limit)?;
     crate::task_verb::sdk::search_bm25(memory, input)
 }

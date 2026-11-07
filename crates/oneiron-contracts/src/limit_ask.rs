@@ -592,6 +592,9 @@ pub enum EngineLimit {
     /// it the row asks whether everything is okay and the manifest is
     /// kept whole.
     CodebaseManifestFiles,
+    /// Original UTF-8 bytes of one recall or text-search query. Past it the
+    /// row asks and the query is served whole; model windows are separate.
+    RecallQueryBytes,
     /// Result rows one search, recall or context-pack door was asked for:
     /// the caller's requested count, measured where the door serves it.
     /// Past it the row asks whether everything is okay and the whole

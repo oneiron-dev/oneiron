@@ -176,6 +176,10 @@ impl Vault {
         limit: usize,
         observe: impl FnOnce(&heed::RoTxn<'_>, &[ScoredEntity]),
     ) -> Result<TimedSearch> {
+        self.measure_limit(
+            crate::limit_ask::EngineLimit::RecallQueryBytes,
+            query.len() as u64,
+        );
         let started_at = self.store.clock.now_recorded_at();
         let started = Instant::now();
         // The count this search serves, asked before the read opens. Best
@@ -239,6 +243,10 @@ impl Vault {
     ) -> Result<TimedSearch> {
         let config = profile.to_bm25_config()?;
         self.ensure_text_index_trusted()?;
+        self.measure_limit(
+            crate::limit_ask::EngineLimit::RecallQueryBytes,
+            query.len() as u64,
+        );
         let started_at = self.store.clock.now_recorded_at();
         let started = Instant::now();
         // The count this search serves, asked after the trust check and

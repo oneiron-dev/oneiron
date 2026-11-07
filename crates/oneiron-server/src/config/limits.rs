@@ -471,6 +471,7 @@ impl LimitsConfig {
             community_cache_bytes,
             connector_manifest_entries,
             codebase_manifest_files,
+            recall_query_bytes,
             requested_result_rows,
             embedding_dimensions,
             shared_merge_evidence_rows,
@@ -779,6 +780,7 @@ impl LimitsConfig {
                 connector_manifest_entries,
             ),
             (EngineLimit::CodebaseManifestFiles, codebase_manifest_files),
+            (EngineLimit::RecallQueryBytes, recall_query_bytes),
             (EngineLimit::RequestedResultRows, requested_result_rows),
             (EngineLimit::EmbeddingDimensions, embedding_dimensions),
             (
