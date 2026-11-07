@@ -364,6 +364,24 @@ impl CalendarEventFacts {
         Some((start, last - start))
     }
 
+    /// The civil time from a floating or all-day EVENT's start to its
+    /// exclusive end, `None` when it names no end (FIX 17869).
+    pub(in crate::calendar) fn civil_duration(&self) -> Option<u64> {
+        let LaneFact::Read((start, Some(end))) = self.wall_time else {
+            return None;
+        };
+        Some(civil_seconds(end)?.saturating_sub(civil_seconds(start)?))
+    }
+
+    /// Whether this EVENT is all-day (dates), as its admitted time kind
+    /// reads; a floating one names wall times (FIX 17869).
+    pub(in crate::calendar) fn civil_all_day(&self) -> bool {
+        matches!(
+            self.time_kind,
+            LaneFact::Read(kind) if kind.kind == crate::calendar::claims::CalendarTimeKind::AllDay
+        )
+    }
+
     pub(in crate::calendar) fn origin(&self) -> Option<CalendarOrigin> {
         match self.origin {
             LaneFact::Absent => Some(CalendarOrigin::Dreamer),

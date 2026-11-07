@@ -52,9 +52,7 @@ pub(in crate::calendar) fn occurrences(
 /// The occurrences of an all-day or floating series that meet `window` (FIX
 /// 16568). Its master steps on the UTC carrier, where its date and floating
 /// exceptions key too, and each start spans the civil envelope of its first
-/// occurrence's civil length: wherever that civil time falls in some zone. A master
-/// seeded in a zone (a dated `DTSTART` with a `TZID`) has its starts read
-/// back to their civil times first.
+/// occurrence's civil length: wherever that civil time falls in some zone.
 fn civil_occurrences(
     row: &CalendarEventRow,
     master: &crate::calendar::claims::CalendarSeriesMasterValue,
@@ -73,6 +71,27 @@ fn civil_occurrences(
     {
         return Ok(Vec::new());
     }
+    Ok(
+        civil_starts(row, master, window, exceptions, row.facts.uids(), length)?
+            .into_iter()
+            .map(|(_, civil)| super::facts::civil_envelope(civil, length))
+            .collect(),
+    )
+}
+
+/// The starts of an all-day or floating series whose civil envelope meets
+/// `window`, each as its recurrence key and its civil start on the UTC
+/// carrier, the exceptions of `uids` masked; `length` is its civil length. A master
+/// seeded in a zone (a dated `DTSTART` with a `TZID`) keys its starts as
+/// instants, read back to their civil times here.
+pub(in crate::calendar) fn civil_starts(
+    row: &CalendarEventRow,
+    master: &crate::calendar::claims::CalendarSeriesMasterValue,
+    window: TimeRange,
+    exceptions: &[CalendarSeriesExceptionValue],
+    uids: &[String],
+    length: u64,
+) -> Result<Vec<(u64, u64)>> {
     let failed = || Error::InvalidConfig("calendar recurrence projection failed".into());
     let (east, west) = super::facts::CIVIL_REACH_SECS;
     // A zone's starts sit up to a day of offsets off their civil times.
@@ -86,10 +105,10 @@ fn civil_occurrences(
     };
     let mut starts = crate::calendar::series::expand_window(&master.rrule, master.into(), expanded)
         .map_err(|_| failed())?;
-    for uid in row.facts.uids() {
+    for uid in uids {
         starts = crate::calendar::series::mask_master_exceptions(row.id, uid, starts, exceptions);
     }
-    let mut spans = Vec::with_capacity(starts.len());
+    let mut kept = Vec::with_capacity(starts.len());
     for start in starts {
         let civil = if zoned {
             let wall = crate::calendar::utc_to_wall(start, &master.tz).map_err(|_| failed())?;
@@ -99,10 +118,57 @@ fn civil_occurrences(
         };
         let span = super::facts::civil_envelope(civil, length);
         if span.start <= window.end && window.start <= span.end {
-            spans.push(span);
+            kept.push((start, civil));
         }
     }
-    Ok(spans)
+    Ok(kept)
+}
+
+/// Each occurrence of a floating or all-day EVENT that meets `window`, its
+/// envelope with its civil span (FIX 17869); `None` for an EVENT anchored at
+/// an instant. A lone one is its own one occurrence.
+pub(in crate::calendar) fn civil_occurrences_named(
+    row: &CalendarEventRow,
+    window: TimeRange,
+    exceptions: &[CalendarSeriesExceptionValue],
+    withheld: &std::collections::BTreeSet<(crate::EntityId, String)>,
+) -> Result<Option<Vec<(TimeRange, super::civil::CalendarCivilSpan)>>> {
+    if row.occurred.is_some() {
+        return Ok(None);
+    }
+    let Some((first, length)) = row.facts.civil_extent() else {
+        return Ok(None);
+    };
+    if row.facts.series_withheld() || row.facts.exception_withheld() {
+        return Ok(Some(Vec::new()));
+    }
+    let starts = match row.facts.series() {
+        None => vec![first],
+        Some(_)
+            if row
+                .facts
+                .uids()
+                .iter()
+                .any(|uid| withheld.contains(&(row.id, uid.clone()))) =>
+        {
+            Vec::new()
+        }
+        Some(master) => civil_starts(row, master, window, exceptions, row.facts.uids(), length)?
+            .into_iter()
+            .map(|(_, civil)| civil)
+            .collect(),
+    };
+    let all_day = row.facts.civil_all_day();
+    let duration = row.facts.civil_duration();
+    Ok(Some(
+        starts
+            .into_iter()
+            .filter_map(|start| {
+                super::civil::civil_span(all_day, start, duration)
+                    .map(|named| (super::facts::civil_envelope(start, length), named))
+            })
+            .collect(),
+    ))
 }
 
 /// A zone's wall time read on the UTC carrier: its civil fields as UTC.
