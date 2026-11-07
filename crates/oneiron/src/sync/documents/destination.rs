@@ -65,7 +65,8 @@ pub fn document_frame_withheld(vault: &Vault, frame: &[u8]) -> bool {
 /// Refused receipt carry no text; every state, update, operation and other
 /// receipt is subject to the same policy. A marked repo source's own frames
 /// never leave (FIX 10872): sync is masked even to owner devices (FIX
-/// 7608), so its text crosses only as its copy lineage, under its copy id.
+/// 7608), so its text crosses only as its copy lineage, under its copy id,
+/// judged as its source.
 pub fn document_frame_withheld_for(vault: &Vault, peer: PeerMachine, frame: &[u8]) -> bool {
     if frame.first() != Some(&crate::sync::transport::TAG_DOCUMENT) {
         return false;
@@ -93,7 +94,26 @@ pub fn document_frame_withheld_for(vault: &Vault, peer: PeerMachine, frame: &[u8
         if marked_source_in_txn(vault, &txn, document.entity)? {
             return Ok(true);
         }
-        text_withheld_for(vault, &txn, document.entity, Withhold::Peer(peer))
+        // A copy stream's frame is judged as the marked source it stands
+        // for: that source's worlds and sources (FIX 10872).
+        let id = super::copy::judged_id_in_txn(vault, &txn, document.entity)?;
+        if text_withheld_for(vault, &txn, id, Withhold::Peer(peer))? {
+            return Ok(true);
+        }
+        // A NOTE fork's state carries the fork's own text: its citations are
+        // judged again here against the worlds kept off this machine now,
+        // however long the frame waited in the queue (FIX 12789).
+        if document.kind == document_sub_tags::NOTE_FORK_STATE {
+            let withheld = Withhold::Peer(peer).worlds_in(vault, &txn)?;
+            return crate::note::fork_state_cites_withheld(
+                vault,
+                &txn,
+                document.entity,
+                document.payload,
+                &withheld,
+            );
+        }
+        Ok(false)
     })()
     .unwrap_or(true)
 }

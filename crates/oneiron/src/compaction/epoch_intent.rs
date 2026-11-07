@@ -96,7 +96,7 @@ pub(super) fn epoch_birth(
     let window = request
         .window
         .iter()
-        .filter(|_| request.log == WindowLog::Conversation)
+        .filter(|_| matches!(request.log, WindowLog::Conversation(_)))
         .flat_map(|message| [message.message_id, message.turn_id]);
     let mut seen = std::collections::BTreeSet::new();
     let inputs: Vec<EntityId> = std::iter::once(intent)
