@@ -713,6 +713,26 @@ impl Vault {
                 &touched,
                 &zero_head_shells,
             )?;
+            // FIX 7817 (Engine 19:59 T-B): a local `Auto` merge, split or
+            // facet keeps its post-hoc review candidate and queues the
+            // Coach's deduplicated job in this writer, after its effects and
+            // seal: the decision lands with its candidate or not at all. No
+            // model or sampler runs here.
+            if super::post_hoc_review::eligible(write.approval, &record.action) {
+                super::post_hoc_review::declare_topology_audit_in_txn(
+                    self,
+                    wtxn,
+                    &super::post_hoc_review::AuditDeclaration {
+                        event: event_id,
+                        disposition: disposition_id,
+                        stored: &stored.root,
+                        record: &record,
+                        actor: write.actor,
+                        decided_by: seal.decider(),
+                    },
+                    now,
+                )?;
+            }
             Ok(IdentityOpOutcome::Applied {
                 event: event_id,
                 transitions,

@@ -30,7 +30,10 @@
 //! [`super::feedback_report_delivery`]). An owner-authorized training run
 //! trains on its own thread, then scores ([`super::training_pack`]). The
 //! nightly drafter retrain trains the vault's own drafter on its own thread
-//! while its night stays parked ([`super::drafter`], FIX 14974).
+//! while its night stays parked ([`super::drafter`], FIX 14974). The
+//! topology audit reviews automatic merges, splits and facets after they
+//! applied, on the host's pinned recipe and decision ladder
+//! (`coach.topology_audit`, FIX 7817, [`topology_audit`]).
 use std::collections::BTreeMap;
 mod wake;
 pub(super) use wake::WakeExecutor;
@@ -82,6 +85,7 @@ mod fork_promote;
 mod judge_label_rechecks;
 mod research_oracle;
 pub(super) mod seal_checks;
+mod topology_audit;
 mod type_tree_upkeep;
 mod weave_digest_settings;
 
@@ -284,6 +288,11 @@ pub(super) fn run_one(
             super::drafter::run(server, admitted, now)
         }
         COACH_SEAL_CHECKS_FACET => seal_checks::run(server, admitted, now),
+        // FIX 7817: the post-hoc review of automatic topology, selected and
+        // reviewed by the host's pinned recipe on the decision ladder.
+        oneiron::dreamer_runner::maintenance::coach::COACH_TOPOLOGY_AUDIT_FACET => {
+            topology_audit::run(server, admitted, now)
+        }
         COACH_ATTRIBUTION_AUDITS_FACET => attribution_audits::run(server, admitted, now),
         COACH_JUDGE_LABEL_RECHECKS_FACET => judge_label_rechecks::run(server, admitted, now),
         COACH_ATTRIBUTION_LABELS_FACET => attribution_labels::run(server, admitted, now),
