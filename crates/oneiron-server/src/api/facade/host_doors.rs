@@ -63,6 +63,8 @@ pub(crate) use super::git_push_doors::*;
 // The public run repo doors (FIX 6867, G1 PR3b): no owner proof, so none is
 // in the owner preflight below.
 pub(crate) use super::repo_doors::*;
+// Manifest-conflict decisions take the owner proof in their own doors.
+pub(crate) use super::repo_manifest_conflict_doors::*;
 pub(crate) use super::shared_act_doors::*;
 pub(crate) use super::shared_admin_doors::*;
 // The shared-vault invitation doors (OF-531) too.
@@ -133,6 +135,13 @@ pub(crate) use super::residence_doors::*;
 pub(crate) use super::summary_doors::*;
 // The weave lens's human doors, likewise.
 pub(crate) use super::weave_doors::*;
+// The owner's reset of a person's step-up passkeys (FIX 17553).
+pub(crate) use super::step_up_doors::{vault_step_up_passkeys_reset, vault_step_up_totp_reset};
+// The weave Admin's served rows, on the passkey step-up (FIX 11694).
+pub(crate) use super::weave_admin_doors::{
+    vault_weave_admin_digest, vault_weave_admin_item_wrong, vault_weave_admin_lens,
+    vault_weave_admin_link_wrong, vault_weave_admin_report,
+};
 // The owner inbox's group doors over both kinds (FIX 3024, 3026), likewise.
 pub(crate) use super::inbox_group_doors::*;
 pub(crate) use super::web_fetch_doors::*;
@@ -261,6 +270,7 @@ pub(crate) use super::code_run_doors::*;
 // The owner's code consent wait answer and receipt doors (DOOR-079), likewise.
 pub(crate) use super::code_wait_doors::*;
 // The owner's hook regeneration due, record and adopt doors (DOOR-077), likewise.
+pub(crate) use super::hook_check_doors::*;
 pub(crate) use super::hook_regen_doors::*;
 pub(crate) use super::host_trigger_doors::*;
 // The owner's speculative merge queue doors (DOOR-132), likewise.

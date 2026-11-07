@@ -62,8 +62,8 @@ mod lmdb_index;
 mod lmdb_short_id_maintenance;
 mod mutation;
 pub(crate) use mutation::{
-    EntityPutAudit, MutationAudit, audit_entity_put_in_txn, audit_mutation_in_txn,
-    storage_service_principal,
+    EntityPutAudit, MutationAudit, MutationAuditProjection, PreparedMutationAudit,
+    audit_entity_put_in_txn, audit_mutation_in_txn, storage_service_principal,
 };
 use oneiron_store::ports::records;
 mod regeneration;
@@ -71,8 +71,8 @@ mod safe_read;
 mod time;
 mod vault_read;
 pub(crate) use safe_read::{
-    BodyStale, body_is_stale, body_readable_in_txn, raw_readable_apart_from_use_in_txn,
-    raw_readable_in_txn, withdrawn_in_txn,
+    BodyStale, body_is_stale, body_readable_in_txn, raw_exportable_in_txn,
+    raw_readable_apart_from_use_in_txn, raw_readable_in_txn, withdrawn_in_txn,
 };
 pub use safe_read::{safe_read_asset_text, safe_read_text};
 #[cfg(test)]
@@ -108,3 +108,4 @@ pub(crate) use time::{
     persist_id_floor_in_txn, recorded_at_in_txn,
 };
 pub use time::{Clock, IdGen, StoreClock};
+pub(crate) use time::{PreparedRecordingClock, RecordingClockProjection};

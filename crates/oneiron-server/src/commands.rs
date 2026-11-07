@@ -128,6 +128,8 @@ mod account;
 pub use account::account;
 mod device;
 pub use device::device_enrol;
+#[cfg(feature = "code-sandbox-wasmtime")]
+pub(crate) mod hook_regen;
 mod serve;
 pub(crate) use self::serve::hook_sandbox;
 pub(crate) use self::serve::open_served_vault_anchored;
@@ -169,6 +171,8 @@ pub use self::seat::{
     seat_login_plan, seat_routes, seat_runner_policy, seat_runners, seat_siwc_clear,
     seat_siwc_login, seat_siwc_revoke,
 };
+mod model_workers;
+pub use model_workers::model_workers;
 mod registry;
 pub use self::registry::registry;
 

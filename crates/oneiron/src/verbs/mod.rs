@@ -3,6 +3,7 @@ mod act_answer;
 mod agent_grant;
 mod agents;
 mod anonymous_chat;
+mod answer_forward;
 mod asr;
 mod authority_history;
 mod board_layout;
@@ -60,6 +61,8 @@ mod proxy;
 mod receipts_page;
 mod record_erase;
 mod reply;
+#[cfg(feature = "sync")]
+mod repo_manifest_conflict;
 mod research;
 mod reservoir_sources;
 mod residence;
@@ -84,6 +87,8 @@ mod skill_fit;
 mod skill_fork;
 mod skills;
 mod standing;
+// FIX 17553: the owner resets a person's step-up passkeys.
+mod step_up;
 mod support_grant;
 #[cfg(feature = "sync")]
 mod sync_quarantine;
@@ -247,7 +252,6 @@ pub struct WorkCompanionSetRequest {
     pub workspace_ref: String,
     pub policy: crate::workspace_roster::WorkCompanionPolicy,
 }
-
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TaskRequest {
@@ -429,6 +433,7 @@ pub use self::act_answer::*;
 pub use self::agent_grant::*;
 pub use self::agents::*;
 pub use self::anonymous_chat::*;
+pub use self::answer_forward::*;
 pub use self::asr::*;
 pub use self::authority_history::*;
 pub use self::board_layout::*;
@@ -488,6 +493,8 @@ pub use self::proxy::*;
 pub use self::receipts_page::*;
 pub use self::record_erase::*;
 pub use self::reply::*;
+#[cfg(feature = "sync")]
+pub use self::repo_manifest_conflict::*;
 pub use self::research::*;
 pub use self::reservoir_sources::*;
 pub use self::residence::*;
@@ -511,6 +518,7 @@ pub use self::skill_execution::*;
 pub use self::skill_fit::*;
 pub use self::skills::*;
 pub use self::standing::*;
+pub use self::step_up::*;
 pub use self::support_grant::*;
 #[cfg(feature = "sync")]
 pub use self::sync_quarantine::*;
@@ -1041,5 +1049,4 @@ fn describe_self_shares_the_typed_sdk_result_and_mcp_arguments() {
         card
     );
 }
-
 pub mod voice_records;

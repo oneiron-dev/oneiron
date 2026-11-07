@@ -42,6 +42,8 @@ pub(crate) struct DesktopWorkers {
         tokio::sync::watch::Sender<bool>,
     )>,
     workers: Vec<tokio::task::JoinHandle<()>>,
+    #[cfg(feature = "code-sandbox-wasmtime")]
+    hook_regen: Option<crate::commands::hook_regen::HookRegenWorker>,
     /// Plain serve's owner host, whose scheduled backup pass in flight ends
     /// before the stop returns (FIX 6732). Embedded serve keeps none: its
     /// vault and runtime stay up, so a pass in flight finishes there.
@@ -311,6 +313,12 @@ pub(crate) async fn start_desktop_workers(
     if config.hooks {
         workers.extend(spawn_fact_hooks(&sync_server, admitted(), stopped.clone()).await);
     }
+    #[cfg(feature = "code-sandbox-wasmtime")]
+    let hook_regen = if config.hooks {
+        crate::commands::hook_regen::HookRegenWorker::spawn(&sync_server, admitted())
+    } else {
+        None
+    };
     // The API's CORS stays the API's: the artifact origin is never granted.
     let artifact_app = build_artifact_app(sync_server.clone());
     let questions = Arc::clone(sync_server.wire_telemetry.limit_questions());
@@ -354,6 +362,8 @@ pub(crate) async fn start_desktop_workers(
             linear_handle,
             tagging,
             workers,
+            #[cfg(feature = "code-sandbox-wasmtime")]
+            hook_regen,
             owner_host,
         },
     })
@@ -384,6 +394,10 @@ impl DesktopWorkers {
         if let Some((tagging, stopping)) = self.tagging {
             let _ = stopping.send_replace(true);
             let _ = tagging.await;
+        }
+        #[cfg(feature = "code-sandbox-wasmtime")]
+        if let Some(regen) = self.hook_regen {
+            regen.stop().await;
         }
         self.model_setup.shutdown().await;
         // A pass or step in flight reaches its own boundary before this returns.

@@ -165,6 +165,12 @@ pub struct AuthorityAuditRow {
     /// A federation lifecycle op's grant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant_ref: Option<String>,
+    /// The execution receipt named by a signed membership withdrawal or Owner handover.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt_ref: Option<String>,
+    /// The grant ids the signed Owner handover says the change affected.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub affected_grants: Vec<String>,
     /// A critical-write confirm's claim.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claim_ref: Option<String>,
@@ -455,6 +461,8 @@ struct OpFields {
     detail: Option<String>,
     subject_ref: Option<String>,
     grant_ref: Option<String>,
+    receipt_ref: Option<String>,
+    affected_grants: Vec<String>,
     claim_ref: Option<String>,
     holder_ref: Option<String>,
     parent_ref: Option<String>,
@@ -494,11 +502,15 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
                 ..OpFields::default()
             },
         ),
-        AuthorityOp::SlipGrantRevoke { grant_ref } => (
+        AuthorityOp::SlipGrantRevoke {
+            grant_ref,
+            membership_receipt,
+        } => (
             Revoke,
             "slip_grant_revoke",
             OpFields {
                 grant_ref: Some(grant_ref.to_hex()),
+                receipt_ref: membership_receipt.clone(),
                 ..OpFields::default()
             },
         ),
@@ -566,7 +578,21 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
         AuthorityOp::OwnerRoot(_) => (Other, "owner_root", OpFields::default()),
         AuthorityOp::WorldPrivacy(_) => (Other, "world_privacy", OpFields::default()),
         AuthorityOp::WorldKeyWraps(_) => (Other, "world_key_wraps", OpFields::default()),
-        AuthorityOp::OwnerHandover(_) => (Other, "owner_handover", OpFields::default()),
+        AuthorityOp::OwnerHandover(action) => (
+            Other,
+            "owner_handover",
+            OpFields {
+                detail: Some(action.cause.wire().to_owned()),
+                subject_ref: Some(action.from.to_hex()),
+                receipt_ref: Some(action.receipt.clone()),
+                affected_grants: action
+                    .affected_grants
+                    .iter()
+                    .map(|id| id.to_hex())
+                    .collect(),
+                ..OpFields::default()
+            },
+        ),
         AuthorityOp::ResidenceDirective(_) => (Other, "residence_directive", OpFields::default()),
         AuthorityOp::ResidenceResult(_) => (Other, "residence_result", OpFields::default()),
         AuthorityOp::GrantTravelSet(set) => (
@@ -849,6 +875,8 @@ fn project_row(
         vault_ref: entry.vault_id.as_ref().map(|id| hex_lower(id)),
         subject_ref: fields.subject_ref,
         grant_ref: fields.grant_ref,
+        receipt_ref: fields.receipt_ref,
+        affected_grants: fields.affected_grants,
         claim_ref: fields.claim_ref,
         holder_ref: fields.holder_ref,
         parent_ref: fields.parent_ref,

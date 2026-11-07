@@ -3,8 +3,8 @@
 use crate::cli_env::ApplyCliEnv as _;
 use crate::{EgressRelay, Error, FenceConfig, FenceProof, Result, linux, wire};
 use std::collections::HashMap;
-use std::io::{self, Read, Write};
-use std::net::{Shutdown, SocketAddr};
+use std::io;
+use std::net::SocketAddr;
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixDatagram, UnixListener, UnixStream};
@@ -23,6 +23,9 @@ mod loopback;
 mod relay_workers;
 // A guest's socket() makes its entry and the end the guest receives.
 mod sockets;
+// A guest stream's relays, to its remote or the host's DNS, hold their room
+// on the host floor and their socket's entry (FIX 6301).
+mod stream_relay;
 
 pub(crate) struct Supervisor {
     listener: UnixListener,
@@ -118,9 +121,23 @@ impl Supervisor {
         relay: Arc<dyn EgressRelay>,
     ) -> Result<(FenceProof, Guard)> {
         let deadline = Instant::now() + self.config.startup_timeout;
-        let (mut stream, _) = loop {
+        // FIX 747: any local user can reach the socket, so each connection's
+        // peer is checked against the container's own process before a byte
+        // is read. Another peer is dropped and the next connection waited
+        // for, so none can take the one handshake or end the startup.
+        let mut container_pid = None;
+        let mut stream = loop {
             match self.listener.accept() {
-                Ok(pair) => break pair,
+                Ok((stream, _)) => {
+                    if from_container(&runtime, &name, &stream, &mut container_pid) {
+                        break stream;
+                    }
+                    if Instant::now() >= deadline {
+                        return Err(Error::Fence(io::Error::other(
+                            "fence launcher did not prove readiness",
+                        )));
+                    }
+                }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                     if child.try_wait().map_err(Error::Fence)?.is_some()
                         || Instant::now() >= deadline
@@ -262,6 +279,38 @@ fn network_none(e: &serde_json::Value) -> bool {
         && e[0]["Config"]["User"]
             .as_str()
             .is_some_and(|s| !s.is_empty() && !s.starts_with("0:"))
+}
+/// Whether `stream`'s peer is the container's own process (FIX 747), read
+/// from the socket before any byte of it. The container's PID comes from the
+/// runtime once it names one, and is kept. A peer that is not it, or a
+/// container the runtime cannot name a process for yet, is no handshake.
+fn from_container(
+    runtime: &Path,
+    name: &str,
+    stream: &UnixStream,
+    container_pid: &mut Option<u64>,
+) -> bool {
+    let Ok(peer) = peer_pid(stream) else {
+        return false;
+    };
+    if peer <= 0 {
+        return false;
+    }
+    let expected = match *container_pid {
+        Some(pid) => pid,
+        None => {
+            let Some(pid) = inspect(runtime, name)
+                .ok()
+                .and_then(|evidence| evidence[0]["State"]["Pid"].as_u64())
+                .filter(|pid| *pid != 0)
+            else {
+                return false;
+            };
+            *container_pid = Some(pid);
+            pid
+        }
+    };
+    peer as u64 == expected
 }
 fn peer_pid(stream: &UnixStream) -> io::Result<i32> {
     // SAFETY: ucred is a plain C value filled by getsockopt with its exact size.
@@ -407,27 +456,17 @@ fn operate(
                     if peer.is_none() {
                         return Err(io::Error::from_raw_os_error(libc::EISCONN));
                     }
+                    // The relay takes its room and starts before the guest's
+                    // end leaves the entry, which it holds (FIX 6301).
                     if target.port() == 53 {
-                        state.relay.authorize_datagram(*target)?;
-                        let peer = peer
-                            .take()
-                            .ok_or_else(|| io::Error::from_raw_os_error(libc::EISCONN))?;
-                        *socket
-                            .target
-                            .lock()
-                            .map_err(|_| io::Error::other("fence state poisoned"))? = Some(*target);
-                        relay_dns(peer, *target, Arc::clone(state));
+                        stream_relay::connect_dns(state, &socket, &mut peer, *target)?;
                     } else {
-                        let (stream, gated) = state.relay.connect_stream(*target)?;
-                        let peer = peer
-                            .take()
-                            .ok_or_else(|| io::Error::from_raw_os_error(libc::EISCONN))?;
-                        *socket
-                            .target
-                            .lock()
-                            .map_err(|_| io::Error::other("fence state poisoned"))? = Some(*target);
-                        relay_stream(peer, stream, *target, gated, Arc::clone(state));
+                        stream_relay::connect_remote(state, &socket, &mut peer, *target)?;
                     }
+                    *socket
+                        .target
+                        .lock()
+                        .map_err(|_| io::Error::other("fence state poisoned"))? = Some(*target);
                     socket.release_control();
                 }
             }
@@ -541,13 +580,13 @@ fn datagram_writer(socket: Arc<Socket>, state: Arc<State>) {
             match host.recv(&mut bytes) {
                 Ok(n) => {
                     let target = socket.target.lock().ok().and_then(|a| *a);
-                    // The relay's socket waits for room on the host floor;
-                    // the guest's next writes wait in its socket (FIX 5979).
+                    // The datagram waits for host room and admission; the
+                    // guest's next writes wait in its socket (FIX 5979, FIX 6298).
                     if let Some(target) = target
-                        && let Some(_room) = relay_workers::reserve(&state, &socket)
-                        && let Ok(answer) = state.relay.datagram(target, &bytes[..n])
+                        && let Some(answer) =
+                            relay_workers::relay_written(&state, &socket, target, &bytes[..n])
                     {
-                        let _ = host.send(&answer);
+                        relay_workers::deliver(&state, &socket, host, &answer);
                     }
                 }
                 Err(e)
@@ -563,114 +602,6 @@ fn datagram_writer(socket: Arc<Socket>, state: Arc<State>) {
         }
     });
 }
-/// Relays one admitted stream both ways. A `gated` stream's opening bytes
-/// pass the relay's name gate after the guest's connect was answered and
-/// before any reaches the remote; a refused one ends with nothing sent
-/// (FIX 7652).
-fn relay_stream(
-    mut guest: UnixStream,
-    mut remote: std::net::TcpStream,
-    target: SocketAddr,
-    gated: bool,
-    state: Arc<State>,
-) {
-    std::thread::spawn(move || {
-        let (Ok(mut incoming), Ok(mut outgoing)) = (remote.try_clone(), guest.try_clone()) else {
-            return;
-        };
-        let _ = incoming.set_read_timeout(Some(Duration::from_millis(250)));
-        let _ = guest.set_read_timeout(Some(Duration::from_millis(250)));
-        let alive = Arc::clone(&state.alive);
-        let relay = Arc::clone(&state.relay);
-        let upload = std::thread::spawn(move || {
-            if gated {
-                let opening = relay.open_upload(target, &mut guest, &alive);
-                if opening.and_then(|bytes| remote.write_all(&bytes)).is_err() {
-                    let _ = remote.shutdown(Shutdown::Both);
-                    return;
-                }
-            }
-            let mut bytes = [0; 32768];
-            while alive.load(Ordering::Acquire) {
-                match guest.read(&mut bytes) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        if remote.write_all(&bytes[..n]).is_err() {
-                            break;
-                        }
-                    }
-                    Err(e)
-                        if matches!(
-                            e.kind(),
-                            io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-                        ) =>
-                    {
-                        continue;
-                    }
-                    Err(_) => break,
-                }
-            }
-            let _ = remote.shutdown(Shutdown::Write);
-        });
-        let mut hash = blake3::Hasher::new();
-        let mut total = 0;
-        let mut bytes = [0; 32768];
-        while state.alive.load(Ordering::Acquire) {
-            match incoming.read(&mut bytes) {
-                Ok(0) => break,
-                Ok(n) => {
-                    hash.update(&bytes[..n]);
-                    total += n as u64;
-                    if outgoing.write_all(&bytes[..n]).is_err() {
-                        break;
-                    }
-                }
-                Err(e)
-                    if matches!(
-                        e.kind(),
-                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-                    ) =>
-                {
-                    continue;
-                }
-                Err(_) => break,
-            }
-        }
-        let _ = incoming.shutdown(Shutdown::Both);
-        let _ = outgoing.shutdown(Shutdown::Both);
-        let _ = upload.join();
-        state
-            .relay
-            .transferred(target, *hash.finalize().as_bytes(), total);
-    });
-}
-
-fn relay_dns(mut guest: UnixStream, target: SocketAddr, state: Arc<State>) {
-    std::thread::spawn(move || {
-        while state.alive.load(Ordering::Acquire) {
-            let mut len = [0; 2];
-            if guest.read_exact(&mut len).is_err() {
-                break;
-            }
-            let mut query = vec![0; u16::from_be_bytes(len) as usize];
-            if guest.read_exact(&mut query).is_err() {
-                break;
-            }
-            let Ok(answer) = state.relay.datagram(target, &query) else {
-                break;
-            };
-            if guest
-                .write_all(&(answer.len() as u16).to_be_bytes())
-                .and_then(|()| guest.write_all(&answer))
-                .is_err()
-            {
-                break;
-            }
-        }
-        let _ = guest.shutdown(Shutdown::Both);
-    });
-}
-
 /// The microVM's trusted PID1 owns a local notifier supervisor. Only network
 /// transport leaves the VM, over the engine's private vsock relay.
 pub fn serve_native(
