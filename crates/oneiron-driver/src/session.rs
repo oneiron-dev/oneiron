@@ -33,14 +33,14 @@
 //! supervisor's existing attempt-queue deadline lane surfaces the enqueued
 //! attempts; no new tick authority is minted for them.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
 use oneiron::session_lifecycle::{
-    SessionActivityPeriod, SessionExpiryPolicy, SessionHintTimestamp, SessionKey,
+    SessionActivityPeriod, SessionExpiryPolicy, SessionHintTimestamp, SessionKey, SessionOpenHint,
 };
 use oneiron::{EndedSession, EntityId, Result, SessionClosePredicate, SessionMintOutcome, Vault};
 
@@ -49,9 +49,11 @@ use crate::tick::{
     TickSource, sleep_until_due, wait_for_change,
 };
 
+mod pending;
 mod policy;
 pub use self::policy::SessionLifecycleConfig;
 use self::policy::expiry_ms;
+use pending::{HintWork, sleep_until_lifecycle_due};
 
 /// Adjacent Activity arrivals separated by less than one second are rolled up
 /// in the push queue and durable period storage. This is tiny beside the
@@ -87,6 +89,8 @@ pub enum SessionHintEffect {
     /// Explicit-end closed the open session (its durable meso round was
     /// enqueued atomically with the close).
     Ended(EndedSession),
+    /// The open is retained, waiting on this hook ask; no sitting was minted.
+    OpenPending(EntityId),
     /// Nothing to do (e.g. activity or explicit-end with no open session).
     NoOp,
 }
@@ -174,10 +178,17 @@ impl<'v> SessionLifecycleDriver<'v> {
         claimed_ms: Option<u64>,
         arrival_ms: u64,
     ) -> Result<SessionHintEffect> {
-        self.apply_hint_carrier(SessionHintCarrier::point(key, hint, claimed_ms, arrival_ms))
+        self.apply_hint_carrier(
+            SessionHintCarrier::point(key, hint, claimed_ms, arrival_ms),
+            &mut None,
+        )
     }
 
-    fn apply_hint_carrier(&self, carrier: SessionHintCarrier) -> Result<SessionHintEffect> {
+    fn apply_hint_carrier(
+        &self,
+        carrier: SessionHintCarrier,
+        prepared: &mut Option<SessionOpenHint>,
+    ) -> Result<SessionHintEffect> {
         let key = carrier.key;
         let policy = self.config.resolve(self.vault)?;
         let mut open = self.vault.open_session(key)?;
@@ -186,7 +197,10 @@ impl<'v> SessionLifecycleDriver<'v> {
             || carrier.first.arrival_ms.saturating_sub(ceiling_ms),
             |session| session.last_effective_ms,
         );
-        let first = Self::hint_timestamp(policy, carrier.first, first_floor_ms);
+        let first = prepared.as_ref().map_or_else(
+            || Self::hint_timestamp(policy, carrier.first, first_floor_ms),
+            SessionOpenHint::timestamp,
+        );
         let last = if carrier.count == 1 {
             first
         } else {
@@ -211,18 +225,28 @@ impl<'v> SessionLifecycleDriver<'v> {
         }
 
         match carrier.hint {
-            SessionHint::AppOpen => match self.vault.mint_session_from_hint(key, first) {
-                Ok(SessionMintOutcome::Minted(id)) => Ok(SessionHintEffect::Minted(id)),
-                // Presence re-signal on the open sitting counts as activity.
-                Ok(SessionMintOutcome::AlreadyOpen(_)) => Ok(self
-                    .vault
-                    .record_session_app_open_hint(key, first)?
-                    .map_or(SessionHintEffect::NoOp, SessionHintEffect::Bumped)),
-                // A `host.session.open` hook refused the sitting (ARCH-0080
-                // §5): the hint is spent, and nothing opens.
-                Err(oneiron::Error::VerbHook(_)) => Ok(SessionHintEffect::NoOp),
-                Err(error) => Err(error),
-            },
+            SessionHint::AppOpen => {
+                let prepared = match prepared {
+                    Some(prepared) => prepared,
+                    slot @ None => slot.insert(self.vault.prepare_session_open_hint(key, first)?),
+                };
+                match self.vault.mint_prepared_session_hint(prepared) {
+                    Ok(SessionMintOutcome::Minted(id)) => Ok(SessionHintEffect::Minted(id)),
+                    // Presence re-signal on the open sitting counts as activity.
+                    Ok(SessionMintOutcome::AlreadyOpen(_)) => Ok(self
+                        .vault
+                        .record_session_app_open_hint(key, first)?
+                        .map_or(SessionHintEffect::NoOp, SessionHintEffect::Bumped)),
+                    Err(oneiron::Error::VerbHook(stop)) => match *stop {
+                        oneiron::runtime_hooks::VerbHookStop::Pending { ask, .. } => {
+                            Ok(SessionHintEffect::OpenPending(EntityId::from_hex(&ask)?))
+                        }
+                        // A terminal hook refusal spends the hint without opening.
+                        _ => Ok(SessionHintEffect::NoOp),
+                    },
+                    Err(error) => Err(error),
+                }
+            }
             SessionHint::Activity => {
                 let Some(session) = open else {
                     return Ok(SessionHintEffect::NoOp);
@@ -394,7 +418,10 @@ pub struct SessionTicks<'v, T> {
     pending_hints: VecDeque<crate::tick::HintSignal>,
     /// The oldest hint whose due-close or apply failed. Nothing newer is
     /// removed from the inner buffer until this hint applies successfully.
-    retry_hint: Option<QueuedSessionHint>,
+    retry_hint: Option<HintWork>,
+    /// Pending opens and their later same-key facts, in causal order.
+    parked_hints: BTreeMap<SessionKey, VecDeque<HintWork>>,
+    hook_changes: Option<tokio::sync::watch::Receiver<u64>>,
     /// Consecutive retained-hint drain failures, used for capped backoff.
     retry_backoff_failures: u32,
     /// Changes after each commit that may have moved the vault's policy
@@ -408,60 +435,17 @@ impl<'v, T: TickSource> SessionTicks<'v, T> {
         // Subscribed before the first expiry read: a policy that commits
         // after it always wakes the sleep that read arms.
         let policy_changes = Some(lifecycle.vault.subscribe_policy_manifest_changes());
+        let hook_changes = Some(lifecycle.vault.subscribe_verb_hook_ask_changes());
         Self {
             inner,
             lifecycle,
             pending_hints: VecDeque::new(),
             retry_hint: None,
+            parked_hints: BTreeMap::new(),
+            hook_changes,
             retry_backoff_failures: 0,
             policy_changes,
         }
-    }
-
-    /// Applies one timestamp-carrying point/period. Failed work stays at the
-    /// head of the pipeline and is never surfaced as if it succeeded. A
-    /// tracked envelope ACKs its ACTUAL effect after the apply commits, on
-    /// EVERY [`Ok`] effect; on [`Err`] the SAME envelope (completion intact)
-    /// stays on the retry head.
-    fn apply_guarded_hint(&mut self, envelope: QueuedSessionHint) -> bool {
-        let carrier = envelope.carrier;
-        let applied = self.lifecycle.apply_hint_carrier(carrier);
-
-        match applied {
-            Ok(effect) => {
-                if let Some(completion) = envelope.completion {
-                    // An abandoned waiter never blocks the apply.
-                    let _ = completion.send(effect);
-                }
-                if !matches!(effect, SessionHintEffect::Ended(_)) {
-                    self.pending_hints.push_back(crate::tick::HintSignal {
-                        session: Some(carrier.hint),
-                    });
-                }
-                true
-            }
-            Err(error) => {
-                self.retry_hint = Some(envelope);
-                tracing::error!(?error, "session hint apply failed; retained for retry");
-                false
-            }
-        }
-    }
-
-    /// Retries the oldest failed fact first, then drains buffered facts in
-    /// arrival order. A failure stops the drain so causality cannot invert.
-    fn drain_buffered_hints(&mut self) -> bool {
-        if let Some(envelope) = self.retry_hint.take()
-            && !self.apply_guarded_hint(envelope)
-        {
-            return false;
-        }
-        while let Some(envelope) = self.inner.take_buffered_session_hint_carrier() {
-            if !self.apply_guarded_hint(envelope) {
-                return false;
-            }
-        }
-        true
     }
 
     fn retry_backoff_duration(&self) -> Duration {
@@ -506,6 +490,7 @@ impl<'v, T: TickSource> SessionTicks<'v, T> {
                 None
             }
         };
+        let expiry = expiry.into_iter().chain(self.next_hook_deadline_ms()).min();
         self.inner.note_armed(ArmedLane::Session, expiry);
         expiry
     }
@@ -578,17 +563,13 @@ impl<T: TickSource> TickSource for SessionTicks<'_, T> {
                 continue;
             }
 
-            let tick = match expiry {
-                Some(due_at_ms) => {
-                    let clock = self.lifecycle.clock();
-                    tokio::select! {
-                        biased;
-                        () = sleep_until_due(&clock, due_at_ms) => None,
-                        () = wait_for_change(&mut self.policy_changes) => None,
-                        tick = self.inner.next_tick() => Some(tick),
-                    }
-                }
-                None => Some(self.inner.next_tick().await),
+            let clock = self.lifecycle.clock();
+            let tick = tokio::select! {
+                biased;
+                () = sleep_until_lifecycle_due(&clock, expiry) => None,
+                () = wait_for_change(&mut self.policy_changes) => None,
+                () = wait_for_change(&mut self.hook_changes) => None,
+                tick = self.inner.next_tick() => Some(tick),
             };
 
             match tick {
@@ -620,26 +601,8 @@ impl<T: TickSource> TickSource for SessionTicks<'_, T> {
                     // timer lane one final unit of timed work. With nothing
                     // open (or a broken store), exhaustion is final —
                     // fail-stop, never a spin.
-                    match self.lifecycle.next_expiry_ms() {
-                        Ok(Some(due_at_ms)) => {
-                            let clock = self.lifecycle.clock();
-                            tokio::select! {
-                                biased;
-                                () = sleep_until_due(&clock, due_at_ms) => {}
-                                // A policy change re-resolves the due instant
-                                // before anything closes (FIX 11402).
-                                () = wait_for_change(&mut self.policy_changes) => continue,
-                            }
-                            if let Err(error) = self.lifecycle.close_due_session_at(due_at_ms) {
-                                tracing::error!(
-                                    ?error,
-                                    "final session close failed at exhaustion; stopping"
-                                );
-                                return None;
-                            }
-                            continue;
-                        }
-                        Ok(None) => return None,
+                    let expiry = match self.lifecycle.next_expiry_ms() {
+                        Ok(expiry) => expiry.into_iter().chain(self.next_hook_deadline_ms()).min(),
                         Err(error) => {
                             tracing::error!(
                                 ?error,
@@ -647,7 +610,25 @@ impl<T: TickSource> TickSource for SessionTicks<'_, T> {
                             );
                             return None;
                         }
+                    };
+                    if expiry.is_none() && self.parked_hints.is_empty() {
+                        return None;
                     }
+                    let clock = self.lifecycle.clock();
+                    tokio::select! {
+                        biased;
+                        () = sleep_until_lifecycle_due(&clock, expiry) => {
+                            if let Some(due_at_ms) = expiry
+                                && let Err(error) = self.lifecycle.close_due_session_at(due_at_ms)
+                            {
+                                tracing::error!(?error, "final session close failed at exhaustion; stopping");
+                                return None;
+                            }
+                        },
+                        () = wait_for_change(&mut self.policy_changes) => {},
+                        () = wait_for_change(&mut self.hook_changes) => {},
+                    }
+                    continue;
                 }
             }
         }
@@ -657,23 +638,13 @@ impl<T: TickSource> TickSource for SessionTicks<'_, T> {
         let expiry = self.prepare_lifecycle().await;
         // Keep every applied hint's follow-up in pending_hints until resume.
         // The push-only wait leaves wake/plain slots and deadlines untouched.
-        match expiry {
-            Some(due_at_ms) => {
-                let clock = self.lifecycle.clock();
-                tokio::select! {
-                    biased;
-                    () = sleep_until_due(&clock, due_at_ms) => {},
-                    () = wait_for_change(&mut self.policy_changes) => {},
-                    () = self.inner.wait_for_buffered_session_hint() => {},
-                }
-            }
-            None => {
-                tokio::select! {
-                    biased;
-                    () = wait_for_change(&mut self.policy_changes) => {},
-                    () = self.inner.wait_for_buffered_session_hint() => {},
-                }
-            }
+        let clock = self.lifecycle.clock();
+        tokio::select! {
+            biased;
+            () = sleep_until_lifecycle_due(&clock, expiry) => {},
+            () = wait_for_change(&mut self.policy_changes) => {},
+            () = wait_for_change(&mut self.hook_changes) => {},
+            () = self.inner.wait_for_buffered_session_hint() => {},
         }
     }
 

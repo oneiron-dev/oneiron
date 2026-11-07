@@ -15,8 +15,12 @@ pub(crate) use erase::{erase_retained_copies_in_txn, retained_copies_in, scrub_r
 pub(crate) use import_guard::check_active_in_txn;
 pub(in crate::sync) use import_guard::with_import_guard;
 mod review_doors;
+mod review_encoding;
+mod review_memory;
 mod types;
 pub use types::*;
+mod payload;
+pub use payload::FederationPayloadBytes;
 mod peer_health;
 mod queue;
 mod review_bundle;
@@ -295,12 +299,19 @@ fn admit_work_at(
         let decision = match health.outcome() {
             FederationBurstOutcome::Allow => FederationBurstDecision::Allow(health.inputs),
             FederationBurstOutcome::IsolateAndPropose if admitted_update.is_some() => {
-                work.isolated_update = admitted_update.map(|parts| {
-                    parts
-                        .iter()
-                        .map(|(window, bytes)| ((*window).to_owned(), bytes.to_vec()))
-                        .collect()
-                });
+                work.isolated_update = admitted_update
+                    .map(|parts| {
+                        parts
+                            .iter()
+                            .map(|(window, bytes)| {
+                                Ok((
+                                    (*window).to_owned(),
+                                    FederationPayloadBytes::copy_from_slice(bytes)?,
+                                ))
+                            })
+                            .collect::<Result<_>>()
+                    })
+                    .transpose()?;
                 work.streak_ratio = health.streak_ratio;
                 FederationBurstDecision::IsolateAndPropose {
                     request_id: work.id,
