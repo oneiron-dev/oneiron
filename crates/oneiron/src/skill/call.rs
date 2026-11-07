@@ -92,6 +92,11 @@ impl JsCodeModeHost for SkillHost<'_> {
     fn caller_entity(&self) -> Option<EntityId> {
         self.host.caller_entity()
     }
+
+    /// The caller's run masks an isolated skill's error (FIX 9209).
+    fn mask_guest_error(&self, body: &str) -> Result<String> {
+        self.host.mask_guest_error(body)
+    }
 }
 
 /// The callable a call's load selected (FIX 3608), as the call ran it: the
