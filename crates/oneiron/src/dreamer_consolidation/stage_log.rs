@@ -26,8 +26,14 @@ pub(super) struct PartitionStages {
     pub(super) branch_ms: u64,
     /// The model run less the stages below: slices, the extraction fan-out
     /// and its reply checks, people bind and mint, and a thing's scoped
-    /// agent pass.
+    /// agent pass. On a window slot it also holds `prefix_join_ms` and
+    /// `finish_wait_ms`, logged on their own; it is not model wait.
     extract_ms: u64,
+    /// On a window slot: from its admission to the window's prefix join.
+    prefix_join_ms: u64,
+    /// On a window slot: from that join to this slot's finish start, the
+    /// earlier slots' serial finishes.
+    finish_wait_ms: u64,
     /// The correction read over every child's candidates.
     pub(super) corrections_ms: u64,
     /// Assembly and conflict resolution, the gap upsert left out.
@@ -49,6 +55,8 @@ impl PartitionStages {
             prep_ms,
             branch_ms: 0,
             extract_ms: 0,
+            prefix_join_ms: 0,
+            finish_wait_ms: 0,
             corrections_ms: 0,
             resolve_ms: 0,
             gap_ms: 0,
@@ -72,6 +80,21 @@ impl PartitionStages {
         self.extract_ms = ms_since(run_started).saturating_sub(inner);
     }
 
+    /// Marks a window slot's two waits; model calls inside them are the
+    /// `dreamer model call` lines' own.
+    pub(super) fn mark_window(
+        &mut self,
+        run_started: Instant,
+        prefix_joined: Instant,
+        finish_started: Instant,
+    ) {
+        let between = |a: Instant, b: Instant| {
+            u64::try_from(b.saturating_duration_since(a).as_millis()).unwrap_or(u64::MAX)
+        };
+        self.prefix_join_ms = between(run_started, prefix_joined);
+        self.finish_wait_ms = between(prefix_joined, finish_started);
+    }
+
     /// Logs the attempt's one stage line once it `executed`.
     pub(super) fn log(
         &self,
@@ -88,6 +111,8 @@ impl PartitionStages {
             prep_ms = self.prep_ms,
             branch_ms = self.branch_ms,
             extract_ms = self.extract_ms,
+            prefix_join_ms = self.prefix_join_ms,
+            finish_wait_ms = self.finish_wait_ms,
             corrections_ms = self.corrections_ms,
             resolve_ms = self.resolve_ms,
             gap_ms = self.gap_ms,

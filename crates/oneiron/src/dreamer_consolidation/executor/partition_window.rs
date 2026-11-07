@@ -54,6 +54,7 @@ enum WindowSlotRun<'a> {
         run_id: Option<String>,
         run_started: Instant,
         prefix: Option<crate::llm::DurableStepResult<PartitionPrefix>>,
+        prefix_joined: Option<Instant>,
     },
     /// A sieve rung job: it runs whole (its span's evidence, its reading
     /// and its own commit) beside the prefixes, and its outcome, kept
@@ -169,14 +170,21 @@ impl ConsolidationExecutor<'_> {
             super::super::sieve_ports::ordered_slots(rung_runs, rung_width),
         )
         .await;
+        let joined = Instant::now();
         for (index, outcome) in rung_indices.into_iter().zip(rung_outcomes) {
             if let WindowSlotRun::Rung(done) = &mut slots[index] {
                 *done = Some(outcome);
             }
         }
         for (index, outcome) in indices.into_iter().zip(outcomes) {
-            if let WindowSlotRun::Running { prefix, .. } = &mut slots[index] {
+            if let WindowSlotRun::Running {
+                prefix,
+                prefix_joined,
+                ..
+            } = &mut slots[index]
+            {
                 *prefix = Some(outcome);
+                *prefix_joined = Some(joined);
             }
         }
         // The finishes, one by one in admission order. Each finish is
@@ -305,6 +313,7 @@ impl ConsolidationExecutor<'_> {
                 run_id: attempt.status.attempt.run_id.clone(),
                 run_started: Instant::now(),
                 prefix: None,
+                prefix_joined: None,
             },
             Err(error) => WindowSlotRun::Settled(Some(stages), Err(error)),
         }
@@ -353,7 +362,11 @@ impl ConsolidationExecutor<'_> {
                 run_id,
                 run_started,
                 prefix,
+                prefix_joined,
             } => {
+                if let Some(joined) = prefix_joined {
+                    stages.mark_window(run_started, joined, Instant::now());
+                }
                 let PartitionStarted {
                     payload,
                     resources,
