@@ -6,6 +6,7 @@
 
 mod codec;
 mod dispatch;
+mod escalation;
 mod late_recipient;
 pub use oneiron_base::unsubscribe_headers as email_headers;
 mod payload;
