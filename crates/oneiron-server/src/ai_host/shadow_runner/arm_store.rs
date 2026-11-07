@@ -15,13 +15,19 @@
 //! byte outlives the arm. Each write is masked at write under the source
 //! vault's custody (FIX 5718 part 3), so no secret the wall can place
 //! reaches an arm's files.
+//!
+//! Each arm keeps the source its bodies are released to a model against
+//! (FIX 9468): the occurrences it was seeded with clean, whose taint each
+//! model release reads again.
 
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use oneiron::code_run::shadow_runner::{ShadowArmLease, ShadowBodyStore, ShadowSourceHold};
+use oneiron::code_run::shadow_runner::{
+    ShadowArmLease, ShadowBodyStore, ShadowReleaseSource, ShadowSourceHold,
+};
 use oneiron::{EntityId, Result, Vault};
 
 /// The directory under the host's temporary directory that runners keep
@@ -40,12 +46,19 @@ pub(crate) struct ArmEntry {
     /// The actor whose step the arm runs: its source run's content is this
     /// actor's.
     source_actor: EntityId,
+    /// What each model release of the arm's bodies reads again (FIX 9468).
+    release: ShadowReleaseSource,
 }
 
 impl ArmEntry {
     /// The arm's store.
     pub(crate) const fn store(&self) -> &ShadowBodyStore {
         &self.store
+    }
+
+    /// What each model release of the arm's bodies reads again (FIX 9468).
+    pub(super) const fn release_source(&self) -> &ShadowReleaseSource {
+        &self.release
     }
 }
 
@@ -89,12 +102,14 @@ impl ArmRegistry {
 
     /// A new arm under `lease`, its store made, of a step `source_actor`'s
     /// source run `source_run` is for, each of its reads and publications
-    /// asking `hold`, each of its writes admitted under `vault`'s custody.
+    /// asking `hold`, each of its writes admitted under `vault`'s custody,
+    /// each model release of its bodies reading `release` again (FIX 9468).
     pub(crate) fn open_arm(
         &self,
         lease: ShadowArmLease,
         (source_actor, source_run): (EntityId, EntityId),
         hold: ShadowSourceHold,
+        release: ShadowReleaseSource,
         vault: &Arc<Vault>,
     ) -> Result<Arc<ArmEntry>> {
         let store = ShadowBodyStore::open(self.root.join(lease.to_hex()))?
@@ -103,6 +118,7 @@ impl ArmRegistry {
         let entry = Arc::new(ArmEntry {
             store,
             source_actor,
+            release,
         });
         self.arms().insert(lease, Arc::clone(&entry));
         Ok(entry)
