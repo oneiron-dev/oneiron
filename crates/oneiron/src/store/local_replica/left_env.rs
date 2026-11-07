@@ -134,7 +134,6 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::LEGAL_HOLD_HOST_PROSPECTIVE_OUTBOX,
     &side_table::LEGAL_HOLD_HOST_PROSPECTIVE_RELEASED,
     &side_table::LEGAL_HOLD_HOST_EVENT,
-    &side_table::LEGAL_HOLD_HOST_ERASE_LINK,
     // The body collector's queue, and the device's residence choice.
     &side_table::PROVENANCE_BODY_RELEASED,
     &side_table::SYNC_RESIDENCE_DEVICE_MODE,

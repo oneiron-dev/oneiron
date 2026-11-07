@@ -40,6 +40,7 @@ pub(crate) use summary::{
 pub mod review_explainer;
 use oneiron_store::entity_doc::side_keys;
 mod storage;
+mod succession;
 #[cfg(feature = "sync")]
 mod sweep;
 mod token_uses;
