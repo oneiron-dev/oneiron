@@ -694,6 +694,10 @@ fn scrub_for_export(
         crate::sync::row_birth::actor_erase::scrub_erased_actor_births(vault, doc, Some(key))?;
     let positions_scrubbed = crate::sync::origin_positions::scrub_stale(vault, doc, key)?;
     crate::workspace_roster::scrub_audience_edits(vault, doc, Some(key))?;
+    // Last of the removals: the source audiences the rows left carried need,
+    // each at this vault's current revision (Engine A, 6 Nov 03:46).
+    let source_audiences_scrubbed =
+        crate::sync::source_audiences::refresh_and_scrub(vault, doc, Some(key))?;
     // Every update and replacement ships each held revision of a PROJECT row the window
     // carries, whatever month it was learned in (Astra #1434 F2).
     if super::project_history::carry_project_history(vault, doc)? {
@@ -712,6 +716,7 @@ fn scrub_for_export(
         || origin_claims_scrubbed
         || section_fit_scrubbed
         || births_scrubbed
+        || source_audiences_scrubbed
         || positions_scrubbed
         || history_free_window_required(vault, key)?
     {

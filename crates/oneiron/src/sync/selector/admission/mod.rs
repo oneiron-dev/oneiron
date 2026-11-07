@@ -246,6 +246,9 @@ fn admit_window_update(
         .with_write_txn_grouped(|wtxn| crate::gate::resolve_policy_manifest(&vault.store, wtxn))?;
 
     reject_federated_tombstones(&remote)?;
+    // Engine A: a federated copy brings no source audience assertion; the
+    // map rides the owner's full-window lane alone (L02 3, 6 Nov 06:24).
+    crate::sync::source_audiences::refuse_foreign_map(&remote)?;
     // The withheld CLAIMs and the contained cross-world edges (FIX 3660).
     let mut terminal = crate::sync::quarantine::TerminalRejectionBatch::new(key.as_str());
     let routes = match guest {

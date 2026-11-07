@@ -712,6 +712,10 @@ side_tables! {
     /// One change to a source audience's readers, its receipt (FIX 12559); the policy entry's
     /// scrub forgets an erased actor here too. Key: id16(policy) + u64be revision.
     SOURCE_AUDIENCE_EVENT: VaultMeta b"source_audience:event:v1:" Named;
+    /// A row this vault reads to no one meanwhile (FIX 12559 follow-up): its carried binding
+    /// waits for its policy, or the vault it came from withheld it after it travelled. Key:
+    /// id16(row).
+    SOURCE_AUDIENCE_HELD: VaultMeta b"source_audience:held:v1:" Named;
     /// One source audience: a mail or calendar source's readers, or one thread's shares (FIX
     /// 12559). An actor's scrub takes it out of every policy and event. Key: id16(policy).
     SOURCE_AUDIENCE_POLICY: VaultMeta b"source_audience:policy:v1:" Named
