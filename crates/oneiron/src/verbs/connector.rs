@@ -83,14 +83,21 @@ impl From<ConnectorDescription> for ConnectorView {
     }
 }
 
-/// `connector.list`: every live catalogued connector the query matches.
+/// `connector.list`: every live catalogued connector the query matches, and
+/// the built-in `google.sheets` while its pack's connection is checked
+/// (FIX 4862), in name order.
 pub fn connector_catalog(
     memory: &Memory<'_>,
     input: ConnectorListRequest,
 ) -> MemoryResult<Vec<ConnectorEntry>> {
-    let entries = memory
-        .vault()
-        .search_connector_catalog(input.query.as_deref().unwrap_or(""))?;
+    let query = input.query.as_deref().unwrap_or("");
+    let mut entries = memory.vault().search_connector_catalog(query)?;
+    if let Some(sheets) =
+        crate::channel_identity_provider::sheets::sheets_catalog_entry(memory.vault(), query)?
+    {
+        let at = entries.partition_point(|entry| entry.name < sheets.name);
+        entries.insert(at, sheets);
+    }
     Ok(entries.into_iter().map(Into::into).collect())
 }
 

@@ -268,7 +268,7 @@ embedder_requests = 2048          # requests `embedder serve` holds at once; pas
 embedder_answer_bytes = 268435456 # bytes `embedder serve`'s answers hold until delivered; past it they queue
 decision_reads = 2048             # owner decision-read probes held at once; past it they queue
 task_work = 2048                  # can, ask, wait and tasks.answer calls the vault runs at once; past it each caller waits a fair turn, then runs
-renderer_work = 2                 # deck and slide renders at once (LibreOffice + pdftoppm); past it each caller waits a fair turn, then render_deadline (default: a quarter of the cores, at least 1)
+renderer_work = 2                 # deck and slide renders at once (LibreOffice + pdftoppm); past it each caller waits a fair turn, then render_deadline (default: a quarter of the cores, at least 1); LibreOffice workbook recalculations take the host's own turns here
 media_reply_bytes = 2147483648    # bytes provider media replies (images, clips, speech) hold until decoded; past it a reply waits its turn, never refused for size (default: an eighth of memory)
 chat_reply_bytes = 2147483648     # bytes the JSON replies a chat send reads whole hold until the send ends; past it a crossing is recorded, never a wait or a refusal (default: an eighth of memory)
 lfs_quota_bytes = 68719476736     # LFS bytes stored plus uploads in flight; past it the row asks
@@ -618,6 +618,19 @@ Calibri and Cambria.
 
 Without both tools the slides stay withdrawn, and their wake is held and tried
 again every five minutes. The rest of the review still lands on Keep.
+
+## Workbook Precision Recalculation
+
+An XLSX export, preview or live read whose workbook the in-process formula
+engine refuses recalculates through LibreOffice Calc headless when `soffice`
+is on the server's `PATH`. Each run uses its own temporary profile, which
+recalculates every formula on load, updates no external link, runs no macro
+and reaches no network, and a timeout. Only the computed formula values come
+back, written into the workbook itself; every other part keeps its bytes. The
+version names `libreoffice` and the `soffice --version` line as its
+calculator. LibreOffice reads `NOW()` and `TODAY()` from the server's clock,
+in the caller's zone. Without `soffice`, or when a run fails, the workbook is
+marked to recalculate when it is opened.
 
 ## Service Templates
 
