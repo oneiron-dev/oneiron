@@ -326,6 +326,7 @@ impl EngineNativeExecutor<'_> {
                 )?
                 .with_file_output_step(completed_steps)
                 .with_skill_executor(&config.model)
+                .with_summary_prompt_package(&config.prompt_package_root)
                 .with_result_share(&self.result_share)
                 .with_callable_checks(CallableChecks::new(self.code_check, completed_steps));
             let step = JsCodeModeStep {
