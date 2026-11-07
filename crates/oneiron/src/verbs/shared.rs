@@ -103,6 +103,7 @@ pub struct SharedReceiptRequest {
 
 /// `vault.members.add`'s input: a live person with no membership here, at a
 /// non-root role, or the creation preset's default member role when absent.
+/// It names no key: the invitee binds their own (FIX 8745).
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SharedMemberAddRequest {
@@ -115,19 +116,6 @@ pub struct SharedMemberAddRequest {
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     pub role: Option<Role>,
-    /// The public key (64 hex) the invitee generated on their own device:
-    /// the host then mints their own slip for this invitation (FIX 1925).
-    #[serde(default)]
-    pub holder_key: Option<String>,
-}
-
-/// `vault.members.add`'s answer: the invitation's receipt and, when the call
-/// named the invitee's device key on a host that signs slips, the invitee's
-/// own slip for it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SharedMemberInvited {
-    pub receipt: SharedActExecutionReceipt,
-    pub credential: Option<InvitationSlip>,
 }
 
 impl InvitationSlip {
@@ -141,8 +129,9 @@ impl InvitationSlip {
 }
 
 /// An invitee's own slip (FIX 1925): it lists, accepts or declines its one
-/// invitation while that is pending, and nothing else. The invitee proves
-/// each request with their own key.
+/// invitation while that is pending and its key is the one the invitee bound
+/// (FIX 8745), and nothing else. The invitee proves each request with that
+/// key.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InvitationSlip {
     /// The slip id, hex.
@@ -391,28 +380,16 @@ pub fn read_shared_deletion(vault: &Vault) -> MemoryResult<Option<SharedVaultDel
 }
 
 /// `vault.members.add`: an Admin's `add_member` power invites a member, who
-/// joins on `vault.members.accept`. With the invitee's `holder_key` and the
-/// host's `slips` issuer, the answer carries the invitee's own slip for the
-/// invitation; an embedded handle holds no issuer and invites without one.
+/// joins on `vault.members.accept`. It only creates the invitation: the
+/// invitee binds a key of their own to it (`vault.members.invitation_slip`,
+/// or an owner's invitation pairing code; FIX 8745).
 pub fn add_shared_member_as(
     vault: &Vault,
     admin: &AuthenticatedOwner,
-    slips: Option<&HostSlipIssuer>,
     input: SharedMemberAddRequest,
-) -> MemoryResult<SharedMemberInvited> {
+) -> MemoryResult<SharedActExecutionReceipt> {
     let member = person_id("member", &input.member)?;
-    let key = input
-        .holder_key
-        .as_deref()
-        .map(super::shared_members::holder_key)
-        .transpose()?;
-    let (receipt, slip) =
-        vault.invite_shared_member(admin, input.vault_id, member, input.role, slips.zip(key))?;
-    let credential = slip.map(InvitationSlip::from_slip).transpose()?;
-    Ok(SharedMemberInvited {
-        receipt,
-        credential,
-    })
+    Ok(vault.add_shared_member(admin, input.vault_id, member, input.role)?)
 }
 
 /// `vault.members.change`: an Admin's `assign_role` power moves a member.

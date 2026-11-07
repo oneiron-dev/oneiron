@@ -384,28 +384,21 @@ pub(crate) async fn vault_shared_deletion(
 }
 
 /// `vault.members.add`: an Admin's `add_member` power, checked by the engine
-/// against the live roster. Given the invitee's own device key, the host's
-/// slip issuer signs the invitee's slip for the invitation (FIX 1925).
+/// against the live roster. It only creates the invitation: the invitee binds
+/// a key of their own to it (FIX 8745).
 pub(crate) async fn vault_members_add(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: SharedMemberAddRequest,
-) -> MaybeListed<SharedMemberInvited> {
+) -> MaybeListed<SharedActExecutionReceipt> {
     const VERB: &str = "vault.members.add";
     let vault = Arc::clone(server);
     as_person_naming(
         server,
         VERB,
         person(server, auth, VERB),
-        move |server, admin| {
-            if input.holder_key.is_none() {
-                return sdk::add_shared_member_as(server.vault(), &admin, None, input);
-            }
-            with_slips(server, VERB, |slips| {
-                sdk::add_shared_member_as(server.vault(), &admin, Some(slips), input)
-            })
-        },
-        move |invited| receipt_rows(vault.vault(), &invited.receipt),
+        move |server, admin| sdk::add_shared_member_as(server.vault(), &admin, input),
+        move |receipt| receipt_rows(vault.vault(), receipt),
     )
     .await
 }
