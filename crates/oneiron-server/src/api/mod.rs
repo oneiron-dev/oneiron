@@ -143,6 +143,7 @@ pub(crate) use self::feedback_inbox::FloodCap;
 // the serve wire, the door window, and the single-writer landing all live in
 // `oneiron::origin::smart_http`.
 mod git_http;
+pub(crate) use self::git_http::install_origin_git_transport;
 mod git_lfs;
 mod transfer;
 pub(crate) use self::transfer::{LFS_MEMORY_ROOM, Transfers};
@@ -194,6 +195,8 @@ pub(crate) use context_board::{action_board, freeze_chat_context, record_action_
 #[allow(dead_code)]
 mod reactive;
 mod report;
+// ABC transport rows T1, T3, T4: the API's request floor.
+mod request_floor;
 mod routes;
 mod run_tree;
 mod saved_query;
@@ -229,11 +232,11 @@ pub(crate) use self::mcp_gateway::{
     MCP_PROTOCOL_VERSION, McpBoardOmissions, mcp_admit_scoped_call, resolve_mcp_gateway_actor,
 };
 pub(crate) use self::mcp_gateway::{
-    McpCallContext, ReaderChildDoor, RunGuests, VerdictAsker, WorkflowPreflight,
-    deliver_run_board_hooks, drop_run_board, execute_run_board_verb,
+    McpCallContext, McpCodeRunContinuations, ReaderChildDoor, RunGuests, VerdictAsker,
+    WorkflowPreflight, deliver_run_board_hooks, drop_run_board, execute_run_board_verb,
     execute_run_board_verb_in_session, mcp_gateway, mcp_stream_reads_task, mcp_stream_task_row,
-    mcp_tool_first_gateway, person_socket_admits, preflight_task_workflow, resolve_mcp_caller,
-    ride_run_carrier, run_session_reads,
+    mcp_tool_first_gateway, person_socket_admits, preflight_task_workflow,
+    reenter_ready_mcp_code_runs, resolve_mcp_caller, ride_run_carrier, run_session_reads,
 };
 pub(crate) use self::memory::*;
 pub(crate) use self::memory_reason::*;
@@ -414,7 +417,38 @@ fn require_entity_type(
     expected_type: u8,
     resource: &'static str,
 ) -> Result<(), ApiError> {
-    match server.vault.get_entity_type(id) {
+    require_entity_type_lookup(
+        server.vault.get_entity_type(id),
+        id,
+        expected_type,
+        resource,
+    )
+}
+
+/// [`require_entity_type`] in the route's snapshot `txn`, so the type it
+/// checks is the one the route then admits and serves (FIX 10782).
+fn require_entity_type_in_txn(
+    vault: &oneiron::Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &oneiron::EntityId,
+    expected_type: u8,
+    resource: &'static str,
+) -> Result<(), ApiError> {
+    require_entity_type_lookup(
+        vault.get_entity_type_in_txn(txn, id),
+        id,
+        expected_type,
+        resource,
+    )
+}
+
+fn require_entity_type_lookup(
+    lookup: oneiron::Result<Option<u8>>,
+    id: &oneiron::EntityId,
+    expected_type: u8,
+    resource: &'static str,
+) -> Result<(), ApiError> {
+    match lookup {
         Ok(Some(actual)) if actual == expected_type => Ok(()),
         Ok(Some(_)) => Err(ApiError::bad_request(
             format!("{resource} id does not reference a {resource} entity"),

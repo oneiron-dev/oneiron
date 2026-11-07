@@ -1,6 +1,7 @@
 //! Typed DEC-0005 policy axes. Other manifest tables stay at their own doors.
 use std::collections::BTreeMap;
 
+use super::PolicyScopedGrantRow;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
@@ -17,11 +18,17 @@ pub enum PolicyCriticality {
     Critical,
 }
 
+/// A predicate class's rung on the DEC-0005 content ladder: `public`,
+/// `private`, `sensitive`, `restricted`. `normal` is the ordinary,
+/// non-sensitive label the shipped packs carry; it keeps that meaning.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PolicySensitivity {
-    Normal,
+    Public,
+    Private,
     Sensitive,
+    Restricted,
+    Normal,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
@@ -141,6 +148,50 @@ pub struct PolicyManifest {
     /// shipped rows hold.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slide_review_policy: Option<Vec<crate::llm::decision::SlideReviewPolicyRow>>,
+    /// Omit to preserve the stored table; an explicit list replaces it and
+    /// an empty list clears it. No other manifest table is changed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scoped_grants: Option<Vec<PolicyScopedGrantRow>>,
+    /// The teacher-probe floor row: a holder authors a proposal's floor here
+    /// to apply it (FIX 8780).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub teacher_probe: Option<TeacherProbePolicy>,
+    /// The sheet-answer limit rows: a holder authors a proposal's limits here
+    /// to apply them (FIX 8780); absent, the shipped vault cap holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sheet_answer_limits: Option<Vec<SheetAnswerLimit>>,
+}
+
+/// A manifest's teacher-probe floor, as the manifest decoder reads it: the
+/// shipped probe's id, the vault floor in millionths of F1, and stricter
+/// per-holder floors.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TeacherProbePolicy {
+    pub probe_id: String,
+    pub min_f1_millionths: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub holders: Vec<TeacherProbeHolderFloor>,
+}
+
+/// One holder's teacher-probe floor, at least the vault's.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TeacherProbeHolderFloor {
+    pub holder_ref: String,
+    pub min_f1_millionths: u32,
+}
+
+/// One sheet-answer limit row: the vault's (no artifact), an artifact's, or
+/// one sheet of an artifact.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SheetAnswerLimit {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sheet: Option<String>,
+    pub max_count: u64,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
