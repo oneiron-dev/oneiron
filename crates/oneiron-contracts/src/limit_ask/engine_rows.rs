@@ -5,7 +5,7 @@ use super::{EngineLimit, memory_share};
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 157] = [
+    pub const ALL: [Self; 162] = [
         Self::KeyedFilterJsonBytes,
         Self::KeyedNamespaceSegments,
         Self::KeyedNamespaceBytes,
@@ -17,6 +17,11 @@ impl EngineLimit {
         Self::ClaimInputJsonBytes,
         Self::CoreBatchEntities,
         Self::LegacyBatchEntities,
+        Self::BlobContentBytes,
+        Self::BookingAvailabilityCallsPerMinute,
+        Self::BookingHoldCallsPerMinute,
+        Self::BookingWriteCallsPerMinute,
+        Self::BookingQuarantineCallsPerMinute,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
         Self::CodeResultScanBytes,
@@ -179,6 +184,13 @@ impl EngineLimit {
             Self::ClaimInputJsonBytes => "limits.claim_input_json_bytes",
             Self::CoreBatchEntities => "limits.core_batch_entities",
             Self::LegacyBatchEntities => "limits.legacy_batch_entities",
+            Self::BlobContentBytes => "limits.blob_content_bytes",
+            Self::BookingAvailabilityCallsPerMinute => {
+                "limits.booking_availability_calls_per_minute"
+            }
+            Self::BookingHoldCallsPerMinute => "limits.booking_hold_calls_per_minute",
+            Self::BookingWriteCallsPerMinute => "limits.booking_write_calls_per_minute",
+            Self::BookingQuarantineCallsPerMinute => "limits.booking_quarantine_calls_per_minute",
             Self::CodeResultInlineBytes => "limits.code_result_inline_bytes",
             Self::CodeResultDiskFloorBytes => "limits.code_result_disk_floor_bytes",
             Self::CodeResultScanBytes => "limits.code_result_scan_bytes",
@@ -342,6 +354,11 @@ impl EngineLimit {
             Self::ClaimInputJsonBytes => 67_108_864,
             Self::CoreBatchEntities => 1_048_576,
             Self::LegacyBatchEntities => 1_048_576,
+            Self::BlobContentBytes => memory_share(16),
+            Self::BookingAvailabilityCallsPerMinute => 1_000_000,
+            Self::BookingHoldCallsPerMinute => 1_000_000,
+            Self::BookingWriteCallsPerMinute => 1_000_000,
+            Self::BookingQuarantineCallsPerMinute => 1_000_000,
             Self::CodeResultInlineBytes => 1 << 20,
             Self::CodeResultDiskFloorBytes => 1 << 30,
             Self::CodeResultScanBytes => 256 << 20,

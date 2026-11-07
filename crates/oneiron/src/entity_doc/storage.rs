@@ -41,6 +41,10 @@ pub(super) struct Head {
     /// (FIX 8942); `None` for a document carried from another machine,
     /// rebuilt or born of anything else.
     pub birth_frontier: Option<Vec<u8>>,
+    /// What a canonical restore left here (FIX 3553); `None` for a document
+    /// no restore rebuilt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restored: Option<super::succession::Restored>,
 }
 
 /// Pointer from an entity to its owning document, plus generation/pending
@@ -439,6 +443,7 @@ impl Vault {
                 generation: 0,
                 pending: 0,
                 birth_frontier: Some(doc.frontier()),
+                restored: None,
             };
             persist(self, txn, entity, &mut h, &doc, None)?;
             // A MESSAGE's quotes taken of its atomic text are pinned at the

@@ -172,6 +172,20 @@ side_tables! {
     /// The latest wake waiting for a free live health-review slot (FIX 9224).
     /// Key: target attempt id16 + big-endian lease generation4.
     COACH_AGENT_HEALTH_LIVE_PENDING: VaultMeta b"coach:agent_health_live_pending:v1:" Named Engine;
+    /// Where the Coach's unclear-note clustering resumes (FIX 7824): the unclear-ledger key of the
+    /// last outcome a pass finished, cleared at the ledger's end. Key: ().
+    COACH_ATTRIBUTION_LABEL_CURSOR: VaultMeta b"coach:attribution_label_cursor:v1" Named Engine;
+    /// One unclear note the Coach's same-pattern choice judged (FIX 7824): its scope's group hash,
+    /// the pattern it joined (none when it names no pattern) and the fingerprint it was judged
+    /// at. No note text. Key: u32be length + unclear-ledger key + u32be note index.
+    COACH_ATTRIBUTION_LABEL_MEMBER: VaultMeta b"coach:attribution_label_member:v1:" Named Engine;
+    /// One recurring unclear-note pattern within one scope (FIX 7824): the note it is shown by
+    /// and the proposal filed for it, which suppresses a second filing. No note text. Key: group
+    /// hash32 + pattern id16.
+    COACH_ATTRIBUTION_LABEL_PATTERN: VaultMeta b"coach:attribution_label_pattern:v1:" Named Engine;
+    /// One note's support for a pattern (FIX 7824), with the outcome identity it counts as. Key:
+    /// group hash32 + pattern id16 + the member key.
+    COACH_ATTRIBUTION_LABEL_SUPPORT: VaultMeta b"coach:attribution_label_support:v1:" Named Engine;
     /// An agent's `self.report_blocked` receipt waiting for the Coach's Issues job. Key: id16 of
     /// the receipt.
     COACH_BLOCKED_ISSUE: VaultMeta b"coach:blocked_issue:v1:" Named;
