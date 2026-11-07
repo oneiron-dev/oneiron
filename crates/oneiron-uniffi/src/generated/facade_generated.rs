@@ -4651,6 +4651,11 @@ export_facade! {
     let output = client.ai_streams_terminal(&input)?;
     crate::codec::lift_record("ai.streams.terminal", &output)
 };
+"ai.streams.release" => fn ai_streams_release(&self, input: ModelStreamRelease) -> ModelStreamReleased = |client| {
+    let input: oneiron::llm::model_stream::ModelStreamRelease = crate::codec::lower_record("ai.streams.release", input)?;
+    let output = client.ai_streams_release(&input)?;
+    crate::codec::lift_record("ai.streams.release", &output)
+};
 "ai.reply" => fn ai_reply(&self, input: AiReplyRequest) -> AiReply = |client| {
     let input: oneiron::task_verb::sdk::AiReplyRequest = crate::codec::lower_record("ai.reply", input)?;
     let output = client.ai_reply(&input)?;

@@ -8297,6 +8297,12 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn ai_streams_release(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.streams.release", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn ai_reply(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("ai.reply", js_json(input))

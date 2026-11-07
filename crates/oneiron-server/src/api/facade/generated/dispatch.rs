@@ -29362,6 +29362,36 @@ async fn ai_streams_terminal(
         facade_hooks_post(server, hooks, output).await?,
     ))
 }
+async fn ai_streams_release(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "ai.streams.release")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("ai.streams.release", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "ai.streams.release", value).await?;
+    let ran = async {
+        Ok::<_, FacadeApiError>(facade_output(
+            super::host_doors::ai_streams_release(server, auth, facade_door_input(&mut hooks)?)
+                .await?,
+        )?)
+    }
+    .await;
+    let output = match ran {
+        Ok(output) => output,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn ai_reply(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -48126,6 +48156,14 @@ fn boxed_ai_streams_terminal<'a>(
     Box::pin(ai_streams_terminal(server, call, input))
 }
 #[inline(never)]
+fn boxed_ai_streams_release<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_streams_release(server, call, input))
+}
+#[inline(never)]
 fn boxed_ai_reply<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
@@ -52713,6 +52751,7 @@ async fn call_verb_row(
         "ai.streams.detach" => boxed_ai_streams_detach(server, call, input).await,
         "ai.streams.abort" => boxed_ai_streams_abort(server, call, input).await,
         "ai.streams.terminal" => boxed_ai_streams_terminal(server, call, input).await,
+        "ai.streams.release" => boxed_ai_streams_release(server, call, input).await,
         "ai.reply" => boxed_ai_reply(server, call, input).await,
         "vault.receipts.context" => boxed_vault_receipts_context(server, call, input).await,
         "vault.receipts.craft_reply_manifest" => {

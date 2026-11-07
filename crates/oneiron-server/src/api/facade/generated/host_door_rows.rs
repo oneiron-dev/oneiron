@@ -97,6 +97,7 @@
 //! - `vault.settings.web_connector`
 //! - `vault.settings.web_connector.replace`
 //! - `vault.connectors.web.usage`
+//! - `ai.streams.release`
 //! - `ai.anonymous_chat`
 //! - `vault.models.trials.resend_arm`
 //! - `ai.options`
@@ -1780,6 +1781,7 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.settings.web_connector"
                 | "vault.settings.web_connector.replace"
                 | "vault.connectors.web.usage"
+                | "ai.streams.release"
                 | "vault.models.trials.resend_arm"
                 | "ai.options"
                 | "ai.ask_image"
