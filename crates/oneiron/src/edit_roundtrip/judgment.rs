@@ -24,7 +24,12 @@ use oneiron_docedit::xlsx_body::{XlsxChange, XlsxValue, project_xlsx, read_xlsx_
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
+use std::num::NonZeroUsize;
 use std::time::Instant;
+
+use oneiron_docedit::resource::Resources;
+
+mod batches;
 
 /// One answer's target and its decision. `value` is the cell the decision's
 /// answer writes; `None` is an abstention, which writes nothing and is not
@@ -70,7 +75,7 @@ pub struct SheetAnswerBundle {
     pub sheet: String,
     pub range: RangeRef,
     pub answers: Vec<SheetCellAnswer>,
-    /// Holder-selected run cap; the manifest vault and scoped rows can only narrow it.
+    /// Maximum edits per write batch; vault and scoped rows can only narrow it.
     #[serde(default)]
     pub max_count_override: Option<u64>,
     /// A sheet-row ask's read columns; a folder column reads its files.
@@ -230,6 +235,7 @@ impl Vault {
             run_ref,
             head.version,
             head.content_hash,
+            &crate::office_body::document_resources(),
         )
     }
 
@@ -241,12 +247,13 @@ impl Vault {
         run_ref: &str,
         version: u64,
         frontier: [u8; 32],
+        resources: &Resources,
     ) -> Result<EditOutcome> {
         let ops = bundle.ops()?;
         let rtxn = self.store.env.read_txn()?;
         let policy = crate::gate::resolve_policy_manifest(&self.store, &rtxn)?;
-        let cap = policy
-            .sheet_answer_limit(
+        let batch_size = policy
+            .sheet_answer_batch_size(
                 &artifact_id.to_hex(),
                 &bundle.sheet,
                 bundle.max_count_override,
@@ -254,12 +261,16 @@ impl Vault {
             .ok_or(Error::Artifact(ArtifactError::InvalidEditManifest(
                 "typed answer count policy unavailable",
             )))?;
-        if u64::try_from(bundle.answers.len()).unwrap_or(u64::MAX) > cap {
-            return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
-                "typed answer count exceeds policy",
-            )));
-        }
+        let batch_size = NonZeroUsize::new(usize::try_from(batch_size).unwrap_or(usize::MAX))
+            .ok_or(Error::Artifact(ArtifactError::InvalidEditManifest(
+                "typed answer count policy unavailable",
+            )))?;
         drop(rtxn);
+        let session = batches::BatchedSheetSession {
+            session,
+            batch_size,
+            resources,
+        };
         let source = self
             .read_blob_artifact_version(artifact_id, version)?
             .ok_or(Error::EntityNotFound)?;
@@ -272,7 +283,7 @@ impl Vault {
         let outcome = self.propose_blob_artifact_edit_at(
             artifact_id,
             version,
-            session,
+            &session,
             &EditPlan::new(ops.clone()),
             run_ref,
         )?;
@@ -581,22 +592,22 @@ impl Vault {
         run_ref: &str,
         version: u64,
         frontier: [u8; 32],
-        resources: oneiron_docedit::resource::Resources,
+        resources: Resources,
     ) -> Result<Option<EditProposal>> {
         if bundle.answers.iter().all(|answer| answer.value.is_none()) {
             return Ok(None);
         }
         let session = NativeCellSession {
             limits: self.docedit_package_limits()?,
-            resources,
+            resources: resources.clone(),
         };
         session
             .resources
             .checkpoint()
             .map_err(crate::office_body::document_refused)?;
-        match self
-            .propose_sheet_answers_at(artifact, &session, bundle, run_ref, version, frontier)?
-        {
+        match self.propose_sheet_answers_at(
+            artifact, &session, bundle, run_ref, version, frontier, &resources,
+        )? {
             EditOutcome::Proposed(proposal) => {
                 if proposal.base_version != Some(version) || proposal.base_content_hash != frontier
                 {
@@ -624,7 +635,7 @@ impl EditProposal {
 /// recalculate in process. No host recalc stands behind it.
 struct NativeCellSession {
     limits: Limits,
-    resources: oneiron_docedit::resource::Resources,
+    resources: Resources,
 }
 
 impl EditSession for NativeCellSession {
