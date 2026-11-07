@@ -92,6 +92,12 @@ impl Vault {
             // An erased world takes its keys with it (fix 7); a deleted one
             // keeps them, so it restores from old bundles.
             if erase {
+                // A reply job naming the row takes its witnessed exchange with
+                // its event, before the provenance pass below clears that
+                // event (FIX 10897).
+                super::super::connector_witness::erase_connector_witness_of_in_txn(
+                    self, wtxn, id, act,
+                )?;
                 self.destroy_world_keys_for_delete_in_txn(
                     wtxn,
                     *id,
@@ -299,8 +305,13 @@ impl Vault {
         // it (FIX 6034, 6086).
         self.halt_deleted_pack_source_routes_in_txn(wtxn, id)?;
         // An erased custody record is fenced before its body is scrubbed (KS-6
-        // part 2).
+        // part 2). A reply job naming the row takes its witnessed exchange
+        // with its event first, before the provenance pass below clears that
+        // event (FIX 10897).
         if erase {
+            super::super::connector_witness::erase_connector_witness_of_in_txn(
+                self, wtxn, id, act,
+            )?;
             self.fence_erased_credential_in_txn(wtxn, id)?;
             crate::runtime_hooks::scrub_hook_source_in_txn(
                 self,

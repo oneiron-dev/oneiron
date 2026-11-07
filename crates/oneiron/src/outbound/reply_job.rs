@@ -17,6 +17,9 @@
 //! event without its payload and takes the job's result with it.
 
 mod repair;
+mod witness_rows;
+
+pub(crate) use witness_rows::connector_witness_rows_in_txn;
 
 use std::collections::BTreeSet;
 
@@ -38,6 +41,9 @@ use crate::{EntityId, TimeRange, Vault, WriteActor};
 
 /// The attempt kind a connector reply job is queued under.
 pub const CONNECTOR_REPLY_JOB_KIND: &str = "connector.reply";
+/// The reply ref an agent's one reply to one event is kept and witnessed
+/// under: every run of the job names the same logical send.
+pub const CONNECTOR_REPLY_REF: &str = "reply";
 /// Every job result ref starts with this: `connector-reply-result:<artifact hex>`.
 pub const CONNECTOR_REPLY_RESULT_PREFIX: &str = "connector-reply-result:";
 /// Domain of a job's dedupe and run key: one job per (agent, event).
@@ -626,22 +632,26 @@ fn connector_reply_job_key(agent: EntityId, event_id: &str) -> String {
 
 /// The participant ids a surface-born event names, without the replying agent.
 pub(crate) fn connector_event_participant_ids(event: &ConnectorEvent) -> Vec<EntityId> {
-    let mut ids = Vec::new();
-    if let Ok(origin) = SurfaceConnectorPayload::from_connector_event(event) {
-        let known = match &origin.counterparty {
-            SurfaceCounterpartyStamp::Known { counterparty_ref } => {
-                EntityId::from_hex(counterparty_ref).ok()
-            }
-            SurfaceCounterpartyStamp::Unknown { .. }
-            | SurfaceCounterpartyStamp::Unparsed { .. } => None,
-        };
-        ids.extend(
-            [origin.actor().ok(), origin.receiving_identity().ok(), known]
-                .into_iter()
-                .flatten(),
-        );
-    }
-    ids
+    SurfaceConnectorPayload::from_connector_event(event)
+        .map(|origin| surface_participant_ids(&origin))
+        .unwrap_or_default()
+}
+
+/// The participant ids a surface-born exchange names: its actor, receiving
+/// identity and known counterparty, without the replying agent.
+pub(crate) fn surface_participant_ids(origin: &SurfaceConnectorPayload) -> Vec<EntityId> {
+    let known = match &origin.counterparty {
+        SurfaceCounterpartyStamp::Known { counterparty_ref } => {
+            EntityId::from_hex(counterparty_ref).ok()
+        }
+        SurfaceCounterpartyStamp::Unknown { .. } | SurfaceCounterpartyStamp::Unparsed { .. } => {
+            None
+        }
+    };
+    [origin.actor().ok(), origin.receiving_identity().ok(), known]
+        .into_iter()
+        .flatten()
+        .collect()
 }
 
 fn is_connector_reply_body_in_txn(
