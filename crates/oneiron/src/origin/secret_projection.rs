@@ -6,10 +6,12 @@
 //! request field: the owner's own doors, a committed real-byte file reveal
 //! and a proved original-source export read the stored bytes; every reader
 //! the host knows to be a run, an agent, a model or an MCP tool reads the
-//! projection. A blob with no readable mark is the stored bytes for every
-//! audience, with no detector, container read, reveal, disk write or reply
-//! field added: before the receive flip no vault holds a mark, so every
-//! read here is today's.
+//! projection. A blob no mark names, whose mask row holds nothing and in
+//! which no value custody knows now appears, is the stored bytes for every
+//! audience, with no reveal, disk write or reply field added. A read that
+//! owns its snapshot checks the blob against the values custody knows now
+//! (FIX 8966), so a value learned after the blob was stored is masked even
+//! in a Git-only blob no sweep walks.
 //!
 //! A marked blob's projection is found before a byte of it is read: opaque
 //! residue wins and gives [`REPO_OPAQUE_FILE_BYTES`] in its place. Span
@@ -54,12 +56,16 @@ use super::secret_marks::{
     RepoBlobAddress, RepoBlobMarks, RepoMarkFacts, RepoSecretMarkLookup, add_place,
 };
 use crate::Vault;
-use crate::batch::secret_scan::project_marked_retained_repo_blob;
+use crate::batch::secret_scan::{
+    RepoKnownCheck, project_marked_retained_repo_blob, retained_repo_known_places,
+};
 use crate::code_document::CodeDocumentFrontier;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::git_wire::GitOid;
+use crate::secret_record::RepoFileKeys;
 use crate::store::file_key_masks::masked_file_in_txn;
+use crate::store::known_value_index::KnownValues;
 
 /// Who a repo read serves, as the door that admitted it binds it. Every
 /// arm but [`Self::Masked`] holds a proof its door already judged; none is
@@ -126,9 +132,11 @@ impl RepoBodyProjection {
     }
 }
 
-/// The blob `marks` names, as `audience` reads it. An exact audience, and
-/// any audience of an unmarked blob, reads `read_exact()` as it is; a masked
-/// reader of opaque residue gets the placeholder before anything is read.
+/// The blob `marks` names, as `audience` reads it. An exact audience reads
+/// `read_exact()` as it is; a masked reader of opaque residue gets the
+/// placeholder before anything is read. Any other masked reader reads the
+/// bytes as [`project_repo_bytes_in_txn`] projects them against the values
+/// custody knows now (FIX 8966), so a blob no mark names is checked too.
 ///
 /// # Errors
 /// `read_exact`'s own, or a store failure.
@@ -146,7 +154,7 @@ pub(crate) fn project_repo_blob<F: FnOnce() -> Result<Vec<u8>>>(
         }
         _ => audience.reads_exact(),
     };
-    if exact || marks.is_empty() {
+    if exact {
         return read_exact().map(RepoBodyProjection::Exact);
     }
     if let (true, Some(source_blob)) = (marks.opaque(), marks.source_blob()) {
@@ -155,14 +163,24 @@ pub(crate) fn project_repo_blob<F: FnOnce() -> Result<Vec<u8>>>(
         }));
     }
     let bytes = read_exact()?;
-    let txn = vault.store.env.read_txn()?;
-    project_repo_bytes_in_txn(vault, &txn, marks, bytes)
+    vault.with_known_snapshot(|known, txn| {
+        project_repo_bytes_in_txn(vault, txn, marks, bytes, known)
+    })
 }
 
 /// `bytes`, read whole from the blob `marks` names, as a masked reader
 /// reads them in `txn`: the stored bytes when nothing marks them, the
 /// masked copy when every span rebuilds clean, the placeholder otherwise.
 /// Bytes that are not the marked blob's own (its BLAKE3) are opaque.
+///
+/// The spans are the marks', any the stored blob's mask row holds beside
+/// them (a value custody came to know later, FIX 2781), and, with `known`,
+/// each value custody knows now in the blob's own bytes or any member
+/// (FIX 8966): a blob no mark names, such as a Git-only blob the lift sweep
+/// never walks, is masked by what custody knows all the same, under the
+/// Git id of its own bytes. `known` is the matcher of a pass the caller
+/// holds ([`Vault::with_known_values`]); `None` checks the stored spans
+/// alone.
 ///
 /// # Errors
 /// A store failure.
@@ -171,30 +189,97 @@ pub(crate) fn project_repo_bytes_in_txn(
     txn: &RoTxn<'_>,
     marks: &RepoBlobMarks,
     bytes: Vec<u8>,
+    known: Option<&KnownValues>,
 ) -> Result<RepoBodyProjection> {
-    let Some(source_blob) = marks.source_blob().cloned() else {
-        return Ok(RepoBodyProjection::Exact(bytes));
-    };
     let hash = *blake3::hash(&bytes).as_bytes();
-    let copy = if marks.opaque() || marks.raw_blake3() != Some(hash) {
-        None
-    } else {
-        // The marks' spans, and any the stored blob's mask row holds beside
-        // them (a value custody came to know later, FIX 2781).
-        let mut places = marks.places();
-        if let Some(row) = masked_file_in_txn(&vault.store, txn, &hash)? {
-            for (member, spans) in row.places() {
-                for span in spans {
-                    add_place(&mut places, &member, span);
-                }
+    if let Some(source_blob) = marks.source_blob()
+        && (marks.opaque() || marks.raw_blake3() != Some(hash))
+    {
+        return Ok(RepoBodyProjection::Opaque(RepoOpaqueFile {
+            source_blob: source_blob.clone(),
+        }));
+    }
+    let mut places = marks.places();
+    if let Some(row) = masked_file_in_txn(&vault.store, txn, &hash)? {
+        for (member, spans) in row.places() {
+            for span in spans {
+                add_place(&mut places, &member, span);
             }
         }
-        project_marked_retained_repo_blob(&bytes, &places)
+    }
+    let check = match known {
+        Some(known) => Some(RepoKnownCheck::for_blob_in_txn(vault, txn, known, &hash)?),
+        None => None,
     };
-    Ok(match copy {
-        Some(bytes) => RepoBodyProjection::Masked { bytes, source_blob },
-        None => RepoBodyProjection::Opaque(RepoOpaqueFile { source_blob }),
+    if let Some(check) = &check {
+        places = retained_repo_known_places(&bytes, check, &places)?;
+    }
+    // A known value no place covers (a container's own bytes, such as a ZIP
+    // entry's name) leaves no copy to make: the blob is opaque.
+    let unplaced = match &check {
+        Some(check) if places.is_empty() => check.reads_known(&bytes)?,
+        _ => false,
+    };
+    if places.is_empty() && !unplaced {
+        return Ok(RepoBodyProjection::Exact(bytes));
+    }
+    let source_blob = match marks.source_blob() {
+        Some(source_blob) => source_blob.clone(),
+        None => git_blob_oid(&bytes)?,
+    };
+    if unplaced {
+        return Ok(RepoBodyProjection::Opaque(RepoOpaqueFile { source_blob }));
+    }
+    Ok(
+        match project_marked_retained_repo_blob(&bytes, &places, check.as_ref()) {
+            Some(bytes) => RepoBodyProjection::Masked { bytes, source_blob },
+            None => RepoBodyProjection::Opaque(RepoOpaqueFile { source_blob }),
+        },
+    )
+}
+
+/// The keys a release of `bytes`, the stored bytes of the marked repo file
+/// `marks` names, shows (FIX 8966): its marks' custody and residue, and,
+/// with `known`, each custody record past them whose value custody knows
+/// reads in `bytes`, its own and every member's. Value-free: a grant must
+/// cover every class among them before the stored bytes go out, so a value
+/// learned after a grant leaves the file masked.
+///
+/// # Errors
+/// A store failure, or a walk failure.
+pub(crate) fn repo_file_keys_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    marks: &RepoBlobMarks,
+    bytes: &[u8],
+    known: Option<&KnownValues>,
+) -> Result<RepoFileKeys> {
+    let mut custody = marks.custody();
+    if let Some(known) = known {
+        let hash = *blake3::hash(bytes).as_bytes();
+        let check = RepoKnownCheck::for_blob_in_txn(vault, txn, known, &hash)?;
+        for holder in check.holders(bytes)? {
+            if !custody.contains(&holder) {
+                custody.push(holder);
+            }
+        }
+    }
+    Ok(RepoFileKeys {
+        custody,
+        opaque: marks.opaque(),
     })
+}
+
+/// The Git blob id of `bytes`: SHA-1 over the blob header and the bytes,
+/// what a masked copy of a blob no mark names is described by (FIX 8966).
+fn git_blob_oid(bytes: &[u8]) -> Result<GitOid> {
+    let mut hasher = gix::hash::hasher(gix::hash::Kind::Sha1);
+    hasher.update(format!("blob {}\0", bytes.len()).as_bytes());
+    hasher.update(bytes);
+    let oid = hasher
+        .try_finalize()
+        .map_err(|_| crate::error::Error::CorruptedIndex("masked repo blob hash"))?;
+    Ok(GitOid::parse_hex(oid.to_string())?)
 }
 
 /// The placeholder a masked reader reads for `bytes`, a code document
@@ -265,8 +350,9 @@ impl RepoMaterializedCopy {
 
 /// `files`, a tree's already selected paths with their stored bytes, as
 /// `audience` reads them: the marks are found in one walk for the whole
-/// tree, each file joined to them by its bytes' BLAKE3. An exact audience,
-/// or a tree nothing marks, keeps every file's stored bytes.
+/// tree, each file joined to them by its bytes' BLAKE3 and checked against
+/// the values custody knows now (FIX 8966). An exact audience keeps every
+/// file's stored bytes, and so does a file nothing marks or holds.
 ///
 /// # Errors
 /// A store failure, or a mark that does not decode.
@@ -301,29 +387,30 @@ pub(crate) fn materialize_masked_repo_sourced(
     if audience.reads_exact() {
         return Ok(exact(files));
     }
-    let txn = vault.store.env.read_txn()?;
-    let facts = RepoMarkFacts::read_in_txn(vault, &txn, RepoSecretMarkLookup::ReadableClaims)?;
-    if facts.is_empty() {
-        return Ok(exact(files));
-    }
-    let mut out = BTreeMap::new();
-    for (path, bytes) in files {
-        let sourced = match documents.get(&path) {
-            Some(tested) => sourced_opaque_in_txn(vault, &txn, &facts, &bytes, || {
-                vault.code_document_source_hashes_in_txn(&txn, tested)
-            })?,
-            None => None,
-        };
-        let body = match sourced {
-            Some(opaque) => RepoBodyProjection::Opaque(opaque),
-            None => {
-                let marks = facts.for_hash(blake3::hash(&bytes).as_bytes());
-                project_repo_bytes_in_txn(vault, &txn, &marks, bytes)?
-            }
-        };
-        out.insert(path, body);
-    }
-    Ok(RepoMaterializedCopy { files: out })
+    // One known-value pass for the whole tree (FIX 8966): a file no mark
+    // names, such as a blob `work.open` captured from Git that no sweep
+    // walks, is checked against the values custody knows now all the same.
+    vault.with_known_snapshot(|known, txn| {
+        let facts = RepoMarkFacts::read_in_txn(vault, txn, RepoSecretMarkLookup::ReadableClaims)?;
+        let mut out = BTreeMap::new();
+        for (path, bytes) in files {
+            let sourced = match documents.get(&path) {
+                Some(tested) => sourced_opaque_in_txn(vault, txn, &facts, &bytes, || {
+                    vault.code_document_source_hashes_in_txn(txn, tested)
+                })?,
+                None => None,
+            };
+            let body = match sourced {
+                Some(opaque) => RepoBodyProjection::Opaque(opaque),
+                None => {
+                    let marks = facts.for_hash(blake3::hash(&bytes).as_bytes());
+                    project_repo_bytes_in_txn(vault, txn, &marks, bytes, known)?
+                }
+            };
+            out.insert(path, body);
+        }
+        Ok(RepoMaterializedCopy { files: out })
+    })
 }
 
 /// The hold lines a Granted agent's export preview gets for marked blobs

@@ -5,12 +5,15 @@
 //! A receipt is written with the binding of the result it describes, in the
 //! checkpoint's one transaction, so neither exists without the other. It is
 //! computed by the host from the jobs it names; the guest only names them.
+//! The step's replay context joins the same transaction beside its capsule
+//! (FIX 6351, `replay_capsule::context`).
 
 use super::program_resume::{ProgramResumeCommit, join_program_resume_in_txn};
 use super::records::REPLAY_RECORDS;
+use super::replay_capsule::{join_step_context_in_txn, stage_step_context};
 use super::routing::SessionBinding;
 use crate::code_run::{
-    CodeRunReplayGeneration, CodeRunReplayRecord, ExecutorStorage, ParkedWait,
+    CodeRunReplayGeneration, CodeRunReplayRecord, ExecutorStorage, ParkedWait, StepContextCommit,
     seal_parked_code_consent_in_txn,
 };
 use crate::side_table::{self, Raw, SideTable};
@@ -95,6 +98,8 @@ impl ExecutorStorage<'_> {
     /// names in the same transaction (DOOR-079 1b), when one is bound to it,
     /// so the binding is sealed exactly when its parked step commits. A
     /// room's run binds no code consent wait, so its commit seals nothing.
+    /// The step's replay `context` joins its capsule in the same
+    /// transaction (FIX 6351); a room's run captures no capsule.
     pub(crate) fn put_code_run_replay_record_with_receipts_if_generation(
         &self,
         record: &CodeRunReplayRecord,
@@ -102,6 +107,7 @@ impl ExecutorStorage<'_> {
         healed_model: Option<&ModelId>,
         receipts: &[ReaderFoldReceipt],
         parked: Option<&ParkedWait>,
+        context: &StepContextCommit,
     ) -> Result<CodeRunReplayGeneration> {
         self.put_replay_record_with_receipts_and_resume(
             record,
@@ -110,6 +116,7 @@ impl ExecutorStorage<'_> {
             receipts,
             parked,
             None,
+            context,
         )
     }
 
@@ -124,6 +131,7 @@ impl ExecutorStorage<'_> {
         receipts: &[ReaderFoldReceipt],
         parked: Option<&ParkedWait>,
         resume: &ProgramResumeCommit,
+        context: &StepContextCommit,
     ) -> Result<CodeRunReplayGeneration> {
         self.put_replay_record_with_receipts_and_resume(
             record,
@@ -132,9 +140,14 @@ impl ExecutorStorage<'_> {
             receipts,
             parked,
             Some(resume),
+            context,
         )
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a checkpoint's commit writes every row its step staged in one transaction"
+    )]
     fn put_replay_record_with_receipts_and_resume(
         &self,
         record: &CodeRunReplayRecord,
@@ -143,31 +156,42 @@ impl ExecutorStorage<'_> {
         receipts: &[ReaderFoldReceipt],
         parked: Option<&ParkedWait>,
         resume: Option<&ProgramResumeCommit>,
+        context: &StepContextCommit,
     ) -> Result<CodeRunReplayGeneration> {
         match self {
-            Self::Canonical(vault) => vault.put_code_run_replay_record_if_generation_with_heal_and(
-                record,
-                expected,
-                healed_model,
-                |wtxn| {
-                    for receipt in receipts {
-                        let key = (receipt.folded.owner, receipt.folded.occurrence);
-                        FOLDS.put(&vault.store, wtxn, &key, receipt)?;
-                    }
-                    if let Some(parked) = parked {
-                        seal_parked_code_consent_in_txn(vault, wtxn, record, parked)?;
-                    }
-                    // A turn program's frontier joins its checkpoint's own
-                    // commit (DOOR-141 PR2); it never fails it.
-                    crate::dreamer_runner::join_program_checkpoint_in_txn(vault, wtxn, record);
-                    // So does a pinned entry's resume checkpoint (DOOR-141
-                    // PR3b), in a savepoint of its own.
-                    if let Some(resume) = resume {
-                        join_program_resume_in_txn(vault, wtxn, record, resume);
-                    }
-                    Ok(())
-                },
-            ),
+            Self::Canonical(vault) => {
+                // Its body instances are minted before the writer opens.
+                let context = stage_step_context(vault, context);
+                vault.put_code_run_replay_record_if_generation_with_heal_and(
+                    record,
+                    expected,
+                    healed_model,
+                    |wtxn| {
+                        for receipt in receipts {
+                            let key = (receipt.folded.owner, receipt.folded.occurrence);
+                            FOLDS.put(&vault.store, wtxn, &key, receipt)?;
+                        }
+                        if let Some(parked) = parked {
+                            seal_parked_code_consent_in_txn(vault, wtxn, record, parked)?;
+                        }
+                        // The step's replay context joins its capsule (FIX
+                        // 6351), in a savepoint of its own; it never fails
+                        // the commit.
+                        if let Some(context) = &context {
+                            join_step_context_in_txn(vault, wtxn, context);
+                        }
+                        // A turn program's frontier joins its checkpoint's own
+                        // commit (DOOR-141 PR2); it never fails it.
+                        crate::dreamer_runner::join_program_checkpoint_in_txn(vault, wtxn, record);
+                        // So does a pinned entry's resume checkpoint (DOOR-141
+                        // PR3b), in a savepoint of its own.
+                        if let Some(resume) = resume {
+                            join_program_resume_in_txn(vault, wtxn, record, resume);
+                        }
+                        Ok(())
+                    },
+                )
+            }
             Self::Session(_) if receipts.is_empty() => self
                 .put_code_run_replay_record_if_generation_with_heal(record, expected, healed_model),
             Self::Session(binding) => {
