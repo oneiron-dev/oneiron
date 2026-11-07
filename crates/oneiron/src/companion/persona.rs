@@ -156,6 +156,10 @@ pub struct CompiledPersona {
     pub scenario: Option<EntityId>,
     pub value: JsonValue,
     pub made_by: PersonaMadeBy,
+    /// The live revision each of `made_by.inputs` was read at, in that order,
+    /// each in the snapshot its words were read in (FIX 4817): a reader that
+    /// wore this value can tell whether every input still reads at it.
+    pub input_revisions: Vec<Option<RevisionRef>>,
     /// Every scoped read the projection made, folded: the changes and scenario
     /// facts this reader could not see are counted here, never silently lost.
     pub receipt: ScopedReadReceipt,
@@ -428,6 +432,7 @@ impl ScopedRead<'_> {
     /// Replays approved identity changes on the current PERSON baseline. Pending, retracted,
     /// superseded, scoped-away and unauthorized changes cannot enter the result.
     /// The optional scenario is applied last and must belong to this PERSON.
+    /// Each input keeps the revision its read saw (FIX 4817).
     ///
     /// Each applied change's recorded input bases are checked against the
     /// basis this replay applies it over: the PERSON's revision read with its
@@ -524,6 +529,7 @@ impl ScopedRead<'_> {
             }
         }
         let mut inputs = vec![*person];
+        let mut input_revisions = vec![person_revision];
         let mut bases: Vec<PersonaInputBasis> = person_revision
             .map(|revision| PersonaInputBasis {
                 input: *person,
@@ -552,6 +558,7 @@ impl ScopedRead<'_> {
             }
             merge_patch(&mut value, &change.patch);
             inputs.push(id);
+            input_revisions.push(revision);
             bases.extend(revision.map(|revision| PersonaInputBasis {
                 input: id,
                 revision,
@@ -595,6 +602,7 @@ impl ScopedRead<'_> {
             object(&mask.patch)?;
             merge_patch(&mut value, &mask.patch);
             inputs.push(facet);
+            input_revisions.push(facet_revision);
             bases.extend(facet_revision.map(|revision| PersonaInputBasis {
                 input: facet,
                 revision,
@@ -611,6 +619,7 @@ impl ScopedRead<'_> {
                 at,
                 bases,
             },
+            input_revisions,
             receipt,
             replay_conflicts,
         })
