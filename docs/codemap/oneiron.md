@@ -1531,7 +1531,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/storage/replay_capsule/erase.rs` | src | s | 5 crate-vis | — | The erase of a capsule's actor (FIX 6144, KEY STORE = A), in the erase's own writer |
 | `src/code_run/storage/replay_capsule/execution.rs` | src | s | 2 crate-vis | — | What came of a contribution fork's program, kept (FIX 3607): its execution, or the shadow runner's reason it… |
 | `src/code_run/storage/replay_capsule/fork_erase.rs` | src | s | 7 crate-vis | — | Contribution-fork erase ownership (FIX 10754, 11358) |
-| `src/code_run/storage/replay_capsule/owner_pair.rs` | src | s | 6 crate-vis | — | An owner verdict's pending pair (FIX 3609), kept in its pair's fork rows under `owner_pair`, beside the two… |
+| `src/code_run/storage/replay_capsule/owner_pair.rs` | src | s | 7 crate-vis | — | An owner verdict's pending pair (FIX 3609), kept in its pair's fork rows under `owner_pair`, beside the two… |
 | `src/code_run/storage/replay_capsule/restore.rs` | src | s | 1 crate-vis | — | Marks restored capsule references only when their body custody retired |
 | `src/code_run/storage/replay_capsule/route_prompt.rs` | src | s | 3 crate-vis | — | A capsule's route prompt (FIX 6255): the prompt its answering rung put first, kept as a body the run owns… |
 | `src/code_run/storage/replay_capsule/spawn_erase.rs` | src | s | 4 crate-vis | — | An erase of a spawn's target over the step starts the capsules keep (FIX 9180, Engine C2) |
@@ -2458,6 +2458,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/maintenance/agent_health/outcomes/setting_fit.rs` | src | s | 1 crate-vis | — | Integer health-threshold checks derived from an owner's frozen card label |
 | `src/dreamer_runner/maintenance/agent_health/pipeline.rs` | src | m | 3 crate-vis | — | One review: detect, emit each finding as a DIAGNOSTIC, route and merge |
 | `src/dreamer_runner/maintenance/agent_health/policy.rs` | src | s | 8 crate-vis | — | The reviewer's policy (FIX 8075, agent-mind §3.8: "The recipe is a skill"): the in-force… |
+| `src/dreamer_runner/maintenance/agent_health/receipt_index.rs` | src | s | 3 crate-vis | — | Each agent-health card under every reviewer receipt it holds (FIX 10880), so… |
 | `src/dreamer_runner/maintenance/agent_health/rollups.rs` | src | m | 6 struct · 2 enum · 3 fn | HealthTrendRollup, HealthTrendRollups, TrendMargin, TrendRatio, TrendSignalTally, TrendSource, TrendSpendTally, TrendStratum | The daily trend pass's rollups (OF-568 L3; agent-mind §3, "Daily |
 | `src/dreamer_runner/maintenance/agent_health/rollups/spend.rs` | src | s | 2 crate-vis | — | Each rollup member's launch spend scope, read for the trend pass |
 | `src/dreamer_runner/maintenance/agent_health/run_loop.rs` | src | s | 2 crate-vis | — | `loop` over an agent run's own calls |
@@ -2837,6 +2838,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/embed/eligibility.rs` | src | s | 7 crate-vis | — | Which stored records are embedded, and what the embedder receives for each |
 | `src/embed/evidence.rs` | src | s | 1 re-export | — | Raw match evidence stays keyed by the space and input kind that produced it |
 | `src/embed/home_vectors.rs` | src | s | 1 struct · 3 fn · 3 crate-vis | HomeClaimVector | Default CLAIM vectors move only over an authenticated own-machine read, never through a canonical window's… |
+| `src/embed/home_vectors/pending.rs` | src | s | 1 fn | — | Provider-independent, own-home catch-up over the existing embedding queue |
 | `src/embed/locality.rs` | src | s | 1 fn · 3 crate-vis | — | Provenance of a filled vector, written atomically with the fill |
 | `src/embed/media.rs` | src | m | 4 fn · 2 re-export · 20 crate-vis | — | The media embedder adapter and the backfill that fills a declared media space from stored image and audio… |
 | `src/embed/media/unbound.rs` | src | s | 1 struct · 3 fn | UnboundMediaSample | — |
@@ -4360,7 +4362,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/office_body/author_token/carrier.rs` | src | m | 6 crate-vis | — | Byte-bound DOCX revision-author carriers over the existing export rows |
 | `src/office_body/author_token/index.rs` | src | s | 6 crate-vis | — | The DOCX author-token lookup (FIX 12403): each token to the canonical export rows that name it |
 | `src/office_body/checkpoint.rs` | src | m | 3 crate-vis | — | The checkpoint getter of office bodies (KS7-2): each artifact's office head, deck fork records, export… |
-| `src/office_body/consent.rs` | src | L | 9 struct · 4 enum · 2 fn · 1 const · 21 crate-vis | AnsweringAuthority, BundleVerdict, MemberAnswer, MemberVerdict, OfficeBodyProposal, ProposalAsk, ProposalAskRefusal, ProposalHeader +5 | Office proposals (DEC-0006, "A content proposal is a set of forks that share its id"; ARCH-0035's embedded… |
+| `src/office_body/consent.rs` | src | L | 9 struct · 4 enum · 2 fn · 1 const · 22 crate-vis | AnsweringAuthority, BundleVerdict, MemberAnswer, MemberVerdict, OfficeBodyProposal, ProposalAsk, ProposalAskRefusal, ProposalHeader +5 | Office proposals (DEC-0006, "A content proposal is a set of forks that share its id"; ARCH-0035's embedded… |
 | `src/office_body/consent/live_edit.rs` | src | s | 12 crate-vis | — | Live DOCX/XLSX edit admission and grant lifecycle (FIX 596) |
 | `src/office_body/docx.rs` | src | m | 2 struct · 2 enum · 6 crate-vis | BodyBlock, BodyBlockKind, DocxBody, DocxBodyOp | The DOCX body inside its Loro document, schema 1 |
 | `src/office_body/doors.rs` | src | m | 17 fn · 11 crate-vis | — | Vault doors for office body import, edits, forks and export |
@@ -6284,7 +6286,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/bridge/tests/fact_suppression.rs` | test | L | — | — | F24 round 7 (H219): a task whose authority fact was tombstoned before it arrived keeps reading as a refusal… |
 | `src/sync/bridge/tests/resident.rs` | test | s | — | — | — |
 | `src/sync/bridge/tombstones.rs` | src | m | 7 crate-vis | — | Observer B's tombstone driver: classification through the shared ingest entry, then one batch transaction… |
-| `src/sync/carrier.rs` | src | s | 1 enum · 2 trait · 1 type · 2 crate-vis | SyncDialer, SyncIo, SyncStream | What a sync socket rides on (OF-535): TCP to the home's URL, or a stream a [`SyncDialer`] opens, such as a… |
+| `src/sync/carrier.rs` | src | s | 1 enum · 2 trait · 1 type · 3 crate-vis | SyncDialer, SyncIo, SyncStream | What a sync socket rides on (OF-535): TCP to the home's URL, or a stream a [`SyncDialer`] opens, such as a… |
 | `src/sync/carrier_holds.rs` | src | s | 3 crate-vis | — | What a carrier-only tear destroys, read from the carrier itself (OF-470, FIX 3061) |
 | `src/sync/carrier_parts.rs` | src | s | 13 crate-vis | — | Linked parts for a window carrier too large for one map value (Rule 5) |
 | `src/sync/checkpoint_payload/author_carrier.rs` | src | s | 2 crate-vis | — | A window's copy of an identity-topology author carrier (FIX 17143): an `entities` value whose row is an… |
@@ -6366,7 +6368,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/connection/handshake.rs` | src | m | 2 fn · 5 crate-vis | — | Handshake: run loop, connect_and_sync, overflow check, resync markers |
 | `src/sync/connection/handshake/acks.rs` | src | s | 1 crate-vis | — | Residence queue acknowledgments during the initial exchange |
 | `src/sync/connection/home_handoff.rs` | src | m | 2 crate-vis | — | FIX 5661 C2a: the old home's delivery worker |
-| `src/sync/connection/home_search.rs` | src | s | 1 struct · 1 enum · 6 fn · 5 crate-vis | DeviceResidence, HomeSearch | The home search this device's query doors reach through its own sync connection (OF-534): a search an opened… |
+| `src/sync/connection/home_search.rs` | src | s | 1 struct · 1 enum · 6 fn · 6 crate-vis | DeviceResidence, HomeSearch | The home search this device's query doors reach through its own sync connection (OF-534): a search an opened… |
 | `src/sync/connection/mod.rs` | src | L | 3 struct · 18 fn · 4 re-export · 1 crate-vis | ConnectionConfig, ResidenceModeChange, SyncConnection | WebSocket connection manager with debounced sync and reconnection |
 | `src/sync/connection/node_batch.rs` | src | m | 3 crate-vis | — | One bounded node proposal batch per sync tick, its window updates and document frames taking turns (FIX… |
 | `src/sync/connection/note_reads.rs` | src | s | 2 fn | — | Typed reads of a residence open, using the named connection's own vault |
@@ -6481,7 +6483,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/queue/checkpoint.rs` | src | s | 3 crate-vis | — | The sync queue's rows in a checkpoint (KS7-3a), read with the queue's own key and value codecs |
 | `src/sync/queue/codec.rs` | src | s | 15 crate-vis | — | Key/value encode/decode plus metadata codecs |
 | `src/sync/queue/core.rs` | src | m | 13 fn · 2 crate-vis | — | SyncQueue impl: push/drain/clear/prune |
-| `src/sync/queue/mod.rs` | src | s | 3 struct · 4 crate-vis | QueuedEmbedJob, QueuedUpdate, SyncQueue | Persistent offline queue backed by LMDB |
+| `src/sync/queue/embed_page.rs` | src | s | 2 crate-vis | — | A resumable physical-row read for provider-independent vector catch-up |
+| `src/sync/queue/mod.rs` | src | s | 3 struct · 5 crate-vis | QueuedEmbedJob, QueuedUpdate, SyncQueue | Persistent offline queue backed by LMDB |
 | `src/sync/queue/scrub.rs` | src | s | 9 crate-vis | — | Carrier scrubs plus test injection hook |
 | `src/sync/queue/seq.rs` | src | s | 7 crate-vis | — | Seq allocation, delete-bearing seqs, embed-job txn helpers |
 | `src/sync/queue/tests.rs` | test | L | — | — | — |
@@ -6963,12 +6966,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault/vector_evidence.rs` | src | s | 3 fn · 6 crate-vis | — | Where a vector hit counts as evidence in the vault's embedding space, as the host's embedder states it |
 | `src/vault_cleanup/attempt_retention.rs` | src | m | 3 fn · 14 crate-vis | — | Reversible retention for private queue records; the serialized attempt is never changed |
 | `src/vault_cleanup/codec_receipts.rs` | src | m | 2 fn · 16 crate-vis | — | vault_meta row codecs and the digest receipt projector |
-| `src/vault_cleanup/erase.rs` | src | s | 2 crate-vis | — | An erase reaches cleanup's own rows (FIX 7517) |
+| `src/vault_cleanup/entity_rows.rs` | src | s | 8 crate-vis | — | Which cleanup listing rows name an id (FIX 7616): one index row per (named id, listing, listing row), kept… |
+| `src/vault_cleanup/erase.rs` | src | m | 3 crate-vis | — | An erase reaches cleanup's own rows (FIX 7517) |
 | `src/vault_cleanup/marks.rs` | src | s | 7 crate-vis | — | Cleanup marks keyed by id16: a run's archive mark on a completed attempt, and the owner's kept mark on an… |
 | `src/vault_cleanup/mod.rs` | src | s | 1 mod · 8 re-export · 6 crate-vis | — | ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931) |
 | `src/vault_cleanup/owner_doors.rs` | src | s | 9 fn | — | The owner's cleanup doors for a transport |
 | `src/vault_cleanup/person_provenance.rs` | src | s | 1 fn · 4 crate-vis | — | Mint-time evidence for the extraction-only PERSON cleanup arm |
-| `src/vault_cleanup/proposal_review.rs` | src | s | 5 crate-vis | — | The owner's per-item cleanup decision (FIX 1758): one complete verdict, an Accept or a Reject for every slot… |
+| `src/vault_cleanup/proposal_review.rs` | src | m | 5 crate-vis | — | The owner's per-item cleanup decision (FIX 1758): one complete verdict, an Accept or a Reject for every slot… |
 | `src/vault_cleanup/proposals_archive.rs` | src | m | 7 fn · 6 crate-vis | — | Proposal accept/reject lane plus the archived query and restore door |
 | `src/vault_cleanup/qodo_tests.rs` | test | m | — | — | Correctness regressions for the Qodo cleanup repair |
 | `src/vault_cleanup/repair_tests.rs` | test | m | — | — | Focused continuation fixtures for the three previously absent seams |
