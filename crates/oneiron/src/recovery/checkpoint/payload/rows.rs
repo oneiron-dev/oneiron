@@ -146,7 +146,8 @@ families! {
     Class::Mixed(Carrier::WindowSnapshot) => WINDOW_SNAPSHOT;
     Class::Mixed(Carrier::PendingEdit) => SYNC_QD_E;
     Class::Mixed(Carrier::PendingNoteOperation) => SYNC_QN_E;
-    Class::Mixed(Carrier::ResidenceItem) => SYNC_RESIDENCE_ITEM_BLOB SYNC_RESIDENCE_ITEM_DOCUMENT;
+    Class::Mixed(Carrier::ResidenceItem) => SYNC_RESIDENCE_ITEM_BLOB SYNC_RESIDENCE_ITEM_DOCUMENT
+        SYNC_RESIDENCE_ITEM_SOURCES;
     Class::Mixed(Carrier::WindowUpdate) => SYNC_U_W;
     Class::NotImaged => BYOA_EXHAUST_ACTIVE_PURGE USAGE_BUDGET_LIMIT ARTIFACT_PUBLICATION_PARTS SYNC_BULK_TRANSFER_MARKER
         SYNC_M_LAST_SYNC MODEL_OFFER_COOLDOWN MODEL_RESPONSES_CHAIN PENDING_EMBEDDING_MARKER
