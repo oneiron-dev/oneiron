@@ -4927,6 +4927,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.rooms.leave",
+                crate::code_run::vault_read::request_schema::<
+                    crate::workspace_roster::RoomLeaveRequest,
+                >(),
+            ),
+            (
                 "vault.rooms.offer",
                 crate::code_run::vault_read::request_schema::<crate::workspace_roster::OfferDraft>(
                 ),
@@ -17328,6 +17334,17 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.rooms.leave" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            properties.insert(
+                "room_ref".to_owned(),
+                schema.pointer("/properties/room")?.clone(),
+            );
+            &["spec", "room_ref"]
+        }
         "vault.rooms.offer" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -21382,6 +21399,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.rooms.join" => validate_input_vault_rooms_join(value)?,
         "vault.rooms.invite" => validate_input_vault_rooms_invite(value)?,
         "vault.rooms.consent" => validate_input_vault_rooms_consent(value)?,
+        "vault.rooms.leave" => validate_input_vault_rooms_leave(value)?,
         "vault.rooms.offer" => validate_input_vault_rooms_offer(value)?,
         "vault.rooms.offer.answer" => validate_input_vault_rooms_offer_answer(value)?,
         "vault.rooms.offer.vote" => validate_input_vault_rooms_offer_vote(value)?,
@@ -26699,6 +26717,11 @@ fn validate_input_vault_rooms_consent(value: &serde_json::Value) -> MemoryResult
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_rooms_leave(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::workspace_roster::RoomLeaveRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_vault_rooms_offer(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::workspace_roster::OfferDraft = decode(value.clone())?;
     Ok(())
@@ -30333,6 +30356,7 @@ pub fn invoke(
         "vault.rooms.join" => invoke_vault_rooms_join(memory, value),
         "vault.rooms.invite" => invoke_vault_rooms_invite(memory, value),
         "vault.rooms.consent" => invoke_vault_rooms_consent(memory, value),
+        "vault.rooms.leave" => invoke_vault_rooms_leave(memory, value),
         "vault.rooms.offer" => invoke_vault_rooms_offer(memory, value),
         "vault.rooms.offer.answer" => invoke_vault_rooms_offer_answer(memory, value),
         "vault.rooms.offer.vote" => invoke_vault_rooms_offer_vote(memory, value),
@@ -37180,6 +37204,13 @@ fn invoke_vault_rooms_consent(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_rooms_consent(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_rooms_leave(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_rooms_leave(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_rooms_offer(
@@ -47756,6 +47787,12 @@ pub fn vault_rooms_consent(
     input: crate::workspace_roster::ConsentAnswer,
 ) -> MemoryResult<crate::workspace_roster::JoinOutcome> {
     memory.rooms_consent(&input)
+}
+pub fn vault_rooms_leave(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::RoomLeaveRequest,
+) -> MemoryResult<crate::workspace_roster::RoomLeaveOutcome> {
+    memory.rooms_leave(&input)
 }
 pub fn vault_rooms_offer(
     memory: &Memory<'_>,
