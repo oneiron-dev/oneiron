@@ -77,6 +77,7 @@ pub enum SelfEffect {
     RepoSnapshotsGet,
     RepoSnapshotsRead,
     RepoSymbolsDefinitions,
+    RepoSymbolsNeighbors,
     RepoViewsGet,
     RepoViewsRead,
     RepoMergeQueueObserve,
@@ -138,6 +139,7 @@ impl SelfEffect {
             Self::RepoSnapshotsGet => "self.code.snapshots.get",
             Self::RepoSnapshotsRead => "self.code.snapshots.read",
             Self::RepoSymbolsDefinitions => "self.code.symbols.definitions",
+            Self::RepoSymbolsNeighbors => "self.code.symbols.neighbors",
             Self::RepoViewsGet => "self.code.views.get",
             Self::RepoViewsRead => "self.code.views.read",
             Self::RepoMergeQueueObserve => "self.code.merge_queue.observe",
@@ -196,6 +198,7 @@ impl SelfEffect {
             Self::RepoSnapshotsGet
             | Self::RepoSnapshotsRead
             | Self::RepoSymbolsDefinitions
+            | Self::RepoSymbolsNeighbors
             | Self::RepoViewsGet
             | Self::RepoViewsRead
             | Self::RepoMergeQueueObserve

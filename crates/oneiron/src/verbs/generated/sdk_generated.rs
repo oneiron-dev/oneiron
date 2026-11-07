@@ -4167,6 +4167,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.symbols.neighbors",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::codebase_doors::CodeSnapshotNeighborsRequest,
+                >(),
+            ),
+            (
                 "vault.code.merge_queue.enqueue",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::merge_queue_doors::MergeQueueEnqueueRequest,
@@ -4353,6 +4359,14 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::LiveRunRequest<
                         crate::memory::repo_doors::RepoSymbolsDefinitionsInput,
+                    >,
+                >(),
+            ),
+            (
+                "vault.repo.symbols.neighbors",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::memory::repo_doors::RepoSymbolsNeighborsInput,
                     >,
                 >(),
             ),
@@ -7297,6 +7311,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.code.symbols.neighbors",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::repo_doors::RepoSymbolsNeighborsInput,
+                >(),
+            ),
+            (
                 "self.code.views.get",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::repo_doors::RepoViewsGetInput,
@@ -7972,6 +7992,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.snapshots.get",
     "vault.code.snapshots.read",
     "vault.code.symbols.definitions",
+    "vault.code.symbols.neighbors",
     "vault.code.merge_queue.review_policy.get",
     "vault.code.merge_queue.review_policy.set",
     "vault.code.merge_queue.export_green",
@@ -7990,6 +8011,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.repo.snapshots.get",
     "vault.repo.snapshots.read",
     "vault.repo.symbols.definitions",
+    "vault.repo.symbols.neighbors",
     "vault.repo.views.get",
     "vault.repo.views.read",
     "vault.repo.merge_queue.observe",
@@ -9997,6 +10019,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.code.symbols.definitions" => crate::code_run::vault_read::request_schema::<
             crate::memory::codebase_doors::CodeSnapshotDefinitionsView,
         >(),
+        "vault.code.symbols.neighbors" => crate::code_run::vault_read::request_schema::<
+            crate::memory::codebase_doors::CodeSnapshotNeighborsView,
+        >(),
         "vault.code.merge_queue.review_policy.get" => {
             crate::code_run::vault_read::request_schema::<
                 crate::memory::merge_queue_doors::QueueReviewPolicyView,
@@ -10054,6 +10079,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.repo.symbols.definitions" => crate::code_run::vault_read::request_schema::<
             crate::memory::repo_doors::RepoSymbolsDefinitionsOutput,
+        >(),
+        "vault.repo.symbols.neighbors" => crate::code_run::vault_read::request_schema::<
+            crate::memory::repo_doors::RepoSymbolsNeighborsOutput,
         >(),
         "vault.repo.views.get" => crate::code_run::vault_read::request_schema::<
             crate::memory::repo_doors::RepoViewsGetOutput,
@@ -16333,6 +16361,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.symbols.neighbors" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.code.merge_queue.enqueue" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -16538,6 +16573,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.repo.symbols.definitions" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.repo.symbols.neighbors" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -21106,6 +21148,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.code.snapshots.get" => validate_input_vault_code_snapshots_get(value)?,
         "vault.code.snapshots.read" => validate_input_vault_code_snapshots_read(value)?,
         "vault.code.symbols.definitions" => validate_input_vault_code_symbols_definitions(value)?,
+        "vault.code.symbols.neighbors" => validate_input_vault_code_symbols_neighbors(value)?,
         "vault.code.merge_queue.enqueue" => validate_input_vault_code_merge_queue_enqueue(value)?,
         "vault.code.merge_queue.stage" => validate_input_vault_code_merge_queue_stage(value)?,
         "vault.code.merge_queue.observe" => validate_input_vault_code_merge_queue_observe(value)?,
@@ -21155,6 +21198,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.repo.snapshots.get" => validate_input_vault_repo_snapshots_get(value)?,
         "vault.repo.snapshots.read" => validate_input_vault_repo_snapshots_read(value)?,
         "vault.repo.symbols.definitions" => validate_input_vault_repo_symbols_definitions(value)?,
+        "vault.repo.symbols.neighbors" => validate_input_vault_repo_symbols_neighbors(value)?,
         "vault.repo.views.get" => validate_input_vault_repo_views_get(value)?,
         "vault.repo.views.read" => validate_input_vault_repo_views_read(value)?,
         "vault.repo.merge_queue.observe" => validate_input_vault_repo_merge_queue_observe(value)?,
@@ -25861,6 +25905,12 @@ fn validate_input_vault_code_symbols_definitions(value: &serde_json::Value) -> M
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_code_symbols_neighbors(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::memory::codebase_doors::CodeSnapshotNeighborsRequest =
+        decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_vault_code_merge_queue_enqueue(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::memory::merge_queue_doors::MergeQueueEnqueueRequest = decode(value.clone())?;
     Ok(())
@@ -26042,6 +26092,13 @@ fn validate_input_vault_repo_snapshots_read(value: &serde_json::Value) -> Memory
 fn validate_input_vault_repo_symbols_definitions(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::task_verb::sdk::LiveRunRequest<
         crate::memory::repo_doors::RepoSymbolsDefinitionsInput,
+    > = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_repo_symbols_neighbors(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::LiveRunRequest<
+        crate::memory::repo_doors::RepoSymbolsNeighborsInput,
     > = decode(value.clone())?;
     Ok(())
 }
@@ -30009,6 +30066,7 @@ pub fn invoke(
         "vault.code.snapshots.get" => invoke_vault_code_snapshots_get(memory, value),
         "vault.code.snapshots.read" => invoke_vault_code_snapshots_read(memory, value),
         "vault.code.symbols.definitions" => invoke_vault_code_symbols_definitions(memory, value),
+        "vault.code.symbols.neighbors" => invoke_vault_code_symbols_neighbors(memory, value),
         "vault.code.merge_queue.enqueue" => invoke_vault_code_merge_queue_enqueue(memory, value),
         "vault.code.merge_queue.stage" => invoke_vault_code_merge_queue_stage(memory, value),
         "vault.code.merge_queue.observe" => invoke_vault_code_merge_queue_observe(memory, value),
@@ -30058,6 +30116,7 @@ pub fn invoke(
         "vault.repo.snapshots.get" => invoke_vault_repo_snapshots_get(memory, value),
         "vault.repo.snapshots.read" => invoke_vault_repo_snapshots_read(memory, value),
         "vault.repo.symbols.definitions" => invoke_vault_repo_symbols_definitions(memory, value),
+        "vault.repo.symbols.neighbors" => invoke_vault_repo_symbols_neighbors(memory, value),
         "vault.repo.views.get" => invoke_vault_repo_views_get(memory, value),
         "vault.repo.views.read" => invoke_vault_repo_views_read(memory, value),
         "vault.repo.merge_queue.observe" => invoke_vault_repo_merge_queue_observe(memory, value),
@@ -36095,6 +36154,13 @@ fn invoke_vault_code_symbols_definitions(
     encode(vault_code_symbols_definitions(memory, decode(value)?)?)
 }
 #[inline(never)]
+fn invoke_vault_code_symbols_neighbors(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_code_symbols_neighbors(memory, decode(value)?)?)
+}
+#[inline(never)]
 fn invoke_vault_code_merge_queue_enqueue(
     memory: &Memory<'_>,
     value: serde_json::Value,
@@ -36322,6 +36388,13 @@ fn invoke_vault_repo_symbols_definitions(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_repo_symbols_definitions(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_repo_symbols_neighbors(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_repo_symbols_neighbors(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_repo_views_get(
@@ -46415,6 +46488,15 @@ pub fn vault_code_symbols_definitions(
         input,
     )
 }
+pub fn vault_code_symbols_neighbors(
+    memory: &Memory<'_>,
+    input: crate::memory::codebase_doors::CodeSnapshotNeighborsRequest,
+) -> MemoryResult<crate::memory::codebase_doors::CodeSnapshotNeighborsView> {
+    memory.code_snapshot_neighbors_as(
+        &memory.embedded_owner("vault.code.symbols.neighbors")?,
+        input,
+    )
+}
 pub fn vault_code_merge_queue_enqueue(
     memory: &Memory<'_>,
     input: crate::memory::merge_queue_doors::MergeQueueEnqueueRequest,
@@ -46697,6 +46779,14 @@ pub fn vault_repo_symbols_definitions(
     >,
 ) -> MemoryResult<crate::memory::repo_doors::RepoSymbolsDefinitionsOutput> {
     crate::task_verb::sdk::host_only(memory, "vault.repo.symbols.definitions", &input)
+}
+pub fn vault_repo_symbols_neighbors(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<
+        crate::memory::repo_doors::RepoSymbolsNeighborsInput,
+    >,
+) -> MemoryResult<crate::memory::repo_doors::RepoSymbolsNeighborsOutput> {
+    crate::task_verb::sdk::host_only(memory, "vault.repo.symbols.neighbors", &input)
 }
 pub fn vault_repo_views_get(
     memory: &Memory<'_>,

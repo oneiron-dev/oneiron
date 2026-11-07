@@ -4285,6 +4285,9 @@ class Oneiron:
         def definitions(self, spec):
             """Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language."""
             return json.loads(_translate(lambda: self._client.vault_code_symbols_definitions(json.dumps(spec))))
+        def neighbors(self, spec):
+            """Read one-hop calls, imports and refs from one pinned symbol manifest after both endpoints pass the caller's native read checks; citations use that snapshot's full-file BLAKE3 hashes."""
+            return json.loads(_translate(lambda: self._client.vault_code_symbols_neighbors(json.dumps(spec))))
     class _VaultCodeSecretsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -4687,6 +4690,9 @@ class Oneiron:
         def definitions(self, spec):
             """Reads a snapshot's exact-name Rust definitions on paths the attached run's Grant reads."""
             return json.loads(_translate(lambda: self._client.vault_repo_symbols_definitions(json.dumps(spec))))
+        def neighbors(self, spec):
+            """Read one-hop calls, imports and refs from one pinned symbol manifest after both endpoints pass the caller's native read checks; citations use that snapshot's full-file BLAKE3 hashes."""
+            return json.loads(_translate(lambda: self._client.vault_repo_symbols_neighbors(json.dumps(spec))))
         def declare(self, spec):
             """Declares current symbols of the attached run's own work on paths its Grant edits, for its TASK; an overlap waits, never refused."""
             return json.loads(_translate(lambda: self._client.vault_repo_symbols_declare(json.dumps(spec))))
