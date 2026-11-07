@@ -78,7 +78,8 @@ pub enum ForeignCodeEffect {
     FileEdit {
         path: String,
         base_content_hash: String,
-        edit: crate::code_document::CodeFileEdit,
+        #[schemars(with = "crate::code_document::CodeFileEdit")]
+        edit: crate::code_sandbox::SandboxFileEdit,
     },
     FileDelete {
         path: String,
@@ -272,10 +273,21 @@ impl Memory<'_> {
             workspace.path(),
             workspace.path(),
         );
+        let floor = self.vault.host_net_floor();
         let mut streamed =
             crate::code_sandbox::microvm::MicroVmOutputSpool::new(std::sync::Arc::clone(&spool));
-        let outcome =
-            execute_foreign_code(prepared, mounts, artifact, budget, spool, &mut streamed)?;
+        // A failed program's own error is masked with this vault's custody
+        // values before it is answered (FIX 9209).
+        let outcome = execute_foreign_code(
+            prepared,
+            mounts,
+            artifact,
+            budget,
+            spool,
+            floor,
+            &mut streamed,
+            self.vault,
+        )?;
         let mut output: StepOutput = serde_json::from_str(&outcome.result_json)
             .map_err(|_| MemoryError::bad_request("foreign step returned invalid typed output"))?;
         outputs::merge(streamed, &mut output)?;

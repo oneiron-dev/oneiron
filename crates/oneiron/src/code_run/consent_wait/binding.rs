@@ -23,7 +23,7 @@ const WAITS: SideTable<EntityId, CodeConsentWaitRow, Named> =
     SideTable::new(&side_table::CODE_RUN_CONSENT_WAIT);
 
 /// The derivation domain of a wait id: its write receipt and call identity.
-const CODE_CONSENT_WAIT_DOMAIN: &[u8] = b"oneiron:code-consent-wait:v1";
+const CODE_CONSENT_WAIT_DOMAIN: &[u8] = crate::entity_id::derived_domains::CODE_CONSENT_WAIT;
 
 /// The hash domain of a binding digest.
 const CODE_CONSENT_BINDING_DOMAIN: &[u8] = b"oneiron:code-consent-binding:v3";

@@ -80,7 +80,7 @@ pub use self::adapters::{
 pub use self::bound::{
     ActionClass, ActionEnvelope, ActorBound, AudienceBound, BoundClass, BoundEnvelope,
     BoundSubject, ConsentDomain, DisclosureClass, DisclosureEnvelope, GrantBound,
-    MAX_AUDIENCE_MEMBERS, MAX_CONSENT_REF_LEN, MAX_ENVELOPE_SELECTORS,
+    MAX_CONSENT_REF_LEN,
 };
 pub use self::browser::{BrowserConsentFacts, BrowserSendScope, browser_approve_once_digest};
 pub use self::bypass::{BypassActive, BypassExtent, BypassGrantWarning, BypassScope};
@@ -120,8 +120,8 @@ pub use self::owner_reason::{
 };
 pub use self::registry::{
     AGENT_GRANT_CLASS, CONSENT_REVOKE_COMMAND, ConsentRegistry, ConsentRegistryAgentGrant,
-    ConsentRegistryDelegation, ConsentRegistryQuery, ConsentRegistryRow, ConsentRevokeAction,
-    SUPPORT_GRANT_CLASS,
+    ConsentRegistryDelegation, ConsentRegistryQuery, ConsentRegistryRow, ConsentRegrantAction,
+    ConsentRevokeAction, SUPPORT_GRANT_CLASS,
 };
 /// FIX 6424 part 2a: the approve-once digest an owner's press on one
 /// campaign enrollment's outbound leg names, by the Gate's own composer over

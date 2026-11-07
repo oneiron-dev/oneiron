@@ -79,13 +79,19 @@ pub use delete::{
 };
 // A maintenance pass's audited corrupt-CLAIM classification (FIX 7800).
 pub use erase::CorruptClaimRepair;
+#[cfg(unix)]
+pub(crate) use legal_hold::clone::HostLegalCaptures;
+#[cfg(unix)]
+pub use legal_hold::clone::{HostLegalChannel, HostLegalConnection, HostLegalConnectionRole};
+pub(crate) use legal_hold::prospective::{
+    ProspectiveBatch, prospective_standing_in_txn, seal_prospective_message_in_txn,
+};
 pub use legal_hold::{
     ERASE_COMPLETION_PENDING, ErasePendingReason, EraseWithdrawal, HostOrderHold,
-    LEGAL_HOLD_DEFERRAL, LEGAL_HOLD_LOG_RETENTION_MONTHS, LEGAL_HOLD_REFUSAL,
-    LEGAL_HOLD_SELF_HOSTED_NOTE, LIFT_AND_ERASE_PROMPT, LIFT_AND_ERASE_TITLE, LegalHold,
-    LegalHoldActorKind, LegalHoldEvent, LegalHoldEventKind, LegalHoldKind, LegalHoldMaintenance,
-    LegalHoldReason, LegalHoldTarget, LegalHoldUseLimit, LiftAndEraseOutcome,
-    LiftAndEraseShownState, LiftAndEraseStatus, ShownCustomerHold,
+    LEGAL_HOLD_LOG_RETENTION_MONTHS, LEGAL_HOLD_REFUSAL, LIFT_AND_ERASE_PROMPT,
+    LIFT_AND_ERASE_TITLE, LegalHold, LegalHoldActorKind, LegalHoldEvent, LegalHoldEventKind,
+    LegalHoldKind, LegalHoldMaintenance, LegalHoldReason, LegalHoldTarget, LegalHoldUseLimit,
+    LiftAndEraseOutcome, LiftAndEraseShownState, LiftAndEraseStatus, ShownCustomerHold,
 };
 // A source's dependents go in bounded batches (`Vault::finish_dependent_walks`).
 pub use crate::ports::{
@@ -122,6 +128,12 @@ pub(crate) use checkpoint_payload::settle_checkpoint_payloads_for_reason_in_txn;
 pub(crate) use delete::{ConfirmedEraseOutcome, due_erase_requester_in_txn};
 pub(crate) use derived_rows::tear_derived_rows_in_txn;
 pub(crate) use erase::{TombstoneScopeProbes, classified_corrupt_claim_in_txn};
+// The relayed ask intents a legal hold kept from their holder's erase (FIX 20468), and those
+// that land after it (FIX 7494).
+pub(crate) use erase::{
+    clear_held_ask_forward_intent_in_txn, held_ask_forward_intents_in_txn,
+    owe_held_ask_forward_intents_in_txn,
+};
 pub(crate) use gate::{DeletionClaim, DeletionGateContext, GatedDeletion, GuestRevokeAuthority};
 pub(crate) use receipt::decode_redaction_audit_receipt;
 // A corrupt CLAIM's repair event is no erase receipt (FIX 7800).
