@@ -209,6 +209,20 @@ impl Memory<'_> {
     /// already landed, then admits the ask with its group bound to the wait
     /// in the admission's commit. Returns the ask's group.
     pub(crate) fn ask_code_consent(&self, wait_id: EntityId, text: &str) -> MemoryResult<EntityId> {
+        self.open_code_consent_ask(wait_id, text, &|_| Ok(()))
+    }
+
+    /// The native question and ask of code consent wait `wait_id`, on this
+    /// caller surface (FIX 4520). `admit_caller` is the check of the caller
+    /// route the surface stands on. It runs before the question lands and
+    /// in each commit that attaches the ask. The held call's own surface
+    /// passes no check; a kept session binding passes its own.
+    pub(crate) fn open_code_consent_ask(
+        &self,
+        wait_id: EntityId,
+        text: &str,
+        admit_caller: &dyn Fn(&heed::RoTxn<'_>) -> MemoryResult<()>,
+    ) -> MemoryResult<EntityId> {
         let vault = self.vault();
         let row = {
             let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
@@ -221,6 +235,7 @@ impl Memory<'_> {
         let question = &row.binding.question;
         let landed = {
             let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+            admit_caller(&txn)?;
             vault
                 .get_entity_type_in_txn(&txn, &question.message)?
                 .is_some()
@@ -249,10 +264,12 @@ impl Memory<'_> {
         }
         let spec = ask_spec(&row)?;
         let receipt = self.tasks_ask_with_txn_effect(&spec, |txn, group| {
+            admit_caller(txn)?;
             Ok(attach_code_consent_ask_in_txn(vault, txn, wait_id, group)?)
         })?;
         if receipt.idempotent_replay {
             self.with_verified_actor_write_txn(|txn| {
+                admit_caller(txn)?;
                 Ok(attach_code_consent_ask_in_txn(
                     vault,
                     txn,

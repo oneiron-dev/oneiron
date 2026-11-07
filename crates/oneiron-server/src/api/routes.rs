@@ -344,6 +344,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // FIX 922: a kit-only restore's read of the sealed cloud bundle.
         // Keyless; each request is signed with the kit's owner anchor.
         .merge(self::recovery_bundle::routes())
+        .merge(self::owner_routes::recovery_kit_target_routes::authority_recovery_routes())
         // ARCH-0052 D5: everyone in a room keeps their own copy of an
         // off-record talk. Its own nest, outside the idempotency layer and
         // the wire receipts: nothing of the stretch may outlive it. The
