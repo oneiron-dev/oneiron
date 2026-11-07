@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1267 facade rows, 4606 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1219.
+// UniFFI census: 1274 facade rows, 4615 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1226.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -15494,6 +15494,90 @@ pub struct WeaveItemCorrectionView {
     pub actor_ref: String,
     #[serde(rename = "recorded_at")]
     pub recorded_at: u64,
+}
+
+/// `oneiron::authority::step_up::admin_inputs::WeaveAdminReportRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WeaveAdminReportRequest {
+    #[serde(rename = "membership_grant")]
+    pub membership_grant: String,
+    #[serde(rename = "request", default, skip_serializing_if = "Option::is_none")]
+    pub request: Option<WeaveReportRequest>,
+}
+
+/// `oneiron::authority::step_up::admin_inputs::WeaveAdminLensRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WeaveAdminLensRequest {
+    #[serde(rename = "membership_grant")]
+    pub membership_grant: String,
+    #[serde(rename = "request", default, skip_serializing_if = "Option::is_none")]
+    pub request: Option<WeaveLensRequest>,
+}
+
+/// `oneiron::authority::step_up::admin_inputs::WeaveAdminDigestRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WeaveAdminDigestRequest {
+    #[serde(rename = "membership_grant")]
+    pub membership_grant: String,
+    #[serde(rename = "request", default, skip_serializing_if = "Option::is_none")]
+    pub request: Option<WeaveDigestRequest>,
+}
+
+/// `oneiron::authority::step_up::admin_inputs::WeaveAdminLinkWrongRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WeaveAdminLinkWrongRequest {
+    #[serde(rename = "membership_grant")]
+    pub membership_grant: String,
+    #[serde(rename = "request")]
+    pub request: WeaveWrongLinkRequest,
+}
+
+/// `oneiron::authority::step_up::admin_inputs::WeaveAdminItemWrongRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WeaveAdminItemWrongRequest {
+    #[serde(rename = "membership_grant")]
+    pub membership_grant: String,
+    #[serde(rename = "request")]
+    pub request: WeaveWrongItemRequest,
+}
+
+/// `oneiron::authority::step_up::StepUpPasskeysResetRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct StepUpPasskeysResetRequest {
+    #[serde(rename = "person")]
+    pub person: String,
+}
+
+/// `oneiron::authority::step_up::StepUpPasskeysReset`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct StepUpPasskeysReset {
+    #[serde(rename = "person")]
+    pub person: String,
+    #[serde(rename = "removed")]
+    pub removed: u64,
+}
+
+/// `oneiron::authority::step_up::totp::StepUpTotpResetRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct StepUpTotpResetRequest {
+    #[serde(rename = "person")]
+    pub person: String,
+}
+
+/// `oneiron::authority::step_up::totp::StepUpTotpReset`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct StepUpTotpReset {
+    #[serde(rename = "person")]
+    pub person: String,
+    #[serde(rename = "removed")]
+    pub removed: u64,
 }
 
 /// `oneiron::verbs::weave::WeaveEnqueueRequest`.
