@@ -149,6 +149,10 @@ fn request(
         },
         RelayRequest::AuthorizeDatagram { target } => relay.authorize_datagram(target),
         RelayRequest::Refusal(refusal) => relay.record_refusal(&refusal),
+        RelayRequest::Fetch { request } => relay
+            .fetch(request)
+            .and_then(|response| serde_json::to_vec(&response).map_err(std::io::Error::other))
+            .map(|bytes| reply.bytes = bytes),
         RelayRequest::Datagram { target, bytes } => relay
             .datagram(target, &bytes)
             .map(|bytes| reply.bytes = bytes),
