@@ -6,7 +6,10 @@ use std::cell::Cell;
 
 use loro::LoroDoc;
 
+use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
+use crate::ports::EntityStoreRead;
+use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::sync::ingest::{TombstoneStep, classify_tombstone};
 use crate::sync::loro_support::map_get_bytes;
 use crate::sync::quarantine::{
@@ -247,6 +250,7 @@ enum TombstoneFailureStage {
 pub(super) struct TombstoneBatch<'work> {
     failures: Vec<(&'work TombstoneWork, TombstoneFailureStage, Error)>,
     applied: Vec<EntityId>,
+    claims_changed: bool,
 }
 
 impl<'work> TombstoneBatch<'work> {
@@ -258,7 +262,11 @@ impl<'work> TombstoneBatch<'work> {
         staged: &'work [TombstoneWork],
         parent: &mut heed::RwTxn<'_>,
     ) -> Result<(Vec<EntityId>, Vec<(crate::attempt_queue::AttemptId, u32)>)> {
-        let Self { failures, applied } = self;
+        let Self {
+            failures,
+            applied,
+            claims_changed,
+        } = self;
         // SCAN C049: one decision-ledger scan answers the hard items' probes.
         let _probes = vault.batch_tombstone_scope_probes_in_txn(
             parent,
@@ -271,9 +279,10 @@ impl<'work> TombstoneBatch<'work> {
         let mut cancelled = Vec::new();
         for work in staged {
             let (stage, err) = match apply_tombstone_in_savepoint(vault, parent, window_key, work) {
-                Ok((ids, item_cancelled)) => {
+                Ok((ids, item_cancelled, item_claims_changed)) => {
                     affected.extend(ids);
                     cancelled.extend(item_cancelled);
+                    *claims_changed |= item_claims_changed;
                     applied.push(work.id);
                     continue;
                 }
@@ -364,6 +373,7 @@ impl<'work> TombstoneBatch<'work> {
             applied: self.applied,
             affected,
             cancelled,
+            claims_changed: self.claims_changed,
         }
     }
 }
@@ -397,8 +407,19 @@ fn apply_tombstone_batch(
 
     #[cfg(test)]
     note_tombstone_batch_top_level_txn();
-    let batch = vault
-        .with_write_txn_grouped(|parent| state.stage_in_txn(vault, window_key, staged, parent));
+    let batch = vault.with_write_txn_grouped_after_commit(
+        |parent| {
+            let (affected, cancelled) = state.stage_in_txn(vault, window_key, staged, parent)?;
+            let claims_changed = std::mem::take(&mut state.claims_changed);
+            Ok((affected, cancelled, claims_changed))
+        },
+        |(affected, cancelled, claims_changed)| {
+            if claims_changed {
+                vault.verb_hook_bindings_changed();
+            }
+            Ok((affected, cancelled))
+        },
+    );
     if let Err(e) = &batch {
         tracing::error!(
             window = %window_key,
@@ -437,6 +458,7 @@ pub(in crate::sync) struct TombstoneEffects {
     applied: Vec<EntityId>,
     affected: Vec<EntityId>,
     cancelled: Vec<(crate::attempt_queue::AttemptId, u32)>,
+    claims_changed: bool,
 }
 
 impl TombstoneEffects {
@@ -464,6 +486,9 @@ impl TombstoneEffects {
     ) -> Vec<EntityId> {
         crate::attempt_queue::AttemptQueue::new(vault)
             .erased_payload_cancellations_committed(&self.cancelled);
+        if self.claims_changed {
+            vault.verb_hook_bindings_changed();
+        }
         loop {
             match vault.collect_lfs_garbage(32) {
                 Ok(0) => break,
@@ -622,7 +647,11 @@ fn apply_tombstone_in_savepoint(
     window_key: &str,
     work: &TombstoneWork,
 ) -> std::result::Result<
-    (Vec<EntityId>, Vec<(crate::attempt_queue::AttemptId, u32)>),
+    (
+        Vec<EntityId>,
+        Vec<(crate::attempt_queue::AttemptId, u32)>,
+        bool,
+    ),
     (TombstoneFailureStage, Error),
 > {
     let mut child = vault
@@ -652,6 +681,12 @@ fn apply_tombstone_in_savepoint(
     } else {
         vec![work.id]
     };
+    // Capture the original kind in the same savepoint as the delete.
+    let is_claim = EntityStoreRead::port_entity_raw(&vault.store, &child, &work.id)
+        .map_err(|e| (TombstoneFailureStage::Replay, e))?
+        .as_deref()
+        .and_then(EntityMetadataHeader::parse)
+        .is_some_and(|header| header.entity_type == ENTITY_TYPE_CLAIM);
     let applied = quarantine::apply_replayed_tombstone_for_sync_in_txn(
         vault,
         &mut child,
@@ -662,17 +697,18 @@ fn apply_tombstone_in_savepoint(
         affected.extend(changed_documents);
     }
     let item = match applied {
-        Ok((_, _, cancelled)) if work.hard => {
+        Ok((outcome, _, cancelled)) if work.hard => {
+            let item_claims_changed = is_claim && outcome.changed_local_state();
             scrub_receiver_outbox_on_remote_hard_delete_in_txn(vault, &mut child, window_key)
-                .map(|_| cancelled)
+                .map(|_| (cancelled, item_claims_changed))
                 .map_err(|e| (TombstoneFailureStage::ReceiverScrub, e))
         }
-        Ok((_, _, cancelled)) => Ok(cancelled),
+        Ok((outcome, _, cancelled)) => Ok((cancelled, is_claim && outcome.changed_local_state())),
         Err(e) => Err((TombstoneFailureStage::Replay, e)),
     };
 
     match item {
-        Ok(cancelled) => {
+        Ok((cancelled, claims_changed)) => {
             if crate::sync::WindowKey::try_new(window_key).is_some_and(|key| key.world().is_some())
             {
                 vault
@@ -687,7 +723,7 @@ fn apply_tombstone_in_savepoint(
             }
             child
                 .commit()
-                .map(|()| (affected, cancelled))
+                .map(|()| (affected, cancelled, claims_changed))
                 .map_err(|e| (TombstoneFailureStage::Replay, Error::from(e)))
         }
         Err(failure) => {
