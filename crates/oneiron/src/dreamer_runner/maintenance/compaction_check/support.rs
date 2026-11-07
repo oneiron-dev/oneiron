@@ -321,6 +321,13 @@ pub(super) async fn verdict(
         .await;
     // Every generation that finished is spent, whatever the pack's outcome.
     spend.book(ctx.vault, &spent).map_err(|error| {
+        if let Some(usage) = decided
+            .as_ref()
+            .err()
+            .and_then(DurableStepError::spent_usage)
+        {
+            spend.units = spend.units.saturating_add(units(usage));
+        }
         spend.note_before_error(ctx);
         error
     })?;

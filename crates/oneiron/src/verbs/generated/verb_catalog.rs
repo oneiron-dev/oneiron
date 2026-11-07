@@ -699,6 +699,8 @@ pub enum AgentVerb {
     VaultCodeProposalSettle,
     VaultCodeProposalSettlement,
     VaultCodeOplog,
+    VaultCodeSecretsGet,
+    VaultCodeSecretsPropose,
     ExecuteCode,
     VaultCodeModelHealCount,
     VaultCodeCorrections,
@@ -735,6 +737,7 @@ pub enum AgentVerb {
     VaultCodeOriginAuthorityGet,
     VaultCodeOriginAuthoritySet,
     VaultCodeOriginPublications,
+    VaultCodeCheckoutHolderBind,
     VaultCodeCheckoutBind,
     VaultCodeCheckoutClaim,
     VaultCodeCheckoutGet,
@@ -913,6 +916,9 @@ pub enum AgentVerb {
     VaultModelsManifestReplace,
     VaultSettingsWebConnector,
     VaultSettingsWebConnectorReplace,
+    VaultSettingsModelPack,
+    VaultSettingsModelPackReplace,
+    VaultModelPackRevert,
     VaultConnectorsWebUsage,
     VaultModelsOneironerBind,
     VaultModelsRoutesRead,
@@ -2010,6 +2016,8 @@ impl AgentVerb {
         Self::VaultCodeProposalSettle,
         Self::VaultCodeProposalSettlement,
         Self::VaultCodeOplog,
+        Self::VaultCodeSecretsGet,
+        Self::VaultCodeSecretsPropose,
         Self::ExecuteCode,
         Self::VaultCodeModelHealCount,
         Self::VaultCodeCorrections,
@@ -2046,6 +2054,7 @@ impl AgentVerb {
         Self::VaultCodeOriginAuthorityGet,
         Self::VaultCodeOriginAuthoritySet,
         Self::VaultCodeOriginPublications,
+        Self::VaultCodeCheckoutHolderBind,
         Self::VaultCodeCheckoutBind,
         Self::VaultCodeCheckoutClaim,
         Self::VaultCodeCheckoutGet,
@@ -2224,6 +2233,9 @@ impl AgentVerb {
         Self::VaultModelsManifestReplace,
         Self::VaultSettingsWebConnector,
         Self::VaultSettingsWebConnectorReplace,
+        Self::VaultSettingsModelPack,
+        Self::VaultSettingsModelPackReplace,
+        Self::VaultModelPackRevert,
         Self::VaultConnectorsWebUsage,
         Self::VaultModelsOneironerBind,
         Self::VaultModelsRoutesRead,
@@ -3348,6 +3360,8 @@ impl AgentVerb {
             Self::VaultCodeProposalSettle => "vault.code.proposal_settle",
             Self::VaultCodeProposalSettlement => "vault.code.proposal_settlement",
             Self::VaultCodeOplog => "vault.code.oplog",
+            Self::VaultCodeSecretsGet => "vault.code.secrets.get",
+            Self::VaultCodeSecretsPropose => "vault.code.secrets.propose",
             Self::ExecuteCode => "execute_code",
             Self::VaultCodeModelHealCount => "vault.code.model_heal_count",
             Self::VaultCodeCorrections => "vault.code.corrections",
@@ -3384,6 +3398,7 @@ impl AgentVerb {
             Self::VaultCodeOriginAuthorityGet => "vault.code.origin.authority.get",
             Self::VaultCodeOriginAuthoritySet => "vault.code.origin.authority.set",
             Self::VaultCodeOriginPublications => "vault.code.origin.publications",
+            Self::VaultCodeCheckoutHolderBind => "vault.code.checkout.holder.bind",
             Self::VaultCodeCheckoutBind => "vault.code.checkout.bind",
             Self::VaultCodeCheckoutClaim => "vault.code.checkout.claim",
             Self::VaultCodeCheckoutGet => "vault.code.checkout.get",
@@ -3564,6 +3579,9 @@ impl AgentVerb {
             Self::VaultModelsManifestReplace => "vault.models.manifest.replace",
             Self::VaultSettingsWebConnector => "vault.settings.web_connector",
             Self::VaultSettingsWebConnectorReplace => "vault.settings.web_connector.replace",
+            Self::VaultSettingsModelPack => "vault.settings.model_pack",
+            Self::VaultSettingsModelPackReplace => "vault.settings.model_pack.replace",
+            Self::VaultModelPackRevert => "vault.model_pack.revert",
             Self::VaultConnectorsWebUsage => "vault.connectors.web.usage",
             Self::VaultModelsOneironerBind => "vault.models.oneironer.bind",
             Self::VaultModelsRoutesRead => "vault.models.routes.read",
@@ -4675,6 +4693,8 @@ impl AgentVerb {
                 | Self::VaultCodeProposalSettle
                 | Self::VaultCodeProposalSettlement
                 | Self::VaultCodeOplog
+                | Self::VaultCodeSecretsGet
+                | Self::VaultCodeSecretsPropose
                 | Self::ExecuteCode
                 | Self::VaultCodeModelHealCount
                 | Self::VaultCodeCorrections
@@ -4711,6 +4731,7 @@ impl AgentVerb {
                 | Self::VaultCodeOriginAuthorityGet
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
+                | Self::VaultCodeCheckoutHolderBind
                 | Self::VaultCodeCheckoutBind
                 | Self::VaultCodeCheckoutClaim
                 | Self::VaultCodeCheckoutGet
@@ -4889,6 +4910,9 @@ impl AgentVerb {
                 | Self::VaultModelsManifestReplace
                 | Self::VaultSettingsWebConnector
                 | Self::VaultSettingsWebConnectorReplace
+                | Self::VaultSettingsModelPack
+                | Self::VaultSettingsModelPackReplace
+                | Self::VaultModelPackRevert
                 | Self::VaultConnectorsWebUsage
                 | Self::VaultModelsOneironerBind
                 | Self::VaultModelsRoutesRead
@@ -6015,6 +6039,8 @@ impl AgentVerb {
                 | Self::VaultCodeProposalSettle
                 | Self::VaultCodeProposalSettlement
                 | Self::VaultCodeOplog
+                | Self::VaultCodeSecretsGet
+                | Self::VaultCodeSecretsPropose
                 | Self::ExecuteCode
                 | Self::VaultCodeModelHealCount
                 | Self::VaultCodeCorrections
@@ -6051,6 +6077,7 @@ impl AgentVerb {
                 | Self::VaultCodeOriginAuthorityGet
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
+                | Self::VaultCodeCheckoutHolderBind
                 | Self::VaultCodeCheckoutBind
                 | Self::VaultCodeCheckoutClaim
                 | Self::VaultCodeCheckoutGet
@@ -6229,6 +6256,9 @@ impl AgentVerb {
                 | Self::VaultModelsManifestReplace
                 | Self::VaultSettingsWebConnector
                 | Self::VaultSettingsWebConnectorReplace
+                | Self::VaultSettingsModelPack
+                | Self::VaultSettingsModelPackReplace
+                | Self::VaultModelPackRevert
                 | Self::VaultConnectorsWebUsage
                 | Self::VaultModelsOneironerBind
                 | Self::VaultModelsRoutesRead
@@ -6767,6 +6797,7 @@ impl AgentVerb {
                 | Self::ExecuteCode
                 | Self::VaultCodeExportPreview
                 | Self::VaultCodeExportPreviewRead
+                | Self::VaultCodeCheckoutHolderBind
                 | Self::VaultCodeMergeQueueReviewPolicyGet
                 | Self::VaultCodeMergeQueueReviewPolicySet
                 | Self::VaultRepoSnapshotsGet
@@ -7496,6 +7527,8 @@ impl AgentVerb {
                 | Self::VaultCodeProposalSettle
                 | Self::VaultCodeProposalSettlement
                 | Self::VaultCodeOplog
+                | Self::VaultCodeSecretsGet
+                | Self::VaultCodeSecretsPropose
                 | Self::VaultCodeModelHealCount
                 | Self::VaultCodeCorrections
                 | Self::VaultCodeTypeDiagnostics
@@ -7689,6 +7722,9 @@ impl AgentVerb {
                 | Self::VaultModelsManifestReplace
                 | Self::VaultSettingsWebConnector
                 | Self::VaultSettingsWebConnectorReplace
+                | Self::VaultSettingsModelPack
+                | Self::VaultSettingsModelPackReplace
+                | Self::VaultModelPackRevert
                 | Self::VaultConnectorsWebUsage
                 | Self::VaultModelsOneironerBind
                 | Self::VaultModelsRoutesRead
@@ -8465,6 +8501,7 @@ impl AgentVerb {
                 | Self::VaultCodeProposalResolve
                 | Self::VaultCodeProposalReview
                 | Self::VaultCodeProposalSettle
+                | Self::VaultCodeSecretsPropose
                 | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeExport
                 | Self::VaultCodeImport
@@ -8479,6 +8516,7 @@ impl AgentVerb {
                 | Self::VaultCodeOriginPublishExecute
                 | Self::VaultCodeOriginPublishCancel
                 | Self::VaultCodeOriginAuthoritySet
+                | Self::VaultCodeCheckoutHolderBind
                 | Self::VaultCodeCheckoutBind
                 | Self::VaultCodeCheckoutClaim
                 | Self::VaultCodeCheckoutRenew
@@ -8591,6 +8629,8 @@ impl AgentVerb {
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultModelsManifestReplace
                 | Self::VaultSettingsWebConnectorReplace
+                | Self::VaultSettingsModelPackReplace
+                | Self::VaultModelPackRevert
                 | Self::VaultModelsOneironerBind
                 | Self::VaultModelsRoutesReplace
                 | Self::VaultSkillsAttributionSettle
@@ -9563,6 +9603,8 @@ impl AgentVerb {
             Self::VaultCodeProposalSettle => &["spec"],
             Self::VaultCodeProposalSettlement => &["spec"],
             Self::VaultCodeOplog => &["spec"],
+            Self::VaultCodeSecretsGet => &["spec"],
+            Self::VaultCodeSecretsPropose => &["spec"],
             Self::ExecuteCode => &["spec"],
             Self::VaultCodeModelHealCount => &["spec"],
             Self::VaultCodeCorrections => &["spec"],
@@ -9599,6 +9641,7 @@ impl AgentVerb {
             Self::VaultCodeOriginAuthorityGet => &["spec"],
             Self::VaultCodeOriginAuthoritySet => &["spec"],
             Self::VaultCodeOriginPublications => &["spec"],
+            Self::VaultCodeCheckoutHolderBind => &["spec"],
             Self::VaultCodeCheckoutBind => &["spec"],
             Self::VaultCodeCheckoutClaim => &["spec"],
             Self::VaultCodeCheckoutGet => &["spec"],
@@ -9777,6 +9820,9 @@ impl AgentVerb {
             Self::VaultModelsManifestReplace => &["spec"],
             Self::VaultSettingsWebConnector => &["spec"],
             Self::VaultSettingsWebConnectorReplace => &["spec"],
+            Self::VaultSettingsModelPack => &["spec"],
+            Self::VaultSettingsModelPackReplace => &["spec"],
+            Self::VaultModelPackRevert => &["spec"],
             Self::VaultConnectorsWebUsage => &["spec"],
             Self::VaultModelsOneironerBind => &["spec"],
             Self::VaultModelsRoutesRead => &["spec"],
@@ -10875,6 +10921,8 @@ impl AgentVerb {
             Self::VaultCodeProposalSettle => &["spec"],
             Self::VaultCodeProposalSettlement => &["spec"],
             Self::VaultCodeOplog => &["spec"],
+            Self::VaultCodeSecretsGet => &["spec"],
+            Self::VaultCodeSecretsPropose => &["spec"],
             Self::ExecuteCode => &["spec"],
             Self::VaultCodeModelHealCount => &["spec"],
             Self::VaultCodeCorrections => &["spec"],
@@ -10911,6 +10959,7 @@ impl AgentVerb {
             Self::VaultCodeOriginAuthorityGet => &["spec"],
             Self::VaultCodeOriginAuthoritySet => &["spec"],
             Self::VaultCodeOriginPublications => &["spec"],
+            Self::VaultCodeCheckoutHolderBind => &["spec"],
             Self::VaultCodeCheckoutBind => &["spec"],
             Self::VaultCodeCheckoutClaim => &["spec"],
             Self::VaultCodeCheckoutGet => &["spec"],
@@ -11089,6 +11138,9 @@ impl AgentVerb {
             Self::VaultModelsManifestReplace => &["spec"],
             Self::VaultSettingsWebConnector => &["spec"],
             Self::VaultSettingsWebConnectorReplace => &["spec"],
+            Self::VaultSettingsModelPack => &["spec"],
+            Self::VaultSettingsModelPackReplace => &["spec"],
+            Self::VaultModelPackRevert => &["spec"],
             Self::VaultConnectorsWebUsage => &["spec"],
             Self::VaultModelsOneironerBind => &["spec"],
             Self::VaultModelsRoutesRead => &["spec"],
@@ -13548,6 +13600,12 @@ impl AgentVerb {
             Self::VaultCodeOplog => {
                 "Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal."
             }
+            Self::VaultCodeSecretsGet => {
+                "Read one repository's marked secrets and linked remediations, value-free: each mark's blob, path, detector kind, where the push saw it and its custody handle. Owner only."
+            }
+            Self::VaultCodeSecretsPropose => {
+                "Stage one remediation of a repository's current code: marked keys become secret references, committed .env files go, .gitignore and .env.example follow. Owner only. It only proposes."
+            }
             Self::ExecuteCode => {
                 "Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal."
             }
@@ -13561,10 +13619,10 @@ impl AgentVerb {
                 "Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref."
             }
             Self::VaultCodeWaitsResolve => {
-                "Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken."
+                "Answer a sealed code consent wait as its authenticated owner or current policy-admitted power holder, on their own word. First answer wins; the effect meets its current gate once. No raw reply, grant or consumption."
             }
             Self::VaultCodeWaitsReceipt => {
-                "Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait."
+                "Read a code consent wait as its authenticated owner or current policy-admitted power holder: effect, answer, settlement and replay-consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait."
             }
             Self::VaultResultsStatus => {
                 "The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run."
@@ -13655,6 +13713,9 @@ impl AgentVerb {
             }
             Self::VaultCodeOriginPublications => {
                 "Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement."
+            }
+            Self::VaultCodeCheckoutHolderBind => {
+                "Materialize the caller's own live checkout without a run. One current repo read Grant must cover the full ref at the lease's pinned commit and every path of that tree. Returns the lease-bound remote URL, not a host path; no lease is minted."
             }
             Self::VaultCodeCheckoutBind => {
                 "Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential."
@@ -14171,6 +14232,15 @@ impl AgentVerb {
             }
             Self::VaultSettingsWebConnectorReplace => {
                 "Replaces the owner's web connector switch under the owner proof. Only Tavily runs on the backend key; other providers run on the owner's own secret (effector connector:web) or a hub connector."
+            }
+            Self::VaultSettingsModelPack => {
+                "Reads the owner's model pack setting: follow the latest pack (the default), a pinned season or a pinned pack, the pack it selects now, the last change and the pack before it, and every installed model pack."
+            }
+            Self::VaultSettingsModelPackReplace => {
+                "Replaces the owner's model pack preference under the owner proof: auto_upgrade follows the latest pack; pinned names a season, pinned_pack one pack, installed and still served. A move of the active pack sends its change notice."
+            }
+            Self::VaultModelPackRevert => {
+                "Reverts a model pack change, its notice's one tap: pins the pack before it while the change is the vault's last and that pack is installed at its bytes and served; else answers why it cannot run now and changes nothing."
             }
             Self::VaultConnectorsWebUsage => {
                 "Reads the web connector's usage rows, newest first: provider, tool, key source, latency, cost and its basis, provider request id and outcome per call, with the summed cost. No query, URL or result text."

@@ -88,6 +88,7 @@ pub(crate) use super::live_voice_doors::*;
 pub(crate) use super::mesh_doors::*;
 pub(crate) use super::model_catalog_doors::*;
 pub(crate) use super::model_manifest_doors::*;
+pub(crate) use super::model_pack_doors::*;
 pub(crate) use super::model_step_doors::*;
 pub(crate) use super::model_stream_doors::*;
 pub(crate) use super::outbox_diverged_doors::*;
@@ -265,6 +266,7 @@ pub(crate) use super::free_time_doors::*;
 pub(crate) use super::standing_doors::*;
 // The owner's symbol lease, proposal submit and oplog doors (DOOR-137), likewise.
 pub(crate) use super::code_doors::*;
+pub(crate) use super::code_secret_doors::*;
 // The owner's per-model code-run heal count door (DOOR-093), likewise.
 pub(crate) use super::code_run_doors::*;
 // The owner's code consent wait answer and receipt doors (DOOR-079), likewise.

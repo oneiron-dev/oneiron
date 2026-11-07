@@ -730,6 +730,8 @@ class Oneiron:
         @property
         def models(self) -> "Oneiron._VaultModelsVerbs": ...
         @property
+        def model_pack(self) -> "Oneiron._VaultModelPackVerbs": ...
+        @property
         def voices(self) -> "Oneiron._VaultVoicesVerbs": ...
         @property
         def graph(self) -> "Oneiron._VaultGraphVerbs": ...
@@ -2421,6 +2423,8 @@ class Oneiron:
         def inference_defaults(self) -> "Oneiron._VaultSettingsInferenceDefaultsVerbs": ...
         @property
         def web_connector(self) -> "Oneiron._VaultSettingsWebConnectorVerbs": ...
+        @property
+        def model_pack(self) -> "Oneiron._VaultSettingsModelPackVerbs": ...
     class _VaultSettingsLearningVerbs:
         def __call__(self, spec: Facade.LearningSettingsRequest) -> Facade.LearningSettingsView:
             """The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type."""
@@ -2441,6 +2445,11 @@ class Oneiron:
             """Reads the owner's web connector switch: which provider serves connector.web.search and fetch, on the backend key, the owner's own secret or a hub connector. Unset reads as Tavily on the backend key."""
         def replace(self, spec: Facade.WebConnectorSetting) -> Facade.WebConnectorSetting:
             """Replaces the owner's web connector switch under the owner proof. Only Tavily runs on the backend key; other providers run on the owner's own secret (effector connector:web) or a hub connector."""
+    class _VaultSettingsModelPackVerbs:
+        def __call__(self, spec: Facade.EmptyRequest) -> Facade.ModelPackSetting:
+            """Reads the owner's model pack setting: follow the latest pack (the default), a pinned season or a pinned pack, the pack it selects now, the last change and the pack before it, and every installed model pack."""
+        def replace(self, spec: Facade.ModelPackPreference) -> Facade.ModelPackSetting:
+            """Replaces the owner's model pack preference under the owner proof: auto_upgrade follows the latest pack; pinned names a season, pinned_pack one pack, installed and still served. A move of the active pack sends its change notice."""
     class _VaultSecretsVerbs:
         def code_run_lifts(self, spec: Facade.CodeRunSecretLiftRequest) -> Facade.CodeRunSecretLiftStatus:
             """The owner lists value-free code-result secret lift proposals. With dismiss, one exact handle and occurrence is dismissed with a receipt first; secret and taint marks, body redaction and exports remain unchanged."""
@@ -2681,6 +2690,8 @@ class Oneiron:
             """Read a code proposal's review decision receipt and execution lineage, including its conflict, original proposals, reconciliation task and resolution claim. Owner only."""
         def oplog(self, spec: Facade.CodeRepoRequest) -> Facade.CodeMutationLog:
             """Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal."""
+        @property
+        def secrets(self) -> "Oneiron._VaultCodeSecretsVerbs": ...
         def model_heal_count(self, spec: Facade.CodeRunModelHealCountRequest) -> Facade.CodeRunModelHealCountView:
             """Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy."""
         def corrections(self, spec: Facade.CodeRunCorrectionsRequest) -> Facade.CodeRunCorrectionsView:
@@ -2725,11 +2736,16 @@ class Oneiron:
             """Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies, approves and schedules nothing."""
         def definitions(self, spec: Facade.CodeSnapshotDefinitionsRequest) -> Facade.CodeSnapshotDefinitionsView:
             """Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language."""
+    class _VaultCodeSecretsVerbs:
+        def get(self, spec: Facade.CodeRepoRequest) -> Facade.CodeRepoSecretsView:
+            """Read one repository's marked secrets and linked remediations, value-free: each mark's blob, path, detector kind, where the push saw it and its custody handle. Owner only."""
+        def propose(self, spec: Facade.CodeRepoSecretProposeRequest) -> Facade.CodeRepoSecretRemediation:
+            """Stage one remediation of a repository's current code: marked keys become secret references, committed .env files go, .gitignore and .env.example follow. Owner only. It only proposes."""
     class _VaultCodeWaitsVerbs:
         def resolve(self, spec: Facade.CodeWaitResolveRequest) -> Facade.CodeWaitReceiptView:
-            """Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken."""
+            """Answer a sealed code consent wait as its authenticated owner or current policy-admitted power holder, on their own word. First answer wins; the effect meets its current gate once. No raw reply, grant or consumption."""
         def receipt(self, spec: Facade.CodeWaitReceiptRequest) -> Facade.CodeWaitReceiptView | None:
-            """Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait."""
+            """Read a code consent wait as its authenticated owner or current policy-admitted power holder: effect, answer, settlement and replay-consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait."""
     class _VaultCodeExportVerbs:
         def __call__(self, spec: Facade.CodeExportRequest) -> Facade.CodeExportResult:
             """Export one already-finalized and reviewed document revision through the existing origin publication protocol."""
@@ -2797,6 +2813,8 @@ class Oneiron:
         def set(self, spec: Facade.OriginAuthoritySetRequest) -> Facade.OriginAuthorityView:
             """Cut over one existing served origin under the owner proof and expected authority epoch."""
     class _VaultCodeCheckoutVerbs:
+        @property
+        def holder(self) -> "Oneiron._VaultCodeCheckoutHolderVerbs": ...
         def bind(self, spec: Facade.CheckoutDoorBindRequest) -> Facade.CheckoutDoorBinding:
             """Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential."""
         def claim(self, spec: Facade.CheckoutClaimInput) -> Facade.CheckoutLeaseView:
@@ -2815,6 +2833,9 @@ class Oneiron:
             """Consume one published checkout result at its epoch as select, apply, release or discard; an identical retry returns its receipt."""
         def teardown(self, spec: Facade.CheckoutTeardownInput) -> Facade.CheckoutTornDown:
             """Collect the caller's checkout only with a matching durable pushed-head receipt and clear custody; retain dirty or uncertain trees."""
+    class _VaultCodeCheckoutHolderVerbs:
+        def bind(self, spec: Facade.RepoCheckoutBindInput) -> Facade.RepoCheckoutBindOutput:
+            """Materialize the caller's own live checkout without a run. One current repo read Grant must cover the full ref at the lease's pinned commit and every path of that tree. Returns the lease-bound remote URL, not a host path; no lease is minted."""
     class _VaultCodeViewsVerbs:
         def materialize(self, spec: Facade.CodeViewMaterializeRequest) -> Facade.CodeWorkingView:
             """Materialize a private linked working view from verified tested file frontiers in the authenticated owner account."""
@@ -3246,6 +3267,9 @@ class Oneiron:
             """Accepts a pending model role-binding proposal as the owner after transaction-local incumbent, catalog and trial checks."""
         def deny(self, spec: Facade.ModelBindingProposalRef) -> Facade.ModelBindingProposal:
             """Denies a pending model role-binding proposal as the owner without changing the incumbent manifest binding."""
+    class _VaultModelPackVerbs:
+        def revert(self, spec: Facade.ModelPackRevertRequest) -> Facade.ModelPackRevert:
+            """Reverts a model pack change, its notice's one tap: pins the pack before it while the change is the vault's last and that pack is installed at its bytes and served; else answers why it cannot run now and changes nothing."""
     class _VaultVoicesVerbs:
         @property
         def packs(self) -> "Oneiron._VaultVoicesPacksVerbs": ...
