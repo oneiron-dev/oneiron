@@ -47,8 +47,8 @@ impl ExecutorStorage<'_> {
                             Ok(((answer, tx.settled), keys))
                         })
                 })?;
-                for (wait, reply, now_ms) in settled {
-                    self.deliver_wait(wait, &reply, None, now_ms)?;
+                for (wait, reply, origins, now_ms) in settled {
+                    self.deliver_wait(wait, &reply, None, origins.as_ref(), now_ms)?;
                 }
                 Ok(answer)
             }

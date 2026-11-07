@@ -91,6 +91,37 @@ pub(crate) fn settle_held_tags_in_txn(
     tags: &EncoderOutput,
     sent: Option<&[(EntityId, &str)]>,
 ) -> Result<HeldTagsOutcome> {
+    settle_held_tags_with_hint_read_in_txn(vault, txn, turn, tags, sent, save::HintRead::Internal)
+}
+
+/// The witness caller's own hint read; no grant leaves hint-based choices
+/// unresolved without changing the turn's write admission.
+pub(crate) fn settle_held_tags_scoped_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    turn: &EntityId,
+    tags: &EncoderOutput,
+    sent: Option<&[(EntityId, &str)]>,
+    read: Option<&crate::claim::ScopedRead<'_>>,
+) -> Result<HeldTagsOutcome> {
+    settle_held_tags_with_hint_read_in_txn(
+        vault,
+        txn,
+        turn,
+        tags,
+        sent,
+        save::HintRead::Caller(read),
+    )
+}
+
+fn settle_held_tags_with_hint_read_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    turn: &EntityId,
+    tags: &EncoderOutput,
+    sent: Option<&[(EntityId, &str)]>,
+    hint_read: save::HintRead<'_, '_>,
+) -> Result<HeldTagsOutcome> {
     let tagging = vault.tagging_marker_config();
     let Some(config) = tagging.as_ref() else {
         return Ok(HeldTagsOutcome::NoMarker);
@@ -187,7 +218,7 @@ pub(crate) fn settle_held_tags_in_txn(
                     output: tags,
                     envelope: save::envelope(&hash, HELD_BY, config, tags.stack_sha16.as_deref()),
                 };
-                save::save_in_txn(vault, txn, answer, config, now)?;
+                save::save_with_hint_read_in_txn(vault, txn, answer, config, now, hint_read)?;
             }
             (
                 TaggingOutcome::Imported {
