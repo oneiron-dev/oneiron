@@ -48,8 +48,10 @@ pub(super) async fn stop(mut handles: StartingHandles) -> (anyhow::Result<()>, a
         Some(host) => host.on_stop(),
         None => Ok(()),
     };
-    if let Some(legal) = handles.host_legal {
-        legal.stop().await;
+    // Every HOST legal capture but a prospective order's ends and joins
+    // here; prospective connections drain at the end, after every writer.
+    if let Some(legal) = handles.host_legal.as_mut() {
+        legal.quiesce().await;
     }
     if let Some(task) = handles.ctl_task {
         let _ = task.await;
@@ -136,6 +138,26 @@ pub(super) async fn stop(mut handles: StartingHandles) -> (anyhow::Result<()>, a
     }
     if let Some(oversight) = handles.oversight {
         oversight.stop().await;
+    }
+    if let Some(legal) = handles.host_legal {
+        // Every admitted write has ended, threads of stopped drivers included.
+        if let Some(state) = &handles.state {
+            state.admitted_writes_ended().await;
+        }
+        // Every off-record session closes as an explicit close does: one a
+        // HOST live order covers has its written spill captured, or that
+        // order ends interrupted, before its bodies go (FIX 13868).
+        if let Some(server) = &handles.server {
+            let vault = Arc::clone(&server.vault);
+            if let Err(error) =
+                tokio::task::spawn_blocking(move || vault.close_off_record_sessions_at_stop()).await
+            {
+                tracing::warn!(%error, "off-record sessions did not close at managed stop");
+            }
+        }
+        // Then each HOST prospective order drains its last entries and names
+        // its next ordinal before the vault closes.
+        legal.finish().await;
     }
     // An inherited socket belongs to the supervisor. Only paths actually
     // created by this process were retained here.
