@@ -200,6 +200,7 @@ impl SyncClient {
         } else {
             responses.extend(self.owner_note_requests()?);
         }
+        self.consume_landed_ask_intents(tag);
         Ok(responses)
     }
 

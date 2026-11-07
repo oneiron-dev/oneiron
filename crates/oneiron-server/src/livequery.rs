@@ -16,6 +16,7 @@ use crate::api::call_receipt::{self, CallStamp};
 use crate::auth::{CoreAuth, CoreScope};
 use crate::protocol::{ProtocolError, TAG_RPC, TAG_SUB};
 
+pub(crate) mod ask_option_link;
 mod budget;
 mod error;
 mod history;
@@ -156,6 +157,9 @@ pub(crate) struct RpcReply {
     frames: Vec<Vec<u8>>,
     /// `None` for a refusal, which carries no rows.
     rows: Option<Option<Vec<oneiron::EntityId>>>,
+    /// A forwarded search's reply to a caller off the carrying device
+    /// (FIX 11991): its send judges the rows for an unknown destination too.
+    off_carrier: bool,
 }
 
 impl RpcReply {
@@ -265,6 +269,7 @@ impl RpcReply {
             request_id,
             frames,
             rows,
+            off_carrier: false,
         })
     }
 
@@ -313,6 +318,7 @@ impl RpcReply {
             request_id,
             frames,
             rows,
+            off_carrier: false,
         })
     }
 
@@ -322,10 +328,22 @@ impl RpcReply {
         let Some(rows) = self.rows else {
             return self.frames;
         };
+        let incarnation = if self.off_carrier {
+            routing::OFF_CARRIER_RPC_INCARNATION
+        } else {
+            0
+        };
         self.frames
             .into_iter()
-            .map(|frame| routing::wrap(conn, self.request_id, 0, rows.as_deref(), frame))
+            .map(|frame| routing::wrap(conn, self.request_id, incarnation, rows.as_deref(), frame))
             .collect()
+    }
+
+    /// This reply, released as a forwarded search's to a caller off the
+    /// carrying device when `off_carrier` (FIX 11991).
+    pub(crate) fn released_off_carrier(mut self, off_carrier: bool) -> Self {
+        self.off_carrier = off_carrier;
+        self
     }
 }
 
