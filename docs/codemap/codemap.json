@@ -17183,7 +17183,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/code_run/dispatcher/team_verbs.rs",
-     "purpose": "`self.team.start` and `self.team.record` (OF-540): a pattern-skill run's own team, bound to the running…",
+     "purpose": "`self.team.start`, `self.team.record` and `self.team.vote` (OF-540): a pattern-skill run's own team, bound…",
      "surface": {
       "crate-vis": 1
      }
@@ -83352,6 +83352,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/team/ballot.rs",
+     "purpose": "Participant choices observed on their own bound code-run invocation",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/team/choice_learning.rs",
      "purpose": "What the planner learned under a spawn choice (FIX 3159; ARCH-0003 #learning-settings: a learned value…",
      "surface": {
@@ -83455,7 +83465,7 @@
      "path": "src/team/mod.rs",
      "purpose": "Coordination patterns as skills, and the team receipt contract (OF-540, ARCH-0079)",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "mod": 14,
       "re-export": 11
      }
@@ -83469,6 +83479,7 @@
      "path": "src/team/observations.rs",
      "purpose": "OF-540: what the host measured of a team run, for its receipt",
      "surface": {
+      "crate-vis": 1,
       "fn": 1,
       "struct": 1
      }
@@ -83560,14 +83571,15 @@
       "TeamMemberInput",
       "TeamRecordInput",
       "TeamRunAnswer",
-      "TeamStartInput"
+      "TeamStartInput",
+      "TeamVoteInput"
      ],
      "path": "src/team/run.rs",
      "purpose": "OF-540: a pattern-skill run's own team, from code mode",
      "surface": {
       "crate-vis": 5,
       "enum": 3,
-      "struct": 5
+      "struct": 6
      }
     },
     {
@@ -93408,7 +93420,7 @@
      "purpose": "The vault's task-work line: the inherent `Vault` methods that admit task work through the line in…"
     },
     "team": {
-     "files": 19,
+     "files": 20,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -93578,7 +93590,7 @@
    },
    "over_bar": 180,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6605,
+   "source_files": 6606,
    "test_files": 895
   },
   "oneiron-android": {
@@ -114643,7 +114655,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 34
+      "crate-vis": 35
      }
     },
     {
@@ -115423,7 +115435,7 @@
      "path": "src/api/facade/generated/host_door_rows.rs",
      "purpose": "The host-door rows whose door checks its caller before the row's verb hooks run (FIX 1763), one variant…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
