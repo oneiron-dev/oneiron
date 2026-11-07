@@ -1,5 +1,5 @@
 //! A training offer's measured card: the paired measurement of exactly the
-//! offer's incumbent and stock candidate, on the seat's live cohort, asked
+//! offer's incumbent and exact stock or returned trained candidate, on the seat's live cohort, asked
 //! for on each draft and attached once it is Final. Until then the offer's
 //! evidence stays as it was grounded (a pilot's card, or none: unknown,
 //! never not-worse). One pair's card is never lent to another option, and
@@ -25,8 +25,8 @@ fn arm(pin: &OfferModelPin) -> EvalArmPin {
 
 /// Asks for the draft's pair's measurement and, when it is Final for that
 /// exact request, puts its card, cohort, rubric revision and exposures
-/// (first) on the draft. A trained candidate has no measurement here: its
-/// weights have no loader yet.
+/// (first) on the draft. A trained embedder recipe measures its actual
+/// returned checkpoint, not its base or a hypothetical later training run.
 /// # Errors
 /// Storage errors.
 pub(in crate::ai_host) fn attach_measured_card(
@@ -34,8 +34,38 @@ pub(in crate::ai_host) fn attach_measured_card(
     draft: &mut TrainingOfferDraft,
     now: u64,
 ) -> oneiron::Result<()> {
-    let OfferCandidate::Stock { model, .. } = &draft.candidate else {
-        return Ok(());
+    let candidate = match &draft.candidate {
+        OfferCandidate::Stock { model, .. } => arm(model),
+        OfferCandidate::TrainRecipe {
+            base, recipe_ref, ..
+        } if draft.seat == oneiron::skill_optimize::EvalSeat::Embedder => {
+            let Some(id) = recipe_ref
+                .strip_prefix("training_run:")
+                .and_then(|id| oneiron::EntityId::from_hex(id).ok())
+            else {
+                return Ok(());
+            };
+            let Some(run) = vault.training_run(&id)? else {
+                return Ok(());
+            };
+            if run.plan.seat != draft.seat
+                || oneiron::skill_optimize::offer_pilot::training_base_pin(&run).as_ref()
+                    != Some(base)
+            {
+                return Ok(());
+            }
+            let Some(source) = vault.training_embedder_source(&id)? else {
+                return Ok(());
+            };
+            EvalArmPin {
+                model: source.checkpoint.model.as_str().to_owned(),
+                revision: blake3::Hash::from(source.checkpoint.content_hash()?)
+                    .to_hex()
+                    .to_string(),
+                skill_digest: None,
+            }
+        }
+        _ => return Ok(()),
     };
     let Some(judge) = crate::replay_judge::registered() else {
         return Ok(());
@@ -52,7 +82,7 @@ pub(in crate::ai_host) fn attach_measured_card(
         decision: OFFER_DECISION.to_owned(),
         seat: draft.seat.clone(),
         incumbent: arm(&draft.incumbent),
-        candidate: arm(model),
+        candidate,
         cohort: cohort.id,
         membership_digest: cohort.membership_digest,
         rubric_revision: cohort.rubric_revision,
