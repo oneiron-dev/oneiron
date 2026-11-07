@@ -148,7 +148,7 @@ impl Vault {
             if let Some(text) = trimmed {
                 if text.len() > SECRET_NAME_MAX_BYTES {
                     return Err(Error::Gate(GateError::InvalidConsentBound(
-                        "a handle label is longer than 255 bytes",
+                        "a handle label is longer than a secret name may be",
                     )));
                 }
                 if text.contains(['\n', '\r', '\0']) {

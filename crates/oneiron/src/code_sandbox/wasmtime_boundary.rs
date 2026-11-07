@@ -268,10 +268,6 @@ pub fn validate_step_result(
     result: &bindings::StepResult,
     tier: SandboxGuestTier,
 ) -> wasmtime::Result<()> {
-    const MAX_BYTES: usize = 1024 * 1024;
-    if result.result_json.len() > MAX_BYTES {
-        return Err(wasmtime::Error::msg("component output limit"));
-    }
     let _: serde_json::Value = serde_json::from_str(&result.result_json)?;
     if tier != SandboxGuestTier::Foreign && !result.proposals.is_empty() {
         return Err(wasmtime::Error::msg("first-party proposals refused"));

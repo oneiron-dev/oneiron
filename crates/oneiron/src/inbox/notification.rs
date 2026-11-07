@@ -207,14 +207,21 @@ pub(crate) fn notification_id(source: &NotificationSource) -> Result<EntityId> {
     )
 }
 
-/// Removes the hard-erased target from existing Finding subjects in its own
-/// writer. Held notices stay untouched; only changed, unheld rows retire
-/// their old revisions and capture the record that materialization stored.
-pub(crate) fn scrub_finding_notification_subjects_in_txn(
+/// Takes the hard-erased actor out of every Finding notice that names them,
+/// in its own writer: out of its subjects (FIX 5269) and its seen and
+/// acknowledged marks, and, where they were its recipient or a segment of its
+/// event key, replaced there by one fresh opaque id this erase mints (FIX
+/// 14749). The recipient never becomes `None`, which would deliver the
+/// notice to everyone: the opaque id names no one, so no one is delivered
+/// it. The notice keeps the id its old event minted. Held notices stay
+/// untouched; only changed, unheld rows retire their old revisions and
+/// capture the record that materialization stored.
+pub(crate) fn scrub_finding_notification_actor_in_txn(
     erase: &mut ActorErasureWriter<'_, '_>,
 ) -> Result<()> {
     let (vault, txn, actor) = erase.parts();
     let erased = actor.to_hex();
+    let mut opaque: Option<String> = None;
     let mut count = ScanCount::start(
         &vault.store,
         &*txn,
@@ -249,9 +256,46 @@ pub(crate) fn scrub_finding_notification_subjects_in_txn(
         }
         let before = body.subject_refs.len();
         body.subject_refs.retain(|subject| subject != &erased);
-        if body.subject_refs.len() == before
-            || crate::store::legal_hold::held_in_txn(&vault.store, txn, id.as_bytes())?
-        {
+        let mut changed = body.subject_refs.len() != before;
+        changed |= body.seen_by.remove(&erased).is_some();
+        changed |= body.acked_by.remove(&erased).is_some();
+        let names_recipient = body.recipient.as_deref() == Some(erased.as_str());
+        let names_event = body
+            .source
+            .event
+            .split(':')
+            .any(|segment| segment == erased);
+        if names_recipient || names_event {
+            let fresh = match opaque.clone() {
+                Some(fresh) => fresh,
+                None => {
+                    let fresh = vault.store.clock.entity_id()?.to_hex();
+                    opaque = Some(fresh.clone());
+                    fresh
+                }
+            };
+            if names_recipient {
+                body.recipient = Some(fresh.clone());
+            }
+            if names_event {
+                let event = body
+                    .source
+                    .event
+                    .split(':')
+                    .map(|segment| {
+                        if segment == erased {
+                            fresh.as_str()
+                        } else {
+                            segment
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(":");
+                body.source.event = event;
+            }
+            changed = true;
+        }
+        if !changed || crate::store::legal_hold::held_in_txn(&vault.store, txn, id.as_bytes())? {
             continue;
         }
         vault.put_notification_in_txn(txn, &id, &body)?;
