@@ -115,6 +115,7 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::RepoSymbolsRenew
             | SelfEffect::RepoSymbolsRelease
             | SelfEffect::RepoProposalSubmit
+            | SelfEffect::RepoProposalResolve
             | SelfEffect::RepoMergeQueueEnqueue
             | SelfEffect::RepoCheckoutBind
             | SelfEffect::RepoExport
