@@ -217,22 +217,27 @@ fn validated_qa_entry(
 ) -> Result<HealerQaEntryRef> {
     let message_ref = parse_card_ref("healer qa message_ref", &entry.message_ref)?;
     let actor_ref = parse_card_ref("healer qa actor_ref", &entry.actor_ref)?;
-    let occurred_start = message_occurred_start(vault, message_ref)?;
+    let txn = vault.store.env.read_txn()?;
+    let occurred_start = message_occurred_start(vault, &txn, message_ref)?;
     if occurred_start != entry.occurred_at {
         return Err(Error::InvalidConfig(
             "healer qa occurred_at must equal the message's occurred_start".to_owned(),
         ));
     }
-    require_thread_membership(vault, message_ref, thread_ref)?;
-    require_witnessed_author(vault, message_ref, actor_ref)?;
+    require_thread_membership(vault, &txn, message_ref, thread_ref)?;
+    require_witnessed_author(vault, &txn, message_ref, actor_ref)?;
     Ok(entry)
 }
 
 /// Resolves `message_ref` for kind MESSAGE only and returns its
 /// `occurred_start`. A header-only row is the soft-delete shell, not a
 /// referenceable message.
-fn message_occurred_start(vault: &Vault, message_ref: EntityId) -> Result<u64> {
-    let Some(raw) = vault.get_raw(&message_ref)? else {
+fn message_occurred_start(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    message_ref: EntityId,
+) -> Result<u64> {
+    let Some(raw) = vault.get_raw_sealed_in_txn(txn, &message_ref)? else {
         return Err(Error::InvalidConfig(
             "healer qa message_ref must resolve to a stored MESSAGE".to_owned(),
         ));
@@ -251,13 +256,13 @@ fn message_occurred_start(vault: &Vault, message_ref: EntityId) -> Result<u64> {
 /// system/tool output by referencing the containing witnessed exchange instead.
 fn require_witnessed_author(
     vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     message_ref: EntityId,
     actor_ref: EntityId,
 ) -> Result<()> {
-    let txn = vault.store.env.read_txn()?;
     let author = crate::memory::sole_edge_target(
         &vault.store,
-        &txn,
+        txn,
         &message_ref,
         EdgeKind::AuthoredBy,
         "message",

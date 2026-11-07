@@ -125,7 +125,7 @@ impl Child {
             }
         };
         if let Err(error) = settled {
-            tracing::warn!(%error, task = %job.task.to_hex(), "a reader child was not settled; its cutoff settles it");
+            tracing::warn!(%error, task = %job.task.to_hex(), "a reader child completion was not recorded");
         }
     }
 
