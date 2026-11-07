@@ -18,8 +18,9 @@ pub struct LiveSessionTarget {
     pub instance: [u8; 16],
 }
 
-/// Identity kept INSIDE an encrypted descriptor. Gate decisions and live
-/// session entries are separate source families, not interchangeable ids.
+/// Identity kept INSIDE an encrypted descriptor. Gate decisions, live
+/// session entries and on-record messages are separate source families, not
+/// interchangeable ids.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(
     tag = "family",
@@ -30,6 +31,8 @@ pub struct LiveSessionTarget {
 pub enum CaptureSource {
     GateDecision([u8; 16]),
     LiveSession(LiveSessionTarget),
+    /// One stored on-record MESSAGE entity, by its 16-byte id.
+    Message([u8; 16]),
 }
 
 /// Exact native source family chosen by the already admitted HOST order.
@@ -39,6 +42,10 @@ pub enum CaptureScope {
     AllClaimFreeGateDecisions,
     GateDecisions(Vec<[u8; 16]>),
     LiveSession(LiveSessionTarget),
+    /// Exact stored on-record MESSAGE entities, strictly increasing ids. Each
+    /// must be a stored MESSAGE row; it is copied with its document rows and
+    /// its outgoing edge rows. Messages stored later are never included.
+    Messages(Vec<[u8; 16]>),
 }
 
 impl CaptureScope {
@@ -46,7 +53,7 @@ impl CaptureScope {
         match self {
             Self::AllClaimFreeGateDecisions => true,
             Self::GateDecisions(ids) => ids.binary_search(decision).is_ok(),
-            Self::LiveSession(_) => false,
+            Self::LiveSession(_) | Self::Messages(_) => false,
         }
     }
 
@@ -69,6 +76,17 @@ impl CaptureScope {
                 out.write_all(&(target.session_ref.len() as u64).to_be_bytes())?;
                 out.write_all(target.session_ref.as_bytes())?;
                 out.write_all(&target.instance)
+            }
+            Self::Messages(ids) => {
+                if !ids.windows(2).all(|pair| pair[0] < pair[1]) {
+                    return Err(invalid("legal capture message order"));
+                }
+                out.write_all(&[4])?;
+                out.write_all(&(ids.len() as u64).to_be_bytes())?;
+                for id in ids {
+                    out.write_all(id)?;
+                }
+                Ok(())
             }
         }
     }
@@ -102,6 +120,19 @@ impl CaptureScope {
                     session_ref,
                     instance: read_array(input)?,
                 }))
+            }
+            4 => {
+                let count = u64::from_be_bytes(read_array(input)?);
+                let mut ids = Vec::new();
+                for _ in 0..count {
+                    let id = read_array(input)?;
+                    if ids.last().is_some_and(|previous| previous >= &id) {
+                        return Err(invalid("legal capture message order"));
+                    }
+                    ids.try_reserve(1).map_err(io::Error::other)?;
+                    ids.push(id);
+                }
+                Ok(Self::Messages(ids))
             }
             _ => Err(invalid("legal capture scope")),
         }
@@ -392,6 +423,9 @@ impl LiveSpillMetadata {
 pub enum CaptureExtent {
     GateDecisions,
     WrittenLiveSessionSpill,
+    /// The selected stored MESSAGE rows with their document and outgoing edge
+    /// rows, in one source snapshot.
+    Messages,
 }
 
 /// Immutable completion manifest for its declared extent, encrypted to the
@@ -407,6 +441,8 @@ pub struct CaptureSummary {
     pub decisions: u64,
     pub live_sessions: u64,
     pub live_bodies: u64,
+    /// Selected messages copied; zero for gate and live-session captures.
+    pub messages: u64,
     pub extent: CaptureExtent,
     pub components: u64,
     pub plaintext_bytes: u64,
