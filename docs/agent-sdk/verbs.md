@@ -255,6 +255,7 @@ both bindings and their export-census tests in one change.
 - `vault.packs.get`
 - `vault.skills.import`
 - `vault.skills.sync`
+- `vault.skills.proposal.settle`
 - `vault.skills.receipts`
 - `vault.skills.convert`
 - `vault.skills.get`
@@ -1247,3 +1248,5 @@ both bindings and their export-census tests in one change.
 - `vault.mail.threads.read`
 - `vault.mail.compliance.search`
 - `vault.files.sources.convert`
+- `vault.sync.repo_manifests.conflict.review`
+- `vault.sync.repo_manifests.conflict.discard`
