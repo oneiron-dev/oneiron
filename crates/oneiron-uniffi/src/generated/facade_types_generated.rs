@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1292 facade rows, 4677 generated types.
+// UniFFI census: 1292 facade rows, 4678 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1244.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -59533,6 +59533,15 @@ pub struct CalendarPassportReadRequest {
     pub uid: String,
 }
 
+/// `oneiron::calendar::claims::values::CalendarPassportSource`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CalendarPassportSource {
+    #[serde(rename = "artifact")]
+    pub artifact: String,
+    #[serde(rename = "version")]
+    pub version: u64,
+}
+
 /// `oneiron::calendar::claims::values::CalendarPassportDirection`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum CalendarPassportDirection {
@@ -59564,6 +59573,8 @@ pub struct CalendarPassportValue {
     pub last_sequence: u32,
     #[serde(rename = "content_hash")]
     pub content_hash: Vec<u8>,
+    #[serde(rename = "source", default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<CalendarPassportSource>,
     #[serde(rename = "direction")]
     pub direction: CalendarPassportDirection,
     #[serde(rename = "last_seen_at")]

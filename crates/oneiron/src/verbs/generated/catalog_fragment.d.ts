@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1344 code-mode rows (1303 host rows, 41 run rows), 4741 declarations.
+// Census: 1344 code-mode rows (1303 host rows, 41 run rows), 4742 declarations.
 // Replies: 1152 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
@@ -3822,9 +3822,10 @@ declare namespace Sdk {
   type CalendarIcsFeedRequest = { system: string };
   type CalendarIcsFeedStatus = { config: IcsFeedPollConfig; cursor?: IcsFeedCursorSnapshot | null; last_poll?: CalendarIcsPollCompletion | null };
   type CalendarPassportReadRequest = { event_ref: string; system: string; uid: string };
+  type CalendarPassportSource = { artifact: EntityId; version: number };
   type CalendarPassportDirection = "inbound" | "outbound" | "two_way";
   type CalendarPassportPresence = "live" | "absent";
-  type CalendarPassportValue = { system: string; uid: string; last_sequence: number; content_hash: number[]; direction: CalendarPassportDirection; last_seen_at: number; presence: CalendarPassportPresence };
+  type CalendarPassportValue = { system: string; uid: string; last_sequence: number; content_hash: number[]; source?: CalendarPassportSource | null; direction: CalendarPassportDirection; last_seen_at: number; presence: CalendarPassportPresence };
   type CalendarPassportRevision = { claim_ref: string; event_ref: string; recorded_at: number; approval: string; lifecycle: string; stale: boolean; passport: CalendarPassportValue };
   type CalendarConnectorSeatConfig = { seat_ref: string; secret_ref: string; system: string; calendar_ref: string; cadence_jitter_min_seconds: number; cadence_jitter_max_seconds: number };
   type CalendarConnectorConfigureRequest = { config: CalendarConnectorSeatConfig; endpoint: string };
