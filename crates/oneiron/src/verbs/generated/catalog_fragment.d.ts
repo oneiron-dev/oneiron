@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1341 code-mode rows (1300 host rows, 41 run rows), 4737 declarations.
-// Replies: 1149 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1344 code-mode rows (1303 host rows, 41 run rows), 4748 declarations.
+// Replies: 1152 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -120,10 +120,10 @@ declare namespace Sdk {
   type IdentityAnswerEvidenceRequest = { ask: string; choice: string; evidence_refs?: string[] };
   type IdentitySettled = { ask: string; entity: string };
   type IdentityEffect = "send" | "pay" | "invite" | "share";
-  type IdentityActNowRequest = { name: string; conversation?: string | null; effect: IdentityEffect; prompt: string; someone_new: string };
+  type IdentityActNowRequest = { name: string; conversation?: string | null; effect: IdentityEffect; prompt: string; someone_new: string; provisional?: string | null };
   type IdentityActNow = { state: "settled"; entity: string } | { state: "unknown" } | { state: "deciding"; ask: string } | { state: "needs_person"; ask: string; card: unknown };
   type InboxListRequest = { after?: string | null; limit?: number | null };
-  type NotificationKind = "job_completed" | "job_failed" | "job_cancelled" | "job_abandoned" | "finding" | "event_received" | "import_finished" | "digest" | "ask" | "world_privacy_changed" | "world_privacy_proposed" | "weave_digest_settings_changed" | "thread_walk_in" | "thread_history_opened" | "thread_join_requested";
+  type NotificationKind = "job_completed" | "job_failed" | "job_cancelled" | "job_abandoned" | "finding" | "event_received" | "import_finished" | "digest" | "ask" | "world_privacy_changed" | "world_privacy_proposed" | "weave_digest_settings_changed" | "thread_walk_in" | "thread_history_opened" | "thread_join_requested" | "model_pack_changed";
   type NotificationSource = { producer: string; event: string; job_kind?: string | null; attempt?: string | null; run?: string | null; result?: string | null; detail?: string | null };
   type NotificationAction = { verb: string; args: unknown };
   type NotificationRow = { id: string; learned_at: number; kind: NotificationKind; source: NotificationSource; subject_refs: string[]; created_at: number; origin_conversation?: string | null; seen: boolean; acked: boolean; actions?: NotificationAction[] };
@@ -1107,7 +1107,7 @@ declare namespace Sdk {
   type HubRefSetRequest = { hub_ref: HubRef; sync_policy: HubSyncPolicy };
   type HubImportRequest = { hub_ref: HubRef; publisher: string };
   type PackPutOutcome = "installed" | "candidate" | "blocked";
-  type PackKind = "capability" | "connector" | "agent";
+  type PackKind = "capability" | "connector" | "agent" | "model";
   type PackAdapter = { builtin: string } | { script: string };
   type PackInstallStatus = "active" | "candidate";
   type PackCandidateReason = "rules_hit" | "code_auto_install_off" | "qualification_required" | "advisories" | "needs_world";
@@ -1417,7 +1417,7 @@ declare namespace Sdk {
   type SharedTransferRequest = { vault_id: string; to: string; from_keeps?: FederationGrantRole | null };
   type SharedRemoveOwnerRequest = { vault_id: string; target: string; successor?: string | null; target_keeps?: FederationGrantRole | null; export_first: boolean };
   type SharedActRequest = { act_id: string };
-  type SharedVaultChange = { vault_deleted: { backup_retain_until: number } } | { ownership_transferred: { from: string; to: string; from_keeps?: FederationGrantRole | null } } | { owner_removed: { target: string; successor?: string | null; target_keeps?: FederationGrantRole | null } } | { member_added: { member: string; role: FederationGrantRole } } | { member_invited: { invitation: string; member: string; role: FederationGrantRole; expires_at: number } } | { invitation_accepted: { invitation: string; member: string; role: FederationGrantRole } } | { invitation_declined: { invitation: string; member: string } } | { invitation_withdrawn: { invitation: string; member: string } } | { member_role_changed: { member: string; from: FederationGrantRole; to: FederationGrantRole } } | { member_removed: { member: string } } | { member_left: { member: string } } | { owner_recovered: { from: string; to: string } } | { record_erased: { record: string; redaction?: string | null } };
+  type SharedVaultChange = { vault_deleted: { backup_retain_until: number } } | { owner_added: { owner: string } } | { ownership_transferred: { from: string; to: string; from_keeps?: FederationGrantRole | null } } | { owner_removed: { target: string; successor?: string | null; target_keeps?: FederationGrantRole | null } } | { member_added: { member: string; role: FederationGrantRole } } | { member_invited: { invitation: string; member: string; role: FederationGrantRole; expires_at: number } } | { invitation_accepted: { invitation: string; member: string; role: FederationGrantRole } } | { invitation_declined: { invitation: string; member: string } } | { invitation_withdrawn: { invitation: string; member: string } } | { member_role_changed: { member: string; from: FederationGrantRole; to: FederationGrantRole } } | { member_removed: { member: string } } | { member_left: { member: string } } | { owner_recovered: { from: string; to: string } } | { record_erased: { record: string; redaction?: string | null } };
   type ExportDiaryRead = { agent: string; diaries: number; reason: string };
   type SharedActExport = { member: string; records: number; digest: string; diary_reads: ExportDiaryRead[] };
   type SharedActExecutionReceipt = { id: string; vault_id: string; act_id?: string | null; request_id?: string | null; actor: string; change: SharedVaultChange; grants: string[]; revoked_slips: string[]; export?: SharedActExport | null; authority_entry?: string | null; authority_record_pending?: boolean; authorizer?: string | null; completed_at: number };
@@ -3347,6 +3347,17 @@ declare namespace Sdk {
   type WebProvider = "tavily" | "exa" | "brave" | "tinyfish" | "context_dev" | "octen";
   type WebProviderKey = { kind: "backend" } | { kind: "secret"; name: string } | { kind: "hub"; connector: string };
   type WebConnectorSetting = { provider: WebProvider; key: WebProviderKey };
+  type ModelStackId = string;
+  type ModelPackId = string;
+  type ModelPackPreference = { mode: "auto_upgrade" } | { mode: "pinned"; stack: ModelStackId } | { mode: "pinned_pack"; pack: ModelPackId };
+  type ModelPackReceipt = { pack: string; version: string; season: ModelStackId; source_id: string; content_hash: string; hub_id: string; hub_ref: string; pin_type: string; pin_value: string; publisher: string; changelog_headline?: string | null };
+  type ModelStackDeprecationStage = "scheduled" | "countdown" | "retired";
+  type ModelStackDeprecationStatus = { stage: ModelStackDeprecationStage; notice_starts_epoch_day: number; retires_epoch_day: number; days_until_notice?: number | null; days_until_retirement?: number | null };
+  type ModelPackView = { receipt: ModelPackReceipt; released_epoch_day: number; roles: string[]; successor?: string | null; retirement?: ModelStackDeprecationStatus | null };
+  type ModelPackSetting = { preference: ModelPackPreference; active?: ModelPackView | null; previous?: ModelPackReceipt | null; change_ref?: string | null; installed: ModelPackView[] };
+  type ModelPackRevertRequest = { change_ref: string };
+  type ModelPackRevertBlock = "superseded" | "no_previous_pack" | "not_installed" | "retired";
+  type ModelPackRevert = { blocked?: ModelPackRevertBlock | null; setting: ModelPackSetting };
   type WebConnectorUsageRead = { since_ms?: number | null; limit?: number | null };
   type WebTool = "search" | "fetch";
   type WebKeySource = "backend" | "user" | "hub";
@@ -6831,6 +6842,10 @@ declare const vault: Sdk.VaultHost & {
     /** Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress. */
     react(input: Sdk.MessageReactionRequest): Promise<Sdk.MessageReactionReceipt | StoredResult>;
   };
+  model_pack: {
+    /** Reverts a model pack change, its notice's one tap: pins the pack before it while the change is the vault's last and that pack is installed at its bytes and served; else answers why it cannot run now and changes nothing. */
+    revert(input: Sdk.ModelPackRevertRequest): Promise<Sdk.ModelPackRevert | StoredResult>;
+  };
   models: {
     bindings: {
       /** Accepts a pending model role-binding proposal as the owner after transaction-local incumbent, catalog and trial checks. */
@@ -7611,6 +7626,11 @@ declare const vault: Sdk.VaultHost & {
       clear(input: Sdk.LearningSettingClear): Promise<Sdk.LearningSettingsView | StoredResult>;
       /** The owner lays one seed or pin on a learned setting at the vault, a project or a task type, replacing the row of the same key, mode and scope. */
       put(input: Sdk.LearningSettingPut): Promise<Sdk.LearningSettingsView | StoredResult>;
+    };
+    /** Reads the owner's model pack setting: follow the latest pack (the default), a pinned season or a pinned pack, the pack it selects now, the last change and the pack before it, and every installed model pack. */
+    model_pack: ((input: Sdk.EmptyRequest) => Promise<Sdk.ModelPackSetting | StoredResult>) & {
+      /** Replaces the owner's model pack preference under the owner proof: auto_upgrade follows the latest pack; pinned names a season, pinned_pack one pack, installed and still served. A move of the active pack sends its change notice. */
+      replace(input: Sdk.ModelPackPreference): Promise<Sdk.ModelPackSetting | StoredResult>;
     };
     wake_policy: {
       /** The owner sets the dreamer's wake policy: the app's dreamer.wake_policy.set action, run as the caller under the owner's proof. */
