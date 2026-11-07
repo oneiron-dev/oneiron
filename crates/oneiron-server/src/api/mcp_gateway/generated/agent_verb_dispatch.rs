@@ -357,6 +357,13 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.weave.owner.link.wrong" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.item.wrong" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.owner.item.wrong" => a.spec.clone().ok_or_else(invalid),
+        "vault.weave.admin.report" => a.spec.clone().ok_or_else(invalid),
+        "vault.weave.admin.lens" => a.spec.clone().ok_or_else(invalid),
+        "vault.weave.admin.digest" => a.spec.clone().ok_or_else(invalid),
+        "vault.weave.admin.link.wrong" => a.spec.clone().ok_or_else(invalid),
+        "vault.weave.admin.item.wrong" => a.spec.clone().ok_or_else(invalid),
+        "vault.step_up.passkeys.reset" => a.spec.clone().ok_or_else(invalid),
+        "vault.step_up.totp.reset" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.enqueue" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.schedules.list" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.schedules.put" => a.spec.clone().ok_or_else(invalid),
@@ -2239,6 +2246,27 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.weave.owner.item.wrong" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.weave.admin.report" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.weave.admin.lens" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.weave.admin.digest" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.weave.admin.link.wrong" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.weave.admin.item.wrong" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.step_up.passkeys.reset" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.step_up.totp.reset" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.weave.enqueue" => {
@@ -6027,6 +6055,19 @@ async fn execute_agent_verb_row_on(
         "vault.weave.owner.item.wrong" => {
             boxed_mcp_verb_row_vault_weave_owner_item_wrong(row).await
         }
+        "vault.weave.admin.report" => boxed_mcp_verb_row_vault_weave_admin_report(row).await,
+        "vault.weave.admin.lens" => boxed_mcp_verb_row_vault_weave_admin_lens(row).await,
+        "vault.weave.admin.digest" => boxed_mcp_verb_row_vault_weave_admin_digest(row).await,
+        "vault.weave.admin.link.wrong" => {
+            boxed_mcp_verb_row_vault_weave_admin_link_wrong(row).await
+        }
+        "vault.weave.admin.item.wrong" => {
+            boxed_mcp_verb_row_vault_weave_admin_item_wrong(row).await
+        }
+        "vault.step_up.passkeys.reset" => {
+            boxed_mcp_verb_row_vault_step_up_passkeys_reset(row).await
+        }
+        "vault.step_up.totp.reset" => boxed_mcp_verb_row_vault_step_up_totp_reset(row).await,
         "vault.weave.enqueue" => boxed_mcp_verb_row_vault_weave_enqueue(row).await,
         "vault.weave.schedules.list" => boxed_mcp_verb_row_vault_weave_schedules_list(row).await,
         "vault.weave.schedules.put" => boxed_mcp_verb_row_vault_weave_schedules_put(row).await,
@@ -18071,6 +18112,369 @@ async fn mcp_verb_row_vault_weave_owner_item_wrong(row: McpVerbRow<'_>) -> McpVe
     let (output, listed) =
         Box::pin(crate::api::facade::host_doors::vault_weave_owner_item_wrong(server, auth, input))
             .await;
+    // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+    served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+        listed,
+    ));
+    let output = output.map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_vault_weave_admin_report<'a>(row: McpVerbRow<'a>) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_weave_admin_report(row))
+}
+async fn mcp_verb_row_vault_weave_admin_report(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("vault.weave.admin.report", &input)
+        .map_err(mcp_facade_error)?;
+    let input: oneiron::authority::WeaveAdminReportRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_weave_admin_report(
+        server, auth, input,
+    ))
+    .await;
+    // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+    served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+        listed,
+    ));
+    let output = output.map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_vault_weave_admin_lens<'a>(row: McpVerbRow<'a>) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_weave_admin_lens(row))
+}
+async fn mcp_verb_row_vault_weave_admin_lens(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("vault.weave.admin.lens", &input)
+        .map_err(mcp_facade_error)?;
+    let input: oneiron::authority::WeaveAdminLensRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_weave_admin_lens(
+        server,
+        auth,
+        actor.client_surface.clone(),
+        input,
+    ))
+    .await;
+    // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+    served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+        listed,
+    ));
+    let output = output.map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_vault_weave_admin_digest<'a>(row: McpVerbRow<'a>) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_weave_admin_digest(row))
+}
+async fn mcp_verb_row_vault_weave_admin_digest(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("vault.weave.admin.digest", &input)
+        .map_err(mcp_facade_error)?;
+    let input: oneiron::authority::WeaveAdminDigestRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_weave_admin_digest(
+        server, auth, input,
+    ))
+    .await;
+    // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+    served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+        listed,
+    ));
+    let output = output.map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_vault_weave_admin_link_wrong<'a>(
+    row: McpVerbRow<'a>,
+) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_weave_admin_link_wrong(row))
+}
+async fn mcp_verb_row_vault_weave_admin_link_wrong(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("vault.weave.admin.link.wrong", &input)
+        .map_err(mcp_facade_error)?;
+    let input: oneiron::authority::WeaveAdminLinkWrongRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let (output, listed) =
+        Box::pin(crate::api::facade::host_doors::vault_weave_admin_link_wrong(server, auth, input))
+            .await;
+    // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+    served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+        listed,
+    ));
+    let output = output.map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_vault_weave_admin_item_wrong<'a>(
+    row: McpVerbRow<'a>,
+) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_weave_admin_item_wrong(row))
+}
+async fn mcp_verb_row_vault_weave_admin_item_wrong(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("vault.weave.admin.item.wrong", &input)
+        .map_err(mcp_facade_error)?;
+    let input: oneiron::authority::WeaveAdminItemWrongRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let (output, listed) =
+        Box::pin(crate::api::facade::host_doors::vault_weave_admin_item_wrong(server, auth, input))
+            .await;
+    // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+    served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+        listed,
+    ));
+    let output = output.map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_vault_step_up_passkeys_reset<'a>(
+    row: McpVerbRow<'a>,
+) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_step_up_passkeys_reset(row))
+}
+async fn mcp_verb_row_vault_step_up_passkeys_reset(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("vault.step_up.passkeys.reset", &input)
+        .map_err(mcp_facade_error)?;
+    let input: oneiron::authority::StepUpPasskeysResetRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let (output, listed) =
+        Box::pin(crate::api::facade::host_doors::vault_step_up_passkeys_reset(server, auth, input))
+            .await;
+    // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+    served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+        listed,
+    ));
+    let output = output.map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_vault_step_up_totp_reset<'a>(row: McpVerbRow<'a>) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_step_up_totp_reset(row))
+}
+async fn mcp_verb_row_vault_step_up_totp_reset(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("vault.step_up.totp.reset", &input)
+        .map_err(mcp_facade_error)?;
+    let input: oneiron::authority::StepUpTotpResetRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_step_up_totp_reset(
+        server, auth, input,
+    ))
+    .await;
     // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
     served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
         listed,
