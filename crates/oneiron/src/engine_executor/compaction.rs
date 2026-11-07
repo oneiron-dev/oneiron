@@ -777,20 +777,13 @@ fn hex_ids(text: &str, found: &mut std::collections::BTreeSet<EntityId>) {
     }
 }
 
-/// The window identity of one step: stable per (run, step), never stored.
-pub(super) fn step_message_id(run_id: EntityId, seq: u64) -> EntityId {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"oneiron:executor-compaction-step:v1");
-    hasher.update(run_id.as_bytes());
-    hasher.update(&seq.to_be_bytes());
-    let mut bytes = [0_u8; 16];
-    bytes.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
-    loop {
-        if let Ok(id) = EntityId::from_bytes(bytes) {
-            return id;
-        }
-        bytes[0] ^= 0x42;
-    }
+/// The window identity of one step: stable per (run, step), never stored,
+/// by the one derived-id rule (FIX 9838).
+pub(super) fn step_message_id(run_id: EntityId, seq: u64) -> crate::Result<EntityId> {
+    EntityId::derive(
+        crate::entity_id::derived_domains::EXECUTOR_COMPACTION_STEP,
+        &[run_id.as_bytes(), &seq.to_be_bytes()],
+    )
 }
 
 /// The engine-authored first words of a failed step's console.
@@ -1028,18 +1021,11 @@ pub(super) fn result_reads(text: &str, found: &mut std::collections::BTreeSet<St
     }
 }
 
-/// The request identity of one fold's pass: stable per (run, fold).
-pub(super) fn fold_request_id(run_id: EntityId, fold: u64) -> EntityId {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"oneiron:executor-fold-request:v1");
-    hasher.update(run_id.as_bytes());
-    hasher.update(&fold.to_be_bytes());
-    let mut bytes = [0_u8; 16];
-    bytes.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
-    loop {
-        if let Ok(id) = EntityId::from_bytes(bytes) {
-            return id;
-        }
-        bytes[0] ^= 0x42;
-    }
+/// The request identity of one fold's pass: stable per (run, fold), by the
+/// one derived-id rule (FIX 9838).
+pub(super) fn fold_request_id(run_id: EntityId, fold: u64) -> crate::Result<EntityId> {
+    EntityId::derive(
+        crate::entity_id::derived_domains::EXECUTOR_FOLD_REQUEST,
+        &[run_id.as_bytes(), &fold.to_be_bytes()],
+    )
 }
