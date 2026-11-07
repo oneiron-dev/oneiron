@@ -46580,7 +46580,18 @@
      "surface": {
       "crate-vis": 13,
       "fn": 2,
+      "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/decision/questions/standing/public_admit.rs",
+     "purpose": "Public standing-answer work keeps the actual caller and the measured frontier",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -62671,7 +62682,23 @@
       "const": 2,
       "enum": 3,
       "fn": 4,
+      "re-export": 1,
       "struct": 19
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "QuestionAdmitRequest",
+      "QuestionPrepareRequest",
+      "QuestionPrepared",
+      "QuestionPreparedSource"
+     ],
+     "path": "src/receipt/questions/standing_admit.rs",
+     "purpose": "Explicit standing-question preparation before provider work and its admission",
+     "surface": {
+      "struct": 4
      }
     },
     {
@@ -69897,9 +69924,19 @@
      "path": "src/skill_attribution/credit_join.rs",
      "purpose": "The one reconciler of an anchored outcome's late credit (FIX 3241, FIX 10108, OF-540)",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_attribution/credit_judge.rs",
+     "purpose": "An existing anchored credit's late judge provenance; its score stays sealed",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -87714,7 +87751,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1314
+      "fn": 1316
      }
     },
     {
@@ -94363,7 +94400,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 174,
+     "files": 175,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94608,7 +94645,7 @@
      "purpose": "Message reactions as `conversation.reaction` claims (OF-372)"
     },
     "receipt": {
-     "files": 43,
+     "files": 44,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94811,7 +94848,7 @@
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
     "skill_attribution": {
-     "files": 33,
+     "files": 34,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -95114,7 +95151,7 @@
    },
    "over_bar": 192,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6733,
+   "source_files": 6736,
    "test_files": 895
   },
   "oneiron-android": {
@@ -108302,7 +108339,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "OpenAiMediaBackend",
@@ -108486,12 +108523,12 @@
     "lib": {
      "files": 16,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam"
     }
    },
-   "over_bar": 0,
+   "over_bar": 1,
    "purpose": "OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam",
    "source_files": 15,
    "test_files": 1
@@ -109977,7 +110014,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1282
+      "fn": 1284
      }
     },
     {
@@ -111770,7 +111807,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1283
+      "fn": 1285
      }
     },
     {
@@ -117309,7 +117346,7 @@
      "path": "src/api/facade/graph_ask_doors.rs",
      "purpose": "OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -117338,6 +117375,16 @@
      "notable": [],
      "path": "src/api/facade/graph_ask_doors/saved_lane.rs",
      "purpose": "OF-506 (FIX 1857): a standing question saved through `vault.questions.create` or `.edit` keeps the caller's…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/graph_ask_doors/standing_admit.rs",
+     "purpose": "External provider work over an explicit standing-question preparation",
      "surface": {
       "crate-vis": 2
      }
@@ -129029,7 +129076,7 @@
      "path": "src/models/http/client.rs",
      "purpose": "Shared provider HTTP client execution",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 22
      }
     },
     {
@@ -133615,7 +133662,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 718,
+     "files": 719,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -134149,7 +134196,7 @@
    },
    "over_bar": 59,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1732,
+   "source_files": 1733,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -148059,6 +148106,7 @@
       "Quarantine",
       "QuarantineContainer",
       "QuestionActivation",
+      "QuestionAdmitRequest",
       "QuestionAnswer",
       "QuestionAnswersPage",
       "QuestionAnswersReply",
@@ -148081,6 +148129,9 @@
       "QuestionOutcomesRequest",
       "QuestionPauseRequest",
       "QuestionPaused",
+      "QuestionPrepareRequest",
+      "QuestionPrepared",
+      "QuestionPreparedSource",
       "QuestionReadRequest",
       "QuestionRecord",
       "QuestionRefreshRequest",
@@ -149603,7 +149654,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1143,
-      "struct": 3498
+      "struct": 3502
      }
     },
     {
