@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1338 code-mode rows (1297 host rows, 41 run rows), 4718 declarations.
-// Replies: 1146 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1341 code-mode rows (1300 host rows, 41 run rows), 4731 declarations.
+// Replies: 1149 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -154,7 +154,7 @@ declare namespace Sdk {
   type RunSignalState = "Pending" | "Settled" | "RefusedCancelUnavailable";
   type ConcernMoveLink = { kind: "note"; room: string; turn?: string | null; messages: string[] } | { kind: "steer"; task_ref: string; branch: string; run_id: string; key: string; state: RunSignalState; run_differs_from_card_attempt: boolean };
   type ConcernMoveReceipt = { actor: EntityId; actor_class: string; at: number; key: string; payload: string; observed?: ConcernMoveBasis | null; current: ConcernMoveBasis; evidence_changed: boolean; task?: EntityId | null; subject: EntityId; attempt?: EntityId | null; link: ConcernMoveLink };
-  type AgentHealthCard = { subject: EntityId; signal: AgentHealthSignal; task?: EntityId | null; attempt?: EntityId | null; witnessed_attempts: EntityId[]; tone: AgentHealthTone; tier: number; confidence: AgentHealthConfidence; diagnostics: EntityId[]; evidence: EntityId[]; window_from: number; window_to: number; measured: number; dial: number; exact_dial?: number | null; exact_measured?: number | null; counter_evidence: AgentHealthCounter[]; agent_blocked: boolean; confession?: EntityId | null; moves: AgentHealthMove[]; recipients: EntityId[]; owner_copy: boolean; outcome: AgentHealthOutcome; outcome_by?: EntityId | null; outcome_at?: number | null; watermark: number; opened_at: number; updated_at: number; coach?: AgentHealthCoachAsk | null; observed_brief?: HealthBriefPin | null; reviewer: string; reviewer_revision?: EntityId | null; review_outcomes: HealthReviewReceipt[]; causes: HealthCauseSource[]; silence?: HealthSilenceActivity | null; moves_taken: ConcernMoveReceipt[] };
+  type AgentHealthCard = { subject: EntityId; signal: AgentHealthSignal; task?: EntityId | null; attempt?: EntityId | null; witnessed_attempts: EntityId[]; tone: AgentHealthTone; tier: number; confidence: AgentHealthConfidence; diagnostics: EntityId[]; evidence: EntityId[]; source_rows: EntityId[] | null; window_from: number; window_to: number; measured: number; dial: number; exact_dial?: number | null; exact_measured?: number | null; counter_evidence: AgentHealthCounter[]; agent_blocked: boolean; confession?: EntityId | null; moves: AgentHealthMove[]; recipients: EntityId[]; owner_copy: boolean; outcome: AgentHealthOutcome; outcome_by?: EntityId | null; outcome_at?: number | null; watermark: number; opened_at: number; updated_at: number; coach?: AgentHealthCoachAsk | null; observed_brief?: HealthBriefPin | null; reviewer: string; reviewer_revision?: EntityId | null; review_outcomes: HealthReviewReceipt[]; causes: HealthCauseSource[]; silence?: HealthSilenceActivity | null; moves_taken: ConcernMoveReceipt[] };
   type RunTreeStatus = "queued" | "running" | "paused" | "completed" | "failed" | "cancelled" | "abandoned";
   type RunTreeTimestamps = { created_at: number; updated_at: number };
   type RunTreeFailure = { reason: string };
@@ -706,7 +706,7 @@ declare namespace Sdk {
   type RetrievalTraceChannelRecord = { stage: RetrievalTraceStage; signal: RetrievalSignal; candidates: RetrievalScoreBreakdown[] };
   type RetrievalTraceStageRecord = { stage: RetrievalTraceStage; candidates: RetrievalScoreBreakdown[] };
   type RetrievalTrace = { fork_hash?: RetrievalTraceForkHash; per_channel: RetrievalTraceChannelRecord[]; fused: RetrievalTraceStageRecord; blended: RetrievalTraceStageRecord; reranked: RetrievalTraceStageRecord; final: RetrievalTraceStageRecord; fusion_list_length?: number };
-  type RetrievalRunRecord = { version: number; run_id: RetrievalRunId; action: RetrievalAction; started_at: number; elapsed_us: number; state?: RetrievalState; policy_trace?: RetrievalPolicyTrace | null; replay_inputs?: RetrievalReplayInputs | null; turn?: RetrievalTurn | null; query_expander_id?: string | null; signals: RetrievalSignal[]; result_ids: number[][]; score_breakdown: RetrievalScoreBreakdown[]; total_in_scope: number; claims_suppressed: number; empty_reason?: string | null; trace?: RetrievalTrace | null; quality?: RetrievalQuality | null; degradation?: RetrievalDegradation[]; confidence_adjustment?: ConfidenceAdjustment | null };
+  type RetrievalRunRecord = { version: number; run_id: RetrievalRunId; action: RetrievalAction; started_at: number; elapsed_us: number; state?: RetrievalState; policy_trace?: RetrievalPolicyTrace | null; replay_inputs?: RetrievalReplayInputs | null; turn?: RetrievalTurn | null; query_expander_id?: string | null; reranker_id?: string | null; signals: RetrievalSignal[]; result_ids: number[][]; score_breakdown: RetrievalScoreBreakdown[]; total_in_scope: number; claims_suppressed: number; empty_reason?: string | null; trace?: RetrievalTrace | null; quality?: RetrievalQuality | null; degradation?: RetrievalDegradation[]; confidence_adjustment?: ConfidenceAdjustment | null };
   type RetrievalRewardEvidence = { retrievalRunIds: RetrievalRunId[]; turn_id: number[]; gate_score: number; confirmed_fact_hit: boolean; latency_scale_us: number; cost_weight: number };
   type RetrievalOutcomeRecord = { version: number; run_id: RetrievalRunId; key: string; reward?: number | null; accepted?: boolean | null; metadata: Record<string, string>; updated_at: number; reward_evidence?: RetrievalRewardEvidence | null };
   type RetrievalRunEvidence = { run: RetrievalRunRecord; outcomes: RetrievalOutcomeRecord[] };
@@ -2237,6 +2237,8 @@ declare namespace Sdk {
   type PolicySignature = { alg: string; key_id?: string | null; sig: string };
   type SlideReviewPrecedence = "nested_narrowing" | "holder_override_capped_at_vault";
   type SlideReviewPolicyRow = { scope: "precedence"; value: SlideReviewPrecedence } | { scope: "vault"; batch_size: number; max_units: number; max_text_bytes: number; max_image_bytes: number } | { scope: "route"; first: DecisionRung; ceiling: DecisionRung } | { scope: "holder"; holder: string; batch_size: number; max_units: number; max_text_bytes: number; max_image_bytes: number } | { scope: "holder_route"; holder: string; first: DecisionRung; ceiling: DecisionRung };
+  type CodeConsentSettlementEligibility = { mode: "all_power_holders" } | { mode: "named"; holders: string[] };
+  type CodeConsentSettlementRow = { version: number; eligible: CodeConsentSettlementEligibility };
   type PolicyGrantMapEntry = { key: PolicyGrantValue; value: PolicyGrantValue };
   type PolicyGrantExtension = { tag: number; data: number[] };
   type PolicyGrantValue = { kind: "nil" } | { kind: "boolean"; value: boolean } | { kind: "integer"; value: string } | { kind: "float32"; value: number[] } | { kind: "float64"; value: number[] } | { kind: "string"; value: string } | { kind: "raw_string"; value: number[] } | { kind: "binary"; value: number[] } | { kind: "array"; value: PolicyGrantValue[] } | { kind: "map"; value: PolicyGrantMapEntry[] } | { kind: "extension"; value: PolicyGrantExtension };
@@ -2244,7 +2246,7 @@ declare namespace Sdk {
   type TeacherProbeHolderFloor = { holder_ref: string; min_f1_millionths: number };
   type TeacherProbePolicy = { probe_id: string; min_f1_millionths: number; holders?: TeacherProbeHolderFloor[] };
   type SheetAnswerLimit = { artifact_ref?: string | null; sheet?: string | null; max_count: number };
-  type PolicyManifest = { schema_version: string; pack_id: string; pack_version: string; min_engine_version: string; defaults: PolicyAxes; rules: PolicyRule[]; actor_ceilings: ActorCeiling[]; source_trust?: Record<string, SourceTrust>; signature?: PolicySignature | null; signatures?: PolicySignature[]; auto_checker?: string | null; slide_review_policy?: SlideReviewPolicyRow[] | null; scoped_grants?: PolicyScopedGrantRow[] | null; teacher_probe?: TeacherProbePolicy | null; sheet_answer_limits?: SheetAnswerLimit[] | null };
+  type PolicyManifest = { schema_version: string; pack_id: string; pack_version: string; min_engine_version: string; defaults: PolicyAxes; rules: PolicyRule[]; actor_ceilings: ActorCeiling[]; source_trust?: Record<string, SourceTrust>; signature?: PolicySignature | null; signatures?: PolicySignature[]; auto_checker?: string | null; slide_review_policy?: SlideReviewPolicyRow[] | null; code_consent_settlement?: CodeConsentSettlementRow | null; scoped_grants?: PolicyScopedGrantRow[] | null; teacher_probe?: TeacherProbePolicy | null; sheet_answer_limits?: SheetAnswerLimit[] | null };
   type PolicyManifestView = { manifest_ref: string; body_hash: string; trusted: boolean; quarantined: boolean; manifest: PolicyManifest };
   type PolicyManifestsView = { default_manifest_ref: string; read_frontier_hash: string; manifests: PolicyManifestView[] };
   type PolicyManifestPut = { manifest_ref?: string | null; expected_body_hash?: string | null; manifest: PolicyManifest };
@@ -2590,6 +2592,15 @@ declare namespace Sdk {
   type CodeMutationState = "prepared" | "applied" | "failed";
   type CodeMutationEntry = { repo_ref: string; seq: number; operation_kind: string; operation_subject?: string | null; actor?: EntityId | null; session?: EntityId | null; started_at_ms: number; finished_at_ms?: number | null; pre_action_fork_hash: string; expected_post_action_fork_hash?: string | null; status: CodeMutationState; failure?: string | null };
   type CodeMutationLog = { repo: EntityId; entries: CodeMutationEntry[] };
+  type CodeRepoSecretSeen = { kind: "ref_move"; name: string; new_commit: string } | { kind: "quarantine" } | { kind: "sync_landing" };
+  type CodeRepoSecretMark = { mark: EntityId; operation: EntityId; blob: string; path?: string | null; kind: string; seen: CodeRepoSecretSeen; custody?: EntityId | null; handle?: string | null; marked_at: number };
+  type CodeRepoSecretRemediationLink = { state: string; proposal: EntityId; commit?: string | null; paths: string[]; linked_at: number };
+  type CodeRepoSecretsView = { repo: EntityId; marks: CodeRepoSecretMark[]; remediations: CodeRepoSecretRemediationLink[] };
+  type CodeRepoSecretProposeRequest = { repo: EntityId; session: EntityId; provenance_claim: EntityId; op_provenance: CodeOpProvenance; catalog?: LensCatalog | null };
+  type CodeRepoSecretRemediationStatus = "proposed" | "unresolved" | "stale" | "clean";
+  type CodeRepoSecretRemediationAction = { action: "replace_literals"; path: string; env_names: string[] } | { action: "remove_dotenv"; path: string } | { action: "write_example"; path: string; names: string[] } | { action: "ignore_dotenv"; entries: string[] } | { action: "declare_env_names"; env_names: string[] };
+  type CodeRepoSecretUnresolved = { path: string; reason: string; custody?: EntityId | null };
+  type CodeRepoSecretRemediation = { repo: EntityId; status: CodeRepoSecretRemediationStatus; base_commit: string; proposal?: EntityId | null; actions: CodeRepoSecretRemediationAction[]; unresolved: CodeRepoSecretUnresolved[] };
   type ForeignCodeRunRequest = { source: string; reads?: string[] };
   type ForeignCodeTier = "foreign";
   type ForeignCodeRead = { reference: string; path: string };
@@ -2694,7 +2705,7 @@ declare namespace Sdk {
   type ExternalImportSource = { host: string; repository: string; source_ref: string; pull_request?: number | null; base_commit: string; head_commit: string };
   type ExternalImportDoor = "raw" | { checkout: { checkout: string; epoch: number } };
   type ExternalImportRequest = { repo: string; code_repo: EntityId; base_revision: EntityId; imported_ref?: string | null; source: ExternalImportSource; source_binding?: string | null; door: ExternalImportDoor };
-  type ExternalImportReceipt = { import: EntityId; repo: string; code_repo: EntityId; source: ExternalImportSource; imported_ref: string; base_revision: EntityId; importer?: EntityId | null; seed_publication?: EntityId | null; receive_provenance?: EntityId | null; publication?: EntityId | null };
+  type ExternalImportReceipt = { import: EntityId; repo: string; code_repo: EntityId; source: ExternalImportSource; imported_ref: string; base_revision: EntityId; importer?: EntityId | null; seed_publication?: EntityId | null; receive_provenance?: EntityId | null; publication?: EntityId | null; lfs_daemon_residual: boolean };
   type ExternalImportLookup = { repo: string; code_repo: EntityId; import: EntityId; door: ExternalImportDoor };
   type ExternalImportPhase = "pending" | "fetch_refused" | "source_moved" | "held_base" | "door_refused" | "transport_unknown" | "received";
   type ReceivedFileOperation = { operation_id: string; actor_id: string; session_id: string; ref_name: string; path: string; before_hash: number[]; after_hash: number[]; old_mode?: number | null; new_mode?: number | null; document_edit: boolean };
@@ -2761,6 +2772,8 @@ declare namespace Sdk {
   type OriginAuthoritySetRequest = { repo: string; expected_epoch?: number | null; residence: OriginResidence; writer?: string | null; mirror?: boolean };
   type OriginPublicationsRequest = { repo: string; ref_name: string; git_commit: string };
   type OriginPublicationsView = { repo: string; publications: OriginPublicationView[] };
+  type RepoCheckoutBindInput = { repo: EntityId; ref: string; checkout: string; epoch: number; endpoint?: string | null };
+  type RepoCheckoutBindOutput = { repo: EntityId; ref: string; checkout: string; epoch: number; remote_url?: string | null };
   type CheckoutDoorBindRequest = { repo: string; checkout: string; epoch: number; endpoint: string };
   type CheckoutDoorBinding = { repo: string; checkout: string; epoch: number; checkout_path: string; remote_url: string };
   type CheckoutClass = "edit" | "build" | "verify" | "effect";
@@ -2800,7 +2813,7 @@ declare namespace Sdk {
   type CodeCacheReadRequest = { account: EntityId; action_digest: CodeActionDigest };
   type CodeRepoPointer = { local_folder: string; commit: string };
   type CodeSnapshotIngestRequest = { project_id: string; pointer: CodeRepoPointer; repository?: EntityId | null };
-  type CodeSnapshotView = { repo: EntityId; repo_ref: string; project_id: string; commit?: string | null; snapshot: string; scope_key: string; files: CodeSnapshotFile[]; repository?: EntityId | null };
+  type CodeSnapshotView = { repo: EntityId; repo_ref: string; project_id: string; commit?: string | null; snapshot: string; scope_key: string; files: CodeSnapshotFile[]; repository?: EntityId | null; capture_receipt?: string | null };
   type CodeSnapshotRequest = { repo: EntityId; snapshot: string };
   type CodeSnapshotReadRequest = { repo: EntityId; snapshot: string; path: string; why?: string | null };
   type CodeSnapshotPinnedFile = { repo: EntityId; snapshot: string; file: CodeSnapshotFile; content: string; text_sha256: string };
@@ -2911,8 +2924,6 @@ declare namespace Sdk {
   type RepoProposalSubmitOutput = { proposal: EntityId; work: EntityId; path: string; base_green: string; base_snapshot: string; session: EntityId; provenance_claim: EntityId; declaration?: EntityId | null; status: RepoProposalStatus };
   type RepoMergeQueueEnqueueInput = { work: EntityId; proposals: EntityId[]; declaration?: EntityId | null };
   type RepoMergeQueueEnqueueOutput = RepoQueueEntryView;
-  type RepoCheckoutBindInput = { repo: EntityId; ref: string; checkout: string; epoch: number; endpoint?: string | null };
-  type RepoCheckoutBindOutput = { repo: EntityId; ref: string; checkout: string; epoch: number; remote_url?: string | null };
   type RepoExportInput = { repo: EntityId; ref: string; checkout: string; epoch: number; revision: EntityId; expected_old_oid?: string | null };
   type RepoExportOutput = { repo: EntityId; ref: string; revision: EntityId; git_commit: string; receipt: EntityId; status: OriginPublicationState; grant: EntityId; ref_was_already_applied: boolean; wire_replayed: boolean; wire_rejected: boolean };
   type BaseAgentPrincipal = { name: string; id: EntityId };
@@ -3141,7 +3152,7 @@ declare namespace Sdk {
   type StepAssetKind = "factual" | "illustration";
   type AssetRef = { artifact: string; version: number; hash: Digest; kind: StepAssetKind; description: string };
   type StepPreset = "rect" | "roundRect" | "ellipse" | "triangle" | "rightArrow";
-  type StepSequence = "name" | "categories" | "values";
+  type StepSequence = "name" | "categories" | "values" | "size";
   type StepCell = "missing" | { number: number } | { text: string } | { date: string };
   type DeckStep = { set_text: { target: StepTarget; text: string } } | { replace_run_text: { target: StepTarget; paragraph: number; run: number; expected: string; text: string } } | { set_xfrm: { target: StepTarget; xfrm: StepXfrm } } | { move_in_slide_space: { target: StepTarget; dx: number; dy: number } } | { set_picture: { target: StepTarget; asset: AssetRef } } | { set_notes: { slide: string; expected?: string | null; text: string } } | { add_shape: { slide: string; preset: StepPreset; name: string; offset: number[]; extent: number[] } } | { delete_shape: { target: StepTarget; cascade?: boolean } } | { reparent: { target: StepTarget; parent?: number | null } } | { duplicate_slide: { slide: string; expected: Digest } } | { reorder_slides: { order: number[] } } | { set_table_cell: { slide: string; table: number; row: number; col: number; expected: string; value: string } } | { set_series_values: { chart: string; series: number; sequence: StepSequence; values: StepCell[] } } | { release_media: { slide: string; relationships: string[] } };
   type DeckTransaction = { schema: number; base: Digest; marks?: IdMarks; seed: string; graphics?: GraphicLimits | null; steps: DeckStep[] };
@@ -4238,8 +4249,10 @@ declare namespace Sdk {
   type ConsolidationEvidenceHop = { kind: string; entity_ref: string; actor_ref?: string | null };
   type ConsolidationMessageEvidence = { message_ref: string; start: number; end: number; revision: number[]; frontier?: number[] | null };
   type ConsolidationEvidenceLocator = { source_ref: string; claim_ref?: string | null; byte_range?: [number, number] | null; content_hash: number[]; messages: ConsolidationMessageEvidence[] };
+  type ConsolidationDocumentImage = { doc: string; at: number[] };
+  type ConsolidationSourceImage = { learned_at: number; body_hash: number[]; document?: ConsolidationDocumentImage | null };
   type ConsolidationDeliveryOrigin = { source_ref: string; delivering_pact: string; consent_epoch: number; grant_ref: string; source_vault: string; delivered_row_hash: string };
-  type ConsolidationEvidenceSource = { source_ref: string; source?: string | null; approval?: string | null; lifecycle?: string | null; evidence_taint?: string | null; generated_origin: boolean; writer_ref?: string | null; foreign_world_ref?: string | null; consolidation_eligible: boolean; corroboration_eligible: boolean; first_party_corroboration: boolean; effector_evidence_eligible: boolean; refusal?: PromotionEvidenceReason | null; source_refs: string[]; evidence_refs: EvidenceRef[]; source_meet?: string | null; chain: ConsolidationEvidenceHop[]; locators: ConsolidationEvidenceLocator[]; delivery_history?: ConsolidationDeliveryOrigin[] | null };
+  type ConsolidationEvidenceSource = { source_ref: string; source?: string | null; approval?: string | null; lifecycle?: string | null; evidence_taint?: string | null; generated_origin: boolean; writer_ref?: string | null; foreign_world_ref?: string | null; consolidation_eligible: boolean; corroboration_eligible: boolean; first_party_corroboration: boolean; effector_evidence_eligible: boolean; refusal?: PromotionEvidenceReason | null; source_refs: string[]; evidence_refs: EvidenceRef[]; source_meet?: string | null; chain: ConsolidationEvidenceHop[]; locators: ConsolidationEvidenceLocator[]; current_image: ConsolidationSourceImage; delivery_history?: ConsolidationDeliveryOrigin[] | null };
   type ConsolidationPromotion = { job_ref: string; landed: string[]; pended: string[]; held: string[]; rejected: ConsolidationRejection[]; input_evidence: ConsolidationEvidenceSource[]; output_evidence: ConsolidationEvidenceSource[] };
   type ConsolidationRootBucket = { subject: string; predicate_root: string; world?: string | null; facet?: string | null; relationship?: string[] | null; project: string };
   type ConsolidationReference = { source_id: string; claim_id?: string | null; byte_range?: [number, number] | null };
@@ -5815,6 +5828,10 @@ declare const vault: Sdk.VaultHost & {
       claim(input: Sdk.CheckoutClaimInput): Promise<Sdk.CheckoutLeaseView | StoredResult>;
       /** Read checkout custody and vault-clock expiry as a task party, without claiming or renewing it. */
       get(input: Sdk.CheckoutGetInput): Promise<Sdk.ScopedReadResult<Sdk.CheckoutLeaseView | null> | StoredResult>;
+      holder: {
+        /** Materialize the caller's own live checkout without a run. One current repo read Grant must cover the full ref at the lease's pinned commit and every path of that tree. Returns the lease-bound remote URL, not a host path; no lease is minted. */
+        bind(input: Sdk.RepoCheckoutBindInput): Promise<Sdk.RepoCheckoutBindOutput | StoredResult>;
+      };
       /** Publish a stored candidate result for checkout settlement under the caller's live epoch; this does not export a Git head. */
       publish(input: Sdk.CheckoutPublishInput): Promise<Sdk.CheckoutPublished | StoredResult>;
       /** Reclaim an expired declared-idempotent build or verify checkout as an authorized successor at the named epoch. */
@@ -5958,6 +5975,12 @@ declare const vault: Sdk.VaultHost & {
       /** Read the selected served code repository, immutable import and workbench links. Owner only. Does not discover a global directory or mutate work. */
       get(input: Sdk.CodeRepoGetRequest): Promise<Sdk.CodeRepoView | null | StoredResult>;
     };
+    secrets: {
+      /** Read one repository's marked secrets and linked remediations, value-free: each mark's blob, path, detector kind, where the push saw it and its custody handle. Owner only. */
+      get(input: Sdk.CodeRepoRequest): Promise<Sdk.CodeRepoSecretsView | StoredResult>;
+      /** Stage one remediation of a repository's current code: marked keys become secret references, committed .env files go, .gitignore and .env.example follow. Owner only. It only proposes. */
+      propose(input: Sdk.CodeRepoSecretProposeRequest): Promise<Sdk.CodeRepoSecretRemediation | StoredResult>;
+    };
     snapshots: {
       /** Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant. */
       get(input: Sdk.CodeSnapshotRequest): Promise<Sdk.CodeSnapshotView | null | StoredResult>;
@@ -5991,9 +6014,9 @@ declare const vault: Sdk.VaultHost & {
       read(input: Sdk.CodeViewReadRequest): Promise<Sdk.CodeViewFileBytes | StoredResult>;
     };
     waits: {
-      /** Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait. */
+      /** Read a code consent wait as its authenticated owner or current policy-admitted power holder: effect, answer, settlement and replay-consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait. */
       receipt(input: Sdk.CodeWaitReceiptRequest): Promise<Sdk.CodeWaitReceiptView | null | StoredResult>;
-      /** Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken. */
+      /** Answer a sealed code consent wait as its authenticated owner or current policy-admitted power holder, on their own word. First answer wins; the effect meets its current gate once. No raw reply, grant or consumption. */
       resolve(input: Sdk.CodeWaitResolveRequest): Promise<Sdk.CodeWaitReceiptView | StoredResult>;
     };
   };
