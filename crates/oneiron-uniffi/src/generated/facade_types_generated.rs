@@ -40110,10 +40110,10 @@ pub enum ForeignCodeApproval {
     Proposed,
 }
 
-/// `oneiron_store::code_document_values::CodeFileEdit`.
+/// `oneiron::code_sandbox::proposal::SandboxFileEdit`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
-pub struct CodeFileEdit {
+pub struct SandboxFileEdit {
     #[serde(rename = "path")]
     pub path: String,
     #[serde(rename = "start")]
@@ -40221,7 +40221,7 @@ pub enum ForeignCodeEffect {
         #[serde(rename = "base_content_hash")]
         base_content_hash: String,
         #[serde(rename = "edit")]
-        edit: CodeFileEdit,
+        edit: SandboxFileEdit,
     },
     #[serde(rename = "file_delete")]
     FileDelete {
