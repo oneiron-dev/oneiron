@@ -130,6 +130,7 @@ pub(crate) fn begin_sourced_answer_with_fallback(
                 funding: funding.clone(),
                 budget_units,
             },
+            sources.clone(),
         )
     });
 
