@@ -333,14 +333,17 @@ impl AgentDispatcher<'_> {
     /// scope's parent, never the closed scope itself: a carve of the pinned
     /// `budget` when the launch pinned one, else a hold of what the launch
     /// held, keeping its hard or soft policy. The failed try's worker lease
-    /// is never carried over. Room-bound work proves its join again under
+    /// is never carried over. A task-reservation ceiling instead keeps the
+    /// failed scope in its ancestry, so continuation cannot mint the same
+    /// research allowance again. Room-bound work proves its join again under
     /// the new scope.
     ///
     /// # Errors
     ///
-    /// `continuation_unfunded` when the failed scope has no parent, its
-    /// parent is gone or closed with no open ancestor, the reservation is
-    /// refused, or the join no longer holds; storage errors.
+    /// `continuation_unfunded` when the failed ordinary scope has no parent,
+    /// its funding scope is gone or closed with no open ancestor (except a
+    /// parentless pinned reservation), the reservation is refused, or the
+    /// join no longer holds; storage errors.
     fn renew_continuation_spend_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -354,11 +357,24 @@ impl AgentDispatcher<'_> {
             self.require_continuation_join_in_txn(txn, input, agent, None)?;
             return Ok(None);
         };
-        let Some(parent) = failed.parent.as_ref() else {
-            return Err(refused(CONTINUATION_UNFUNDED));
+        let reservation_bound = self
+            .binding_cap_in_txn(txn, &failed)?
+            .ceiling_units
+            .is_some();
+        let parent = if reservation_bound {
+            &failed.scope
+        } else {
+            failed
+                .parent
+                .as_ref()
+                .ok_or_else(|| refused(CONTINUATION_UNFUNDED))?
         };
         let funded = match SCOPE.get(&self.vault.store, txn, &parent.0)? {
-            Some(row) if row.state == SpendState::Open => true,
+            Some(row)
+                if row.state == SpendState::Open || (reservation_bound && row.parent.is_none()) =>
+            {
+                true
+            }
             // FIX 10541: a child keeps a closed parent, which books at its
             // nearest open ancestor; one with none open is unfunded.
             Some(_) => self.effective_scope_in_txn(txn, parent)?.state == SpendState::Open,
@@ -371,7 +387,7 @@ impl AgentDispatcher<'_> {
             .budget
             .or_else(|| input.launch.as_ref().map(|launch| launch.reserved_units))
             .unwrap_or(failed.cap_units);
-        let ask = if failed.hard {
+        let ask = if failed.hard && !reservation_bound {
             ChildSpend::Carve { cap_units: units }
         } else {
             ChildSpend::Hold {
