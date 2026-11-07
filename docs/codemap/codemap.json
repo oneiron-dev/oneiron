@@ -125637,11 +125637,21 @@
      "purpose": "Structured HTTP API errors and their schema catalog",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 2,
       "fn": 29,
       "re-export": 1,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/error/room_join_hold_schema.rs",
+     "purpose": "Schema mirrors of the engine's room-join hold and its missing consent parties",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -125659,9 +125669,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/error/typed_refusal.rs",
-     "purpose": "The typed refusals of the direct error vocabulary (FIX 6032)",
+     "purpose": "Typed refusals and their payloads in the direct error vocabulary",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -133794,7 +133804,7 @@
      "purpose": "The embedder provider slot"
     },
     "error": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -134125,7 +134135,7 @@
    },
    "over_bar": 59,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1731,
+   "source_files": 1732,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -144682,7 +144692,7 @@
      "path": "src/codec.rs",
      "purpose": "Lift and lower codecs between this crate's UniFFI records and the engine types the shared…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -148399,6 +148409,7 @@
       "RoomHostPin",
       "RoomHostRequest",
       "RoomHosting",
+      "RoomJoinHold",
       "RoomMessagesRequest",
       "RoomOriginCard",
       "RoomPage",
@@ -149578,7 +149589,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1143,
-      "struct": 3497
+      "struct": 3498
      }
     },
     {
