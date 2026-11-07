@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6719 | 895 | 188 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6721 | 895 | 189 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 4 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 64 | 1 | 0 |
 | [oneiron-base](codemap/oneiron-base.md) | The base layer of the oneiron engine: modules that name nothing above them | 34 | 2 | 1 |
@@ -135,7 +135,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `counterparty_contact` | dir | 12 | m | yes | Counterparty contact record substrate (OF-347 CID-7) |
 | `credential_door` | dir | 11 | m | — | Checkout receive-pack admission, catastrophe policy, and secret-shaped diff scanning |
 | `critic` | file+dir | 15 | m | — | Multi-critic review node primitives |
-| `deletion` | dir | 65 | L | yes | ARCH-0038 deletion/redaction contract types |
+| `deletion` | dir | 66 | L | yes | ARCH-0038 deletion/redaction contract types |
 | `delivery_window` | dir | 7 | s | — | Delivery-window policy claims and evaluator for OF-327 O3 |
 | `disclosure` | dir | 14 | m | yes | Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2) |
 | `dispatch_byoa` | dir | 31 | L | yes | Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents… |
@@ -205,7 +205,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `off_record` | dir | 39 | L | yes | Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732 |
 | `office_body` | dir | 46 | L | yes | Live office body records and Vault doors |
 | `origin` | dir | 151 | L | yes | Vault-as-origin serving plane (ARCH-0068 Phase A) |
-| `outbound` | dir | 67 | L | yes | Outbound action capability manifests and dispatch spine for OF-327 |
+| `outbound` | dir | 68 | L | yes | Outbound action capability manifests and dispatch spine for OF-327 |
 | `outbound_chokepoint` | dir | 12 | L | yes | Replay-first outbound effect execution |
 | `outbound_consent` | dir | 35 | m | yes | Payload-aware consent and transport boundary for scoped outbound tools |
 | `outbound_grant` | dir | 10 | m | yes | Standing outbound-grant records for OF-367 RS6.2/RS6.5 |
