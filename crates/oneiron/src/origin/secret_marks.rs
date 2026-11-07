@@ -393,10 +393,6 @@ fn span_of(key: &RetainedRepoPlacedKey) -> RepoSecretPlacement {
 ///
 /// # Errors
 /// A store failure, or another record under a mark's id.
-#[allow(
-    dead_code,
-    reason = "FIX 7608 2b-ii-A: the exact forward calls it in 2b-ii-B"
-)]
 pub(crate) fn readdress_forward_secret_marks_in_txn(
     vault: &Vault,
     wtxn: &mut RwTxn<'_>,
