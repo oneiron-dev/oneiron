@@ -135,12 +135,12 @@ impl LocalVisionModel {
             content.push(ContentPart::Text { text: rubric });
         }
         content.push(ContentPart::Text {
-            text: json!({"question": call.question.text, "state": state}).to_string(),
+            text: json!({"question": call.question_text(), "state": state}).to_string(),
         });
         let purpose = CallPurpose::Other {
             name: PURPOSE.to_owned(),
         };
-        Ok(LlmRequest {
+        let mut request = LlmRequest {
             model: self.model.clone(),
             envelope: CallEnvelope {
                 seat_effort: None,
@@ -151,6 +151,7 @@ impl LocalVisionModel {
                 response_format: ResponseFormat::Json { schema },
                 locality: self.locality,
                 host_keyless: false,
+                host_paid: false,
             },
             messages: vec![LlmMessage {
                 role: LlmMessageRole::User,
@@ -160,7 +161,11 @@ impl LocalVisionModel {
             params: BTreeMap::new(),
             provider_options: BTreeMap::new(),
             host_segments: None,
-        })
+        };
+        if let Some(labels) = call.labels {
+            labels.bind(&mut request);
+        }
+        Ok(request)
     }
 }
 

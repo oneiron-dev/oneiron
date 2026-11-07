@@ -176,9 +176,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/retained_opc/xml/retained.rs` | src | m | 4 crate-vis | — | One authoritative parse |
 | `src/worksheet_preserve.rs` | src | m | 1 struct · 1 fn | Preservation | FIX9820 PART: restore wholly-missing worksheet root foreign groups and SML ext records |
 | `src/xlfn.rs` | src | s | 2 fn | — | Excel's storage qualifiers for post-2007 worksheet functions |
-| `src/xlsx_body.rs` | src | m | 10 re-export | — | SpreadsheetML workbook read and projection seam |
+| `src/xlsx_body.rs` | src | m | 11 re-export | — | SpreadsheetML workbook read and projection seam |
 | `src/xlsx_body/attachments.rs` | src | m | 5 crate-vis | — | Drawing, note, table and slicer changes after an axis edit |
 | `src/xlsx_body/axis.rs` | src | s | 4 crate-vis | — | Shared-formula expansion and worksheet axis changes |
+| `src/xlsx_body/cached.rs` | src | m | 1 struct · 1 fn | CachedValuesWritten | A recalculated copy's formula values, written into the original workbook (FIX 2462) |
 | `src/xlsx_body/conditional.rs` | src | s | 1 struct · 2 enum · 4 fn · 1 crate-vis | XlsxConditionalFormat, XlsxConditionalOperator, XlsxConditionalRule | Conditional formats a body adds to a worksheet (FIX 3468): a rule over a range, and the differential format… |
 | `src/xlsx_body/coordinates.rs` | src | m | 1 crate-vis | — | Coordinate XML rewrites after an axis edit |
 | `src/xlsx_body/header.rs` | src | s | 1 fn · 1 crate-vis | — | Renaming a worksheet table's column through its header cell (FIX 6399) |
