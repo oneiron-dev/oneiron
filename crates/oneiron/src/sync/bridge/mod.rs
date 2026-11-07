@@ -67,8 +67,8 @@ pub(crate) use self::observers::{
     DELETION_TOMBSTONE_ORIGIN, persist_window_update, persist_window_update_in_txn,
     register_custody_observer, register_document_pins_observer, register_message_docs_observer,
     register_office_proposals_observer, register_repo_manifests_observer,
-    register_room_facts_observer, register_room_turns_observer, register_typed_body_rows_observer,
-    with_deletion_tombstone_observer_a_suppressed,
+    register_room_facts_observer, register_room_turns_observer, register_source_audiences_observer,
+    register_typed_body_rows_observer, with_deletion_tombstone_observer_a_suppressed,
 };
 
 #[cfg(test)]

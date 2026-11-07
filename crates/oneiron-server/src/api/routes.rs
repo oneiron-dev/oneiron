@@ -295,6 +295,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .merge(self::report::routes())
         // OF-495: an agent role holder's skill tradeoff asks and picks.
         .merge(self::facade::role_picks::routes())
+        // FIX 11694: a person's MFA step-up with a passkey, on their own slip.
+        .merge(self::facade::step_up_doors::routes())
         // OF-516: a role holder's door to the ladder's person asks.
         .merge(self::facade::decision_role_asks::routes())
         .route("/v1/usage/events", post(record_usage_event))

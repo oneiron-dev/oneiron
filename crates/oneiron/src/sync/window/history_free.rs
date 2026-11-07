@@ -648,6 +648,66 @@ pub fn export_promotion_snapshot(
     export_window_replacement_for(vault, key, doc, Some(&newest), withhold)
 }
 
+/// What a private world's sealed mirror ships ([`export_sealed_mirror_snapshot`]).
+pub(crate) struct SealedMirrorExport {
+    /// The snapshot.
+    pub(crate) bytes: Vec<u8>,
+    /// Whether its history passed the check: the snapshot may then be rooted later than the
+    /// mirror, so storing it destroys history a legal hold may keep.
+    pub(crate) checked: bool,
+}
+
+/// The snapshot a private world's sealed mirror of window `key` ships (FIX 17210): every export
+/// scrub runs over `doc` first, with nothing withheld (only the world's key opens the section it
+/// rides). When a scrub took something out, the window is pinned history-free, or the mirror is
+/// shallow (its root may hold what a later scrub took out), its history then passes the check a
+/// pinned window's does: it ships whole when that passes, else rooted at its newest operation, or
+/// cut at the mirror's one head when no root passes. Typed `HistoryFreeRootUnavailable` when that
+/// cut is not proved or its state does not pass either: nothing unchecked ships. Any other mirror
+/// ships whole, its full history, as before.
+pub(crate) fn export_sealed_mirror_snapshot(
+    vault: &Vault,
+    key: &WindowKey,
+    doc: &LoroDoc,
+) -> Result<SealedMirrorExport> {
+    let Scrubbed { check, .. } = scrub_for_export(
+        vault,
+        key,
+        doc,
+        &VersionVector::default(),
+        super::Withhold::Nothing,
+    )?;
+    let check = match check {
+        Some(check) => check,
+        None if doc.is_shallow() => HistoryCheck::read(vault, key, doc)?,
+        None => {
+            return Ok(SealedMirrorExport {
+                bytes: export_snapshot(doc)?,
+                checked: false,
+            });
+        }
+    };
+    let bytes = match history_free_snapshot(doc, Some(&check), None) {
+        Err(Error::Sync(SyncError::SyncProtocolError {
+            context: SyncProtocolValidation::HistoryFreeRootUnavailable,
+        })) => {
+            // The mirror has no observers: the barrier the cut commits
+            // reaches no window.
+            let cut = super::shallow::strict_window_cut(doc)?;
+            if cut.proved && check.root_ships(doc, &doc.oplog_frontiers()) {
+                cut.bytes
+            } else {
+                return Err(root_unavailable());
+            }
+        }
+        other => other?,
+    };
+    Ok(SealedMirrorExport {
+        bytes,
+        checked: true,
+    })
+}
+
 /// What the export scrubs left.
 struct Scrubbed {
     /// The check a pinned window's history must pass; `None` for a window not pinned.
@@ -700,6 +760,10 @@ fn scrub_for_export(
         crate::sync::row_birth::actor_erase::scrub_erased_actor_births(vault, doc, Some(key))?;
     let positions_scrubbed = crate::sync::origin_positions::scrub_stale(vault, doc, key)?;
     crate::workspace_roster::scrub_audience_edits(vault, doc, Some(key))?;
+    // Last of the removals: the source audiences the rows left carried need,
+    // each at this vault's current revision (Engine A, 6 Nov 03:46).
+    let source_audiences_scrubbed =
+        crate::sync::source_audiences::refresh_and_scrub(vault, doc, Some(key))?;
     // Every update and replacement ships each held revision of a PROJECT row the window
     // carries, whatever month it was learned in (Astra #1434 F2).
     if super::project_history::carry_project_history(vault, doc)? {
@@ -720,6 +784,7 @@ fn scrub_for_export(
         || origin_claims_scrubbed
         || section_fit_scrubbed
         || births_scrubbed
+        || source_audiences_scrubbed
         || positions_scrubbed
         || history_free_window_required(vault, key)?
     {
