@@ -282,6 +282,7 @@ impl Vault {
                 actor,
                 occurred,
                 learned_at,
+                crate::core_write::CoreWriteLaneRef::Unbound,
             )
         })?;
         if let Some(version) = version {
@@ -369,6 +370,7 @@ impl Vault {
                 occurred,
                 learned_at,
                 Some(parent_version),
+                crate::core_write::CoreWriteLaneRef::Unbound,
             )
         })
     }
@@ -430,6 +432,7 @@ impl Vault {
             fork_parent,
             None,
             Some(made_by),
+            crate::core_write::CoreWriteLaneRef::Unbound,
         )
     }
 
@@ -476,6 +479,7 @@ impl Vault {
             Some(made_by),
             true,
             false,
+            crate::core_write::CoreWriteLaneRef::Unbound,
         )
     }
 
@@ -505,6 +509,37 @@ impl Vault {
             occurred,
             learned_at,
             None,
+            crate::core_write::CoreWriteLaneRef::Unbound,
+        )
+    }
+
+    /// An artifact content writer's append, under that writer's actual read lane.
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) fn append_blob_artifact_version_in_lane(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        artifact_id: &EntityId,
+        bytes: &[u8],
+        provenance: &BlobVersionProvenance,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+        lane: crate::core_write::CoreWriteLaneRef<'_>,
+    ) -> Result<BlobArtifactVersion> {
+        self.append_blob_artifact_version_body_in_txn(
+            wtxn,
+            artifact_id,
+            VersionBody::Bytes(bytes),
+            provenance,
+            actor,
+            occurred,
+            learned_at,
+            None,
+            None,
+            None,
+            false,
+            true,
+            lane,
         )
     }
 
@@ -555,6 +590,7 @@ impl Vault {
             None,
             false,
             true,
+            crate::core_write::CoreWriteLaneRef::Unbound,
         )?;
         Ok((version, staged))
     }
@@ -588,6 +624,7 @@ impl Vault {
             made_by,
             false,
             false,
+            crate::core_write::CoreWriteLaneRef::Unbound,
         )
     }
 
@@ -602,6 +639,7 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
         fork_parent: Option<u64>,
+        lane: crate::core_write::CoreWriteLaneRef<'_>,
     ) -> Result<BlobArtifactVersion> {
         self.append_blob_artifact_version_with_parent_and_engine_in_txn(
             wtxn,
@@ -614,6 +652,7 @@ impl Vault {
             fork_parent,
             None,
             None,
+            lane,
         )
     }
 
@@ -630,6 +669,7 @@ impl Vault {
         fork_parent: Option<u64>,
         calc_engine: Option<&CalcEngineStamp>,
         made_by: Option<&MadeBy>,
+        lane: crate::core_write::CoreWriteLaneRef<'_>,
     ) -> Result<BlobArtifactVersion> {
         self.append_blob_artifact_version_body_in_txn(
             wtxn,
@@ -644,6 +684,7 @@ impl Vault {
             made_by,
             false,
             true,
+            lane,
         )
     }
 
@@ -667,6 +708,7 @@ impl Vault {
         made_by: Option<&MadeBy>,
         preserve_made_by: bool,
         reanchor_html: bool,
+        lane: crate::core_write::CoreWriteLaneRef<'_>,
     ) -> Result<BlobArtifactVersion> {
         self.append_blob_artifact_version_body_with_authority_in_txn(
             wtxn,
@@ -681,6 +723,7 @@ impl Vault {
             made_by,
             preserve_made_by,
             reanchor_html,
+            lane,
         )
     }
 
@@ -699,6 +742,7 @@ impl Vault {
         made_by: Option<&MadeBy>,
         preserve_made_by: bool,
         reanchor_html: bool,
+        lane: crate::core_write::CoreWriteLaneRef<'_>,
     ) -> Result<BlobArtifactVersion> {
         let actor = match &authority {
             VersionAuthority::Actor(actor) => *actor,
@@ -843,7 +887,7 @@ impl Vault {
             .batch_in()
             .claim_candidate(&claim_id, candidate, &envelope, occurred, learned_at);
         match &authority {
-            VersionAuthority::Actor(actor) => claim.apply_actor(wtxn, actor)?,
+            VersionAuthority::Actor(actor) => claim.apply_actor(wtxn, actor, lane)?,
             VersionAuthority::QueueCheck(_) => claim.apply(wtxn)?,
         }
 

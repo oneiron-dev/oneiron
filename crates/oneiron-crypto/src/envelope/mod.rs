@@ -4,7 +4,9 @@
 mod hybrid;
 mod seal;
 
-pub use self::seal::{OpenKey, OpenPolicy, SealKey, SealParams, seal, seal_with_aad};
+pub use self::seal::{
+    OpenKey, OpenPolicy, SealKey, SealParams, seal, seal_with_aad, seal_with_aad_into,
+};
 
 use std::io::Write;
 
@@ -168,6 +170,9 @@ pub enum Purpose {
     /// between the owner's machines (DEC-0005 fix 8). Its `key_id` is a fresh
     /// salt and a holder-only hint, never the world or the key.
     SealedWorldUpdate = 30,
+    /// A legal-clone content chunk or encrypted descriptor/summary, sealed only
+    /// to the host's independently destroyable per-order hybrid key.
+    LegalClone = 31,
 }
 
 impl Purpose {
@@ -203,6 +208,7 @@ impl Purpose {
             28 => Self::CheckpointHostOrderHoldsKey,
             29 => Self::WorldSideRow,
             30 => Self::SealedWorldUpdate,
+            31 => Self::LegalClone,
             other => return Err(Error::UnknownPurpose(other)),
         })
     }

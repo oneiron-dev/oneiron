@@ -1,5 +1,6 @@
 //! Tested code file frontiers, text edits and Git metadata edits.
 
+use crate::git_wire::path_text::git_path_bytes;
 use oneiron_base::error::{ArtifactError, Error, Result};
 use serde::{Deserialize, Serialize};
 
@@ -169,6 +170,9 @@ pub fn invalid() -> Error {
     ))
 }
 
+/// A code document's repo and path. `path` is a Git path's text: a name
+/// outside UTF-8 passes as its canonical escape, the only NUL it may hold
+/// (FIX 21326).
 pub fn validate_path(repo: &str, path: &str) -> Result<()> {
     if repo.trim().is_empty()
         || repo.len() > 4096
@@ -176,7 +180,8 @@ pub fn validate_path(repo: &str, path: &str) -> Result<()> {
         || path.is_empty()
         || path.len() > 4096
         || path.starts_with('/')
-        || path.contains(['\\', '\0'])
+        || path.contains('\\')
+        || git_path_bytes(path).is_err()
         || path.split('/').any(|part| matches!(part, "" | "." | ".."))
     {
         return Err(invalid());
