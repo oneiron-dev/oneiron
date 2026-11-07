@@ -465,6 +465,8 @@ use readonly_fold::authority_log_rows_in_txn;
 pub(crate) use readonly_fold::authority_view_readonly_for_store_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use readonly_fold::folded_vault_id_of_records;
+#[cfg(feature = "sync")]
+pub(crate) use readonly_fold::is_history_incomplete;
 pub(crate) use readonly_fold::{
     AuthorityCachedFold, advance_authority_cache_generation, authority_cache_generation,
     authority_fold_readonly_for_store_in_txn,
@@ -481,7 +483,8 @@ use machine_profile::{
     merge_machine_maps,
 };
 pub(crate) use machine_write::{
-    evidence_without_machine_signature, machine_claim_needs_history, machine_claim_read_admitted,
+    evidence_without_machine_signature, machine_claim_needs_history,
+    machine_claim_needs_history_observing, machine_claim_read_admitted,
     machine_history_authority_descends, machine_history_authority_descends_with_image,
     machine_history_host_context, resign_machine_claim_after_mask_in_txn,
     verify_machine_claim_in_txn,
