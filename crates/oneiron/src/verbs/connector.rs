@@ -90,12 +90,20 @@ impl From<ConnectorDescription> for ConnectorView {
 }
 
 /// `connector.list`: matching live catalogued keys and first-party interfaces.
+/// Includes built-in `google.sheets` while its pack's connection is checked
+/// (FIX 4862), in name order.
 pub fn connector_catalog(
     memory: &Memory<'_>,
     input: ConnectorListRequest,
 ) -> MemoryResult<Vec<ConnectorEntry>> {
     let query = input.query.as_deref().unwrap_or("");
-    let catalog = memory.vault().search_connector_catalog(query)?;
+    let mut catalog = memory.vault().search_connector_catalog(query)?;
+    if let Some(sheets) =
+        crate::channel_identity_provider::sheets::sheets_catalog_entry(memory.vault(), query)?
+    {
+        let at = catalog.partition_point(|entry| entry.name < sheets.name);
+        catalog.insert(at, sheets);
+    }
     let mut entries: Vec<ConnectorEntry> = catalog.into_iter().map(Into::into).collect();
     if let Some(web) = builtin_web_entry(query) {
         let position = entries.partition_point(|entry| entry.name() < web.name());
