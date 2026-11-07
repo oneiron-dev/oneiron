@@ -245,6 +245,8 @@ pub enum AgentVerb {
     VaultSkillsRestoredefaults,
     VaultSkillHubsPut,
     VaultSkillHubsGet,
+    VaultSkillHubsClawhubSearch,
+    VaultSkillHubsClawhubImport,
     VaultSkillHubsPublishersAdmit,
     VaultSkillHubsPublishersRevoke,
     VaultSkillHubsRefsGet,
@@ -427,6 +429,7 @@ pub enum AgentVerb {
     VaultFilesSourcesDetach,
     VaultFilesSourcesList,
     VaultFilesSourcesFiles,
+    VaultFilesSourcesExclude,
     VaultResidenceMode,
     VaultResidenceOpen,
     VaultResidenceIndex,
@@ -1563,6 +1566,8 @@ impl AgentVerb {
         Self::VaultSkillsRestoredefaults,
         Self::VaultSkillHubsPut,
         Self::VaultSkillHubsGet,
+        Self::VaultSkillHubsClawhubSearch,
+        Self::VaultSkillHubsClawhubImport,
         Self::VaultSkillHubsPublishersAdmit,
         Self::VaultSkillHubsPublishersRevoke,
         Self::VaultSkillHubsRefsGet,
@@ -1745,6 +1750,7 @@ impl AgentVerb {
         Self::VaultFilesSourcesDetach,
         Self::VaultFilesSourcesList,
         Self::VaultFilesSourcesFiles,
+        Self::VaultFilesSourcesExclude,
         Self::VaultResidenceMode,
         Self::VaultResidenceOpen,
         Self::VaultResidenceIndex,
@@ -2884,6 +2890,8 @@ impl AgentVerb {
             Self::VaultSkillsRestoredefaults => "vault.skills.restoreDefaults",
             Self::VaultSkillHubsPut => "vault.skill_hubs.put",
             Self::VaultSkillHubsGet => "vault.skill_hubs.get",
+            Self::VaultSkillHubsClawhubSearch => "vault.skill_hubs.clawhub.search",
+            Self::VaultSkillHubsClawhubImport => "vault.skill_hubs.clawhub.import",
             Self::VaultSkillHubsPublishersAdmit => "vault.skill_hubs.publishers.admit",
             Self::VaultSkillHubsPublishersRevoke => "vault.skill_hubs.publishers.revoke",
             Self::VaultSkillHubsRefsGet => "vault.skill_hubs.refs.get",
@@ -3076,6 +3084,7 @@ impl AgentVerb {
             Self::VaultFilesSourcesDetach => "vault.files.sources.detach",
             Self::VaultFilesSourcesList => "vault.files.sources.list",
             Self::VaultFilesSourcesFiles => "vault.files.sources.files",
+            Self::VaultFilesSourcesExclude => "vault.files.sources.exclude",
             Self::VaultResidenceMode => "vault.residence.mode",
             Self::VaultResidenceOpen => "vault.residence.open",
             Self::VaultResidenceIndex => "vault.residence.index",
@@ -4242,6 +4251,8 @@ impl AgentVerb {
                 | Self::VaultSkillsRestoredefaults
                 | Self::VaultSkillHubsPut
                 | Self::VaultSkillHubsGet
+                | Self::VaultSkillHubsClawhubSearch
+                | Self::VaultSkillHubsClawhubImport
                 | Self::VaultSkillHubsPublishersAdmit
                 | Self::VaultSkillHubsPublishersRevoke
                 | Self::VaultSkillHubsRefsGet
@@ -4424,6 +4435,7 @@ impl AgentVerb {
                 | Self::VaultFilesSourcesDetach
                 | Self::VaultFilesSourcesList
                 | Self::VaultFilesSourcesFiles
+                | Self::VaultFilesSourcesExclude
                 | Self::VaultResidenceMode
                 | Self::VaultResidenceOpen
                 | Self::VaultResidenceIndex
@@ -5589,6 +5601,8 @@ impl AgentVerb {
                 | Self::VaultSkillsRestoredefaults
                 | Self::VaultSkillHubsPut
                 | Self::VaultSkillHubsGet
+                | Self::VaultSkillHubsClawhubSearch
+                | Self::VaultSkillHubsClawhubImport
                 | Self::VaultSkillHubsPublishersAdmit
                 | Self::VaultSkillHubsPublishersRevoke
                 | Self::VaultSkillHubsRefsGet
@@ -5771,6 +5785,7 @@ impl AgentVerb {
                 | Self::VaultFilesSourcesDetach
                 | Self::VaultFilesSourcesList
                 | Self::VaultFilesSourcesFiles
+                | Self::VaultFilesSourcesExclude
                 | Self::VaultResidenceMode
                 | Self::VaultResidenceOpen
                 | Self::VaultResidenceIndex
@@ -7090,6 +7105,8 @@ impl AgentVerb {
                 | Self::VaultSkillsRestoredefaults
                 | Self::VaultSkillHubsPut
                 | Self::VaultSkillHubsGet
+                | Self::VaultSkillHubsClawhubSearch
+                | Self::VaultSkillHubsClawhubImport
                 | Self::VaultSkillHubsPublishersAdmit
                 | Self::VaultSkillHubsPublishersRevoke
                 | Self::VaultSkillHubsRefsGet
@@ -7271,6 +7288,7 @@ impl AgentVerb {
                 | Self::VaultFilesSourcesDetach
                 | Self::VaultFilesSourcesList
                 | Self::VaultFilesSourcesFiles
+                | Self::VaultFilesSourcesExclude
                 | Self::VaultResidenceMode
                 | Self::VaultResidenceOpen
                 | Self::VaultResidenceIndex
@@ -8218,6 +8236,7 @@ impl AgentVerb {
                 | Self::SelfInboxLater
                 | Self::VaultSkillsRestoredefaults
                 | Self::VaultSkillHubsPut
+                | Self::VaultSkillHubsClawhubImport
                 | Self::VaultSkillHubsPublishersAdmit
                 | Self::VaultSkillHubsPublishersRevoke
                 | Self::VaultSkillHubsRefsSet
@@ -8341,6 +8360,7 @@ impl AgentVerb {
                 | Self::VaultFilesSourcesAttach
                 | Self::VaultFilesSourcesRescan
                 | Self::VaultFilesSourcesDetach
+                | Self::VaultFilesSourcesExclude
                 | Self::VaultResidenceMode
                 | Self::VaultResidenceOpen
                 | Self::VaultResidencePrune
@@ -9156,6 +9176,8 @@ impl AgentVerb {
             Self::VaultSkillsRestoredefaults => &["spec"],
             Self::VaultSkillHubsPut => &["spec"],
             Self::VaultSkillHubsGet => &["spec"],
+            Self::VaultSkillHubsClawhubSearch => &["spec"],
+            Self::VaultSkillHubsClawhubImport => &["spec"],
             Self::VaultSkillHubsPublishersAdmit => &["spec"],
             Self::VaultSkillHubsPublishersRevoke => &["spec"],
             Self::VaultSkillHubsRefsGet => &["spec"],
@@ -9338,6 +9360,7 @@ impl AgentVerb {
             Self::VaultFilesSourcesDetach => &["spec"],
             Self::VaultFilesSourcesList => &["spec"],
             Self::VaultFilesSourcesFiles => &["spec"],
+            Self::VaultFilesSourcesExclude => &["spec"],
             Self::VaultResidenceMode => &["spec"],
             Self::VaultResidenceOpen => &["spec"],
             Self::VaultResidenceIndex => &["spec"],
@@ -10475,6 +10498,8 @@ impl AgentVerb {
             Self::VaultSkillsRestoredefaults => &["spec"],
             Self::VaultSkillHubsPut => &["spec"],
             Self::VaultSkillHubsGet => &["spec"],
+            Self::VaultSkillHubsClawhubSearch => &["spec"],
+            Self::VaultSkillHubsClawhubImport => &["spec"],
             Self::VaultSkillHubsPublishersAdmit => &["spec"],
             Self::VaultSkillHubsPublishersRevoke => &["spec"],
             Self::VaultSkillHubsRefsGet => &["spec"],
@@ -10657,6 +10682,7 @@ impl AgentVerb {
             Self::VaultFilesSourcesDetach => &["spec"],
             Self::VaultFilesSourcesList => &["spec"],
             Self::VaultFilesSourcesFiles => &["spec"],
+            Self::VaultFilesSourcesExclude => &["spec"],
             Self::VaultResidenceMode => &["spec"],
             Self::VaultResidenceOpen => &["spec"],
             Self::VaultResidenceIndex => &["spec"],
@@ -12269,6 +12295,12 @@ impl AgentVerb {
                 "The owner registers or revises a hub source; hub trust never grants activation authority."
             }
             Self::VaultSkillHubsGet => "Reads one configured hub as the owner.",
+            Self::VaultSkillHubsClawhubSearch => {
+                "Queries a configured HTTP hub origin as a public ClawHub-compatible API; returned provider locators are not pinned, imported or admitted packages."
+            }
+            Self::VaultSkillHubsClawhubImport => {
+                "Downloads an owner-selected ClawHub ZIP or pinned public-GitHub subtree and imports the same checked bytes through native publisher, scan and fit doors; provider contentHash is not a native pin."
+            }
             Self::VaultSkillHubsPublishersAdmit => {
                 "The owner admits a foreign publisher to offer candidates from one configured hub, and nothing else."
             }
@@ -12806,6 +12838,9 @@ impl AgentVerb {
             }
             Self::VaultFilesSourcesFiles => {
                 "The owner reads one Files source's ledger: each file's path, readiness (text or name only, and why), revision and dates."
+            }
+            Self::VaultFilesSourcesExclude => {
+                "The owner replaces a Files source's filters: the include patterns it reads, and the paths the host never opens. Absent keeps today's list; a list, even an empty one, replaces it."
             }
             Self::VaultResidenceMode => {
                 "Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive."

@@ -2138,12 +2138,19 @@ class Oneiron:
         def get(self, spec: Facade.SkillHubRequest) -> Facade.SkillHubRecord:
             """Reads one configured hub as the owner."""
         @property
+        def clawhub(self) -> "Oneiron._VaultSkillHubsClawhubVerbs": ...
+        @property
         def publishers(self) -> "Oneiron._VaultSkillHubsPublishersVerbs": ...
         @property
         def refs(self) -> "Oneiron._VaultSkillHubsRefsVerbs": ...
     class _VaultSkillHubsDefaultVerbs:
         def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.DefaultSkillHub:
             """Reads the first hub identity, configured mirror endpoint and pinned skill-root ref; owner hub and ref setters configure that source."""
+    class _VaultSkillHubsClawhubVerbs:
+        def search(self, spec: Facade.ClawHubSearchRequest) -> Facade.ClawHubSearchReply:
+            """Queries a configured HTTP hub origin as a public ClawHub-compatible API; returned provider locators are not pinned, imported or admitted packages."""
+        def import_(self, spec: Facade.ClawHubImportRequest) -> Facade.ClawHubImportReply:
+            """Downloads an owner-selected ClawHub ZIP or pinned public-GitHub subtree and imports the same checked bytes through native publisher, scan and fit doors; provider contentHash is not a native pin."""
     class _VaultSkillHubsPublishersVerbs:
         def admit(self, spec: Facade.SkillPublisherRequest) -> Facade.SkillPublisherAdmission:
             """The owner admits a foreign publisher to offer candidates from one configured hub, and nothing else."""
@@ -2621,6 +2628,8 @@ class Oneiron:
             """The owner lists this install's Files world and every Files source, with each one's exclusions and ledger counts."""
         def files(self, spec: Facade.FilesSourceFilesRequest) -> Facade.FilesSourceFiles:
             """The owner reads one Files source's ledger: each file's path, readiness (text or name only, and why), revision and dates."""
+        def exclude(self, spec: Facade.FilesSourceExcludeRequest) -> Facade.FilesSourceExcludeAnswer:
+            """The owner replaces a Files source's filters: the include patterns it reads, and the paths the host never opens. Absent keeps today's list; a list, even an empty one, replaces it."""
         def convert(self, spec: Facade.FilesSourceConvertRequest) -> Facade.FilesSourceAttachAnswer:
             """The owner converts an attached notes folder on this host to Files, keeping its existing notes, history and links. The host rescans the folder into its Files world and returns the source and rescan report."""
     class _VaultResidenceVerbs:
