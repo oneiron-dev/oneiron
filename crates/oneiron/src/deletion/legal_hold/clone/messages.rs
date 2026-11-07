@@ -64,9 +64,11 @@ struct MessageRow {
 }
 
 /// Streams every selected message, in id order, under one source snapshot:
-/// every result body pinned, then the custody read guard before the source
-/// writer, as a gate capture takes them, all held until the HOST
-/// acknowledges the exact request and transcript. A missing selected
+/// every result body pinned, then the custody read guard before an LMDB
+/// read snapshot, as a gate capture takes them, all held until the HOST
+/// acknowledges the exact request and transcript. No writer is held, so the
+/// user's writes and erases commit meanwhile; an erase's key destruction
+/// waits for the custody guard, so the snapshot keeps its keys. A missing selected
 /// message, or a selected id whose row is not a MESSAGE, fails the capture
 /// before its summary, so no ACK can claim it. A message whose attachment
 /// names a body it no longer holds, or that no row holds, is captured
@@ -83,7 +85,7 @@ pub(super) fn capture(
     // before it opens and stays pinned past the last read.
     let _bodies = vault.pin_all_result_bodies();
     let _custody = vault.store.gate_custody_read_guard()?;
-    let txn = vault.store.env.write_txn()?;
+    let txn = vault.store.env.read_txn()?;
     check()?;
     let mut collector = Collector::pinned(stream, public, request)?;
     let mut absent_result_bodies = Vec::new();
@@ -155,7 +157,7 @@ pub(super) fn capture(
         CaptureExtent::Messages,
         &check,
     )?;
-    // Read-only abort, after the exact durable HOST acknowledgement.
+    // The snapshot ends after the exact durable HOST acknowledgement.
     drop(txn);
     Ok(())
 }
