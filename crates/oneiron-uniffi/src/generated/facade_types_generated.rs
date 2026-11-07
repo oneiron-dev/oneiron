@@ -28588,6 +28588,12 @@ pub struct OfferEvidence {
     pub rubric_revision: Option<String>,
     #[serde(rename = "card", default, skip_serializing_if = "Option::is_none")]
     pub card: Option<SufficiencyCard>,
+    #[serde(
+        rename = "paired_measurement",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub paired_measurement: Option<Vec<u8>>,
     #[serde(rename = "losses")]
     pub losses: Vec<String>,
     #[serde(rename = "risk", default, skip_serializing_if = "Option::is_none")]
