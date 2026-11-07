@@ -43324,6 +43324,12 @@ pub struct CodeSnapshotView {
     pub scope_key: String,
     #[serde(rename = "files")]
     pub files: Vec<CodeSnapshotFile>,
+    #[serde(
+        rename = "capture_receipt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub capture_receipt: Option<String>,
 }
 
 /// `oneiron::memory::codebase_doors::types::CodeSnapshotRequest`.
