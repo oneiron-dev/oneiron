@@ -17770,6 +17770,41 @@ async fn vault_connectors_calls_approve_once(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_connectors_replies_retry_failed(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.connectors.replies.retry_failed")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.connectors.replies.retry_failed", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.connectors.replies.retry_failed", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_connectors_replies_retry_failed(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_consent_deny(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -28750,6 +28785,109 @@ async fn vault_settings_web_connector_replace(
         facade_hooks_pre(server, call, "vault.settings.web_connector.replace", value).await?;
     let ran = async {
         let (output, listed) = super::host_doors::vault_settings_web_connector_replace(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_settings_model_pack(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.settings.model_pack")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.settings.model_pack", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.settings.model_pack", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_settings_model_pack(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_settings_model_pack_replace(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.settings.model_pack.replace")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.settings.model_pack.replace", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.settings.model_pack.replace", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_settings_model_pack_replace(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_model_pack_revert(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.model_pack.revert")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.model_pack.revert", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.model_pack.revert", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_model_pack_revert(
             server,
             auth,
             facade_door_input(&mut hooks)?,
@@ -45268,6 +45406,14 @@ fn boxed_vault_connectors_calls_approve_once<'a>(
     Box::pin(vault_connectors_calls_approve_once(server, call, input))
 }
 #[inline(never)]
+fn boxed_vault_connectors_replies_retry_failed<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_connectors_replies_retry_failed(server, call, input))
+}
+#[inline(never)]
 fn boxed_vault_consent_deny<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
@@ -48112,6 +48258,30 @@ fn boxed_vault_settings_web_connector_replace<'a>(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> FacadeRowFuture<'a> {
     Box::pin(vault_settings_web_connector_replace(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_settings_model_pack<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_settings_model_pack(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_settings_model_pack_replace<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_settings_model_pack_replace(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_model_pack_revert<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_model_pack_revert(server, call, input))
 }
 #[inline(never)]
 fn boxed_vault_connectors_web_usage<'a>(
@@ -52213,6 +52383,9 @@ async fn call_verb_row(
         "vault.connectors.calls.approve_once" => {
             boxed_vault_connectors_calls_approve_once(server, call, input).await
         }
+        "vault.connectors.replies.retry_failed" => {
+            boxed_vault_connectors_replies_retry_failed(server, call, input).await
+        }
         "vault.consent.deny" => boxed_vault_consent_deny(server, call, input).await,
         "vault.consent.create_standing_grant" => {
             boxed_vault_consent_create_standing_grant(server, call, input).await
@@ -52847,6 +53020,11 @@ async fn call_verb_row(
         "vault.settings.web_connector.replace" => {
             boxed_vault_settings_web_connector_replace(server, call, input).await
         }
+        "vault.settings.model_pack" => boxed_vault_settings_model_pack(server, call, input).await,
+        "vault.settings.model_pack.replace" => {
+            boxed_vault_settings_model_pack_replace(server, call, input).await
+        }
+        "vault.model_pack.revert" => boxed_vault_model_pack_revert(server, call, input).await,
         "vault.connectors.web.usage" => boxed_vault_connectors_web_usage(server, call, input).await,
         "vault.models.oneironer.bind" => {
             boxed_vault_models_oneironer_bind(server, call, input).await
@@ -53526,6 +53704,7 @@ async fn call_verb_row(
         | "self.code.symbols.renew"
         | "self.code.symbols.release"
         | "self.code.proposal_submit"
+        | "self.code.proposal_resolve"
         | "self.code.merge_queue.enqueue"
         | "self.code.checkout.bind"
         | "self.code.export"

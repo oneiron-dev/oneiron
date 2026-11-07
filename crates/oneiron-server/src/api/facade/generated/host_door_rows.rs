@@ -52,6 +52,7 @@
 //! - `vault.roots.requests.cancel`
 //! - `vault.policy.outbound.decide`
 //! - `vault.policy.relay.decide`
+//! - `vault.connectors.replies.retry_failed`
 //! - `vault.secrets.lift_history`
 //! - `vault.settings.inference_defaults`
 //! - `vault.settings.inference_defaults.replace`
@@ -96,6 +97,9 @@
 //! - `vault.messages.react`
 //! - `vault.settings.web_connector`
 //! - `vault.settings.web_connector.replace`
+//! - `vault.settings.model_pack`
+//! - `vault.settings.model_pack.replace`
+//! - `vault.model_pack.revert`
 //! - `vault.connectors.web.usage`
 //! - `ai.streams.release`
 //! - `ai.anonymous_chat`
@@ -1742,6 +1746,7 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.roots.requests.cancel"
                 | "vault.policy.outbound.decide"
                 | "vault.policy.relay.decide"
+                | "vault.connectors.replies.retry_failed"
                 | "vault.secrets.lift_history"
                 | "vault.settings.inference_defaults"
                 | "vault.settings.inference_defaults.replace"
@@ -1786,6 +1791,9 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.messages.react"
                 | "vault.settings.web_connector"
                 | "vault.settings.web_connector.replace"
+                | "vault.settings.model_pack"
+                | "vault.settings.model_pack.replace"
+                | "vault.model_pack.revert"
                 | "vault.connectors.web.usage"
                 | "ai.streams.release"
                 | "vault.models.trials.resend_arm"
