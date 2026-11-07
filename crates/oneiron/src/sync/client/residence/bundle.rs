@@ -31,6 +31,7 @@ mod attempt;
 mod entries;
 mod pad_sweep;
 mod publication;
+mod publication_access;
 mod refill;
 mod relay_observation;
 mod report;
@@ -41,7 +42,9 @@ mod work;
 
 pub use self::access::PadAdmissionReport;
 pub(crate) use self::relay_observation::observe_sealed_bundle_relay;
-pub use self::relay_observation::{SealedBundleRelayObservation, sealed_bundle_relay_observation};
+pub use self::relay_observation::{
+    SealedBundleRelayObservation, UnmergedUpload, sealed_bundle_relay_observation,
+};
 pub use self::report::SealedBundleRelay;
 use self::upload::{put_object, upload_refused};
 
@@ -301,6 +304,10 @@ pub(crate) async fn relay_sealed_bundle(
         Err(error) => return Err(error),
     };
     relay.reached = true;
+    // A missing publication grant must not stop the existing admission/erase work.
+    if let Err(error) = publication_access::serve(vault, &mut rpc).await {
+        tracing::warn!(%error, "publication grants remain pending");
+    }
     // The admissions first: an old reader with no erase or slot work still
     // grants (FIX 4271). A home that refuses them still takes the rest.
     match access::serve_admissions(vault, &mut rpc).await {
@@ -341,6 +348,8 @@ pub(crate) async fn relay_sealed_bundle(
         work::WorkFate::Committed(attempt) => {
             attempt::settle_one(vault, attempt::AttemptKey::Auto(address), &attempt)
                 .map_err(storage)?;
+            // What it carries unmerged stays shown to the owner (FIX 19525).
+            relay_observation::restore_upload(vault, &attempt);
             cursor.taken = Some(attempt.generation);
             relay.published = Some(attempt.generation);
             relay.incomplete_authority = attempt.incomplete_authority;
@@ -517,6 +526,9 @@ impl SlotRelay<'_> {
                 }
             };
             let generation = upload.bundle.generation();
+            // The owner sees each readable section this upload carries
+            // unmerged (FIX 19525) once it is assembled, before its commit.
+            relay_observation::observe_upload(vault, home, generation, &upload.unmerged_sections);
             let staged = put_object(
                 rpc,
                 &generation,
@@ -536,7 +548,7 @@ impl SlotRelay<'_> {
             let terminal: Option<bool> = if !staged {
                 None
             } else {
-                let attempt = attempt::BundleAttempt {
+                let mut attempt = attempt::BundleAttempt {
                     home,
                     executor,
                     generation,
@@ -549,10 +561,12 @@ impl SlotRelay<'_> {
                     pads_digest: upload.pads.digest(),
                     incomplete_authority: upload.incomplete_authority.clone(),
                     awaiting_reader: awaiting.clone(),
+                    unmerged_sections: upload.unmerged_sections.clone(),
+                    assembled_at: Some(vault.store.clock.peek_recorded_at()),
                 };
                 // The exact attempt persists before the first commit send, so
                 // an ack lost on the way resumes, never reuploads.
-                attempt::persist(vault, attempt::AttemptKey::Auto(address), &attempt)
+                attempt::persist(vault, attempt::AttemptKey::Auto(address), &mut attempt)
                     .map_err(storage)?;
                 match work::begin_work(rpc, &attempt).await? {
                     work::WorkOutcome::Accepted(status) => match status.state {
