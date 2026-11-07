@@ -13,7 +13,8 @@ use crate::memory::{
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult,
 };
 use crate::note::{
-    FileHandle, FileReadiness, FolderFileState, FolderRescanReport, FolderSource, FolderSourceFile,
+    FileHandle, FileOriginal, FileReadiness, FolderFileState, FolderRescanReport, FolderSource,
+    FolderSourceFile,
 };
 
 /// `vault.files.sources.attach`'s input: the folder, and what of it the
@@ -262,6 +263,10 @@ pub struct FilesFileView {
     /// file's text; none for a file held by name only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revision: Option<String>,
+    /// The kept original's blob artifact, exact version and content hash;
+    /// absent when this ledger row names no kept original.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original: Option<FileOriginal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bytes: Option<u64>,
     /// When the file was last written (Unix seconds), at that revision.
@@ -369,6 +374,7 @@ fn files_file_view(source: EntityId, file: FolderSourceFile) -> FilesFileView {
         note: file.note,
         fork,
         revision,
+        original: file.original,
         bytes: meta.map(|meta| meta.bytes),
         modified_at: meta.map(|meta| meta.modified_at),
         first_seen_at,

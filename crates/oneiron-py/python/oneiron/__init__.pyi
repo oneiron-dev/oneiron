@@ -793,6 +793,8 @@ class Oneiron:
         def custody(self) -> "Oneiron._VaultCustodyVerbs": ...
         @property
         def mail(self) -> "Oneiron._VaultMailVerbs": ...
+        @property
+        def dreamer(self) -> "Oneiron._VaultDreamerVerbs": ...
     class _VaultCommitmentsVerbs:
         def create(self, spec: Facade.CommitmentCreateRequest) -> Facade.CommitmentCreateReceipt:
             """Creates an authored commitment series and its due index atomically, without approving a reminder."""
@@ -3732,6 +3734,12 @@ class Oneiron:
             """The compliance log, oldest first: each change to the setting and each search made under it. The Owner and Admins read it."""
         def search(self, spec: Facade.MailComplianceSearchRequest) -> Facade.MailComplianceSearchReply:
             """Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers."""
+    class _VaultDreamerVerbs:
+        @property
+        def follower(self) -> "Oneiron._VaultDreamerFollowerVerbs": ...
+    class _VaultDreamerFollowerVerbs:
+        def keyframe(self, spec: Facade.EmptyRequest) -> Facade.DreamerFollowerKeyframeResult:
+            """The owner marks each existing follower session to fold retained frames into a keyframe after its prepared suffix drains. Returns sessions marked, not folds completed."""
     class _FeedbackVerbs:
         def preview(self, spec: Facade.FeedbackPreviewRequest) -> Facade.FeedbackSubjectPreview:
             """The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval."""

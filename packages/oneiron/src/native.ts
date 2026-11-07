@@ -1279,6 +1279,7 @@ vaultMailComplianceSearch(input: unknown): unknown
 vaultFilesSourcesConvert(input: unknown): unknown
 vaultSyncRepoManifestsConflictReview(input: unknown): unknown
 vaultSyncRepoManifestsConflictDiscard(input: unknown): unknown
+vaultDreamerFollowerKeyframe(input: unknown): unknown
 connectorAnswer(input: unknown): unknown
 selfBrowserOpen(input: unknown): unknown
 selfBrowserObserve(input: unknown): unknown

@@ -962,6 +962,9 @@ class Oneiron:
         @property
         def mail(self) -> "Oneiron._VaultMailVerbs":
             return Oneiron._VaultMailVerbs(self._client)
+        @property
+        def dreamer(self) -> "Oneiron._VaultDreamerVerbs":
+            return Oneiron._VaultDreamerVerbs(self._client)
     class _VaultCommitmentsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -5999,6 +6002,18 @@ class Oneiron:
         def search(self, spec):
             """Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers."""
             return json.loads(_translate(lambda: self._client.vault_mail_compliance_search(json.dumps(spec))))
+    class _VaultDreamerVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def follower(self) -> "Oneiron._VaultDreamerFollowerVerbs":
+            return Oneiron._VaultDreamerFollowerVerbs(self._client)
+    class _VaultDreamerFollowerVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def keyframe(self, spec):
+            """The owner marks each existing follower session to fold retained frames into a keyframe after its prepared suffix drains. Returns sessions marked, not folds completed."""
+            return json.loads(_translate(lambda: self._client.vault_dreamer_follower_keyframe(json.dumps(spec))))
     class _FeedbackVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

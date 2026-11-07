@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1334 code-mode rows (1293 host rows, 41 run rows), 4702 declarations.
-// Replies: 1142 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1335 code-mode rows (1294 host rows, 41 run rows), 4704 declarations.
+// Replies: 1143 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -1615,7 +1615,8 @@ declare namespace Sdk {
   type FilesFileState = "landed" | "proposed" | "retracted" | "name_only";
   type NameOnlyReason = "unsupported" | "not_text" | "unreadable" | "empty" | "linked";
   type FileReadiness = "text" | { name_only: { why: NameOnlyReason } };
-  type FilesFileView = { handle: FileHandle; state: FilesFileState; readiness: FileReadiness; note?: EntityId | null; fork?: EntityId | null; revision?: string | null; bytes?: number | null; modified_at?: number | null; first_seen_at?: number | null; indexed_at?: number | null };
+  type FileOriginal = { artifact: EntityId; version: number; content_hash: string };
+  type FilesFileView = { handle: FileHandle; state: FilesFileState; readiness: FileReadiness; note?: EntityId | null; fork?: EntityId | null; revision?: string | null; original?: FileOriginal | null; bytes?: number | null; modified_at?: number | null; first_seen_at?: number | null; indexed_at?: number | null };
   type FilesSourceFiles = { source: EntityId; files: FilesFileView[] };
   type ResidenceModeName = "opened" | "all";
   type ResidenceModeRequest = { machine: EntityId; mode: ResidenceModeName };
@@ -4564,6 +4565,7 @@ declare namespace Sdk {
   type RepoManifestConflictDiscardRequest = { binding: string };
   type RepoManifestConflictQueueView = { state: "queued"; sequence: number } | { state: "failed"; error: string };
   type RepoManifestConflictDiscardView = { state: "discarded"; update_base64: string; queue: RepoManifestConflictQueueView } | { state: "stale" } | { state: "window_live" };
+  type DreamerFollowerKeyframeResult = { sessions_marked: number };
   type TabSwitchCause = "opened" | "closed";
   type TabSwitch = { tab: string; url: string; title: string; from: string; why: TabSwitchCause };
   type DemonstrationId = string;
@@ -6266,6 +6268,12 @@ declare const vault: Sdk.VaultHost & {
     revert_as(input: Sdk.DrafterRevertRequest): Promise<Sdk.DrafterRevertReceipt | StoredResult>;
     /** The owner reads the drafter policy, each bound target's pointer and generation, and the content-free drafter events after an optional cursor. */
     status(input: Sdk.DrafterStatusRequest): Promise<Sdk.DrafterStatus | StoredResult>;
+  };
+  dreamer: {
+    follower: {
+      /** The owner marks each existing follower session to fold retained frames into a keyframe after its prepared suffix drains. Returns sessions marked, not folds completed. */
+      keyframe(input: Sdk.EmptyRequest): Promise<Sdk.DreamerFollowerKeyframeResult | StoredResult>;
+    };
   };
   edges: {
     put(input: Sdk.MemoryEdgeInput): Promise<Sdk.MemoryEdgeOutput | StoredResult>;
