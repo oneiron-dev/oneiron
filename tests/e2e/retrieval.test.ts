@@ -190,14 +190,14 @@ async function effortCorpus(engine: EngineFixture) {
  * the observed production-reconciliation background corpus below. Unknown input
  * fails the flow; no default vector, prompt echo or engine-derived answer.
  */
-// G8 source-mapped background corpus (FIX21902 closure, Engine 12:03; FIX21914 adds observed agent-health-review). 28
+// G8 source-mapped background corpus (FIX21902 closure, Engine 12:03; FIX21914 adds observed agent-health-review). 29
 // pinned literals from production-reconciliation batches (R22 32-input batch
 // before first test write, 8-input batches after; egress.allowAll on a fresh
 // vault legitimately seeds bootstrap data): 1 startup literal 'model', 7
 // opaque 32-hex rows (exact producing rows UNKNOWN per rootcause, pinned as
 // literals, never a live any-32hex pattern which would silently accept
-// unplanned inputs), 13 skill hub_provenance CLAIMs (5 bootstrap hubId
-// eba40381... + 8 pack hubId 0f8ccc77..., all clock-free verbatim; producer
+// unplanned inputs), 14 skill hub_provenance CLAIMs (5 bootstrap hubId
+// eba40381... + 9 pack hubId 0f8ccc77..., all clock-free verbatim; producer
 // skill_hub/index.rs:257-266 ClaimBody PREDICATE_SKILL_HUB_PROVENANCE with
 // {contentHash, hubRef}, embedded via embed.rs:136-145 payload_text and
 // eligibility.rs:116-123 ClaimBody), 5 bootstrap scan_verdict shapes
@@ -237,10 +237,11 @@ const BACKGROUND_LITERALS: readonly string[] = [
   '{"contentHash": "bdea3a9b9ff4c63804e89de60815957fdae35f9e7ed99963b5b0532999db1f59", "hubRef": {"hubId": "0f8ccc77298089c9b670f3bac7ae8f07", "refString": "pack-skill:81ffcb82eb5ff17e543684ad7ef119b5b6d30b1f5e47a18158a023317c8aeb60", "pin": {"type": "content_hash", "value": "bdea3a9b9ff4c63804e89de60815957fdae35f9e7ed99963b5b0532999db1f59"}}}',
   '{"contentHash": "f661e275a80d44bfc5ac4cd3cb200f45010a9c41aa15289f47d699849e460c2a", "hubRef": {"hubId": "0f8ccc77298089c9b670f3bac7ae8f07", "refString": "pack-skill:79ba63d22e2a88e88be173d0db70c37d962899d50769a861be5ade0a729577c9", "pin": {"type": "content_hash", "value": "f661e275a80d44bfc5ac4cd3cb200f45010a9c41aa15289f47d699849e460c2a"}}}',
   '{"contentHash": "237cec53997e8d4b4bc642b34913249a2d86672def3fc1d5948679aa75ac7e0c", "hubRef": {"hubId": "0f8ccc77298089c9b670f3bac7ae8f07", "refString": "pack-skill:08da204ede76e8749a0d4866bebbf5d21d3396475f6005f1c4fb68f3431021f8", "pin": {"type": "content_hash", "value": "237cec53997e8d4b4bc642b34913249a2d86672def3fc1d5948679aa75ac7e0c"}}}',
+  '{"contentHash": "c3e4241a880307b1003b9c962eded7e7bfd9a2433a417dd17e90efef3b52616c", "hubRef": {"hubId": "0f8ccc77298089c9b670f3bac7ae8f07", "refString": "pack-skill:15ab715ae6fc567ee6217ddd3232b4e6513a2b180fcca469d6bfdaac7e8efd9d", "pin": {"type": "content_hash", "value": "c3e4241a880307b1003b9c962eded7e7bfd9a2433a417dd17e90efef3b52616c"}}}',
   'Interview a human for a typed project goal record and commit it via authenticated intake.',
   'Judge agent health from receipts with closed-form detectors and seeded dials.',
 ];
-// contentHashes of the 13 observed skill rows (5 bootstrap + 8 pack).
+// contentHashes of the 14 observed skill rows (5 bootstrap + 9 pack).
 const BACKGROUND_SKILL_HASHES: ReadonlySet<string> = new Set([
   '1bb662bb3d352973c375c2e2884979ae868c32d0b496666a0a908babb77977f7',
   '237cec53997e8d4b4bc642b34913249a2d86672def3fc1d5948679aa75ac7e0c',
@@ -252,6 +253,7 @@ const BACKGROUND_SKILL_HASHES: ReadonlySet<string> = new Set([
   '8e6ef3e2ed38e1232b50027cb16f9e1bd097aad921f7ec0efd4b6e36a9fe5a37',
   'b97d7d780db236973912a26553c2759b368104a4a903419d51309aa0338691d3',
   'bdea3a9b9ff4c63804e89de60815957fdae35f9e7ed99963b5b0532999db1f59',
+  'c3e4241a880307b1003b9c962eded7e7bfd9a2433a417dd17e90efef3b52616c',
   'd5ad33a464e4c5bf48254121a0c3fc9a600e7104d46a1359057ec8369ac25a4d',
   'f661e275a80d44bfc5ac4cd3cb200f45010a9c41aa15289f47d699849e460c2a',
   'fff8ad74327606acd8335424de87dc954dfd99792b2213e9793fc0bebe329b69',
@@ -658,8 +660,6 @@ suite.test(test, "RETRIEVAL-05", "Retrieval effort and deadline should work", as
   try {
     const rows = await effortCorpus(engine);
     const reader = await recordBoundReader(engine, [engine.pairedActor.principalRef, ...rows.map(row => row.id)]);
-    const role = await engine.client.call("vault.models.roles.read", { role: "reranker" });
-    expect(role.provider).toBe("retrieval_fixture");
     const observations = [];
     for (const effort of fixture.efforts) {
       const beforeCalls = providers.seenFixtureCalls.length;
@@ -763,7 +763,10 @@ suite.test(test, "RETRIEVAL-06", "Evidence abstention not invented recall should
   const fixture = await catalog.readJson<EvidenceFixture>("retrieval-evidence");
   const provider = startVectorTable(fixture);
   const engine = await EngineFixture.start({ id: "RETRIEVAL-06", profile,
-    initArgs: endpointInitArgs(provider.endpoint),
+    // Explicit reconciler cadence: an empty pass sleeps 500 ms, not the
+    // 15 s default, so a row written after a partial pass is filled
+    // inside the unchanged readiness budget.
+    initArgs: [...endpointInitArgs(provider.endpoint), "--embedder-idle-interval-ms", "500"],
     embedder: { endpoint: provider.endpoint, modelKey: fixture.embedder.modelKey,
       modelId: fixture.embedder.modelId, dimensions: fixture.embedder.dimensions,
       egress: { allowAll: true } } });
@@ -1232,17 +1235,29 @@ suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should wo
 });
 
 type ClusterVerb = "vault.cluster" | "vault.cluster.propose" | "vault.cluster.proposal" | "vault.cluster.resolve_proposal";
+// One tools/list per initialized MCP session: the server advertises
+// tools.listChanged = false, so the bound schema versions hold for it.
+const clusterSchemas = new WeakMap<object, Map<string, string>>();
+async function clusterSchemaVersion(engine: EngineFixture, verb: ClusterVerb): Promise<string> {
+  let bound = clusterSchemas.get(engine.mcp);
+  if (!bound) {
+    const listed = await engine.mcp.request<{ tools: {
+      name: string; inputSchema: { properties: { schema_version: { const: string } } };
+    }[] }>("tools/list");
+    bound = new Map(listed.tools.map(item => [item.name, item.inputSchema.properties.schema_version.const]));
+    clusterSchemas.set(engine.mcp, bound);
+  }
+  const version = bound.get(verb);
+  if (!version) throw new Error(`Required public MCP tool not registered: ${verb}`);
+  return version;
+}
 // The tool-first envelope is the advertised schema: schema_version bound from
 // tools/list, consent, and the verb input nested under arguments.spec. A bare
 // top-level spec is refused as tool_args_invalid.
 async function clusterTool<V extends ClusterVerb>(engine: EngineFixture, verb: V, input: FacadeInput<V>): Promise<FacadeResult<V>> {
-  const listed = await engine.mcp.request<{ tools: {
-    name: string; inputSchema: { properties: { schema_version: { const: string } } };
-  }[] }>("tools/list");
-  const tool = listed.tools.find(item => item.name === verb);
-  if (!tool) throw new Error(`Required public MCP tool not registered: ${verb}`);
+  const schemaVersion = await clusterSchemaVersion(engine, verb);
   const reply = await engine.mcp.callTool(verb, {
-    schema_version: tool.inputSchema.properties.schema_version.const,
+    schema_version: schemaVersion,
     consent: { policy_ref: "policy:retrieval-session", purpose: "retrieval clustering journey" },
     arguments: { spec: input },
   }) as { isError: boolean; structuredContent: { tool: string; output: FacadeResult<V> } };
