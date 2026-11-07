@@ -59950,6 +59950,18 @@ pub enum TranscriptIngestOutcome {
         #[serde(rename = "open_session_ref")]
         open_session_ref: String,
     },
+    #[serde(rename = "hook_pending")]
+    HookPending {
+        #[serde(rename = "session_ref")]
+        session_ref: String,
+        #[serde(rename = "ask")]
+        ask: String,
+    },
+    #[serde(rename = "queued")]
+    Queued {
+        #[serde(rename = "attempt_ref")]
+        attempt_ref: String,
+    },
     #[serde(rename = "note_fallback")]
     NoteFallback {
         #[serde(rename = "note_ref")]
