@@ -22,6 +22,8 @@ pub mod artifact_origin;
 /// The backup handoff: a label's retention pin and the supervisor's
 /// root-stage ack (LC backup shipper).
 pub mod backup_handoff;
+/// The supervisor-pinned public recipient for checkpoint host-order members.
+pub mod checkpoint_recipient;
 /// The publisher training outbox: offers, controls and receipts (OF-420).
 pub mod conversation_training;
 mod ctl;

@@ -5,20 +5,30 @@
 //! principal's key: only the hits that key admits stay, in their cached order
 //! and with their cached scores, and the answer carries that read's receipt.
 //! Nothing runs again (no search, rerank or refill), and the stored replay
-//! record is not rewritten.
-use super::super::SelfDispatchOutcome;
+//! record is not rewritten. A replayed verb answer is released again by the
+//! door that served it, for its caller now (FIX 8158).
+use super::super::{AgentVerbDoor, SelfDispatchOutcome};
 use crate::claim::{PointRead, ScopedReadActorKey, ScopedReadReceipt};
 use crate::{Result, Vault};
 
 /// `outcome` as `key` reads it now, beside the receipt it answers under: a
 /// replayed search keeps the hits `key` admits, under that read's receipt;
-/// any other outcome keeps `receipt` and is returned as it was.
+/// a replayed verb answer is what `replay`'s door releases of it for verb
+/// it names; any other outcome keeps `receipt` and is returned as it was.
 pub(super) fn rescoped(
     vault: &Vault,
     key: &ScopedReadActorKey,
+    replay: Option<(&dyn AgentVerbDoor, &str)>,
     outcome: SelfDispatchOutcome,
     receipt: ScopedReadReceipt,
 ) -> Result<(SelfDispatchOutcome, ScopedReadReceipt)> {
+    let outcome = match (outcome, replay) {
+        (SelfDispatchOutcome::AgentVerb(answer), Some((door, verb))) => {
+            let answer = door.replay_action_answer(verb, answer)?;
+            return Ok((SelfDispatchOutcome::AgentVerb(answer), receipt));
+        }
+        (outcome, _) => outcome,
+    };
     let SelfDispatchOutcome::MemorySearch(mut search) = outcome else {
         return Ok((outcome, receipt));
     };
