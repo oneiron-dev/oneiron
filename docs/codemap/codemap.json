@@ -4345,14 +4345,15 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "HostActionAuthority"
+      "HostActionAuthority",
+      "HostActionIdentity"
      ],
      "path": "src/authority/host_action.rs",
      "purpose": "Who a host credential acts as inside its vault (FIX 2222, owner ruling \"A + support\", 2026-10-18)",
      "surface": {
-      "crate-vis": 15,
-      "fn": 4,
-      "struct": 1
+      "crate-vis": 14,
+      "fn": 7,
+      "struct": 2
      }
     },
     {
@@ -5370,8 +5371,8 @@
      "path": "src/authority/slip_vault.rs",
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
-      "crate-vis": 25,
-      "fn": 24,
+      "crate-vis": 24,
+      "fn": 22,
       "re-export": 3
      }
     },
@@ -5425,6 +5426,17 @@
      "purpose": "The host's signature on a courtesy deletion ask and on its answer (OF-273)",
      "surface": {
       "crate-vis": 2,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/slip_vault/host_root.rs",
+     "purpose": "The host's own root slip: its bootstrap with Genesis on an empty log, the cache that retains the minted root…",
+     "surface": {
+      "crate-vis": 1,
       "fn": 3
      }
     },
@@ -6621,7 +6633,7 @@
      "path": "src/autoreason_campaign/research/budget.rs",
      "purpose": "The campaign's spend on the RSI line: reserve-then-spend, fail-closed",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 6,
       "struct": 2
@@ -45632,6 +45644,7 @@
      "path": "src/llm/budget/rsi.rs",
      "purpose": "Vault-local durable reserve/settle/refund ledger for research-loop spend",
      "surface": {
+      "crate-vis": 1,
       "fn": 15,
       "re-export": 1
      }
@@ -93423,7 +93436,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 264,
+     "files": 265,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94951,7 +94964,7 @@
    },
    "over_bar": 189,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6721,
+   "source_files": 6722,
    "test_files": 895
   },
   "oneiron-android": {
@@ -121840,7 +121853,7 @@
      "path": "src/auth/slips.rs",
      "purpose": "HTTP/session holder proof and projection of the single log-backed slip",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -122625,7 +122638,7 @@
      "path": "src/code_consent_host.rs",
      "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -122658,7 +122671,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 13,
       "re-export": 28,
       "struct": 1
@@ -122850,6 +122863,16 @@
      "purpose": "Recall through `oneiron mcp`, spoken to one JSON-RPC request at a time, and the short block a hook prints…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/hook_regen.rs",
+     "purpose": "One startup pass over hooks bound under an older engine contract",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -124671,7 +124694,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/credential_resume.rs",
@@ -133427,7 +133450,7 @@
      "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…"
     },
     "commands": {
-     "files": 69,
+     "files": 70,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -133485,7 +133508,7 @@
     "credential_resume": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The server's check for a credential caller's call a verb hook's ask stopped (ARCH-0080 §3 Ask, OF-580)"
     },
@@ -133884,7 +133907,7 @@
    },
    "over_bar": 59,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1727,
+   "source_files": 1728,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
