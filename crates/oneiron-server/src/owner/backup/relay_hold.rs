@@ -105,7 +105,6 @@ impl RelayDeleteHoldGuard for VaultRelayHoldGuard {
             if let Some(held) = holds.held_visibility() {
                 let visibility = match held {
                     BackupHoldVisibility::Visible => RelayHoldVisibility::Visible,
-                    BackupHoldVisibility::SilentOnly => RelayHoldVisibility::SilentOnly,
                 };
                 return Ok(RelayDeleteHoldOutcome::Deferred(
                     RelayDeleteDeferral::Held { visibility },
