@@ -10,6 +10,7 @@ use super::*;
 use crate::code_run::result_read::unplaced_answer;
 use crate::provenance::body::{owned_body_in_txn, publish_body_in_txn};
 use crate::side_table::RoutedDbs;
+use crate::store::BodyDir;
 
 mod admitted_reply;
 
@@ -240,6 +241,58 @@ impl SessionBinding<'_> {
             .transpose()
     }
 
+    /// The row of the body `finished` holds, as run `owner`'s `output`,
+    /// prepared for a writer on the run's route that its caller opens (FIX
+    /// 6592). The directory a sealed file's key is checked against is read
+    /// here, before that writer opens.
+    pub(in crate::code_run::storage) fn prepare_output_row<'f>(
+        &self,
+        finished: &'f FinishedOutput,
+        output: &'f CodeRunRawOutput,
+        owner: EntityId,
+    ) -> Result<PreparedOutputRow<'f>> {
+        Ok(PreparedOutputRow {
+            finished,
+            output,
+            owner,
+            dir: self.key_dir(finished)?,
+        })
+    }
+}
+
+/// One output row of a session-bound run, with the directory of its sealed
+/// file, prepared before the routed writer that publishes it opens (FIX
+/// 6592).
+pub(in crate::code_run::storage) struct PreparedOutputRow<'f> {
+    finished: &'f FinishedOutput,
+    output: &'f CodeRunRawOutput,
+    owner: EntityId,
+    dir: Option<BodyDir>,
+}
+
+impl PreparedOutputRow<'_> {
+    /// The secret scan's mark of the occurrence, then the row, in the
+    /// caller's routed writer (FIX 6592): what
+    /// [`SessionBinding::publish_output_sourced`] writes in two writers, in
+    /// one, its row as [`SessionBinding::put_output_row`] writes it. A
+    /// resumed reply's body is published so, in its resume commit, and a
+    /// refusal there leaves neither.
+    pub(in crate::code_run::storage) fn publish_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        read: RoutedDbs<'_>,
+        write: RoutedDbs<'_>,
+    ) -> Result<()> {
+        let (finished, output, owner, dir) = (self.finished, self.output, self.owner, &self.dir);
+        if let Some(reason) = finished.secret {
+            let key = ResultOccurrence::of(Some(owner), output)?.mark_key(&output.handle);
+            RAW_OUTPUT_SECRETS.put(&write, txn, &key, &reason.to_owned())?;
+        }
+        put_output_row_in_txn(txn, (read, write), dir.as_ref(), finished, output, owner)
+    }
+}
+
+impl SessionBinding<'_> {
     pub(super) fn get_raw_output(&self, output: &CodeRunRawOutput) -> Result<Option<Vec<u8>>> {
         validate_raw_output(output)?;
         let _pin = self.session.pin_result_body(output.raw_blake3);
