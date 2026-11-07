@@ -5076,6 +5076,23 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.settings.model_pack",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
+                "vault.settings.model_pack.replace",
+                crate::code_run::vault_read::request_schema::<
+                    crate::settings::model_pack::ModelPackPreference,
+                >(),
+            ),
+            (
+                "vault.model_pack.revert",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::model_pack::ModelPackRevertRequest,
+                >(),
+            ),
+            (
                 "vault.connectors.web.usage",
                 crate::code_run::vault_read::request_schema::<
                     crate::web_connector::WebConnectorUsageRead,
@@ -8045,6 +8062,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.models.manifest.replace",
     "vault.settings.web_connector",
     "vault.settings.web_connector.replace",
+    "vault.settings.model_pack",
+    "vault.settings.model_pack.replace",
+    "vault.model_pack.revert",
     "vault.connectors.web.usage",
     "vault.models.oneironer.bind",
     "vault.models.routes.read",
@@ -10209,6 +10229,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.settings.web_connector.replace" => crate::code_run::vault_read::request_schema::<
             crate::web_connector::WebConnectorSetting,
         >(),
+        "vault.settings.model_pack" => crate::code_run::vault_read::request_schema::<
+            crate::llm::model_pack::ModelPackSetting,
+        >(),
+        "vault.settings.model_pack.replace" => crate::code_run::vault_read::request_schema::<
+            crate::llm::model_pack::ModelPackSetting,
+        >(),
+        "vault.model_pack.revert" => {
+            crate::code_run::vault_read::request_schema::<crate::llm::model_pack::ModelPackRevert>()
+        }
         "vault.connectors.web.usage" => crate::code_run::vault_read::request_schema::<
             crate::web_connector::WebConnectorUsagePage,
         >(),
@@ -17480,6 +17509,27 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.settings.model_pack" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.settings.model_pack.replace" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.model_pack.revert" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.connectors.web.usage" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -21316,6 +21366,11 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.settings.web_connector.replace" => {
             validate_input_vault_settings_web_connector_replace(value)?
         }
+        "vault.settings.model_pack" => validate_input_vault_settings_model_pack(value)?,
+        "vault.settings.model_pack.replace" => {
+            validate_input_vault_settings_model_pack_replace(value)?
+        }
+        "vault.model_pack.revert" => validate_input_vault_model_pack_revert(value)?,
         "vault.connectors.web.usage" => validate_input_vault_connectors_web_usage(value)?,
         "vault.models.oneironer.bind" => validate_input_vault_models_oneironer_bind(value)?,
         "vault.models.routes.read" => validate_input_vault_models_routes_read(value)?,
@@ -26741,6 +26796,21 @@ fn validate_input_vault_settings_web_connector_replace(
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_settings_model_pack(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_settings_model_pack_replace(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::settings::model_pack::ModelPackPreference = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_model_pack_revert(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::llm::model_pack::ModelPackRevertRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_vault_connectors_web_usage(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::web_connector::WebConnectorUsageRead = decode(value.clone())?;
     Ok(())
@@ -30225,6 +30295,11 @@ pub fn invoke(
         "vault.settings.web_connector.replace" => {
             invoke_vault_settings_web_connector_replace(memory, value)
         }
+        "vault.settings.model_pack" => invoke_vault_settings_model_pack(memory, value),
+        "vault.settings.model_pack.replace" => {
+            invoke_vault_settings_model_pack_replace(memory, value)
+        }
+        "vault.model_pack.revert" => invoke_vault_model_pack_revert(memory, value),
         "vault.connectors.web.usage" => invoke_vault_connectors_web_usage(memory, value),
         "vault.models.oneironer.bind" => invoke_vault_models_oneironer_bind(memory, value),
         "vault.models.routes.read" => invoke_vault_models_routes_read(memory, value),
@@ -37236,6 +37311,27 @@ fn invoke_vault_settings_web_connector_replace(
         memory,
         decode(value)?,
     )?)
+}
+#[inline(never)]
+fn invoke_vault_settings_model_pack(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_settings_model_pack(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_settings_model_pack_replace(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_settings_model_pack_replace(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_model_pack_revert(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_model_pack_revert(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_connectors_web_usage(
@@ -47773,6 +47869,24 @@ pub fn vault_settings_web_connector_replace(
     input: crate::web_connector::WebConnectorSetting,
 ) -> MemoryResult<crate::web_connector::WebConnectorSetting> {
     crate::task_verb::sdk::replace_web_connector_setting(memory, input)
+}
+pub fn vault_settings_model_pack(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<crate::llm::model_pack::ModelPackSetting> {
+    crate::task_verb::sdk::read_model_pack_setting(memory)
+}
+pub fn vault_settings_model_pack_replace(
+    memory: &Memory<'_>,
+    input: crate::settings::model_pack::ModelPackPreference,
+) -> MemoryResult<crate::llm::model_pack::ModelPackSetting> {
+    crate::task_verb::sdk::replace_model_pack_preference(memory, input)
+}
+pub fn vault_model_pack_revert(
+    memory: &Memory<'_>,
+    input: crate::llm::model_pack::ModelPackRevertRequest,
+) -> MemoryResult<crate::llm::model_pack::ModelPackRevert> {
+    crate::task_verb::sdk::revert_model_pack(memory, input)
 }
 pub fn vault_connectors_web_usage(
     memory: &Memory<'_>,
