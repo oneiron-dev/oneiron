@@ -241,16 +241,21 @@ impl Caller {
 }
 
 /// The two MCP routes, behind the same binding door and telemetry the API
-/// mounts them behind.
+/// mounts them behind, with the same methods: GET and DELETE answer 405
+/// (FIX 4902).
 fn mcp_routes(server: Arc<SyncServer>) -> Router {
     Router::new()
         .route(
             crate::cli::McpSurface::Primary.path(),
-            post(crate::api::mcp_gateway),
+            post(crate::api::mcp_gateway)
+                .get(crate::api::mcp_method_not_allowed)
+                .delete(crate::api::mcp_method_not_allowed),
         )
         .route(
             crate::cli::McpSurface::ToolFirst.path(),
-            post(crate::api::mcp_tool_first_gateway),
+            post(crate::api::mcp_tool_first_gateway)
+                .get(crate::api::mcp_method_not_allowed)
+                .delete(crate::api::mcp_method_not_allowed),
         )
         .layer(axum::middleware::from_fn_with_state(
             server.clone(),
@@ -365,6 +370,8 @@ pub(super) fn upgrade(
     let hold = crate::embedded::UpgradeHold::take(extensions);
     Ok(ws
         .protocols([MCP_SUBPROTOCOL])
+        // ABC transport row T25: the request floor bounds a message.
+        .max_message_size(server.socket_message_bytes())
         .max_frame_size(server.config.max_frame_size)
         .write_buffer_size(WS_WRITE_BUFFER_SIZE)
         .max_write_buffer_size(WS_MAX_WRITE_BUFFER_SIZE)
@@ -459,6 +466,8 @@ pub(super) fn booking_upgrade(
     let hold = crate::embedded::UpgradeHold::take(extensions);
     Ok(ws
         .protocols([MCP_SUBPROTOCOL])
+        // ABC transport row T25: the request floor bounds a message.
+        .max_message_size(server.socket_message_bytes())
         .max_frame_size(server.config.max_frame_size)
         .write_buffer_size(WS_WRITE_BUFFER_SIZE)
         .max_write_buffer_size(WS_MAX_WRITE_BUFFER_SIZE)

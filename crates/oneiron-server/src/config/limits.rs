@@ -86,6 +86,8 @@ pub struct LimitsConfig {
     pub task_work: usize,
     /// Deck and slide renders at once (FIX 7653): past it each caller's render
     /// waits its fair turn, then answers `render_deadline`. Never a refusal.
+    /// LibreOffice's workbook recalculations (FIX 2462) take the host's own
+    /// turns in the same line, behind every caller.
     pub renderer_work: usize,
     /// Bytes stored LFS objects may come to, counting what uploads in flight
     /// have reserved: each reserves its declared size, or the per-object row
