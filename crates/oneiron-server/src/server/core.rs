@@ -101,6 +101,8 @@ pub struct SyncServer {
     pub(crate) renderer_turns: crate::admission::Admission<oneiron::EntityId>,
     /// The operator's renderer scratch source, resolved once with shared disk claims.
     pub(crate) renderer_scratch: crate::slide_render::RendererScratch,
+    /// The context-pack input line, round robin across authenticated callers.
+    pub(crate) context_reads: crate::admission::Admission<String>,
     /// OF-520 questions retrieval queries past `config.limits` raised.
     pub(crate) query_checks: super::read_shape::QueryChecks,
     /// Set only by managed boot after inherited-credential and DEK checks.
@@ -108,15 +110,13 @@ pub struct SyncServer {
     /// Its presence says the vault is managed; the issuer inside is `None`
     /// where this install holds no issuer seed for it (FIX-LIST 3018).
     pub(crate) managed_issuer: Option<ManagedIssuer>,
-    /// The self-host root's issuer, loaded at construction from this
-    /// install's own issuer seed for the vault when a host secret is
-    /// configured (FIX-LIST 3018); `None` with no secret, on a relay, or
-    /// where this install holds no seed. Never the managed issuer.
+    /// The self-host root's issuer, loaded at construction from this install's own issuer seed for
+    /// the vault when a host secret is configured (FIX-LIST 3018); `None` with no secret, on a
+    /// relay, or where this install holds no seed. Never the managed issuer.
     pub(crate) host_root_issuer: Option<Arc<oneiron::authority::HostSlipIssuer>>,
     pub(crate) policy_doors: super::policy_doors::PolicyDoors,
-    /// Node-side account API key verifier (OF-448), installed by a host
-    /// that supplies the control-plane checker. `None`: account keys are
-    /// never admitted.
+    /// Node-side account API key verifier (OF-448), installed by a host that supplies the
+    /// control-plane checker. `None`: account keys are never admitted.
     pub(crate) account_keys: Option<Arc<crate::auth::account_key::AccountKeys>>,
     /// Per-vault usage ledger over the server vault.
     pub(crate) usage_ledger: UsageLedger,

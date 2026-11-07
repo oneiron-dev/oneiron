@@ -204,6 +204,12 @@ impl SyncServer {
             config.limits.renderer_work,
             config.limits.queue_wait(),
         );
+        let context_reads = crate::admission::Admission::new(
+            crate::wire_telemetry::LimitRow::ContextReads,
+            Arc::clone(wire_telemetry.limit_questions()),
+            config.limits.context_reads,
+            config.limits.queue_wait(),
+        );
         // Task work waits in the vault's own line, which the embedded SDK, a
         // code run's own ask and wait and a pumped agent share with the
         // served doors; this server sets its `[limits]` row on it.
@@ -308,6 +314,7 @@ impl SyncServer {
             memory: memory.clone(),
             renderer_turns,
             renderer_scratch: Default::default(),
+            context_reads,
             wire_telemetry,
             mesh_pressure: crate::wire_telemetry::PoolPressure::mesh(),
             invocation_claims: crate::invocation_claims::InvocationClaimStore::new(vault.clone()),
