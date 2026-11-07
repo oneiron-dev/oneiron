@@ -54,6 +54,9 @@ pub struct DeckExportRequest {
     pub run_ref: String,
     #[serde(default)]
     pub made_by: Option<serde_json::Value>,
+    /// Ceilings for compiling new or replaced live pictures.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graphics: Option<oneiron_docedit::graphic::GraphicLimits>,
 }
 
 /// `vault.artifacts.body.deck.gate`: one export profile's gate (the default
@@ -286,7 +289,7 @@ impl Memory<'_> {
         input: &DeckExportRequest,
     ) -> MemoryResult<DeckExportView> {
         let artifact = self.body_ref(&input.artifact_ref)?;
-        let export = self.vault().export_pptx_body(&artifact)?;
+        let export = self.vault().export_pptx_body(&artifact, input.graphics)?;
         // With the gate open an unchanged deck still lands when the head is a
         // version that landed outside it (FIX 2700): the head becomes the
         // deck's, and that version stays beside it.

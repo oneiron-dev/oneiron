@@ -30,8 +30,8 @@ use heed::{Env, RoTxn, RwTxn};
 use crate::error::{Error, Result, StoreError};
 use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::store::key_custody::{
-    self, CustodyBinding, CustodyPlan, ForkedCustodyDir, LocalCustody, Requirement,
-    decode_native_path, encode_native_path,
+    self, CustodyBinding, CustodyKind, CustodyPlan, ForkedCustodyDir, LocalCustody, Requirement,
+    RetirementIntent, decode_native_path, encode_native_path, retirements_in_rows,
 };
 use crate::store::restore_admission::Rejected;
 use crate::store::restore_admission::RestoreAdmissionReason as R;
@@ -509,6 +509,34 @@ pub(crate) fn preflight_checkpoint_rows_rejected(
     rows: &[(Vec<u8>, Vec<u8>)],
     source: Option<&LiveCustody>,
 ) -> std::result::Result<CheckpointCustody, Rejected> {
+    preflight_with(rows, source, Vec::new())
+}
+
+/// [`preflight_checkpoint_rows_rejected`] for a legal read of one of this
+/// vault's own checkpoints (a HOST order's artifact capture): `live` is this
+/// vault's live custody, read under its custody guard. Beside every intent
+/// the preflight reads, each payload-compartment retirement intent (KS-7)
+/// the live vault committed counts as carried out, whatever its finisher
+/// waits on, so an owner erase or purge committed since the cut never opens
+/// that owner's compartment. A checkpoint bound to other custody refuses as
+/// `custody_lineage_mismatch`. Nothing is forked, copied or written.
+pub(crate) fn preflight_legal_read_rejected(
+    rows: &[(Vec<u8>, Vec<u8>)],
+    live: &LiveCustody,
+) -> std::result::Result<CheckpointCustody, Rejected> {
+    let payload = retirements_in_rows(&live.rows)?
+        .into_iter()
+        .filter(|intent| intent.subject.kind() == CustodyKind::CheckpointPayload)
+        .map(|intent| (intent, true))
+        .collect();
+    preflight_with(rows, Some(live), payload)
+}
+
+fn preflight_with(
+    rows: &[(Vec<u8>, Vec<u8>)],
+    source: Option<&LiveCustody>,
+    extra: Vec<(RetirementIntent, bool)>,
+) -> std::result::Result<CheckpointCustody, Rejected> {
     let bound = key_custody::binding_in_rows(rows)?;
     let mut retirements = checkpoint_retirements(rows)?;
     if let Some(source) = source {
@@ -523,6 +551,7 @@ pub(crate) fn preflight_checkpoint_rows_rejected(
         }
         retirements.extend(checkpoint_retirements(&source.rows)?);
     }
+    retirements.extend(extra);
     let mut plan = CustodyPlan::new(bound.clone(), retirements);
     // The training link key (TL-2) rides a side restore while it is live, so
     // the copy can still withdraw and purge its past codes; the host issuer

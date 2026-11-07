@@ -213,6 +213,7 @@ impl DecisionLadder<'_> {
             policy,
             reversibility,
             deadline,
+            labels,
         )?;
         let mut readings = pack.readings();
         let mut first = Vec::with_capacity(questions.len());
@@ -229,13 +230,14 @@ impl DecisionLadder<'_> {
                 state,
                 deadline,
                 run: None,
+                labels,
             };
             // A read the work time cannot start never goes out.
             if !deadline.decision_may_start() {
                 first.extend(chunk.iter().map(|_| Some(Read::NotStarted)));
                 continue;
             }
-            let answers = match read(rung, &pack, &call, spent, labels).await? {
+            let answers = match read(rung, &pack, &call, spent).await? {
                 Reply::Answers(answers) => answers,
                 Reply::Trapped => return Ok(GeneratedDecisions::Trapped),
                 Reply::Unread(miss) => return Ok(GeneratedDecisions::Unread(miss)),
@@ -267,8 +269,8 @@ async fn read(
     pack: &OpenPack<'_>,
     call: &DecisionPack<'_>,
     steps: &mut Vec<([u8; 32], LlmUsage, bool)>,
-    labels: Option<&dyn DecisionWireLabels>,
 ) -> DurableStepResult<Reply> {
+    let labels = call.labels;
     let asked = asked(call, pack.person);
     let paired = pack.paired.map(|paired| (paired, call.questions));
     let request = (rung.seal)(request(
@@ -536,6 +538,7 @@ fn answers(
                     paired,
                     person: None,
                     served: None,
+                    cost_per_thousand: None,
                 };
             };
             let mut top = 0;
@@ -556,6 +559,7 @@ fn answers(
                 paired,
                 person: None,
                 served: None,
+                cost_per_thousand: None,
             }
         })
         .collect())
