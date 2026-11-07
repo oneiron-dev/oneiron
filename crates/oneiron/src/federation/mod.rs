@@ -13,6 +13,8 @@ mod agent_grant;
 pub(crate) use agent_grant::{
     AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, agent_grants_for_store_in_txn,
 };
+// The self brief's GRANT producer (FIX 17594).
+mod agent_grant_brief;
 // Who may delete one record the cleanup archived (OF-449 L4).
 mod archive_delete;
 pub(crate) use archive_delete::{
@@ -141,8 +143,8 @@ pub use self::pact_scope::{
     selector_range_of,
 };
 pub use self::peer_authority::{
-    MAX_PEER_AUTHORITY_ENTRIES_PER_PEER, PEER_AUTHORITY_KEY_PREFIX, admit_peer_authority_log_entry,
-    peer_authority_entry_key, peer_authority_roster, peer_consent_roots,
+    PEER_AUTHORITY_KEY_PREFIX, admit_peer_authority_log_entry, peer_authority_entry_key,
+    peer_authority_roster, peer_consent_roots,
 };
 pub use self::relationships::{
     MAX_RELATIONSHIP_LABEL_BYTES, MemberRelationship, MemberRelationshipContext,
