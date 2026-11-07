@@ -1,9 +1,8 @@
-//! The owner preflight every host door's verb meets before its door runs.
-//! `door_admits` is its call surface.
-//! Each door's own facade module defines the proof it admits on; this match only routes to it.
-//! The generated `HostDoorRow` names every host door that checks first, so the match has no
-//! catch-all arm and a new host door fails to compile until it names its check (FIX 1763).
-//! Checked verbs that project no host row keep main's owner-proof check in the fallback below.
+//! The owner preflight every host door's verb meets before its door runs. `door_admits` is its call
+//! surface. Each door's own facade module defines the proof it admits on; this match only routes to
+//! it. The generated `HostDoorRow` names every host door that checks first, so the match has no
+//! catch-all arm and a new host door fails to compile until it names its check (FIX 1763). Checked
+//! verbs that project no host row keep main's owner-proof check in the fallback below.
 
 use oneiron::memory::MemoryResult;
 
@@ -563,6 +562,8 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCodeProposalSettle
         | Row::VaultCodeProposalSettlement
         | Row::VaultCodeOplog
+        | Row::VaultCodeSecretsGet
+        | Row::VaultCodeSecretsPropose
         | Row::VaultResultsStatus
         | Row::VaultResultsRecover
         | Row::VaultResultsRead
@@ -572,8 +573,6 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCodeTypeDiagnostics
         | Row::VaultCodeCorrections
         | Row::VaultCodeStepEvidence
-        | Row::VaultCodeWaitsResolve
-        | Row::VaultCodeWaitsReceipt
         | Row::VaultCodeExport
         | Row::VaultCodeImport
         | Row::VaultCodeReposGet
@@ -696,7 +695,9 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultTrustedContactsConsent
         | Row::VaultTrustedContactsRevoke
         | Row::VaultSharedPolicyPropose
-        | Row::VaultSharedPolicyAnswer => {
+        | Row::VaultSharedPolicyAnswer
+        | Row::VaultCodeWaitsResolve
+        | Row::VaultCodeWaitsReceipt => {
             crate::api::facade::shared_act_doors::person(server, auth, verb).map(drop)
         }
         // The voice bank's rows (FIX 4393): a live person on their own proof,
@@ -729,6 +730,9 @@ pub(in crate::api::facade) fn door_admits(
         // bound principal whose one Grant the engine door admits.
         Row::VaultCodeExportPreview | Row::VaultCodeExportPreviewRead => {
             crate::api::facade::origin_doors::preview_admits(server, auth, verb)
+        }
+        Row::VaultCodeCheckoutHolderBind => {
+            crate::api::facade::origin_doors::checkout_holder_admits(server, auth)
         }
         // The vault's review policy rows (FIX 8268): a live Owner, or a bound
         // principal whose one Grant the engine door admits.
@@ -815,8 +819,7 @@ pub(in crate::api::facade) fn door_admits(
             owner_grade(auth, MEDIA_OWNERS)
         }
         Row::AiVideoPoll | Row::AiVideoCancel => owner_grade(auth, VIDEO_JOB_OWNERS),
-        // The rows that left the owner-only list for a caller's own act
-        // (`owner_binding::caller_bound_admits`).
+        // Rows that left the owner-only list for a caller's own act (`caller_bound_admits`).
         Row::VaultTrustedContactsName
         | Row::VaultTrustedContactsDialSet
         | Row::VaultTrustedContactsConcernAsks
