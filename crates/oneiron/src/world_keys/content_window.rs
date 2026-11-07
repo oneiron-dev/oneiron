@@ -407,6 +407,12 @@ impl WindowManager {
             if named {
                 require_history_free_window(vault, window)?;
             }
+            // Every derived set it took in, its retained history and shallow
+            // root included, binds its row before anything lands or waits
+            // here, as window admission stages it (fix list row 17207).
+            let floors =
+                crate::sync::source_audiences::history_derived_floors(&mirror, &from, snapshot)?;
+            crate::sync::source_audiences::stage_derived_floors(vault, &floors)?;
         }
         if materialize {
             self.land_mirror(world, window, &mirror, gained, &read)?;
