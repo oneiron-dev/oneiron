@@ -45,7 +45,14 @@ impl LlmBackend for LiveLeaseBackend<'_> {
         lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
         self.live.book_and_revise();
-        self.inner.generate(request, lease)
+        let generated = self.inner.generate(request, lease);
+        Box::pin(async move {
+            let result = generated.await;
+            // Publish settled usage before the returned program can queue
+            // children against this same scope's available balance.
+            self.live.book_and_revise();
+            result
+        })
     }
 
     fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {

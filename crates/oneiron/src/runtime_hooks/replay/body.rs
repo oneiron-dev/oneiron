@@ -5,10 +5,11 @@ use crate::claim::{PointRead, ScopedRead};
 use crate::runtime_hooks::body::{HookBudgetOverrun, HookRunContext};
 use crate::runtime_hooks::filter;
 use crate::runtime_hooks::read::{self, HistoryAdmission, grant_view::shows_row};
-use crate::runtime_hooks::runner::{ask_verdict, input_json, judge, verdict_context};
+use crate::runtime_hooks::runner::{Verdict, ask_verdict, input_json, judge, verdict_context};
 use crate::runtime_hooks::source::FactEntry;
-use crate::runtime_hooks::store::{self, HookRunRecord};
-use crate::runtime_hooks::verb::HookVerbRunRecord;
+use crate::runtime_hooks::store::{self, HookRunRecord, HookRunState};
+use crate::runtime_hooks::verb::{HookVerbRunRecord, admit_verb_outcome, merge_withheld};
+use crate::skill_hub::pack_catalog::HookPhase;
 use crate::{EntityId, Error, Result};
 
 use super::{HookReplayResult, PinnedReads, PinnedVerdicts, Replay, input_too_large, ran};
@@ -221,8 +222,224 @@ impl Replay<'_> {
         if let Some(reason) = reads.missing {
             return HookReplayResult::MissingHistory { reason };
         }
+        let mut verdict = judge(self.binding, result, overrun, &context);
+        // The chain's own checks beside the judge (FIX 2393), as the live
+        // run applied them: a Rewrite the checks refuse, a host.compact
+        // Skip or an empty Redact reads `refused` here too, so the token
+        // stands beside the recorded one. The Rewrite check replay can
+        // run is the static half — the host doors' add-only rules over
+        // the args the saved input showed the hook, and the row's own
+        // input shape for a verb the SDK table knows; a door's own
+        // rewrite admission was never saved, so replay stays more
+        // accepting than that door was, never less.
+        if let Some(reason) = verdict.outcome.as_ref().and_then(|outcome| {
+            let before = serde_json::from_str::<serde_json::Value>(input)
+                .ok()
+                .and_then(|shown| shown.get("args").cloned());
+            let check = |next: &serde_json::Value| {
+                // Restrictive verbs pin what they act on (FIX 5076): a hook's
+                // changed pin that fails the door's parse never ran — the live
+                // chain repaired it to the caller's own before admission
+                // (Landing::select). Repair the rewrite the same way before
+                // the static checks below; static rows only, as the saved
+                // input shows them.
+                // The landing the live chain repaired against was judged on
+                // the caller's own args (FIX 2393): the run records whether
+                // it had one. With none, replay skips the repair instead of
+                // inventing a landing from later seen args; without the
+                // record (older saves) it infers a held-call landing as
+                // before. A kept landing rebuilds from the saved original —
+                // held-call rows and the vault-free polymorphic rows alike —
+                // and repairs against the seen args as live did; an
+                // unavailable snapshot (oversize original, or a vault-read
+                // row) skips the repair.
+                let repaired;
+                let merged;
+                let next = match &before {
+                    Some(before) => {
+                        repaired = match saved.had_landing {
+                            Some(true) => {
+                                let base: Option<serde_json::Value> = saved
+                                    .landing_original
+                                    .as_deref()
+                                    .and_then(|original| serde_json::from_str(original).ok());
+                                match base.and_then(|base| {
+                                    crate::task_verb::revoke_lands::Landing::from_recorded(
+                                        &saved.verb,
+                                        base,
+                                    )
+                                }) {
+                                    Some(mut landing) => {
+                                        landing.select(before, next.clone(), &|_| Ok(())).0
+                                    }
+                                    None => next.clone(),
+                                }
+                            }
+                            None => {
+                                let base = saved
+                                    .landing_original
+                                    .as_deref()
+                                    .and_then(|original| serde_json::from_str(original).ok())
+                                    .unwrap_or_else(|| before.clone());
+                                match crate::task_verb::revoke_lands::Landing::from_snapshot(
+                                    &saved.verb,
+                                    base,
+                                    Vec::new(),
+                                ) {
+                                    Some(mut landing) => {
+                                        landing.select(before, next.clone(), &|_| Ok(())).0
+                                    }
+                                    None => next.clone(),
+                                }
+                            }
+                            Some(false) => next.clone(),
+                        };
+                        // A narrowed hook's Rewrite keeps withheld markers
+                        // where its grant hid values: the live chain merged
+                        // them against the seen args before admission, so
+                        // replay merges against the saved seen args when the
+                        // recorded condition held — and checks the raw
+                        // rewrite when it did not, as live did. Records saved
+                        // before the condition existed keep the earlier
+                        // merge.
+                        if saved.args_withheld || saved.had_landing.is_none() {
+                            merged = merge_withheld(before, repaired);
+                        } else {
+                            merged = repaired;
+                        }
+                        &merged
+                    }
+                    None => next,
+                };
+                // Whether the saved host.compact window holds placeholders,
+                // not text, where the hook's grant withheld content (an
+                // object where the text stood): the live chain admitted
+                // against the restored window, which replay cannot rebuild,
+                // so the typed content validation below cannot run on those
+                // markers — the immutable fields and the append-only keep
+                // list still apply, through the unverified-window check.
+                let withheld = before.as_ref().is_some_and(|before| {
+                    saved.verb == "host.compact"
+                        && before
+                            .get("window")
+                            .and_then(serde_json::Value::as_array)
+                            .is_some_and(|window| {
+                                window.iter().any(|message| {
+                                    !message
+                                        .get("content")
+                                        .and_then(serde_json::Value::as_str)
+                                        .is_some()
+                                })
+                            })
+                });
+                if let Some(before) = &before {
+                    if withheld {
+                        crate::compaction::check_host_compact_rewrite_unverified_window(
+                            before, next,
+                        )?;
+                    } else {
+                        crate::runtime_hooks::host_doors::check_rewrite(&saved.verb, before, next)?;
+                    }
+                }
+                if withheld {
+                    return Ok(());
+                }
+                // Automatic host-hook runs never wore the facade shape (FIX
+                // 2393): a compaction pass runs its pre chain on
+                // {window, keep_list, token_ceiling} with no session_ref, a
+                // wake pass on {kind, scope, queue_head{queued, head}} —
+                // neither decodes as its facade row, whose live validator was
+                // the door's own check, not the table shape. Recognize these
+                // two shapes before the facade fallback below claims them.
+                // (An invalid SDK call mimicking a hook shape stays admitted;
+                // pathological, and the door refuses the call itself.)
+                let hook_flavor = before
+                    .as_ref()
+                    .is_some_and(|before| match saved.verb.as_str() {
+                        "host.compact" => {
+                            before.get("session_ref").is_none()
+                                && before
+                                    .get("window")
+                                    .and_then(serde_json::Value::as_array)
+                                    .is_some()
+                                && before
+                                    .get("keep_list")
+                                    .and_then(serde_json::Value::as_array)
+                                    .is_some()
+                                && before.get("token_ceiling").is_some()
+                        }
+                        "host.wake" => {
+                            before
+                                .get("kind")
+                                .and_then(serde_json::Value::as_str)
+                                .is_some()
+                                && before
+                                    .get("scope")
+                                    .and_then(serde_json::Value::as_str)
+                                    .is_some()
+                                && before
+                                    .get("queue_head")
+                                    .and_then(serde_json::Value::as_object)
+                                    .is_some()
+                        }
+                        _ => false,
+                    });
+                // The SDK table knows every SDK verb's facade shape, and the
+                // browser table its browser shape. Each shape governs the
+                // flavor the call ran: the facade shape when the saved args
+                // validate under it, else the browser shape when they validate
+                // under that — or, when the caller's own args were already
+                // invalid, the verb's own tables (facade rows via
+                // input_schema, the browser/desktop surfaces), since
+                // sdk::invoke runs hooks before decoding and still refused
+                // the rewrite. Only an actual host-hook flavor, recognized
+                // above or in neither table, runs on the host-door rules
+                // alone.
+                let probe_facade = before.as_ref().is_some_and(|before| {
+                    crate::task_verb::sdk::validate_input(&saved.verb, before).is_ok()
+                });
+                let probe_browser = !probe_facade
+                    && before.as_ref().is_some_and(|before| {
+                        crate::task_verb::sdk::validate_browser_input(&saved.verb, before).is_ok()
+                    });
+                let unprobed = !probe_facade && !probe_browser;
+                let facade_known = crate::task_verb::sdk::input_schema(&saved.verb).is_some();
+                let browser_known = saved.verb.starts_with("self.browser.")
+                    || saved.verb.starts_with("self.desktop.");
+                let facade = !hook_flavor && (probe_facade || (unprobed && facade_known));
+                let browser =
+                    !hook_flavor && !facade && (probe_browser || (unprobed && browser_known));
+                if facade
+                    && let Err(error) = crate::task_verb::sdk::validate_input(&saved.verb, next)
+                {
+                    // A browser row's run checked its rewrites against the
+                    // browser shape, not the live-run wrapper: the saved
+                    // record does not say which ran, so the browser check
+                    // gets its say before the row's refuses.
+                    crate::task_verb::sdk::validate_browser_input(&saved.verb, next)
+                        .map_err(|_| error.to_string())?;
+                } else if browser {
+                    crate::task_verb::sdk::validate_browser_input(&saved.verb, next)
+                        .map_err(|error| error.to_string())?;
+                }
+                Ok(())
+            };
+            // The live post chain gives a Rewrite nothing to check its
+            // args with, as a pre chain gives it its door's check.
+            let check = (saved.phase == HookPhase::Pre)
+                .then_some(&check as crate::runtime_hooks::verb::VerbArgsCheck<'_>);
+            admit_verb_outcome(&saved.verb, outcome, check).err()
+        }) {
+            verdict = Verdict {
+                state: HookRunState::Refused,
+                outcome: None,
+                token: "refused".to_owned(),
+                reason: Some(reason),
+                ..verdict
+            };
+        }
         ran(
-            judge(self.binding, result, overrun, &context),
+            verdict,
             Some(saved.outcome.as_str()),
             saved.outcome_json.as_deref(),
             true,

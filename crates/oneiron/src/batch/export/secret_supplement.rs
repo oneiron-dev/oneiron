@@ -13,7 +13,9 @@
 //! Once its secret is restored, or found here already the same, the import
 //! marks the request imported in its own writer (FIX 12062), so no install
 //! relays the sealed copy any more. A skipped or refused import marks
-//! nothing, and a mark that fails leaves the import standing.
+//! nothing. A mark this install cannot sign there stays owed, value-free,
+//! and a later pass signs it (FIX 12291); only a failure to file that intent
+//! refuses the import.
 
 use base64::Engine as _;
 use zeroize::Zeroizing;
@@ -64,7 +66,7 @@ impl Vault {
             return Err(invalid("its body disagrees with its metadata"));
         }
         // The install key that signs the import mark loads before the writer
-        // opens; without it the mark is not signed, and the import stands.
+        // opens; without it the mark stays owed, and the import stands.
         let _ = self.load_install_signing_if_minted();
         let imported = self.with_write_txn(|wtxn| {
             let actor = owner.revalidate_as_vault_owner_in_txn(self, wtxn)?;
@@ -91,15 +93,27 @@ impl Vault {
             } else {
                 SecretSupplementImport::Skipped
             };
-            if matches!(
+            let marked = matches!(
                 outcome,
                 SecretSupplementImport::Restored | SecretSupplementImport::Unchanged
-            ) {
-                self.mark_supplement_imported_in_txn(wtxn, actor, surface, supplement.request);
-            }
-            Ok(outcome)
+            ) && self.mark_supplement_imported_in_txn(
+                wtxn,
+                actor,
+                surface,
+                supplement.request,
+            )?;
+            Ok((outcome, marked))
         });
         zeroize::Zeroize::zeroize(&mut record.value_bytes);
-        imported
+        let (outcome, marked) = imported?;
+        // A mark this writer signed rides the live windows now, so their
+        // relayed copies leave (FIX 12291).
+        #[cfg(feature = "sync")]
+        if marked {
+            self.refresh_custody_in_live_windows();
+        }
+        #[cfg(not(feature = "sync"))]
+        let _ = marked;
+        Ok(outcome)
     }
 }

@@ -1,6 +1,8 @@
 //! Default CLAIM vectors move only over an authenticated own-machine read,
 //! never through a canonical window's retained operation history.
 
+mod pending;
+
 use heed::RoTxn;
 use serde::{Deserialize, Serialize};
 
