@@ -582,7 +582,7 @@ impl ScopedRead<'_> {
     /// this read's own store (`record_scope::record_world_in`), as a read
     /// under the world ceiling `ceiling` holds it: a NOTE at its world
     /// witness there (FIX-LIST 9433). `None` where the row cannot prove one.
-    fn world_record_in(
+    pub(super) fn world_record_in(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,

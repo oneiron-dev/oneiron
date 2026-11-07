@@ -139,6 +139,7 @@ impl DecisionProvider for DecisionReadProvider<'_> {
             state: call.state,
             deadline: call.deadline,
             run: call.run,
+            labels: call.labels,
         })?;
         answers
             .pop()
@@ -166,12 +167,28 @@ impl DecisionProvider for DecisionReadProvider<'_> {
         // (FIX 2181); a yes/no keeps its label descriptions.
         let texts: Vec<Option<String>> = asked
             .iter()
-            .map(|question| match question.contract {
-                AnswerContract::Noul => None,
-                _ => QuestionCriteria::rubric_in(state, &question.contract)
-                    .map(|rubric| format!("{}\n\n{rubric}", question.text)),
+            .map(|question| {
+                let text = match question.contract {
+                    AnswerContract::Noul => None,
+                    _ => QuestionCriteria::rubric_in(state, &question.contract)
+                        .map(|rubric| format!("{}\n\n{rubric}", question.text)),
+                };
+                match pack
+                    .labels
+                    .and_then(|labels| labels.question_label(question.id))
+                {
+                    Some(label) => Some(format!(
+                        "{label}: {}",
+                        text.as_deref().unwrap_or(&question.text),
+                    )),
+                    None => text,
+                }
             })
             .collect();
+        let paired_text = pack
+            .labels
+            .and_then(|labels| labels.question_label(self.paired.id))
+            .map(|label| format!("{label}: {}", self.paired.text));
         // Each asked question's place among the read ones; `None` abstains.
         let mut slots = Vec::with_capacity(asked.len());
         let mut questions = Vec::with_capacity(asked.len());
@@ -200,7 +217,8 @@ impl DecisionProvider for DecisionReadProvider<'_> {
             questions.push(LabelReadout {
                 text: texts[index].as_deref().unwrap_or(&question.text),
                 labels,
-                paired: (!person).then_some(self.paired.text.as_str()),
+                paired: (!person)
+                    .then_some(paired_text.as_deref().unwrap_or(self.paired.text.as_str())),
             });
         }
         let abstained = || ProviderDecision {

@@ -206,6 +206,7 @@ fn registry_row(grant: &GitPushRegistryGrant, status: ConsentGrantStatus) -> Con
             command: GIT_PUSH_REVOKE_COMMAND.to_owned(),
             grant_ref: grant_ref.clone(),
         },
+        regrant_action: None,
         grant_ref,
         bypass: None,
         delegation: None,
