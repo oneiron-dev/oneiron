@@ -78,6 +78,7 @@ impl<'stream> Collector<'stream> {
                 session_ref_digest: legal_clone::live_session_ref_digest(&target.session_ref),
                 instance: target.instance,
             },
+            CaptureSource::Message(message) => ContentSource::Message(*message),
         };
         let descriptor = CaptureDescriptor {
             component: component as u8,
@@ -149,6 +150,7 @@ impl<'stream> Collector<'stream> {
         decisions: u64,
         live_sessions: u64,
         live_bodies: u64,
+        messages: u64,
         extent: CaptureExtent,
         check: impl Fn() -> Result<()>,
     ) -> Result<()> {
@@ -162,6 +164,7 @@ impl<'stream> Collector<'stream> {
             decisions,
             live_sessions,
             live_bodies,
+            messages,
             extent,
             components: self.components,
             plaintext_bytes: self.plaintext_bytes,
