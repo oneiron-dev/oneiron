@@ -51,6 +51,69 @@ pub enum CaptureScope {
     /// when it lands, while the order stands and before its `ends_at`. No
     /// other scope ever captures a message stored after its request.
     ProspectiveMessages(MessageSelector),
+    /// Exact MESSAGE entities, strictly increasing ids, as ONE of this
+    /// vault's own backup artifacts holds them: the order's explicit choice
+    /// of that artifact. The HOST hands its file over right after the request
+    /// ([`ARTIFACT_FILE_MARKER`]); the source opens it, checks every
+    /// identity field and reads only what its live custody still opens.
+    ArtifactMessages(ArtifactMessages),
+}
+
+/// The one byte the HOST sends, alone, right after an
+/// [`CaptureScope::ArtifactMessages`] request frame and its flush, carrying
+/// exactly one SCM_RIGHTS descriptor: the artifact's file, opened read-only,
+/// which the HOST keeps open until the exact acknowledgement. The descriptor
+/// shares the HOST's file offset, so from the hand-over to that
+/// acknowledgement the HOST neither reads nor seeks it; the source reads it
+/// from the start. The source reads the request with exact reads, so nothing
+/// reads past the frame, then receives this byte with its one descriptor;
+/// any other byte, a truncated control message or any other descriptor count
+/// refuses.
+pub const ARTIFACT_FILE_MARKER: u8 = 0x41;
+
+/// The backup artifact an artifact capture reads, as the HOST verified the
+/// file it hands over: the vault it is of, its checkpoint id (the BLAKE3 of
+/// its image), the BLAKE3 of its signed commitment, and the whole file's
+/// length and BLAKE3. The source checks each against the file and against
+/// what the real opener verifies before any row is read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ArtifactIdentity {
+    pub vault_id: [u8; 32],
+    pub checkpoint_id: [u8; 32],
+    pub commitment_digest: [u8; 32],
+    pub file_len: u64,
+    pub file_blake3: [u8; 32],
+}
+
+/// An artifact capture's selection: one artifact, and exact MESSAGE ids in
+/// strictly increasing order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArtifactMessages {
+    pub artifact: ArtifactIdentity,
+    pub ids: Vec<[u8; 16]>,
+}
+
+/// Writes an id list its caller checked is strictly increasing.
+fn write_ids(out: &mut impl Write, ids: &[[u8; 16]]) -> io::Result<()> {
+    out.write_all(&(ids.len() as u64).to_be_bytes())?;
+    for id in ids {
+        out.write_all(id)?;
+    }
+    Ok(())
+}
+
+fn read_ids(input: &mut impl Read, what: &'static str) -> io::Result<Vec<[u8; 16]>> {
+    let count = u64::from_be_bytes(read_array(input)?);
+    let mut ids: Vec<[u8; 16]> = Vec::new();
+    for _ in 0..count {
+        let id = read_array(input)?;
+        if ids.last().is_some_and(|previous| previous >= &id) {
+            return Err(invalid(what));
+        }
+        ids.try_reserve(1).map_err(io::Error::other)?;
+        ids.push(id);
+    }
+    Ok(ids)
 }
 
 /// Which new on-record messages a prospective order covers. Closed; a new
@@ -66,7 +129,10 @@ impl CaptureScope {
         match self {
             Self::AllClaimFreeGateDecisions => true,
             Self::GateDecisions(ids) => ids.binary_search(decision).is_ok(),
-            Self::LiveSession(_) | Self::Messages(_) | Self::ProspectiveMessages(_) => false,
+            Self::LiveSession(_)
+            | Self::Messages(_)
+            | Self::ProspectiveMessages(_)
+            | Self::ArtifactMessages(_) => false,
         }
     }
 
@@ -95,13 +161,22 @@ impl CaptureScope {
                     return Err(invalid("legal capture message order"));
                 }
                 out.write_all(&[4])?;
-                out.write_all(&(ids.len() as u64).to_be_bytes())?;
-                for id in ids {
-                    out.write_all(id)?;
-                }
-                Ok(())
+                write_ids(out, ids)
             }
             Self::ProspectiveMessages(MessageSelector::Vault) => out.write_all(&[5, 1]),
+            Self::ArtifactMessages(selection) => {
+                if !selection.ids.windows(2).all(|pair| pair[0] < pair[1]) {
+                    return Err(invalid("legal capture message order"));
+                }
+                let artifact = &selection.artifact;
+                out.write_all(&[6])?;
+                out.write_all(&artifact.vault_id)?;
+                out.write_all(&artifact.checkpoint_id)?;
+                out.write_all(&artifact.commitment_digest)?;
+                out.write_all(&artifact.file_len.to_be_bytes())?;
+                out.write_all(&artifact.file_blake3)?;
+                write_ids(out, &selection.ids)
+            }
         }
     }
 
@@ -135,23 +210,25 @@ impl CaptureScope {
                     instance: read_array(input)?,
                 }))
             }
-            4 => {
-                let count = u64::from_be_bytes(read_array(input)?);
-                let mut ids = Vec::new();
-                for _ in 0..count {
-                    let id = read_array(input)?;
-                    if ids.last().is_some_and(|previous| previous >= &id) {
-                        return Err(invalid("legal capture message order"));
-                    }
-                    ids.try_reserve(1).map_err(io::Error::other)?;
-                    ids.push(id);
-                }
-                Ok(Self::Messages(ids))
-            }
+            4 => Ok(Self::Messages(read_ids(
+                input,
+                "legal capture message order",
+            )?)),
             5 => match read_array::<1>(input)?[0] {
                 1 => Ok(Self::ProspectiveMessages(MessageSelector::Vault)),
                 _ => Err(invalid("legal capture message selector")),
             },
+            6 => {
+                let artifact = ArtifactIdentity {
+                    vault_id: read_array(input)?,
+                    checkpoint_id: read_array(input)?,
+                    commitment_digest: read_array(input)?,
+                    file_len: u64::from_be_bytes(read_array(input)?),
+                    file_blake3: read_array(input)?,
+                };
+                let ids = read_ids(input, "legal capture message order")?;
+                Ok(Self::ArtifactMessages(ArtifactMessages { artifact, ids }))
+            }
             _ => Err(invalid("legal capture scope")),
         }
     }
@@ -300,6 +377,11 @@ pub enum FrameKind {
     Pending = 6,
     /// Exact native order standing ended; not HOST key destruction.
     Released = 7,
+    /// A prospective order stands and is attached to this connection, sent
+    /// once before its first batch; the payload is the exact request digest.
+    /// From here managed stop's trigger leaves the connection open for the
+    /// final drain.
+    Standing = 8,
 }
 
 /// Opaque member/part ordinals only. No source keys or content fingerprints
@@ -332,6 +414,7 @@ impl FrameHeader {
             5 => FrameKind::Ready,
             6 => FrameKind::Pending,
             7 => FrameKind::Released,
+            8 => FrameKind::Standing,
             _ => return Err(invalid("legal capture frame kind")),
         };
         Ok(Self {
@@ -441,12 +524,42 @@ impl LiveSpillMetadata {
 pub enum CaptureExtent {
     GateDecisions,
     WrittenLiveSessionSpill,
-    /// The selected stored MESSAGE rows with their document and outgoing edge
-    /// rows, in one source snapshot.
+    /// The selected stored MESSAGE rows, in id order, each followed by its
+    /// document rows (component 9), its outgoing edge rows (component 10),
+    /// its revision ledger rows (component 12: the retained history document
+    /// of its earlier stored rows, its revision state, its retained
+    /// frontiers, then each frontier's reverse identity naming it) and the
+    /// result body it still holds (component 11), in one source snapshot.
     Messages,
-    /// One batch of a prospective order: the exact MESSAGE rows sealed when
-    /// they landed, in ordinal order. Rows only: no document or edge rows.
+    /// One batch of a prospective order, in ordinal order: each new MESSAGE
+    /// row sealed when it landed (component 8), and each outgoing edge row
+    /// its birth batch wrote, sealed at that batch's end under the row's
+    /// revision (component 10). An edge entry follows its row's ordinal and
+    /// may fall in a later batch; it names its message by source and the
+    /// row's revision, so it joins that row across batches. A message whose
+    /// row the same batch replaced or removed is listed missed instead of
+    /// taking edges. No document rows: a message has none at birth. Edges
+    /// added by a later batch are not part of it.
     ProspectiveMessages,
+    /// The selected MESSAGE records as ONE backup artifact holds them, in
+    /// id order and the Messages extent's per-message order: row 8,
+    /// document 9, edges 10, ledger 12, then the result body 11 its row
+    /// names, when the message's own attachment occurrence in the artifact
+    /// holds exactly that output and the artifact carries it under an
+    /// instance current custody still opens. A message is read only when the
+    /// artifact's payload holds its entity tree's compartment and the vault's
+    /// live custody opens it, so what an erase or purge retired since is never
+    /// read; an artifact with no compartments yields every id missed. The
+    /// entity row, head, slot rows, edge rows and ledger rows are the
+    /// artifact's exact stored bytes. A document's snapshot and updates are
+    /// the join of its split history, the same history but not always the
+    /// same bytes; its state vector and shallow-since rows are derived, so no
+    /// artifact holds them. `messages` counts the captured messages and
+    /// `missed_messages` the rest of the selected ids, so together they are
+    /// exactly the selection: a capture with misses is partial, never a
+    /// whole fulfilment. A captured message whose named body did not stream
+    /// is in `absent_result_bodies`.
+    ArtifactMessages,
 }
 
 /// Immutable completion manifest for its declared extent, encrypted to the
@@ -463,17 +576,39 @@ pub struct CaptureSummary {
     pub live_sessions: u64,
     pub live_bodies: u64,
     /// Selected messages copied; zero for gate and live-session captures.
-    /// In a prospective batch, the sealed message rows it carries.
+    /// In a prospective batch, the sealed message rows it carries (edge rows
+    /// not counted).
     pub messages: u64,
     /// A prospective batch's first outbox ordinal; zero otherwise.
     pub batch_first_ordinal: u64,
-    /// A prospective batch's ordinal count (sealed plus missed); zero
+    /// A prospective batch's ordinal count (rows, edges and missed); zero
     /// otherwise. Ordinals `batch_first_ordinal..+batch_entries` are exactly
     /// the batch, so one acknowledgement never covers another batch.
     pub batch_entries: u64,
-    /// New messages of a prospective batch that landed but could not be
-    /// sealed: a truthful coverage gap, never claimed as captured.
+    /// New messages of a prospective batch whose row, or one of whose birth
+    /// edge rows, could not be sealed; or, in an artifact capture, selected
+    /// messages the artifact holds no readable MESSAGE row for. A truthful
+    /// coverage gap, never claimed as captured.
     pub missed_messages: Vec<[u8; 16]>,
+    /// In a Messages capture, selected messages whose result attachment
+    /// names a body the message no longer holds, or that no row holds: their
+    /// rows are captured, the body is not and is never claimed. A held body
+    /// is component 11 (`MessageResultBody`), revision the BLAKE3 of that
+    /// message's full stored entity row. In an artifact capture, every
+    /// captured message whose row names a result attachment whose body did
+    /// not stream: its occurrence there does not hold it, the artifact
+    /// carries none, or current custody no longer opens its instance (an
+    /// erase or release retired it). Uncaptured, never another source's
+    /// bytes. Empty for every other capture.
+    pub absent_result_bodies: Vec<[u8; 16]>,
+    /// Only on a prospective order's last batch of one source process, sent
+    /// after every writer of that process stopped: `Some(n)`, the order's
+    /// next ordinal. No entry at or after `n` exists, and this process writes
+    /// none; the batch's range ends at `n` (an empty final batch has
+    /// `batch_first_ordinal` `n` and no entries). It is not the order's
+    /// release or end: the standing stays for a later start. `None` on every
+    /// other summary.
+    pub final_next_ordinal: Option<u64>,
     pub extent: CaptureExtent,
     pub components: u64,
     pub plaintext_bytes: u64,

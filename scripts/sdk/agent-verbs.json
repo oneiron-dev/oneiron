@@ -18374,8 +18374,7 @@
         "unrestricted_record_scope": true,
         "readable": [
           "artifact_ref"
-        ],
-        "validate": "if input.content_base64.len() > crate::memory::caps::MAX_BLOB_BASE64_LEN { return Err(MemoryError::bad_request(\"blob base64 exceeds the content ceiling\")); }"
+        ]
       },
       "section": false,
       "binding": {
@@ -20587,6 +20586,14 @@
     {
       "name": "self.team.record",
       "input": "crate::team::TeamRecordInput",
+      "output": "crate::team::TeamRunAnswer",
+      "scope": "Write",
+      "context": "run",
+      "effect": "Team"
+    },
+    {
+      "name": "self.team.vote",
+      "input": "crate::team::TeamVoteInput",
       "output": "crate::team::TeamRunAnswer",
       "scope": "Write",
       "context": "run",
