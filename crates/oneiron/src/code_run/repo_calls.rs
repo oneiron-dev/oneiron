@@ -11,10 +11,10 @@ use crate::EntityId;
 use crate::error::{Error, Result};
 use crate::memory::repo_doors::{
     RepoCheckoutBindInput, RepoExportInput, RepoMergeQueueEnqueueInput, RepoMergeQueueObserveInput,
-    RepoProposalSubmitInput, RepoSnapshotsGetInput, RepoSnapshotsIngestInput,
-    RepoSnapshotsReadInput, RepoSymbolsDeclareInput, RepoSymbolsDefinitionsInput,
-    RepoSymbolsNeighborsInput, RepoSymbolsReleaseInput, RepoSymbolsRenewInput, RepoViewsGetInput,
-    RepoViewsReadInput, RepoWorkOpenInput,
+    RepoProposalResolveInput, RepoProposalSubmitInput, RepoSnapshotsGetInput,
+    RepoSnapshotsIngestInput, RepoSnapshotsReadInput, RepoSymbolsDeclareInput,
+    RepoSymbolsDefinitionsInput, RepoSymbolsNeighborsInput, RepoSymbolsReleaseInput,
+    RepoSymbolsRenewInput, RepoViewsGetInput, RepoViewsReadInput, RepoWorkOpenInput,
 };
 use crate::task_verb::sdk::RunVerb;
 
@@ -49,6 +49,8 @@ pub enum RepoRunCall {
     SymbolsRelease(RepoSymbolsReleaseInput),
     /// `self.code.proposal_submit`.
     ProposalSubmit(RepoProposalSubmitInput),
+    /// `self.code.proposal_resolve`.
+    ProposalResolve(RepoProposalResolveInput),
     /// `self.code.merge_queue.enqueue`.
     MergeQueueEnqueue(RepoMergeQueueEnqueueInput),
     /// `self.code.checkout.bind` (PR3b).
@@ -75,6 +77,7 @@ impl RepoRunCall {
             Self::SymbolsRenew(_) => SelfEffect::RepoSymbolsRenew,
             Self::SymbolsRelease(_) => SelfEffect::RepoSymbolsRelease,
             Self::ProposalSubmit(_) => SelfEffect::RepoProposalSubmit,
+            Self::ProposalResolve(_) => SelfEffect::RepoProposalResolve,
             Self::MergeQueueEnqueue(_) => SelfEffect::RepoMergeQueueEnqueue,
             Self::CheckoutBind(_) => SelfEffect::RepoCheckoutBind,
             Self::Export(_) => SelfEffect::RepoExport,
@@ -99,6 +102,7 @@ impl RepoRunCall {
             | Self::SymbolsRenew(RepoSymbolsRenewInput { work, .. })
             | Self::SymbolsRelease(RepoSymbolsReleaseInput { work, .. })
             | Self::ProposalSubmit(RepoProposalSubmitInput { work, .. })
+            | Self::ProposalResolve(RepoProposalResolveInput { work, .. })
             | Self::MergeQueueEnqueue(RepoMergeQueueEnqueueInput { work, .. }) => Some(*work),
             Self::SnapshotsGet(_)
             | Self::SnapshotsRead(_)
@@ -128,6 +132,7 @@ impl RepoRunCall {
             RunVerb::SelfCodeSymbolsRenew => Self::SymbolsRenew(typed(input)?),
             RunVerb::SelfCodeSymbolsRelease => Self::SymbolsRelease(typed(input)?),
             RunVerb::SelfCodeProposalSubmit => Self::ProposalSubmit(typed(input)?),
+            RunVerb::SelfCodeProposalResolve => Self::ProposalResolve(typed(input)?),
             RunVerb::SelfCodeMergeQueueEnqueue => Self::MergeQueueEnqueue(typed(input)?),
             RunVerb::SelfCodeCheckoutBind => Self::CheckoutBind(typed(input)?),
             RunVerb::SelfCodeExport => Self::Export(typed(input)?),
@@ -153,6 +158,7 @@ impl RepoRunCall {
             Self::SymbolsRenew(_) => Self::SymbolsRenew(retyped(args)?),
             Self::SymbolsRelease(_) => Self::SymbolsRelease(retyped(args)?),
             Self::ProposalSubmit(_) => Self::ProposalSubmit(retyped(args)?),
+            Self::ProposalResolve(_) => Self::ProposalResolve(retyped(args)?),
             Self::MergeQueueEnqueue(_) => Self::MergeQueueEnqueue(retyped(args)?),
             Self::CheckoutBind(_) => Self::CheckoutBind(retyped(args)?),
             Self::Export(_) => Self::Export(retyped(args)?),
@@ -161,7 +167,7 @@ impl RepoRunCall {
 }
 
 /// Every run repo effect, in row order.
-const REPO_EFFECTS: [SelfEffect; 16] = [
+const REPO_EFFECTS: [SelfEffect; 17] = [
     SelfEffect::RepoSnapshotsGet,
     SelfEffect::RepoSnapshotsRead,
     SelfEffect::RepoSymbolsDefinitions,
@@ -175,6 +181,7 @@ const REPO_EFFECTS: [SelfEffect; 16] = [
     SelfEffect::RepoSymbolsRenew,
     SelfEffect::RepoSymbolsRelease,
     SelfEffect::RepoProposalSubmit,
+    SelfEffect::RepoProposalResolve,
     SelfEffect::RepoMergeQueueEnqueue,
     SelfEffect::RepoCheckoutBind,
     SelfEffect::RepoExport,
@@ -199,6 +206,7 @@ impl SelfEffect {
                 | Self::RepoSymbolsRenew
                 | Self::RepoSymbolsRelease
                 | Self::RepoProposalSubmit
+                | Self::RepoProposalResolve
                 | Self::RepoMergeQueueEnqueue
                 | Self::RepoCheckoutBind
                 | Self::RepoExport
@@ -218,6 +226,7 @@ impl SelfEffect {
                 | Self::RepoSymbolsRenew
                 | Self::RepoSymbolsRelease
                 | Self::RepoProposalSubmit
+                | Self::RepoProposalResolve
                 | Self::RepoMergeQueueEnqueue
                 | Self::RepoCheckoutBind
                 | Self::RepoExport
