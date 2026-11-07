@@ -22,6 +22,7 @@ mod connector_call_output;
 mod connector_call_pending;
 mod connector_call_rebind;
 mod connector_call_resume;
+mod connector_call_sent;
 mod connector_call_start;
 mod connector_call_types;
 mod connector_elicitation_asks;
@@ -65,6 +66,9 @@ pub use self::connector_call_input_resume::{
 pub(crate) use self::connector_call_pending::CONNECTOR_CALL_PENDING_TTL_MS;
 pub(crate) use self::connector_call_rebind::{
     code_wait_rebind_effects_in_txn, code_wait_retry_approval_in_txn,
+};
+pub use self::connector_call_sent::{
+    ConnectorSentClearer, SentGeneration, SentGenerations, replace_spans,
 };
 pub use self::connector_elicitation_asks::{
     ConnectorElicitationAnswer, ConnectorElicitationOwnerAsk,

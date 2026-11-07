@@ -8,7 +8,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{
     GitCommitRequest, GitOid, GitRefName, GitTreeEntry, GitWire, GitWirePlan, GitWireRepo,
-    lock_repository,
+    git_path_bytes, lock_repository,
 };
 use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::store::code_snapshot::entity_id_from_hash_material;
@@ -391,10 +391,12 @@ pub(in crate::origin) fn write_tree_files(
     for (path, file) in files {
         count.row();
         let parts: Vec<_> = path.split('/').collect();
-        if parts
-            .iter()
-            .any(|p| p.is_empty() || matches!(*p, "." | ".." | ".git") || p.as_bytes().contains(&0))
-        {
+        // Each part is a Git path's text: a name outside UTF-8 is written as
+        // its own bytes, and text that is no path's canonical text is refused
+        // (FIX 21326).
+        if parts.iter().any(|p| {
+            p.is_empty() || matches!(*p, "." | ".." | ".git") || git_path_bytes(p).is_err()
+        }) {
             return Err(Error::InvariantViolation("unsafe exported file path"));
         }
         total = total
@@ -415,7 +417,7 @@ pub(in crate::origin) fn write_tree_files(
             .ok_or(Error::InvariantViolation("export parent missing"))?
             .push(GitTreeEntry {
                 mode: file.mode,
-                name: parts[parts.len() - 1].as_bytes().to_vec(),
+                name: git_path_bytes(parts[parts.len() - 1])?.into_owned(),
                 oid,
             });
     }
@@ -448,7 +450,7 @@ pub(in crate::origin) fn write_tree_files(
             .ok_or(Error::InvariantViolation("export tree parent missing"))?
             .push(GitTreeEntry {
                 mode: 0o040000,
-                name: name.as_bytes().to_vec(),
+                name: git_path_bytes(name)?.into_owned(),
                 oid,
             });
     }
