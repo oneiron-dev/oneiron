@@ -116,6 +116,7 @@ pub use self::served_form::{AudioPull, PixelPull, ServedForm, ServedRung};
 pub use self::session::{SessionLocalReceiptLog, SessionReceiptClose};
 pub use self::share_doors::{ShareRevokeReceipt, SharedBriefCitation, SharedBriefView};
 
+pub(crate) use self::direct_dispatch::latest_direct_dispatch_receipt_in_txn;
 pub(crate) use self::direct_dispatch::record as record_direct_dispatch_receipt;
 pub(crate) use self::dispatch_observation::{
     DispatchObservationKey, append_dispatch_observation_in_txn, read_dispatch_observation,
