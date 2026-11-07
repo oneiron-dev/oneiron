@@ -77,6 +77,27 @@ pub(super) fn standing_words_in(
     summary_words(read, txn, &receipt.summary)
 }
 
+/// Whether the landed summary `summary` stands for `read` in `txn` now, as
+/// a chat log reads it (FIX 5027, 5031): its receipt's evidence reads to its
+/// pins and its words pass the reader's read and its sources' disclosure
+/// fence. A kept prefix that holds a summary its reader may no longer read
+/// is not sent again.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn summary_stands_in(
+    read: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    summary: &EntityId,
+) -> Result<bool> {
+    let Some(receipt) = super::storage::conversation_receipt_in(&read.vault().store, txn, summary)?
+    else {
+        return Ok(false);
+    };
+    Ok(standing_words_in(read, txn, &receipt)?.is_some())
+}
+
 /// The epoch summary a conversation's compaction folded one turn into, as
 /// its reader reads it now (FIX 5038).
 #[derive(Debug, Clone, PartialEq, Eq)]
