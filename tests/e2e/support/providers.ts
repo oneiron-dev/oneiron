@@ -1,6 +1,6 @@
 /** Scripted external origins only. Storage, gates, schedulers and organ executables remain real. */
 import { gunzipSync } from "node:zlib";
-import { ownResource, redactor, withDeadline, LIMITS } from "./run.ts";
+import { ownResource, redactor, withDeadline, LIMITS, assertFlowActive } from "./run.ts";
 import type { Artifacts } from "./run.ts";
 
 export type Json = null | boolean | number | string | readonly Json[] | {readonly [key:string]:Json};
@@ -91,6 +91,7 @@ export class ScriptedProviders {
   private disown:()=>void=()=>{};
   private constructor(readonly scenario:ProviderScenario) {this.urls={}}
   static async start(scenario:ProviderScenario):Promise<ScriptedProviders> {
+    assertFlowActive();
     if(process.platform!=="linux") throw new ProviderScriptError("Provider execution is Linux-only");
     const instance=new ScriptedProviders(scenario);
     const ids=new Set<string>();
@@ -107,6 +108,7 @@ export class ScriptedProviders {
     const urls:Record<string,string>={};
     try {
       for(const origin of [...new Set([...instance.pending.keys(),...instance.sockets.keys()])].sort()) {
+        assertFlowActive();
         const server=Bun.serve<SocketState>({hostname:"127.0.0.1",port:0,idleTimeout:0,
           fetch:(request,server)=>{
             if(request.headers.get("upgrade")?.toLowerCase()!=="websocket") return instance.answer(origin,request);

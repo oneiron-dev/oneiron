@@ -1,5 +1,6 @@
 /** Linux-only execution and reporting. Importing this module starts nothing. */
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile, rm, mkdtemp, readdir, access } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
@@ -21,13 +22,37 @@ export class DeadlineError extends Error { override name = "DeadlineError" }
 export function assertLinux(): void {
   if (process.platform !== "linux") throw new BlockedDoor("E2E execution is Linux-only; never launch on the coordinator Mac");
 }
+class FlowLifecycle {
+  readonly processes = new Set<ManagedProcess>();
+  readonly resources = new Set<() => void | Promise<void>>();
+  readonly controller = new AbortController();
+  private failure: DeadlineError | undefined;
+  constructor(readonly id: string, readonly deadlineAt: number) {}
+  assertActive(): void {
+    if (!this.failure && performance.now() >= this.deadlineAt) this.expire();
+    if (this.failure) throw this.failure;
+  }
+  expire(): void {
+    if (this.failure) return;
+    this.failure = new DeadlineError(`${this.id} flow expired`);
+    this.controller.abort(this.failure);
+    for (const child of this.processes) child.signal("SIGKILL");
+  }
+  finish(): void {
+    this.failure ??= new DeadlineError(`${this.id} flow finished`);
+    this.controller.abort(this.failure);
+  }
+}
+const flowStorage = new AsyncLocalStorage<FlowLifecycle>();
+export function assertFlowActive(): void { flowStorage.getStore()?.assertActive() }
+export function flowAbortSignal(): AbortSignal | undefined { return flowStorage.getStore()?.controller.signal }
 export function secretHex(bytes = 32): string { return randomBytes(bytes).toString("hex") }
 export class Redactor {
   private readonly secrets = new Set<string>();
   add(...values: string[]): void { for (const value of values) if (value) this.secrets.add(value) }
-  text(value: string): string {
+  text(value: string, localSecrets: readonly string[] = []): string {
     let text = value;
-    for (const secret of [...this.secrets].sort((a,b) => b.length-a.length)) text = text.split(secret).join("[REDACTED]");
+    for (const secret of [...this.secrets, ...localSecrets].sort((a,b) => b.length-a.length)) text = text.split(secret).join("[REDACTED]");
     return text
       .replace(/v2\.(?:cred|slip)\.[a-f0-9.]+/gi, "[REDACTED CREDENTIAL]")
       .replace(/(\/pair)#[^\s"'<>]+/g, "$1#[REDACTED]")
@@ -41,13 +66,13 @@ export class Redactor {
     try { return JSON.stringify(this.value(JSON.parse(value))).replace(/\b[a-f0-9]{32,}\b/gi,"[REDACTED HEX]") }
     catch { return "[WITHHELD non-JSON private stderr]" }
   }
-  value(value: unknown): unknown {
-    if (typeof value === "string") return this.text(value);
-    if (Array.isArray(value)) return value.map(v => this.value(v));
+  value(value: unknown, localSecrets: readonly string[] = []): unknown {
+    if (typeof value === "string") return this.text(value, localSecrets);
+    if (Array.isArray(value)) return value.map(v => this.value(v, localSecrets));
     if (value && typeof value === "object") {
-      if (value instanceof Error) return { name: value.name, message: this.text(value.message) };
+      if (value instanceof Error) return { name: value.name, message: this.text(value.message, localSecrets) };
       return Object.fromEntries(Object.entries(value).map(([key,val]) => [key,
-        /authorization|binding|cookie|password|secret|token|credential|seed|api.?key/i.test(key) ? "[REDACTED]" : this.value(val)]));
+        /authorization|binding|cookie|password|secret|token|credential|seed|api.?key/i.test(key) ? "[REDACTED]" : this.value(val, localSecrets)]));
     }
     return value;
   }
@@ -62,16 +87,25 @@ export async function withDeadline<T>(work: Promise<T>, ms: number, label: strin
 }
 export class Artifacts {
   constructor(readonly root: string) {}
-  async json(name: string, value: unknown): Promise<void> {
+  async json(name: string, value: unknown, localSecrets: readonly string[] = []): Promise<void> {
     if (!/^[a-zA-Z0-9_.-]+$/.test(name)) throw new Error("Artifact name must be one path segment");
     await mkdir(this.root, { recursive: true, mode: 0o700 });
-    await writeFile(resolve(this.root, name), JSON.stringify(redactor.value(value), null, 2)+"\n", { mode: 0o600 });
+    await writeFile(resolve(this.root, name), JSON.stringify(redactor.value(value, localSecrets), null, 2)+"\n", { mode: 0o600 });
   }
 }
 /** Start records are persisted before the operation, including calls that never return. */
 export async function recordStart(kind: "http" | "cli" | "sdk" | "process" | "stage" | "fixture", details: Readonly<Record<string,unknown>>, artifacts?: Artifacts, stepId = secretHex(6)): Promise<string> {
+  assertFlowActive();
   const target = artifacts ?? (process.env.E2E_ARTIFACTS_DIR ? new Artifacts(process.env.E2E_ARTIFACTS_DIR) : undefined);
   await target?.json(`request-${stepId}-start.json`, {stepId,phase:"start",kind,startedAt:new Date().toISOString(),...details});
+  try { assertFlowActive() }
+  catch (error) {
+    if (target) await target.json(`request-${stepId}-cancelled.json`, {
+      stepId,phase:"cancelled",kind,finishedAt:new Date().toISOString(),...details,
+      error:error instanceof Error ? {name:error.name,message:error.message} : String(error),
+    }).catch(() => {});
+    throw error;
+  }
   return stepId;
 }
 export interface ProcessResult { readonly exitCode: number; readonly signal: string | null; readonly stdout: string; readonly stderr: string }
@@ -98,13 +132,16 @@ const owned = new Set<ManagedProcess>();
 const resources = new Set<() => void | Promise<void>>();
 /** Register a provider/socket/fixture for end-of-flow cleanup, including failure paths. */
 export function ownResource(close: () => void | Promise<void>): () => void {
-  resources.add(close);
-  return () => { resources.delete(close) };
+  assertFlowActive();
+  const owners = flowStorage.getStore()?.resources ?? resources;
+  owners.add(close);
+  return () => { owners.delete(close) };
 }
 export async function closeOwnedResources(): Promise<void> {
   const failures: unknown[] = [];
-  for (const close of [...resources].reverse()) {
-    resources.delete(close);
+  const owners = flowStorage.getStore()?.resources ?? resources;
+  for (const close of [...owners].reverse()) {
+    owners.delete(close);
     try { await close() } catch (error) { failures.push(error) }
   }
   await closeOwnedProcesses();
@@ -119,7 +156,8 @@ export class ManagedProcess {
   private readonly lines: { stdout: string; stderr: string } = { stdout: "", stderr: "" };
   private readonly ring: string[] = [];
   private constructor(readonly child: ChildProcessWithoutNullStreams, readonly options: ProcessOptions, readonly stepId: string, readonly ownerFile: string | undefined, readonly argv: readonly string[]) {
-    owned.add(this);
+    const owners = flowStorage.getStore()?.processes ?? owned;
+    owners.add(this);
     const collect = (kind: "stdout" | "stderr", chunk: Buffer): void => {
       const output = this[kind]+chunk.toString("utf8");
       if (output.length > 4*1024*1024) this.truncated[kind] = true;
@@ -153,13 +191,14 @@ export class ManagedProcess {
           stderr: this.truncated.stderr ? "[WITHHELD truncated stderr]" : options.diagnosticOutput ? redactor.text(this.stderr) : options.privateOutput ? redactor.privateStderr(this.stderr) : redactor.text(this.stderr).replace(/\b[a-f0-9]{32,}\b/gi,"[REDACTED HEX]") });
       } finally {
         if (ownerFile) await rm(ownerFile,{force:true});
-        owned.delete(this);
+        owners.delete(this);
       }
     });
     // Callers await settled; this handler only prevents an early unhandled rejection.
     void this.settled.catch(() => {});
   }
   static async start(argv: readonly string[], options: ProcessOptions): Promise<ManagedProcess> {
+    assertFlowActive();
     assertLinux();
     if (!argv[0]) throw new Error("Empty process argv");
     const stepId = await recordStart(options.operation?.kind ?? "process", {method:options.operation?.method ?? options.label,
@@ -206,11 +245,13 @@ export class ManagedProcess {
 export async function runProcess(argv: readonly string[], options: ProcessOptions, ms: number = LIMITS.requestMs): Promise<ProcessResult> {
   return (await ManagedProcess.start(argv, options)).wait(ms);
 }
-export async function closeOwnedProcesses(): Promise<void> { await Promise.all([...owned].map(p => p.stop())) }
+export async function closeOwnedProcesses(): Promise<void> { await Promise.all([...(flowStorage.getStore()?.processes ?? owned)].map(p => p.stop())) }
 export async function tempRoot(label: string): Promise<string> {
+  assertFlowActive();
   assertLinux();
   const base = process.env.E2E_TEMP_ROOT ?? tmpdir();
   await mkdir(base, {recursive:true,mode:0o700});
+  assertFlowActive();
   const path = await mkdtemp(resolve(base,`oneiron-${label}-`));
   return path;
 }
@@ -226,6 +267,9 @@ interface Reporter { test: typeof BunTest }
 /** Call once at module scope; pass Bun's test function to avoid importing bun:test in the runner. */
 export function defineFile(meta: ImportMeta, declaration: FileDeclaration) {
   const file = basename(fileURLToPath(meta.url));
+  // Register only in a Bun test file; importing the suite runner starts no work.
+  const { beforeAll } = require("bun:test") as typeof import("bun:test");
+  beforeAll(async () => { await loadBuildManifest(declaration.profile) }, LIMITS.suiteMs);
   const results = new Map<string,IdResult>();
   const registrations = new Set<string>();
   const resultPath = process.env.E2E_RESULT_FILE;
@@ -242,27 +286,33 @@ export function defineFile(meta: ImportMeta, declaration: FileDeclaration) {
       if (selected.size && !selected.has(id)) return;
       register(id);
       test(`${id} ${name}`, async () => {
-        const started = performance.now();
-        try {
-          if (process.env.E2E_PROFILE && process.env.E2E_PROFILE !== declaration.profile) throw new BlockedDoor("File profile mismatch");
-          await withDeadline(Promise.resolve().then(body), deadlineMs, id, () => { for (const child of owned) child.signal("SIGKILL") });
-          await closeOwnedResources();
-          results.set(id, {id,outcome:"PASS",durationMs:performance.now()-started});
-        } catch (error) {
-          results.set(id, {id,outcome:error instanceof BlockedDoor ? "BLOCKED" : "FAIL",durationMs:performance.now()-started,
-            reason:redactor.text(error instanceof Error ? error.message : String(error))});
-          // Bun must not inspect raw credential-bearing properties such as CliError.result.
-          throw new Error(results.get(id)!.reason);
-        } finally {
-          try { await closeOwnedResources() }
-          catch (error) {
-            const prior = results.get(id);
-            const cleanupError = redactor.text(String(error));
-            results.set(id,{id,outcome:"FAIL",durationMs:performance.now()-started,reason:prior?.reason ?? cleanupError,cleanupError});
-            throw new Error(cleanupError);
+        const flow = new FlowLifecycle(id, performance.now() + deadlineMs);
+        return flowStorage.run(flow, async () => {
+          const started = performance.now();
+          try {
+            if (process.env.E2E_PROFILE && process.env.E2E_PROFILE !== declaration.profile) throw new BlockedDoor("File profile mismatch");
+            await withDeadline(Promise.resolve().then(() => { assertFlowActive(); return body() }), deadlineMs, id, () => flow.expire());
+            assertFlowActive();
+            flow.finish();
+            await closeOwnedResources();
+            results.set(id, {id,outcome:"PASS",durationMs:performance.now()-started});
+          } catch (error) {
+            results.set(id, {id,outcome:error instanceof BlockedDoor ? "BLOCKED" : "FAIL",durationMs:performance.now()-started,
+              reason:redactor.text(error instanceof Error ? error.message : String(error))});
+            // Bun must not inspect raw credential-bearing properties such as CliError.result.
+            throw new Error(results.get(id)!.reason);
+          } finally {
+            flow.finish();
+            try { await closeOwnedResources() }
+            catch (error) {
+              const prior = results.get(id);
+              const cleanupError = redactor.text(String(error));
+              results.set(id,{id,outcome:"FAIL",durationMs:performance.now()-started,reason:prior?.reason ?? cleanupError,cleanupError});
+              throw new Error(cleanupError);
+            }
+            finally { await flush() }
           }
-          finally { await flush() }
-        }
+        });
       }, deadlineMs + LIMITS.stopMs + 1000);
     },
     /** Real test.todo, but also a mandatory BLOCKED row in the independent report. */
