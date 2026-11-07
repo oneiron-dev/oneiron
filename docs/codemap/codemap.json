@@ -25989,7 +25989,7 @@
      "path": "src/deletion/legal_hold/clone/collector.rs",
      "purpose": "Streaming ciphertext and exact completion shared by native source families",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 7
      }
     },
     {
@@ -26026,6 +26026,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/legal_hold/clone/outbox.rs",
+     "purpose": "The connection half of a HOST order's prospective capture (FIX 13866): stands the order, then streams its…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -26057,7 +26067,7 @@
      "path": "src/deletion/legal_hold/mod.rs",
      "purpose": "Legal hold doors (OF-470, design B; owner ruling 2026-10-17: \"B, and that stuff is for cloud only + we…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 13,
       "re-export": 2
      }
@@ -26071,6 +26081,16 @@
      "surface": {
       "crate-vis": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/legal_hold/prospective.rs",
+     "purpose": "A HOST order's explicit prospective capture of new on-record messages (LEGAL-HOLD-USE = B as a clone, owner…",
+     "surface": {
+      "crate-vis": 14
      }
     },
     {
@@ -26108,7 +26128,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 44,
+      "crate-vis": 45,
       "re-export": 15
      }
     },
@@ -74416,13 +74436,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/store/legal_hold/mod.rs",
      "purpose": "The one legal-hold store (OF-470, design B; ARCH-0038 #legal-hold)",
      "surface": {
-      "crate-vis": 35
+      "crate-vis": 39
      }
     },
     {
@@ -92364,7 +92384,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 63,
+     "files": 65,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93498,9 +93518,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 178,
+   "over_bar": 179,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6598,
+   "source_files": 6600,
    "test_files": 895
   },
   "oneiron-android": {
@@ -147709,13 +147729,14 @@
       "HostLegalRequest",
       "LiveSessionTarget",
       "LiveSpillMetadata",
+      "MessageSelector",
       "ReleaseLiveOrder",
       "SourceHello"
      ],
      "path": "src/lib/host_legal.rs",
      "purpose": "HOST-private legal-clone capture framing",
      "surface": {
-      "enum": 6,
+      "enum": 7,
       "fn": 16,
       "struct": 8
      }
