@@ -135,7 +135,7 @@ pub(super) fn gate<'a>(
         Ok(None) => return Ok(Gated::Forward),
         Err(why) => return Err(refuse(proxy, unverifiable(why))),
     };
-    let step = flows.ingest(opened, datagram, proxy);
+    let step = flows.ingest(opened, datagram, &*proxy.vault.host_net_floor);
     let release = match step {
         Step::Agreed => return Ok(Gated::Forward),
         Step::Held => return Ok(Gated::Held),

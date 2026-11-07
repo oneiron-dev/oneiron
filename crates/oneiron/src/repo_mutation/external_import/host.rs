@@ -26,10 +26,11 @@ pub trait ExternalGitSourceHost: Send + Sync {
     fn revalidate(&self) -> Result<()>;
 
     /// Fetches exactly the normalized `source` into a private scratch store
-    /// (`GitWire::fetch_external_exact`), with the `Authorization` header
-    /// of the custody secret `binding` when one is named: only to the
-    /// source's own https host, never a fallback. A redirect off that host
-    /// is a refusal naming its target.
+    /// (`GitWire::fetch_external_exact`), with the credential of the custody
+    /// secret `binding` when one is named, which only the credential broker
+    /// installs (OSH-3, `GitWire::fetch_external_exact_via_relay`): only to
+    /// the source's own https host, never a fallback. A redirect off that
+    /// host is a refusal naming its target.
     ///
     /// # Errors
     /// A custody refusal, or a process or store failure.
