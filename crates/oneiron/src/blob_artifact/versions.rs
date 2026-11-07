@@ -282,6 +282,7 @@ impl Vault {
                 occurred,
                 learned_at,
                 BirthPosition::default(),
+                crate::core_write::CoreWriteLaneRef::Unbound,
             )
         })?;
         if let Some(version) = version {
@@ -369,6 +370,7 @@ impl Vault {
                 occurred,
                 learned_at,
                 Some(parent_version),
+                crate::core_write::CoreWriteLaneRef::Unbound,
             )
         })
     }
@@ -430,6 +432,7 @@ impl Vault {
             fork_parent,
             None,
             Some(made_by),
+            crate::core_write::CoreWriteLaneRef::Unbound,
         )
     }
 
@@ -482,6 +485,7 @@ impl Vault {
             true,
             false,
             producer_position,
+            crate::core_write::CoreWriteLaneRef::Unbound,
         )
     }
 
@@ -511,6 +515,37 @@ impl Vault {
             occurred,
             learned_at,
             None,
+            crate::core_write::CoreWriteLaneRef::Unbound,
+        )
+    }
+
+    /// An artifact content writer's append, under that writer's actual read lane.
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) fn append_blob_artifact_version_in_lane(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        artifact_id: &EntityId,
+        bytes: &[u8],
+        provenance: &BlobVersionProvenance,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+        lane: crate::core_write::CoreWriteLaneRef<'_>,
+    ) -> Result<BlobArtifactVersion> {
+        self.append_blob_artifact_version_body_in_txn(
+            wtxn,
+            artifact_id,
+            VersionBody::Bytes(bytes),
+            provenance,
+            actor,
+            occurred,
+            learned_at,
+            None,
+            None,
+            None,
+            false,
+            true,
+            lane,
         )
     }
 
@@ -561,6 +596,7 @@ impl Vault {
             None,
             false,
             true,
+            crate::core_write::CoreWriteLaneRef::Unbound,
         )?;
         Ok((version, staged))
     }
@@ -594,6 +630,7 @@ impl Vault {
             made_by,
             false,
             false,
+            crate::core_write::CoreWriteLaneRef::Unbound,
         )
     }
 }
