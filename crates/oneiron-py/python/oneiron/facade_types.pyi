@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1265 facade rows, 4599 declarations.
-Inputs: 1195 of 1265 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1097 of 1265 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1272 facade rows, 4609 declarations.
+Inputs: 1201 of 1272 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1101 of 1272 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -5067,6 +5067,31 @@ class WeaveItemCorrectionView(TypedDict):
     project_ref: NotRequired[str | None]
     actor_ref: str
     recorded_at: int
+class WeaveAdminReportRequest(TypedDict):
+    membership_grant: str
+    request: NotRequired[WeaveReportRequest]
+class WeaveAdminLensRequest(TypedDict):
+    membership_grant: str
+    request: NotRequired[WeaveLensRequest]
+class WeaveAdminDigestRequest(TypedDict):
+    membership_grant: str
+    request: NotRequired[WeaveDigestRequest]
+class WeaveAdminLinkWrongRequest(TypedDict):
+    membership_grant: str
+    request: WeaveWrongLinkRequest
+class WeaveAdminItemWrongRequest(TypedDict):
+    membership_grant: str
+    request: WeaveWrongItemRequest
+class StepUpPasskeysResetRequest(TypedDict):
+    person: str
+class StepUpPasskeysReset(TypedDict):
+    person: str
+    removed: int
+class StepUpTotpResetRequest(TypedDict):
+    person: str
+class StepUpTotpReset(TypedDict):
+    person: str
+    removed: int
 class WeaveEnqueueRequest(TypedDict):
     skill_ref: str
     subject_ref: str
@@ -10342,14 +10367,6 @@ class LegalHoldLiftAndEraseRequest(TypedDict):
     claim_free_partition: NotRequired[bool]
     shown_state: LiftAndEraseShownState
 ErasePendingReason = Literal["historical_sweep", "custody_retirement", "veto_window"]
-LegalHoldBoundKind = Literal["law"]
-class LegalHoldBound(TypedDict):
-    kind: LegalHoldBoundKind
-    order_ref: NotRequired[str | None]
-    legal_basis_ref: NotRequired[str | None]
-    jurisdiction: NotRequired[str | None]
-    issuing_authority_ref: NotRequired[str | None]
-    ends_at: NotRequired[int | None]
 class LegalHoldEraseStateErased(TypedDict):
     state: Literal["erased"]
     receipt_ref: NotRequired[str | None]
@@ -10357,15 +10374,10 @@ class LegalHoldEraseStateCompletionPending(TypedDict):
     state: Literal["completion_pending"]
     receipt_ref: NotRequired[str | None]
     reason: NotRequired[ErasePendingReason | None]
-class LegalHoldEraseStateRetainedForLaw(TypedDict):
-    state: Literal["retained_for_law"]
-    bound: LegalHoldBound
-    works_self_hosted: bool
-    self_hosted_note: str
 class LegalHoldEraseStateFailed(TypedDict):
     state: Literal["failed"]
     message: str
-LegalHoldEraseState = LegalHoldEraseStateErased | LegalHoldEraseStateCompletionPending | LegalHoldEraseStateRetainedForLaw | LegalHoldEraseStateFailed
+LegalHoldEraseState = LegalHoldEraseStateErased | LegalHoldEraseStateCompletionPending | LegalHoldEraseStateFailed
 class LegalHoldErasedRecord(TypedDict):
     record: EntityId
     status: LegalHoldEraseState
@@ -13492,6 +13504,7 @@ class OriginPublishRefusal(TypedDict):
     observed: NotRequired[OriginPublishRemote | None]
     changed_fields: list[str]
     detail: NotRequired[str | None]
+BrokerIsolation = Literal["separate_user", "same_user"]
 class OriginPublishRequestView(TypedDict):
     request_id: EntityId
     repo: str
@@ -13512,6 +13525,7 @@ class OriginPublishRequestView(TypedDict):
     refusal: NotRequired[OriginPublishRefusal | None]
     created_at: int
     finished_at: NotRequired[int | None]
+    broker_isolation: NotRequired[BrokerIsolation | None]
 class OriginPublishReviewRequest(TypedDict):
     repo: str
     request_id: EntityId
@@ -18351,6 +18365,14 @@ class ScopedCommitRequest(TypedDict):
     claims: list[ScopedClaimInput]
 RefusalReason = Literal["INVENTED_REFERENCE", "GATE_REFUSED"]
 LegalHoldState = Literal["retained_for_law", "use_restricted"]
+LegalHoldBoundKind = Literal["law"]
+class LegalHoldBound(TypedDict):
+    kind: LegalHoldBoundKind
+    order_ref: NotRequired[str | None]
+    legal_basis_ref: NotRequired[str | None]
+    jurisdiction: NotRequired[str | None]
+    issuing_authority_ref: NotRequired[str | None]
+    ends_at: NotRequired[int | None]
 class LegalHoldNotice(TypedDict):
     state: LegalHoldState
     bound: LegalHoldBound
