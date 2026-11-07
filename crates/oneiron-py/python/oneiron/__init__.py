@@ -3863,6 +3863,9 @@ class Oneiron:
     class _VaultHooksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def checks(self, spec=None):
+            """The owner reads saved hook cycle and depth checks, including their causal lineage. Reads no hook arguments, body or result values and changes nothing; keeps the native list's oldest-key order and 1000-row limit."""
+            return json.loads(_translate(lambda: self._client.vault_hooks_checks(json.dumps({} if spec is None else spec))))
         def replay(self, spec):
             """The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands, 256 entries a page; next_cursor continues to the rest."""
             return json.loads(_translate(lambda: self._client.vault_hooks_replay(json.dumps(spec))))

@@ -645,6 +645,7 @@ pub enum AgentVerb {
     HostCompact,
     HostWake,
     HostBudgetHit,
+    VaultHooksChecks,
     VaultHooksReplay,
     VaultHooksRegenDue,
     VaultHooksRegenGet,
@@ -1942,6 +1943,7 @@ impl AgentVerb {
         Self::HostCompact,
         Self::HostWake,
         Self::HostBudgetHit,
+        Self::VaultHooksChecks,
         Self::VaultHooksReplay,
         Self::VaultHooksRegenDue,
         Self::VaultHooksRegenGet,
@@ -3262,6 +3264,7 @@ impl AgentVerb {
             Self::HostCompact => "host.compact",
             Self::HostWake => "host.wake",
             Self::HostBudgetHit => "host.budget.hit",
+            Self::VaultHooksChecks => "vault.hooks.checks",
             Self::VaultHooksReplay => "vault.hooks.replay",
             Self::VaultHooksRegenDue => "vault.hooks.regen.due",
             Self::VaultHooksRegenGet => "vault.hooks.regen.get",
@@ -4575,6 +4578,7 @@ impl AgentVerb {
                 | Self::HostCompact
                 | Self::HostWake
                 | Self::HostBudgetHit
+                | Self::VaultHooksChecks
                 | Self::VaultHooksReplay
                 | Self::VaultHooksRegenDue
                 | Self::VaultHooksRegenGet
@@ -5901,6 +5905,7 @@ impl AgentVerb {
                 | Self::HostCompact
                 | Self::HostWake
                 | Self::HostBudgetHit
+                | Self::VaultHooksChecks
                 | Self::VaultHooksReplay
                 | Self::VaultHooksRegenDue
                 | Self::VaultHooksRegenGet
@@ -6612,6 +6617,7 @@ impl AgentVerb {
                 | Self::VaultSealPending
                 | Self::VaultSecretsCodeRunRoomLifts
                 | Self::VaultDisclosureReveals
+                | Self::VaultHooksChecks
                 | Self::VaultHooksReplay
                 | Self::VaultHooksRegenDue
                 | Self::VaultArtifactsThreadsList
@@ -7377,6 +7383,7 @@ impl AgentVerb {
                 | Self::HostCompact
                 | Self::HostWake
                 | Self::HostBudgetHit
+                | Self::VaultHooksChecks
                 | Self::VaultHooksReplay
                 | Self::VaultHooksRegenDue
                 | Self::VaultHooksRegenGet
@@ -9410,6 +9417,7 @@ impl AgentVerb {
             Self::HostCompact => &["spec"],
             Self::HostWake => &["spec"],
             Self::HostBudgetHit => &["spec"],
+            Self::VaultHooksChecks => &["spec"],
             Self::VaultHooksReplay => &["spec"],
             Self::VaultHooksRegenDue => &["spec"],
             Self::VaultHooksRegenGet => &["spec"],
@@ -10708,6 +10716,7 @@ impl AgentVerb {
             Self::HostCompact => &["spec"],
             Self::HostWake => &["spec"],
             Self::HostBudgetHit => &["spec"],
+            Self::VaultHooksChecks => &["spec"],
             Self::VaultHooksReplay => &["spec"],
             Self::VaultHooksRegenDue => &["spec"],
             Self::VaultHooksRegenGet => &["spec"],
@@ -13258,6 +13267,9 @@ impl AgentVerb {
             }
             Self::HostBudgetHit => {
                 "Notifies a spent durable budget seat under Suspend, retaining the original line, root payer, cap and accounting for hook follow-up work."
+            }
+            Self::VaultHooksChecks => {
+                "The owner reads saved hook cycle and depth checks, including their causal lineage. Reads no hook arguments, body or result values and changes nothing; keeps the native list's oldest-key order and 1000-row limit."
             }
             Self::VaultHooksReplay => {
                 "The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands, 256 entries a page; next_cursor continues to the rest."
