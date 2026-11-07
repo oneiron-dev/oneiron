@@ -148,7 +148,8 @@ pub use self::replay_capsule::{
 pub(crate) use self::replay_capsule::{StepCapture, StepStartBody, StepStartCapture, capture_step};
 pub(crate) use self::replay_context::{
     CapturedGuestResponse, CapturedReaderChild, ReaderFindingSelection, ReaderReadCapture,
-    SelectedFinding, StepContextCapture, StepContextCommit, StepReplayContext, reveals_secret,
+    RetainedReadVerdict, SelectedFinding, StepContextCapture, StepContextCommit, StepReplayContext,
+    reveals_secret,
 };
 pub use self::repo_calls::RepoRunCall;
 pub use self::result_read::ResultFacet;
@@ -159,7 +160,6 @@ pub(crate) use self::result_read::{
 };
 pub use self::storage::ReadWorldUnknown;
 pub(crate) use self::storage::SessionCheckpointBody;
-pub(crate) use self::storage::retire_replay_bodies_in_rows;
 pub use self::storage::step_replay_capsules;
 pub(crate) use self::storage::undecodable_step_capsule_in_txn;
 pub(crate) use self::storage::{
@@ -195,10 +195,10 @@ pub(crate) use self::storage::{
     ReadWorldSeal, ReadWorldSnapshot, captured_step_read_scopes_in_txn, read_world_snapshot_in_txn,
 };
 pub(crate) use self::storage::{
-    StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn, code_run_body_row_key,
-    code_run_inline_body_of_row, deliver_wait_in_txn, deliver_wait_listing_in_txn,
-    lift_code_run_file_hold_in_txn, retire_unlanded_inline_body_keys_in_txn,
-    settled_wait_reply_in_txn,
+    StagedSinks, clear_parked_wait_in_txn, code_run_body_file_of_row, code_run_body_held_in_txn,
+    code_run_body_row_key, code_run_inline_body_of_row, deliver_wait_in_txn,
+    deliver_wait_listing_in_txn, lift_code_run_file_hold_in_txn,
+    retire_unlanded_inline_body_keys_in_txn, settled_wait_reply_in_txn,
 };
 pub(crate) use self::storage::{
     StepKey, StoredStepFeedback, erase_spawn_targets_in_txn, erase_type_diagnostics_actor_in_txn,
@@ -220,6 +220,7 @@ pub(crate) use self::storage::{
 pub(crate) use self::storage::{
     drop_code_run_result_marks_in_txn, erase_retained_result_marks_in_txn,
 };
+pub(crate) use self::storage::{retire_replay_bodies_in_rows, settle_evaporated_reader_spend};
 // FIX 9180 (coord-b slice d): a replay row's and a step start's parts in
 // checkpoint images, as row-held responses.
 pub(crate) use self::replay_parts::{
@@ -252,7 +253,7 @@ pub use self::reader::{
     ClaimOutcome, DEFAULT_READER_FOLD_RESERVE_MS, DEFAULT_READER_WINDOW_TOKENS, DelegatedSource,
     ReaderActor, ReaderFindingRef, ReaderJob, ReaderJobKind, ReaderJobRunner, ReaderJobState,
     ReaderJobWake, ReaderParent, ReaderQueueCursor, ReaderQueuePage, ReaderReportReceipt,
-    ReaderRoute, ReaderRunEnd, ReaderSpawnReceipt, ReaderSpend, RunDeadline,
+    ReaderRoute, ReaderRunEnd, ReaderSpawnReceipt, ReaderSpend, ResultOrigins, RunDeadline,
     SUMMARY_GROUP_EXCEEDS_WINDOW, SUMMARY_READ_BYTES_PER_TOKEN, SUMMARY_WINDOW_DIVISOR,
     SelfReaderReportCall, SelfReaderSpawnCall, SelfSummarizeCall, SpawnHostSeat,
     SpawnParentBinding, SummarizeEffort, SummarizeRecipe, SummarizeReply, TaskWaitFailure,
@@ -260,8 +261,8 @@ pub use self::reader::{
     summary_exceeds_window, summary_exceeds_window_bytes, summary_token_budget,
 };
 pub(crate) use self::reader::{
-    reader_attempt_id, reader_run_id, reader_task_id, reader_wait_id, reduce_task_wait_set,
-    summary_memo_key, summary_task_id, valid_reader_key, vault_ref,
+    OriginsUnion, reader_attempt_id, reader_run_id, reader_task_id, reader_wait_id,
+    reduce_task_wait_set, summary_memo_key, summary_task_id, valid_reader_key, vault_ref,
 };
 pub use self::reader_brief::reader_task_brief;
 pub(crate) use self::reader_clock::{reader_job_cutoff, reader_wait_cutoff};

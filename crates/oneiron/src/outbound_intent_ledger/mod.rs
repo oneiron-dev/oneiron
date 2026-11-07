@@ -6,6 +6,7 @@
 
 mod codec;
 mod dispatch;
+mod late_recipient;
 pub use oneiron_base::unsubscribe_headers as email_headers;
 mod payload;
 mod pinned_approval;
@@ -39,6 +40,7 @@ pub(crate) use self::dispatch::execute_outbound_call;
 #[cfg(test)]
 use self::dispatch::recover_outbound_intents;
 pub(crate) use self::dispatch::{IntentRecoveryEntry, intent_recovery_entries};
+pub(crate) use self::late_recipient::{link_late_recipients_in_txn, record_unresolved_party_in_txn};
 pub(crate) use self::payload::{
     LedgerPayloadContext, admitting_actor_in_txn, erase_outbound_intent_actor_in_txn,
     payload_recipient_in_txn, stored_admission_in_txn,

@@ -217,11 +217,21 @@ pub(crate) fn restrict_child(pids: u32) -> Result<()> {
     restrict_process(pids, 64, crate::protocol::MAX_FILE as u64)
 }
 
-pub(crate) fn restrict_native_child(pids: u32, scratch_mib: u32) -> Result<()> {
-    restrict_process(pids, 4096, u64::from(scratch_mib) * 1024 * 1024)
+pub(crate) fn restrict_native_child(pids: u32, scratch_mib: u32, uid: u32, gid: u32) -> Result<()> {
+    restrict_process_as(pids, 4096, u64::from(scratch_mib) * 1024 * 1024, uid, gid)
 }
 
 fn restrict_process(pids: u32, descriptors: u64, file_bytes: u64) -> Result<()> {
+    restrict_process_as(pids, descriptors, file_bytes, UID, GID)
+}
+
+fn restrict_process_as(
+    pids: u32,
+    descriptors: u64,
+    file_bytes: u64,
+    uid: u32,
+    gid: u32,
+) -> Result<()> {
     // Joining precedes dropping privilege. Every later runtime thread inherits
     // this cgroup. PID 1 remains outside it so it can always reap the child.
     fs::write(format!("{CGROUP}/cgroup.procs"), "0")?;
@@ -230,18 +240,18 @@ fn restrict_process(pids: u32, descriptors: u64, file_bytes: u64) -> Result<()> 
     limit(libc::RLIMIT_CORE, 0)?;
     limit(libc::RLIMIT_FSIZE, file_bytes)?;
     // SAFETY: these process-local operations run only in the single fork child;
-    // setgroups receives an empty list, IDs are fixed non-root IDs, and prctl
+    // setgroups receives an empty list, IDs are the validated non-root IDs, and prctl
     // arguments match the documented integer-only options.
     let result = unsafe {
         libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == 0
             && libc::prctl(libc::PR_SET_KEEPCAPS, 0, 0, 0, 0) == 0
             && libc::setgroups(0, std::ptr::null()) == 0
-            && libc::setresgid(GID, GID, GID) == 0
-            && libc::setresuid(UID, UID, UID) == 0
-            && libc::getuid() == UID
-            && libc::geteuid() == UID
-            && libc::getgid() == GID
-            && libc::getegid() == GID
+            && libc::setresgid(gid, gid, gid) == 0
+            && libc::setresuid(uid, uid, uid) == 0
+            && libc::getuid() == uid
+            && libc::geteuid() == uid
+            && libc::getgid() == gid
+            && libc::getegid() == gid
             && libc::prctl(libc::PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0) == 1
     };
     if !result {
@@ -361,7 +371,7 @@ fn wait_child(child: libc::pid_t) -> i32 {
     }
 }
 
-fn block_sigchld() -> Result<libc::sigset_t> {
+pub(crate) fn block_sigchld() -> Result<libc::sigset_t> {
     let mut signals = std::mem::MaybeUninit::<libc::sigset_t>::uninit();
     // SAFETY: sigemptyset initializes signals before sigaddset/sigprocmask use it.
     let result = unsafe {
@@ -376,7 +386,7 @@ fn block_sigchld() -> Result<libc::sigset_t> {
     Ok(unsafe { signals.assume_init() })
 }
 
-fn await_host_shutdown(signals: &libc::sigset_t) -> ! {
+pub(crate) fn await_host_shutdown(signals: &libc::sigset_t) -> ! {
     loop {
         let mut status = 0;
         // SAFETY: PID 1 owns reaping of all adopted children. WNOHANG prevents
