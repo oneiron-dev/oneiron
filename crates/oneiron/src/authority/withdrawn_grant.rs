@@ -22,7 +22,9 @@
 //! A membership change that deletes a Grant an owner's signed mint made also
 //! logs the host's signed withdrawal of it
 //! ([`crate::Vault::log_membership_grant_withdrawal_in_txn`], FIX 7135), so
-//! the authority audit pairs that mint with a revoke.
+//! the authority audit pairs that mint with a revoke. With no host issuer to
+//! sign it, the change's carrier-signed membership execution record names
+//! the Grant instead, pending until it counts (FIX 12335).
 
 use super::{AuthorityOp, HostSlipIssuer};
 use crate::entity_id::EntityId;
@@ -143,7 +145,8 @@ impl crate::Vault {
     /// The authority audit lists it as that Grant's revoke beside its signed
     /// mint, and every replica's fold withdraws any slip minted under it.
     /// An issuer that is no live host of this vault's roster signs nothing
-    /// and refuses nothing: `false`, and the change lands as before.
+    /// and refuses nothing: `false`, and the change lands with the Grant
+    /// named in its pending carrier-signed record (FIX 12335).
     ///
     /// # Errors
     /// A store, fold or clock failure, or an entry the fold did not count.
