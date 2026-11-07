@@ -8,13 +8,14 @@ use oneiron::Vault;
 use oneiron::booking::anti_abuse::{
     BookingAbuseVerdict, BookingAntiAbuseRuleRow, BookingQuarantineAdmission,
     BookingQuarantineRestoreInput, BookingRateDecision, BookingRequestFacts,
-    admit_quarantine_submission, admit_restorable_quarantine_submission,
-    applicable_booking_anti_abuse_rules, book_rate_knobs, evaluate_booking_amend_request,
-    evaluate_booking_book_request, evaluate_booking_hold_request,
+    admit_quarantine_submission, admit_quarantine_submission_without_quota,
+    admit_restorable_quarantine_submission, applicable_booking_anti_abuse_rules, book_rate_knobs,
+    evaluate_booking_amend_request, evaluate_booking_book_request, evaluate_booking_hold_request,
     evaluate_booking_slot_list_request, hold_rate_knobs, observe_book_request,
     observe_hold_request, observe_slot_list_request, server_submission_fingerprint,
     slot_list_rate_knobs,
 };
+use oneiron::limit_ask::EngineLimit;
 
 use super::support::{correction_body, engine_error, log_rate_block};
 use crate::error::ApiError;
@@ -28,6 +29,31 @@ use crate::server::SyncServer;
 pub(crate) struct BookingRateKey {
     pub ip_hash: [u8; 32],
     pub email_hash: Option<[u8; 32]>,
+}
+
+/// The caller one booking request is admitted for (FIX 128-131).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum BookingCaller {
+    /// A pre-auth visitor: the owner's anti-abuse windows govern it.
+    Anonymous,
+    /// An authenticated caller, keyed by the hash of its actor. It never
+    /// spends the owner's per-minute windows: its calls are counted against
+    /// `[limits]` rows that ask and serve.
+    Authenticated { actor: [u8; 32] },
+}
+
+/// Counts one authenticated call under `row` and measures the actor's calls
+/// this minute against it: past it the row asks, and the call goes on.
+fn measure_calls(
+    server: &SyncServer,
+    row: EngineLimit,
+    actor: &[u8; 32],
+) -> std::result::Result<(), ApiError> {
+    let calls = server
+        .booking_calls
+        .count(row, actor, server.booking_now_secs()?);
+    let _ = server.vault.measure_limit(row, calls);
+    Ok(())
 }
 
 /// How a guard call disposes of the request. Route handlers translate:
@@ -130,9 +156,18 @@ pub(crate) async fn enforce_slot_list(
     State(server): State<Arc<SyncServer>>,
     facts: BookingRequestFacts,
     cache_hit: bool,
+    caller: BookingCaller,
 ) -> std::result::Result<BookingHttpDisposition, ApiError> {
     let vault = &server.vault;
     let rows = load_rows(vault, &facts)?;
+    // FIX 128: an authenticated listing is counted, never windowed.
+    if let BookingCaller::Authenticated { actor } = caller {
+        measure_calls(
+            &server,
+            EngineLimit::BookingAvailabilityCallsPerMinute,
+            &actor,
+        )?;
+    }
     let Some((per_minute_per_ip, _)) =
         slot_list_rate_knobs(&rows, &facts.page_ref, &facts.event_type)
     else {
@@ -143,6 +178,11 @@ pub(crate) async fn enforce_slot_list(
     // serves the body through `cached_slot_list_body`.
     if cache_hit {
         return Ok(BookingHttpDisposition::Continue);
+    }
+    if matches!(caller, BookingCaller::Authenticated { .. }) {
+        let verdict = evaluate_booking_slot_list_request(&rows, &facts);
+        return disposition_from_verdict("slot-list", &facts, verdict)
+            .map(|disposition| disposition.unwrap_or(BookingHttpDisposition::Continue));
     }
     match observe_slot_list_request(vault, &facts.ip_hash, per_minute_per_ip, now)
         .map_err(engine_error)?
@@ -173,6 +213,7 @@ pub(crate) async fn enforce_slot_list(
 pub(crate) async fn enforce_hold(
     State(server): State<Arc<SyncServer>>,
     facts: BookingRequestFacts,
+    caller: BookingCaller,
 ) -> std::result::Result<BookingHttpDisposition, ApiError> {
     let vault = &server.vault;
     let rows = load_rows(vault, &facts)?;
@@ -188,6 +229,11 @@ pub(crate) async fn enforce_hold(
             seconds: 60,
             bound: u64::from(max_active_per_session),
         });
+    }
+    // FIX 129: an authenticated hold is counted, never windowed.
+    if let BookingCaller::Authenticated { actor } = caller {
+        measure_calls(&server, EngineLimit::BookingHoldCallsPerMinute, &actor)?;
+        return Ok(BookingHttpDisposition::Continue);
     }
     let Some((_, per_minute_per_ip)) = hold_rate_knobs(&rows, &facts.page_ref, &facts.event_type)
     else {
@@ -226,7 +272,7 @@ pub(crate) async fn enforce_book(
     State(server): State<Arc<SyncServer>>,
     facts: BookingRequestFacts,
 ) -> std::result::Result<BookingHttpDisposition, ApiError> {
-    enforce_book_restorable(State(server), facts, None).await
+    enforce_book_restorable(State(server), facts, None, BookingCaller::Anonymous).await
 }
 
 /// [`enforce_book`] for a confirm whose raw submission the boundary holds:
@@ -240,6 +286,7 @@ pub(crate) async fn enforce_book_restorable(
     State(server): State<Arc<SyncServer>>,
     mut facts: BookingRequestFacts,
     restore: Option<BookingQuarantineRestoreInput<'_>>,
+    caller: BookingCaller,
 ) -> std::result::Result<BookingHttpDisposition, ApiError> {
     // This is the trusted production admission boundary: never honour a
     // fingerprint supplied by the transport.
@@ -247,6 +294,24 @@ pub(crate) async fn enforce_book_restorable(
     let vault = &server.vault;
     let rows = load_rows(vault, &facts)?;
     let verdict = evaluate_booking_book_request(&rows, &facts);
+    // FIX 130, 131: an authenticated confirm is counted, never windowed. A
+    // quarantined one is still kept for the owner's review, through the same
+    // admission and its exact-retry replay, with no per-minute quota.
+    if let BookingCaller::Authenticated { actor } = caller {
+        if let BookingAbuseVerdict::Quarantine { reason } = &verdict {
+            measure_calls(
+                &server,
+                EngineLimit::BookingQuarantineCallsPerMinute,
+                &actor,
+            )?;
+            return admit_quarantine(&server, &facts, reason, None, restore.as_ref());
+        }
+        if let Some(disposition) = disposition_from_verdict("book", &facts, verdict)? {
+            return Ok(disposition);
+        }
+        measure_calls(&server, EngineLimit::BookingWriteCallsPerMinute, &actor)?;
+        return Ok(BookingHttpDisposition::Continue);
+    }
     let is_quarantine = matches!(verdict, BookingAbuseVerdict::Quarantine { .. });
     let per_minute_per_ip = match book_rate_knobs(&rows, &facts.page_ref, &facts.event_type) {
         Some((per_minute_per_ip, _)) => per_minute_per_ip,
@@ -268,40 +333,60 @@ pub(crate) async fn enforce_book_restorable(
         return Ok(disposition);
     }
     if let BookingAbuseVerdict::Quarantine { reason } = &verdict {
-        // This one engine door serializes exact-retry lookup, aggregate quota,
-        // and first durable quarantine write.
-        let now = server.booking_now_secs()?;
-        let admission = match &restore {
-            Some(restore) => admit_restorable_quarantine_submission(
-                vault,
-                &facts,
-                reason,
-                per_minute_per_ip,
-                now,
-                restore,
-            ),
-            None => admit_quarantine_submission(vault, &facts, reason, per_minute_per_ip, now),
-        };
-        match admission.map_err(engine_error)? {
-            BookingQuarantineAdmission::Accepted(receipt) => {
-                tracing::info!(
-                    endpoint = "book",
-                    claim_ref = %receipt.claim_ref,
-                    "booking anti-abuse quarantine accepted"
-                );
-                return Ok(BookingHttpDisposition::QuarantineAndAccept);
-            }
-            BookingQuarantineAdmission::RateLimited { retry_after_secs } => {
-                log_rate_block("book", &facts.ip_hash, retry_after_secs);
-                return Ok(BookingHttpDisposition::RetryAfter {
-                    seconds: retry_after_secs,
-                    bound: u64::from(per_minute_per_ip.get()),
-                });
-            }
-        }
+        return admit_quarantine(
+            &server,
+            &facts,
+            reason,
+            Some(per_minute_per_ip),
+            restore.as_ref(),
+        );
     }
     // A non-quarantine request consumes its identity confirmation bucket.
     spend_book_bucket(&server, "book", &key, per_minute_per_ip)
+}
+
+/// Keeps a quarantined confirm for the owner's review. This one engine door
+/// serializes exact-retry lookup, the page-wide aggregate quota
+/// (`per_minute_per_ip`), and first durable quarantine write. An
+/// authenticated caller's submission (`None`) spends no token of that
+/// quota, so it never takes an anonymous visitor's place (FIX 131).
+fn admit_quarantine(
+    server: &SyncServer,
+    facts: &BookingRequestFacts,
+    reason: &str,
+    per_minute_per_ip: Option<NonZeroU32>,
+    restore: Option<&BookingQuarantineRestoreInput<'_>>,
+) -> std::result::Result<BookingHttpDisposition, ApiError> {
+    let vault = &server.vault;
+    let now = server.booking_now_secs()?;
+    let admission = match (per_minute_per_ip, restore) {
+        (None, restore) => {
+            admit_quarantine_submission_without_quota(vault, facts, reason, now, restore)
+        }
+        (Some(per_minute), Some(restore)) => {
+            admit_restorable_quarantine_submission(vault, facts, reason, per_minute, now, restore)
+        }
+        (Some(per_minute), None) => {
+            admit_quarantine_submission(vault, facts, reason, per_minute, now)
+        }
+    };
+    match admission.map_err(engine_error)? {
+        BookingQuarantineAdmission::Accepted(receipt) => {
+            tracing::info!(
+                endpoint = "book",
+                claim_ref = %receipt.claim_ref,
+                "booking anti-abuse quarantine accepted"
+            );
+            Ok(BookingHttpDisposition::QuarantineAndAccept)
+        }
+        BookingQuarantineAdmission::RateLimited { retry_after_secs } => {
+            log_rate_block("book", &facts.ip_hash, retry_after_secs);
+            Ok(BookingHttpDisposition::RetryAfter {
+                seconds: retry_after_secs,
+                bound: per_minute_per_ip.map_or(0, |per_minute| u64::from(per_minute.get())),
+            })
+        }
+    }
 }
 
 /// Amend guard for cancel and reschedule. An amendment presents an action
@@ -317,12 +402,19 @@ pub(crate) async fn enforce_book_restorable(
 pub(crate) async fn enforce_amend(
     State(server): State<Arc<SyncServer>>,
     facts: BookingRequestFacts,
+    caller: BookingCaller,
 ) -> std::result::Result<BookingHttpDisposition, ApiError> {
     let vault = &server.vault;
     let rows = load_rows(vault, &facts)?;
     let verdict = evaluate_booking_amend_request(&rows, &facts);
     if let Some(disposition) = disposition_from_verdict("amend", &facts, verdict)? {
         return Ok(disposition);
+    }
+    // FIX 130: an authenticated amendment is counted with its confirms,
+    // never windowed.
+    if let BookingCaller::Authenticated { actor } = caller {
+        measure_calls(&server, EngineLimit::BookingWriteCallsPerMinute, &actor)?;
+        return Ok(BookingHttpDisposition::Continue);
     }
     let Some((per_minute_per_ip, _)) = book_rate_knobs(&rows, &facts.page_ref, &facts.event_type)
     else {

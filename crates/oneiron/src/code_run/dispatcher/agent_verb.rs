@@ -2,6 +2,7 @@
 
 mod scoped_port;
 mod session_write;
+mod stored_answer;
 
 use serde_json::Value;
 
@@ -30,7 +31,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
 
-const AGENT_VERB_RECEIPT_DOMAIN: &[u8] = b"oneiron:executor-agent-verb-receipt:v1";
+const AGENT_VERB_RECEIPT_DOMAIN: &[u8] =
+    crate::entity_id::derived_domains::EXECUTOR_AGENT_VERB_RECEIPT;
 
 /// The reason a receipt's refusal row carries, so that no row read back from
 /// the receipt's answer, a refusal or not, is ever taken for one.
@@ -74,8 +76,8 @@ impl HostSelfDispatcher<'_> {
     /// room's overlay instead (DOOR-127, Engine ruling 10-18), as the door
     /// admits it for its caller, through the run's captured route and under
     /// this same receipt (WILL L11-01 S01-2a, `session_write`).
-    /// `vault.get`, `vault.hydrate`, `vault.refs.resolve` and
-    /// `vault.search.bm25` read the room's view on the key the door admits
+    /// `vault.get`, `vault.hydrate`, `vault.refs.resolve`, `vault.search.bm25`
+    /// and `vault.receipts` read the room's view on the key the door admits
     /// for its caller (WILL L11-01, `session_verbs`); every other call is
     /// refused.
     ///
@@ -183,7 +185,7 @@ impl HostSelfDispatcher<'_> {
             KeptWrite::Fresh(stopped) => stopped,
         };
         let mut receipt = CodeRunReplayRecord::new(receipt_id, CodeRunDeterminism::new(0, [0; 32]));
-        let generation =
+        let mut generation =
             self.put_write_receipt(&receipt, stopped, program.as_ref(), false, site.run_id)?;
         // A call a code consent wait may bind carries its place in the run
         // (DOOR-079 1a), so a hold for consent alone binds the wait to it.
@@ -260,6 +262,14 @@ impl HostSelfDispatcher<'_> {
             }
             Err(error) => return Err(error),
         };
+        let mut outcome = outcome;
+        stored_answer::store(
+            &self.storage,
+            site.run_id,
+            &mut receipt,
+            &mut generation,
+            &mut outcome,
+        )?;
         // A receipt keeps its call's answer as its record's first row.
         receipt.bridge_calls.push(CodeRunBridgeCall::record(
             0,
@@ -343,7 +353,9 @@ impl HostSelfDispatcher<'_> {
         if standing_refusal(&receipt).is_some() {
             self.append_ruling(&receipt, row.clone())?;
         }
-        decode_self_dispatch_outcome(&row.outcome)
+        let mut outcome = decode_self_dispatch_outcome(&row.outcome)?;
+        stored_answer::restore(&receipt, &mut outcome);
+        Ok(outcome)
     }
 
     /// A `reveal.wait` answer carries a secret's value (OF-560): the guest

@@ -50,6 +50,12 @@ pub(super) fn record_tuning_config(
             "confession_instruction:{}",
             blake3::hash(settings.wording.confession().as_bytes()).to_hex()
         )))
+        // The compaction check's effective rubric (FIX 4814): an operator's
+        // rubric names a new config, as any other prompt does.
+        .chain(std::iter::once(format!(
+            "compaction_check_rubric:{}",
+            blake3::hash(settings.compaction_check_rubric.as_bytes()).to_hex()
+        )))
         .collect();
     // A sitting dial the host left unset is the vault's row, not this
     // host's: it is absent here (FIX 8600).

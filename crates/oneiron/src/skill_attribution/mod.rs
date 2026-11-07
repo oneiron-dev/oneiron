@@ -71,6 +71,7 @@ mod contribution_targets;
 pub(crate) use contribution_targets::Experiment;
 pub use contribution_targets::{CheckedEdge, ContributionTarget};
 mod credit_join;
+mod credit_judge;
 pub(crate) use credit_join::effective_credit_subjects_in_txn;
 pub(crate) use credit_join::erase_credit_adjustments_in_txn;
 pub use credit_join::{CreditAdjustmentReceipt, credit_adjustments};
@@ -110,8 +111,11 @@ pub(crate) use self::split::{
 };
 use oneiron_skill_attribution::types;
 mod unclear;
-pub use self::unclear::{UnclearAttribution, unclear_attributions};
-pub(crate) use self::unclear::{delete_unclear_in_txn, put_unclear_in_txn};
+pub use self::unclear::{UnclearAttribution, UnclearContext, unclear_attributions};
+pub(crate) use self::unclear::{
+    delete_unclear_in_txn, erase_unclear_entity_in_txn, erase_unclear_source_in_txn,
+    put_unclear_in_txn, unclear_key, unclear_page_in_txn, unclear_row_in_txn,
+};
 
 pub use self::audit::{
     AttributionAuditRecord, AttributionAuditReport, AuditFixture, attribution_audit_records,
