@@ -203,6 +203,7 @@ async fn generate_draft(
             response_format: ResponseFormat::Text,
             locality: seat.locality,
             host_keyless: false,
+            host_paid: false,
         },
         messages: sources.messages(&context),
         tools: Vec::new(),
