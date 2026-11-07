@@ -704,13 +704,13 @@ pub(super) fn contains_text_op(ops: &[BatchOp]) -> bool {
             *entity_type == crate::registry::ENTITY_TYPE_CLAIM
                 && *allow_maintenance
                 && *allow_reserved_predicate
-                && id
-                    .as_bytes()
-                    .starts_with(&crate::write_envelope::claim_body::lexical_query_hint::LEXICAL_QUERY_HINT_ID_PREFIX)
                 && crate::write_envelope::claim_body::decode_claim_body(data, true)
                     .ok()
                     .is_some_and(|body| {
-                        body.predicate == crate::write_envelope::claim_body::lexical_query_hint::PREDICATE_LEXICAL_QUERY_HINT
+                        matches!(
+                            crate::claim::canonical_lexical_query_hint(id, &body),
+                            Ok(Some(_))
+                        )
                     })
         }
         _ => false,
