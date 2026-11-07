@@ -17053,6 +17053,26 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "CodeRunCorrection",
+      "CodeRunCorrectionCheckpoint",
+      "CodeRunCorrectionOutcome",
+      "CodeRunCorrectionPolicy",
+      "ExecutorWireRepairs"
+     ],
+     "path": "src/code_run/correction.rs",
+     "purpose": "Durable code-run correction records (CODE-RUNTIME-02 slice 1: FIX 4411, 4412, 4413)",
+     "surface": {
+      "const": 2,
+      "crate-vis": 9,
+      "enum": 1,
+      "fn": 2,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/code_run/dispatcher/admission.rs",
      "purpose": "The admission of the run door and its answered dispatch bracket",
@@ -17564,9 +17584,9 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 52,
+      "crate-vis": 53,
       "mod": 8,
-      "re-export": 33
+      "re-export": 34
      }
     },
     {
@@ -18286,6 +18306,16 @@
      "purpose": "A successor attempt's approved continuation of a failed run (FIX 3694, OF-568): the run it forks from, the…",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/corrections.rs",
+     "purpose": "The code-run correction table (CODE-RUNTIME-02 slice 1: FIX 4411, 4412): one row per model response the live…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -36268,9 +36298,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/engine_executor/repl/persistence.rs",
-     "purpose": "Durable REPL record loading, failed-step appends and wait resumption",
+     "purpose": "Durable REPL record loading, failed-step appends, refused-reply correction records and wait resumption",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -36505,7 +36535,7 @@
      "path": "src/engine_executor/wire.rs",
      "purpose": "Reply normalization: fence/exec stripping, console-block scanning, and the structural gate",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 6
      }
     },
     {
@@ -48967,7 +48997,7 @@
      "path": "src/memory/code_run_doors/mod.rs",
      "purpose": "The typed per-model code-run heal count door (DOOR-093)",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "re-export": 1
      }
     },
@@ -48975,14 +49005,17 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "CodeRunCorrectionsRequest",
+      "CodeRunCorrectionsView",
       "CodeRunModelHealCountRequest",
       "CodeRunModelHealCountView",
       "CodeRunTypeDiagnosticsRequest"
      ],
      "path": "src/memory/code_run_doors/types.rs",
-     "purpose": "The code run model-heal count request and view records",
+     "purpose": "The code run door request and view records: the model-heal count, a step's type feedback and a run's…",
      "surface": {
-      "struct": 3
+      "const": 2,
+      "struct": 5
      }
     },
     {
@@ -87251,7 +87284,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1310
+      "fn": 1311
      }
     },
     {
@@ -93292,7 +93325,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 216,
+     "files": 218,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94631,7 +94664,7 @@
    },
    "over_bar": 187,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6693,
+   "source_files": 6695,
    "test_files": 895
   },
   "oneiron-android": {
@@ -109401,7 +109434,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1278
+      "fn": 1279
      }
     },
     {
@@ -111194,7 +111227,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1279
+      "fn": 1280
      }
     },
     {
@@ -116123,7 +116156,7 @@
      "path": "src/api/facade/code_run_doors.rs",
      "purpose": "The credential-bound host projection of the typed per-model code-run heal count door (DOOR-093)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -144878,6 +144911,12 @@
       "CodeRepoPointer",
       "CodeRepoRequest",
       "CodeRepoView",
+      "CodeRunCorrection",
+      "CodeRunCorrectionCheckpoint",
+      "CodeRunCorrectionOutcome",
+      "CodeRunCorrectionPolicy",
+      "CodeRunCorrectionsRequest",
+      "CodeRunCorrectionsView",
       "CodeRunModelHealCountRequest",
       "CodeRunModelHealCountView",
       "CodeRunRoomSecretLiftRequest",
@@ -145636,6 +145675,7 @@
       "ExecutionCompute",
       "ExecutionPick",
       "ExecutionRuntime",
+      "ExecutorWireRepairs",
       "ExpectInput",
       "ExpectOutput",
       "ExpectedSpend",
@@ -148743,8 +148783,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1142,
-      "struct": 3482
+      "enum": 1143,
+      "struct": 3488
      }
     },
     {
