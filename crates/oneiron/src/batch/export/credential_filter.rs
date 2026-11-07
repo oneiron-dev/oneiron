@@ -3,6 +3,7 @@
 
 pub(crate) use oneiron_store::batch::export::credential_filter::*;
 
+use super::bundle_lineage::BundleLineage;
 use super::{
     ExportManifest, ExportScope, ExportSecretsNulledManifest, carries_embedding_setup,
     whole_vault_export_excludes_entity_in_txn,
@@ -284,15 +285,7 @@ impl Vault {
             .as_ref()
             .map(|plan| plan.judge(self, &dbs, &txn))
             .transpose()?;
-        // What the side ledgers record each row's body was made from, read
-        // once in this snapshot for a pass the rule judges: every row meets
-        // it before its body is read, as an archive's and an OKF copy's do
-        // (fix list row 15416).
-        let recorded = if judge.is_some() {
-            super::archive_side_tables::SideProvenance::read_in(&self.store, &txn)?
-        } else {
-            super::archive_side_tables::SideProvenance::default()
-        };
+        let lineage = BundleLineage::read_in(&self.store, &txn, judge.is_some())?;
         let exported: std::collections::BTreeSet<EntityId> = ids.iter().copied().collect();
         let mut records = Vec::new();
         let mut nulled = false;
@@ -320,26 +313,11 @@ impl Vault {
                 continue;
             }
             // A member's mailbox the copy does not carry, and what was
-            // learned from it, stay home: what the row's own lineage names,
-            // what the side ledgers record its body was made from, and the
-            // rows a blob version's ledger claim names, as an archive and an
-            // OKF copy judge them (fix list row 15416).
-            let mut sources = Vec::new();
-            if let Some(judge) = judge.as_mut() {
-                let carried = judge.carries(*id, Some(raw.as_slice()))?;
-                match recorded.admitted(judge, *id)? {
-                    Some(admitted) if carried => sources = admitted,
-                    Some(_) | None => continue,
-                }
-                if let Some(names) =
-                    super::copy_release::version_claim_names(header.entity_type, &raw)
-                {
-                    if !judge.carries_all(names.as_deref())? {
-                        continue;
-                    }
-                    sources.extend(names.into_iter().flatten());
-                }
-            }
+            // learned from it, stay home (fix list row 15416).
+            let Some(sources) = lineage.admitted(judge.as_mut(), *id, header.entity_type, &raw)?
+            else {
+                continue;
+            };
             // A file-plane ASSET leaves as its body, never the manifest its
             // row keeps (FIX 3677).
             let raw = self.materialized_row_in_txn(&txn, id, raw)?;
@@ -354,7 +332,7 @@ impl Vault {
                 |source, _| {
                     Ok(exported.contains(source)
                         && !whole_vault_export_excludes_entity_in_txn(&self.store, &txn, source)?
-                        && carried_by(judge.as_mut(), &recorded, *source)?)
+                        && lineage.carried_by(judge.as_mut(), *source)?)
                 },
             )? == Some(false)
             {
@@ -387,14 +365,10 @@ impl Vault {
                 nulled = true;
             }
             thread_roots.extend(crate::memory::turn_thread_root(header.entity_type, bytes));
-            // The copy carries a member's mailbox only through a row it ships,
-            // and the rows the side ledgers record its body was made from
+            // The copy carries a member's mailbox only through a row it ships
             // (fix list row 15416).
             if let Some(judge) = judge.as_mut() {
-                judge.ships(*id);
-                for source in sources {
-                    judge.ships(source);
-                }
+                BundleLineage::ships(judge, *id, sources);
             }
             records.push((
                 *id,
@@ -476,20 +450,6 @@ struct BundlePass {
     json: Vec<u8>,
     thread_roots: crate::workspace_roster::ExportThreadRoots,
     member_mail: Option<crate::mail_pack::CarriedMemberMailboxes>,
-}
-
-/// Whether a pass's mailbox judge, when it has one, carries the row `id` and
-/// every row the side ledgers record its body was made from (`recorded`).
-fn carried_by(
-    judge: Option<&mut crate::source_audience::ExportJudge<'_, '_, '_>>,
-    recorded: &super::archive_side_tables::SideProvenance,
-    id: EntityId,
-) -> Result<bool> {
-    let Some(judge) = judge else {
-        return Ok(true);
-    };
-    let carried = judge.carries(id, None)?;
-    Ok(recorded.admitted(judge, id)?.is_some() && carried)
 }
 
 #[cfg(test)]

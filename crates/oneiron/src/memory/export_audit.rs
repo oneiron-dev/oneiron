@@ -25,7 +25,9 @@
 //! those mailboxes, each mailbox's person's notice and each approval's use
 //! are written in one write before the copy leaves
 //! ([`record_member_mail_export`]), and a write that does not commit leaves
-//! those mailboxes out of the copy.
+//! those mailboxes out of the copy, made again: its row, counting none, is
+//! written the same way before that copy leaves, and it never leaves
+//! unaudited.
 
 use serde::{Deserialize, Serialize};
 
@@ -421,7 +423,7 @@ pub(crate) fn record_member_mail_json_export(
         digest: Some(blake3::hash(json).to_hex().to_string()),
         ..ExportCopy::raw(mailboxes.exporter(), EXPORT_FORMAT_JSON, Vec::new(), roots)
     };
-    record_member_mail_export(vault, copy, mailboxes).map(drop)
+    record_member_mail_export(vault, copy, Some(mailboxes)).map(drop)
 }
 
 /// Records `copy`, an Owner's copy of whatever shape that carries other
@@ -442,6 +444,11 @@ pub(crate) fn record_member_mail_json_export(
 /// fails is logged, never read as a rollback, so the copy keeps its one
 /// export id.
 ///
+/// With no `mailboxes`, `copy` is the one made again without them after
+/// such a write did not commit: its row, counting no mailbox, is written
+/// the same way before a byte of it leaves, with no notice and no approval
+/// used, and a write that does not commit releases nothing.
+///
 /// # Errors
 ///
 /// The write did not commit: a mailbox or an approval no longer goes with
@@ -449,7 +456,7 @@ pub(crate) fn record_member_mail_json_export(
 pub(crate) fn record_member_mail_export(
     vault: &Vault,
     copy: ExportCopy,
-    mailboxes: &crate::mail_pack::CarriedMemberMailboxes,
+    mailboxes: Option<&crate::mail_pack::CarriedMemberMailboxes>,
 ) -> crate::Result<Vec<HolderExportRequest>> {
     let ExportCopy {
         scope,
@@ -477,8 +484,14 @@ pub(crate) fn record_member_mail_export(
         |txn| -> crate::Result<Vec<HolderExportRequest>> {
             // The id's allocation floor is kept with the row that names it.
             let at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
-            let told =
-                crate::mail_pack::tell_member_mailboxes_in_txn(vault, txn, mailboxes, export, at)?;
+            let told = match mailboxes {
+                Some(mailboxes) => crate::mail_pack::tell_member_mailboxes_in_txn(
+                    vault, txn, mailboxes, export, at,
+                )?,
+                // The copy made again carries no mailbox and uses no
+                // approval: no one is told.
+                None => 0,
+            };
             // The signed record goes before the holder requests, which link
             // it, and both before the row, which lists them, as
             // [`record_export`] writes them.

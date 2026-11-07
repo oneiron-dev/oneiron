@@ -23,9 +23,10 @@ use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::Store;
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 
+use super::archived_versions::ArchivedVersionSource;
 use super::provenance::BLOB_VERSION_CLAIM_PREDICATE;
 use super::store_keys::BLOB_ARTIFACT_CONTENT_HASH_LEN;
-use super::versions::{ArchivedVersionSource, KEY_CONTENT_HASH};
+use super::versions::KEY_CONTENT_HASH;
 
 type ContentHash = [u8; BLOB_ARTIFACT_CONTENT_HASH_LEN];
 

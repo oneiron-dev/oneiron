@@ -28,6 +28,7 @@
 //! store (OF-307): a content hash computed from one tenant's bytes never
 //! resolves storage for another tenant, even when byte-identical.
 
+mod archived_versions;
 mod body;
 pub use oneiron_store::blob_artifact::body_tags;
 mod born_from;
@@ -55,6 +56,9 @@ mod version_codec;
 mod version_rows;
 mod versions;
 
+pub(crate) use self::archived_versions::{
+    ArchivedVersionSource, archive_version_rows, archive_version_source,
+};
 pub(crate) use self::body::validate_blob_artifact_body_bytes;
 pub use self::body::{
     BLOB_ARTIFACT_BODY_KEYS, BLOB_ARTIFACT_MEDIA_TYPE_MAX_BYTES, BLOB_ARTIFACT_NAME_MAX_BYTES,
@@ -108,10 +112,8 @@ pub use self::verbs::{
     NativeOutputRequest, ProposalSettleRequest, ReleasedWait, SlideReviewOutcome,
     SlideReviewSubmit, SlideReviewUnitInput, SlideUnitRefused, UndoneKeep,
 };
+pub(crate) use self::versions::archive_version_tables;
 pub(crate) use self::versions::read_blob_artifact_head_in_txn;
-pub(crate) use self::versions::{
-    ArchivedVersionSource, archive_version_rows, archive_version_source, archive_version_tables,
-};
 // FIX 7227: the queue-check completion writer (token-only, no raw bytes/ids),
 // minted/bound in the merge-queue finish writer; the MQ child names these via
 // this BLOB parent alias, never via the private versions child path.
