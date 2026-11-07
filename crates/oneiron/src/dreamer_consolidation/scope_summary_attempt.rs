@@ -43,6 +43,10 @@ mod arc_chunks;
 mod arc_claims;
 mod arc_compose;
 mod arc_evidence;
+mod arc_open_apply;
+mod arc_open_backend;
+mod arc_open_questions;
+mod arc_open_runtime;
 mod arc_output;
 mod arc_part_merge;
 mod arc_reduce;
@@ -51,6 +55,7 @@ mod arc_synopsis;
 mod arc_turns;
 mod chunks;
 mod durable_labels;
+mod host;
 mod output;
 mod window;
 
@@ -72,38 +77,7 @@ pub struct ScopeSummaryExecutor<'a, E> {
     /// The tokens one call's input may fill on `model`, as the host counts
     /// them (FIX 7509 P7b); `None` reads the vault's own row for the model.
     window_tokens: Option<u64>,
-}
-
-impl<'a, E> ScopeSummaryExecutor<'a, E> {
-    #[must_use]
-    pub fn new(
-        inner: E,
-        backend: &'a dyn LlmBackend,
-        guard: &'a BudgetGuard,
-        actor: WriteActor,
-        model: ModelId,
-        inference: HostInferenceContext<'a>,
-        instruction: Option<&'a str>,
-    ) -> Self {
-        Self {
-            inner,
-            backend,
-            guard,
-            actor,
-            model,
-            inference,
-            instruction,
-            window_tokens: None,
-        }
-    }
-
-    /// The tokens one call's input may fill on the model, lent by the host
-    /// (FIX 7509 P7b): a sitting too big for one call pages its TURNs to it.
-    #[must_use]
-    pub fn with_window_tokens(mut self, window_tokens: Option<u64>) -> Self {
-        self.window_tokens = window_tokens;
-        self
-    }
+    arc_decisions: Option<(super::executor::ConsolidationDecisions, super::RoleBackends)>,
 }
 
 impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ScopeSummaryExecutor<'_, E> {
@@ -480,6 +454,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             .selected_locality()
             .ok_or_else(|| Error::InvalidConfig("summary host binding needs locality".into()))?;
         let keyless = self.inference.selected_keyless();
+        let paid = self.inference.selected_paid();
         let request = LlmRequest {
             model: self.model.clone(),
             envelope: CallEnvelope {
@@ -501,6 +476,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 response_format: ResponseFormat::Json { schema },
                 locality,
                 host_keyless: keyless,
+                host_paid: paid,
             }
             .with_purpose_defaults(),
             messages: vec![

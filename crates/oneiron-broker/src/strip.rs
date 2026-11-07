@@ -120,7 +120,7 @@ fn replace_all(haystack: &[u8], needle: &[u8]) -> Zeroizing<Vec<u8>> {
 }
 
 /// Every form of `key`, longest first, without repeats.
-fn forms(key: &[u8]) -> Vec<Zeroizing<Vec<u8>>> {
+pub(crate) fn forms(key: &[u8]) -> Vec<Zeroizing<Vec<u8>>> {
     let mut forms: Vec<Zeroizing<Vec<u8>>> = vec![Zeroizing::new(key.to_vec())];
     let mut bearer = Zeroizing::new(b"Bearer ".to_vec());
     bearer.extend_from_slice(key);
@@ -143,7 +143,7 @@ fn forms(key: &[u8]) -> Vec<Zeroizing<Vec<u8>>> {
 
 /// The base64 forms of `key`: its encoding in both alphabets, with and
 /// without padding, and the core of it at each byte offset.
-fn base64_forms(key: &[u8]) -> Vec<Zeroizing<Vec<u8>>> {
+pub(crate) fn base64_forms(key: &[u8]) -> Vec<Zeroizing<Vec<u8>>> {
     let mut forms = Vec::new();
     for engine in [&STANDARD, &STANDARD_NO_PAD, &URL_SAFE, &URL_SAFE_NO_PAD] {
         forms.push(Zeroizing::new(engine.encode(key).into_bytes()));

@@ -5,7 +5,7 @@ pub(super) use crate::store::consent_bound::DOMAIN_ACTION;
 pub use crate::store::consent_bound::{
     ActionClass, ActionEnvelope, ActorBound, AudienceBound, BoundClass, BoundEnvelope,
     BoundSubject, ConsentDomain, DisclosureClass, DisclosureEnvelope, GrantBound,
-    MAX_AUDIENCE_MEMBERS, MAX_CONSENT_REF_LEN, MAX_ENVELOPE_SELECTORS,
+    MAX_CONSENT_REF_LEN,
 };
 
 pub(super) fn covers(grants: &[StandingConsentGrant], required: &GrantBound) -> bool {
@@ -13,8 +13,9 @@ pub(super) fn covers(grants: &[StandingConsentGrant], required: &GrantBound) -> 
 }
 
 /// Whether an uncovered requirement is an EXCEEDED bound rather than an absent
-/// one — i.e. a grant already names this subject and class, but its envelope
-/// does not reach this candidate.
+/// one — i.e. a grant already holds this subject and covers this class (its
+/// own spelling or a registered member verb), but its envelope does not reach
+/// this candidate.
 ///
 /// The distinction IS invariant 3: an absent grant makes a first ask, while an
 /// exceeded one is a scope-exceed escalation whose approve-and-stop-asking
