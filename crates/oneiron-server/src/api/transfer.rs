@@ -30,6 +30,7 @@ use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 
 use crate::admission::{Admission, Permit, WaitTimedOut};
+use crate::api::body_spool::RawSpoolMemory;
 use crate::byte_line::{ByteLine, HeldBytes};
 use crate::config::LimitsConfig;
 use crate::machine::{DiskClaim, DiskFloor};
@@ -40,17 +41,20 @@ const LARGEST_PAGE: u64 = 32 * 1024;
 
 /// The room in memory one chunk exchange takes past its request's decoded
 /// selector, and the least either half of the memory row holds: sixteen
-/// times the 8 MiB frame it reads whole. Its frame and its decoded request;
-/// a frame of its manifest's row (a larger row's copies past the frame are
-/// charged when its worker names the object: [`Transfers::charge_exchange_manifest`],
-/// FIX 9032) as read and as the two window docs its selector is judged in
-/// hold it, twice each; and its reply, the manifest read again (as stored,
-/// decoded and encoded), the chunks it carries and its encoding. Its
-/// selector is decoded, and gone, before the manifest is read
-/// ([`Transfers::exchange_room`]).
+/// times the 8 MiB frame. A frame of its manifest's row (a larger row's
+/// copies past the frame are charged when its worker names the object:
+/// [`Transfers::charge_exchange_manifest`], FIX 9032) as read and as the two
+/// window docs its selector is judged in hold it, twice each; and its reply,
+/// the manifest read again (as stored, decoded and encoded), the page of
+/// chunks it carries, and its stream's frames in flight. Neither its request
+/// nor its reply's encoding is held whole: the request is decoded as its
+/// frames arrive and the reply written a frame at a time as its client takes
+/// it (FIX 145). Its selector is decoded, and gone, before the manifest is
+/// read ([`Transfers::exchange_room`]). Counted generously.
 pub(crate) const LFS_MEMORY_ROOM: u64 = 16 * FRAME;
 
-/// The frame a chunk exchange reads whole.
+/// The most one frame of a chunk exchange carries: the unit its room is
+/// counted in, never a bound on its request or its reply.
 const FRAME: u64 = oneiron::sync::chunks::MAX_CHUNK_SYNC_FRAME as u64;
 
 /// The most a structured body holds decoded, for each byte it takes on the
@@ -65,8 +69,9 @@ const FRAME: u64 = oneiron::sync::chunks::MAX_CHUNK_SYNC_FRAME as u64;
 pub(super) const DECODED_PER_BYTE: u64 = 256;
 
 /// What a download or a verify holds beside its manifest: a chunk as stored
-/// and as read, the pieces on their way to the client, and a verify's body,
-/// counted generously.
+/// and as read, and the pieces on their way to or from the client, counted
+/// generously. A verify's body decoded is counted apart, by its length
+/// ([`Transfers::verify_room`]).
 pub(super) const READ_ROOM: u64 = 1024 * 1024;
 
 /// Copies of its manifest's row a download or verify holds at once: the row
@@ -300,12 +305,64 @@ impl Transfers {
     }
 
     /// The room a chunk exchange whose request declares `declared` bytes
-    /// takes: [`LFS_MEMORY_ROOM`], and its request decoded, by the bytes it
-    /// may read ([`DECODED_PER_BYTE`] each, a frame's when it declares no
-    /// length). It reads no more than it declared.
+    /// takes: [`LFS_MEMORY_ROOM`], and its request decoded, by the bytes its
+    /// room counts ([`Self::exchange_request_bytes`], [`DECODED_PER_BYTE`]
+    /// each).
     pub(super) fn exchange_room(declared: Option<u64>) -> u64 {
-        let request = declared.map_or(FRAME, |declared| declared.min(FRAME));
-        LFS_MEMORY_ROOM.saturating_add(request.saturating_mul(DECODED_PER_BYTE))
+        LFS_MEMORY_ROOM
+            .saturating_add(Self::exchange_request_bytes(declared).saturating_mul(DECODED_PER_BYTE))
+    }
+
+    /// The bytes of a chunk exchange's request its room counts decoded:
+    /// all it declares, however many, or a frame's when it declares no
+    /// length (FIX 145). It reads no more than it declares; one that declares
+    /// none is charged for each byte it reads past the frame
+    /// ([`Self::charge_body`]).
+    pub(super) fn exchange_request_bytes(declared: Option<u64>) -> u64 {
+        declared.unwrap_or(FRAME)
+    }
+
+    /// The room a verify takes (FIX 144): what reading its route's object
+    /// takes, `sized` ([`Self::read_room`]; [`READ_ROOM`] for an object not
+    /// stored, whose manifest it never reads), and its body decoded, by the
+    /// bytes it declares ([`DECODED_PER_BYTE`] each). Its body is decoded as
+    /// it arrives; one that declares no length is charged for each byte it
+    /// reads ([`Self::charge_body`]).
+    pub(super) fn verify_room(sized: Option<u64>, declared: Option<u64>) -> u64 {
+        sized
+            .unwrap_or(READ_ROOM)
+            .saturating_add(declared.unwrap_or(0).saturating_mul(DECODED_PER_BYTE))
+    }
+
+    /// Charges a read's hold, taken at `room` on the reads line for a body
+    /// of which it counts `counted` bytes decoded, for the `read` bytes its
+    /// body has given in all (FIX 144, 145): each byte past `counted` holds
+    /// [`DECODED_PER_BYTE`] decoded. The body is read under the transfer
+    /// permit, and no permit holder waits for the reads line (the lock order
+    /// [`crate::byte_line`] names), so the bytes are charged, never waited
+    /// for: past the line's free bytes the line owes them and the row asks
+    /// ([`ByteLine::charge`]). Answers the room held now.
+    pub(super) fn charge_body(
+        line: &ByteLine,
+        questions: &LimitQuestions,
+        held: &mut HeldBytes,
+        room: u64,
+        counted: u64,
+        read: u64,
+    ) -> u64 {
+        let extra = read
+            .saturating_sub(counted)
+            .saturating_mul(DECODED_PER_BYTE);
+        if extra == 0 {
+            return room;
+        }
+        let target = room.saturating_add(extra);
+        line.charge(
+            held,
+            usize::try_from(target).unwrap_or(usize::MAX),
+            questions,
+        );
+        target
     }
 
     /// The line LFS reads take their room on, lent to a chunk exchange's
@@ -315,9 +372,10 @@ impl Transfers {
         Arc::clone(&self.lfs_reads)
     }
 
-    /// Charges a chunk exchange's hold (taken at [`Self::exchange_room`] =
-    /// `room`) for the copies of a manifest whose row is `row` bytes past
-    /// the frame the room counts (FIX 9032). The exchange names its object
+    /// Charges a chunk exchange's hold (`room`, as [`Self::exchange_room`]
+    /// took it and its request's read charged it: [`Self::charge_body`]) for
+    /// the copies of a manifest whose row is `row` bytes past the frame the
+    /// room counts (FIX 9032). The exchange names its object
     /// only once its worker decodes the request, holding its transfer
     /// permit, and no permit holder waits for the reads line (the lock
     /// order [`crate::byte_line`] names), so the copies are charged, never
@@ -553,7 +611,7 @@ pub(super) fn feed_body(
 ) -> impl std::future::Future<Output = ()> {
     // Capture before a caller spawns this future on a different task.
     let revocation = crate::http_listener::current_body_revocation();
-    feed_pieces(body, pieces, Some(idle), max_piece, revocation, None)
+    feed_pieces(body, pieces, Some(idle), max_piece, revocation, None, None)
 }
 
 /// [`feed_body`] with no wait of its own on the client: only the listener's
@@ -564,7 +622,7 @@ pub(super) async fn feed_body_untimed(
     pieces: mpsc::Sender<BodyPiece>,
     max_piece: usize,
 ) {
-    feed_pieces(body, pieces, None, max_piece, None, None).await;
+    feed_pieces(body, pieces, None, max_piece, None, None, None).await;
 }
 
 /// Feeds a spool worker, ending its memory wait before enqueueing a failed input.
@@ -574,6 +632,7 @@ pub(super) fn feed_body_stoppable(
     idle: Option<Duration>,
     max_piece: usize,
     stopped: Arc<AtomicBool>,
+    admitted: tokio::sync::oneshot::Receiver<Arc<RawSpoolMemory>>,
 ) -> impl std::future::Future<Output = ()> {
     let revocation = idle.and_then(|_| crate::http_listener::current_body_revocation());
     async move {
@@ -584,6 +643,7 @@ pub(super) fn feed_body_stoppable(
             max_piece,
             revocation,
             Some(stopped.as_ref()),
+            Some(admitted),
         )
         .await;
     }
@@ -596,7 +656,9 @@ async fn feed_pieces(
     max_piece: usize,
     revocation: Option<crate::http_listener::BodyRevocation>,
     stopped: Option<&AtomicBool>,
+    mut admitted: Option<tokio::sync::oneshot::Receiver<Arc<RawSpoolMemory>>>,
 ) {
+    let mut memory = None;
     let mut stream = body.into_data_stream();
     let stop_failed_feed = || {
         if let Some(stopped) = stopped {
@@ -641,11 +703,17 @@ async fn feed_pieces(
         // Copied, never sliced: a slice would keep a hostile giant backing
         // allocation alive for every queued small piece.
         for piece in frame.chunks(max_piece) {
-            if pieces
-                .send(Ok(Some(Bytes::copy_from_slice(piece))))
-                .await
-                .is_err()
-            {
+            if let Some(admitted) = admitted.take() {
+                let Ok(admitted) = admitted.await else {
+                    return;
+                };
+                memory = Some(admitted);
+            }
+            let piece = Bytes::copy_from_slice(piece);
+            if let Some(memory) = memory.as_deref() {
+                memory.materialized(piece.len() as u64);
+            }
+            if pieces.send(Ok(Some(piece))).await.is_err() {
                 stop_failed_feed();
                 return;
             }
@@ -674,6 +742,8 @@ pub(super) struct BodyReader {
     pieces: mpsc::Receiver<BodyPiece>,
     current: Bytes,
     ended: bool,
+    memory: Option<Arc<RawSpoolMemory>>,
+    current_allocation: u64,
 }
 
 impl BodyReader {
@@ -682,6 +752,18 @@ impl BodyReader {
             pieces,
             current: Bytes::new(),
             ended: false,
+            memory: None,
+            current_allocation: 0,
+        }
+    }
+
+    pub(super) fn new_admitted(
+        pieces: mpsc::Receiver<BodyPiece>,
+        memory: Arc<RawSpoolMemory>,
+    ) -> Self {
+        Self {
+            memory: Some(memory),
+            ..Self::new(pieces)
         }
     }
 }
@@ -693,7 +775,10 @@ impl Read for BodyReader {
         }
         while self.current.is_empty() && !self.ended {
             match self.pieces.blocking_recv() {
-                Some(Ok(Some(piece))) => self.current = piece,
+                Some(Ok(Some(piece))) => {
+                    self.current_allocation = piece.len() as u64;
+                    self.current = piece;
+                }
                 Some(Ok(None)) => self.ended = true,
                 Some(Err(error)) => return Err(error),
                 None => {
@@ -706,7 +791,15 @@ impl Read for BodyReader {
         }
         let count = output.len().min(self.current.len());
         output[..count].copy_from_slice(&self.current[..count]);
-        self.current = self.current.slice(count..);
+        if count == self.current.len()
+            && let Some(memory) = self.memory.as_deref()
+        {
+            let allocation = std::mem::take(&mut self.current_allocation);
+            let current = &mut self.current;
+            memory.reclaimed_after(allocation, || *current = current.slice(count..));
+        } else {
+            self.current = self.current.slice(count..);
+        }
         Ok(count)
     }
 }
