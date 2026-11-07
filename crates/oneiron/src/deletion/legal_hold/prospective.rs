@@ -213,17 +213,24 @@ fn note_prior_edges_in_txn(store: &Store, txn: &RoTxn<'_>, message: [u8; 16]) ->
     Ok(())
 }
 
-/// Takes the prior edge rows noted for `message`; `None` when none were
-/// noted on this thread.
-fn take_prior_edges(store: &Store, message: &[u8; 16]) -> Option<Vec<(Vec<u8>, [u8; 32])>> {
+/// The prior edge rows noted for `message`; `None` when none were noted on
+/// this thread. Every standing order reads the same note; the outermost
+/// batch clears its notes as it ends ([`clear_prior_edges`]).
+fn prior_edges(store: &Store, message: &[u8; 16]) -> Option<Vec<(Vec<u8>, [u8; 32])>> {
     let at = std::ptr::from_ref(store).addr();
     PRIOR_EDGES.with(|notes| {
-        let mut notes = notes.borrow_mut();
-        let index = notes
+        notes
+            .borrow()
             .iter()
-            .position(|(store, id, _)| *store == at && id == message)?;
-        Some(notes.swap_remove(index).2)
+            .find(|(store, id, _)| *store == at && id == message)
+            .map(|(_, _, prior)| prior.clone())
     })
+}
+
+/// Clears every prior-edge note of `store` on this thread.
+fn clear_prior_edges(store: &Store) {
+    let at = std::ptr::from_ref(store).addr();
+    PRIOR_EDGES.with(|notes| notes.borrow_mut().retain(|(store, _, _)| *store != at));
 }
 
 /// Appends `entry` at `standing`'s next ordinal. The caller stores the
@@ -292,7 +299,7 @@ impl Drop for ProspectiveBatch<'_> {
         let key = std::ptr::from_ref(self.store).addr();
         if self.outermost {
             // A batch that ended before its seal leaves no note behind.
-            PRIOR_EDGES.with(|notes| notes.borrow_mut().retain(|(store, _, _)| *store != key));
+            clear_prior_edges(self.store);
         }
         OPEN_BATCHES.with(|open| {
             let mut open = open.borrow_mut();
@@ -335,7 +342,7 @@ fn seal_prospective_edges_in_txn(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<
             }
         }
         for (message, revision) in born {
-            let prior = take_prior_edges(store, &message);
+            let prior = prior_edges(store, &message);
             let current = store.entities().get(wtxn, &message[..])?;
             if current.is_none_or(|row| *blake3::hash(&row).as_bytes() != revision) {
                 append_in_txn(
@@ -403,6 +410,8 @@ fn seal_prospective_edges_in_txn(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<
         standing.edges_from = standing.next_ordinal;
         STANDINGS.put(store, wtxn, &key, &standing)?;
     }
+    // Every standing order read the batch's notes; none outlives the batch.
+    clear_prior_edges(store);
     if sealed_any {
         store.host_legal_prospective.bump();
     }
