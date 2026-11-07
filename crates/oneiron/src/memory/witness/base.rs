@@ -687,6 +687,7 @@ impl Memory<'_> {
         }
         let turn_short = self.short_ref_of_in_txn(txn, &plan.turn_id)?;
         Ok(WitnessReceipt {
+            turn_id: plan.turn_id,
             turn: Some(crate::lens::RecordRef::from_id(
                 crate::registry::ENTITY_TYPE_TURN,
                 &plan.turn_id,
