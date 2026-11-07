@@ -133974,7 +133974,7 @@
      "path": "src/critic_lens.rs",
      "purpose": "Critic lens catalogue vocabulary, seed catalogue and pure shape checks",
      "surface": {
-      "const": 7,
+      "const": 6,
       "fn": 9,
       "struct": 2
      }
