@@ -20771,7 +20771,7 @@
     },
     {
       "name": "vault.identity.propose",
-      "description": "The owner parks a nominated merge or split candidate with no topology effects; distinct pairs suppress merge proposals.",
+      "description": "The owner parks a nominated merge, split or facet candidate with no topology effects; distinct pairs suppress merge proposals.",
       "input": "crate::task_verb::sdk::IdentityProposeRequest",
       "output": "crate::task_verb::sdk::IdentityTopologyResult",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.identity.propose\", &input)?",

@@ -8695,12 +8695,14 @@ export type IdentityReassignmentItem = { kind: "claim"; claim: EntityId } | { ki
 export type IdentityReassignmentTarget = { kind: "head"; head: EntityId } | { kind: "facet"; index: number } | { kind: "residue" }
 /** `oneiron::verbs::identity_topology::IdentityReassignment` */
 export type IdentityReassignment = { item: IdentityReassignmentItem; target: IdentityReassignmentTarget }
+/** `oneiron::verbs::identity_topology::IdentityFacetSpec` */
+export type IdentityFacetSpec = { label: string }
 /** `oneiron::verbs::identity_topology::IdentityProposalOutcome` */
 export type IdentityProposalOutcome = "approved_untouched" | "approved_amended" | "rejected"
 /** `oneiron::verbs::identity_topology::IdentityAmendment` */
-export type IdentityAmendment = { op: "merge"; sources: EntityId[]; survivor: EntityId; survivorship_plan: IdentitySurvivorshipPlan } | { op: "split"; entity: EntityId; heads: EntityId[]; reassignment_map: IdentityReassignment[] }
+export type IdentityAmendment = { op: "merge"; sources: EntityId[]; survivor: EntityId; survivorship_plan: IdentitySurvivorshipPlan } | { op: "split"; entity: EntityId; heads: EntityId[]; reassignment_map: IdentityReassignment[] } | { op: "facet"; entity: EntityId; facets: IdentityFacetSpec[]; reassignment_map: IdentityReassignment[] }
 /** `oneiron::verbs::identity_topology::IdentityEventAction` */
-export type IdentityEventAction = { op: "merge"; sources: EntityId[]; survivor: EntityId } | { op: "split"; entity: EntityId; heads: EntityId[]; reassignment_map: IdentityReassignment[]; applied_assigned: number; applied_residue: number } | { op: "facet"; entity: EntityId; facets: EntityId[]; reassignment_map: IdentityReassignment[]; applied_assigned: number; applied_residue: number; forked: EntityId[] } | { op: "assert_distinct"; a: EntityId; b: EntityId; claim: EntityId } | { op: "undo"; target: EntityId } | { op: "proposal_resolution"; proposal: EntityId; outcome: IdentityProposalOutcome; op_kind: string; target_class: string; proposer: string; amendment?: IdentityAmendment | null } | { op: "proposal_cancellation"; proposal: EntityId; participant: EntityId }
+export type IdentityEventAction = { op: "merge"; sources: EntityId[]; survivor: EntityId } | { op: "split"; entity: EntityId; heads: EntityId[]; reassignment_map: IdentityReassignment[]; applied_assigned: number; applied_residue: number } | { op: "facet"; entity: EntityId; facets: EntityId[]; reassignment_map: IdentityReassignment[]; applied_assigned: number; applied_residue: number; forked: EntityId[] } | { op: "parked_facet"; entity: EntityId; specs: IdentityFacetSpec[]; reassignment_map: IdentityReassignment[] } | { op: "assert_distinct"; a: EntityId; b: EntityId; claim: EntityId } | { op: "undo"; target: EntityId } | { op: "proposal_resolution"; proposal: EntityId; outcome: IdentityProposalOutcome; op_kind: string; target_class: string; proposer: string; amendment?: IdentityAmendment | null } | { op: "proposal_cancellation"; proposal: EntityId; participant: EntityId }
 /** `oneiron::verbs::identity_topology::IdentityTopologyReceipt` */
 export type IdentityTopologyReceipt = { event: EntityId; seq: number; at: number; actor?: EntityId | null; source: ClaimSource; approval: ClaimApprovalStatus; confidence: number; evidence?: IdentityEvidence | null; action: IdentityEventAction; seen: string }
 /** `oneiron::verbs::identity_topology::IdentityLifecycle` */
@@ -8711,14 +8713,12 @@ export type IdentityTransition = { entity: EntityId; state: IdentityLifecycle }
 export type IdentityTopologyResult = { outcome: "applied"; receipt: IdentityTopologyReceipt; transitions: IdentityTransition[] } | { outcome: "parked"; receipt: IdentityTopologyReceipt } | { outcome: "noop" }
 /** `oneiron::verbs::identity_topology::IdentitySplitRequest` */
 export type IdentitySplitRequest = { entity: EntityId; heads: EntityId[]; reassignment_map: IdentityReassignment[]; evidence: IdentityEvidence }
-/** `oneiron::verbs::identity_topology::IdentityFacetSpec` */
-export type IdentityFacetSpec = { label: string }
 /** `oneiron::verbs::identity_topology::IdentityFacetRequest` */
 export type IdentityFacetRequest = { entity: EntityId; facets: IdentityFacetSpec[]; reassignment_map: IdentityReassignment[]; evidence: IdentityEvidence }
 /** `oneiron::verbs::identity_topology::IdentityAssertDistinctRequest` */
 export type IdentityAssertDistinctRequest = { a: EntityId; b: EntityId; reason: string }
 /** `oneiron::verbs::identity_topology::IdentityProposedOp` */
-export type IdentityProposedOp = { op: "merge"; spec: IdentityMergeRequest } | { op: "split"; spec: IdentitySplitRequest }
+export type IdentityProposedOp = { op: "merge"; spec: IdentityMergeRequest } | { op: "split"; spec: IdentitySplitRequest } | { op: "facet"; spec: IdentityFacetRequest }
 /** `oneiron::verbs::identity_topology::IdentityProposeRequest` */
 export type IdentityProposeRequest = { operation: IdentityProposedOp }
 /** `oneiron::verbs::identity_topology::IdentityUndoRequest` */

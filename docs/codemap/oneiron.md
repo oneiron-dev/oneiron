@@ -1312,7 +1312,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/supersession_provenance.rs` | src | m | 7 crate-vis | — | Runner-owned companion claims; structural taint mirrors also run on replay |
 | `src/claim/supersession_provenance/tests.rs` | test | s | — | — | — |
 | `src/claim/tests.rs` | test | XL | — | — | — |
-| `src/claim/transition/event.rs` | src | s | 10 crate-vis | — | Canonical bounded MessagePack and Ed25519 proof for claim transition events |
+| `src/claim/transition/event.rs` | src | m | 10 crate-vis | — | Canonical MessagePack and Ed25519 proof for claim transition events |
 | `src/claim/transition/fold.rs` | src | m | 5 crate-vis | — | Deterministic causal fold |
 | `src/claim/transition/mod.rs` | src | s | 1 fn · 8 crate-vis | — | Signed, causally ordered claim state transitions |
 | `src/claim/transition/tests.rs` | test | m | — | — | — |
@@ -3020,7 +3020,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/federation/git_push/mint.rs` | src | s | 4 crate-vis | — | The owner's mint and revoke of a `git_push` Grant (FIX 6867, G1-PUSH): `vault.repo.git_push.mint` and… |
 | `src/federation/git_push/mod.rs` | src | s | 1 re-export · 10 crate-vis | — | The owner's `git_push` Grant (FIX 6867, owner ruling G1-PUSH = D, as the owner refined it 10-21: "the Grant… |
 | `src/federation/git_push/registry.rs` | src | s | 1 crate-vis | — | The GitPush grants as `vault.consent.registry` reviews them (FIX 6867, G1-PUSH): one row per live grant, in… |
-| `src/federation/grant.rs` | src | L | 2 struct · 3 enum · 20 fn · 4 const · 19 crate-vis | FederationGrant, FederationGrantGuestPayload, FederationGrantPreset, FederationGrantRole, FederationGrantScope | Federation grant record, role/preset policy, and grant body MessagePack codec |
+| `src/federation/grant.rs` | src | L | 2 struct · 3 enum · 21 fn · 4 const · 19 crate-vis | FederationGrant, FederationGrantGuestPayload, FederationGrantPreset, FederationGrantRole, FederationGrantScope | Federation grant record, role/preset policy, and grant body MessagePack codec |
 | `src/federation/grant/git_push.rs` | src | s | 1 fn · 4 crate-vis | — | The `grant_kind` and `git_push_bounds` keys of the FEDERATION_GRANT body (FIX 6867, G1-PUSH): a GitPush… |
 | `src/federation/grant/guest_key.rs` | src | s | 2 crate-vis | — | The guest payload's `holder_key` (FIX-LIST 1978): the public key the guest generated on their own device, as… |
 | `src/federation/grant/repo_bounds.rs` | src | s | 3 crate-vis | — | The `repo_bounds` key of the FEDERATION_GRANT body (FIX 6867): the repo bounds an owner gave his agent, in… |
@@ -3432,7 +3432,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/identity_topology/mod.rs` | src | s | 12 re-export · 19 crate-vis | — | ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an… |
 | `src/identity_topology/op_apply.rs` | src | m | 1 struct · 1 enum · 4 fn · 9 crate-vis | IdentityOpOutcome, IdentityOpWrite | The apply door: the per-write consent metadata, the door outcome, the merge/split/facet/assert_distinct… |
 | `src/identity_topology/op_undo.rs` | src | m | 2 fn · 1 crate-vis | — | The undo door: a counter-event appended over an applied merge, split or facet, never a rewrite of the event… |
-| `src/identity_topology/op_vocabulary.rs` | src | s | 6 struct · 2 enum · 1 fn · 2 crate-vis | AssertDistinctOp, FacetOp, FacetSpec, IdentityOpEvidence, IdentityTopologyOp, MergeOp, SplitOp, SurvivorshipPlan | The typed identity-topology op vocabulary (ARCH-0055 §2): merge, split, facet and assert_distinct, plus the… |
+| `src/identity_topology/op_vocabulary.rs` | src | s | 6 struct · 2 enum · 1 fn · 3 crate-vis | AssertDistinctOp, FacetOp, FacetSpec, IdentityOpEvidence, IdentityTopologyOp, MergeOp, SplitOp, SurvivorshipPlan | The typed identity-topology op vocabulary (ARCH-0055 §2): merge, split, facet and assert_distinct, plus the… |
 | `src/identity_topology/operation_parts.rs` | src | m | 7 crate-vis | — | One merge, split or facet decision too large for one record, carried across bounded records of the same… |
 | `src/identity_topology/proposal_resolution.rs` | src | m | 4 fn · 9 crate-vis | — | The ARCH-0055 r7 proposal-resolution lane: scope derivation, the amendment codec and its narrowing bounds… |
 | `src/identity_topology/proposer_scope.rs` | src | s | 6 crate-vis | — | The proposer axis of the ARCH-0055 r7 ramp scope (FIX 9870 + FIX 10189): op kind x target class x the… |
@@ -3445,7 +3445,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/identity_topology/tests.rs` | test | XL | — | — | ONE-1743 (MS-01) unit tests: op vocabulary, the full (state, op) transition table, the seq-ordered ledger… |
 | `src/identity_topology/topology_queries.rs` | src | s | 5 fn · 6 crate-vis | — | Read-only vault queries over the ledger and the reassignment projection: one event record, the claims a… |
 | `src/identity_topology/transition_table.rs` | src | s | 1 struct · 2 enum · 4 fn · 1 re-export · 1 crate-vis | ProposalOutcome, ProposalRuling, ProposalScope | The (state, op) transition table and the deterministic rejection taxonomy it speaks, plus the proposal… |
-| `src/identity_topology/wire_keys.rs` | src | s | 1 const · 1 re-export · 75 crate-vis | — | Pinned wire vocabulary of the identity-topology family: the type-76 body field keys, the reassignment-map… |
+| `src/identity_topology/wire_keys.rs` | src | s | 1 const · 1 re-export · 77 crate-vis | — | Pinned wire vocabulary of the identity-topology family: the type-76 body field keys, the reassignment-map… |
 | `src/inbox/actions.rs` | src | s | 1 struct · 1 crate-vis | NotificationAction | FIX 5629, 6505: the taps a delivered notification offers, read when its row is read, from the refs its… |
 | `src/inbox/compilation_target.rs` | src | s | 1 enum · 2 crate-vis | CompilationTarget | Principal-bound preference compilation choices recorded by inbox decisions |
 | `src/inbox/list.rs` | src | m | 2 struct · 1 enum · 2 fn · 1 const | NotificationMark, NotificationPage, NotificationRow | OF-221: the actor-bound inbox page over NOTIFICATION records, and the one write door that marks a… |
@@ -5366,7 +5366,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/secret_custody/handle_labels.rs` | src | s | 1 struct · 3 fn · 1 re-export · 3 crate-vis | SecretHandleLabelSet | An owner's display label on a secret handle (L04 s43 FIX 12541, engine part) |
 | `src/secret_custody/handle_purpose.rs` | src | s | 2 struct · 2 fn | SecretHandlePurposeSet, SecretPurposeQuestion | An owner's purpose answer is authored content, not a label or a grant |
 | `src/secret_custody/holder_export.rs` | src | m | 2 fn · 7 crate-vis | — | The holder's side of a holder-mediated export (FIX 4624(b)), and the owner's fetch and open of what it sealed |
-| `src/secret_custody/holder_export/import_mark.rs` | src | s | 1 crate-vis | — | The owner's mark that he imported one export secret supplement (FIX 12062), signed in the import's own… |
+| `src/secret_custody/holder_export/import_mark.rs` | src | m | 3 crate-vis | — | The owner's mark that he imported one export secret supplement (FIX 12062), signed in the import's own… |
 | `src/secret_custody/holder_export/part_signature.rs` | src | s | 3 crate-vis | — | The holder's signature of each numbered part an export secret copy rides in (FIX 12373; Engine 13:54 call A) |
 | `src/secret_custody/holder_export/relay.rs` | src | m | 20 crate-vis | — | An export secret request's sealed copy as it is kept and relayed (FIX 11843): a label, the second its holder… |
 | `src/secret_custody/holder_export/sealed.rs` | src | s | 4 crate-vis | — | The bytes of a sealed export secret supplement (FIX 4624(b)): the archive row of one custody secret, sealed… |
@@ -5748,7 +5748,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_optimize/eval_set/doors.rs` | src | m | 14 struct · 12 fn | EvalAuthorNowRequest, EvalAuthoringRef, EvalAuthoringResult, EvalBlockedLabelsRequest, EvalCaseLineage, EvalCasesRequest, EvalCohortOpenRequest, EvalCohortRef +6 | Owner-bound eval authoring and ledger doors |
 | `src/skill_optimize/eval_set/erase.rs` | src | s | 4 crate-vis | — | An erased row out of the eval cases' source sets (FIX 6933): each case's own set and every label's on it… |
 | `src/skill_optimize/eval_set/measurement.rs` | src | s | 7 struct · 3 enum · 3 fn · 3 re-export · 1 crate-vis | EvalArmPin, EvalAxisPin, EvalCaseMeasurement, EvalLegRecord, EvalMeasurement, EvalMeasurementRequest, FloorSlicePolicy, MeasurementState +2 | Paired, family-grouped eval measurements (FIX 574, OF-578; ARCH-0053) |
-| `src/skill_optimize/eval_set/measurement/doors.rs` | src | m | 9 fn · 7 crate-vis | — | The measurement doors: ask, read, claim, record a case and fail |
+| `src/skill_optimize/eval_set/measurement/doors.rs` | src | m | 9 fn · 8 crate-vis | — | The measurement doors: ask, read, claim, record a case and fail |
 | `src/skill_optimize/eval_set/measurement/finish.rs` | src | s | 1 fn · 2 const | — | Finishing a measurement: the complete matched set, the estimator once, and the card read from its numbers |
 | `src/skill_optimize/eval_set/measurement/statistics.rs` | src | m | 2 struct · 1 enum · 1 fn · 14 crate-vis | EstimateGap, EvalFamilySummary, MeasurementMethodPin | The paired, family-grouped estimator behind an eval measurement (FIX 574, OF-578) |
 | `src/skill_optimize/eval_set/replay_input.rs` | src | s | 1 struct · 1 fn | EvalTaskInput | The task a released eval case was given, for the trusted measuring host only (FIX 574, OF-578) |
@@ -5788,6 +5788,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_optimize/labels/rubric.rs` | src | m | 3 struct · 1 enum · 1 trait · 2 fn · 4 crate-vis | JudgeLabelChecker, JudgeLabelFit, JudgeLabelRecheckReport, JudgeLabelRecheckRequest, JudgeLabelRegrade | Judge rubric pins, label rechecks and human regrades |
 | `src/skill_optimize/mod.rs` | src | m | 3 mod · 19 re-export · 19 crate-vis | — | SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 "Optimize skills"): the Coach's job on the Dreamer's runner that… |
 | `src/skill_optimize/offer.rs` | src | m | 9 fn · 1 const · 1 re-export · 4 crate-vis | — | The Coach's training offer (OF-577): a cheaper stock model or a custom one for a seat, which the owner… |
+| `src/skill_optimize/offer/measurement.rs` | src | s | 1 crate-vis | — | Qualifies a card's native source in the offer's committing snapshot |
 | `src/skill_optimize/offer/snapshot.rs` | src | m | 10 struct · 5 enum · 1 re-export · 7 crate-vis | ComputeDestination, OfferAnswer, OfferAnswerRecord, OfferCandidate, OfferCheck, OfferCheckInput, OfferCheckOutcome, OfferCost +7 | The training offer's snapshot shapes (OF-577): what the Coach drafts, the immutable offer the owner is… |
 | `src/skill_optimize/offer_doors.rs` | src | s | 9 struct · 9 fn | OfferAnswerReply, OfferAnswerRequest, OfferListRequest, OfferPassRef, OfferPassRequest, OfferPassResult, OfferRef, OfferUndoReceipt +1 | Typed owner doors for the production Coach offer pass and its evidence |
 | `src/skill_optimize/offer_pilot.rs` | src | m | 9 struct · 14 fn · 2 crate-vis | OfferCandidateQuery, OfferCandidateRecord, OfferCandidateSetup, OfferPilot, OfferPilotComplete, OfferPilotMeasurement, OfferPilotPrepare, OfferPilotPrepared +1 | Per-seat candidate pins and externally measured pilot evidence for OF-577 |
@@ -6076,7 +6077,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/local_replica/left_env.rs` | src | L | 3 crate-vis | — | Local purge of a left shared vault's dedicated environment (OF-158) |
 | `src/store/local_replica/member_removal.rs` | src | s | 4 crate-vis | — | One member's local leaves for the replica tear: its index, projection, vector and edge rows, then its entity… |
 | `src/store/materialization_event.rs` | src | s | 1 struct · 1 enum · 1 trait · 1 re-export | LiveQueryTee, MaterializedDiffSummary, RevisionEvent | Core half of `store::materialization_event`: its store-layer items live in… |
-| `src/store/mod.rs` | src | m | 68 mod · 87 re-export · 160 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
+| `src/store/mod.rs` | src | m | 68 mod · 87 re-export · 161 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
 | `src/store/model_description_rows.rs` | src | s | 2 struct · 1 re-export · 2 crate-vis | DescriptionPolicy, ModelDescription | Core half of `store::model_description_rows`: its store-layer items live in… |
 | `src/store/model_score_diff.rs` | src | s | 1 re-export · 1 crate-vis | — | Core half of `store::model_score_diff`: its store-layer items live in `oneiron_store::model_score_diff` and… |
 | `src/store/model_step_response_carriage.rs` | src | s | 2 crate-vis | — | Core half of `store::model_step_response_carriage`: its store-layer items live in… |
@@ -6116,6 +6117,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/pending_gate_consent/run_groups.rs` | src | s | 1 fn · 1 crate-vis | — | Each waiting run with every proposal it holds, read in one snapshot (FIX 9524) |
 | `src/store/pending_gate_consent/sequence_sweep.rs` | src | s | 9 crate-vis | — | Monotonic sequence allocator, high-water read, and sweep-state cursors for expiry/list sweeps |
 | `src/store/pending_gate_consent/tray.rs` | src | m | 2 fn · 16 crate-vis | — | Pending gate-consent tray lifecycle: put/get/delete, resolution into the decision ledger, and ordered reads |
+| `src/store/pending_import_mark.rs` | src | s | 3 crate-vis | — | The export supplement import marks this install still owes the owner's other machines (FIX 12291): one… |
 | `src/store/person_billing_account.rs` | src | s | 1 struct · 2 crate-vis | FiledBillingAccount | The billing account a PERSON filed (`PERSON_BILLING_ACCOUNT` rows) and the erase that takes it with the PERSON |
 | `src/store/policy_record.rs` | src | s | 5 crate-vis | — | Core half of `store::policy_record`: its store-layer items live in `oneiron_store::policy_record` and are… |
 | `src/store/positive_skill_proposals.rs` | src | s | 1 struct · 1 enum · 2 crate-vis | PositiveFinding, PositiveSkillProposal | The pending positive skill proposals (`SKILL_ATTRIBUTION_POSITIVE_PROPOSAL` rows): what a succeeded attempt… |
