@@ -228,6 +228,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::HostCompact
         | Row::HostWake
         | Row::HostBudgetHit
+        | Row::VaultHooksChecks
         | Row::VaultHooksReplay
         | Row::VaultHooksRegenDue
         | Row::VaultHooksRegenGet

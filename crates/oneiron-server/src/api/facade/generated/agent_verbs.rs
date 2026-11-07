@@ -718,6 +718,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/host.compact", post(facade_route))
         .route("/host.wake", post(facade_route))
         .route("/host.budget.hit", post(facade_route))
+        .route("/vault.hooks.checks", post(facade_route))
         .route("/vault.hooks.replay", post(facade_route))
         .route("/vault.hooks.regen.due", post(facade_route))
         .route("/vault.hooks.regen.get", post(facade_route))
