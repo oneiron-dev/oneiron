@@ -30,6 +30,7 @@ pub(in crate::session_overlay) struct TxnSegment {
     )]
     pub(super) journal: Vec<JournalEntry>,
     pub(super) journal_bytes: usize,
+    pub(super) net_budget: Option<super::rows::NetBudgetCheckpoint>,
     _lease: Lease,
 }
 
@@ -65,6 +66,11 @@ impl TxnSegmentGuard {
         if !Arc::ptr_eq(&segment.overlay, &self.overlay) {
             return Err(Error::InvariantViolation(
                 "another session txn segment replaced the installed segment",
+            ));
+        }
+        if segment.net_budget.is_some() {
+            return Err(Error::InvariantViolation(
+                "a room net-budget operation must finish before commit",
             ));
         }
         let result = self.overlay.apply_segment(&segment);
@@ -134,6 +140,7 @@ impl SessionOverlay {
             mutations: Vec::new(),
             journal: Vec::new(),
             journal_bytes: 0,
+            net_budget: None,
             _lease: lease,
         };
         let install_result = ACTIVE_SEGMENT.with(|slot| {
