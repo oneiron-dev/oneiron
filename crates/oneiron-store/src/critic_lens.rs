@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 pub const CRITIC_LENS_CATALOG_SCHEMA_VERSION: u64 = 1;
-pub const MAX_CATALOG_LENSES: usize = 64;
 pub const MAX_ID_BYTES: usize = 64;
 pub const MAX_DOMAIN_BYTES: usize = 64;
 pub const MAX_CONTRACT_BYTES: usize = 4096;
@@ -106,9 +105,11 @@ pub fn validate_catalog(catalog: &LensCatalog) -> Result<()> {
             "unsupported critic lens catalog schema_version",
         ));
     }
-    if catalog.lenses.is_empty() || catalog.lenses.len() > MAX_CATALOG_LENSES {
+    // No count of lenses refuses a valid catalog (FIX 8517): each lens is
+    // checked on its own.
+    if catalog.lenses.is_empty() {
         return Err(invalid_critic_config(
-            "critic lens catalog must contain 1..=64 lenses",
+            "critic lens catalog must contain at least one lens",
         ));
     }
     let mut seen = BTreeSet::new();

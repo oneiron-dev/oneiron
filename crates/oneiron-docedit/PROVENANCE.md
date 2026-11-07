@@ -114,6 +114,15 @@ The same pack (FIX 13299) advances the text-overlay cursor over the
 existing hard-break and opaque-inline placeholders, matching `extract_inlines_text`.
 The non-text inline nodes themselves are preserved unchanged.
 
+The table-cell fallback change (2026-11-06, FIX 17480) touches
+`src/native_patch/table.rs`. When retained text mapping and the field-aware cut
+cannot apply, the existing rebuild keeps the first paragraph's terminal run
+properties and the namespace bindings of copied paragraph and run properties.
+If no ordinary run exists, it carries the first field's explicit run properties.
+The outcome names the actual typed fields removed by that rebuild. Expected-text
+checks, grid/merge checks, first-match table selection and the retained/cut paths
+are unchanged. This is a source-level correction, not a PowerPoint fidelity proof.
+
 The styled structural-marker carrier change (2026-11-06, FIX 14354) touches
 `src/edit/mod.rs`. Whole-paragraph segment replacement leaves each existing
 Decoration or comment range/reference marker in one carrier at its original
@@ -124,3 +133,26 @@ text before the inserted replacement. No marker identity is duplicated or
 inferred from replacement prose. The same predicate now serves marker presence,
 stripping and this carrier. Native wire/schema versions and marker-free
 replacement semantics are unchanged; no Word-runtime comparison is claimed.
+
+
+## Native deck transaction graphic ceilings (FIX 10653)
+
+A deck transaction may carry `graphics` with the existing `svg_bytes`,
+`raster_bytes`, and `raster_pixels` ceilings. Every `set_picture` step uses that
+same setting through `Picture.limits`. An absent setting uses the unchanged
+`GraphicLimits::default()` values and is omitted from canonical serialization.
+An explicit setting stays in the canonical transaction and therefore the existing
+handoff hash and settlement replay. The asset identity/hash checks, factual-use
+and provenance rules, resource admission, capacity errors, candidate part-diff
+checks, and reports are unchanged. Native deck creation and live export retain
+their existing defaults; this is only the transaction slice of FIX 10653.
+
+
+### Native live deck export graphic settings (FIX 10653)
+
+The live deck export profile accepts optional `GraphicLimits`. The projector resolves
+those settings once and passes them to both new-picture creation and bound-picture
+replacement. Existing held-media paths do not re-admit their bytes. Omitting the
+settings keeps the existing numeric defaults and the old profile/key serialization.
+An explicit setting is part of `ExportKey`, so a memo for another setting cannot
+stand in for it. The projector signature and export gate remain unchanged.
