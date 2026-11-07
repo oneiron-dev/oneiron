@@ -1381,6 +1381,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -1445,6 +1446,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -1470,6 +1472,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -1495,6 +1498,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -1520,6 +1524,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -1545,6 +1550,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -5731,6 +5737,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -5888,6 +5895,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -5913,6 +5921,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -5938,6 +5947,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -6140,6 +6150,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -6699,6 +6710,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -7153,6 +7165,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -7178,6 +7191,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -7203,6 +7217,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -7228,6 +7243,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -7253,6 +7269,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -7278,6 +7295,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -7387,6 +7405,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -7412,6 +7431,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -7437,6 +7457,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -7462,6 +7483,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -7487,6 +7509,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -7512,6 +7535,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self.inner.agent_verb("can", input).map_err(facade_error)?;
@@ -7534,6 +7558,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self.inner.agent_verb("peek", input).map_err(facade_error)?;
@@ -9494,6 +9519,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -9519,6 +9545,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -9544,6 +9571,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -9569,6 +9597,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -9594,6 +9623,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -9619,6 +9649,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -9644,6 +9675,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -9669,6 +9701,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -9694,6 +9727,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -9719,6 +9753,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -9744,6 +9779,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -9772,6 +9808,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -9797,6 +9834,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -9822,6 +9860,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -9847,6 +9886,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -9872,6 +9912,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -9897,6 +9938,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -9922,6 +9964,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -9947,6 +9990,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -9972,6 +10016,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -10813,6 +10858,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -10838,6 +10884,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -10863,6 +10910,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self
@@ -10888,6 +10936,7 @@ impl NativeClient {
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
                 legal_hold: None,
+                room_join_hold: None,
             })
         })?;
         let output = self

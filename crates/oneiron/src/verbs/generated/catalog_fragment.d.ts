@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1334 code-mode rows (1293 host rows, 41 run rows), 4702 declarations.
+// Census: 1334 code-mode rows (1293 host rows, 41 run rows), 4703 declarations.
 // Replies: 1142 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
@@ -3944,7 +3944,8 @@ declare namespace Sdk {
   type MemoryPolicyDenial = { level: string; row_ref: string; role: string; exception_proposal: MemoryPolicyExceptionProposal };
   type MemoryWrongRoot = { attempted: string; replacement: string; schemaRef: string };
   type VerbHookStop = { status: "skipped"; hook: string; reason: string } | { status: "pending"; invocation: string; ask: string } | { status: "hidden"; hook: string } | { status: "completed"; invocation: string; result: unknown } | { status: "completed_with_error"; invocation: string; code: string; message: string; receipt_ref?: string | null };
-  type MemoryError = Partial<MemoryWrongRoot> & { code: string; message: string; suggestions: string[]; successor_short_id?: string | null; gate_denial?: MemoryGateDenial | null; narrowing?: ScopedReadReceipt | null; policy_denial?: MemoryPolicyDenial | null; hook?: VerbHookStop | null; retry_after?: number | null; resets_at?: number[]; reason_codes?: string[]; legal_hold?: LegalHoldNotice | null };
+  type RoomJoinHold = { room: EntityId; person: EntityId; intent_key: string; needs: ConsentNeed[] };
+  type MemoryError = Partial<MemoryWrongRoot> & { code: string; message: string; suggestions: string[]; successor_short_id?: string | null; gate_denial?: MemoryGateDenial | null; narrowing?: ScopedReadReceipt | null; policy_denial?: MemoryPolicyDenial | null; hook?: VerbHookStop | null; retry_after?: number | null; resets_at?: number[]; reason_codes?: string[]; legal_hold?: LegalHoldNotice | null; room_join_hold?: RoomJoinHold | null };
   type EsignDocumentTrail = { trail: "readable"; status: DocumentStatus; awaits_owner_answer: boolean; document: EsignDocument; recipients: Record<string, RecipientState>; signatures: SignatureRow[]; rejection?: string | null; sealed_sha256: string[]; audit: EsignEventRow[] } | { trail: "unreadable"; error: MemoryError };
   type EsignDocumentView = EsignDocumentTrail & { document_ref: string; delivery_receipts: EsignDeliveryReceipt[] };
   type EsignLinksIssueRequest = { document_ref: string; rotate?: boolean };

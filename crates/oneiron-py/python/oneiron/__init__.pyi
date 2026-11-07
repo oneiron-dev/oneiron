@@ -408,6 +408,7 @@ class OneironError(RuntimeError):
     # The refusal's stable reason codes, in its producer's order (FIX 7398).
     reason_codes: tuple[str, ...] | None
     legal_hold: Facade.LegalHoldNotice | None
+    room_join_hold: Facade.RoomJoinHold | None
     def __init__(
         self,
         code: str,
@@ -419,6 +420,7 @@ class OneironError(RuntimeError):
         resets_at: list[int] | None = None,
         reason_codes: list[str] | None = None,
         legal_hold: Facade.LegalHoldNotice | None = None,
+        room_join_hold: Facade.RoomJoinHold | None = None,
     ) -> None: ...
 
 class Oneiron:

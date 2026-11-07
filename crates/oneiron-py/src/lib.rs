@@ -164,6 +164,7 @@ fn decode<'de, T: Deserialize<'de>>(json: &'de str, what: &str) -> PyResult<T> {
             resets_at: Vec::new(),
             reason_codes: Vec::new(),
             legal_hold: None,
+            room_join_hold: None,
         })
     })
 }
@@ -184,6 +185,7 @@ fn encode_error(error: serde_json::Error) -> PyErr {
         resets_at: Vec::new(),
         reason_codes: Vec::new(),
         legal_hold: None,
+        room_join_hold: None,
     })
 }
 

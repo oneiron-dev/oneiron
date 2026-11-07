@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1282 facade rows, 4640 generated types.
+// UniFFI census: 1282 facade rows, 4641 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1234.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -61300,6 +61300,20 @@ pub enum VerbHookStop {
     },
 }
 
+/// `oneiron_contracts::room_join::RoomJoinHold`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RoomJoinHold {
+    #[serde(rename = "room")]
+    pub room: String,
+    #[serde(rename = "person")]
+    pub person: String,
+    #[serde(rename = "intent_key")]
+    pub intent_key: String,
+    #[serde(rename = "needs")]
+    pub needs: Vec<ConsentNeed>,
+}
+
 /// `oneiron_contracts::memory::error::MemoryWrongRoot`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct MemoryWrongRoot {
@@ -61362,6 +61376,12 @@ pub struct MemoryError {
         skip_serializing_if = "Option::is_none"
     )]
     pub legal_hold: Option<LegalHoldNotice>,
+    #[serde(
+        rename = "room_join_hold",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub room_join_hold: Option<RoomJoinHold>,
     #[serde(flatten)]
     pub memory_wrong_root: Option<MemoryWrongRoot>,
 }

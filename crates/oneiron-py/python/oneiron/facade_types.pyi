@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1282 facade rows, 4644 declarations.
+Census: 1282 facade rows, 4645 declarations.
 Inputs: 1211 of 1282 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1111 of 1282 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -19544,6 +19544,11 @@ class VerbHookStopCompletedWithError(TypedDict):
     message: str
     receipt_ref: NotRequired[str | None]
 VerbHookStop = VerbHookStopSkipped | VerbHookStopPending | VerbHookStopHidden | VerbHookStopCompleted | VerbHookStopCompletedWithError
+class RoomJoinHold(TypedDict):
+    room: EntityId
+    person: EntityId
+    intent_key: str
+    needs: list[ConsentNeed]
 class FacadeMemoryError(TypedDict):
     attempted: NotRequired[str]
     replacement: NotRequired[str]
@@ -19560,6 +19565,7 @@ class FacadeMemoryError(TypedDict):
     resets_at: NotRequired[list[int]]
     reason_codes: NotRequired[list[str]]
     legal_hold: NotRequired[LegalHoldNotice | None]
+    room_join_hold: NotRequired[RoomJoinHold | None]
 class EsignDocumentTrailReadable(TypedDict):
     trail: Literal["readable"]
     status: DocumentStatus
