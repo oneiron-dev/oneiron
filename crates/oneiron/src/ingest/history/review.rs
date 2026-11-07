@@ -132,7 +132,10 @@ pub(crate) fn imported_evidence_in_txn(
                     stamped |= parent_header.entity_type == ENTITY_TYPE_TURN && facts.imported;
                 }
                 imported |= stamped;
+                // A foreign archive's copy names no owner history import's
+                // review, whatever source it keeps (FIX 15412).
                 if let Some(source) = source.as_deref().and_then(HistorySource::parse)
+                    && !crate::memory::admitted_foreign(ENTITY_TYPE_MESSAGE, &body)
                     && latest
                         .as_ref()
                         .is_none_or(|(at, _)| header.learned_at > *at)
@@ -149,7 +152,11 @@ pub(crate) fn imported_evidence_in_txn(
             continue;
         }
         imported = true;
-        // Only a source this module imports names a review.
+        // Only a source this module imports names a review; a foreign
+        // archive's copy names none, whatever source it keeps (FIX 15412).
+        if crate::memory::admitted_foreign(ENTITY_TYPE_TURN, &body) {
+            continue;
+        }
         let Some(source) = facts
             .import_source
             .as_deref()

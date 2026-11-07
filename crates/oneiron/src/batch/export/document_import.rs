@@ -226,6 +226,7 @@ impl Vault {
         super::provenance_import::index_provenance(&mut archive)?;
         super::expression_import::index_expressions(&mut archive)?;
         super::evidence_import::index_message_containers(&mut archive)?;
+        super::evidence_import::index_inline_speech_conversations(self, &mut archive)?;
         let mut pending = 0;
         let mut inserted_descriptors = 0;
         let mut unchanged_entities = model_imports.unchanged;
@@ -264,9 +265,15 @@ impl Vault {
                 // A file-plane ASSET compares as its body, never the manifest
                 // its row keeps (FIX 3677).
                 let existing = self.materialized_row_in_txn(&wtxn, &id, existing)?;
-                // FIX 15412: under foreign speakers a MESSAGE or TURN stored
-                // here as it came is this vault's own speech, never a repeat.
-                let speech = matches!(row.entity_type, ENTITY_TYPE_MESSAGE | ENTITY_TYPE_TURN);
+                // FIX 15412: a foreign archive's admission marks each MESSAGE,
+                // TURN and CONVERSATION of its speech, so no copy one choice
+                // made matches what the other makes; under foreign speakers
+                // such a row stored here as it came is this vault's own
+                // speech, never a repeat.
+                let speech = matches!(
+                    row.entity_type,
+                    ENTITY_TYPE_MESSAGE | ENTITY_TYPE_TURN | ENTITY_TYPE_CONVERSATION
+                );
                 let foreign_speech = speech && speakers == ArchiveSpeakers::Foreign;
                 if !foreign_speech && matches_row(&row, &existing, &row.body) {
                     validate_existing_source(self, &wtxn, &row, &archive, &at)?;
@@ -1615,19 +1622,30 @@ fn imported_body(
             )
         }
         // FIX 15412: a foreign archive's conversational TURN no MESSAGE
-        // joins, its words inline, speaks as a counterparty too.
+        // joins, its words inline, speaks as a counterparty too, and its
+        // CONVERSATION is marked as a foreign archive's words.
         ENTITY_TYPE_TURN if speakers == ArchiveSpeakers::Foreign => {
             crate::memory::archived_inline_turn_body(&bytes, &vault.config.assistant_display_names)
+        }
+        ENTITY_TYPE_CONVERSATION
+            if speakers == ArchiveSpeakers::Foreign
+                && index
+                    .contains(Tag::InlineSpeechConversation, parse_id(&row.id)?.as_bytes())? =>
+        {
+            crate::memory::archived_inline_conversation_body(&bytes)
         }
         _ => Ok(bytes),
     }
 }
 
-/// FIX 15412: refuses archived MESSAGE or TURN `row`, which collides with
-/// the row stored here as `existing`, by name when the other speaker choice
-/// explains the collision: an import with own speakers meets a row foreign
-/// speakers made; one with foreign speakers meets a row own speakers made, or
-/// this vault's own row stored as it came. The stored row stays as it is.
+/// FIX 15412: refuses archived MESSAGE, TURN or CONVERSATION `row`, which
+/// collides with the row stored here as `existing`, by name when the other
+/// speaker choice explains the collision. The stored row names its choice:
+/// a foreign archive's admission marks every row it makes
+/// (`memory::admitted_foreign`), and own speakers never do. When that choice
+/// is not `speakers` and made the stored row from `row` (or, the stored row
+/// unmarked, it is `row` as it came: this vault's own speech), the import is
+/// refused naming it. The stored row stays as it is.
 fn refuse_other_speakers<R: Read + Seek>(
     vault: &Vault,
     row: &ExportEntity,
@@ -1635,22 +1653,28 @@ fn refuse_other_speakers<R: Read + Seek>(
     archive: &IndexedArchive<'_, R>,
     speakers: ArchiveSpeakers,
 ) -> Result<()> {
-    let other = match speakers {
-        ArchiveSpeakers::Own => ArchiveSpeakers::Foreign,
-        ArchiveSpeakers::Foreign => ArchiveSpeakers::Own,
+    let stored_body = existing
+        .get(ENTITY_METADATA_HEADER_LEN..)
+        .unwrap_or_default();
+    let stored = if crate::memory::admitted_foreign(row.entity_type, stored_body) {
+        ArchiveSpeakers::Foreign
+    } else {
+        ArchiveSpeakers::Own
     };
-    let made = imported_body(vault, row, &archive.index, &archive.files, other)?;
-    let made = ExportBody::from_bytes(&made, row.entity_type);
-    let as_it_came = speakers == ArchiveSpeakers::Foreign && matches_row(row, existing, &row.body);
-    let explained = as_it_came || matches_row(row, existing, &made);
-    if !explained {
+    if stored == speakers {
         return Ok(());
     }
-    Err(invalid(match speakers {
-        ArchiveSpeakers::Own => {
+    let made = imported_body(vault, row, &archive.index, &archive.files, stored)?;
+    let made = ExportBody::from_bytes(&made, row.entity_type);
+    let as_it_came = stored == ArchiveSpeakers::Own && matches_row(row, existing, &row.body);
+    if !as_it_came && !matches_row(row, existing, &made) {
+        return Ok(());
+    }
+    Err(invalid(match stored {
+        ArchiveSpeakers::Foreign => {
             "archived speech is already here with foreign speakers; this import names own speakers"
         }
-        ArchiveSpeakers::Foreign => {
+        ArchiveSpeakers::Own => {
             "archived speech is already here with own speakers; this import names foreign speakers"
         }
     }))
