@@ -43,6 +43,7 @@ impl ExpectedContainers {
                         "row_births",
                         "withdrawn_cutoffs",
                         "asset_body_refs",
+                        "source_audiences",
                     ] {
                         self.rows.push(CanonicalContainerManifest {
                             container_id: name.to_owned(),
