@@ -75,8 +75,8 @@ pub struct CriticBinding {
 }
 
 /// What a review gave back: the verdict claim, the triage, each lens's
-/// artifact and one receipt per typed question asked (none when the review
-/// replayed from its cache).
+/// artifact and one receipt per typed question asked (on a replay from its
+/// cache, the first ask's; none for a review cached before they were kept).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CriticReviewOutcome {
     pub verdict_claim_ref: String,

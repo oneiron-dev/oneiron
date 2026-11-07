@@ -235,7 +235,7 @@ struct RevokeClearance {
 struct PreclearSet {
     /// The trusted set's name; each receipt names it.
     set_name: String,
-    /// 1..=256 distinct contacts, as 32 hex each.
+    /// The distinct contacts, at least one, as 32 hex each.
     contacts: Vec<String>,
     scope: Scope,
 }
