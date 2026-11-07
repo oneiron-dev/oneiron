@@ -31,6 +31,12 @@
 //! once. A reason a retry may clear waits for one retry first. Neither is a
 //! loss. A call the live guest read through a hook's view the context kept
 //! runs as it ran, and its fork is evidence like any other.
+//!
+//! A callable's pair (FIX 3608, [`callable`]) runs its caller's own
+//! program twice instead, its load present and absent, through the same
+//! lent runtime and scratch stores, before either fork is generated.
+
+mod callable;
 
 use std::sync::Arc;
 
@@ -45,7 +51,8 @@ use super::{
 };
 use crate::code_run::shadow_runner::{
     PreparedShadowStep, ShadowBodyRef, ShadowBodyStore, ShadowDeterminism, ShadowStatus,
-    ShadowUnavailable, ShadowUnavailableReason as Reason, prepare_shadow_step_source,
+    ShadowStepRun, ShadowUnavailable, ShadowUnavailableReason as Reason,
+    prepare_shadow_step_source,
 };
 use crate::code_sandbox::SANDBOX_WIT_WORLD_NAME;
 use crate::compaction::output::OutputRef;
@@ -55,6 +62,9 @@ use crate::engine_executor::{
 };
 use crate::entity_id::bytes_to_hex_lower;
 use crate::{EntityId, LlmResponse, Result, Vault};
+
+pub use self::callable::{CallableBranch, execute_callable_branch};
+pub(super) use self::callable::{CallerTarget, caller_target_in_txn};
 
 /// A program run's part, or the shadow runner's reason it has none.
 type Ran<T> = Result<std::result::Result<T, ShadowUnavailable>>;
@@ -347,6 +357,20 @@ pub trait ContributionForkProgram {
         step: &PreparedShadowStep,
         response: &LlmResponse,
     ) -> Result<std::result::Result<ExecutedFork, ShadowUnavailable>>;
+
+    /// `branch`'s run of `step`'s captured caller step (FIX 3608) through
+    /// [`execute_callable_branch`], as [`Self::execute`] runs a fork's
+    /// answer: on a fresh runtime of that component and in a scratch store
+    /// of its own that the host releases before this returns.
+    ///
+    /// # Errors
+    ///
+    /// The scratch store failing, and a step the executor cannot set up.
+    fn execute_branch(
+        &self,
+        step: &PreparedShadowStep,
+        branch: &CallableBranch,
+    ) -> Result<std::result::Result<ExecutedFork, ShadowUnavailable>>;
 }
 
 /// Runs `response`'s program for `step`'s captured step on `runtime`, a
@@ -376,6 +400,19 @@ pub fn execute_contribution_fork(
         live: Arc::new(|| false),
     };
     let run = run_shadow_step(step, response, runtime, store, cancel, &feedback)?;
+    executed_run(step, run, runtime_pin, store)
+}
+
+/// What `run`, a program run of `step` on the component pinned at
+/// `runtime_pin`, left, read back whole from `store`: unavailable for the
+/// shadow runner's own reason, a recorded call answered without the
+/// response its live guest read, a step left open, or a body marked or gone.
+fn executed_run(
+    step: &PreparedShadowStep,
+    run: ShadowStepRun,
+    runtime_pin: [u8; 32],
+    store: &ShadowBodyStore,
+) -> Ran<ExecutedFork> {
     let status = match run.status {
         ShadowStatus::Unavailable { unavailable } => return Ok(Err(unavailable)),
         ShadowStatus::StepComplete { done } => Some(ExecutedStepStatus::StepComplete { done }),

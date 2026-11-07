@@ -18,6 +18,20 @@
 //! holds what the step's result reads saw of reader state (FIX 6352,
 //! `reads`): a reader child's binding, whether its job was live, a parent's
 //! settled findings and the fold receipt each whole result's card carried.
+//! It also keeps each callable skill the step's own program called and that
+//! answered (FIX 3608, `callables`): what its load selected, the arguments it
+//! ran with and where its own calls are, so a callable's counterfactual
+//! runs that exact load again, or leaves it out. And it keeps each skill body
+//! a call's answer delivered to the step's own program (FIX 3608,
+//! `deliveries`): the call's bridge position and the body its native
+//! producer witnessed, kept only once the guest read that answer as the
+//! producer made it, so a delivery's counterfactual answers that exact call
+//! again, or as the skill were not found.
+//!
+//! The context is committed with the step's capsule, as a body the run owns
+//! (`storage::replay_capsule`): an erase of the capsule's actor releases the
+//! context with the capsule's other bodies, and the deliveries it keeps with
+//! it. No other row keeps a delivery.
 
 mod reads;
 
@@ -28,6 +42,7 @@ pub(crate) use self::reads::{
 };
 use super::types::SelfCall;
 use crate::dreamer_wake::BudgetLegibilityEnvelope;
+use crate::skill::{SelectedCallable, SkillBodyWitness};
 use crate::task_verb::sdk::AgentVerb;
 use crate::{EntityId, Error, Result};
 
@@ -107,6 +122,32 @@ impl GuestResponseCapture {
     }
 }
 
+/// A callable skill the step's own program called, kept once it answered
+/// (FIX 3608): the bridge position of the call's own row, where the calls
+/// the skill made end (its rows are the ones after the call's own, up to
+/// `nested_end`), the skill the call named, what its load selected and the
+/// arguments it ran with, all after the call's verb hooks.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct CapturedCallable {
+    pub(crate) seq: u64,
+    pub(crate) nested_end: u64,
+    pub(crate) skill: EntityId,
+    pub(crate) selected: SelectedCallable,
+    pub(crate) args: serde_json::Value,
+}
+
+/// A skill body a call's answer delivered whole to the step's own program
+/// (FIX 3608): the bridge position of the call's row, and the body as the
+/// answer's native producer witnessed it: the skill's entity, its revision
+/// as `skill_id@version`, and each file the answer carries exactly, by its
+/// path, byte extent and BLAKE3. A call's answer may deliver several skills'
+/// bodies (a library page), one delivery each at the call's position.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct CapturedSkillDelivery {
+    pub(crate) seq: u64,
+    pub(crate) body: SkillBodyWitness,
+}
+
 /// One captured step's replay context: the step it is, where its calls are
 /// in its run's bridge log, and what its guest read beside them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -120,9 +161,52 @@ pub(crate) struct StepReplayContext {
     pub(crate) guest_responses: GuestResponseCapture,
     /// What the step's result reads saw of reader state (FIX 6352).
     pub(crate) reader_reads: ReaderReadCapture,
+    /// Each callable skill the step's program called that answered, in
+    /// call order (FIX 3608).
+    pub(crate) callables: Vec<CapturedCallable>,
+    /// Each skill body a call's answer delivered to the step's program, in
+    /// call order (FIX 3608).
+    pub(crate) deliveries: Vec<CapturedSkillDelivery>,
 }
 
 impl StepReplayContext {
+    /// Whether each callable it keeps sits inside the step's own calls,
+    /// `bridge_start..bridge_end`, its calls after its own row, once each.
+    pub(crate) fn callables_placed(&self) -> bool {
+        self.callables.iter().enumerate().all(|(index, callable)| {
+            self.bridge_start <= callable.seq
+                && callable.seq < callable.nested_end
+                && callable.nested_end <= self.bridge_end
+                && self.callables[..index]
+                    .iter()
+                    .all(|earlier| earlier.nested_end <= callable.seq)
+        })
+    }
+
+    /// The callable kept for the call at bridge position `seq`.
+    pub(crate) fn callable_at(&self, seq: u64) -> Option<&CapturedCallable> {
+        self.callables.iter().find(|callable| callable.seq == seq)
+    }
+
+    /// Whether each delivery it keeps sits at one of the step's own calls,
+    /// `bridge_start..bridge_end`, in call order.
+    pub(crate) fn deliveries_placed(&self) -> bool {
+        self.deliveries.iter().enumerate().all(|(index, delivery)| {
+            (self.bridge_start..self.bridge_end).contains(&delivery.seq)
+                && self.deliveries[..index]
+                    .iter()
+                    .all(|earlier| earlier.seq <= delivery.seq)
+        })
+    }
+
+    /// The delivery of `skill`'s body kept for the call at bridge position
+    /// `seq`.
+    pub(crate) fn delivery_at(&self, seq: u64, skill: EntityId) -> Option<&CapturedSkillDelivery> {
+        self.deliveries
+            .iter()
+            .find(|delivery| delivery.seq == seq && delivery.body.entity == skill)
+    }
+
     /// Its body: canonical JSON.
     pub(crate) fn encode(&self) -> Result<Vec<u8>> {
         serde_json::to_vec(self)
@@ -136,11 +220,15 @@ impl StepReplayContext {
 }
 
 /// What one step's host keeps for the step's replay context while the step
-/// runs: each guest response it hands out (FIX 6351) and what its result
-/// reads see of reader state (FIX 6352).
+/// runs: each guest response it hands out (FIX 6351), what its result reads
+/// see of reader state (FIX 6352), each callable its program called that
+/// answered and each skill body a call's answer delivered to its program
+/// (FIX 3608).
 pub(crate) struct StepContextCapture {
     pub(crate) guest_responses: GuestResponseCapture,
     pub(crate) reader_reads: ReaderReadCapture,
+    pub(crate) callables: Vec<CapturedCallable>,
+    pub(crate) deliveries: Vec<CapturedSkillDelivery>,
 }
 
 impl StepContextCapture {
@@ -149,6 +237,8 @@ impl StepContextCapture {
         Self {
             guest_responses: GuestResponseCapture::new(),
             reader_reads: ReaderReadCapture::new(child),
+            callables: Vec::new(),
+            deliveries: Vec::new(),
         }
     }
 }

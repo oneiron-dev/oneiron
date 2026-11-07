@@ -20,7 +20,7 @@ use crate::error::{ArtifactError, Error, Result};
 use crate::llm::decision::{DecisionBandPolicy, DecisionDial, HeldLadder};
 use crate::memory::MemoryResult;
 use crate::retrieval_depth::RetrievalDeadline;
-use crate::skill::LoadedSkillPack;
+use crate::skill::{LoadedSkillPack, SkillBodyWitness, SkillFileSpan};
 use crate::task_type::PlacementDecisions;
 use crate::team::{LeasedSpawnRequest, PatternLaunchRunner, PlannedSpawnHost, SpawnPhase};
 use crate::workspace_roster::{ProjectProofVersion, ProjectRecord, ProjectWriteProof};
@@ -344,7 +344,11 @@ impl HostSelfDispatcher<'_> {
                 at,
             )?),
             SelfLeaderCall::Pattern { skill } => {
-                pattern_json(&self.reload_leader_pattern(skill, &planner.executor, at)?)
+                let loaded = self.reload_leader_pattern(skill, &planner.executor, at)?;
+                let answer = pattern_json(&loaded);
+                // The pattern's files its answer carries exactly (FIX 3608).
+                self.witness_skill_body(&answer, pattern_witness(&loaded));
+                answer
             }
             SelfLeaderCall::Split { leader, slice } => {
                 return self.dispatch_leader_split(leader, slice);
@@ -674,4 +678,23 @@ fn pattern_json(loaded: &LoadedSkillPack) -> serde_json::Value {
                 .collect()
         }),
     })
+}
+
+/// The skill body [`pattern_json`] carries of `loaded` (FIX 3608): each file
+/// whose bytes are UTF-8, which its text holds exactly. A file the answer
+/// decodes lossily is no span of the body; `None` when no file is exact.
+fn pattern_witness(loaded: &LoadedSkillPack) -> Option<SkillBodyWitness> {
+    let files = loaded
+        .source_files
+        .iter()
+        .flatten()
+        .filter(|file| std::str::from_utf8(&file.content).is_ok())
+        .map(|file| SkillFileSpan::whole(&file.path, &file.content))
+        .collect();
+    SkillBodyWitness::of_files(
+        loaded.entity,
+        &loaded.record.skill_id,
+        &loaded.record.version,
+        files,
+    )
 }

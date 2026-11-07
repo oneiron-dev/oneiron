@@ -44,13 +44,14 @@ pub(crate) use self::program_entry::{PinnedProgramEntry, PinnedProgramRun};
 use self::record::step_state_hash;
 pub use self::record::{EnteredRun, entered_run};
 pub(crate) use self::record::{code_run_complete_in_txn, parked_wait_now};
-pub(crate) use self::shadow_step::shadow_readable_outputs;
 pub use self::shadow_step::{ArmTypeFeedback, run_shadow_step};
+pub(crate) use self::shadow_step::{run_shadow_callable_branch, shadow_readable_outputs};
 pub use self::skill_call::{execute_live_skill_call, execute_live_skill_call_listing};
 pub(crate) use self::store::{
     RESULT_READ_ROOT, RESULT_REPLY_INLINE_BYTES, bridge_result_output_path, clean_for_context,
-    holds_reply_content, is_result_output_path, mask_known_text, parse_result_read_path,
-    result_handle_json, result_read_path_for, store_ordinal_base, store_result_output_path,
+    holds_reply_content, is_result_output_path, mask_known_text, observation_output_path,
+    parse_result_read_path, result_handle_json, result_read_path_for, script_output_path,
+    store_ordinal_base, store_result_output_path,
 };
 pub use self::types::{
     CallableProgram, ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME, ENGINE_EXECUTOR_FALLBACK_NAME,

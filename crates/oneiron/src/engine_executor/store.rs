@@ -802,11 +802,11 @@ pub(super) fn resumed_output_wait(path: &str) -> Option<(u64, &str)> {
     Some((seq.parse().ok()?, wait))
 }
 
-pub(super) fn script_output_path(seq: u64) -> String {
+pub(crate) fn script_output_path(seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.generated.js")
 }
 
-pub(super) fn observation_output_path(seq: u64) -> String {
+pub(crate) fn observation_output_path(seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.observation.txt")
 }
 

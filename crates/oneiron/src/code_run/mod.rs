@@ -93,12 +93,13 @@ pub(crate) use self::consent_wait::{
 };
 pub(crate) use self::contribution::matched_contribution_facts_in_txn;
 pub use self::contribution::{
-    ContributionForkExecution, ContributionForkModel, ContributionForkProgram,
+    CallableBranch, ContributionForkExecution, ContributionForkModel, ContributionForkProgram,
     ContributionForkReceipt, ContributionForkScorer, ContributionReplayUnavailable, ExecutedBody,
     ExecutedFork, ExecutedForkView, ExecutedOutput, ExecutedStepStatus, ForkEvidenceMode,
     ForkExecutionOutcome, ForkExecutionPin, ForkJudge, ForkMismatch, ForkScore, ForkScoring,
     ForkScoringIdentity, ForkTreatment, OwnerJudgment, ReplayAnchor, ScoredFork,
-    contribution_fork_receipts, execute_contribution_fork, run_contribution_forks,
+    contribution_fork_receipts, execute_callable_branch, execute_contribution_fork,
+    run_contribution_forks,
 };
 pub(crate) use self::contribution::{
     OwnerPair, OwnerPairAnswer, OwnerPairChoice, OwnerPairRoute, OwnerPairTexts,
@@ -126,16 +127,18 @@ pub use self::replay::{
 };
 pub(crate) use self::replay::{CODE_RUN_OUTPUT_PREVIEW_WITHHELD, agent_verb_rows_of};
 pub use self::replay_capsule::{
-    CapsuleContent, CapsuleHost, CapsuleRequest, CapsuleRungBinding, ExecutorStepStart,
-    ExposureKind, ExposureSlot, ReplayRoutePin, ReplayRung, StepContextRef, StepReplayCapsule,
-    StoredRungBinding, StoredSpan, TaskExposure, WorkflowCaptureHandle, bind_workflow_step_answer,
-    capture_workflow_step, finalize_step_captures, note_answering_route_pin, note_answering_rung,
-    note_step_admission_role, refresh_step_capture_request, route_prompt_digest,
+    CapsuleContent, CapsuleHost, CapsuleRequest, CapsuleRungBinding, ConsoleSlot,
+    ExecutorStepStart, ExposureKind, ExposureSlot, ReplayRoutePin, ReplayRung, StepContextRef,
+    StepReplayCapsule, StoredRungBinding, StoredSpan, TaskExposure, WorkflowCaptureHandle,
+    bind_workflow_step_answer, capture_workflow_step, finalize_step_captures,
+    note_answering_route_pin, note_answering_rung, note_step_admission_role,
+    refresh_step_capture_request, route_prompt_digest,
 };
 pub(crate) use self::replay_capsule::{StepCapture, StepStartBody, StepStartCapture, capture_step};
 pub(crate) use self::replay_context::{
-    CapturedGuestResponse, CapturedReaderChild, ReaderFindingSelection, ReaderReadCapture,
-    SelectedFinding, StepContextCapture, StepContextCommit, StepReplayContext, reveals_secret,
+    CapturedCallable, CapturedGuestResponse, CapturedReaderChild, CapturedSkillDelivery,
+    ReaderFindingSelection, ReaderReadCapture, SelectedFinding, StepContextCapture,
+    StepContextCommit, StepReplayContext, reveals_secret,
 };
 pub use self::repo_calls::RepoRunCall;
 pub use self::result_read::ResultFacet;

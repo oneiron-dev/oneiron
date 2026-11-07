@@ -18,6 +18,10 @@
 //! the arm's run and is read later under the arm's lease alone, never as its
 //! source run's step. Nothing waits on the check; its status is never the
 //! arm's.
+//!
+//! A callable branch's arm (FIX 3608, [`run_shadow_callable_branch`]) runs
+//! the step's own recorded program, not a model's answer, and answers each
+//! callable call it makes as the branch treats the step's recorded callables.
 
 use std::sync::Arc;
 
@@ -32,7 +36,7 @@ use super::store::{
 use super::types::{JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome};
 use super::wire::heal_executor_reply;
 use crate::code_run::shadow_runner::{
-    ArmReads, PreparedShadowStep, ShadowBodyRef, ShadowBodyStore, ShadowBridgeHost,
+    ArmCallables, ArmReads, PreparedShadowStep, ShadowBodyRef, ShadowBodyStore, ShadowBridgeHost,
     ShadowBridgeWindow, ShadowStatus, ShadowStepRun, ShadowTraceEntry, ShadowTraceKind,
     ShadowUnavailable, ShadowUnavailableReason,
 };
@@ -99,7 +103,7 @@ pub fn run_shadow_step(
     seed_store(prepared, store)?;
     let encoded = serde_json::to_vec(answer)
         .map_err(|error| Error::InvalidConfig(format!("shadow step answer: {error}")))?;
-    let mut outputs = vec![store.put(arm_path(seq, "answer.json"), &encoded)?];
+    let outputs = vec![store.put(arm_path(seq, "answer.json"), &encoded)?];
     let Ok(healed) = heal_executor_reply(answer) else {
         let status = ShadowStatus::Failed {
             kind: "reply_unhealable".to_owned(),
@@ -111,28 +115,110 @@ pub fn run_shadow_step(
         };
         return finish_run(store, seq, status, outputs, &[], &[], bridge);
     };
+    let speech = healed.trailing_speak.as_deref();
+    let program = ArmProgram {
+        code: &healed.code,
+        trailing_speak: speech,
+        callables: None,
+    };
+    run_program(
+        prepared, &program, outputs, runtime, store, cancel, feedback,
+    )
+}
+
+/// Runs `program`, the step's own program as its run recorded it, in a
+/// callable or delivery branch's arm (FIX 3608) whose bodies are in `store`,
+/// on a fresh `runtime` under `cancel`: each callable call it makes, and the
+/// call whose answer delivered a skill's body, answered as `callables`
+/// treats them, every other call matched as in any arm. Its program is
+/// checked on `feedback`.
+///
+/// # Errors
+///
+/// The arm's store failing, and a step the executor cannot set up.
+pub(crate) fn run_shadow_callable_branch(
+    prepared: &PreparedShadowStep,
+    program: &str,
+    callables: &ArmCallables,
+    runtime: &mut dyn JsCodeModeRuntime,
+    store: &ShadowBodyStore,
+    cancel: &StepCancellation,
+    feedback: &ArmTypeFeedback<'_>,
+) -> Result<ShadowStepRun> {
+    let seq = prepared.step().step;
+    let (start, end) = prepared.bridge_window();
+    if let Some(withheld) = store.source_withheld() {
+        let bridge = ShadowBridgeWindow {
+            start,
+            end,
+            consumed: start,
+        };
+        return withheld_run(store, seq, withheld, bridge);
+    }
+    seed_store(prepared, store)?;
+    let program = ArmProgram {
+        code: program,
+        trailing_speak: None,
+        callables: Some(callables),
+    };
+    run_program(
+        prepared,
+        &program,
+        Vec::new(),
+        runtime,
+        store,
+        cancel,
+        feedback,
+    )
+}
+
+/// The program an arm runs: its code, the speech its reply carried after
+/// it, and a callable branch's treatment of the step's callables.
+struct ArmProgram<'p> {
+    code: &'p str,
+    trailing_speak: Option<&'p str>,
+    callables: Option<&'p ArmCallables>,
+}
+
+/// Runs `program` in the arm whose bodies are in `store` and which already
+/// holds `outputs`.
+fn run_program(
+    prepared: &PreparedShadowStep,
+    program: &ArmProgram<'_>,
+    mut outputs: Vec<ShadowBodyRef>,
+    runtime: &mut dyn JsCodeModeRuntime,
+    store: &ShadowBodyStore,
+    cancel: &StepCancellation,
+    feedback: &ArmTypeFeedback<'_>,
+) -> Result<ShadowStepRun> {
+    let (code, trailing_speak) = (program.code, program.trailing_speak);
+    let seq = prepared.step().step;
+    let (start, end) = prepared.bridge_window();
     // Prepared once, as a run's step is (FIX 8276): a TypeScript program's
     // executed JavaScript and its preparation record stay in the arm's own
     // store beside the program.
-    let source = prepare_source(&healed.code);
+    let source = prepare_source(code);
     // Checked once, as its author wrote it, before anything of it is
     // written (FIX 10389, fork d).
-    let mut check = start_arm_check(feedback, prepared, &healed.code, &source);
+    let mut check = start_arm_check(feedback, prepared, code, &source);
     store.hold_feedback(check.latest());
-    outputs.push(store.put(script_output_path(seq), healed.code.as_bytes())?);
+    outputs.push(store.put(script_output_path(seq), code.as_bytes())?);
     if let Some(transpiled) = source.transpiled() {
         let executed = transpiled.executed_js().as_bytes();
         outputs.push(store.put(executed_output_path(seq), executed)?);
-        let record = transpiled.record_json(&healed.code)?;
+        let record = transpiled.record_json(code)?;
         outputs.push(store.put(source_map_output_path(seq), &record)?);
     }
     let boundary = executor_boundary_contract()
         .map_err(|_| Error::InvariantViolation("executor sandbox contract"))?;
     let mut host = ShadowBridgeHost::new(prepared, store, arm_reads(prepared))?;
+    if let Some(callables) = program.callables {
+        host = host.with_callables(callables);
+    }
     let step = JsCodeModeStep {
         run_id: prepared.step().run,
         seq,
-        script: &healed.code,
+        script: code,
         boundary,
         determinism: prepared.determinism,
     };
@@ -157,11 +243,7 @@ pub fn run_shadow_step(
     outputs.extend(bodies);
     outputs.extend(host.own_results());
     let mut proposed = std::mem::take(&mut host.proposed);
-    if let Some(text) = healed
-        .trailing_speak
-        .as_deref()
-        .filter(|text| !text.is_empty())
-    {
+    if let Some(text) = trailing_speak.filter(|text| !text.is_empty()) {
         outputs.push(store.put(arm_path(seq, "trailing-speech.txt"), text.as_bytes())?);
         proposed.push(trailing_speech(host.consumed(), text));
     }
