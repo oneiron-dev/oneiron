@@ -1839,6 +1839,27 @@ def host_door_rows(facade_rows):
     out += '    pub(in crate::api::facade) fn from_verb(verb: &str) -> Option<Self> {\n        Some(match verb {\n'
     out += ''.join(f'            {json.dumps(r["name"])} => Self::{variant(r)},\n' for r in checked)
     out += '            _ => return None,\n        })\n    }\n}\n'
+    # FIX 4794: the MCP rows whose handler takes the caller's credential
+    # before it runs, as `mcp_input_dispatch` emits them, so the hook
+    # admission refuses a call with none before the row's pre hooks. Most are
+    # the checked host doors above; only the difference is listed.
+    credential = [r['name'] for r in mcp_rows()
+                  if r['name'] != 'ai.anonymous_chat' and r.get('context') != 'board'
+                  and (r.get('admission', {}).get('owner_grade') or r.get('host_door'))]
+    checked_names = [r['name'] for r in checked]
+    added = [name for name in credential if name not in checked_names]
+    removed = [name for name in checked_names if name not in credential]
+    alternatives = lambda names: ' | '.join(json.dumps(name) for name in names)
+    out += ('/// Whether `verb` is an MCP row whose handler takes the caller\'s credential\n'
+            '/// before it runs: every host door and every owner-grade row. A call that\n'
+            '/// carries none is refused before the row\'s pre hooks (FIX 4794).\n')
+    out += '#[must_use]\npub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {\n'
+    test = 'HostDoorRow::from_verb(verb).is_some()'
+    if removed:
+        test = f'({test} && !matches!(verb, {alternatives(removed)}))'
+    if added:
+        test += f' || matches!(verb, {alternatives(added)})'
+    out += f'    {test}\n}}\n'
     return out
 
 # FIX 10471: `rust_feature` gates one CORE Rust typed emission behind a Cargo
