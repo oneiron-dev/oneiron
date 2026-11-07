@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1272 facade rows, 4610 declarations.
-Inputs: 1201 of 1272 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1101 of 1272 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1273 facade rows, 4612 declarations.
+Inputs: 1202 of 1273 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1102 of 1273 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -7568,7 +7568,7 @@ class FederationBurstPolicy(TypedDict):
 class FederationBurstPolicySetRequest(TypedDict):
     peer: FederationBurstPeerRequest
     policy: FederationBurstPolicy
-QuarantineContainer = Literal["entities", "edges", "tombstones", "leases"]
+QuarantineContainer = Literal["entities", "edges", "tombstones", "leases", "office_proposals", "typed_body_rows"]
 class SyncHeldEditEvidence(TypedDict):
     window_key: str
     container: QuarantineContainer
@@ -7930,6 +7930,16 @@ class GuestDocumentEnvelope(TypedDict):
     envelope: GuestShareEnvelope
     signer: str
     signature: list[int]
+class ConnectProposeRequest(TypedDict):
+    grant_ref: EntityId
+    world_ref: EntityId
+    entity_ref: EntityId
+    update: list[int]
+class ConnectProposalLanded(TypedDict):
+    proposal_ref: EntityId
+    grant_ref: EntityId
+    entity_ref: EntityId
+    proposed_at: int
 class GuestRevokeRequest(TypedDict):
     grant_ref: EntityId
     peer: NotRequired[str | None]

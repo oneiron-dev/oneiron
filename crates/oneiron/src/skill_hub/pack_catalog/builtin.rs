@@ -95,6 +95,35 @@ pub(super) fn embedded_builtin_source(channel: &str) -> Result<PackSource> {
     builtin_source(name, markdown)
 }
 
+/// The built-in packs' seed rows, for the empty-vault join guard: each
+/// source's entity id with its bundled skills' ids and content hashes,
+/// recomputed from the embedded sources the seed pass stages and imports.
+pub(crate) fn builtin_pack_seed_ids()
+-> Result<Vec<(EntityId, Vec<(EntityId, crate::skill::SkillContentHash)>)>> {
+    fn seeded(
+        source: &PackSource,
+    ) -> Result<(EntityId, Vec<(EntityId, crate::skill::SkillContentHash)>)> {
+        let mut skills = Vec::new();
+        for (_, package) in super::bundled_skills::bundled_skill_packages(source)? {
+            let hash = package.content_hash()?;
+            let id = crate::codebase::entity_id_from_hash_material(
+                b"oneiron.pack-skill.v1",
+                &[hash.as_bytes()],
+            )?;
+            skills.push((id, hash));
+        }
+        Ok((source.entity_id()?, skills))
+    }
+    let mut seeds = vec![seeded(&super::local::local_seed_source()?)?];
+    for (name, markdown) in PACKS {
+        seeds.push(seeded(&builtin_source(name, markdown)?)?);
+    }
+    seeds.push(seeded(&PackSource::from_files(
+        super::lenses::weave_lens_pack_files(),
+    )?)?);
+    Ok(seeds)
+}
+
 /// The engine hub ref a built-in source's bundled skills are imported under,
 /// pinned to that exact source.
 fn builtin_hub_ref(name: &str, source: &PackSource) -> Result<HubRef> {
