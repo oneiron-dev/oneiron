@@ -239,7 +239,6 @@ pub(crate) struct CoreMemoryWatchResponse {
     health: Option<watch::CoreMemoryWatchHealth>,
 }
 
-mod owner_delete;
 mod timeline;
 mod watch;
 pub(crate) use self::timeline::{__path_core_memory_timeline, core_memory_timeline};
@@ -393,22 +392,13 @@ pub(crate) async fn core_memory_verb(
                 tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory delete failed");
                 core_engine_error("core memory delete failed", error)
             };
-            // The proven owner's delete of a record only secret orders keep
-            // waits, accepted, instead of being refused (FIX 1465).
-            let pending =
-                owner_delete::owner_pending_delete(&server, &auth, &id, reason).map_err(failed)?;
-            let (outcome, state) = if pending {
-                let state = oneiron::memory::DeleteRequestState::CompletionPending;
-                ((true, None, None), state)
-            } else {
-                let outcome = server
-                    .vault
-                    .delete_entity_with_reason(&id, reason)
-                    .map_err(failed)?;
-                let applied = (outcome.existed, outcome.receipt_id, outcome.sweep_key);
-                (applied, oneiron::memory::DeleteRequestState::Applied)
-            };
-            let (existed, receipt_id, sweep_key) = outcome;
+            let outcome = server
+                .vault
+                .delete_entity_with_reason(&id, reason)
+                .map_err(failed)?;
+            let (existed, receipt_id, sweep_key) =
+                (outcome.existed, outcome.receipt_id, outcome.sweep_key);
+            let state = oneiron::memory::DeleteRequestState::Applied;
 
             Ok(Json(CoreMemoryVerbResponse {
                 verb: verb.canonical_name().to_owned(),

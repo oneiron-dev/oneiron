@@ -224,8 +224,23 @@ role or model `on_device`); every other call keeps the provider's offer,
 native when the worker's socket is up and HTTP otherwise, as before, and stays
 `own_server`. An on-device call never falls back to HTTP, to another rung, or
 to an owner's fallback off the device, and an on-device extraction needs no
-`extraction_egress`. Only free work gets the on-device offer: a provider with
-a key or a payer other than `local` keeps its calls `own_server` and paid. The
+`extraction_egress`.
+
+The on-device offer changes where a call runs, never who pays for it. It
+keeps the provider offer's payer, key custody and rates. A free provider
+(payer `local`, no key) stays free work on device. A paid provider (a
+`key_env` key, or a payer other than `local`) gets the on-device offer too,
+so a vault routed `on_device` can use it: each call is charged to that payer,
+reserves on its run's budget line (and on the vault's allocation for payer
+`host`), and is refused when they refuse it, exactly as its own-server call
+is. A declared run still refuses a `key_env` (T1) offer unless the owner
+allowed that offer. The native channel sends no key; a key the provider holds
+still makes its calls paid. The receipt names the place `on_device`
+(`<model>@on_device`) and the route `exl3-native@worker:<id>`. One kind of
+provider gets no on-device offer: payer `local`, no key, and locality
+`third_party` (the `openai-compat` default). Its calls are paid only because
+of that locality, and on device they would turn free. Set `locality = "own_server"`
+on it to make its calls free work and give it the on-device offer. The
 reranker and a raw `/v1/llm` call keep the provider's own offer.
 
 A `key_secret` names a vault secret instead of a variable: the key stays in
@@ -514,6 +529,14 @@ before the file is settled, at the level it settles to (`--log-level` over the
 file's `log_level`). A file with `[models.voice]` and no `--voice-socket` runs
 no voice loop, logged once with the reason `voice_socket_missing`; live voice
 sessions still run.
+
+An own-device sync connection can also copy settled default CLAIM vectors from
+its reachable home during scheduled housekeeping, even when this server has no
+ready embedder. This uses the existing pass budget and write admission. The
+current source, embedding model, transform, provenance and world route must
+match; another worker's active matching lease is left alone. A miss keeps the
+pending job for a later pass or the normal model worker. This is scheduled
+catch-up, not an offline vector carrier or an immediate fill at import.
 
 A managed vault reports how it came up on every ctl `Ping`, as `readiness`
 (contract v3): `{"state":"ready"}`, or `{"state":"degraded","missing":[...]}`
@@ -1020,6 +1043,29 @@ vault the server has mounted, and are non-additive facts: they neither
 alter the worker's own row nor any quota or admission, and a row's bytes
 mix device pages with host snapshots.
 
+### Failure healers for agent runs
+
+Served resident, TASK-backed and tree agent runs keep their human-only failure
+policy unless the operator selects a healer in the config file or settings file:
+
+```toml
+[self_heal]
+agent_failure_healer = "Coach"
+```
+
+This routes eligible failure cases to the existing Coach heal queue. Configure
+its models and wording separately. The native `AgentDef` slot is also accepted:
+`agent_failure_healer = { AgentDef = { agent_def_ref = "<hex EntityId>" } }`.
+The referenced live definition still passes the existing dispatchability and
+propose-only ceiling checks. `"Reserved"` explicitly restores human-only routing,
+including over a lower config layer that selected a healer. With no setting,
+the previous Human/Reserved policy remains unchanged.
+
+The choice does not change retry limits, evidence, checkpoint or Q&A references,
+provider-outage and payer parks, read authority, or proposal approval. It creates
+no Q&A messages and applies no repair. Saved workflow steps keep their existing
+human-only failure policy; this setting does not route those steps to a healer.
+
 ## 5. Saved workflows
 
 A dispatched saved workflow runs its steps on the `generative_reasoner` seat
@@ -1141,7 +1187,9 @@ agent's own harness (`sticky` with `why: "harness_compacts"`). Its
 `compaction_backend` names `code-mode-compaction` (the seat above) or a
 reasoning seat by its role's key (`checker`, `local_reasoner`,
 `generative_reasoner`); a key this host does not serve compacts on the seat
-above. Any other run uses the table above. A long run never outgrows one
+above. A saved agent definition with no `memory_profile` compacts as
+itself (`compaction_backend = "self"`, below) on this host's window (FIX
+7744). Any other run uses the table above. A long run never outgrows one
 summary's sources: each summary stands for the records the calls before it
 were served, so the next one names only the records served since.
 
