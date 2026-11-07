@@ -349,6 +349,7 @@ pub enum AgentVerb {
     VaultMembersProjection,
     VaultMembersAdd,
     VaultMembersInvitationSlip,
+    VaultMembersInvitationCode,
     VaultMembersChange,
     VaultMembersRemove,
     VaultMembersLeave,
@@ -1641,6 +1642,7 @@ impl AgentVerb {
         Self::VaultMembersProjection,
         Self::VaultMembersAdd,
         Self::VaultMembersInvitationSlip,
+        Self::VaultMembersInvitationCode,
         Self::VaultMembersChange,
         Self::VaultMembersRemove,
         Self::VaultMembersLeave,
@@ -2938,6 +2940,7 @@ impl AgentVerb {
             Self::VaultMembersProjection => "vault.members.projection",
             Self::VaultMembersAdd => "vault.members.add",
             Self::VaultMembersInvitationSlip => "vault.members.invitation_slip",
+            Self::VaultMembersInvitationCode => "vault.members.invitation_code",
             Self::VaultMembersChange => "vault.members.change",
             Self::VaultMembersRemove => "vault.members.remove",
             Self::VaultMembersLeave => "vault.members.leave",
@@ -4264,6 +4267,7 @@ impl AgentVerb {
                 | Self::VaultMembersProjection
                 | Self::VaultMembersAdd
                 | Self::VaultMembersInvitationSlip
+                | Self::VaultMembersInvitationCode
                 | Self::VaultMembersChange
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
@@ -5585,6 +5589,7 @@ impl AgentVerb {
                 | Self::VaultMembersProjection
                 | Self::VaultMembersAdd
                 | Self::VaultMembersInvitationSlip
+                | Self::VaultMembersInvitationCode
                 | Self::VaultMembersChange
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
@@ -7057,6 +7062,7 @@ impl AgentVerb {
                 | Self::VaultMembersProjection
                 | Self::VaultMembersAdd
                 | Self::VaultMembersInvitationSlip
+                | Self::VaultMembersInvitationCode
                 | Self::VaultMembersChange
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
@@ -8129,6 +8135,7 @@ impl AgentVerb {
                 | Self::VaultMembersDelegate
                 | Self::VaultMembersAdd
                 | Self::VaultMembersInvitationSlip
+                | Self::VaultMembersInvitationCode
                 | Self::VaultMembersChange
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
@@ -9081,6 +9088,7 @@ impl AgentVerb {
             Self::VaultMembersProjection => &["spec"],
             Self::VaultMembersAdd => &["spec"],
             Self::VaultMembersInvitationSlip => &["spec"],
+            Self::VaultMembersInvitationCode => &["spec"],
             Self::VaultMembersChange => &["spec"],
             Self::VaultMembersRemove => &["spec"],
             Self::VaultMembersLeave => &["spec"],
@@ -10374,6 +10382,7 @@ impl AgentVerb {
             Self::VaultMembersProjection => &["spec"],
             Self::VaultMembersAdd => &["spec"],
             Self::VaultMembersInvitationSlip => &["spec"],
+            Self::VaultMembersInvitationCode => &["spec"],
             Self::VaultMembersChange => &["spec"],
             Self::VaultMembersRemove => &["spec"],
             Self::VaultMembersLeave => &["spec"],
@@ -12341,10 +12350,13 @@ impl AgentVerb {
                 "Read a member's visible role grants, scopes, expiry and person/relationship through the caller's own scoped read; relationship labels confer no additional authority."
             }
             Self::VaultMembersAdd => {
-                "An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending."
+                "An Admin invites a live person into a shared vault at a non-root role; they join when they accept. It names no key: the invitee binds a key of their own to the invitation."
             }
             Self::VaultMembersInvitationSlip => {
-                "An Admin mints a pending invitation's slip for the public key the invitee generated on their own device: a founding invitation's, or one whose slip was lost."
+                "The invitee binds their own pending invitation to the key of the independent human credential the request came on, and gets the invitation's slip: good only at that invitation's doors while it is pending and that key stays bound."
+            }
+            Self::VaultMembersInvitationCode => {
+                "The owner mints a single-use pairing code for a pending invitation, passed to the invitee by any channel; redeemed at the pairing door with the invitee's own key, it binds the invitation to that key."
             }
             Self::VaultMembersChange => {
                 "An Admin assigns another non-root role to a member who is not an Owner."
@@ -14351,7 +14363,7 @@ impl AgentVerb {
                 "The owner imports one exact uploaded ICS version through the existing UID diff and imported-claim gate; the receipt exposes pending claim refs without granting consent."
             }
             Self::VaultCalendarOccurrences => {
-                "Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions."
+                "Expands an admitted stored master in an inclusive UTC window under the caller's read scope, masking detached exceptions, as one page: an optional deadline_ms, and resume_from to continue."
             }
             Self::VaultCalendarInstancesMove => {
                 "The owner applies one uploaded detached-instance amendment matching its UID, original start and new interval, through the import gate without changing other instances."
@@ -14360,10 +14372,10 @@ impl AgentVerb {
                 "Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt."
             }
             Self::VaultCalendarSearch => {
-                "Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt."
+                "Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, as one page in time order: an optional deadline_ms, and resume_from to continue."
             }
             Self::VaultCalendarFreebusy => {
-                "Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt."
+                "Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals, one page of the covered prefix: an optional deadline_ms, and resume_from to continue."
             }
             Self::VaultCalendarPrep => {
                 "Builds a fresh caller-scoped meeting PrepPack with commitments first and a 250-word ceiling, or deliberately returns no pack."
@@ -14918,7 +14930,7 @@ impl AgentVerb {
                 "The owner asserts two identities are distinct through one symmetric claim that suppresses merge re-proposals."
             }
             Self::VaultIdentityPropose => {
-                "The owner parks a nominated merge or split candidate with no topology effects; distinct pairs suppress merge proposals."
+                "The owner parks a nominated merge, split or facet candidate with no topology effects; distinct pairs suppress merge proposals."
             }
             Self::VaultIdentityUndo => {
                 "The owner undoes one current topology event by appending a counter-event under its observed revision."

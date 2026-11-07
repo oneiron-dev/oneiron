@@ -531,8 +531,8 @@ impl Vault {
         if !crate::consent::person_is_live_in_txn(self, txn, &member)? {
             return Err(invalid());
         }
-        let (effect, _) =
-            self.issue_invitation_in_txn(txn, vault_id, creator, member, role, true, None, now)?;
+        let effect =
+            self.issue_invitation_in_txn(txn, vault_id, creator, member, role, true, now)?;
         let id = self.store.clock.entity_id()?.to_hex();
         self.record_shared_change_in_txn(
             txn,
@@ -552,7 +552,9 @@ impl Vault {
     /// Invite `member`, a live person with no membership here, at a non-root
     /// role, or the creation preset's default member role when `None`. No
     /// grant is written until they accept ([`Vault::accept_shared_invitation`]);
-    /// the receipt's `MemberInvited` names the invitation.
+    /// the receipt's `MemberInvited` names the invitation. The `add_member`
+    /// power only creates or withdraws invitations: it names no key, and the
+    /// invitee binds their own ([`Vault::mint_invitation_slip`], FIX 8745).
     pub fn add_shared_member(
         &self,
         admin: &AuthenticatedOwner,
@@ -560,25 +562,7 @@ impl Vault {
         member: EntityId,
         role: Option<Role>,
     ) -> Result<SharedActExecutionReceipt> {
-        self.invite_shared_member(admin, vault_id, member, role, None)
-            .map(|(receipt, _)| receipt)
-    }
-
-    /// [`Vault::add_shared_member`], and with `credential` (the host's slip
-    /// issuer and the public key `member` generated on their own device) the
-    /// invitee's own slip for this invitation (FIX 1925), minted in the same
-    /// writer: it reaches only the invitation's list, accept and decline, and
-    /// stands while the invitation is pending.
-    pub fn invite_shared_member(
-        &self,
-        admin: &AuthenticatedOwner,
-        vault_id: u64,
-        member: EntityId,
-        role: Option<Role>,
-        credential: Option<(&HostSlipIssuer, [u8; 32])>,
-    ) -> Result<(SharedActExecutionReceipt, Option<CapabilitySlip>)> {
-        let mut slip = None;
-        let receipt = self.change_shared_membership(
+        self.change_shared_membership(
             admin,
             vault_id,
             Some(OrgAdminPower::AddMember),
@@ -597,14 +581,9 @@ impl Vault {
                 {
                     return Err(invalid());
                 }
-                let (effect, minted) = self.issue_invitation_in_txn(
-                    txn, vault_id, inviter, member, role, false, credential, now,
-                )?;
-                slip = minted;
-                Ok(effect)
+                self.issue_invitation_in_txn(txn, vault_id, inviter, member, role, false, now)
             },
-        )?;
-        Ok((receipt, slip))
+        )
     }
     /// Assign `member` another non-root role. An Owner's role changes only
     /// through the `transfer_ownership` and `remove_owner` acts.
