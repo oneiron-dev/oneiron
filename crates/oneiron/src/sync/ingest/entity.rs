@@ -23,6 +23,7 @@ use crate::vault::Vault;
 
 mod asset_ref;
 mod beside;
+mod window_admission;
 mod withdrawn;
 
 /// What one ingest reads besides the value: the vault, the window the value replays into, the
@@ -91,8 +92,9 @@ impl<'a> IngestCtx<'a> {
     }
 
     /// The window document the entries come from, whose birth map carries
-    /// each row's Rule A envelope.
-    fn carrier_doc(&self) -> Option<&'a loro::LoroDoc> {
+    /// each row's Rule A envelope and whose writer map each MESSAGE row's
+    /// writer proof.
+    pub(super) fn carrier_doc(&self) -> Option<&'a loro::LoroDoc> {
         match self.residence? {
             Residence::Quarantine(doc) | Residence::Forward { doc, .. } => Some(doc),
         }
@@ -110,6 +112,10 @@ pub(in crate::sync) enum EntityStep {
     Skip,
     /// The replicated row was written.
     Materialized(EntityId),
+    /// The local row already holds the bytes the remote value carries, byte
+    /// for byte or as one of their echo forms: nothing is written, and the
+    /// row stands here as delivered (FIX 4312).
+    Unchanged(EntityId),
     /// A carrier whose body moves by reference and is not here yet (FIX 5489): nothing is
     /// written, and nothing its landing discharges is discharged, until the body comes.
     Pending,
@@ -156,6 +162,9 @@ pub(in crate::sync) enum RefusalRetry {
 impl RefusalRetry {
     fn of(err: &Error) -> Self {
         if crate::subject_model::subject_model_dependency_pending(err)
+            // An own machine's companion row that waits for its author
+            // (FIX 21271).
+            || crate::gate::companion_author_pending(err)
             || matches!(
                 err.kind(),
                 ErrorKind::ProjectDependencyPending
@@ -320,7 +329,10 @@ pub(in crate::sync) fn ingest_entity_in_txn(
     if key != id.to_hex() {
         return Ok(refuse(Some(id), Error::InvalidKey));
     }
-    if let Some(step) = check_residence(ctx, wtxn, id, blob)? {
+    if let Some(step) = window_admission::check_residence(ctx, wtxn, id, blob)? {
+        return Ok(step);
+    }
+    if let Some(step) = window_admission::check_discarded(ctx, wtxn, id, &header, blob)? {
         return Ok(step);
     }
     match admit(ctx, wtxn, id, &header, blob) {
@@ -332,61 +344,6 @@ pub(in crate::sync) fn ingest_entity_in_txn(
             }))
         }
         admitted => admitted,
-    }
-}
-
-/// A body whose world or month is not its window's is not admitted by that window, except a
-/// retained world shell the window still holds.
-fn check_residence(
-    ctx: &IngestCtx<'_>,
-    wtxn: &heed::RwTxn<'_>,
-    id: EntityId,
-    blob: &[u8],
-) -> Result<Option<EntityStep>> {
-    let Some(residence) = ctx.residence else {
-        return Ok(None);
-    };
-    let Some(window) = crate::sync::types::WindowKey::try_new(ctx.window_key) else {
-        return Ok(None);
-    };
-    if crate::sync::types::entity_belongs_to_window(blob, &window) {
-        return Ok(None);
-    }
-    let outside = || Error::InvalidConfig("entity outside window residence".into());
-    match residence {
-        Residence::Quarantine(doc) => {
-            if window.world().is_some()
-                && crate::sync::types::retained_world_shell_belongs_to_window(
-                    ctx.vault,
-                    wtxn,
-                    doc,
-                    ctx.tombstones,
-                    &id,
-                    blob,
-                    &window,
-                    false,
-                )?
-            {
-                return Ok(None);
-            }
-            Ok(Some(refuse(Some(id), outside())))
-        }
-        Residence::Forward { doc, trusted } => {
-            if crate::sync::types::retained_world_shell_belongs_to_window(
-                ctx.vault,
-                wtxn,
-                doc,
-                ctx.tombstones,
-                &id,
-                blob,
-                &window,
-                trusted,
-            )? {
-                // The dedicated shell restorer runs after this pass.
-                return Ok(Some(EntityStep::Skip));
-            }
-            Err(outside())
-        }
     }
 }
 
@@ -490,7 +447,7 @@ fn admit(
             if let Some(doc) = ctx.carrier_doc() {
                 super::carried_origin_in_txn(vault, wtxn, doc, ctx.window_key, &id, blob)?;
             }
-            return Ok(EntityStep::Skip);
+            return Ok(EntityStep::Unchanged(id));
         }
         // SoftErase shell guard: `user_delete` truncates the local record to the 25 B header
         // shell and writes NO CRDT record (contracts.ts deleteReasons user_delete; cross-device

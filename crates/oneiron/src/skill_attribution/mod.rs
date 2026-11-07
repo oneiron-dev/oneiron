@@ -57,6 +57,7 @@ pub(crate) use judge_supersession::{
     judgment_displaced_in_txn, judgment_judge_in_txn,
 };
 mod contribution;
+pub(crate) use contribution::record_contribution_pair_in_txn;
 pub use contribution::{
     ContributionCandidate, ContributionCheckRecord, ContributionFork, ContributionPair,
     contributed, contribution_check_candidates_after, record_contribution_pair,
@@ -76,12 +77,14 @@ pub use credit_join::{CreditAdjustmentReceipt, credit_adjustments};
 pub(crate) use credit_join::{StandingCreditObservation, standing_credit_observation_in_txn};
 mod decay_fit;
 mod late_credit;
+mod outcome_source;
 mod pack_learning;
 pub(crate) use late_credit::erase_late_credit_in_txn;
 pub(crate) use late_credit::late_credit_receipt_in_txn;
 pub use late_credit::{
     LateCreditReceipt, LateCreditShare, late_credit_receipt, late_credit_receipt_for_outcome,
 };
+pub use outcome_source::{OutcomeWitness, WitnessedPackOutcome, stored_anchored_outcome};
 pub use pack_learning::{
     AnchoredPackOutcome, project_anchored_pack_outcome, project_anchored_pack_outcome_as_owner,
 };
@@ -107,8 +110,11 @@ pub(crate) use self::split::{
 };
 use oneiron_skill_attribution::types;
 mod unclear;
-pub use self::unclear::{UnclearAttribution, unclear_attributions};
-pub(crate) use self::unclear::{delete_unclear_in_txn, put_unclear_in_txn};
+pub use self::unclear::{UnclearAttribution, UnclearContext, unclear_attributions};
+pub(crate) use self::unclear::{
+    delete_unclear_in_txn, erase_unclear_entity_in_txn, erase_unclear_source_in_txn,
+    put_unclear_in_txn, unclear_key, unclear_page_in_txn, unclear_row_in_txn,
+};
 
 pub use self::audit::{
     AttributionAuditRecord, AttributionAuditReport, AuditFixture, attribution_audit_records,
