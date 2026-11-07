@@ -194,7 +194,9 @@ pub struct ReplayRoutePin {
 pub enum CapsuleRequest {
     /// Its canonical JSON as stored, each secret in it its custody handle,
     /// by its body ref, its path and the hash of the stored bytes, which a
-    /// read of the body checks.
+    /// read of the body checks. For a step's request, the body is the
+    /// manifest of its shared pieces (FIX 4192), and the hash is the whole
+    /// request's they put together.
     Kept {
         body: OutputRef,
         path: String,
@@ -245,7 +247,8 @@ pub struct StepReplayCapsule {
     pub host: CapsuleHost,
     /// The request as assembled and bound, before its route's prompt: its
     /// body as stored (FIX 6144), or withheld when the wall refused it
-    /// outright (FIX 6254).
+    /// outright (FIX 6254). A kept request's body is the manifest of the
+    /// pieces its run holds once for the actor (FIX 4192).
     pub request: CapsuleRequest,
     /// The canonical hash of the request as it was sent, before any mask:
     /// the identity a sent request is matched by.

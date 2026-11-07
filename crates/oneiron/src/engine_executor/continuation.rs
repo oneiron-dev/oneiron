@@ -16,15 +16,23 @@
 //! just before the turn instruction.
 //!
 //! The child runs the source's task, model, locality, seat effort, tier,
-//! clock and limits. Its first seed keeps that frozen config as child-owned
-//! content, so reopening does not need the parent's start body again. The
-//! child's own content and all current lease, source and cut checks still
+//! clock and limits. It inherits the source's epochs and fold ledger as the
+//! start captured them, kept inside the copied prefix, so it neither renders
+//! that prefix whole nor compacts it again (FIX 4198). After a failed step,
+//! that capture is the earlier start's, so the fold verbs the failed step
+//! called are not inherited, and its copied calls keep their answers. The
+//! child's ledger then gives out handles past the highest one those answers
+//! name, so its next mark never reuses one (FIX 18695). Its first seed keeps
+//! the frozen config as child-owned content, so reopening does not need the
+//! parent's start body again. The child's own content and all current
+//! lease, source and cut checks still
 //! apply. Its config marker binds the source's teaching fingerprint and this
 //! continuation's digest, so a teaching that drifted since, or another
 //! continuation, refuses through the marker check. A cut
 //! that a call with an effect follows refuses
 //! ([`ContinuationRefusal::EffectTail`]); [`pre_fail_checkpoint`] never
-//! names one.
+//! names one. A cut also refuses so when a write receipt past it may have
+//! run (FIX 4199): a crash can leave the receipt with no call in the row.
 
 mod seed;
 
@@ -33,9 +41,10 @@ use super::types::{EngineExecutorConfig, EngineExecutorError, EngineExecutorResu
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::code_run::{
     CodeRunBridgeCall, CodeRunReplayRecord, ExecutorStorage, SelfEffect, StepReplayCapsule,
-    StepStartBody, StoredRunContinuation, capsule_start_body, decode_code_run_replay_record,
-    encode_code_run_replay_record, put_run_continuation_row_in_txn, recorded_verb_call,
-    run_continuation_in_txn, step_replay_capsules_in_txn,
+    StepStartBody, StoredRunContinuation, agent_attempt_run_ref, capsule_start_body,
+    decode_code_run_replay_record, encode_code_run_replay_record, put_run_continuation_row_in_txn,
+    recorded_verb_call, run_continuation_in_txn, step_replay_capsules_in_txn,
+    write_receipt_may_have_run,
 };
 use crate::task_verb::sdk::AgentVerb;
 use crate::{ContentPart, EntityId, Error, LlmMessage, LlmMessageRole, Vault};
@@ -105,7 +114,8 @@ pub enum ContinuationRefusal {
     /// proves the run's row.
     #[error("continuation_no_checkpoint")]
     NoCheckpoint,
-    /// The failing step committed effects after the cut.
+    /// The failing step committed effects after the cut, or a write receipt
+    /// past the cut may have run with no call in the row (FIX 4199).
     #[error("continuation_effect_tail")]
     EffectTail,
     /// The predecessor is not a Failed attempt, the checkpoint names another
@@ -317,9 +327,10 @@ pub(super) fn turn_note(
 /// The checkpoint a failed run continues from: the step of its latest
 /// captured start (by lease generation, then step), else its completed-step
 /// count, 0 with no replay row. When a call the row holds after that start
-/// may have committed an effect, and the failed step was checkpointed, it is
-/// the row's checkpoint count instead (FIX 3694 PR 2): the cut after the
-/// failed step, whose calls are then never made again.
+/// may have committed an effect, or a write receipt past it may have run
+/// (FIX 4199), and the failed step was checkpointed, it is the row's
+/// checkpoint count instead (FIX 3694 PR 2): the cut after the failed step,
+/// whose calls are then never made again.
 ///
 /// # Errors
 ///
@@ -372,17 +383,15 @@ fn pre_fail_checkpoint_of(
     let completed = source
         .as_ref()
         .map_or(0, |record| record.step_checkpoints.len() as u64);
-    let step = match latest {
-        Some(capsule)
-            if completed > capsule.step
-                && source
-                    .as_ref()
-                    .is_some_and(|record| effect_after(record, capsule)) =>
-        {
-            completed
+    let effect = match (latest, &source) {
+        (Some(capsule), Some(record)) if completed > capsule.step => {
+            effect_after(vault, rtxn, record, capsule)?
         }
-        Some(capsule) => capsule.step,
-        None => completed,
+        _ => false,
+    };
+    let step = match latest {
+        Some(capsule) if !effect => capsule.step,
+        _ => completed,
     };
     Ok(ExecutorCheckpointRef {
         source_run: run,
@@ -395,7 +404,8 @@ fn pre_fail_checkpoint_of(
 /// run's capsule for the step (its latest lease generation that holds a
 /// start) holds a start whose body is still there, clean and its digest,
 /// and whose prefix row the run's row still descends from; and no call
-/// after the cut may have committed an effect. A step with no start that is
+/// after the cut may have committed an effect, nor any write receipt past
+/// the cut may have run (FIX 4199). A step with no start that is
 /// the row's checkpoint count is a cut after the failed step, proved from
 /// the row the failure left ([`prove_final_row`]).
 fn prove_in_txn(
@@ -425,6 +435,7 @@ fn prove_in_txn(
         .iter()
         .skip(bridge_start)
         .any(continuation_tail_effect)
+        || write_receipt_after(vault, rtxn, &source, bridge_start)?
     {
         return Err(ContinuationRefusal::EffectTail);
     }
@@ -453,7 +464,9 @@ fn source_in_txn(
 /// left (FIX 3694 PR 2): `step` is that row's checkpoint count, the config
 /// is the latest start the run captured before it, the row still descends
 /// from that start, and no step from that start on ended on a terminal
-/// marker. No call follows the cut, so none can have an effect after it.
+/// marker. No call follows the cut, so none can have an effect after it. A
+/// write receipt at the row's end may still have run with no call in the
+/// row; it refuses (FIX 4199).
 fn prove_final_row(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -479,6 +492,9 @@ fn prove_final_row(
     if terminal || !descends(source, &start.prefix, capsule.step, bridge_start) {
         return Err(ContinuationRefusal::NoCheckpoint);
     }
+    if write_receipt_after(vault, rtxn, source, source.bridge_calls.len())? {
+        return Err(ContinuationRefusal::EffectTail);
+    }
     let mut prefix = source.clone();
     prefix.live_run = None;
     let mut hasher = blake3::Hasher::new();
@@ -496,19 +512,65 @@ fn prove_final_row(
 }
 
 /// Whether a call `record` holds after the start `capsule` captured may have
-/// committed an effect.
-fn effect_after(record: &CodeRunReplayRecord, capsule: &StepReplayCapsule) -> bool {
-    capsule
+/// committed an effect, or a write receipt past that start may have run
+/// (FIX 4199).
+fn effect_after(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    record: &CodeRunReplayRecord,
+    capsule: &StepReplayCapsule,
+) -> crate::Result<bool> {
+    let Some(start) = capsule
         .start
         .as_ref()
         .and_then(|start| usize::try_from(start.bridge_start).ok())
-        .is_some_and(|start| {
-            record
-                .bridge_calls
-                .iter()
-                .skip(start)
-                .any(continuation_tail_effect)
-        })
+    else {
+        return Ok(false);
+    };
+    if record
+        .bridge_calls
+        .iter()
+        .skip(start)
+        .any(continuation_tail_effect)
+    {
+        return Ok(true);
+    }
+    write_receipt_after(vault, rtxn, record, start)
+}
+
+/// Whether a write receipt of `source`'s run, kept by a step that started at
+/// bridge position `cut` or later, may have run (FIX 4199). A step keeps a
+/// write's answer on its receipt before the row keeps the write's call, so a
+/// crash between the two leaves a write the row does not show.
+///
+/// Every such step started at a position from `cut` to the row's end, and
+/// each is read under the run reference its source attempt ran under. No
+/// write call follows the cut when this is asked: the row's own check
+/// refuses one first. So each such step's first write has ordinal 0. A
+/// source attempt that does not read gives no run reference, and its
+/// receipts may have run.
+///
+/// Only a receipt's explicit never-ran mark excludes it. This never infers
+/// that a write did not commit, and never reruns one from an absent
+/// outcome. The positive commit marker is the work of FIX 12507 and FIX
+/// 11887.
+fn write_receipt_after(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    source: &CodeRunReplayRecord,
+    cut: usize,
+) -> crate::Result<bool> {
+    let attempt = AttemptId::from_bytes(source.run_id.as_bytes())?;
+    let Ok(Some(attempt_record)) = AttemptQueue::new(vault).get_in_txn(rtxn, attempt) else {
+        return Ok(true);
+    };
+    let run_ref = agent_attempt_run_ref(attempt, attempt_record.run_id);
+    for step_start in cut..=source.bridge_calls.len() {
+        if write_receipt_may_have_run(vault, rtxn, &run_ref, source.run_id, step_start as u64, 0)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// The start `capsule` holds, decoded, with the bridge log's length at it;

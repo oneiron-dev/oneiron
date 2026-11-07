@@ -7,9 +7,10 @@
 //! each such ask, owed to every target its host resolved for the call. The
 //! image row holds its skeleton, the stub a retired reply leaves, with no
 //! carried ask in it. A step start whose prefix holds such a spawn travels
-//! the same way: its rest, and each ask. Erasing one target retires only
-//! the asks of the calls it seats, so every other part stays restorable;
-//! two calls that reach one target are two parts.
+//! the same way: its rest, and each ask. A start's captured folds keep no
+//! words (FIX 18694), so they never make it travel apart. Erasing one target
+//! retires only the asks of the calls it seats, so every other part stays
+//! restorable; two calls that reach one target are two parts.
 //!
 //! A restore recomposes each row or start once, after every part's
 //! disposition is known ([`recompose_replay_record`]). A row or start that

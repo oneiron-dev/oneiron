@@ -15,10 +15,16 @@
 //! The same tombstone fences every later write: a late capture, a finalize
 //! and a fork answer's publication read it in their own writer and keep
 //! nothing for an actor that is gone.
+//!
+//! A capsule's request pieces are held once per run and actor (FIX 4192),
+//! so every capsule that names them is the actor's: the erase releases each
+//! piece its runs hold for the actor, found by the run's own descriptors,
+//! after every capsule body.
 
 use super::super::super::replay::{CodeRunRawOutput, ResultOccurrence};
 use super::super::super::replay_capsule::{CapsuleContent, CapsuleRequest, StepReplayCapsule};
 use super::super::response_erase::erase_actor_responses_in_txn;
+use super::pieces::actor_pieces_in_txn;
 use super::{CAPSULES, FORKS, ForkValue};
 use crate::compaction::output::OutputRef;
 use crate::ports::EntityStoreRead;
@@ -35,7 +41,9 @@ type CapsuleKey = (EntityId, u64, u64);
 /// before is left as it is, and a row that does not decode names no actor
 /// and stays as it is. An id whose entity is no actor scans nothing. The
 /// reply content of the actor's runs, these capsules' runs among them, is
-/// erased beside them first (FIX 5718), release only as here.
+/// erased beside them first (FIX 5718), release only as here. FIX 4192:
+/// the request pieces each run holds for the actor are read before anything
+/// is released, and released last.
 ///
 /// # Errors
 ///
@@ -55,10 +63,14 @@ pub(crate) fn erase_capsule_actor_in_txn(
         return Ok(());
     }
     let answers = fork_answers_in_txn(&vault.store, wtxn)?;
+    let pieces = actor_pieces_in_txn(&vault.store, wtxn, actor, runs)?;
     for (key, capsule) in owned {
         let bodies = capsule_bodies(&key, &capsule, &answers);
         release_bodies_in_txn(vault, wtxn, capsule.run, &bodies)?;
         CAPSULES.put_erased(&vault.store, wtxn, &key, Erased::of(capsule)?)?;
+    }
+    for (run, bodies) in pieces {
+        release_bodies_in_txn(vault, wtxn, run, &bodies)?;
     }
     Ok(())
 }
@@ -67,7 +79,8 @@ pub(crate) fn erase_capsule_actor_in_txn(
 /// kept request, each start, each replay context, each kept route prompt
 /// (FIX 6255), each fork answer and each fork's executed body, read before the erase releases them, so the
 /// provenance door's hard erase retires their instances (FIX 6278). A
-/// capsule erased before names none.
+/// capsule erased before names none. Each request piece its runs hold for
+/// the actor is one of them (FIX 4192).
 ///
 /// # Errors
 ///
@@ -90,6 +103,10 @@ pub(in crate::code_run::storage) fn capsule_bodies_in_txn(
                 .into_iter()
                 .map(|(body, path)| (run, body, path)),
         );
+    }
+    let runs = owned.iter().map(|(_, capsule)| capsule.run);
+    for (run, pieces) in actor_pieces_in_txn(store, txn, actor, runs)? {
+        bodies.extend(pieces.into_iter().map(|(body, path)| (run, body, path)));
     }
     Ok(bodies)
 }
