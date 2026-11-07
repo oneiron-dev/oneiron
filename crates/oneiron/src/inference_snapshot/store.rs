@@ -112,7 +112,17 @@ fn named_id(name: &str) -> Option<SnapshotId> {
 /// `catalog id ‖ manifest`, after the domain: what each chunk of a body
 /// binds, so it opens under its own row alone.
 fn associated_data(id: &SnapshotId, manifest: &SnapshotManifest) -> Result<Vec<u8>> {
-    let manifest = rmp_serde::to_vec_named(manifest).map_err(|_| corrupt())?;
+    let manifest = rmp_serde::to_vec_named(manifest).map_err(|error| match error {
+        rmp_serde::encode::Error::InvalidValueWrite(error) => {
+            let error: std::io::Error = error.into();
+            if error.kind() == ErrorKind::OutOfMemory {
+                error.into()
+            } else {
+                corrupt()
+            }
+        }
+        _ => corrupt(),
+    })?;
     let len = AAD_DOMAIN
         .len()
         .checked_add(16)
@@ -365,6 +375,9 @@ impl Vault {
             match store.read_inference_snapshot_key(&wtxn, &id.0) {
                 Ok(Some(wrapped)) => (record, wrapped),
                 Ok(None) => return Ok(None),
+                Err(Error::Io(error)) if error.kind() == ErrorKind::OutOfMemory => {
+                    return Err(error.into());
+                }
                 Err(_) => {
                     drop(wtxn);
                     self.retire_inference_snapshot(id)?;

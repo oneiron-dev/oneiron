@@ -366,7 +366,15 @@ impl OfferLadder {
                     return Ok(Sent::Answer(response, sent_call));
                 }
                 Err(error) => {
-                    let fallback = rung.offer.backend.fallback(&error);
+                    // The alternate wire is the same offer, sent where that
+                    // offer sends: taken only while the rung sits within
+                    // the ladder's locality ceiling (FIX 12735); else the
+                    // rung fails as any failure does.
+                    let fallback = rung
+                        .offer
+                        .backend
+                        .fallback(&error)
+                        .filter(|_| self.rung_within_ceiling(index));
                     let sent = settle_failed(permit);
                     if let Some(backend) = fallback {
                         // The failed wire keeps its own truthful receipt. Its

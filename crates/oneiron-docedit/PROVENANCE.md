@@ -114,6 +114,15 @@ The same pack (FIX 13299) advances the text-overlay cursor over the
 existing hard-break and opaque-inline placeholders, matching `extract_inlines_text`.
 The non-text inline nodes themselves are preserved unchanged.
 
+The table-cell fallback change (2026-11-06, FIX 17480) touches
+`src/native_patch/table.rs`. When retained text mapping and the field-aware cut
+cannot apply, the existing rebuild keeps the first paragraph's terminal run
+properties and the namespace bindings of copied paragraph and run properties.
+If no ordinary run exists, it carries the first field's explicit run properties.
+The outcome names the actual typed fields removed by that rebuild. Expected-text
+checks, grid/merge checks, first-match table selection and the retained/cut paths
+are unchanged. This is a source-level correction, not a PowerPoint fidelity proof.
+
 The styled structural-marker carrier change (2026-11-06, FIX 14354) touches
 `src/edit/mod.rs`. Whole-paragraph segment replacement leaves each existing
 Decoration or comment range/reference marker in one carrier at its original
