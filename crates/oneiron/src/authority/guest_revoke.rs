@@ -425,7 +425,14 @@ impl Vault {
         // fold and every checkpoint image carry it, so a slip another replica
         // minted under the grant and merges later is tombstoned there too
         // (FIX 1978).
-        self.append_slip_op_in_txn(txn, issuer, AuthorityOp::SlipGrantRevoke { grant_ref })?;
+        self.append_slip_op_in_txn(
+            txn,
+            issuer,
+            AuthorityOp::SlipGrantRevoke {
+                grant_ref,
+                membership_receipt: None,
+            },
+        )?;
         // The withdrawal stays known here and reaches its peers, in this
         // writer (FIX-LIST 5107, 10772).
         super::withdraw_grant_row_in_txn(&self.store, txn, grant_ref)?;
