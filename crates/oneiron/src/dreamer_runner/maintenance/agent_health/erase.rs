@@ -182,7 +182,7 @@ pub(crate) fn erase_sources_in_txn(
         if changed {
             sync_card_membership(store, txn, &key, &old_sources, &card.draft_source_rows())?;
             sync_reviewer_membership(store, txn, &key, &old_reviewers, &card.reviewer_revisions())?;
-            CARDS.put(store, txn, &key, &card)?;
+            super::receipt_index::put_card_in_txn(store, txn, &key, &card)?;
         }
     }
     // FIX 10432: a standing draft that predates `source_rows` names none of
@@ -215,7 +215,7 @@ pub(crate) fn erase_sources_in_txn(
                     &old_reviewers,
                     &card.reviewer_revisions(),
                 )?;
-                CARDS.put(store, txn, &key, &card)?;
+                super::receipt_index::put_card_in_txn(store, txn, &key, &card)?;
             }
         }
     }
