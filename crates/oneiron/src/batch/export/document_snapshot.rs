@@ -451,6 +451,22 @@ impl Vault {
             {
                 continue;
             }
+            // A blob version's ledger claim names each row the version's
+            // made_by names, as the version's side rows do, and goes only
+            // when the copy carries every one of them (fix list row 15416).
+            if let Some(judge) = judge.as_mut()
+                && header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
+                && let Ok(claim) = crate::write_envelope::claim_body::decode_claim_body(
+                    &raw[ENTITY_METADATA_HEADER_LEN..],
+                    true,
+                )
+                && let Some(value) = crate::blob_artifact::version_claim_value(&claim)
+                && !judge.carries_all(Some(
+                    super::archive_side_tables::value_entities(value).as_slice(),
+                ))?
+            {
+                continue;
+            }
             // FIX 1496 S5: an epoch summary stays home when any transitive
             // source is excluded (use-limited or off-record), same as the
             // JSON bundle door, or is of a member's mailbox the copy does not
@@ -551,7 +567,7 @@ impl Vault {
                 // SCAN C022: each receipt source is folded from its carrier
                 // only when the carrier passes the same filter, and the
                 // carriers folded are sources.
-                let (receipts, carriers) = crate::receipt::archived_receipt_carriers_in_txn(
+                let (mut receipts, carriers) = crate::receipt::archived_receipt_carriers_in_txn(
                     &self.store,
                     &rtxn,
                     &id,
@@ -573,6 +589,12 @@ impl Vault {
                     },
                 )?;
                 sources.extend(carriers);
+                // An archived source keeps its body only beside every row its
+                // attempt read, judged as a native receipt's is below; one
+                // made from a member's mailbox the copy leaves out, or from
+                // rows not all known, goes as unavailable and still stands
+                // for its id (fix list row 15416).
+                lineage.archived_receipt_sources(judge.as_mut(), id, &mut receipts)?;
                 // A native receipt goes only where no archived source of its
                 // id stands, and keeps its body only beside every row its
                 // attempt read, judged before the body is kept: one made from
@@ -697,13 +719,16 @@ impl Vault {
         // with the owner's own whole-vault archive wherever it goes (owner
         // ruling 1-EXPORT = B), never with a records archive. A carried
         // record whose family names a carrier left out is named in the
-        // manifest instead.
+        // manifest instead, and in an Owner's copy so is one whose family
+        // names a row of a member's mailbox the copy leaves out, or a row
+        // whose words came from one (fix list row 15416).
         if cut == ExportCut::Archive {
             let (rows, withheld) = super::archive_side_rows_in_txn(
                 &self.store,
                 &rtxn,
                 &included,
                 only.is_none() && (owner_export || locality == CallerLocality::OnDevice),
+                judge.as_mut(),
             )?;
             for row in rows {
                 writer.side_row(row)?;
@@ -743,9 +768,14 @@ impl Vault {
         let (diary_reads, diary_holds, unlogged) = diaries.finish(self);
         // Each member's mailbox the copy left out is named to the Owner; a
         // member's mailbox counts as carried only through a row the copy
-        // ships (fix list row 15416).
-        let (mailbox_notices, member_mail) =
-            lineage.outcome(plan, verdicts, writer.carried_rows(), &unlogged);
+        // ships, or a receipt body it serializes (fix list row 15416).
+        let (mailbox_notices, member_mail) = lineage.outcome(
+            plan,
+            verdicts,
+            writer.carried_rows(),
+            writer.carried_receipts(),
+            &unlogged,
+        );
         writer
             .finish(
                 DocumentTail {

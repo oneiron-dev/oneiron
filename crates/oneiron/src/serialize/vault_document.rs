@@ -87,6 +87,10 @@ pub(crate) struct DocumentWriter<'v> {
     /// `finish`, when that set and the unlogged diaries are final.
     carried_ids: BTreeSet<EntityId>,
     row_births: BTreeMap<EntityId, RowBirth>,
+    /// Each receipt a carried row's derivation envelope keeps the body of,
+    /// by that row and the receipt's id (fix list row 15416: the rows that
+    /// body was made from count as carried through it).
+    carried_receipts: BTreeSet<(EntityId, String)>,
 }
 
 impl<'v> DocumentWriter<'v> {
@@ -120,6 +124,7 @@ impl<'v> DocumentWriter<'v> {
             side_withheld: Vec::new(),
             carried_ids: BTreeSet::new(),
             row_births: BTreeMap::new(),
+            carried_receipts: BTreeSet::new(),
         };
         for adapter in adapters {
             writer.push_nulled(
@@ -170,14 +175,26 @@ impl<'v> DocumentWriter<'v> {
                 .iter()
                 .find(|(key, _)| matches!(key, ExportValue::String(key) if key == "evid"))
         {
+            let receipts = crate::batch::export::receipt_sources_for_body(
+                &body,
+                &raw.task_receipts,
+                raw.archived_receipts.as_ref(),
+            )?;
+            self.carried_receipts.extend(
+                receipts
+                    .iter()
+                    .filter(|source| {
+                        matches!(
+                            source,
+                            crate::batch::export::ExportReceiptSource::Preserved { .. }
+                        )
+                    })
+                    .map(|source| (raw.id, source.receipt_id().to_owned())),
+            );
             let envelope = ExportDerivationEnvelope {
                 id: id.clone(),
                 evidence: evidence.clone(),
-                receipts: crate::batch::export::receipt_sources_for_body(
-                    &body,
-                    &raw.task_receipts,
-                    raw.archived_receipts.as_ref(),
-                )?,
+                receipts,
             };
             self.push_nulled(ArchiveRecordKind::DerivationEnvelope, &envelope, 2)?;
         }
@@ -431,6 +448,12 @@ impl<'v> DocumentWriter<'v> {
     /// row 15416: what an Owner's copy carries of members' mailboxes).
     pub(crate) const fn carried_rows(&self) -> &BTreeSet<EntityId> {
         &self.carried_ids
+    }
+
+    /// Each receipt whose body a carried row's derivation envelope keeps, by
+    /// that row and the receipt's id (fix list row 15416).
+    pub(crate) const fn carried_receipts(&self) -> &BTreeSet<(EntityId, String)> {
+        &self.carried_receipts
     }
 
     /// Builds the agent bundles and the manifest, then writes the archive, or
