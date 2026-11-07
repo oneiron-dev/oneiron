@@ -105,6 +105,8 @@ fn cycle_json(m: &Measured<'_>) -> Value {
         "prep_ms",
         "branch_ms",
         "extract_ms",
+        "prefix_join_ms",
+        "finish_wait_ms",
         "corrections_ms",
         "resolve_ms",
         "gap_ms",
@@ -158,6 +160,8 @@ fn cycle_json(m: &Measured<'_>) -> Value {
         "rejected": field_sum(stages, t0, "rejected").0,
         "snapshot_at_exports": exports,
         "stage_lines": lines_json(stages, t0, t0),
+        "call_lines": lines_json(&m.scan.calls, t0, t0),
+        "call_elapsed_ms_sum": field_sum(&m.scan.calls, t0, "elapsed_ms").0,
         "pass_lines": lines_json(&m.scan.passes, t0, t0),
         "lines_before_t0": before,
         "stage_lines_logged": m.scan.observed(),
@@ -199,6 +203,8 @@ fn recalls_json(m: &Measured<'_>) -> Value {
         "during": window(ticks, t0, end),
         // The loop stops `AFTER` past the end, give or take one step.
         "after": window(ticks, end, end + after_ms + 1000.0),
+        // A cycle that hit its bound measured this arm past it, not after an idle Dreamer.
+        "after_arm": if m.cycle.waited.reason == "timeout" { "post-bound" } else { "after" },
         // Taken once the Dreamer stayed still, inside the cycle's bound:
         // the after-cycle recall with no Dreamer work beside it.
         "still_wait": m.still,
@@ -390,7 +396,11 @@ pub(super) fn summary(r: &Value) -> String {
         format!("5 timed: {}", yes(&p["5_timed"])),
         format!("recall baseline: {}", spread(&r["recalls"]["baseline"])),
         format!("recall during:   {}", spread(&r["recalls"]["during"])),
-        format!("recall after:    {}", spread(&r["recalls"]["after"])),
+        format!(
+            "recall {:<9} {}",
+            format!("{}:", r["recalls"]["after_arm"].as_str().unwrap_or("after")),
+            spread(&r["recalls"]["after"])
+        ),
         format!(
             "server log during the cycle: {} warn, {} error",
             r["server_log"]["warn_during_cycle"], r["server_log"]["error_during_cycle"]

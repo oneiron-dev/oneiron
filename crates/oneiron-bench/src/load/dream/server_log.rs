@@ -1,8 +1,9 @@
 //! The server log as `load dream` reads it: the lines written since the
 //! last read, the Dreamer's `dreamer partition stages`, `dreamer wake pass`,
 //! `dreamer sitting open` and `dreamer sitting close` lines (target
-//! `oneiron::dreamer::stages`, L07 DREAM-OBSERVE) as `key=value` fields, and
-//! the WARN and ERROR lines by message. The lines are tracing's default fmt
+//! `oneiron::dreamer::stages`, L07 DREAM-OBSERVE) and `dreamer model call`
+//! lines (target `oneiron::dreamer::calls`) as `key=value` fields, and the
+//! WARN and ERROR lines by message. The lines are tracing's default fmt
 //! text; a field may be missing or quoted.
 
 use std::collections::BTreeMap;
@@ -12,6 +13,8 @@ use std::time::Instant;
 
 /// The message of one consolidation partition attempt's line.
 pub(super) const STAGES: &str = "dreamer partition stages";
+/// The message of one durable-step wire try's timing line.
+pub(super) const CALL: &str = "dreamer model call";
 /// The message of one wake pass's line.
 pub(super) const PASS: &str = "dreamer wake pass";
 /// The message of a sitting's open line: TURNs witnessed after it join it.
@@ -83,6 +86,7 @@ pub(super) struct Scan {
     pub(super) passes: Vec<Seen>,
     pub(super) opens: Vec<Seen>,
     pub(super) closes: Vec<Seen>,
+    pub(super) calls: Vec<Seen>,
     pub(super) alarms: Vec<Alarm>,
 }
 
@@ -108,6 +112,8 @@ impl Scan {
                 self.opens.push(Seen { at_ms, fields });
             } else if let Some(fields) = fields(&line, CLOSE) {
                 self.closes.push(Seen { at_ms, fields });
+            } else if let Some(fields) = fields(&line, CALL) {
+                self.calls.push(Seen { at_ms, fields });
             }
         }
     }

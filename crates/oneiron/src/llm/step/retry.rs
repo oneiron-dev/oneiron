@@ -37,15 +37,31 @@ pub(super) fn retry_delay_ms(retry: usize) -> u64 {
         .unwrap_or(0)
 }
 
+/// Logs one `dreamer model call` line per wire try, never a body or a credential.
 pub(super) async fn generate_with_retry(
     backend: &dyn LlmBackend,
     request: &LlmRequest,
     lease: &super::BudgetLease,
     max_retries: usize,
+    calls: &crate::dreamer_wake::StepCalls<'_>,
+    ordinal: u32,
 ) -> LlmResult<LlmResponse> {
     let mut retries = 0_usize;
     loop {
-        match backend.generate(request.clone(), lease).await {
+        let started = Instant::now();
+        let result = backend.generate(request.clone(), lease).await;
+        tracing::debug!(
+            target: "oneiron::dreamer::calls",
+            attempt = %crate::entity_id::bytes_to_hex_lower(calls.attempt_id.as_bytes()),
+            step = %crate::entity_id::bytes_to_hex_lower(&calls.step_hash),
+            purpose = ?request.envelope.purpose,
+            call = ordinal,
+            retry = retries,
+            elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            outcome = match &result { Ok(_) => "ok", Err(LlmError::Retryable(_)) => "retryable", Err(_) => "error" },
+            "dreamer model call"
+        );
+        match result {
             Ok(response) => return Ok(response),
             Err(LlmError::Retryable(error)) => {
                 if retries >= max_retries || waits_past_schedule(&error, retries, max_retries) {

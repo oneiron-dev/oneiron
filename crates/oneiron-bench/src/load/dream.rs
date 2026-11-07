@@ -48,8 +48,8 @@ const USAGE: &str = "usage: oneiron-bench load dream --server <oneiron-server> -
   [--cycle-timeout-s 1200] [--model-context-tokens N] [--label TEXT] [--log-extra DIRECTIVES]\n\
   (--model-base-url ends where /chat/completions follows, usually in /v1)";
 
-/// The server's log level: the Dreamer's stage and pass lines are info.
-const RUST_LOG: &str = "warn,oneiron::dreamer::stages=info";
+/// The server's log level: stage and pass lines are info; model calls are debug.
+const RUST_LOG: &str = "warn,oneiron::dreamer::stages=info,oneiron::dreamer::calls=debug";
 const LOG_NAME: &str = "serve.log";
 /// Recalls before the cycle, and the most queries the loop rotates over.
 const BASELINE: usize = 20;
@@ -74,7 +74,7 @@ struct Plan {
     recall_every: Duration,
     cycle_timeout: Duration,
     label: Option<String>,
-    /// More `RUST_LOG` directives for the server, after the stage lines'.
+    /// More `RUST_LOG` directives for the server, after the built-in Dreamer ones.
     log_extra: Option<String>,
 }
 
