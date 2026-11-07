@@ -234,7 +234,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/attempt_queue/engine/mutate.rs` | src | m | 3 fn · 7 crate-vis | — | Retry/intervene/manifest append mutation doors |
 | `src/attempt_queue/engine/owner_retained_payload.rs` | src | s | 1 crate-vis | — | An owner-retained row's payload rewritten in place (FIX 6755): the one door through which an owner-retained… |
 | `src/attempt_queue/engine/place.rs` | src | s | 1 crate-vis | — | Placement inside a caller-owned writer: a row enqueued in the same transaction takes its worker and parent… |
-| `src/attempt_queue/engine/prune.rs` | src | s | 2 crate-vis | — | The doors an owner-retained kind's tries leave the ledger by: a settled attempt with every try it retried… |
+| `src/attempt_queue/engine/prune.rs` | src | s | 3 crate-vis | — | The doors an owner-retained kind's tries leave the ledger by: a settled attempt with every try it retried… |
 | `src/attempt_queue/engine/reads.rs` | src | m | 6 fn · 33 crate-vis | — | Point/list/dedupe reads plus retry-chain and dreamer-root walks |
 | `src/attempt_queue/engine/reclaim.rs` | src | s | 3 fn | — | Lease cleanup: an expired lease goes back to the ready index under the same try, and an expired landing… |
 | `src/attempt_queue/engine/redirect.rs` | src | s | 1 fn | — | Atomic operator placement changes with lease fencing and cycle refusal |
@@ -248,7 +248,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/attempt_queue/index.rs` | src | s | 12 crate-vis | — | FIX 11318: the attempt ledger's side indexes, so a reader that wants a kind's rows, a task's rows, a try's… |
 | `src/attempt_queue/kind_payload_erase.rs` | src | s | 1 crate-vis | — | One kind's payloads, emptied for an erase (FIX 9775): the attempts of a kind whose payload names an erased… |
 | `src/attempt_queue/maintenance_predicate.rs` | src | s | 4 const · 2 crate-vis | — | Claim predicates used by queued maintenance proposals |
-| `src/attempt_queue/mod.rs` | src | s | 9 mod · 10 re-export · 17 crate-vis | — | Generic LMDB-backed background attempt queue |
+| `src/attempt_queue/mod.rs` | src | s | 9 mod · 10 re-export · 18 crate-vis | — | Generic LMDB-backed background attempt queue |
 | `src/attempt_queue/observe.rs` | src | s | 1 fn · 2 crate-vis | — | Post-commit invalidations for local run-tree observers |
 | `src/attempt_queue/payload_erase.rs` | src | L | 12 crate-vis | — | An erased dispatch target's instructions and briefing, out of the attempt payloads that carry them (FIX 7076) |
 | `src/attempt_queue/payload_erase/asker.rs` | src | s | 2 crate-vis | — | Which agent dispatch rows carry an erased asker's ask (FIX 9181) |
@@ -287,6 +287,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/attempt_queue/types/cleanup.rs` | src | s | 1 re-export | — | Lease-cleanup input and report vocabulary retained at the store layer |
 | `src/attempt_queue/types/exhaust.rs` | src | s | 1 re-export | — | What a terminal attempt left behind (FIX 9578): its durable outputs and the checkpoint frontier it recorded… |
 | `src/attempt_queue/types/hold.rs` | src | s | 2 crate-vis | — | The pause a paused attempt row is held under (FIX 9579), kept on the row itself rather than read back from… |
+| `src/attempt_queue/unserved_kinds.rs` | src | s | 1 crate-vis | — | The kinds the engine once queued and no executor serves (FIX 12327) |
 | `src/attempt_queue/validate/cancel_receipt_landing.rs` | src | s | 7 crate-vis | — | Cancel-receipt shape table, landing validators, and receipt/event append mutators |
 | `src/attempt_queue/validate/field_validators.rs` | src | s | 15 crate-vis | — | Length caps, error literals, and per-field validators plus lease/manifest mutators |
 | `src/attempt_queue/validate/mod.rs` | src | s | 4 crate-vis | — | Input validators and in-place record mutators guarding the attempt-queue doors |
@@ -1938,7 +1939,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_board/room_verbs_tests.rs` | test | s | — | — | Room render reads: the caller's scoped read and every present peer's |
 | `src/context_board/scratchpad.rs` | src | m | 4 struct · 1 enum · 5 fn · 2 const · 8 crate-vis | ScratchpadAppendReceipt, ScratchpadBoard, ScratchpadMark, ScratchpadRecall, ScratchpadRecallLine | The one session scratchpad (OF-548): a `scratchpad` NOTE per run, sealed when its own session ends… |
 | `src/context_board/scratchpad/run_lifecycle.rs` | src | s | 1 fn · 1 crate-vis | — | Exact-pad ownership at a durable code run's close |
-| `src/context_board/self_brief.rs` | src | m | 8 struct · 2 enum · 14 fn | BriefPlacement, BriefSkillRow, ClassLimit, ClassVerdict, CommunicationLimits, PlacedSelfBrief, SelfBrief, SelfBriefInput +2 | Typed turn-one self projection shared by the prefix and mid-run describe call |
+| `src/context_board/self_brief.rs` | src | m | 8 struct · 2 enum · 15 fn | BriefPlacement, BriefSkillRow, ClassLimit, ClassVerdict, CommunicationLimits, PlacedSelfBrief, SelfBrief, SelfBriefInput +2 | Typed turn-one self projection shared by the prefix and mid-run describe call |
 | `src/context_board/stream/events.rs` | src | s | 3 struct · 4 enum · 3 fn · 1 const | BoardEvent, DeliveryClass, DeliveryPolicy, RouteObservation, SubscriptionError, SubscriptionReceipt, SubscriptionScope | Board events and their subscription/delivery classification |
 | `src/context_board/stream/frames.rs` | src | s | 6 struct · 5 enum · 6 fn | AppliedStreamState, BoardRenderMode, BoardSnapshot, BoardStreamFrame, CarrierCoalesceBuffer, CoalesceOutcome, DeltaRow, FrameApplyOutcome +3 | Board stream frames, snapshots and carrier coalescing |
 | `src/context_board/stream/mod.rs` | src | s | 7 re-export · 2 crate-vis | — | Board streaming frames, routing and the pending-wake queue |
@@ -2230,7 +2231,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/assembly.rs` | src | s | 4 crate-vis | — | Store-backed mechanical inputs for the consolidation executor |
 | `src/dreamer_consolidation/attempt_reads.rs` | src | s | 2 crate-vis | — | The rows a Dreamer attempt's inputs were read from, as its own readers report them on its read set (FIX… |
 | `src/dreamer_consolidation/branch.rs` | src | s | 2 struct · 1 trait · 16 crate-vis | BranchTurn, ConsolidationBranchPlan, ConversationPart | One consolidation branch (FIX 7524): a nightly thing's turns across every conversation it appears in… |
-| `src/dreamer_consolidation/branch_scope.rs` | src | s | 4 fn · 7 crate-vis | — | Durable branch restriction alongside a partition payload, not a partition or consolidation identity axis |
+| `src/dreamer_consolidation/branch_scope.rs` | src | m | 4 fn · 8 crate-vis | — | Durable branch restriction alongside a partition payload, not a partition or consolidation identity axis |
 | `src/dreamer_consolidation/call_labels.rs` | src | m | 21 crate-vis | — | Call-local labels (FIX 7506, ARCH-0026 row 1): what one model call shows in place of every id |
 | `src/dreamer_consolidation/call_labels/decision_rungs.rs` | src | s | 3 crate-vis | — | The host ladder's model rungs through one call's labels (FIX 7506 P2) |
 | `src/dreamer_consolidation/call_labels/relationships.rs` | src | s | 3 crate-vis | — | The relationships an extraction call lists (FIX 7575) |
@@ -2255,7 +2256,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/executor/partition_run.rs` | src | m | 6 crate-vis | — | The prepared partition run `execute` ends in: the branch's resources at the wake's pin, the partition's… |
 | `src/dreamer_consolidation/executor/partition_window.rs` | src | m | 1 crate-vis | — | One window of plain Micro or Meso partitions (FIX 12487): slots pinned and opened in admission order… |
 | `src/dreamer_consolidation/extracted_people.rs` | src | s | 5 crate-vis | — | Explicit PERSON outputs from the production extraction response |
-| `src/dreamer_consolidation/extracted_people/bindings.rs` | src | s | 10 crate-vis | — | The engine's person mint (FIX 7506, ARCH-0026 row 1): a reply declares a person it names as `new:P<n>`… |
+| `src/dreamer_consolidation/extracted_people/bindings.rs` | src | s | 11 crate-vis | — | The engine's person mint (FIX 7506, ARCH-0026 row 1): a reply declares a person it names as `new:P<n>`… |
 | `src/dreamer_consolidation/failure_rules.rs` | src | m | 1 fn · 13 crate-vis | — | Resident-owned v1 failure rules for the two Dreamer consolidation call sites |
 | `src/dreamer_consolidation/follower_attempt/mod.rs` | src | m | 1 crate-vis | — | The follower's attempt (FIX 7510): one queued per session, on the extraction role's route and the wake's… |
 | `src/dreamer_consolidation/follower_attempt/output.rs` | src | s | 4 crate-vis | — | The follower's reply and receipts (FIX 7510): a suffix's batch readings read back through its call's labels… |
@@ -2497,6 +2498,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/maintenance/coach_environment.rs` | src | s | 2 struct · 3 crate-vis | CoachEnvironmentDraft, EnvironmentGrantTarget | Reviewable grant-environment repair data for a failure-ladder case |
 | `src/dreamer_runner/maintenance/coach_heal.rs` | src | L | 2 struct · 1 enum · 1 trait · 3 fn · 4 re-export · 9 crate-vis | CoachHealAuthor, HealDecisions, HealRoute, IssuesRun | The Coach's heal and Issues jobs (ARCH-0066 #coach, OF-418) |
 | `src/dreamer_runner/maintenance/coach_learning.rs` | src | s | 2 fn · 2 const · 2 crate-vis | — | The Coach's own record (ARCH-0066 #coach: "calibration, meta-learning"): each anchored outcome of the… |
+| `src/dreamer_runner/maintenance/coach_person.rs` | src | s | 1 crate-vis | — | Case-bound human-escalation intent in the Coach's ordinary proposal write |
 | `src/dreamer_runner/maintenance/coach_prompt_repair.rs` | src | s | 1 struct · 3 crate-vis | CoachPromptDraft | A case-backed prompt draft is data for owner review, never permission to inject it or resume the failed run |
 | `src/dreamer_runner/maintenance/coach_repair.rs` | src | m | 7 crate-vis | — | The Coach's draft-first skill repair (ARCH-0066 #healer, OF-418) |
 | `src/dreamer_runner/maintenance/coach_research.rs` | src | s | 1 trait · 3 fn | ResearchGoalOracle | The Coach's autoresearch jobs (OF-351, FIX 886, FIX 1331), both on the host lane: execution advances a… |
@@ -5987,7 +5989,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/gate_decision/context.rs` | src | m | 9 struct · 5 enum · 17 fn · 5 crate-vis | GateAnalysisCoverage, GateClaimReadSelectors, GateDecisionAnalysis, GateDecisionContext, GateDecisionReadContext, GateLoopFamily, GateLoopLink, GateLoopOrigin +6 | What a Gate decision was made about, the loop it came from and the ruled analysis of the input it judged… |
 | `src/store/gate_decision/keys.rs` | src | s | 5 crate-vis | — | Core half of `store::gate_decision::keys`: its store-layer items live in… |
 | `src/store/gate_decision/leave.rs` | src | s | 3 crate-vis | — | The gate-decision rows a left environment's purge keeps (FIX 8851): the decisions of the partitions a… |
-| `src/store/gate_decision/ledger.rs` | src | m | 1 fn · 31 crate-vis | — | Gate-decision ledger Store methods plus the row append and record codec |
+| `src/store/gate_decision/ledger.rs` | src | L | 1 fn · 32 crate-vis | — | Gate-decision ledger Store methods plus the row append and record codec |
 | `src/store/gate_decision/ledger/actor_append.rs` | src | s | 1 crate-vis | — | An actor erased before a decision's append, under the same writer |
 | `src/store/gate_decision/ledger/custody.rs` | src | s | 7 crate-vis | — | The ledger's side of the claim custody client: a row decrypted under its claim's key, a new row sealed under… |
 | `src/store/gate_decision/ledger/erasure_scan.rs` | src | s | 1 crate-vis | — | The ERASE completeness scan for many claims at once (SCAN C049): one tombstone batch's missing-id probes… |

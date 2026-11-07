@@ -2717,7 +2717,7 @@
      "path": "src/attempt_queue/engine/prune.rs",
      "purpose": "The doors an owner-retained kind's tries leave the ledger by: a settled attempt with every try it retried…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -2870,7 +2870,7 @@
      "path": "src/attempt_queue/mod.rs",
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "mod": 9,
       "re-export": 10
      }
@@ -3263,6 +3263,16 @@
      "purpose": "The pause a paused attempt row is held under (FIX 9579), kept on the row itself rather than read back from…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/unserved_kinds.rs",
+     "purpose": "The kinds the engine once queued and no executor serves (FIX 12327)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -23685,7 +23695,7 @@
      "purpose": "Typed turn-one self projection shared by the prefix and mid-run describe call",
      "surface": {
       "enum": 2,
-      "fn": 14,
+      "fn": 15,
       "struct": 8
      }
     },
@@ -27364,13 +27374,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/branch_scope.rs",
      "purpose": "Durable branch restriction alongside a partition payload, not a partition or consolidation identity axis",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 4
      }
     },
@@ -27646,7 +27656,7 @@
      "path": "src/dreamer_consolidation/extracted_people/bindings.rs",
      "purpose": "The engine's person mint (FIX 7506, ARCH-0026 row 1): a reply declares a person it names as `new:P<n>`…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -30534,6 +30544,16 @@
       "const": 2,
       "crate-vis": 2,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/coach_person.rs",
+     "purpose": "Case-bound human-escalation intent in the Coach's ordinary proposal write",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -73525,13 +73545,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/store/gate_decision/ledger.rs",
      "purpose": "Gate-decision ledger Store methods plus the row append and record codec",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 32,
       "fn": 1
      }
     },
@@ -92073,7 +92093,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 78,
+     "files": 79,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92535,7 +92555,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 207,
+     "files": 208,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93606,9 +93626,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 180,
+   "over_bar": 181,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6607,
+   "source_files": 6609,
    "test_files": 895
   },
   "oneiron-android": {
@@ -114087,7 +114107,7 @@
      "path": "src/api/context_board/run_self.rs",
      "purpose": "A pumped run's own `describe(self)` (FIX 2086): the self brief of the run's agent, rendered by the…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
