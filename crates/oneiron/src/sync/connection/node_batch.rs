@@ -114,7 +114,10 @@ impl SyncConnection {
                 }
             },
         };
-        if sent.is_err() {
+        // A peer session confirms nothing for the home: each full-window
+        // write it sent is queued too, and the home session replays it when
+        // the home returns (FIX 4748).
+        if sent.is_err() || client.peer_session.is_some() {
             // Opened writes already have durable sequences. Full-window writes
             // keep the original reconnect/VV-confirmation recovery contract.
             for update in full_updates {
