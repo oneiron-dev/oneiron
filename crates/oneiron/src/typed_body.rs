@@ -33,6 +33,8 @@ mod discard;
 mod lift;
 mod receipts;
 pub(crate) mod reviewed_fork;
+#[cfg(feature = "sync")]
+pub(crate) mod sync_frame;
 pub use self::body_actor::BodyActor;
 pub(crate) use self::body_actor::{erase_fork_actor_in_txn, names_no_actor};
 pub(crate) use self::discard::{
@@ -467,7 +469,12 @@ impl Vault {
         writer: TypedBodyWriter<'_>,
         init: impl FnOnce(&LoroDoc) -> Result<T>,
     ) -> Result<(T, TypedBodyCommit)> {
-        self.with_write_txn_grouped(|txn| birth_typed_body_in_txn(self, txn, entity, writer, init))
+        let born = self.with_write_txn_grouped(|txn| {
+            birth_typed_body_in_txn(self, txn, entity, writer, init)
+        })?;
+        #[cfg(feature = "sync")]
+        self.notify_typed_body_document(*entity);
+        Ok(born)
     }
 
     /// The writer's operations on the live body, read against `base` when
@@ -479,9 +486,12 @@ impl Vault {
         writer: TypedBodyWriter<'_>,
         edit: impl FnOnce(&LoroDoc) -> Result<T>,
     ) -> Result<(T, TypedBodyCommit)> {
-        self.with_write_txn_grouped(|txn| {
+        let edited = self.with_write_txn_grouped(|txn| {
             edit_typed_body_in_txn(self, txn, entity, base, writer, edit)
-        })
+        })?;
+        #[cfg(feature = "sync")]
+        self.notify_typed_body_document(*entity);
+        Ok(edited)
     }
 
     /// Opens a fork of the live body at its head for `actor`'s work.
@@ -518,9 +528,12 @@ impl Vault {
         expected_head: &[u8],
         actor: WriteActor,
     ) -> Result<TypedBodyHead> {
-        self.with_write_txn_grouped(|txn| {
+        let merged = self.with_write_txn_grouped(|txn| {
             merge_typed_body_fork_in_txn(self, txn, entity, fork, expected_head, actor)
-        })
+        })?;
+        #[cfg(feature = "sync")]
+        self.notify_typed_body_document(*entity);
+        Ok(merged)
     }
 
     /// Abandons an open fork's unlanded work.

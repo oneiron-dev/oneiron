@@ -816,14 +816,16 @@ impl Vault {
             crate::federation::removal_archive_owners_in_rows(&image.databases["vault_meta"]);
         // The carried rows hold `current`'s custody binding and retirements,
         // and its pad objects are captured in the read that carried them.
+        let classes = restore_class::Classes::new(current, &image.databases)?;
         let (home_table_notes, current_pads) =
-            authority_plane::carry_current_authority(&mut image.databases, current)?;
+            authority_plane::carry_current_authority(&mut image.databases, current, &classes)?;
         // Each kept removal archive's file and descriptor follow its Live
         // row (FIX 3679).
         let archives = removal_files::carry_live(&mut image, current, image_owners)?;
-        // A Live family's response row came with it, and its binding: the
-        // image's copy is passed over (KS-2B2).
-        response_rows::supersede_live(&mut image, current)?;
+        // A Live family's response row came with it, and its binding, by the
+        // same classes (FIX 6994): the image's copy is passed over (KS-2B2).
+        response_rows::supersede_live(&mut image, &classes);
+        drop(classes);
         // And its host orders, which no image carries.
         host_holds::carry_current(&mut image.databases, current)?;
         // Two live vaults never answer as one machine (wp-keys I7).

@@ -89,6 +89,8 @@ impl Vault {
                 })?;
             }
         }
+        #[cfg(feature = "sync")]
+        self.notify_typed_body_document(*artifact);
         self.office_body_head(artifact)?
             .ok_or(Error::EntityNotFound)
     }
@@ -262,7 +264,7 @@ impl Vault {
         // standing `entity.office.edit` grant's; without either the verb
         // raises the owner ask. Decks keep today's behavior.
         let gated = kind != OfficeBodyKind::Pptx;
-        self.with_write_txn_grouped(|wtxn| {
+        let edited = self.with_write_txn_grouped(|wtxn| {
             if gated {
                 admit_live_edit_in_txn(self, wtxn, artifact, &actor.entity_ref())?;
             }
@@ -287,7 +289,10 @@ impl Vault {
                 receipt: commit.receipt,
                 effects: Vec::new(),
             })
-        })
+        })?;
+        #[cfg(feature = "sync")]
+        self.notify_typed_body_document(*artifact);
+        Ok(edited)
     }
 
     /// Open a fork of the live body at its head for `actor`'s machine work in
@@ -464,7 +469,7 @@ impl Vault {
         (expected_head, expected_fork): (&[u8], &[u8]),
         actor: WriteActor,
     ) -> Result<std::result::Result<OfficeBodyDiff, EntityId>> {
-        self.with_write_txn_grouped(|wtxn| {
+        let merged = self.with_write_txn_grouped(|wtxn| {
             loro_kind(&self.store, wtxn, artifact)?;
             let proposal = consent::proposal_of(&self.store, wtxn, artifact, fork)?;
             let reviewed = [ReviewedFork {
@@ -485,7 +490,12 @@ impl Vault {
                 .next()
                 .map(|(_, diff)| diff)
                 .ok_or(proposal))
-        })
+        })?;
+        #[cfg(feature = "sync")]
+        if merged.is_ok() {
+            self.notify_typed_body_document(*artifact);
+        }
+        Ok(merged)
     }
 
     /// Abandon an open fork's unlanded work.

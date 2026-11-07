@@ -58,7 +58,8 @@ pub(crate) use self::id_pin::{
 };
 pub(crate) use self::manifest::{
     SEEDED_AGENT_DEFINITION_TIMESTAMP, ensure_seeded_agent_persons_in_txn,
-    seed_system_agent_definitions, system_export_identity, validate_reserved_logical_id,
+    seed_system_agent_definitions, seeded_row_matches_manifest, seeded_system_agent_ids,
+    system_export_identity, validate_reserved_logical_id,
 };
 pub(crate) use self::models::{list_admits, listed_entry, no_listed_model};
 pub(crate) use self::types::forked_from_row_ref;

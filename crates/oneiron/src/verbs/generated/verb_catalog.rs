@@ -407,6 +407,7 @@ pub enum AgentVerb {
     VaultTrustedContactsConcernDeliver,
     VaultGuestsShare,
     VaultGuestsExportEnvelope,
+    VaultGuestsPropose,
     VaultGuestsReshare,
     VaultGuestsRevoke,
     VaultGuestsMintSlip,
@@ -1697,6 +1698,7 @@ impl AgentVerb {
         Self::VaultTrustedContactsConcernDeliver,
         Self::VaultGuestsShare,
         Self::VaultGuestsExportEnvelope,
+        Self::VaultGuestsPropose,
         Self::VaultGuestsReshare,
         Self::VaultGuestsRevoke,
         Self::VaultGuestsMintSlip,
@@ -3000,6 +3002,7 @@ impl AgentVerb {
             Self::VaultTrustedContactsConcernDeliver => "vault.trusted_contacts.concern.deliver",
             Self::VaultGuestsShare => "vault.guests.share",
             Self::VaultGuestsExportEnvelope => "vault.guests.export_envelope",
+            Self::VaultGuestsPropose => "vault.guests.propose",
             Self::VaultGuestsReshare => "vault.guests.reshare",
             Self::VaultGuestsRevoke => "vault.guests.revoke",
             Self::VaultGuestsMintSlip => "vault.guests.mint_slip",
@@ -4316,6 +4319,7 @@ impl AgentVerb {
                 | Self::VaultTrustedContactsConcernDeliver
                 | Self::VaultGuestsShare
                 | Self::VaultGuestsExportEnvelope
+                | Self::VaultGuestsPropose
                 | Self::VaultGuestsReshare
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
@@ -5635,6 +5639,7 @@ impl AgentVerb {
                 | Self::VaultTrustedContactsConcernDeliver
                 | Self::VaultGuestsShare
                 | Self::VaultGuestsExportEnvelope
+                | Self::VaultGuestsPropose
                 | Self::VaultGuestsReshare
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
@@ -7105,6 +7110,7 @@ impl AgentVerb {
                 | Self::VaultTrustedContactsConcernDeliver
                 | Self::VaultGuestsShare
                 | Self::VaultGuestsExportEnvelope
+                | Self::VaultGuestsPropose
                 | Self::VaultGuestsReshare
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
@@ -9126,6 +9132,7 @@ impl AgentVerb {
             Self::VaultTrustedContactsConcernDeliver => &["spec"],
             Self::VaultGuestsShare => &["spec"],
             Self::VaultGuestsExportEnvelope => &["spec"],
+            Self::VaultGuestsPropose => &["spec"],
             Self::VaultGuestsReshare => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
@@ -10417,6 +10424,7 @@ impl AgentVerb {
             Self::VaultTrustedContactsConcernDeliver => &["spec"],
             Self::VaultGuestsShare => &["spec"],
             Self::VaultGuestsExportEnvelope => &["spec"],
+            Self::VaultGuestsPropose => &["spec"],
             Self::VaultGuestsReshare => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
@@ -12500,6 +12508,9 @@ impl AgentVerb {
             }
             Self::VaultGuestsExportEnvelope => {
                 "The guest fetches its actual filtered signed document envelope under its own live grant-bound credential over HTTP or the held socket."
+            }
+            Self::VaultGuestsPropose => {
+                "A Connect guest proposes one write of a record's text under its own live grant-bound credential; it lands in the owner's review inbox for that Connect and never writes the vault."
             }
             Self::VaultGuestsReshare => {
                 "The owner attempts a document re-share through the same local-world-only guest door; received foreign worlds and base are refused."

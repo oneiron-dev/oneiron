@@ -526,6 +526,8 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
     // and an erased message's document.
     crate::sync::document_pins::scrub_document_pins(vault, doc, Some(key))?;
     crate::sync::message_docs::scrub_message_docs(vault, doc, Some(key))?;
+    // FIX 2691: and the office proposals of an artifact it erased.
+    crate::sync::office_proposals::scrub_office_proposals(vault, doc, Some(key))?;
     // FIX 6870: and an erased repo's portable manifest.
     crate::sync::repo_manifests::scrub_repo_manifests(vault, doc, Some(key))?;
     // FIX 3877: and an origin claim carrier that names an erased actor.

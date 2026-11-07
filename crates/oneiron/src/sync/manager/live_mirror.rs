@@ -225,6 +225,13 @@ impl WindowManager {
                 &key,
                 rows,
             );
+            // FIX 2691: and a proposal that waited for its artifact's row.
+            crate::sync::office_proposals::merge_committed_office_proposals(
+                &self.vault,
+                &window.doc,
+                &key,
+                rows,
+            );
             // FIX 6870: a CODE row that lands after its manifest's head
             // finds the head here.
             crate::sync::repo_manifests::merge_committed_repo_manifests(
