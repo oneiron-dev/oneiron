@@ -74,7 +74,9 @@ pub(super) fn check_request_length(length: u64) -> Result<(), MemoryError> {
     if length > MAX_REMOTE_REQUEST_BYTES as u64 {
         return Err(bad_request(
             format!("the request body exceeds the {MAX_REMOTE_REQUEST_BYTES}-byte ceiling"),
-            &["Send less in one call; blob versions cap at 32 MiB of raw content."],
+            &[
+                "Send less in one call: the whole serialized request, a blob version's base64 content included, stays within this ceiling.",
+            ],
         ));
     }
     Ok(())
