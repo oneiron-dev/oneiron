@@ -111,6 +111,8 @@ pub const FEDERATION_SCOPE_COMMIT_DOMAIN: &[u8] = b"oneiron/federation/pact-scop
 /// Upper bound for encoded federation pact scope bytes in a lifecycle op.
 pub const MAX_PACT_SCOPE_BYTES: usize = 4096;
 
+/// The parents one entry names, except a frontier join, which names every
+/// head of the frontier it joins (FIX 8527).
 pub const MAX_PARENTS: usize = 32;
 pub const MAX_COSIGNS: usize = 8;
 pub const MAX_ATTESTATION_EVIDENCE_BYTES: usize = 4096;
@@ -140,6 +142,8 @@ pub const SLIP_KEY_CHANNELS: &str = "channels";
 pub const SLIP_KEY_ACTOR_CLASS: &str = "actor_class";
 pub const SLIP_KEY_ORG_REF: &str = "org_ref";
 pub const SLIP_KEY_GRANT_REF: &str = "grant_ref";
+/// The membership execution receipt this signed Grant withdrawal belongs to.
+pub const SLIP_KEY_MEMBERSHIP_RECEIPT: &str = "membership_receipt";
 pub const SLIP_KEY_INVITATION_REF: &str = "invitation_ref";
 /// A support slip's signed delegation (OF-606). Present only on a support
 /// slip's mint, so every other slip's wire form is unchanged.

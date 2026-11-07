@@ -57,7 +57,7 @@ const TOKENIZE_PATH: &str = "/tokenize";
 const COMPLETION_PATH: &str = "/completion";
 /// The fields each answer carries: as measured, the prompt it answers, and
 /// the model that answered it (its launch alias, FIX 7895).
-const RESPONSE_FIELDS: [&str; 9] = [
+const RESPONSE_FIELDS: [&str; 10] = [
     "index",
     "model",
     "content",
@@ -67,7 +67,9 @@ const RESPONSE_FIELDS: [&str; 9] = [
     "tokens_predicted",
     "stop_type",
     "stopped_eos",
+    "truncated",
 ];
+const EOS_READ_TOKENS: u64 = 1;
 /// The bias that forces the end token: generation stops at once, and the
 /// probabilities read are the pre-sampler ones, which no bias touches.
 const EOS_BIAS: f64 = 1e9;
@@ -415,7 +417,7 @@ impl DecisionReader {
     ) -> LlmResult<(JsonValue, Option<CacheDigest>)> {
         let body = json!({
             "prompt": prompt,
-            "n_predict": 1,
+            "n_predict": EOS_READ_TOKENS,
             "temperature": 0.0,
             "cache_prompt": true,
             "id_slot": -1,
@@ -640,7 +642,18 @@ fn label_logprobs(body: &JsonValue, ids: &[u64], tokens: &[String]) -> LlmResult
     let eos = body.get("stop_type").and_then(JsonValue::as_str) == Some("eos")
         || body.get("stopped_eos").and_then(JsonValue::as_bool) == Some(true);
     if !eos {
-        return Err(failed(LabelReadFailure::NotEosStop));
+        // A native "limit" alone can also mean a context or time limit.
+        let token_cap = body.get("stop_type").and_then(JsonValue::as_str) == Some("limit")
+            && body.get("truncated").and_then(JsonValue::as_bool) == Some(false)
+            && body
+                .get("tokens_predicted")
+                .and_then(JsonValue::as_u64)
+                .is_some_and(|tokens| tokens >= EOS_READ_TOKENS);
+        return Err(failed(if token_cap {
+            LabelReadFailure::TokenCap
+        } else {
+            LabelReadFailure::NotEosStop
+        }));
     }
     let rows = body
         .get("completion_probabilities")

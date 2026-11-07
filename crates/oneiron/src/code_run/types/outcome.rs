@@ -75,6 +75,8 @@ pub enum SelfStoredReplyKind {
     InferenceDefaults,
     TaskAskSettled,
     TaskAskWorldPrivacy,
+    /// A wait-set reply with no program feedback to release separately.
+    TaskWaitSet,
     /// A direct team start's native receipt, not reply content.
     TeamStartReceipt,
 }
@@ -266,4 +268,30 @@ pub enum SelfAgentSpawnResult {
     /// An erase took the AGENT_DEF the planned spawn's plan seats (Engine
     /// 10-22): the intent records it, and nothing launched.
     TargetErased,
+    /// An erase of its asker took the planned spawn's intent (FIX 9183):
+    /// the intent records that cause, and nothing launched.
+    AskerErased,
+}
+
+impl SelfAgentSpawnResult {
+    /// Whose erase this answer names (FIX 9183); `None` for an answer that
+    /// is not erased.
+    #[must_use]
+    pub const fn erasure(&self) -> Option<crate::team::SpawnErasure> {
+        match self {
+            Self::TargetErased => Some(crate::team::SpawnErasure::TargetErased),
+            Self::AskerErased => Some(crate::team::SpawnErasure::AskerErased),
+            Self::Queued { .. } | Self::ProposedWiden { .. } => None,
+        }
+    }
+}
+
+/// FIX 9183: an erased planned spawn answers the cause its intent stored.
+impl From<crate::team::SpawnErasure> for SelfAgentSpawnResult {
+    fn from(erasure: crate::team::SpawnErasure) -> Self {
+        match erasure {
+            crate::team::SpawnErasure::TargetErased => Self::TargetErased,
+            crate::team::SpawnErasure::AskerErased => Self::AskerErased,
+        }
+    }
 }

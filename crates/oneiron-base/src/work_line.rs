@@ -19,7 +19,10 @@
 //!
 //! When work has to wait and nobody waited before it, the line is crossed:
 //! its [`LineCrossing`] hears it once per crossing (a host's OF-520 "is
-//! everything okay" question), and again when the last waiter leaves.
+//! everything okay" question), and again when the last waiter leaves. A
+//! bundle of the host's own work that finds too little room crosses the line
+//! as a waiter does, and its crossing lasts until room for it comes back
+//! ([`WorkLine::try_admit_background_bundle`], FIX 6304).
 //!
 //! Task work (`can`, `ask`, `wait`, `tasks.answer`; Rule 5) takes its turn
 //! from one line per vault ([`Vault::admit_task_work`]), whichever door it
@@ -37,8 +40,9 @@ use tokio::sync::Notify;
 /// Where a line says it was crossed: work had to wait, and nobody waited
 /// before it. Called outside the line's lock; it must not wait on the work.
 pub trait LineCrossing: Send + Sync {
-    /// `observed` pieces of work hold or wait for the line's `bound` permits.
-    fn crossed(&self, bound: u64, observed: u64);
+    /// Crossing `epoch` ([`WorkLine::crossing_epoch`]) began: `observed`
+    /// pieces of work hold, wait for or asked for the line's `bound` permits.
+    fn crossed(&self, epoch: u64, bound: u64, observed: u64);
 
     /// The crossing `epoch` names ([`WorkLine::crossing_epoch`]) is over:
     /// its last waiter left the line, given its permit, gone or out of time.
@@ -59,6 +63,13 @@ pub trait LineObserver: Send + Sync {
 /// started.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WaitTimedOut;
+
+/// A bundle of the host's own work that found too little room: `free`
+/// permits were free when it asked. Nothing was taken or put in line.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LineShortage {
+    pub free: usize,
+}
 
 /// A bound over one kind of work, and the line of work waiting for it.
 pub struct WorkLine<K> {
@@ -93,6 +104,10 @@ struct Queue<K> {
     background: VecDeque<Arc<Waiter>>,
     /// Whether the crossing in progress was said.
     asked: bool,
+    /// The largest bundle of the host's own work that found too little room
+    /// since room for it last came back: while one is unmet, the crossing it
+    /// began stays open, so trying again is not crossing again.
+    unmet: usize,
     /// Which crossing is the latest: each new one counts the next.
     epoch: u64,
 }
@@ -130,6 +145,7 @@ impl<K: Eq + Hash + Clone + Send + 'static> WorkLine<K> {
                     turns: VecDeque::new(),
                     background: VecDeque::new(),
                     asked: false,
+                    unmet: 0,
                     epoch: 0,
                 }),
                 bound: AtomicUsize::new(bound.max(1)),
@@ -165,11 +181,8 @@ impl<K: Eq + Hash + Clone + Send + 'static> WorkLine<K> {
             queue.held += 1;
             grant(&waiter);
         }
-        let drained = if queue.waiters() == 0 {
-            queue.end_crossing()
-        } else {
-            None
-        };
+        queue.room_returned(bound);
+        let drained = queue.end_settled_crossing();
         drop(queue);
         self.pool.say_drained(drained);
     }
@@ -185,8 +198,9 @@ impl<K: Eq + Hash + Clone + Send + 'static> WorkLine<K> {
         lock(&self.pool.queue).waiters()
     }
 
-    /// The crossing in progress while work waits in line: its epoch, which
-    /// every later crossing's is greater than. `None` while nobody waits.
+    /// The crossing in progress while work waits in line or a bundle's
+    /// shortage is unmet: its epoch, which every later crossing's is greater
+    /// than. `None` while neither is.
     pub fn crossing_epoch(&self) -> Option<u64> {
         let queue = lock(&self.pool.queue);
         queue.asked.then_some(queue.epoch)
@@ -271,6 +285,73 @@ impl<K: Eq + Hash + Clone + Send + 'static> WorkLine<K> {
         self.wait_blocking(Some(key), Some(wait))
     }
 
+    /// [`Self::admit_blocking`] with the observation
+    /// [`Self::admit_in_line_observed`] makes, on this thread: this caller's
+    /// queued/held transition, said to the serving call's receipt when it
+    /// has one (FIX 21154).
+    pub fn admit_blocking_observed(
+        &self,
+        key: K,
+        observer: Option<Arc<dyn LineObserver>>,
+    ) -> Result<LinePermit, WaitTimedOut> {
+        self.wait_blocking_observed(key, None, observer)
+    }
+
+    /// [`Self::admit_blocking_for`] with the same observation.
+    pub fn admit_blocking_for_observed(
+        &self,
+        key: K,
+        wait: Duration,
+        observer: Option<Arc<dyn LineObserver>>,
+    ) -> Result<LinePermit, WaitTimedOut> {
+        self.wait_blocking_observed(key, Some(wait), observer)
+    }
+
+    /// [`Self::admit_blocking_untimed`] with the same observation.
+    pub fn admit_blocking_untimed_observed(
+        &self,
+        key: K,
+        observer: Option<Arc<dyn LineObserver>>,
+    ) -> LinePermit {
+        let entry = self.enter(Some(key));
+        observe_entry(observer.as_deref(), &entry);
+        let mut place = match entry {
+            Entry::Admitted(permit) => return permit,
+            Entry::Queued(place) => place,
+        };
+        place.wait_granted(None);
+        let permit = place
+            .settle()
+            .expect("a place whose permit was handed over settles with it");
+        if let Some(observer) = observer {
+            observer.held();
+        }
+        permit
+    }
+
+    /// A caller's blocking wait at its place, observed as an awaited one is:
+    /// queued or held as it enters, held once its permit comes.
+    fn wait_blocking_observed(
+        &self,
+        key: K,
+        wait: Option<Duration>,
+        observer: Option<Arc<dyn LineObserver>>,
+    ) -> Result<LinePermit, WaitTimedOut> {
+        let entry = self.enter(Some(key));
+        observe_entry(observer.as_deref(), &entry);
+        let mut place = match entry {
+            Entry::Admitted(permit) => return Ok(permit),
+            Entry::Queued(place) => place,
+        };
+        let deadline = Instant::now() + wait.unwrap_or_else(|| *lock(&self.pool.wait));
+        place.wait_granted(Some(deadline));
+        let permit = place.settle().ok_or(WaitTimedOut)?;
+        if let Some(observer) = observer {
+            observer.held();
+        }
+        Ok(permit)
+    }
+
     /// A permit for the host's own work, given only when no caller waits.
     pub fn admit_background_blocking(&self) -> Result<LinePermit, WaitTimedOut> {
         self.wait_blocking(None, None)
@@ -296,6 +377,35 @@ impl<K: Eq + Hash + Clone + Send + 'static> WorkLine<K> {
         queue.held += 1;
         drop(queue);
         Some(self.permit())
+    }
+
+    /// `permits` free permits at once for the host's own work, all or none,
+    /// with nothing put in line (FIX 6304): a caller in line keeps every
+    /// permit that comes free before it. A bundle that finds too little room
+    /// crosses the line, said once as a first waiter's crossing is, and the
+    /// crossing stays open until room for the bundle comes back, so a bundle
+    /// tried again meanwhile is not a new crossing.
+    ///
+    /// # Errors
+    /// Returns the [`LineShortage`] when fewer than `permits` are free.
+    pub fn try_admit_background_bundle(
+        &self,
+        permits: usize,
+    ) -> Result<Vec<LinePermit>, LineShortage> {
+        let mut queue = lock(&self.pool.queue);
+        let bound = self.pool.bound.load(Ordering::Relaxed);
+        // A free permit means nobody waits, as in `enter`.
+        let free = bound.saturating_sub(queue.held);
+        if permits <= free {
+            queue.held += permits;
+            drop(queue);
+            return Ok((0..permits).map(|_| self.permit()).collect());
+        }
+        queue.unmet = queue.unmet.max(permits);
+        let crossing = queue.begin_crossing(permits);
+        drop(queue);
+        self.pool.say_crossed(crossing, bound);
+        Err(LineShortage { free })
     }
 
     fn wait_blocking(
@@ -431,24 +541,9 @@ impl<K: Eq + Hash + Clone + Send + 'static> WorkLine<K> {
             }
             None => queue.background.push_back(Arc::clone(&waiter)),
         }
-        let first = !queue.asked;
-        queue.asked = true;
-        if first {
-            queue.epoch += 1;
-        }
-        let observed = queue.held + queue.waiters();
+        let crossing = queue.begin_crossing(0);
         drop(queue);
-        if first {
-            let crossing = self
-                .pool
-                .crossing
-                .read()
-                .unwrap_or_else(PoisonError::into_inner)
-                .clone();
-            if let Some(crossing) = crossing {
-                crossing.crossed(bound as u64, observed as u64);
-            }
-        }
+        self.pool.say_crossed(crossing, bound);
         Entry::Queued(Place {
             pool: Arc::clone(&self.pool),
             waiter,
@@ -531,11 +626,7 @@ impl<K: Eq + Hash + Clone + Send + 'static> Place<K> {
                 .background
                 .retain(|queued| !Arc::ptr_eq(queued, waiter)),
         }
-        let drained = if queue.waiters() == 0 {
-            queue.end_crossing()
-        } else {
-            None
-        };
+        let drained = queue.end_settled_crossing();
         drop(queue);
         self.pool.say_drained(drained);
         None
@@ -554,10 +645,33 @@ impl<K: Eq + Hash + Clone> Queue<K> {
         self.waiting.values().map(VecDeque::len).sum::<usize>() + self.background.len()
     }
 
-    /// Ends the crossing in progress: its epoch, if it was said, for the
-    /// line's crossing to hear once the lock is let go.
-    fn end_crossing(&mut self) -> Option<u64> {
+    /// Begins a crossing unless one is in progress: its epoch and the work
+    /// that holds, waits for or asks for the line with `asking` more, for the
+    /// line's crossing to hear once the lock is let go. `None` when one is.
+    fn begin_crossing(&mut self, asking: usize) -> Option<(u64, usize)> {
+        if std::mem::replace(&mut self.asked, true) {
+            return None;
+        }
+        self.epoch += 1;
+        Some((self.epoch, self.held + self.waiters() + asking))
+    }
+
+    /// Ends the crossing in progress once nobody waits and no bundle's
+    /// shortage is unmet: its epoch, if it was said, for the line's crossing
+    /// to hear once the lock is let go.
+    fn end_settled_crossing(&mut self) -> Option<u64> {
+        if self.waiters() > 0 || self.unmet > 0 {
+            return None;
+        }
         std::mem::take(&mut self.asked).then_some(self.epoch)
+    }
+
+    /// Clears an unmet bundle's shortage once room for it is free again
+    /// under `bound`, or the whole line is, for one larger than the line.
+    fn room_returned(&mut self, bound: usize) {
+        if bound.saturating_sub(self.held) >= self.unmet.min(bound) {
+            self.unmet = 0;
+        }
     }
 
     /// The next waiter whose turn it is: the oldest of the next key in the
@@ -578,47 +692,55 @@ impl<K: Eq + Hash + Clone> Queue<K> {
 }
 
 impl<K> Pool<K> {
+    /// Tells the line's crossing that crossing `begun` (its epoch and the
+    /// work it observed) began on a line of `bound`, if one did. Called
+    /// outside the queue's lock.
+    fn say_crossed(&self, begun: Option<(u64, usize)>, bound: usize) {
+        if let Some((epoch, observed)) = begun
+            && let Some(crossing) = self.crossing()
+        {
+            crossing.crossed(epoch, bound as u64, observed as u64);
+        }
+    }
+
     /// Tells the line's crossing that crossing `epoch` is over, if one
     /// ended. Called outside the queue's lock.
     fn say_drained(&self, epoch: Option<u64>) {
-        let Some(epoch) = epoch else {
-            return;
-        };
-        let crossing = self
-            .crossing
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
-        if let Some(crossing) = crossing {
+        if let Some(epoch) = epoch
+            && let Some(crossing) = self.crossing()
+        {
             crossing.drained(epoch);
         }
+    }
+
+    fn crossing(&self) -> Option<Arc<dyn LineCrossing>> {
+        self.crossing
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 }
 
 impl<K: Eq + Hash + Clone + Send + 'static> Release for Pool<K> {
     fn release(&self) {
         let mut queue = lock(&self.queue);
+        let bound = self.bound.load(Ordering::Relaxed);
         // Over a lowered bound, the permit goes back rather than on.
-        if queue.held > self.bound.load(Ordering::Relaxed) {
+        if queue.held > bound {
             queue.held -= 1;
             return;
         }
-        let drained = match queue.next() {
-            // The permit passes on as it is: `held` does not change. Once
-            // nobody waits, the crossing is over; the next wait is a new one.
-            Some(waiter) => {
-                grant(&waiter);
-                if queue.waiters() == 0 {
-                    queue.end_crossing()
-                } else {
-                    None
-                }
-            }
+        // The permit passes on as it is: `held` does not change. Once nobody
+        // waits and no bundle's shortage is unmet, the crossing is over; the
+        // next wait is a new one.
+        match queue.next() {
+            Some(waiter) => grant(&waiter),
             None => {
                 queue.held = queue.held.saturating_sub(1);
-                queue.end_crossing()
+                queue.room_returned(bound);
             }
-        };
+        }
+        let drained = queue.end_settled_crossing();
         drop(queue);
         self.say_drained(drained);
     }
@@ -656,6 +778,20 @@ impl Waiter {
 impl Drop for LinePermit {
     fn drop(&mut self) {
         self.pool.release();
+    }
+}
+
+/// Says `entry` to `observer`: held when it took a permit at once, queued
+/// when it waits for one.
+fn observe_entry<K: Eq + Hash + Clone + Send + 'static>(
+    observer: Option<&dyn LineObserver>,
+    entry: &Entry<K>,
+) {
+    if let Some(observer) = observer {
+        match entry {
+            Entry::Admitted(_) => observer.held(),
+            Entry::Queued(_) => observer.queued(),
+        }
     }
 }
 

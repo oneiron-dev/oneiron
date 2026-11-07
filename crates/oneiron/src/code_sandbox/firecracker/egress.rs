@@ -4,7 +4,16 @@
 //! floor before its thread starts, and a full floor answers it `EAGAIN`
 //! naming the floor, unread (FIX 5979). The VM's own floor charges nothing:
 //! this is where the VM's network work is counted on the host.
-use oneiron_container::{EgressRelay, RelayReply, RelayRequest, read_relay, write_relay};
+//!
+//! A datagram is admitted before it is relayed (FIX 6298). Its thread reads
+//! it, replies `Admitted`, and only then relays it and replies its `Answer`.
+//! The VM acknowledges the guest's send on `Admitted`, so host back-pressure
+//! reaches the send before it succeeds. The request keeps its room until its
+//! relay has ended, even when the VM's channel is gone. Rebuild the code
+//! guest image from the same commit as this host: both speak one wire.
+use oneiron_container::{
+    EgressRelay, RelayAnswer, RelayReply, RelayRequest, read_relay, write_relay,
+};
 use std::{
     io::{Read, Write},
     net::Shutdown,
@@ -62,11 +71,6 @@ fn request(
     channel.set_read_timeout(Some(Duration::from_secs(30)))?;
     channel.set_write_timeout(Some(Duration::from_secs(30)))?;
     let op: RelayRequest = read_relay(&mut channel)?;
-    let mut reply = RelayReply {
-        errno: 0,
-        bytes: Vec::new(),
-        floor: None,
-    };
     let result = match op {
         RelayRequest::Connect { target } => match relay
             .host_net_floor()
@@ -74,7 +78,7 @@ fn request(
             .and_then(|room| relay.connect_stream(target).map(|remote| (room, remote)))
         {
             Ok((_room, (mut remote, gated))) => {
-                write_relay(&mut channel, &reply)?;
+                write_relay(&mut channel, &RelayReply::answered(Vec::new()))?;
                 let mut upload = channel.try_clone()?;
                 let mut send = remote.try_clone()?;
                 let upload_alive = Arc::clone(&alive);
@@ -147,30 +151,40 @@ fn request(
             }
             Err(error) => Err(error),
         },
-        RelayRequest::AuthorizeDatagram { target } => relay.authorize_datagram(target),
-        RelayRequest::Refusal(refusal) => relay.record_refusal(&refusal),
-        RelayRequest::Datagram { target, bytes } => relay
-            .datagram(target, &bytes)
-            .map(|bytes| reply.bytes = bytes),
+        RelayRequest::AuthorizeDatagram { target } => {
+            relay.authorize_datagram(target).map(|()| Vec::new())
+        }
+        RelayRequest::Refusal(refusal) => relay.record_refusal(&refusal).map(|()| Vec::new()),
+        RelayRequest::Fetch { request } => relay
+            .fetch(request)
+            .and_then(|response| serde_json::to_vec(&response).map_err(std::io::Error::other)),
+        RelayRequest::Datagram { target, bytes } => {
+            // The VM acknowledges the guest's send on this reply, so it goes
+            // before the relay; when it cannot be written, nothing is
+            // relayed (FIX 6298).
+            write_relay(&mut channel, &RelayReply::Admitted)?;
+            relay.datagram(target, &bytes)
+        }
     };
-    if let Err(error) = result {
-        reply = failed(&error);
-    }
+    let reply = match result {
+        Ok(bytes) => RelayReply::answered(bytes),
+        Err(error) => failed(&error),
+    };
     write_relay(&mut channel, &reply)
 }
 
-/// The reply to a request that failed. A host floor's back-pressure is
+/// The last reply to a request that failed. A host floor's back-pressure is
 /// `EAGAIN`, carrying the floor's name.
 fn failed(error: &std::io::Error) -> RelayReply {
     let floor = oneiron_container::saturated_floor(error);
-    RelayReply {
+    RelayReply::Answer(RelayAnswer {
         errno: match floor {
             Some(_) => libc::EAGAIN,
             None => error.raw_os_error().unwrap_or(libc::EIO),
         },
         bytes: Vec::new(),
         floor: floor.map(str::to_owned),
-    }
+    })
 }
 
 /// Answers a request the host floor has no room for, unread and on the
