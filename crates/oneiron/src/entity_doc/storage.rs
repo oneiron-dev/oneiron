@@ -3,16 +3,13 @@
 use super::{DocAuthorization, EntityDoc, invalid};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result, StoreError};
-use crate::ports::EntityStoreRead;
 use crate::ports::{
-    DocumentRow, DocumentRowStore, DocumentSlot, EntityStoreMaintenance, UpdateSeq,
+    DocumentRow, DocumentRowStore, DocumentSlot, EntityStoreMaintenance, EntityStoreRead, UpdateSeq,
 };
 use crate::side_table::{self, HexId, Named, SideTable};
-use crate::store::Store;
-use crate::store::row_birth::RowBirth;
+use crate::store::{Store, row_birth::RowBirth};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
-use crate::write_envelope::WriteActor;
-use crate::write_envelope::provenance::made_by::MadeByClass;
+use crate::write_envelope::{WriteActor, provenance::made_by::MadeByClass};
 use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -689,6 +686,26 @@ pub(crate) fn record_head_bytes(
     entity: &EntityId,
 ) -> Result<Option<Vec<u8>>> {
     ENTITY_DOC_HEAD.get_bytes(store, txn, &HexId(*entity))
+}
+
+/// A record's exact stored document head row (full key and bytes) and the
+/// document slot it names, read in `txn`; `None` without a head. For a
+/// legal-clone copy of the stored rows (LEGAL-HOLD-USE = B as a clone): the
+/// bytes are copied as stored, never re-encoded.
+pub(crate) fn record_head_row_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    entity: &EntityId,
+) -> Result<Option<(Vec<u8>, Vec<u8>, DocumentSlot)>> {
+    let key = HexId(*entity);
+    let Some(bytes) = ENTITY_DOC_HEAD.get_bytes(store, txn, &key)? else {
+        return Ok(None);
+    };
+    let Some(h) = ENTITY_DOC_HEAD.get(store, txn, &key)? else {
+        return Err(Error::CorruptedIndex("entity document head"));
+    };
+    let slot = DocumentSlot::from_hex(&h.document)?;
+    Ok(Some((ENTITY_DOC_HEAD.key_bytes(&key), bytes, slot)))
 }
 
 /// Read-only view for existing typed record readers; the durable row retains

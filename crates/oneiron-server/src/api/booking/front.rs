@@ -117,7 +117,7 @@ async fn run_constraint_turn_in(
         session_ref: input.session_ref.clone(),
     });
     public_availability::validate_public_request(&authority.publication, &listing)?;
-    validate_operation_shape(&listing)?;
+    validate_operation_shape(&listing, transport.credential.is_none())?;
     let front = authority
         .publication
         .constraint_front
