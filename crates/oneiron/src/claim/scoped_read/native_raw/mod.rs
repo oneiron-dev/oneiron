@@ -40,7 +40,7 @@ impl<'a> NativeRawRead<'a> {
                     let body = if self.lane.actor_key.secret_sight()
                         == crate::secret_custody::SecretSight::Masked
                     {
-                        crate::memory::repo_secret_reads::repo_asset_body_in_txn(
+                        crate::memory::repo_secret_reads::repo_asset_body_known_in_txn(
                             self.lane.vault,
                             txn,
                             id,

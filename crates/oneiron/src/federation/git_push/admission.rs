@@ -43,8 +43,8 @@ use crate::policy_model::owners_in_txn;
 
 use super::GitPushGrantStanding;
 use super::caller::{
-    GitPushAdmission, GitPushArm, GitPushCaller, GitPushRefChange, GitPushStamp, ServedPushRepo,
-    class_byte, refused,
+    GitPushAdmission, GitPushArm, GitPushCaller, GitPushCheckout, GitPushRefChange, GitPushStamp,
+    ServedPushRepo, class_byte, refused,
 };
 
 /// No live GitPush grant names this pusher and this repo.
@@ -72,7 +72,12 @@ const PATHS_UNKNOWN: &str = "the checkout push's changed paths could not be list
 impl Vault {
     /// The one receive-pack decision, in the caller's snapshot `txn`, for
     /// the push `caller` makes into `served`, over the checkout `ticket`
-    /// when it came on the lease route.
+    /// when it came on the lease route. A push that names a lease is held to
+    /// it whatever arm admits it (FIX 8729): the lease, its TASK and
+    /// attempt, and the run's own Grant over the served repo must stand, and
+    /// the stamp carries the lease, so the final writer judges every ref move
+    /// and changed path under it again. Only a push that names no lease is a
+    /// raw push.
     ///
     /// # Errors
     /// [`crate::error::CodeError::GitPushCapabilityRequired`] when no arm admits the push;
@@ -84,12 +89,15 @@ impl Vault {
         served: &ServedPushRepo,
         ticket: Option<&str>,
     ) -> Result<GitPushAdmission> {
+        let leased = ticket
+            .map(|ticket| self.git_push_checkout_admits_in_txn(txn, caller, served, ticket))
+            .transpose()?;
         if self.git_push_owner_in_txn(txn, caller.principal)? {
-            return Ok(GitPushAdmission::sealed(GitPushStamp::new(
-                GitPushArm::Owner,
-                caller,
+            return held_to_lease(
+                GitPushStamp::new(GitPushArm::Owner, caller, served),
+                leased.as_ref(),
                 served,
-            )));
+            );
         }
         if !caller.host {
             return Err(refused(&served.name, IN_PROCESS_OWNER_ONLY));
@@ -97,7 +105,7 @@ impl Vault {
         // A Grant read that fails refuses only a push no other arm admits:
         // it is logged, and a checkout's own fence and Grant still decide.
         let no_grant = match self.git_push_grant_admits_in_txn(txn, caller, served) {
-            Ok(Ok(stamp)) => return Ok(GitPushAdmission::sealed(stamp)),
+            Ok(Ok(stamp)) => return held_to_lease(stamp, leased.as_ref(), served),
             Ok(Err(reason)) => reason,
             Err(error) => {
                 tracing::warn!(
@@ -107,10 +115,10 @@ impl Vault {
                 NO_GRANT
             }
         };
-        let Some(ticket) = ticket else {
+        let Some(leased) = leased else {
             return Err(refused(&served.name, no_grant));
         };
-        match self.git_push_checkout_admits_in_txn(txn, caller, served, ticket)? {
+        match leased {
             Ok(stamp) => Ok(GitPushAdmission::sealed(stamp)),
             // A Grant's pact lapse or root hold remains the reason when
             // the independent Checkout arm also admits nothing.
@@ -281,13 +289,13 @@ impl Vault {
             }
             match self.admit_repo_member_in_txn(txn, caller.principal, class, bounds.repo)? {
                 Ok(membership) => {
-                    let mut stamp = GitPushStamp::new(GitPushArm::Checkout, caller, served).naming(
-                        membership.grant,
-                        repo,
-                        anchor,
-                    );
-                    stamp.checkout = Some(ticket.to_owned());
-                    stamp.class = Some(class_byte(class));
+                    let stamp = GitPushStamp::new(GitPushArm::Checkout, caller, served)
+                        .naming(membership.grant, repo, anchor)
+                        .with_checkout(GitPushCheckout {
+                            ticket: ticket.to_owned(),
+                            repo,
+                            class: class_byte(class),
+                        });
                     return Ok(Ok(stamp));
                 }
                 Err(RepoAccessRefusal::MembershipHeld) => held = true,
@@ -339,14 +347,17 @@ impl Vault {
     /// live owner; the same GitPush grant still stands for the same repo
     /// and anchor; or the same checkout still holds, and a live Grant of
     /// the pusher's over this repo admits each ref move and changed path in
-    /// `changes`. The current credential is still unrevoked. In-process
+    /// `changes`. A push that named a lease meets that checkout recheck
+    /// whatever arm admitted it (FIX 8729). The current credential is still
+    /// unrevoked. In-process
     /// pushes have no credential to recheck. A recheck that cannot read
     /// admits nothing: an owner push's is logged and refused with the typed
     /// capability refusal, which he retries (FIX 7134).
     ///
-    /// `Ok` names, for a checkout push, the Grant that admitted each ref move
-    /// by its full ref name (FIX 7138), for the intent to record
-    /// ([`GitPushStamp::record_ref_grants`]); it is empty for the other arms.
+    /// `Ok` names, for a push that named a lease, the Grant that admitted
+    /// each ref move by its full ref name (FIX 7138), for the intent to
+    /// record ([`GitPushStamp::record_ref_grants`]); it is empty for a raw
+    /// push.
     ///
     /// # Errors
     /// [`crate::error::CodeError::GitPushCapabilityRequired`] when the authority no longer
@@ -360,35 +371,44 @@ impl Vault {
     ) -> Result<BTreeMap<String, EntityId>> {
         let principal = EntityId::from_hex(&stamp.principal)
             .map_err(|_| refused(&stamp.served, NO_LONGER_STANDS))?;
-        let stands = match stamp.arm {
+        match stamp.arm {
             // A recheck that cannot read never lands the push (FIX 7134): it
             // is logged and refused with the typed capability refusal, as
             // the non-owner arms are.
-            GitPushArm::Owner => {
-                return match self.git_push_owner_rechecks_in_txn(txn, stamp, principal) {
-                    Ok(true) => Ok(BTreeMap::new()),
-                    Ok(false) => Err(refused(&stamp.served, NO_LONGER_STANDS)),
-                    Err(error) => {
-                        tracing::warn!(
-                            kind = ?error.kind(),
-                            "git push: an owner push's recheck did not read; it is refused"
-                        );
-                        Err(refused(&stamp.served, OWNER_RECHECK_UNREAD))
-                    }
-                };
+            GitPushArm::Owner => match self.git_push_owner_rechecks_in_txn(txn, stamp, principal) {
+                Ok(true) => {}
+                Ok(false) => return Err(refused(&stamp.served, NO_LONGER_STANDS)),
+                Err(error) => {
+                    tracing::warn!(
+                        kind = ?error.kind(),
+                        "git push: an owner push's recheck did not read; it is refused"
+                    );
+                    return Err(refused(&stamp.served, OWNER_RECHECK_UNREAD));
+                }
+            },
+            GitPushArm::Grant => {
+                if !self.git_push_grant_rechecks_in_txn(txn, stamp, principal)? {
+                    return Err(refused(&stamp.served, NO_LONGER_STANDS));
+                }
             }
-            GitPushArm::Grant => self.git_push_grant_rechecks_in_txn(txn, stamp, principal)?,
-            GitPushArm::Checkout => {
-                let changes = changes.ok_or_else(|| refused(&stamp.served, PATHS_UNKNOWN))?;
-                return self
-                    .git_push_checkout_rechecks_in_txn(txn, stamp, principal, repo, changes);
-            }
-        };
-        if !stands {
-            return Err(refused(&stamp.served, NO_LONGER_STANDS));
+            GitPushArm::Checkout => {}
         }
-        self.git_push_credential_rechecks_in_txn(txn, stamp)?;
-        Ok(BTreeMap::new())
+        // A push that named a lease is held to it whatever arm admitted it
+        // (FIX 8729): the same lease, its TASK and attempt, and a live Grant
+        // of the pusher's over every ref move and changed path.
+        if stamp.checkout.is_some() {
+            let changes = changes.ok_or_else(|| refused(&stamp.served, PATHS_UNKNOWN))?;
+            return self.git_push_checkout_rechecks_in_txn(txn, stamp, principal, repo, changes);
+        }
+        match stamp.arm {
+            GitPushArm::Owner => Ok(BTreeMap::new()),
+            GitPushArm::Grant => {
+                self.git_push_credential_rechecks_in_txn(txn, stamp)?;
+                Ok(BTreeMap::new())
+            }
+            // A checkout push names its lease.
+            GitPushArm::Checkout => Err(refused(&stamp.served, NO_LONGER_STANDS)),
+        }
     }
 
     /// The owner, read again: still a live owner, his credential unrevoked.
@@ -455,15 +475,11 @@ impl Vault {
         changes: &[GitPushRefChange],
     ) -> Result<BTreeMap<String, EntityId>> {
         let no_longer = || refused(&stamp.served, NO_LONGER_STANDS);
-        let (Some(ticket), Some(_), Some(anchor_repo), Some(class)) = (
-            stamp.checkout.as_deref(),
-            stamp
-                .grant
-                .as_deref()
-                .and_then(|hex| EntityId::from_hex(hex).ok()),
-            stamp.repo,
-            stamp.class.and_then(EdgeActorClass::try_from_u8),
-        ) else {
+        let Some(checkout) = stamp.checkout.as_ref() else {
+            return Err(no_longer());
+        };
+        let (ticket, anchor_repo) = (checkout.ticket.as_str(), checkout.repo);
+        let Some(class) = EdgeActorClass::try_from_u8(checkout.class) else {
             return Err(no_longer());
         };
         let lease = crate::credential_door::require_checkout_lease_in_txn(
@@ -565,4 +581,27 @@ fn standing_names(
         && standing.stands_at(now)
         && standing.grant.scope == scope
         && owners.contains(&standing.delegated_by)
+}
+
+/// `stamp`, an arm's admission, held to the lease the push named (FIX 8729):
+/// as it stands when it named none; carrying the lease when the lease, its
+/// TASK and attempt and the run's Grant stand (`leased`, the Checkout arm's
+/// own decision); else refused with that arm's reason. A named lease never
+/// falls back to a raw push.
+fn held_to_lease(
+    stamp: GitPushStamp,
+    leased: Option<&std::result::Result<GitPushStamp, &'static str>>,
+    served: &ServedPushRepo,
+) -> Result<GitPushAdmission> {
+    match leased {
+        None => Ok(GitPushAdmission::sealed(stamp)),
+        Some(Ok(lease)) => {
+            let checkout = lease
+                .checkout
+                .clone()
+                .ok_or_else(|| refused(&served.name, STALE_CHECKOUT))?;
+            Ok(GitPushAdmission::sealed(stamp.with_checkout(checkout)))
+        }
+        Some(Err(reason)) => Err(refused(&served.name, reason)),
+    }
 }
