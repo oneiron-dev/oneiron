@@ -3,9 +3,15 @@
 
 use super::{EngineLimit, memory_share};
 
+macro_rules! engine_limit_rows {
+    ($($row:expr),+ $(,)?) => {
+        /// Every engine row.
+        pub const ALL: [Self; [$(stringify!($row)),+].len()] = [$($row),+];
+    };
+}
+
 impl EngineLimit {
-    /// Every engine row.
-    pub const ALL: [Self; 163] = [
+    engine_limit_rows![
         Self::KeyedFilterJsonBytes,
         Self::KeyedNamespaceSegments,
         Self::KeyedNamespaceBytes,
@@ -166,6 +172,7 @@ impl EngineLimit {
         Self::EmbeddingDimensions,
         Self::MemoryReasonEvidenceRows,
         Self::MemoryReasonTokens,
+        Self::DecisionQuestionsPerCall,
         Self::ContextEdgeHops,
         Self::ContextNeighbors,
         Self::ContextSelectedEdges,
@@ -336,6 +343,7 @@ impl EngineLimit {
             Self::EmbeddingDimensions => "limits.embedding_dimensions",
             Self::MemoryReasonEvidenceRows => "limits.memory_reason_evidence_rows",
             Self::MemoryReasonTokens => "limits.memory_reason_tokens",
+            Self::DecisionQuestionsPerCall => "limits.decision_questions_per_call",
             Self::ContextEdgeHops => "limits.context_edge_hops",
             Self::ContextNeighbors => "limits.context_neighbors",
             Self::ContextSelectedEdges => "limits.context_selected_edges",
@@ -586,6 +594,7 @@ impl EngineLimit {
             // question served in ordinary use. Past it the row asks, and the
             // whole question is served.
             Self::MemoryReasonTokens => 16_777_216,
+            Self::DecisionQuestionsPerCall => super::DEFAULT_DECISION_QUESTIONS_PER_CALL as u64,
             // Owner-ruled ABC row 11 (FIX 62).
             Self::ContextEdgeHops => 1_024,
             // Owner-ruled ABC row 12 (FIX 63).
