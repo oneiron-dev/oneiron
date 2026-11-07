@@ -75,6 +75,7 @@ pub mod schema;
 pub mod selector;
 pub mod server_state;
 pub mod shared_leave;
+pub(crate) mod source_audiences;
 mod sweep_fence;
 #[cfg(test)]
 mod tests;
