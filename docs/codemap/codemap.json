@@ -26107,7 +26107,7 @@
      "path": "src/deletion/legal_hold/prospective.rs",
      "purpose": "A HOST order's explicit prospective capture of new on-record messages (LEGAL-HOLD-USE = B as a clone, owner…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 18
      }
     },
     {
