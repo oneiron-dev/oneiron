@@ -502,7 +502,8 @@ pub(crate) fn settle_code_consent_wait_listing_in_txn(
 /// Settles `row`'s open wait as `settled` for `reasons`, with `reply`, the
 /// reply its parked run is delivered beside `rows`, in the caller's writer:
 /// the settlement, its receipt in the consent Gate family, and the delivery
-/// that wakes the run, in one commit. Every held effect kind settles here.
+/// that wakes the run, in one commit. Every held effect kind settles here,
+/// its reply's origins unknown (FIX 7083).
 pub(super) fn settle_with_reply_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -514,7 +515,7 @@ pub(super) fn settle_with_reply_in_txn(
 ) -> Result<bool> {
     let wait_id = row.binding.wait_id;
     let now = now_ms();
-    crate::code_run::deliver_wait_listing_in_txn(vault, txn, wait_id, reply, rows, now)?;
+    crate::code_run::deliver_wait_listing_in_txn(vault, txn, wait_id, reply, rows, None, now)?;
     let delivered = crate::code_run::settled_wait_reply_in_txn(vault, txn, wait_id)?.ok_or(
         Error::InvariantViolation("a settled code consent wait kept no reply"),
     )?;

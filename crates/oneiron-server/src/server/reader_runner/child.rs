@@ -2,13 +2,18 @@
 //! The two `Child` impls keep their seat, clock, and meter behavior together.
 //! Child and shared-state definitions stay in the parent module.
 
+mod compaction;
+
+use compaction::CompactionBinding;
+use oneiron::claim::CallerLocality;
+
 use super::{
     AgentDispatcher, AgentVerbDoor, Arc, BudgetDenied, BudgetGuard, CallClass, CallEnvelope,
     CallPurpose, Child, ContentPart, Duration, ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorError,
     EngineExecutorStatus, EngineNativeExecutor, HostSelfDispatcher, Instant, JsCodeModeRuntime,
     LlmBackend, LlmError, LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality,
-    ModelSeat, ModelTierRef, OffRecordSession, READER_CHILD_READ_ONLY, ReaderJobKind, ReaderJobs,
-    ReaderRunEnd, ResponseFormat, SCOPED_CHILD_PARENT_LEASE_LOST, SUMMARY_PURPOSE_NAME,
+    ModelSeat, ModelTierRef, OffRecordSession, ReaderJobKind, ReaderJobs, ReaderRunEnd,
+    ResponseFormat, SCOPED_CHILD_PARENT_LEASE_LOST, SUMMARY_PURPOSE_NAME,
     SUMMARY_READ_BYTES_PER_TOKEN, ScopedChildDoor, ScopedChildPorts, ScopedChildProfile, SeatKind,
     SeatTask, Shared, SpendScopeId, SummarizeRecipe, SummaryRead, TierPrecedence, Unseated, Vault,
     birth_under_inherited_list, ensure_inherited_model_list, reader_task_brief, run_seat,
@@ -81,6 +86,7 @@ impl Child {
     /// Runs the child and settles it as its run ended.
     pub(super) fn run_and_settle(&self, shared: &Shared, vault: &Arc<Vault>) {
         let job = &self.job;
+        let caller = shared.seats.caller(job.binding.parent_run);
         // A scoped child's door is its loan, Grant-checked at each call
         // (FIX 7507); the read child's door never stands in for it.
         let door: Arc<dyn AgentVerbDoor> = match &job.kind {
@@ -88,10 +94,7 @@ impl Child {
                 Arc::new(ScopedChildDoor::new(Arc::clone(vault), job.clone()))
             }
             ReaderJobKind::Read | ReaderJobKind::Summarize { .. } => {
-                let door = crate::api::ReaderChildDoor::new(
-                    Arc::clone(vault),
-                    shared.seats.caller(job.binding.parent_run),
-                );
+                let door = crate::api::ReaderChildDoor::new(Arc::clone(vault), caller.clone());
                 Arc::new(if job.kind == ReaderJobKind::Read {
                     door.with_nested_readers()
                 } else {
@@ -101,7 +104,7 @@ impl Child {
         };
         let settled = match &self.session {
             None => {
-                let end = self.metered(vault, None, door);
+                let end = self.metered(vault, None, door, caller.locality());
                 ReaderJobs::canonical(vault).complete(
                     job.task,
                     job.generation,
@@ -115,14 +118,14 @@ impl Child {
                 let Ok(session) = vault.off_record_session_vault().bind(session_ref) else {
                     return;
                 };
-                let end = self.metered(vault, Some(&session), door);
+                let end = self.metered(vault, Some(&session), door, caller.locality());
                 ReaderJobs::for_session(&session, *participant).and_then(|jobs| {
                     jobs.complete(job.task, job.generation, end, unix_millis_now())
                 })
             }
         };
         if let Err(error) = settled {
-            tracing::warn!(%error, task = %job.task.to_hex(), "a reader child was not settled; its cutoff settles it");
+            tracing::warn!(%error, task = %job.task.to_hex(), "a reader child completion was not recorded");
         }
     }
 
@@ -135,12 +138,13 @@ impl Child {
         vault: &Vault,
         session: Option<&OffRecordSession<'_>>,
         door: Arc<dyn AgentVerbDoor>,
+        caller: CallerLocality,
     ) -> ReaderRunEnd {
         let job = &self.job;
         // A scoped child its own host profiled (FIX 7508) runs on that
         // profile's backend and its parent's meter, never the host's.
         if let Some(profile) = self.profile() {
-            return self.metered_on_profile(vault, session, door, &profile);
+            return self.metered_on_profile(vault, session, door, &profile, caller);
         }
         let (guard, recorded) = match self.meter(vault) {
             Ok(meter) => meter,
@@ -167,9 +171,15 @@ impl Child {
         // parent room a soft hold shares included, never past the room the
         // meter opened with, and its spend books there as the next call is
         // admitted. A child on the host's meter runs on its backend as it is.
-        let live = recorded.map(|scope| {
+        let live = recorded.as_ref().map(|scope| {
             let limit = guard.read().limit_units;
-            crate::ai_host::live_lease::LiveLease::new(vault, Some(scope), guard.clone(), limit, 0)
+            crate::ai_host::live_lease::LiveLease::new(
+                vault,
+                Some(scope.clone()),
+                guard.clone(),
+                limit,
+                0,
+            )
         });
         let scoped_backend = live.as_ref().and_then(|live| {
             self.provider.reader_backend_with_lease(
@@ -197,14 +207,36 @@ impl Child {
             Some(leased) => leased,
             None => backend.as_ref(),
         };
+        let compaction = CompactionBinding {
+            caller,
+            spend: recorded,
+        };
         let end = match &job.kind {
-            ReaderJobKind::Read => self.run(vault, session, backend, &guard, door, None, None),
+            ReaderJobKind::Read => self.run(
+                vault,
+                session,
+                backend,
+                &guard,
+                door,
+                None,
+                None,
+                Some(compaction),
+            ),
             // A scoped child runs as a read child's run does, with its lent
             // ports bound; one whose authority or ports do not hold ends
             // before any call, never as a read child.
             ReaderJobKind::ScopedAgent { .. } => {
                 match scoped_child_service(vault, self.provider.as_ref(), job) {
-                    Ok(ports) => self.run(vault, session, backend, &guard, door, ports, None),
+                    Ok(ports) => self.run(
+                        vault,
+                        session,
+                        backend,
+                        &guard,
+                        door,
+                        ports,
+                        None,
+                        Some(compaction),
+                    ),
                     Err(end) => end,
                 }
             }
@@ -422,6 +454,7 @@ impl Child {
         door: Arc<dyn AgentVerbDoor>,
         ports: Option<Arc<dyn ScopedChildPorts>>,
         profile: Option<&ScopedChildProfile>,
+        compaction: Option<CompactionBinding>,
     ) -> ReaderRunEnd {
         let job = &self.job;
         let provider = self.provider.as_ref();
@@ -476,6 +509,8 @@ impl Child {
         } else if let Err(end) = self.held_to_list(&config.model) {
             return end;
         }
+        let mut compaction =
+            compaction.and_then(|binding| self.compaction(&dispatcher, binding, profile));
         loop {
             let parked = {
                 let reactor = match tokio::runtime::Builder::new_current_thread()
@@ -509,6 +544,9 @@ impl Child {
                 };
                 if let Some(seat) = &seat {
                     executor = executor.with_model_seat(seat);
+                }
+                if let Some(compaction) = compaction.as_mut() {
+                    executor = executor.with_compaction(compaction);
                 }
                 // A child's steps get type feedback from the host's one service, as
                 // every run's do (FIX 8277).
@@ -550,20 +588,16 @@ impl Child {
                                     }
                                 };
                             }
-                            EngineExecutorStatus::WindowFull { .. } => {
-                                return ReaderRunEnd::Failed("window_full".to_owned());
+                            EngineExecutorStatus::WindowFull { reason, .. } => {
+                                match self.join_compaction(&mut executor, *reason) {
+                                    Ok(()) => continue,
+                                    Err(end) => return end,
+                                }
                             }
                         },
                         Ok(Err(error)) => error,
                     };
                     return match error {
-                        // The run's last step committed; the trailing bubble it may
-                        // not say is refused after that.
-                        EngineExecutorError::HostRefused { code }
-                            if code == READER_CHILD_READ_ONLY =>
-                        {
-                            ReaderRunEnd::Completed
-                        }
                         // A host check holds new host-paid work as a spent line
                         // stops it (FIX 9924).
                         EngineExecutorError::Llm(LlmError::BudgetDenied(
