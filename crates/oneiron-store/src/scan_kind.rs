@@ -58,7 +58,7 @@ pub enum EngineScan {
     /// The sync rematerialization markers and quarantine rows a pack's
     /// exclusion index reads.
     PackQuarantineRows,
-    /// The legacy lexical-hint claims a target's hint lookup walks.
+    /// The CLAIM rows a target's lexical-hint lookup walks.
     LexicalHintRows,
     /// The graduation answer log a gate receipt query projects.
     AnswerReceiptRows,
@@ -144,6 +144,10 @@ pub enum EngineScan {
     /// One MACHINE claim's target index: the ids of its birth, transitions
     /// and handoffs.
     MachineHistoryTargetRows,
+    /// The prior-frontier tips one signed MACHINE claim transition names,
+    /// which its put door reads whole, per claim (once refused past 64;
+    /// FIX 8673).
+    MachineTransitionFrontier,
     /// One claim's incident edges of every kind, one way, which a claim-VAD
     /// consolidation or clear reads.
     ClaimVadIncidentEdges,

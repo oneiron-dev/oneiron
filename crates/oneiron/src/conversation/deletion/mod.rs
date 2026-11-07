@@ -645,7 +645,6 @@ impl Vault {
         Ok(RoomPersonEraseOutcome {
             outcomes,
             kept: progress.kept.len(),
-            law_notice: progress.law_notice,
         })
     }
 }
