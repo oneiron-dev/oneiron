@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1275 facade rows, 4617 declarations.
-Inputs: 1204 of 1275 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1104 of 1275 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1279 facade rows, 4631 declarations.
+Inputs: 1208 of 1279 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1108 of 1279 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -1324,6 +1324,7 @@ class TurnProgramWakeOutcomeUnpersisted(TypedDict):
     reason: UnpersistedWakeReason
 TurnProgramWakeOutcome = TurnProgramWakeOutcomeNotArmed | TurnProgramWakeOutcomeEvaluated | TurnProgramWakeOutcomeUnpersisted
 class WitnessReceipt(TypedDict):
+    turn_id: EntityId
     turn_short_id: str
     message_short_ids: list[str]
     receipt_ref: str
@@ -7626,10 +7627,11 @@ class FederationBurstReceipt(TypedDict):
 class FederationBurstReplayRequest(TypedDict):
     peer: FederationBurstPeerRequest
     batch_ref: str
+FederationPayloadBytes = list[int]
 class FederationIsolatedUpdate(TypedDict):
     request_ref: str
     window: str
-    admitted_update: list[int]
+    admitted_update: FederationPayloadBytes
     rate_ratio: float
     streak_ratio: float
 class FederationBurstReviewBundle(TypedDict):
@@ -9388,6 +9390,7 @@ class RoleSwapReceipt(TypedDict):
     at: int
     role: ModelRole
     previous: NotRequired[ModelBinding | None]
+    previous_swap: NotRequired[EntityId | None]
     binding: ModelBinding
     checkpoint: PinnedCheckpoint
     evaluation: NotRequired[HeldOutResult | None]
@@ -12821,6 +12824,47 @@ class CodeRunModelHealCountRequest(TypedDict):
 class CodeRunModelHealCountView(TypedDict):
     model_id: str
     healed_turns: int
+class CodeRunCorrectionsRequest(TypedDict):
+    run_ref: str
+    after_step: NotRequired[int | None]
+    limit: NotRequired[int | None]
+class CodeRunCorrectionPolicy(TypedDict):
+    normalization_passes: int
+    model_repair_retries: int
+class ExecutorWireRepairs(TypedDict):
+    trimmed_transport_whitespace: bool
+    stripped_code_fence: bool
+    stripped_exec_wrapper: bool
+    discarded_console_blocks: int
+class CodeRunCorrectionOutcomeClean(TypedDict):
+    kind: Literal["clean"]
+class CodeRunCorrectionOutcomeNormalized(TypedDict):
+    kind: Literal["normalized"]
+class CodeRunCorrectionOutcomeRejected(TypedDict):
+    kind: Literal["rejected"]
+    reason: str
+CodeRunCorrectionOutcome = CodeRunCorrectionOutcomeClean | CodeRunCorrectionOutcomeNormalized | CodeRunCorrectionOutcomeRejected
+class CodeRunCorrectionCheckpoint(TypedDict):
+    step: int
+    state_hash: str
+class CodeRunCorrection(TypedDict):
+    schema: int
+    run_id: EntityId
+    step: int
+    attempt: int
+    recorded_at_ms: int
+    model_id: str
+    repairs: ExecutorWireRepairs
+    outcome: CodeRunCorrectionOutcome
+    policy: CodeRunCorrectionPolicy
+    model_repair_retries_used: int
+    exhausted: bool
+    checkpoint: NotRequired[CodeRunCorrectionCheckpoint | None]
+class CodeRunCorrectionsView(TypedDict):
+    run_ref: str
+    policy: CodeRunCorrectionPolicy
+    records: list[CodeRunCorrection]
+    next_after_step: NotRequired[int | None]
 class CodeRunTypeDiagnosticsRequest(TypedDict):
     check_ref: str
     session_ref: NotRequired[str | None]
@@ -14447,7 +14491,7 @@ class PlannedSpawnRead(TypedDict):
     spawn_ref: EntityId
 SpawnPhase = Literal["planned", "launched", "refused", "erased"]
 SpawnErasure = Literal["asker_erased", "target_erased"]
-CoordinationPatternView = Literal["solo", "ceo_decides", "committee", "vote", "market", "rotation"]
+SpawnPattern = Literal["solo", "ceo_decides", "committee", "vote", "market", "rotation"]
 class SkillRevisionView(TypedDict):
     skill_ref: EntityId
     version: str
@@ -14459,7 +14503,7 @@ class PlanObservation(TypedDict):
     type_ref: TypeStamp
     model: str
     width: int
-    pattern: CoordinationPatternView
+    pattern: SpawnPattern
     hard_cap_units: NotRequired[int | None]
     expected_spend_units: int
     available_units: NotRequired[int | None]
@@ -14478,7 +14522,7 @@ class LaunchedMember(TypedDict):
 TeamAxis = Literal["converge", "diverge"]
 class ResolvedTeam(TypedDict):
     type_ref: TypeStamp
-    pattern: CoordinationPatternView
+    pattern: SpawnPattern
     width: int
     model: str
     axis: NotRequired[TeamAxis | None]
@@ -14488,7 +14532,7 @@ class ResolvedTeam(TypedDict):
     team_ref: NotRequired[str | None]
 class TeamBindingView(TypedDict):
     team_ref: str
-    pattern: CoordinationPatternView
+    pattern: SpawnPattern
     leader: EntityId
     member_attempt_refs: list[EntityId]
     proposal_refs: list[str]
@@ -14497,7 +14541,7 @@ class TeamBindingView(TypedDict):
 class TeamReceiptView(TypedDict):
     team_ref: str
     type_ref: TypeStamp
-    pattern: CoordinationPatternView
+    pattern: SpawnPattern
     pattern_skill: NotRequired[SkillRevisionView | None]
     axis: TeamAxis
     width: int
@@ -14596,14 +14640,14 @@ class PlannedSpawnObservation(TypedDict):
     critics: list[CriticObservation]
     learning: list[LearningObservation]
     issues: list[ObservationIssue]
-class SpawnAskKnobSeed(TypedDict, Generic[T]):
+class SpawnKnobSeed(TypedDict, Generic[T]):
     mode: Literal["seed"]
     value: T
     weight_runs: float
-class SpawnAskKnobPin(TypedDict, Generic[T]):
+class SpawnKnobPin(TypedDict, Generic[T]):
     mode: Literal["pin"]
     value: T
-SpawnAskKnob = SpawnAskKnobSeed[T] | SpawnAskKnobPin[T]
+SpawnKnob = SpawnKnobSeed[T] | SpawnKnobPin[T]
 class SpawnIntentRequest(TypedDict):
     intent_key: str
     prompt: str
@@ -14611,10 +14655,10 @@ class SpawnIntentRequest(TypedDict):
     need: str
     care: NotRequired[str | None]
     notes: NotRequired[str | None]
-    model: NotRequired[SpawnAskKnob[str] | None]
-    width: NotRequired[SpawnAskKnob[int] | None]
-    pattern: NotRequired[SpawnAskKnob[str] | None]
-    budget_cap_units: NotRequired[SpawnAskKnob[int] | None]
+    model: NotRequired[SpawnKnob[str] | None]
+    width: NotRequired[SpawnKnob[int] | None]
+    pattern: NotRequired[SpawnKnob[str] | None]
+    budget_cap_units: NotRequired[SpawnKnob[int] | None]
     balance_free_prompt: NotRequired[bool]
 class SpawnIntentReply(TypedDict):
     intent_key: str
@@ -15436,6 +15480,10 @@ class DeckDesignView(TypedDict):
     plans: list[DeckPlanView | None]
     decisions: list[list[DeckDesignDecision]]
     presentation: NotRequired[DeckPresentation]
+class GraphicLimits(TypedDict):
+    svg_bytes: int
+    raster_bytes: int
+    raster_pixels: int
 class DeckEmissionNames(TypedDict):
     text: str
     table: str
@@ -15449,6 +15497,7 @@ class DeckEmissionRequest(TypedDict):
     template: ArtifactVersionRef
     assets: NotRequired[dict[str, ArtifactVersionRef]]
     fonts: NotRequired[list[ArtifactVersionRef]]
+    graphics: NotRequired[GraphicLimits | None]
     names: DeckEmissionNames
     name: str
     run_ref: str
@@ -15674,6 +15723,7 @@ class DeckTransaction(TypedDict):
     base: Digest
     marks: NotRequired[IdMarks]
     seed: str
+    graphics: NotRequired[GraphicLimits | None]
     steps: list[DeckStep]
 DeckRenderSide = Literal["base", "candidate"]
 class DeckRender(TypedDict):
@@ -15981,6 +16031,37 @@ TaskAskWait = TaskAskWaitPending | TaskAskWaitChanged | TaskAskWaitReady | TaskA
 class TaskAnswerRequest(TypedDict):
     handle: TaskAskHandle
     word: TaskAskWord
+class AskForwardActWord(TypedDict):
+    word: TaskAskWord
+AskForwardAct = Literal["void"] | AskForwardActWord
+class TaskAnswerForwardChallengeRequest(TypedDict):
+    handle: TaskAskHandle
+    intent_key: str
+    act: AskForwardAct
+class TaskAnswerForwardChallenge(TypedDict):
+    challenge: str
+class AskForwardHolderProof(TypedDict):
+    token: str
+    signature: str
+class TaskAnswerForwardRequest(TypedDict):
+    handle: TaskAskHandle
+    intent_key: str
+    act: AskForwardAct
+    proof: AskForwardHolderProof
+class AskForwardReceiptPending(TypedDict):
+    state: Literal["pending"]
+    intent_ref: EntityId
+class AskForwardReceiptAnswered(TypedDict):
+    state: Literal["answered"]
+    intent_ref: EntityId
+    answer: TaskAskAnswer
+class AskForwardReceiptVoided(TypedDict):
+    state: Literal["voided"]
+    intent_ref: EntityId
+    generation: int
+AskForwardReceipt = AskForwardReceiptPending | AskForwardReceiptAnswered | AskForwardReceiptVoided
+class TaskAnswerForwardStatusRequest(TypedDict):
+    intent_ref: EntityId
 class OutcomeLabel(TypedDict):
     answer: str
     fact: str
@@ -20801,6 +20882,7 @@ class DeckExportRequest(TypedDict):
     artifact_ref: str
     run_ref: str
     made_by: NotRequired[Any | None]
+    graphics: NotRequired[GraphicLimits | None]
 class DeckExportView(TypedDict):
     frontier: list[int]
     profile: str
@@ -23830,15 +23912,6 @@ class ReportBlockedInput(TypedDict):
 class ReportBlockedOutput(TypedDict):
     receipt: str
 SpawnCare = Literal["light", "medium", "high", "xhigh", "max"]
-class SpawnKnobSeed(TypedDict, Generic[T]):
-    mode: Literal["seed"]
-    value: T
-    weight_runs: float
-class SpawnKnobPin(TypedDict, Generic[T]):
-    mode: Literal["pin"]
-    value: T
-SpawnKnob = SpawnKnobSeed[T] | SpawnKnobPin[T]
-SpawnPattern = Literal["solo", "ceo_decides", "committee", "vote", "market", "rotation"]
 class AgentSpawnInput(TypedDict):
     need: str
     prompt: str
@@ -23888,7 +23961,10 @@ class AgentSpawnOutputProposedWiden(TypedDict):
 class AgentSpawnOutputTargetErased(TypedDict):
     state: Literal["target_erased"]
     kind: AgentSpawnKind
-AgentSpawnOutput = AgentSpawnOutputQueued | AgentSpawnOutputProposedWiden | AgentSpawnOutputTargetErased
+class AgentSpawnOutputAskerErased(TypedDict):
+    state: Literal["asker_erased"]
+    kind: AgentSpawnKind
+AgentSpawnOutput = AgentSpawnOutputQueued | AgentSpawnOutputProposedWiden | AgentSpawnOutputTargetErased | AgentSpawnOutputAskerErased
 class LeaderSplitInput(TypedDict):
     leader: NotRequired[str | None]
     slice: NotRequired[ScopeScope | None]
