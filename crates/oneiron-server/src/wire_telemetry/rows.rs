@@ -257,6 +257,7 @@ impl LimitRow {
         Self::Engine(EngineLimit::EmbeddingDimensions),
         Self::Engine(EngineLimit::MemoryReasonEvidenceRows),
         Self::Engine(EngineLimit::MemoryReasonTokens),
+        Self::Engine(EngineLimit::DecisionQuestionsPerCall),
         Self::Engine(EngineLimit::ContextEdgeHops),
         Self::Engine(EngineLimit::ContextNeighbors),
         Self::Engine(EngineLimit::ContextSelectedEdges),

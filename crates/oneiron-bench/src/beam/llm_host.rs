@@ -307,6 +307,7 @@ impl ModelSession {
                 response_format: ResponseFormat::Text,
                 locality: ModelLocality::ThirdParty,
                 host_keyless: false,
+                host_paid: false,
             },
             messages: vec![
                 message(LlmMessageRole::System, system),
