@@ -30,6 +30,9 @@ side_tables! {
         => crate::mail_pack::erase_compliance_actor_in_txn;
     /// The org compliance search setting, off when absent (FIX 12560). Key: ().
     MAIL_PACK_COMPLIANCE_SETTING: VaultMeta b"mail_pack:compliance_setting:v1" Named;
+    /// A mail message's header-only revision its body superseded, owed its delete (FIX 15413).
+    /// Key: id16(source) + blake3 (32) of the provider id + id16(MESSAGE).
+    MAIL_PACK_HEADER_RETIREMENT: VaultMeta b"mail_pack:header_retirement:v1:" Named;
     /// Where one mbox or Takeout import into a mail source stands (FIX 12559): the file, its
     /// size and change time, the archive entry and byte offset. Key: id16(source) + blake3 (32)
     /// of the path.
