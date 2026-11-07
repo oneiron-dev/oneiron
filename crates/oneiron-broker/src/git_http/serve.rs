@@ -24,8 +24,7 @@ use crate::frame::{
     STREAM_CHUNK, read_chunk, read_segment, write_chunk, write_segment, write_stream_end,
     write_stream_header,
 };
-use crate::send::{Sender, encoded, push_wiped, reply_headers, watchable};
-use crate::strip::KeyWatch;
+use crate::send::{Sender, encoded, git_echo_forms, git_reply_headers, git_watchable, push_wiped};
 use crate::{Failure, MAX_SECRET, Outcome, PROTOCOL_VERSION, Refusal, ReplyHeader};
 
 /// The user agent of a git exchange: a smart-HTTP server serves its smart
@@ -47,7 +46,8 @@ async fn exchange(
     header: &GitCallHeader,
     sender: &Sender,
 ) -> io::Result<()> {
-    let (client, idle) = sender.git_client();
+    let client = sender.git_client();
+    let idle = header.idle();
     let prepared = match header.check() {
         Ok(url) => spool(stream, header, idle).await?.map(|spool| (url, spool)),
         Err(reason) => {
@@ -86,7 +86,7 @@ async fn exchange(
     }
     let answered = Outcome::Answered {
         status: response.status().as_u16(),
-        headers: reply_headers(response.headers(), &credential.watched),
+        headers: git_reply_headers(response.headers(), &git_echo_forms(&credential.watched)),
     };
     idle_bound(idle, write_stream_header(stream, &reply(header, answered))).await?;
     let cut = relay(&mut response, stream, &credential.watched, idle).await?;
@@ -201,7 +201,8 @@ struct GitCredential {
 /// trimmed: visible ASCII and spaces, a scheme, then its credentials. The
 /// token watched for is the credentials, or for `Basic` the password the
 /// base64 holds (its user name when the password is empty or GitHub's
-/// `x-oauth-basic`). The token must be one the strip rule is sure to find.
+/// `x-oauth-basic`). Any token up to [`MAX_SECRET`] bytes goes
+/// ([`git_watchable`]); the reply's echo watch searches its literal forms.
 fn git_credential(secret: &[u8]) -> Result<GitCredential, Refusal> {
     let value = secret.trim_ascii();
     if value.is_empty()
@@ -239,7 +240,7 @@ fn git_credential(secret: &[u8]) -> Result<GitCredential, Refusal> {
     } else {
         Zeroizing::new(credentials.to_vec())
     };
-    if !watchable(&watched) {
+    if !git_watchable(&watched) {
         return Err(Refusal::Secret);
     }
     let mut header = HeaderValue::from_bytes(value).map_err(|_| Refusal::Secret)?;
@@ -370,41 +371,91 @@ fn failure(error: &reqwest::Error) -> Failure {
 }
 
 /// Relays the reply's body as it comes, byte for byte, in chunks of at most
-/// [`STREAM_CHUNK`]. [`KeyWatch`] reads it for the token: what the watch
-/// releases unchanged goes on, and a release that differs from the bytes
-/// that came is an echo, which cuts the reply. Returns how the body ended:
-/// clean, or cut.
+/// [`STREAM_CHUNK`]. [`EchoWatch`] reads it for the literal forms of the
+/// token and holds back only the bytes a form could still end in; a reply
+/// that holds a form is cut before any byte of it goes. Returns how the body
+/// ended: clean, or cut.
 async fn relay(
     response: &mut reqwest::Response,
     stream: &mut UnixStream,
     watched: &[u8],
     idle: Duration,
 ) -> io::Result<Option<Failure>> {
-    let mut watch = KeyWatch::new(watched);
-    // The bytes that came and the watch has not released yet.
-    let mut held = Zeroizing::new(Vec::new());
+    let mut watch = EchoWatch::new(watched);
     loop {
         let (released, last) = match tokio::time::timeout(idle, response.chunk()).await {
             Err(_) => return Ok(Some(Failure::Timeout)),
             Ok(Err(error)) => return Ok(Some(failure(&error))),
-            Ok(Ok(Some(chunk))) => {
-                push_wiped(&mut held, &chunk)?;
-                (watch.push(&chunk), false)
-            }
-            Ok(Ok(None)) => (watch.finish(), true),
+            Ok(Ok(Some(chunk))) => (watch.push(&chunk)?, false),
+            Ok(Ok(None)) => (Some(watch.finish()), true),
         };
-        if !held.starts_with(&released) || (last && held.len() != released.len()) {
+        let Some(released) = released else {
             return Ok(Some(Failure::ReplyHoldsKey));
-        }
+        };
         for piece in released.chunks(STREAM_CHUNK) {
             idle_bound(idle, write_chunk(stream, piece)).await?;
         }
-        let rest = held.len() - released.len();
-        held.copy_within(released.len().., 0);
-        held.truncate(rest);
         if last {
             return Ok(None);
         }
+    }
+}
+
+/// The git reply's credential watch: the token's literal forms (raw,
+/// JSON-escaped, `Bearer`, percent-encoded, and its base64, whole and at
+/// each byte offset), searched across chunk edges. Unlike the model strip,
+/// it never marks a run it cannot settle: a pack or an advertisement full of
+/// escapes is passed byte for byte unless a form is in it. It holds back
+/// only the bytes a form could still end in.
+struct EchoWatch {
+    forms: Vec<Zeroizing<Vec<u8>>>,
+    /// The longest form's length less one: what a form split across chunks
+    /// can have shown so far.
+    keep: usize,
+    /// The bytes that came and are not released yet.
+    held: Zeroizing<Vec<u8>>,
+}
+
+impl EchoWatch {
+    fn new(token: &[u8]) -> Self {
+        let forms = git_echo_forms(token);
+        let keep = forms
+            .iter()
+            .map(|form| form.len())
+            .max()
+            .unwrap_or(1)
+            .saturating_sub(1);
+        Self {
+            forms,
+            keep,
+            held: Zeroizing::new(Vec::new()),
+        }
+    }
+
+    /// Takes the next `chunk` and answers the bytes released with it, or
+    /// `None` when a form of the token is in what came.
+    fn push(&mut self, chunk: &[u8]) -> io::Result<Option<Zeroizing<Vec<u8>>>> {
+        push_wiped(&mut self.held, chunk)?;
+        if self
+            .forms
+            .iter()
+            .any(|form| memchr::memmem::find(&self.held, form).is_some())
+        {
+            return Ok(None);
+        }
+        let release = self.held.len().saturating_sub(self.keep);
+        let mut released = Zeroizing::new(Vec::new());
+        push_wiped(&mut released, &self.held[..release])?;
+        let rest = self.held.len() - release;
+        self.held.copy_within(release.., 0);
+        self.held.truncate(rest);
+        Ok(Some(released))
+    }
+
+    /// The bytes still held once the reply ended: no form ends in them,
+    /// since every form was searched as they came.
+    fn finish(&mut self) -> Zeroizing<Vec<u8>> {
+        std::mem::replace(&mut self.held, Zeroizing::new(Vec::new()))
     }
 }
 

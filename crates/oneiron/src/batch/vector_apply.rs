@@ -43,6 +43,7 @@ pub(super) fn apply_vector(
         None,
         Some((vector, provenance)),
         pending_embedding_token,
+        None,
     )? {
         return Ok(AppliedVector {
             wrote_vector: false,
