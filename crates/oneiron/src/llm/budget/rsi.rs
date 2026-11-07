@@ -41,7 +41,9 @@ impl Line {
             let amount = match (row.line, &row.settlement) {
                 (RsiLine::Tokens, Some(RsiSettlement::Spent(amount)))
                 | (RsiLine::Exposure, Some(RsiSettlement::Exposure(amount))) => Some(*amount),
-                (_, None) | (_, Some(RsiSettlement::Refunded)) => None,
+                (RsiLine::Tokens, Some(RsiSettlement::Unknown))
+                | (_, None)
+                | (_, Some(RsiSettlement::Refunded)) => None,
                 _ => return Err(crate::Error::CorruptedIndex("RSI budget settlement line").into()),
             };
             if row.line != line {
@@ -49,7 +51,7 @@ impl Line {
             }
             if let Some(amount) = amount {
                 spent = spent.checked_add(amount).ok_or(RsiBudgetError::Exhausted)?;
-            } else if row.settlement.is_none() {
+            } else if row.settlement.is_none() || row.settlement == Some(RsiSettlement::Unknown) {
                 reserved = reserved
                     .checked_add(row.amount)
                     .ok_or(RsiBudgetError::Exhausted)?;
@@ -70,7 +72,7 @@ impl Line {
             let units = match row.settlement {
                 Some(RsiSettlement::Spent(units)) => units,
                 Some(RsiSettlement::Refunded) => 0,
-                None => row.amount,
+                None | Some(RsiSettlement::Unknown) => row.amount,
                 Some(RsiSettlement::Exposure(_)) => {
                     return Err(crate::Error::CorruptedIndex("RSI token settlement line").into());
                 }
@@ -364,6 +366,12 @@ impl Vault {
         self.finish_rsi_reservation(id, RsiSettlement::Spent(spent))
     }
 
+    /// End token work with no token-denominated native spend total. Keep its
+    /// reservation committed without claiming that the amount was spent.
+    pub(crate) fn settle_rsi_budget_unknown(&self, id: EntityId) -> RsiResult<()> {
+        self.finish_rsi_reservation(id, RsiSettlement::Unknown)
+    }
+
     /// Settle exploration exposure once, releasing unused reserved exposure.
     pub fn settle_rsi_exploration(&self, id: EntityId, exposure: u64) -> RsiResult<()> {
         self.finish_rsi_reservation(id, RsiSettlement::Exposure(exposure))
@@ -383,8 +391,10 @@ impl Vault {
             .ok_or(RsiBudgetError::ReservationRequired)?;
         if !matches!(
             (row.line, &settlement),
-            (RsiLine::Tokens, RsiSettlement::Spent(_))
-                | (RsiLine::Exposure, RsiSettlement::Exposure(_))
+            (
+                RsiLine::Tokens,
+                RsiSettlement::Spent(_) | RsiSettlement::Unknown
+            ) | (RsiLine::Exposure, RsiSettlement::Exposure(_))
                 | (_, RsiSettlement::Refunded)
         ) {
             return Err(RsiBudgetError::WrongLine);
@@ -396,7 +406,9 @@ impl Vault {
                 Err(RsiBudgetError::ReservationRequired)
             };
         }
-        if let RsiSettlement::Spent(amount) | RsiSettlement::Exposure(amount) = settlement
+        // Token spend already happened: record it whole even past the
+        // reservation. Future admission still applies the configured caps.
+        if let RsiSettlement::Exposure(amount) = settlement
             && amount > row.amount
         {
             return Err(RsiBudgetError::Exhausted);
