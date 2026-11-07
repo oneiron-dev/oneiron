@@ -195,7 +195,7 @@ impl<'a> StepSecretUse<'a> {
         run: &RunAdmission,
         lease: &LiveLease<'_>,
         mut request: LlmRequest,
-        capture: impl FnOnce(&LlmRequest) -> Option<oneiron::code_run::WorkflowCaptureHandle>,
+        mut capture: impl FnMut(&LlmRequest, u64) -> Option<oneiron::code_run::WorkflowCaptureHandle>,
         continuation: Option<(WorkflowToolCursor, Option<WorkflowToolWait>)>,
         mut save: impl FnMut(
             &LlmRequest,
@@ -222,7 +222,6 @@ impl<'a> StepSecretUse<'a> {
             None,
         ));
         let mut rounds = retained;
-        let mut capture = Some(capture);
         let mut refreshed_sources = Vec::new();
         loop {
             if !retained {
@@ -234,10 +233,12 @@ impl<'a> StepSecretUse<'a> {
                         refreshed_sources.push(source);
                     }
                 }
+                // Each round is its own replay capsule (FIX 7013): the
+                // cursor's flag says whether this round's call has one.
                 let staged = if cursor.capture_completed {
                     None
                 } else {
-                    capture.take().and_then(|capture| capture(&request))
+                    capture(&request, cursor.round)
                 };
                 let generated = runtime.block_on(ladder.generate_recorded_while(
                     run,
@@ -294,6 +295,7 @@ impl<'a> StepSecretUse<'a> {
                     .round
                     .checked_add(1)
                     .ok_or(oneiron::Error::ArithmeticOverflow("workflow tool round"))?;
+                cursor.capture_completed = false;
                 request.messages.push(LlmMessage {
                     role: LlmMessageRole::Assistant,
                     content,
