@@ -438,6 +438,7 @@ impl<'a> EngineNativeExecutor<'a> {
         )
         .with_recoverable_outputs(&self.storage, &record, recoverable)?
         .with_skill_executor(&config.model)
+        .with_summary_prompt_package(&config.prompt_package_root)
         .with_result_share(&self.result_share)
         .with_program_injection(injection)
         .with_callable_checks(
