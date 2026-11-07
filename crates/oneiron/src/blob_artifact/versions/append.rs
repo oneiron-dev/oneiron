@@ -13,6 +13,7 @@ use heed::{RoTxn, RwTxn};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
+use crate::federation::record_scope::BirthPosition;
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::store::ManifestDbs;
 use crate::temporal::TimeRange;
@@ -131,10 +132,15 @@ impl Vault {
             made_by,
             preserve_made_by,
             reanchor_html,
+            BirthPosition::default(),
             lane,
         )
     }
 
+    /// [`Self::append_blob_artifact_version_body_in_txn`] under `authority`.
+    /// `producer_position` is where the producing run's host bound it
+    /// (FIX 3171): the version's claim is born there. The default position,
+    /// which an unbound append passes, keeps the birth default.
     #[expect(clippy::too_many_arguments)]
     pub(super) fn append_blob_artifact_version_body_with_authority_in_txn(
         &self,
@@ -150,6 +156,7 @@ impl Vault {
         made_by: Option<&MadeBy>,
         preserve_made_by: bool,
         reanchor_html: bool,
+        producer_position: BirthPosition,
         lane: crate::core_write::CoreWriteLaneRef<'_>,
     ) -> Result<BlobArtifactVersion> {
         let actor = match &authority {
@@ -227,6 +234,8 @@ impl Vault {
             actor,
             learned_at,
         )?;
+        // Placed before it is signed, so the signature covers the position.
+        let candidate = place_claim_at_producer_position(candidate, producer_position);
         // The artifact is the logical owner of this content-addressed version.
         // The ASSET bytes and head/index rows are supporting effects of it;
         // the canonical claim is a second semantic content owner.
@@ -308,6 +317,24 @@ impl Vault {
         }
         Ok(record)
     }
+}
+
+/// FIX 3171: a version's `blob.version` claim is born at the world and
+/// facet its producing run's host bound, as that host's TASKs are. Base
+/// reality names no world. Its relationships, opaque scope and project stay
+/// the defaults. The other position axes wait for a producing host that owns
+/// them. The position is data: it grants no read or write.
+fn place_claim_at_producer_position(
+    mut candidate: ClaimCandidate,
+    position: BirthPosition,
+) -> ClaimCandidate {
+    if let Some(world) = position.claim_world() {
+        candidate = candidate.with_world(world);
+    }
+    if let Some(facet) = position.facet {
+        candidate = candidate.with_scope_stamps(facet, crate::claim::default_project_id());
+    }
+    candidate
 }
 
 /// Where the next version of one artifact goes, as [`place_version_in_txn`]
