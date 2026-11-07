@@ -9,15 +9,17 @@
 //!
 //! A read the arm makes of a result that is none of its own takes its answer
 //! from what the live reads saw, in the live order: the child's delegated
-//! input, then the parent's settled finding. Only a capture that proves no
-//! binding answers `unknown_handle`. A context that is missing, or holds no
-//! read of the kind the arm needs, is `SourceMissing`; a read whose bridge
-//! position the reads kept do not establish is `CapturedOutcomeMissing`.
+//! input, then the parent's settled finding, then the door's row check on
+//! the read. Only a capture that proves no binding answers `unknown_handle`.
+//! A context that is missing, or holds no read of the kind the arm needs, is
+//! `SourceMissing`; a read whose bridge position the reads kept do not
+//! establish is `CapturedOutcomeMissing`.
 
 use super::context::ArmContext;
 use super::{Admits, FrozenBody, Outcome, PreparedShadowStep, Reason, freeze_body, unavailable};
 use crate::code_run::{
     CodeRunRawOutput, CodeRunReplayRecord, ReaderFoldReceipt, ReaderReadCapture,
+    RetainedReadVerdict,
 };
 use crate::engine_executor::JsResultRef;
 use crate::{EntityId, Result, Vault};
@@ -202,6 +204,27 @@ impl PreparedShadowStep {
         reads
             .job_live_at(cut)
             .ok_or_else(|| unavailable(Reason::CapturedOutcomeMissing, "reader_job"))
+    }
+
+    /// The verdict the door's row check gave the live reads of another run's
+    /// result by `reference` at bridge position `cut`, under the run's
+    /// callable rows when `callable` (FIX 6352). A verdict is not final once
+    /// seen, so only reads at `cut` that agree establish it:
+    /// `CapturedOutcomeMissing` otherwise, and `SourceMissing` when no read
+    /// kept one.
+    pub(crate) fn retained_read_verdict(
+        &self,
+        reference: &JsResultRef,
+        callable: bool,
+        cut: u64,
+    ) -> Outcome<&RetainedReadVerdict> {
+        let reads = self.reader_reads()?;
+        if reads.retained_reads.is_empty() {
+            return Err(unavailable(Reason::SourceMissing, "retained_read"));
+        }
+        reads
+            .retained_read_at(reference, callable, cut)
+            .ok_or_else(|| unavailable(Reason::CapturedOutcomeMissing, "retained_read"))
     }
 
     /// The fold receipt the live card of the whole result `owner` holds as

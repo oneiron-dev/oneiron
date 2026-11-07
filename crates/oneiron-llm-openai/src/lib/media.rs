@@ -58,6 +58,7 @@ pub enum OpenAiMediaBody {
 pub struct OpenAiMediaHttpRequest {
     pub method: OpenAiMediaMethod,
     pub path: String,
+    pub headers: BTreeMap<String, String>,
     pub body: OpenAiMediaBody,
 }
 
@@ -180,13 +181,31 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
         lease: &BudgetLease,
         release: Option<oneiron::llm::DispatchRelease<'_>>,
     ) -> LlmResult<OpenAiMediaHttpResponse> {
+        self.send_with_headers(method, path, body, BTreeMap::new(), lease, release)
+            .await
+    }
+
+    async fn send_with_headers(
+        &self,
+        method: OpenAiMediaMethod,
+        path: String,
+        body: OpenAiMediaBody,
+        headers: BTreeMap<String, String>,
+        lease: &BudgetLease,
+        release: Option<oneiron::llm::DispatchRelease<'_>>,
+    ) -> LlmResult<OpenAiMediaHttpResponse> {
         if let Some(release) = release {
             release()?;
         }
         let reply = self
             .transport
             .execute_released(
-                OpenAiMediaHttpRequest { method, path, body },
+                OpenAiMediaHttpRequest {
+                    method,
+                    path,
+                    headers,
+                    body,
+                },
                 lease,
                 release,
             )
@@ -238,6 +257,7 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
                 OpenAiMediaHttpRequest {
                     method: OpenAiMediaMethod::Post,
                     path: path.to_owned(),
+                    headers: BTreeMap::new(),
                     body,
                 },
                 lease,
@@ -477,7 +497,12 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
         })
     }
 
-    async fn submit_job(&self, request: MediaRequest, lease: &BudgetLease) -> LlmResult<String> {
+    async fn submit_job(
+        &self,
+        request: MediaRequest,
+        key: Option<&str>,
+        lease: &BudgetLease,
+    ) -> LlmResult<String> {
         let wire = self.wire_model(&request.model)?;
         let PreparedVideo { fields } = prepare_video(&request, &wire)?;
         // The job's one start frame, when it has one; the builder refused a
@@ -491,8 +516,19 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
             },
             (Some(_), false) => return Err(FatalLlmError::InvalidRequest.into()),
         };
+        let mut headers = BTreeMap::new();
+        if let Some(key) = key.filter(|key| !key.is_empty()) {
+            headers.insert("idempotency-key".to_owned(), key.to_owned());
+        }
         let reply = self
-            .send(OpenAiMediaMethod::Post, "/v1/videos".into(), body, lease)
+            .send_with_headers(
+                OpenAiMediaMethod::Post,
+                "/v1/videos".into(),
+                body,
+                headers,
+                lease,
+                None,
+            )
             .await?;
         reply
             .json()
@@ -702,16 +738,15 @@ impl<T: OpenAiMediaTransport> MediaBackend for OpenAiMediaBackend<T> {
         })
     }
 
-    /// An OpenAI-compatible video job names no idempotency key its
-    /// provider is known to honour (FIX 2248): it goes out without one, and
-    /// the wire says it does not dedupe.
+    /// Forwards a video's submit key without claiming the provider honours
+    /// it (FIX 2248): this wire still reports that it does not dedupe.
     fn submit<'a>(
         &'a self,
         request: MediaRequest,
-        _key: Option<&'a str>,
+        key: Option<&'a str>,
         lease: &'a BudgetLease,
     ) -> MediaFuture<'a, String> {
-        Box::pin(self.submit_job(request, lease))
+        Box::pin(self.submit_job(request, key, lease))
     }
 
     fn poll<'a>(

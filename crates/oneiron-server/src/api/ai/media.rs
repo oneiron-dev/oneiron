@@ -480,6 +480,7 @@ pub(crate) fn prepare_media_call(
             response_format: ResponseFormat::Text,
             locality,
             host_keyless: false,
+            host_paid: false,
             seat_effort: None,
         },
         operation,

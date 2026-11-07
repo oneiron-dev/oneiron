@@ -95,7 +95,7 @@ impl GraphFsResolver<'_, '_> {
     /// device-local world keeps: such a claim takes no place in the run, never
     /// fills it and never ends it, so neither the page nor its cursor hints at
     /// one (DEC-0005).
-    fn device_admitted_run(
+    pub(super) fn device_admitted_run(
         &self,
         after: Option<EntityId>,
         fetch: usize,

@@ -88,10 +88,10 @@ pub trait MediaBackend: Send + Sync {
     }
 
     /// Starts one long call as a provider job; returns the provider's job id.
-    /// `key` is the job's idempotency key (FIX 2248): a wire whose provider
-    /// takes one sends it, so the same submit sent again under it answers
-    /// the job it started ([`Self::submit_dedupes`]); a wire whose provider
-    /// takes none sends without it.
+    /// `key` is the job's idempotency key (FIX 2248). A wire may forward it
+    /// without claiming the provider honours it; [`Self::submit_dedupes`]
+    /// says whether the same submit sent again is known to answer the job
+    /// it started rather than starting another.
     fn submit<'a>(
         &'a self,
         _request: MediaRequest,
@@ -103,9 +103,9 @@ pub trait MediaBackend: Send + Sync {
 
     /// Whether this wire's provider starts a job once per idempotency key,
     /// so a submit sent again under its key answers the job it started
-    /// rather than a new one (FIX 2248). The default, `false`, is a wire
-    /// that sends no key: a submit whose answer was lost cannot be found
-    /// again through it.
+    /// rather than a new one (FIX 2248). The default, `false`, makes no
+    /// such guarantee even if the wire forwards a key: a submit whose
+    /// answer was lost is not automatically sent again through it.
     fn submit_dedupes(&self) -> bool {
         false
     }

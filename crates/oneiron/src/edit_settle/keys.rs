@@ -4,7 +4,7 @@
 pub const SETTLEMENT_SCHEMA_VERSION: u64 = 3;
 
 /// Pinned on-disk MessagePack key set for a [`SettlementRecord`](crate::edit_settle::SettlementRecord) body.
-pub const SETTLEMENT_RECORD_KEYS: [&str; 20] = [
+pub const SETTLEMENT_RECORD_KEYS: [&str; 21] = [
     "schema_version",
     "proposal_ref",
     "outcome",
@@ -25,6 +25,7 @@ pub const SETTLEMENT_RECORD_KEYS: [&str; 20] = [
     "deck",
     "docx_judgments",
     "grant_ref",
+    "discarded_words",
 ];
 
 /// Pinned on-disk MessagePack key set for one [`SettledAnchor`](crate::edit_settle::SettledAnchor) entry.
@@ -51,6 +52,8 @@ pub(super) const KEY_ACTOR_REF: &str = SETTLEMENT_RECORD_KEYS[4];
 pub(super) const KEY_BRIEF_REF: &str = SETTLEMENT_RECORD_KEYS[5];
 
 pub(super) const KEY_GRANT_REF: &str = SETTLEMENT_RECORD_KEYS[19];
+
+pub(super) const KEY_DISCARDED_WORDS: &str = SETTLEMENT_RECORD_KEYS[20];
 
 pub(super) const KEY_BEFORE_VERSION: &str = SETTLEMENT_RECORD_KEYS[6];
 

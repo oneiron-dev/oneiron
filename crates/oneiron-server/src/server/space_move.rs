@@ -241,6 +241,7 @@ impl ServerProbeAuthor<'_> {
                 response_format: ResponseFormat::Text,
                 locality,
                 host_keyless: false,
+                host_paid: false,
             },
             operation: AiOperation::Transcribe,
             parts,
@@ -267,6 +268,7 @@ impl ServerProbeAuthor<'_> {
                 response_format: ResponseFormat::Text,
                 locality: self.locality,
                 host_keyless: false,
+                host_paid: false,
             },
             messages: vec![
                 LlmMessage {

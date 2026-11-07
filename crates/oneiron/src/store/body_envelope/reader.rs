@@ -10,6 +10,7 @@ use zeroize::Zeroizing;
 use super::frames::{
     FileKey, Layout, SealedStream, check_terminal, checked_layout, chunk_of, read_chunk,
 };
+use super::live_spill::WrittenSpillSource;
 use crate::error::{Error, Result};
 
 /// One body file held open for reading: plain, or an envelope with its
@@ -22,6 +23,7 @@ pub(crate) struct BodyFile {
     /// Where a sequential read of an envelope is, and the chunk it holds.
     at: u64,
     chunk: Option<(u64, Zeroizing<Vec<u8>>)>,
+    _live_spill_source: Option<Arc<WrittenSpillSource>>,
 }
 
 enum Inner {
@@ -35,6 +37,11 @@ enum Inner {
 }
 
 impl BodyFile {
+    pub(super) fn with_live_spill_source(mut self, source: Arc<WrittenSpillSource>) -> Self {
+        self._live_spill_source = Some(source);
+        self
+    }
+
     /// The plain body file `file`, `len` bytes long.
     pub(crate) fn plain(file: File, len: u64) -> Self {
         Self {
@@ -42,6 +49,7 @@ impl BodyFile {
             len,
             at: 0,
             chunk: None,
+            _live_spill_source: None,
         }
     }
 
@@ -66,6 +74,7 @@ impl BodyFile {
             len,
             at: 0,
             chunk: None,
+            _live_spill_source: None,
         })
     }
 

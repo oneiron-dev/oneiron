@@ -72,6 +72,9 @@ pub(crate) use self::program::{
 pub(crate) use self::program::{
     program_run_actor_in_txn, program_step_carriage, program_step_owners,
 };
+// FIX 11906: the project a turn program's code run sends in, for browser
+// consent.
+pub(crate) use self::program::program_run_project_in_txn;
 // DOOR-141 PR3a/PR3b: a turn program's reads, for its host doors and the SDK.
 pub use self::program::{
     OwedWakeHoldView, ProgramAdmissionOutcomeView, ProgramCheckpointCallView,
