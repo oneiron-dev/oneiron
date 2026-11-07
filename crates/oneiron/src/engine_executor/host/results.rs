@@ -453,23 +453,22 @@ impl RecordingJsHost<'_, '_> {
                 JsResultRef::Name(name) => child.delegated(true, name),
                 JsResultRef::Handle(handle) => child.delegated(false, handle),
             };
-            let Some((name, source)) = named else {
-                return Ok(None);
-            };
-            let Some(output) =
-                recorded_output(storage, source.owner, &source.path, &source.handle)?
-            else {
-                return Ok(None);
-            };
-            return Ok(Some(ResolvedResult {
-                output,
-                name: Some(name.to_owned()),
-                owner: source.owner,
-                rows: Some(source.rows.clone()),
-                origins: source.origins.clone(),
-                within: Some(source.range),
-                child_source: true,
-            }));
+            if let Some((name, source)) = named {
+                let Some(output) =
+                    recorded_output(storage, source.owner, &source.path, &source.handle)?
+                else {
+                    return Ok(None);
+                };
+                return Ok(Some(ResolvedResult {
+                    output,
+                    name: Some(name.to_owned()),
+                    owner: source.owner,
+                    rows: Some(source.rows.clone()),
+                    origins: source.origins.clone(),
+                    within: Some(source.range),
+                    child_source: true,
+                }));
+            }
         }
         let JsResultRef::Handle(handle) = reference else {
             return Ok(None);

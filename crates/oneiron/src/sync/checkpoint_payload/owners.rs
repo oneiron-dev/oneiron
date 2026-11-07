@@ -42,12 +42,13 @@ use crate::sync::room_turns::ROOM_TURNS_MAP;
 use crate::sync::row_birth::ROW_BIRTHS_MAP;
 use crate::sync::schema::ASSET_BODY_REFS_MAP;
 use crate::sync::selector::{HELD_EDIT_CAUSALITY_KEY, HELD_EDIT_CAUSALITY_MAP};
+use crate::sync::source_audiences::SOURCE_AUDIENCES_MAP;
 use crate::sync::withdrawn_cutoffs::{
     CarriedCutoff, EPOCH_FLOOR, WITHDRAWN_CUTOFFS_MAP, admit_withdrawn_cutoff_carrier,
 };
 
 /// Every window root map an adapter here reads: the roots a capture admits.
-pub(crate) const WINDOW_ROOTS: [&str; 23] = [
+pub(crate) const WINDOW_ROOTS: [&str; 24] = [
     "entities",
     "edges",
     "tombstones",
@@ -71,6 +72,7 @@ pub(crate) const WINDOW_ROOTS: [&str; 23] = [
     MESSAGE_DOCS_MAP,
     REPO_MANIFESTS_MAP,
     ASSET_BODY_REFS_MAP,
+    SOURCE_AUDIENCES_MAP,
 ];
 
 /// Whether a key holding a digest of what it carries (a pin's, a part's, a
@@ -170,6 +172,7 @@ pub(crate) fn root_entry(
         DOCUMENT_PINS_MAP => crate::sync::document_pins::checkpoint::entry(key, value),
         MESSAGE_DOCS_MAP => crate::sync::message_docs::checkpoint::entry(key, value),
         REPO_MANIFESTS_MAP => crate::sync::repo_manifests::checkpoint::entry(key, value),
+        SOURCE_AUDIENCES_MAP => crate::sync::source_audiences::checkpoint::entry(key, value),
         // KS-2 carries every ASSET byte, a by-reference body's too.
         ASSET_BODY_REFS_MAP => Placement::Dispatched(OtherClient::Body),
         _ => Placement::unclassified(None, SyncUnclassified::UnknownRoot),
@@ -263,6 +266,7 @@ pub(super) fn key_refusal(root: &str, key: &str) -> Option<SyncUnclassified> {
         DOCUMENT_PINS_MAP => crate::sync::document_pins::checkpoint::key_class(key),
         MESSAGE_DOCS_MAP => crate::sync::message_docs::checkpoint::key_class(key),
         REPO_MANIFESTS_MAP => crate::sync::repo_manifests::checkpoint::key_class(key),
+        SOURCE_AUDIENCES_MAP => crate::sync::source_audiences::checkpoint::key_class(key),
         // A side row's key may spell a platform handle.
         ROOM_FACTS_MAP => KeyClass::Payload,
         _ => return Some(SyncUnclassified::UnknownRoot),
