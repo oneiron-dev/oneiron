@@ -97,8 +97,7 @@ fn reap_dropped(
         );
     }
     let owner = vault.to_owned();
-    let spawned = std::thread::Builder::new()
-        .name("vm-reaper".into())
+    let spawned = crate::engine_thread("vm-reaper".into())
         .spawn(move || {
             let reaped = reap(child, exit, &owner);
             match lease {
