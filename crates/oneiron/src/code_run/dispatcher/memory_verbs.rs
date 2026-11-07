@@ -313,6 +313,7 @@ impl HostSelfDispatcher<'_> {
     pub(super) fn dispatch_memory_put_claim(
         &self,
         call: SelfMemoryPutClaimCall,
+        read_as: Option<ScopedReadActorKey>,
     ) -> Result<SelfDispatchOutcome> {
         let admission = self.code_emission_admission()?;
         let candidate = match admission
@@ -341,16 +342,32 @@ impl HostSelfDispatcher<'_> {
                 "Dreamer rule author is not the bound resident".into(),
             ));
         }
+        // The subject it names resolves for its writer (OF-063, FIX 1214).
+        let subject = match gate_body.subject {
+            ClaimSubject::Entity(id) => vec![("/subject", id)],
+            ClaimSubject::Edge { source, target, .. } => {
+                vec![("/subject", source), ("/subject", target)]
+            }
+        };
+        if let Some(refused) = self.refused_write_reference(
+            SelfEffect::MemoryPutClaim,
+            "vault.claims.put",
+            read_as.as_ref(),
+            &subject,
+        )? {
+            return Ok(refused);
+        }
         self.check_write_gate(call.id, &gate_body, &envelope, true)?;
-        match &self.storage {
-            ExecutorStorage::Canonical(vault) => vault.put_claim_candidate_with_landing(
-                &call.id,
-                candidate,
-                &envelope,
-                call.occurred,
-                call.learned_at,
-                |_| Ok(()),
-            )?,
+        let actual_id = match &self.storage {
+            ExecutorStorage::Canonical(vault) => vault
+                .put_claim_candidate_with_landing_returning_actual(
+                    &call.id,
+                    candidate,
+                    &envelope,
+                    call.occurred,
+                    call.learned_at,
+                    |_| Ok(()),
+                )?,
             ExecutorStorage::Session(binding) => binding.session.executor_put_claim_candidate(
                 &binding.route,
                 &call.id,
@@ -359,20 +376,20 @@ impl HostSelfDispatcher<'_> {
                 call.occurred,
                 call.learned_at,
             )?,
-        }
+        };
 
         if let Some(json) = authored_rules {
             let admitted = match &self.storage {
                 ExecutorStorage::Canonical(vault) => {
                     crate::dreamer_consolidation::admitted_authored_claim(
-                        vault, &call.id, self.actor,
+                        vault, &actual_id, self.actor,
                     )?
                 }
-                ExecutorStorage::Session(binding) => {
-                    binding
-                        .session
-                        .admitted_executor_claim(&binding.route, &call.id, self.actor)?
-                }
+                ExecutorStorage::Session(binding) => binding.session.admitted_executor_claim(
+                    &binding.route,
+                    &actual_id,
+                    self.actor,
+                )?,
             };
             if !admitted {
                 return Err(Error::InvalidConfig(
@@ -380,10 +397,10 @@ impl HostSelfDispatcher<'_> {
                 ));
             }
             let record =
-                crate::dreamer_consolidation::resident_record(self.actor, &json, Some(&call.id))?;
+                crate::dreamer_consolidation::resident_record(self.actor, &json, Some(&actual_id))?;
             match &self.storage {
                 ExecutorStorage::Canonical(vault) => {
-                    vault.set_claimed_dreamer_failure_rules(self.actor, &json, &call.id)?;
+                    vault.set_claimed_dreamer_failure_rules(self.actor, &json, &actual_id)?;
                 }
                 ExecutorStorage::Session(binding) => {
                     binding.session.side_table_put_routed(
@@ -396,14 +413,24 @@ impl HostSelfDispatcher<'_> {
             }
         }
         Ok(SelfDispatchOutcome::MemoryWrite(SelfMemoryWriteResult {
-            id: call.id,
+            id: actual_id,
         }))
     }
 
     pub(super) fn dispatch_memory_supersede_claim(
         &self,
         call: SelfMemorySupersedeClaimCall,
+        read_as: Option<ScopedReadActorKey>,
     ) -> Result<SelfDispatchOutcome> {
+        // Both claims it names resolve for its writer (OF-063, FIX 1214).
+        if let Some(refused) = self.refused_write_reference(
+            SelfEffect::MemorySupersedeClaim,
+            "vault.claims.supersede",
+            read_as.as_ref(),
+            &[("/new_id", call.new_id), ("/old_id", call.old_id)],
+        )? {
+            return Ok(refused);
+        }
         let admission = self.non_candidate_code_emission_admission()?;
         if matches!(
             admission.as_ref().map(|admission| admission.lane),
@@ -480,6 +507,15 @@ impl HostSelfDispatcher<'_> {
         read_as: Option<ScopedReadActorKey>,
     ) -> Result<SelfDispatchOutcome> {
         ensure_public_memory_edge_kind(call.kind)?;
+        // Both ends it names resolve for its writer (OF-063, FIX 1214).
+        if let Some(refused) = self.refused_write_reference(
+            SelfEffect::MemoryPutEdge,
+            "vault.edges.put",
+            read_as.as_ref(),
+            &[("/src", call.src), ("/tgt", call.tgt)],
+        )? {
+            return Ok(refused);
+        }
         let placement = read_as.filter(|_| call.kind == EdgeKind::FacetOf);
         if placement.is_some() && matches!(self.storage, ExecutorStorage::Session(_)) {
             // A room's rows include overlay rows a door's lane cannot name, so

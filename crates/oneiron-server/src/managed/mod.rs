@@ -42,6 +42,7 @@ mod container_dirs;
 #[cfg(test)]
 mod ctl_shed_tests;
 mod host;
+mod host_legal;
 mod isolation;
 pub mod key_sync;
 mod ledger;
@@ -71,8 +72,8 @@ mod shed;
 pub(crate) use self::peer::UnixPeer;
 mod state_serve;
 pub(crate) use state_serve::{
-    ManagedCarrierContext, ManagedIngress, ManagedOwnerHolder, ManagedOwnerSession,
-    ManagedPersonHolder, ManagedPersonSession, ManagedWidenHolder,
+    CarrierAdmission, ManagedCarrierContext, ManagedIngress, ManagedOwnerHolder,
+    ManagedOwnerSession, ManagedPersonHolder, ManagedPersonSession, ManagedWidenHolder,
 };
 mod vault_gates;
 #[cfg(target_os = "linux")]
@@ -86,10 +87,12 @@ mod vm_outbox;
 #[cfg(target_os = "linux")]
 mod vm_schedule;
 #[cfg(target_os = "linux")]
+mod vm_source_control;
+#[cfg(target_os = "linux")]
 pub use self::vm_host::{
     SleepOutcome, VaultVm, VaultVmConfig, VaultVmInspect, VaultVmRun, VmAnchorHostIo, VmExitWatch,
-    VmRestoreFds, VmRestoreHostIo, VmSnapshotCustody, VmSnapshotCustodyUnavailable,
-    inspect_vault_vm, run_vault_vm,
+    VmImageMeasurement, VmImageReleaseObservation, VmRestoreFds, VmRestoreHostIo,
+    VmSnapshotCustody, VmSnapshotCustodyUnavailable, inspect_vault_vm, run_vault_vm,
 };
 #[cfg(target_os = "linux")]
 pub use self::vm_init::run_vm_init;

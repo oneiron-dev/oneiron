@@ -27,6 +27,7 @@
 pub(super) mod action_routes;
 mod admission_doors;
 mod affect_doors;
+mod ag_ui_file_doors;
 mod agent_definition_doors;
 mod agent_grant_doors;
 #[path = "facade/generated/agent_verbs.rs"]
@@ -84,6 +85,7 @@ mod deck_creation_doors;
 mod disclosure_doors;
 #[path = "facade/generated/dispatch.rs"]
 mod dispatch;
+mod drafter_doors;
 mod embedding_space_doors;
 mod errors;
 mod eval_doors;
@@ -110,6 +112,7 @@ mod hook_session;
 mod hooks;
 #[path = "facade/generated/host_door_rows.rs"]
 mod host_door_rows;
+pub(in crate::api) use host_door_rows::needs_caller_credential;
 pub(super) mod host_doors;
 mod host_trigger_doors;
 mod hub_doors;
@@ -225,9 +228,9 @@ pub(crate) use export_transfer::{ExportTransfers, mcp_export_transfer};
 pub(crate) use hooks::*;
 pub(crate) use host_doors::ai_speech_for_run;
 pub(crate) use host_doors::{
-    ai_media_as_owner, ai_media_for_run, ai_options_for_program, ai_video_as_owner,
-    ai_video_cancel_as_owner, ai_video_cancel_for_run, ai_video_for_agent_run, ai_video_for_run,
-    ai_video_poll_as_owner, ai_video_poll_for_run, vault_hooks_replay_as_owner,
+    ai_image_for_run_step, ai_media_as_owner, ai_media_for_run, ai_options_for_program,
+    ai_video_as_owner, ai_video_cancel_as_owner, ai_video_cancel_for_run, ai_video_for_agent_run,
+    ai_video_for_run, ai_video_poll_as_owner, ai_video_poll_for_run, vault_hooks_replay_as_owner,
 };
 pub(crate) use identity::*;
 pub(crate) use invocations::*;
@@ -282,12 +285,10 @@ use super::credential_memory;
 use super::write_facet::{SESSION_HEADER, landing_facet};
 use super::{host_action, owner_routes, pairing, scoped_read_for_core_auth};
 
-/// Request-body ceiling for the facade nest: 64 MiB.
-///
-/// Sized for the largest legal blob append (32 MiB raw) once base64 and JSON
-/// framing are paid for. Applied as a layer on THIS router, so the limit is a
-/// property of the facade projection and no other route's body handling moves.
-const FACADE_MAX_BODY_BYTES: usize = MAX_REMOTE_REQUEST_BYTES;
+/// Request-body ceiling for the anonymous-chat SDK route: 64 MiB, its
+/// pre-auth bound. The authenticated facade nest reads up to the API's
+/// request floor instead (`limits.request_body_bytes`, ABC transport row T2).
+const ANONYMOUS_CHAT_MAX_BODY_BYTES: usize = MAX_REMOTE_REQUEST_BYTES;
 
 /// The facade route table.
 ///
@@ -295,18 +296,19 @@ const FACADE_MAX_BODY_BYTES: usize = MAX_REMOTE_REQUEST_BYTES;
 /// request bodies (`vault.recall` has five inputs), and `/v1/core`'s own read
 /// routes — `/query`, `/context-pack`, `/hydrate` — already post their
 /// requests for the same reason. One method per verb also keeps the route
-/// census a flat list a contract test can compare against the catalog.
+/// census a flat list a contract test can compare against the catalog. Its
+/// bodies are read up to the API's request floor (`limits.request_body_bytes`,
+/// ABC transport row T2), the API router's own layer: the nest sets none.
 pub(crate) fn facade_routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .merge(agent_verbs::routes())
         .fallback(facade_unknown_verb)
-        .layer(DefaultBodyLimit::max(FACADE_MAX_BODY_BYTES))
 }
 
 /// The anonymous-chat SDK route, mounted with the existing standalone
 /// handler outside invocation claims, wire telemetry and call receipts.
 pub(crate) fn anonymous_chat_routes() -> Router<Arc<SyncServer>> {
-    agent_verbs::anonymous_chat_routes().layer(DefaultBodyLimit::max(FACADE_MAX_BODY_BYTES))
+    agent_verbs::anonymous_chat_routes().layer(DefaultBodyLimit::max(ANONYMOUS_CHAT_MAX_BODY_BYTES))
 }
 
 /// [`facade_routes`] with every reply's call receipt (OF-538): one layer

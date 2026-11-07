@@ -332,9 +332,10 @@ impl OffRecordSession<'_> {
 
     /// Write-path gate check for a session-bound code run's durable write.
     /// The gate's decision is a write too, so it lands only as the write
-    /// would: off record (DOOR-127) the write stages in the room, so the
-    /// gate is judged and its decision kept nowhere
-    /// ([`Self::session_gate_check`]).
+    /// would: off record (DOOR-127) the write stages in the room, so this
+    /// precheck keeps no decision ([`Self::session_gate_check`]), and the
+    /// staging write judges again and stages its decision beside the claim
+    /// (FIX 9967).
     pub(crate) fn executor_check_write_gate(
         &self,
         route: &SessionWriteRoute,
@@ -395,14 +396,14 @@ impl OffRecordSession<'_> {
         envelope: &crate::WriteEnvelope,
         occurred: crate::TimeRange,
         learned_at: u64,
-    ) -> Result<()> {
+    ) -> Result<EntityId> {
         if route.target() == RouteTarget::Overlay {
             return self
                 .stage_session_claim(route, *id, candidate, envelope, occurred, learned_at)
-                .map(drop);
+                .map(|_| *id);
         }
         let (vault, landing) = self.base_write_vault(route)?;
-        vault.put_claim_candidate_with_landing(
+        vault.put_claim_candidate_with_landing_returning_actual(
             id,
             candidate,
             envelope,

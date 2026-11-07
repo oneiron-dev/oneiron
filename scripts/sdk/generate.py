@@ -142,6 +142,13 @@ for row in ROWS:
     # catch-all, so a new host door names its check or fails to compile.
     if row.get('host_door_precheck', True) is not True and (row['host_door_precheck'] is not False or not row.get('host_door')):
         raise ValueError(f'{row["name"]}: host_door_precheck is only a host door\'s, and only false')
+    # `host_door_paced` hands a host door the facade call's paced context
+    # (FIX 8753): its invocation, the door it came in by and, on the drain's
+    # run of a held call, the drain's permit, so a full budget window holds
+    # the call in its caller's paced line and the drain runs it there again.
+    # An MCP call hands `None` and answers its paced receipt as before.
+    if row.get('host_door_paced') and not row.get('host_door'):
+        raise ValueError(f'{row["name"]}: only a host door takes a paced context')
     # `host_door_lens_owner` hands a live lens door the owner its card is held
     # for (OF-181, FIX 2612), never a field of its input: the facade call's
     # host-bound creating run and subscription (`FacadeCall::lens_owner`), or
@@ -346,7 +353,7 @@ ARGUMENTS = {
     'effort': {'rust': 'oneiron::memory::RecallEffort', 'napi': 'Option<String>', 'native_ts': 'string | undefined', 'py': 'str', 'stub': 'Effort', 'native_py': 'Option<&str>',
         'napi_convert': 'let {name} = oneiron_remote::parse_effort({name}.as_deref().unwrap_or({default})).map_err(facade_error)?;', 'py_convert': 'let {name} = oneiron_remote::parse_effort({name}.unwrap_or({default})).map_err(raise)?;', 'field': 'Some({name})'},
     'scope': {'rust': '&oneiron::memory::RecallScope', 'napi': 'Option<NapiRecallScope>', 'native_ts': 'RecallScope | undefined', 'py': 'dict[str, Any] | None', 'stub': 'RecallScope | None', 'native_py': 'Option<&str>', 'json': True,
-        'napi_convert': 'let {name} = recall_scope_to_engine({name});', 'py_convert': 'let {name} = match {name} {{ Some(value) => decode(value, "recall scope")?, None => oneiron::memory::RecallScope::default() }};', 'borrow': '&', 'field': 'Some({name}.clone())'},
+        'napi_convert': 'let {name} = recall_scope_to_engine({name}).map_err(facade_error)?;', 'py_convert': 'let {name} = match {name} {{ Some(value) => decode(value, "recall scope")?, None => oneiron::memory::RecallScope::default() }};', 'borrow': '&', 'field': 'Some({name}.clone())'},
     'limit': {'rust': 'usize', 'napi': 'Option<f64>', 'native_ts': 'number | undefined', 'py': 'int', 'stub': 'int', 'native_py': 'Option<usize>',
         'napi_convert': 'let {name} = {name}.map(limit_to_engine).transpose().map_err(facade_error)?.unwrap_or({default});', 'py_convert': 'let {name} = {name}.unwrap_or({default});', 'field': 'Some({name})'},
     'format': {'rust': 'Option<&str>', 'napi': 'Option<String>', 'native_ts': 'string | undefined', 'py': 'str | None', 'stub': 'PackFormat | None', 'native_py': 'Option<String>', 'borrow': '', 'suffix': '.as_deref()', 'field': '{name}.map(str::to_owned)'},
@@ -879,7 +886,8 @@ def mcp_input_dispatch(row):
         # a call that keeps no record hands its hidden id (FIX 5381).
         caller_arg = f'(actor.actor_ref, actor.actor_class), oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, {json.dumps(name)}), '
         fold_hooks_arg = ', pre_hooked_fold' if name == 'self.fold' else ''
-        door = f'Box::pin(crate::api::facade::host_doors::{method}(server, auth, {session_arg}{caller_arg if row.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}input{fold_hooks_arg})).await'
+        paced_arg = 'None, ' if row.get('host_door_paced') else ''
+        door = f'Box::pin(crate::api::facade::host_doors::{method}(server, auth, {session_arg}{caller_arg if row.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}{paced_arg}input{fold_hooks_arg})).await'
         # The card's owner names the request as the row runs it, before it decodes.
         lens_owner = f'let owner = surface.lens_owner({json.dumps(name)}, &input);\n' if row.get('host_door_lens_owner') else ''
         # A source door's failure keeps its program's feedback beside its
@@ -906,6 +914,12 @@ def mcp_input_dispatch(row):
                  'let output = output.map_err(mcp_facade_error)?;\n')
     else:
         body += decode
+        if name in ('vault.artifacts.view', 'vault.artifacts.export'):
+            body += ('let owner = actor.auth.as_ref().and_then(|auth| crate::api::owner_routes::owner(auth, server).ok());\n'
+                     'let memory = match owner {\n'
+                     '    Some(owner) => memory.with_owner_authorship(&owner),\n'
+                     '    None => memory,\n'
+                     '};\n')
         if name == 'describe':
             # describe(card key) expands a board card, under the board's own
             # scope and frame-epoch checks.
@@ -995,7 +1009,7 @@ pub(super) async fn execute_mcp_agent_verb(
         actor: &McpCallContext,
         served: &mut McpServed,
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
-    ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
+    ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>, Option<String>), McpGatewayError> {
         let input = mcp_agent_verb_input(args.tool.name, &args.payload.arguments)?;
         execute_agent_verb_input(server, args.tool.name, input, actor, None, served, board_hooks).await
     }
@@ -1029,7 +1043,7 @@ pub(crate) async fn execute_agent_verb_input(
         run: Option<McpCodeRun>,
         served: &mut McpServed,
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
-    ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
+    ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>, Option<String>), McpGatewayError> {
         let producers = oneiron::memory::ProducerRows::default();
         // An owner's erase or revoke reads the restriction-only clock through
         // its hooks and door, as the engine classifies it (FIX 11201).
@@ -1056,7 +1070,7 @@ async fn execute_agent_verb_listing(
         producers: &oneiron::memory::ProducerRows,
         served: &mut McpServed,
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
-    ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
+    ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>, Option<String>), McpGatewayError> {
 '''
     result += invalid + '''if let Some(field) = crate::mcp::verb_input_unknown_field(tool, &input) {
         return Err(McpGatewayError::new(-32602, "tool_args_invalid", format!("{tool} input names unknown field `{field}`")));
@@ -1118,10 +1132,12 @@ async fn execute_agent_verb_listing(
             return Err(error);
         }
     };
-    let output = crate::api::facade::row_hooks_post(server, hooks, output).await.map_err(mcp_facade_error)?;
+    let hook_notice = oneiron::task_verb::revoke_lands::caller_notice(&hooks);
+    let output = crate::api::facade::row_hooks_post(server, hooks, output).await
+        .map_err(|error| mcp_facade_error(error).with_hook_notice(hook_notice.clone()))?;
     // The row's turn ends after its post hooks.
     drop(task_work_turn);
-    Ok((output, source, carrier, epoch))
+    Ok((output, source, carrier, epoch, hook_notice))
     }
 
 /// One row of [`execute_agent_verb_listing`], on the args its pre chain left,
@@ -1145,7 +1161,9 @@ async fn execute_agent_verb_row(
     }
 
 /// [`execute_agent_verb_row`]'s row, inside the run's write envelope. Each
-/// arm's door future is on the heap, so this one stays small (FIX 12072).
+/// row's arm is its own async function, constructed and boxed in its own
+/// non-inlined function (FIX 19837); this match holds only that boxed handle,
+/// so its frame stays small however large any one row is.
 async fn execute_agent_verb_row_on(
         server: &Arc<SyncServer>,
         tool: &str,
@@ -1158,9 +1176,43 @@ async fn execute_agent_verb_row_on(
         pre_hooked_fold: Option<oneiron::code_run::actions::PreHookedFold>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
 '''
-    result += invalid + 'match tool {\n'
-    result += ''.join(mcp_input_dispatch(row) for row in mcp_rows() if row['name'] != 'ai.anonymous_chat')
+    result += invalid + ('let row = McpVerbRow { server, tool, input, actor, memory, surface, served, board_hooks, pre_hooked_fold };\n'
+                         'match tool {\n')
+    rows = [row for row in mcp_rows() if row['name'] != 'ai.anonymous_chat']
+    helpers = ''
+    for row in rows:
+        name, method = row['name'], row['name'].replace('.', '_')
+        arm = mcp_input_dispatch(row)
+        prefix, suffix = f'{json.dumps(name)} => {{\n', ' },\n'
+        assert arm.startswith(prefix) and arm.endswith(suffix), f'{name}: an MCP arm is not one block'
+        body = arm[len(prefix):-len(suffix)]
+        result += f'{json.dumps(name)} => boxed_mcp_verb_row_{method}(row).await,\n'
+        # The row's body is unchanged; it runs in its own function on the
+        # same arguments, the ones it does not read named once (FIX 19837).
+        uses_invalid = re.search(r'(?<![\w"])invalid(?![\w"])', body) is not None
+        helpers += (f"#[inline(never)]\nfn boxed_mcp_verb_row_{method}<'a>(row: McpVerbRow<'a>) -> McpVerbRowFuture<'a> {{\nBox::pin(mcp_verb_row_{method}(row))\n}}\n"
+                    f"async fn mcp_verb_row_{method}(row: McpVerbRow<'_>) -> McpVerbRowResult {{\n"
+                    'let McpVerbRow { server, tool, input, actor, memory, surface, served, board_hooks, pre_hooked_fold } = row;\n'
+                    'let _ = (&server, &tool, &input, &actor, &memory, &surface, &served, &board_hooks, &pre_hooked_fold);\n'
+                    + (invalid if uses_invalid else '') + f'{body} }}\n')
     result += '_ => Err(invalid()), } }\n'
+    result += '''/// What one MCP row's arm returns.
+type McpVerbRowResult = Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError>;
+/// One MCP row's arm, boxed by its own function (FIX 19837).
+type McpVerbRowFuture<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = McpVerbRowResult> + Send + 'a>>;
+/// [`execute_agent_verb_row_on`]'s arguments, moved whole into the one row's arm.
+struct McpVerbRow<'a> {
+    server: &'a Arc<SyncServer>,
+    tool: &'a str,
+    input: Value,
+    actor: &'a McpCallContext,
+    memory: oneiron::Memory<'a>,
+    surface: McpRowSurface,
+    served: &'a mut McpServed,
+    board_hooks: &'a mut Option<super::board_setup::McpBoardHooks>,
+    pre_hooked_fold: Option<oneiron::code_run::actions::PreHookedFold>,
+}
+''' + helpers
     result += '''/// One typed verb result, drained in a single frame.
 fn mcp_agent_verb_output(
         output: impl serde::Serialize,
@@ -1539,7 +1591,8 @@ def facade_dispatch(facade_rows):
             caller_arg = 'caller, Some(oneiron::task_verb::verb_hook_boundary::door_invocation(&server.vault, &hooks)), '
             # Only the public fold's Mark action repeats this same hook name.
             fold_hooks_arg = ', oneiron::code_run::actions::PreHookedFold::from_pre(&hooks)' if name == 'self.fold' else ''
-            door = f'super::host_doors::{method}(server, auth, {session_arg}{caller_arg if r.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}facade_door_input(&mut hooks)?{fold_hooks_arg}).await'
+            paced_arg = 'Some(super::FacadePacedCall::of(call)?), ' if r.get('host_door_paced') else ''
+            door = f'super::host_doors::{method}(server, auth, {session_arg}{caller_arg if r.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}{paced_arg}facade_door_input(&mut hooks)?{fold_hooks_arg}).await'
             # A door that fails after the pre chain ran (the door itself, its
             # input's decode or its answer's encoding) keeps a session-only
             # call's pre hook records and runs no post chain (FIX 5527).
@@ -1734,6 +1787,14 @@ def facade_dispatch(facade_rows):
                  '/// [`NESTED_READABLE`]\'s paths for `verb`; none for a row that declares none.\n'
                  "pub(super) fn nested_readable_paths(verb: &str) -> &'static [&'static str] {\n"
                  'match NESTED_READABLE.iter().find(|(row, _)| *row == verb) { Some((_, paths)) => *paths, None => &[] }\n}\n')
+    dispatch += "type FacadeRowFuture<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<FacadeCallOutput, FacadeApiError>> + Send + 'a>>;\n"
+    for r in facade_rows:
+        method = r['name'].replace('.', '_')
+        dispatch += f'''#[inline(never)]
+fn boxed_{method}<'a>(server: &'a Arc<SyncServer>, call: &'a FacadeCall<'a>, input: Result<serde_json::Value, FacadeApiError>) -> FacadeRowFuture<'a> {{
+Box::pin({method}(server, call, input))
+}}
+'''
     dispatch += f'''/// Runs facade verb `verb` for `call` over `input`, as its row admits it:
 /// the one verb table every server transport serves. A board, browser or run
 /// row is refused by the context it needs, which no facade call carries; any
@@ -1745,12 +1806,13 @@ pub(crate) async fn call_verb(server: &Arc<SyncServer>, call: &FacadeCall<'_>, v
 let restrictive = super::clock_ingress::restrictive_call(server, verb, input.as_ref().ok());
 super::clock_ingress::scoped(restrictive, call_verb_row(server, call, verb, input)).await
 }}
-/// [`call_verb`]'s row for `verb`. Each row's future is on the heap, so this
-/// one stays small however large its largest row is (FIX 12072).
+/// [`call_verb`]'s row for `verb`. Each row's concrete future is constructed
+/// and boxed in its own non-inlined function (FIX 19837); this match receives
+/// only its boxed handle.
 async fn call_verb_row(server: &Arc<SyncServer>, call: &FacadeCall<'_>, verb: &str, input: Result<serde_json::Value, FacadeApiError>) -> Result<FacadeCallOutput, FacadeApiError> {{
 match verb {{
 '''
-    dispatch += ''.join(f'{json.dumps(r["name"])} => Box::pin({r["name"].replace(".", "_")}(server, call, input)).await,\n' for r in facade_rows)
+    dispatch += ''.join(f'{json.dumps(r["name"])} => boxed_{r["name"].replace(".", "_")}(server, call, input).await,\n' for r in facade_rows)
     for context, rows in [('Board', [r for r in ROWS if r.get('context') == 'board' and 'host' not in r]), ('Browser', [r for r in BROWSER_ROWS if 'host' not in r]), ('Run', [r for r in RUN_ROWS if 'host' not in r])]:
         if rows: dispatch += ' | '.join(json.dumps(r['name']) for r in rows) + f' => Err(context_required(verb, VerbContext::{context})),\n'
     dispatch += '_ => Err(unknown_verb(verb)),\n}\n}\n'
@@ -1777,6 +1839,27 @@ def host_door_rows(facade_rows):
     out += '    pub(in crate::api::facade) fn from_verb(verb: &str) -> Option<Self> {\n        Some(match verb {\n'
     out += ''.join(f'            {json.dumps(r["name"])} => Self::{variant(r)},\n' for r in checked)
     out += '            _ => return None,\n        })\n    }\n}\n'
+    # FIX 4794: the MCP rows whose handler takes the caller's credential
+    # before it runs, as `mcp_input_dispatch` emits them, so the hook
+    # admission refuses a call with none before the row's pre hooks. Most are
+    # the checked host doors above; only the difference is listed.
+    credential = [r['name'] for r in mcp_rows()
+                  if r['name'] != 'ai.anonymous_chat' and r.get('context') != 'board'
+                  and (r.get('admission', {}).get('owner_grade') or r.get('host_door'))]
+    checked_names = [r['name'] for r in checked]
+    added = [name for name in credential if name not in checked_names]
+    removed = [name for name in checked_names if name not in credential]
+    alternatives = lambda names: ' | '.join(json.dumps(name) for name in names)
+    out += ('/// Whether `verb` is an MCP row whose handler takes the caller\'s credential\n'
+            '/// before it runs: every host door and every owner-grade row. A call that\n'
+            '/// carries none is refused before the row\'s pre hooks (FIX 4794).\n')
+    out += '#[must_use]\npub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {\n'
+    test = 'HostDoorRow::from_verb(verb).is_some()'
+    if removed:
+        test = f'({test} && !matches!(verb, {alternatives(removed)}))'
+    if added:
+        test += f' || matches!(verb, {alternatives(added)})'
+    out += f'    {test}\n}}\n'
     return out
 
 # FIX 10471: `rust_feature` gates one CORE Rust typed emission behind a Cargo
@@ -1841,18 +1924,22 @@ def outputs():
         core += '&' + json.dumps(list(r.get('mcp_required_fields', r['mcp_fields']))) + '},\n'
     core += '_ => return None, }; Some(serde_json::json!({"type": "object", "additionalProperties": false, "required": required, "properties": properties})) }\n'
     core += "pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()> { match verb {\n"
+    validators = ''
     board_host_input = {r['name']: r['input'] for r in BOARD_HOST_ROWS}
     for r in ROWS:
+        method = r['name'].replace('.', '_')
         checks = r.get('admission', {}).get('validate', '')
         binding = 'input' if checks else '_input'
         if r['name'] in board_host_input:
             # One verb, two served shapes: the board/MCP shape and the
             # facade's host projection. Either admits; each door decodes
             # its own shape after this check.
-            core += f'{core_cfg(r)}{json.dumps(r["name"])} => {{ if decode::<{r["input"]}>(value.clone()).is_err() {{ let _host: {board_host_input[r["name"]]} = decode(value.clone())?; }} }},\n'
+            body = f'if decode::<{r["input"]}>(value.clone()).is_err() {{ let _host: {board_host_input[r["name"]]} = decode(value.clone())?; }}'
         else:
-            core += f'{core_cfg(r)}{json.dumps(r["name"])} => {{ let {binding}: {r["input"]} = decode(value.clone())?; {checks} }},\n'
-    core += '_ => return Err(wrong_root(verb).unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb"))), } Ok(()) }\n'
+            body = f'let {binding}: {r["input"]} = decode(value.clone())?; {checks}'
+        core += f'{core_cfg(r)}{json.dumps(r["name"])} => validate_input_{method}(value)?,\n'
+        validators += f'{core_cfg(r)}#[inline(never)]\nfn validate_input_{method}(value: &serde_json::Value) -> MemoryResult<()> {{ {body} Ok(()) }}\n'
+    core += '_ => return Err(wrong_root(verb).unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb"))), } Ok(()) }\n' + validators
     # Code mode binds its own guest, so a rewrite there validates the original
     # browser input, never the public live-run attachment wrapper.
     core += "pub fn validate_browser_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()> { match verb {\n"
@@ -1868,15 +1955,18 @@ def outputs():
     core += 'if verb == "ai.anonymous_chat" { return encode(ai_anonymous_chat(memory, decode(value)?)?); }\n'
     core += "// The row's one verb-hook boundary (ARCH-0080 §3).\n"
     core += "crate::task_verb::verb_hook_boundary::row(memory, verb, value, |value| match verb {\n"
+    invokers = ''
     for r in facade_rows:
         method = r['name'].replace('.', '_')
         if r.get('board_host'):
             # No memory fn of this name: it is the board fn's. An embedded
             # handle answers the host-only refusal, as other host rows do.
-            core += f'{core_cfg(r)}{json.dumps(r["name"])} => encode(crate::task_verb::sdk::host_only::<{r["output"]}, {r["input"]}>(memory, {json.dumps(r["name"])}, &decode(value)?)?),\n'
+            body = f'encode(crate::task_verb::sdk::host_only::<{r["output"]}, {r["input"]}>(memory, {json.dumps(r["name"])}, &decode(value)?)?)'
         else:
-            core += f'{core_cfg(r)}{json.dumps(r["name"])} => encode({method}(memory, decode(value)?)?),\n'
-    core += '_ => Err(MemoryError::bad_request("unknown SDK agent verb")),\n})\n}\n'
+            body = f'encode({method}(memory, decode(value)?)?)'
+        core += f'{core_cfg(r)}{json.dumps(r["name"])} => invoke_{method}(memory, value),\n'
+        invokers += f"{core_cfg(r)}#[inline(never)]\nfn invoke_{method}(memory: &Memory<'_>, value: serde_json::Value) -> MemoryResult<serde_json::Value> {{ {body} }}\n"
+    core += '_ => Err(MemoryError::bad_request("unknown SDK agent verb")),\n})\n}\n' + invokers
     # A browser row's one door: code mode hands its whole input to the run's
     # browser session and takes the verb's whole output back.
     core += "pub fn invoke_browser(driver: &mut dyn oneiron_browser::BrowserDriver, verb: &str, value: serde_json::Value) -> Result<serde_json::Value, oneiron_browser::BrowserError> {\n"
@@ -2162,6 +2252,33 @@ UNIFFI_RESULTS = {
     'crate::claim::ScopedReadResult<Vec<crate::memory::LexicalHit>>': 'LexicalHits',
     'crate::claim::ScopedReadResult<Vec<crate::memory::NeighborHit>>': 'NeighborHits',
 }
+# Generated records with an owned codec for a nested opaque JSON result.
+# `types.root()` still emits their public records before this codec is selected.
+UNIFFI_GENERATED_RESULT_LIFTS = {
+    'crate::task_verb::sdk::BrowserBatchOutput': 'BrowserAnswerBatchOutput',
+    'crate::edit_settle::PendingProposalView': 'PendingProposalView',
+    'crate::memory::ClaimProposalReview': 'ClaimProposalReview',
+    'crate::memory::KeyValueItem': 'KeyValueItem',
+    'crate::memory::KeyValuePutReceipt': 'KeyValuePutReceipt',
+    'crate::skill::helper::CallableCardView': 'CallableCardView',
+    'crate::task_verb::sdk::AiOptions': 'AiOptions',
+    'crate::core_write::CoreEntityWriteReceipt': 'CoreEntityWriteReceipt',
+    'crate::engine_executor::checkpoint_read::CheckpointView': 'CheckpointView',
+    'crate::policy_setting_doors::PolicyActionOutcome': 'PolicyActionOutcome',
+    'crate::lens::LensResultSetActionResult': 'LensResultSetActionResult',
+    'crate::claim::ScopedReadResult<Vec<crate::memory::DiagnosticEventView>>': 'ScopedReadResultDiagnosticEventViewList',
+    'crate::claim::ScopedReadResult<Option<crate::memory::DiagnosticEventView>>': 'ScopedReadResultOptionalDiagnosticEventView',
+    'crate::claim::ScopedReadResult<crate::memory::CoachInspectionView>': 'ScopedReadResultCoachInspectionView',
+    'crate::blob_artifact::DeckProposeOutcome': 'DeckProposeOutcome',
+    'crate::office_body::DeckExportView': 'DeckExportView',
+    'crate::blob_artifact::ArtifactAskOutcome': 'ArtifactAskOutcome',
+    'crate::task_verb::sdk::ConnectorCallReply': 'ConnectorCallReply',
+    'crate::task_verb::sdk::ConnectorCallStatus': 'ConnectorCallStatus',
+    'crate::task_verb::sdk::ConnectorSchemaReply': 'ConnectorSchemaReply',
+    'crate::task_verb::sdk::ActAnswer<crate::blob_artifact::SlideReviewOutcome>': 'ActAnswerSlideReviewOutcome',
+    'crate::task_verb::sdk::ActAnswer<crate::blob_artifact::ArtifactAskOutcome>': 'ActAnswerArtifactAskOutcome',
+}
+
 # A typed binding argument the client takes as is: its foreign type and how it
 # is passed. Any other binding argument is lowered into its `ARGUMENTS` type.
 UNIFFI_ARGUMENTS = {
@@ -2269,10 +2386,51 @@ def uniffi_export(row, types, census):
             output, result = record, 'Lift::lift(output)'
             sides.append('typed')
         elif mirror := types.root(row['output']):
-            output, result = mirror, f'crate::codec::lift_record({name}, &output)'
+            owned = uniffi_record(row['output'], UNIFFI_GENERATED_RESULT_LIFTS)
+            if owned and owned != mirror:
+                raise ValueError(f'{row["name"]}: its owned result codec must keep the generated record {mirror}')
+            output = mirror
+            if owned:
+                result = 'Lift::lift(output)'
+            elif row['output'].startswith('crate::task_verb::sdk::ActAnswer<') and row['output'].endswith('>'):
+                nested_voice = ''
+                if row['output'] == 'crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::LiveVoiceToolReply>':
+                    nested_voice = (
+                        'oneiron::task_verb::sdk::ActAnswer::Done(oneiron::task_verb::sdk::LiveVoiceToolReply { '
+                        'processed: oneiron::task_verb::sdk::LiveVoiceProcessed { session_ref, cursor, ended }, '
+                        'reply: oneiron::task_verb::sdk::LiveVoiceToolCallReply::QuestionsNarrowed(q) }) => '
+                        f'Ok({mirror}::Done(crate::LiveVoiceToolReply {{ '
+                        'processed: crate::LiveVoiceProcessed { session_ref, cursor, ended }, '
+                        'reply: crate::LiveVoiceToolCallReply::QuestionsNarrowed(crate::NarrowedQuestions::lift(q)?) })), '
+                    )
+                owned_done = ''
+                if row['output'] == 'crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::ConnectorCallReply>':
+                    owned_done = (
+                        'oneiron::task_verb::sdk::ActAnswer::Done(reply) => '
+                        f'Ok({mirror}::Done(crate::ConnectorCallReply::lift(reply)?)), '
+                    )
+                elif row['output'] == 'crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::LiveVoiceToolReply>':
+                    owned_done = (
+                        'oneiron::task_verb::sdk::ActAnswer::Done(oneiron::task_verb::sdk::LiveVoiceToolReply { '
+                        'processed: oneiron::task_verb::sdk::LiveVoiceProcessed { session_ref, cursor, ended }, '
+                        'reply: oneiron::task_verb::sdk::LiveVoiceToolCallReply::Done(reply) }) => '
+                        f'Ok({mirror}::Done(crate::LiveVoiceToolReply {{ '
+                        'processed: crate::LiveVoiceProcessed { session_ref, cursor, ended }, '
+                        'reply: crate::LiveVoiceToolCallReply::Done(crate::ConnectorCallReply::lift(reply)?) })), '
+                    )
+                # Other variants keep the existing whole-record conversion.
+                result = (
+                    f'match output {{ oneiron::task_verb::sdk::ActAnswer::QuestionsNarrowed(q) => '
+                    f'Ok({mirror}::QuestionsNarrowed(crate::NarrowedQuestions::lift(q)?)), '
+                    f'{nested_voice}{owned_done}'
+                    f'other => crate::codec::lift_record({name}, &other) }}'
+                )
+            else:
+                result = f'crate::codec::lift_record({name}, &output)'
             sides.append('generated')
         else:
-            output, result = 'WireJson', f'crate::codec::encode({name}, &output)'
+            output = 'WireJson'
+            result = 'Lift::lift(output)' if row['output'] == 'serde_json::Value' else f'crate::codec::encode({name}, &output)'
             sides.append('wire')
         census.setdefault(tuple(sides), []).append(row['name'])
     declaration = ', '.join(arg + ': ' + typ for arg, typ in params.items())

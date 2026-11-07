@@ -655,7 +655,10 @@ impl Connection {
             }
             return None;
         }
-        if !self.withholds(locality, peer, routed.rows.as_deref(), routed.frame) {
+        if self.own_machine_reply_stands(peer, routed)
+            && !self.withholds(locality, peer, routed.rows.as_deref(), routed.frame)
+            && !self.off_carrier_withholds(routed)
+        {
             return Some(routed.frame.to_vec());
         }
         if !last {
@@ -734,6 +737,48 @@ impl Connection {
             })
             .collect();
         self.frames(pushes)
+    }
+}
+
+impl Connection {
+    pub(crate) fn is_own_machine_reply(&self, data: &[u8]) -> bool {
+        super::routing::addressed(data, self.conn_id).is_some_and(|routed| {
+            routed.incarnation == super::routing::OWN_MACHINE_RPC_INCARNATION
+                && routed.frame.first() == Some(&crate::protocol::TAG_RPC)
+        })
+    }
+
+    /// Whether a forwarded search's reply to a caller off the carrying device
+    /// keeps a row from an unknown destination now (FIX 11991). The search
+    /// judged its hits for one; a world that withholds from it between the
+    /// search and the send keeps the reply, whatever machine carries it and
+    /// wherever that machine sits.
+    fn off_carrier_withholds(&self, routed: &super::routing::Routed<'_>) -> bool {
+        routed.incarnation == super::routing::OFF_CARRIER_RPC_INCARNATION
+            && self.withholds(
+                oneiron::claim::CallerLocality::OffDevice,
+                oneiron::authority::PeerMachine::Unknown,
+                routed.rows.as_deref(),
+                routed.frame,
+            )
+    }
+
+    fn own_machine_reply_stands(
+        &self,
+        peer: oneiron::authority::PeerMachine,
+        routed: &super::routing::Routed<'_>,
+    ) -> bool {
+        if routed.frame.first() != Some(&crate::protocol::TAG_RPC)
+            || routed.incarnation != super::routing::OWN_MACHINE_RPC_INCARNATION
+        {
+            return true;
+        }
+        self.hub.server.upgrade().is_some_and(|server| {
+            server
+                .vault()
+                .home_claim_vector_peer_stands(peer)
+                .unwrap_or(false)
+        })
     }
 }
 

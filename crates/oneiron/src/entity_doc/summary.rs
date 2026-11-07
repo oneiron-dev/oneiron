@@ -165,6 +165,7 @@ pub(crate) fn birth_summary_in_txn(
         generation: 0,
         pending: 0,
         birth_frontier: None,
+        restored: None,
     };
     storage::persist(vault, txn, &entity, &mut head, &doc, None)
 }
@@ -191,6 +192,9 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             super::forks::authorize(self, txn, authorization, summary, actor)?;
             self.authorize_shared_content_write_in_txn(txn, *summary, &actor)?;
+            if let Some(refusal) = self.store.use_restricted_in_txn(txn, summary)? {
+                return Err(refusal);
+            }
             let (mut head, doc) = summary_doc(self, txn, summary)?;
             if doc.frontier() != frontier {
                 return Err(Error::ConcurrentWrite(

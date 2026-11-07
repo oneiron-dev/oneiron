@@ -13,6 +13,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+// The supervisor's copy of a stream socket's guest end (FIX 6788).
+mod control;
 // A socket's host entry ends with the guest's last hold on it (FIX 5978).
 mod lifetime;
 // Guest-loopback listeners, inside the session only (FIX 6680).
@@ -35,6 +37,15 @@ struct Socket {
     target: Mutex<Option<SocketAddr>>,
     stream: Mutex<Option<UnixStream>>,
     datagram: Option<(UnixDatagram, UnixDatagram)>,
+    /// A stream socket's copy of its guest end, until it listens or
+    /// connects (FIX 6788).
+    control: Mutex<Option<control::Control>>,
+    /// IPV6_V6ONLY: an AF_INET6 socket that takes no IPv4-mapped address
+    /// (FIX 6787).
+    ipv6_only: AtomicBool,
+    /// A virtual loopback connect on the socket is in progress: another
+    /// one is `EALREADY`.
+    connecting: AtomicBool,
     /// No guest task holds the socket any more: its writer stops.
     closed: AtomicBool,
     /// Its room on the host floor, given back with its descriptors.
@@ -107,9 +118,23 @@ impl Supervisor {
         relay: Arc<dyn EgressRelay>,
     ) -> Result<(FenceProof, Guard)> {
         let deadline = Instant::now() + self.config.startup_timeout;
-        let (mut stream, _) = loop {
+        // FIX 747: any local user can reach the socket, so each connection's
+        // peer is checked against the container's own process before a byte
+        // is read. Another peer is dropped and the next connection waited
+        // for, so none can take the one handshake or end the startup.
+        let mut container_pid = None;
+        let mut stream = loop {
             match self.listener.accept() {
-                Ok(pair) => break pair,
+                Ok((stream, _)) => {
+                    if from_container(&runtime, &name, &stream, &mut container_pid) {
+                        break stream;
+                    }
+                    if Instant::now() >= deadline {
+                        return Err(Error::Fence(io::Error::other(
+                            "fence launcher did not prove readiness",
+                        )));
+                    }
+                }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                     if child.try_wait().map_err(Error::Fence)?.is_some()
                         || Instant::now() >= deadline
@@ -252,6 +277,38 @@ fn network_none(e: &serde_json::Value) -> bool {
             .as_str()
             .is_some_and(|s| !s.is_empty() && !s.starts_with("0:"))
 }
+/// Whether `stream`'s peer is the container's own process (FIX 747), read
+/// from the socket before any byte of it. The container's PID comes from the
+/// runtime once it names one, and is kept. A peer that is not it, or a
+/// container the runtime cannot name a process for yet, is no handshake.
+fn from_container(
+    runtime: &Path,
+    name: &str,
+    stream: &UnixStream,
+    container_pid: &mut Option<u64>,
+) -> bool {
+    let Ok(peer) = peer_pid(stream) else {
+        return false;
+    };
+    if peer <= 0 {
+        return false;
+    }
+    let expected = match *container_pid {
+        Some(pid) => pid,
+        None => {
+            let Some(pid) = inspect(runtime, name)
+                .ok()
+                .and_then(|evidence| evidence[0]["State"]["Pid"].as_u64())
+                .filter(|pid| *pid != 0)
+            else {
+                return false;
+            };
+            *container_pid = Some(pid);
+            pid
+        }
+    };
+    peer as u64 == expected
+}
 fn peer_pid(stream: &UnixStream) -> io::Result<i32> {
     // SAFETY: ucred is a plain C value filled by getsockopt with its exact size.
     unsafe {
@@ -291,12 +348,6 @@ fn serve(mut reader: UnixStream, listener: Arc<OwnedFd>, state: Arc<State>) -> i
                 continue;
             }
         };
-        // A listen's frame is followed by the listener's guest end.
-        let carried = if request.op.carries_fd() {
-            Some(wire::receive_fd(&reader)?)
-        } else {
-            None
-        };
         if !state.alive.load(Ordering::Acquire) {
             return Ok(());
         }
@@ -322,10 +373,10 @@ fn serve(mut reader: UnixStream, listener: Arc<OwnedFd>, state: Arc<State>) -> i
             if let Ok(mut result) = completion.result.lock() {
                 let reply = result.get_or_insert_with(|| {
                     let outcome = if request.op.settles_reservation() {
-                        operate(&request, &listener, &state, carried)
+                        operate(&request, &listener, &state)
                     } else {
                         linux::valid(listener.as_raw_fd(), request.notification)
-                            .and_then(|()| operate(&request, &listener, &state, carried))
+                            .and_then(|()| operate(&request, &listener, &state))
                     };
                     match outcome {
                         Ok(mut reply) => {
@@ -365,16 +416,11 @@ fn operate(
     request: &wire::Request,
     listener: &OwnedFd,
     state: &Arc<State>,
-    carried: Option<OwnedFd>,
 ) -> io::Result<wire::Reply> {
     use wire::Operation;
     let mut reply = wire::Reply::default();
     match &request.op {
-        Operation::Socket {
-            family,
-            kind,
-            protocol,
-        } => sockets::open(request, listener, state, family, kind, protocol, &mut reply)?,
+        Operation::Socket { .. } => sockets::open(request, listener, state, &mut reply)?,
         Operation::Describe { socket } => {
             let socket = get(state, *socket)?;
             reply.value = socket.kind as i64;
@@ -382,43 +428,53 @@ fn operate(
         }
         Operation::Connect { socket: id, target } => {
             let socket = get(state, *id)?;
+            let waiting = || linux::valid(listener.as_raw_fd(), request.notification).is_ok();
             if socket.kind == libc::SOCK_DGRAM {
                 state.relay.authorize_datagram(*target)?;
                 *socket
                     .target
                     .lock()
                     .map_err(|_| io::Error::other("fence state poisoned"))? = Some(*target);
-            } else if let Some(answer) = loopback::connect(state, *id, &socket, *target) {
-                // A loopback target: this session's listener, or a refusal.
-                reply = answer?;
             } else {
-                let mut peer = socket
-                    .stream
-                    .lock()
-                    .map_err(|_| io::Error::other("fence state poisoned"))?;
-                if peer.is_none() {
-                    return Err(io::Error::from_raw_os_error(libc::EISCONN));
-                }
-                if target.port() == 53 {
-                    state.relay.authorize_datagram(*target)?;
-                    let peer = peer
-                        .take()
-                        .ok_or_else(|| io::Error::from_raw_os_error(libc::EISCONN))?;
-                    *socket
-                        .target
-                        .lock()
-                        .map_err(|_| io::Error::other("fence state poisoned"))? = Some(*target);
-                    relay_dns(peer, *target, Arc::clone(state));
+                // One connect at a time on a stream socket, to a virtual
+                // listener or through the broker: another while one is in
+                // progress is EALREADY, as on Linux.
+                let Some(_connecting) = loopback::Connecting::begin(&socket) else {
+                    return Err(io::Error::from_raw_os_error(libc::EALREADY));
+                };
+                if let Some(answer) = loopback::connect(state, *id, &socket, *target, waiting) {
+                    // A loopback target: this session's listener, or a refusal.
+                    reply = answer?;
                 } else {
-                    let (stream, gated) = state.relay.connect_stream(*target)?;
-                    let peer = peer
-                        .take()
-                        .ok_or_else(|| io::Error::from_raw_os_error(libc::EISCONN))?;
-                    *socket
-                        .target
+                    let mut peer = socket
+                        .stream
                         .lock()
-                        .map_err(|_| io::Error::other("fence state poisoned"))? = Some(*target);
-                    relay_stream(peer, stream, *target, gated, Arc::clone(state));
+                        .map_err(|_| io::Error::other("fence state poisoned"))?;
+                    if peer.is_none() {
+                        return Err(io::Error::from_raw_os_error(libc::EISCONN));
+                    }
+                    if target.port() == 53 {
+                        state.relay.authorize_datagram(*target)?;
+                        let peer = peer
+                            .take()
+                            .ok_or_else(|| io::Error::from_raw_os_error(libc::EISCONN))?;
+                        *socket
+                            .target
+                            .lock()
+                            .map_err(|_| io::Error::other("fence state poisoned"))? = Some(*target);
+                        relay_dns(peer, *target, Arc::clone(state));
+                    } else {
+                        let (stream, gated) = state.relay.connect_stream(*target)?;
+                        let peer = peer
+                            .take()
+                            .ok_or_else(|| io::Error::from_raw_os_error(libc::EISCONN))?;
+                        *socket
+                            .target
+                            .lock()
+                            .map_err(|_| io::Error::other("fence state poisoned"))? = Some(*target);
+                        relay_stream(peer, stream, *target, gated, Arc::clone(state));
+                    }
+                    socket.release_control();
                 }
             }
         }
@@ -474,7 +530,8 @@ fn operate(
         }
         Operation::Peer { socket: id, local } => {
             let socket = get(state, *id)?;
-            reply.address = if *local && let Some(bound) = loopback::local(state, *id) {
+            let family = socket.family;
+            reply.address = if *local && let Some(bound) = loopback::local(state, *id, family) {
                 Some(bound)
             } else if *local {
                 Some(
@@ -497,9 +554,7 @@ fn operate(
             }
         }
         Operation::Bind { socket, address } => return loopback::bind(state, *socket, *address),
-        Operation::Listen { socket, backlog } => {
-            return loopback::listen(state, *socket, *backlog, carried);
-        }
+        Operation::Listen { socket, backlog } => return loopback::listen(state, *socket, *backlog),
         Operation::Accept { socket } => {
             let waiting = || linux::valid(listener.as_raw_fd(), request.notification).is_ok();
             return loopback::accept(state, *socket, waiting);
@@ -510,6 +565,14 @@ fn operate(
             commit,
             flags,
         } => return loopback::finish(request, listener, state, *socket, *ticket, *commit, *flags),
+        Operation::GetOption { socket, option } => {
+            return loopback::get_option(state, *socket, *option);
+        }
+        Operation::SetOption {
+            socket,
+            option,
+            value,
+        } => return loopback::set_option(state, *socket, *option, *value),
     }
     Ok(reply)
 }
@@ -530,7 +593,7 @@ fn datagram_writer(socket: Arc<Socket>, state: Arc<State>) {
                         && let Some(_room) = relay_workers::reserve(&state, &socket)
                         && let Ok(answer) = state.relay.datagram(target, &bytes[..n])
                     {
-                        let _ = host.send(&answer);
+                        relay_workers::deliver(&state, &socket, host, &answer);
                     }
                 }
                 Err(e)

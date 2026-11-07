@@ -36,6 +36,21 @@ use crate::dto::{
 };
 use crate::error::OneironError;
 
+mod ai_options;
+mod browser_batch;
+mod checkpoints;
+mod claims;
+mod core_write;
+mod diagnostics;
+mod key_value;
+mod lens_actions;
+mod lens_frames;
+mod policy_settings;
+mod proposal_results;
+mod proposals;
+mod skill_callables;
+mod wire_json;
+
 /// Lowers a foreign value into the engine type `T`.
 pub(crate) trait Lower<T> {
     fn lower(self) -> Result<T, OneironError>;
@@ -123,14 +138,6 @@ impl Lower<serde_json::Value> for WireJson {
                 "Send exactly one JSON value as canonical_json.",
             )
         })
-    }
-}
-
-impl Lift<serde_json::Value> for WireJson {
-    fn lift(value: serde_json::Value) -> Result<Self, OneironError> {
-        serde_json::to_string(&value)
-            .map(|canonical_json| Self { canonical_json })
-            .map_err(|error| internal(format!("could not encode a JSON value: {error}")))
     }
 }
 
@@ -1021,14 +1028,14 @@ impl Lower<engine::BlobArtifactInput> for BlobArtifactInput {
     }
 }
 
-/// `vault.artifacts.append`'s arguments: the raw bytes are measured against
-/// the engine blob ceiling before they are base64-encoded for the request.
+/// `vault.artifacts.append`'s arguments: the raw bytes are base64-encoded
+/// for the request; the engine's append door measures their size against
+/// `blob_content_bytes` and never refuses it (FIX 76).
 impl Lower<sdk::AppendBlobVersionRequest>
     for (String, Vec<u8>, Option<String>, Option<i64>, Option<i64>)
 {
     fn lower(self) -> Result<sdk::AppendBlobVersionRequest, OneironError> {
         let (artifact_ref, content, run_ref, occurred_at, learned_at) = self;
-        engine::caps::check_blob_bytes(content.len())?;
         Ok(sdk::AppendBlobVersionRequest {
             artifact_ref,
             content_base64: base64::engine::general_purpose::STANDARD.encode(&content),
@@ -1056,7 +1063,7 @@ impl Lift<engine::BlobVersionAppendOutcome> for BlobVersionAppendOutcome {
                 view: BlobVersionView::lift(view)?,
             },
             engine::BlobVersionAppendOutcome::Proposed(proposal) => Self::Proposed {
-                proposal: lift_record("vault.artifacts.append", &proposal)?,
+                proposal: crate::PendingProposalView::lift(proposal)?,
             },
         })
     }

@@ -102,20 +102,51 @@ impl Vault {
         learned_at: u64,
         carry: Option<Option<&super::carry::UnitWithdrawal>>,
     ) -> Result<SettleSelectOutcome> {
+        let sheet = self.prepare_sheet_keep(artifact_id, proposal, made_by, carry.flatten())?;
+        self.settle_select_prepared(
+            artifact_id,
+            proposal,
+            made_by,
+            consent,
+            actor,
+            occurred,
+            learned_at,
+            carry,
+            sheet.as_ref(),
+        )
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    fn settle_select_prepared(
+        &self,
+        artifact_id: &EntityId,
+        held: &EditProposal,
+        made_by: Option<&MadeBy>,
+        consent: &SettleConsent,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+        carry: Option<Option<&super::carry::UnitWithdrawal>>,
+        sheet: Option<&super::carry::SheetKeep>,
+    ) -> Result<SettleSelectOutcome> {
+        let split = sheet.and_then(|sheet| sheet.split.as_ref());
+        let proposal = split
+            .and_then(|split| split.carried.as_ref())
+            .unwrap_or(held);
+        let carry = match split {
+            Some(split) => {
+                Some((!split.withdrawal.answers.is_empty()).then_some(&split.withdrawal))
+            }
+            None => carry,
+        };
         self.ensure_selectable(artifact_id, proposal, actor, carry.is_some())?;
         self.authorize_settle(consent, actor)?;
-        // A deck proposal answering a thread settles under that thread's brief
-        // when it rides a standing grant; the owner's own consent needs none.
+        // The brief of the thread a deck proposal answers, which a settle a
+        // standing grant carries must name (judged in the writer below).
         let deck = crate::edit_roundtrip::deck_op(proposal);
-        if let (Some((_, _, context)), SettleConsent::StandingGrant { brief_ref }) = (deck, consent)
-            && context.thread.is_some_and(|thread| {
-                crate::anchored_annotation::thread_brief_ref(&thread) != *brief_ref
-            })
-        {
-            return Err(Error::Artifact(ArtifactError::SettleNotAuthorized(
-                "a deck proposal answering a thread settles only under that thread's brief",
-            )));
-        }
+        let thread_brief = deck
+            .and_then(|(_, _, context)| context.thread)
+            .map(|thread| crate::anchored_annotation::thread_brief_ref(&thread));
         let proposal_ref = proposal.run_ref.as_str();
         let key = settlement_key_parts(artifact_id, proposal_ref);
         let manifest_hash = manifest_ref(&proposal.manifest)?;
@@ -137,22 +168,34 @@ impl Vault {
                 // Standing-grant authorization resolves INSIDE this txn (TOCTOU):
                 // a revocation serialized before this commit makes it fail here.
                 let grant_ref = self.authorize_settle_in_txn(wtxn, consent, actor)?;
-                if let Some(bundle) = &proposal.sheet_answers {
-                    let policy = crate::gate::resolve_policy_manifest(&self.store, &*wtxn)?;
-                    let cap = policy
-                        .sheet_answer_limit(
-                            &artifact_id.to_hex(),
-                            &bundle.sheet,
-                            bundle.max_count_override,
-                        )
-                        .ok_or(Error::Artifact(ArtifactError::InvalidEditManifest(
-                            "typed answer count policy unavailable",
-                        )))?;
-                    if u64::try_from(bundle.answers.len()).unwrap_or(u64::MAX) > cap {
-                        return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
-                            "typed answer count exceeds policy",
-                        )));
-                    }
+                // A deck proposal answering a thread settles under that
+                // thread's brief whenever a standing grant carries the settle,
+                // whatever consent it named; only the verified owner needs
+                // none (FIX 9620).
+                if grant_ref.is_some()
+                    && let Some(thread_brief) = &thread_brief
+                    && consent.brief_ref() != Some(thread_brief.as_str())
+                {
+                    return Err(Error::Artifact(ArtifactError::SettleNotAuthorized(
+                        "a deck proposal answering a thread settles only under that thread's brief",
+                    )));
+                }
+                if let Some(sheet) = sheet
+                    && !sheet.is_current_in_txn(self, wtxn)?
+                {
+                    // Leave the held proposal intact for a fresh Keep instead
+                    // of spinning while another writer keeps moving a source.
+                    return Err(Error::ConcurrentWrite(
+                        "sheet answer source changed during Keep",
+                    ));
+                }
+                if let Some(split) = split
+                    && split.carried.is_none()
+                {
+                    let (head, record) = self.settle_all_withdrawn_in_txn(
+                        wtxn, artifact_id, held, &split.withdrawal, consent, actor, learned_at,
+                    )?;
+                    return Ok((head, ReanchorSummary::default(), record, None));
                 }
                 // A policy revision under this write lock can only make the budget
                 // stricter than the preflight. Re-evaluate before any durable row.
@@ -293,6 +336,7 @@ impl Vault {
                         reason: Some("stale_base".to_owned()),
                         sheet_answers: proposal.sheet_answers.clone(),
                         deck: None,
+                        discarded_words: None,
                     };
                     RECORD.put(&self.store, wtxn, &key, &record)?;
                     return Ok((base, ReanchorSummary::default(), record, Some(stranded)));
@@ -447,6 +491,7 @@ impl Vault {
                     reason: None,
                     sheet_answers: proposal.sheet_answers.clone(),
                     deck: checked_deck.map(|checked| Box::new(checked.evidence)),
+                    discarded_words: None,
                 };
                 RECORD.put(&self.store, wtxn, &key, &record)?;
                 if let Some(Some(withdrawal)) = carry {
@@ -514,6 +559,7 @@ impl Vault {
             // The decisions stay on the record; only a Keep's are kept answers.
             sheet_answers: proposal.sheet_answers.clone(),
             deck: None,
+            discarded_words: None,
         };
         RECORD.encode_value(&record)?;
 
@@ -649,23 +695,33 @@ impl Vault {
             .any(|grant| grant.bound().contains(&required)))
     }
 
+    /// The settle's early check, before its writer opens: as
+    /// [`Self::authorize_settle_in_txn`] decides it, on a read of its own.
+    /// The writer decides again.
     pub(super) fn authorize_settle(
         &self,
         consent: &SettleConsent,
         actor: WriteActor,
     ) -> Result<()> {
-        match consent {
-            SettleConsent::OwnerConsent { .. } => Ok(()),
-            SettleConsent::StandingGrant { brief_ref } => {
-                if self.settle_standing_grant_authorizes(actor, brief_ref)? {
-                    Ok(())
-                } else {
-                    Err(Error::Artifact(ArtifactError::SettleNotAuthorized(
-                        "no standing actor×artifact.settle×brief grant covers this settle",
-                    )))
-                }
+        if matches!(consent, SettleConsent::OwnerConsent { .. }) {
+            let txn = self.store.env.read_txn()?;
+            if self.settle_owner_in_txn(&txn, actor) {
+                return Ok(());
             }
         }
+        let brief_ref = consent.brief_ref().ok_or_else(owner_or_grant_required)?;
+        if self.settle_standing_grant_authorizes(actor, brief_ref)? {
+            Ok(())
+        } else {
+            Err(no_covering_grant())
+        }
+    }
+
+    /// Whether `actor` settles as the vault's owner (FIX 9620): a human
+    /// actor bound to the vault's owner in `txn`, never a person because
+    /// they are a person.
+    fn settle_owner_in_txn(&self, txn: &heed::RoTxn<'_>, actor: WriteActor) -> bool {
+        self.verify_owner_write_actor_in_txn(txn, &actor).is_ok()
     }
 
     /// The transaction-composable form of [`Vault::authorize_settle`], run
@@ -686,22 +742,25 @@ impl Vault {
         consent: &SettleConsent,
         actor: WriteActor,
     ) -> Result<Option<String>> {
-        match consent {
-            SettleConsent::OwnerConsent { .. } => Ok(None),
-            SettleConsent::StandingGrant { brief_ref } => {
-                let required = settle_grant_bound(actor, brief_ref)?;
-                let covering = self
-                    .active_standing_consent_grants_in_txn(wtxn)?
-                    .into_iter()
-                    .find(|grant| grant.bound().contains(&required));
-                if let Some(grant) = covering {
-                    Ok(Some(grant.bound().digest().to_hex()))
-                } else {
-                    Err(Error::Artifact(ArtifactError::SettleNotAuthorized(
-                        "no standing actor×artifact.settle×brief grant covers this settle",
-                    )))
-                }
-            }
+        // The owner's consent stands only for the vault's owner, verified in
+        // this writer (FIX 9620). Any other person settles as an agent does,
+        // under a standing grant on the brief it names, or not at all: the
+        // proposal stays as it is.
+        if matches!(consent, SettleConsent::OwnerConsent { .. })
+            && self.settle_owner_in_txn(wtxn, actor)
+        {
+            return Ok(None);
+        }
+        let brief_ref = consent.brief_ref().ok_or_else(owner_or_grant_required)?;
+        let required = settle_grant_bound(actor, brief_ref)?;
+        let covering = self
+            .active_standing_consent_grants_in_txn(wtxn)?
+            .into_iter()
+            .find(|grant| grant.bound().contains(&required));
+        if let Some(grant) = covering {
+            Ok(Some(grant.bound().digest().to_hex()))
+        } else {
+            Err(no_covering_grant())
         }
     }
 
@@ -759,24 +818,6 @@ impl Vault {
                 )));
             }
             verify_sheet_answer_bytes(bundle, Some(&source), Some(&proposal.new_bytes))?;
-            // A folder column answers for files read at a version: one that
-            // has moved since is not the file the answer read.
-            for pin in bundle
-                .answers
-                .iter()
-                .filter(|answer| answer.value.is_some())
-                .filter_map(|answer| answer.source.as_ref())
-            {
-                let current = match self.blob_artifact_head(&pin.id)? {
-                    Some(head) => self.read_blob_artifact_version(&pin.id, head.version)?,
-                    None => None,
-                };
-                if current.is_none_or(|bytes| blake3::hash(&bytes).as_bytes() != &pin.body_hash) {
-                    return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
-                        "a file the typed answers read has changed since; ask again",
-                    )));
-                }
-            }
         }
         // The spreadsheet door cannot settle a disguised PowerPoint manifest.
         if proposal.format == OfficeFormat::Xlsx
@@ -920,4 +961,19 @@ fn validate_settle_proposal_ref(run_ref: &str) -> Result<()> {
     }
     secret_scan::scan_metadata_field(run_ref)?;
     Ok(())
+}
+
+/// No standing grant covers this settle.
+fn no_covering_grant() -> Error {
+    Error::Artifact(ArtifactError::SettleNotAuthorized(
+        "no standing actor×artifact.settle×brief grant covers this settle",
+    ))
+}
+
+/// A person who is not the vault's owner named no brief a grant could cover
+/// (FIX 9620).
+fn owner_or_grant_required() -> Error {
+    Error::Artifact(ArtifactError::SettleNotAuthorized(
+        "only the vault's owner settles without a standing grant; name the brief one covers",
+    ))
 }

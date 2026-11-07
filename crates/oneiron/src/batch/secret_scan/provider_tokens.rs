@@ -1,5 +1,9 @@
 //! Core half of `batch::secret_scan::provider_tokens`: its store-layer items live in `oneiron_store::batch::secret_scan::provider_tokens` and are
 //! re-exported here; the items below stay in the engine.
+//!
+//! A stream reader reads one start at a time ([`credential_at`]) over a
+//! window of the token ([`KEY_WINDOW`]), so it never keeps a token whole
+//! (FIX 7200).
 
 pub(crate) use oneiron_store::batch::secret_scan::provider_tokens::*;
 
@@ -11,7 +15,7 @@ use super::{
 /// Where [`super::detect`]'s provider rules read a key in `text`: each whole
 /// token one names, with its reason.
 pub(super) fn provider_token_spans(text: &str) -> Vec<(std::ops::Range<usize>, &'static str)> {
-    text.split(|ch: char| !(ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-')))
+    text.split(|ch: char| !token_char(ch))
         .filter_map(|token| {
             classify_token(token).map(|reason| (shapes::span_of(text, token), reason))
         })
@@ -37,6 +41,28 @@ pub(super) fn classify_token(token: &str) -> Option<&'static str> {
         };
         classify_at(&token[start..], body)
     })
+}
+
+/// Whether `ch` is a token's: an ASCII letter or digit, `_` or `-`. A token
+/// is a longest run of them.
+pub(super) fn token_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-')
+}
+
+/// The provider rules at one start of a token: what [`classify_token`] reads
+/// there. `window` is the token's text from that start, [`KEY_WINDOW`] bytes
+/// of it or all it has left; `token_start`: the start is the token's own.
+pub(super) fn credential_at(window: &str, token_start: bool) -> Option<&'static str> {
+    let head = *window.as_bytes().first()?;
+    if !PREFIX_HEADS[usize::from(head)] {
+        return None;
+    }
+    let body = if token_start {
+        Body::Token
+    } else {
+        Body::Embedded
+    };
+    classify_at(window, body)
 }
 
 /// The provider rules for a key that starts inside a longer token, read at
@@ -81,8 +107,21 @@ const PROVIDER_RULES: [ProviderRule; 18] = [
 /// The fewest bytes any provider rule reads a key in.
 const MIN_KEY_LEN: usize = min_key_len(&PROVIDER_RULES);
 
+/// The most bytes any provider rule reads a key over, its prefix included.
+/// At any start, this much of a token reads as the token's whole rest does.
+/// A rule that reads the whole rest at the token's start checks only that
+/// its bytes are token bytes, and every byte of a token is one.
+pub(super) const KEY_WINDOW: usize = max_key_len(&PROVIDER_RULES);
+
 /// The bytes some provider rule's prefix starts with.
 static PREFIX_HEADS: [bool; 256] = prefix_heads(&PROVIDER_RULES);
+
+/// Whether some provider rule's prefix starts with `byte` (FIX 12207): the
+/// one table a reader of a key's first byte asks, so a new rule's head is
+/// read wherever keys are found.
+pub(crate) fn provider_prefix_head(byte: u8) -> bool {
+    PREFIX_HEADS[usize::from(byte)]
+}
 
 /// One provider rule: a key that starts with `prefix`, its bytes read by
 /// `shape`, named by `reason`.
@@ -174,6 +213,20 @@ const fn min_key_len(rules: &[ProviderRule]) -> usize {
         at += 1;
     }
     least
+}
+
+/// [`ProviderRule::min_len`]'s greatest over `rules`.
+const fn max_key_len(rules: &[ProviderRule]) -> usize {
+    let mut most = 0;
+    let mut at = 0;
+    while at < rules.len() {
+        let len = rules[at].min_len();
+        if len > most {
+            most = len;
+        }
+        at += 1;
+    }
+    most
 }
 
 /// Which bytes a prefix in `rules` starts with; every byte when a rule has no

@@ -20,6 +20,7 @@ mod memory_verbs;
 mod program_step;
 mod read_worlds;
 mod reader_spawn;
+mod record_refs;
 mod repo;
 mod repo_sources;
 mod routed_entry;
@@ -27,6 +28,7 @@ mod session_verbs;
 mod spawn_capture;
 mod summarize;
 mod team_submit;
+mod team_submit_entity;
 mod team_submit_output;
 mod team_verbs;
 mod verb_hooks;
@@ -61,7 +63,9 @@ pub(super) use self::envelope::{SELF_PROVENANCE_SURFACE_KEY, lineage_for_run};
 use self::human_speech::HumanWaitDispatchTarget;
 pub use self::leader::{HostPlannerBinding, HostPlannerDecisions};
 pub use self::memory_verbs::SELF_MEMORY_SEARCH_MAX_RESULTS;
-pub(crate) use self::reader_spawn::ReaderChildBinding;
+pub(crate) use self::reader_spawn::{
+    ReaderChildBinding, delegated_input, delegated_occurrence_input,
+};
 
 /// Host-bound dispatcher for one first-party code run.
 ///

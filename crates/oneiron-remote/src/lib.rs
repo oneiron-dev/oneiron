@@ -63,10 +63,10 @@ use oneiron::authority::MachineDeviceClass;
 use oneiron::memory::{MemoryError, RecallEffort};
 
 pub use crate::caps::{
-    MAX_BATCH_ENTITIES, MAX_BLOB_BASE64_LEN, MAX_BLOB_CONTENT_BYTES, MAX_CODEBASE_FILES,
-    MAX_ENTITY_PAYLOAD_BYTES, MAX_QUERY_BYTES, MAX_REMOTE_REQUEST_BYTES, MAX_REMOTE_RESPONSE_BYTES,
-    MAX_SEARCH_LIMIT, check_batch_len, check_deadline_ms_number, check_dimensions,
-    check_payload_bytes, check_query, check_token_budget_number, check_unix_seconds,
+    MAX_BATCH_ENTITIES, MAX_CODEBASE_FILES, MAX_ENTITY_PAYLOAD_BYTES, MAX_QUERY_BYTES,
+    MAX_REMOTE_REQUEST_BYTES, MAX_REMOTE_RESPONSE_BYTES, MAX_SEARCH_LIMIT, check_batch_len,
+    check_deadline_ms_number, check_dimensions, check_payload_bytes, check_query,
+    check_token_budget_number, check_unix_seconds,
 };
 use crate::embedded::EmbeddedClient;
 pub use crate::embedded::{HostOpenCheck, store_open_count, verify_read_credential};
@@ -81,9 +81,9 @@ use crate::remote::RemoteClient;
 
 /// Options an embedded open accepts (§HEAD-CONTRACT `OpenOptions`).
 ///
-/// `PartialEq` is not decoration: I9 compares a reopen's options against the
-/// registered ones and refuses a divergent pair, so equality IS the
-/// same-vault test.
+/// I9 compares normalized options and refuses a divergent pair. The registry
+/// resolves an omitted device class to `Computer` before comparing every
+/// option with `PartialEq`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct OpenOptions {
     /// Embedding vector dimensions; `None` takes the engine default.

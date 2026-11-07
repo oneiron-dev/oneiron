@@ -13,8 +13,6 @@ pub(crate) const MAX_FRAME: usize = oneiron_sandbox_contract::MAX_FRAME_BYTES;
 pub(crate) const MAX_COMPONENT: usize = oneiron_sandbox_contract::MAX_COMPONENT_BYTES;
 pub(crate) const MAX_FILE: usize = oneiron_sandbox_contract::MAX_FILE_BYTES;
 pub(crate) const MAX_CHUNK: usize = oneiron_sandbox_contract::MAX_CHUNK_BYTES;
-pub(crate) const MAX_TOTAL: usize = oneiron_sandbox_contract::MAX_WORKSPACE_BYTES;
-pub(crate) const MAX_REQUESTS: usize = oneiron_sandbox_contract::MAX_REQUESTS;
 pub(crate) const MAX_SOURCE: usize = oneiron_sandbox_contract::MAX_PROGRAM_BYTES;
 
 /// Source identities and exact lengths; seeded bytes stay in the workspace.
@@ -80,6 +78,19 @@ enum GuestFrame<'a> {
         from: &'a str,
         to: &'a str,
     },
+    OutputText {
+        target: &'a str,
+        start: bool,
+        frame: &'a str,
+    },
+    OutputBytes {
+        path: &'a str,
+        frame: &'a [u8],
+    },
+    StoreBytes {
+        start: bool,
+        frame: &'a [u8],
+    },
     StepResult {
         result_json: &'a str,
     },
@@ -104,7 +115,6 @@ struct SeedFile {
 
 pub(crate) struct Session<T> {
     channel: T,
-    requests: usize,
     finished: bool,
 }
 
@@ -112,7 +122,6 @@ impl<T: Read + Write> Session<T> {
     pub(crate) fn new(channel: T) -> Self {
         Self {
             channel,
-            requests: 0,
             finished: false,
         }
     }
@@ -150,16 +159,10 @@ impl<T: Read + Write> Session<T> {
         let mut files = BTreeMap::new();
         let mut shape = WorkspaceShape::new();
         let mut open: Option<SeedFile> = None;
-        let mut requests = 1;
+        // No frame count ends the source: each frame is checked as it comes
+        // (FIX 8026).
         loop {
             let frame = self.read()?;
-            // One logical file spends one request, regardless of byte length.
-            if !matches!(frame, HostFrame::FileChunk { .. } | HostFrame::FileClose) {
-                if requests == MAX_REQUESTS {
-                    return Err(Error::Protocol("source request count exhausted"));
-                }
-                requests += 1;
-            }
             if open.is_some()
                 && !matches!(frame, HostFrame::FileChunk { .. } | HostFrame::FileClose)
             {
@@ -283,6 +286,54 @@ impl<T: Read + Write> Session<T> {
         Ok(())
     }
 
+    pub(crate) fn output_text(
+        &mut self,
+        target: &str,
+        start: bool,
+        frame: &str,
+    ) -> Result<std::result::Result<u64, String>> {
+        self.output_frame(
+            &GuestFrame::OutputText {
+                target,
+                start,
+                frame,
+            },
+            frame.len(),
+        )
+    }
+
+    pub(crate) fn output_bytes(
+        &mut self,
+        path: &str,
+        frame: &[u8],
+    ) -> Result<std::result::Result<u64, String>> {
+        self.output_frame(&GuestFrame::OutputBytes { path, frame }, frame.len())
+    }
+
+    pub(crate) fn store_bytes(
+        &mut self,
+        start: bool,
+        frame: &[u8],
+    ) -> Result<std::result::Result<u64, String>> {
+        self.output_frame(&GuestFrame::StoreBytes { start, frame }, frame.len())
+    }
+
+    fn output_frame(
+        &mut self,
+        frame: &GuestFrame<'_>,
+        len: usize,
+    ) -> Result<std::result::Result<u64, String>> {
+        if self.finished || len > MAX_CHUNK {
+            return Err(Error::Protocol("output frame bounds"));
+        }
+        self.send(frame)?;
+        match self.read()? {
+            HostFrame::Receipt { accepted: true } => Ok(Ok(len as u64)),
+            HostFrame::Failure { code, detail } => Ok(Err(format!("{code}: {detail}"))),
+            _ => Err(Error::Protocol("expected output frame receipt")),
+        }
+    }
+
     pub(crate) fn result(&mut self, result_json: &str) -> Result<()> {
         if self.finished || result_json.len() > MAX_FILE {
             return Err(Error::Protocol("step result bounds"));
@@ -299,11 +350,11 @@ impl<T: Read + Write> Session<T> {
     }
 
     fn request(&mut self, frame: &GuestFrame<'_>) -> Result<bool> {
-        // Reserve the terminal step-result and finish frames.
-        if self.finished || self.requests >= MAX_REQUESTS - 2 {
-            return Err(Error::Protocol("outbound request count exhausted"));
+        // No lifetime count ends a run's requests (FIX 8026); none follows
+        // its finish.
+        if self.finished {
+            return Err(Error::Protocol("outbound request after finish"));
         }
-        self.requests += 1;
         self.send(frame)?;
         match self.read()? {
             HostFrame::Receipt { accepted } => Ok(accepted),

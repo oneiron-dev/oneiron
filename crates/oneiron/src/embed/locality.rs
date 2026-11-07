@@ -36,14 +36,26 @@ pub(crate) fn clear_embedding_locality_in_txn(
     Ok(())
 }
 
-#[cfg(feature = "sync")]
-pub(super) fn stamp_embedding_locality_in_txn(
+pub(crate) fn stamp_embedding_locality_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
     locality: EmbedderLocality,
 ) -> Result<()> {
     EMBEDDING_LOCALITY.put(&vault.store, txn, id, &locality)
+}
+
+impl Vault {
+    pub(crate) fn settled_embedding_locality_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<EmbedderLocality>> {
+        if self.store.pending_embedding_marker_present(txn, id)? {
+            return Ok(None);
+        }
+        EMBEDDING_LOCALITY.get(&self.store, txn, id)
+    }
 }
 
 impl Vault {

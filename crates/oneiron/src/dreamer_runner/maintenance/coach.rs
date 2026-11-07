@@ -90,6 +90,11 @@ pub const COACH_TRAINING_RUN_FACET: &str = "coach.training_run";
 /// The nightly offer pass: each pending offer reaches every owner's inbox
 /// once, and each offer whose check date came queues its promise check.
 pub const COACH_TRAINING_OFFERS_FACET: &str = "coach.training_offers";
+/// The nightly drafter retrain (FIX 12569, I5-DRAFTER = A): the vault's own
+/// draft model retrained on its own traffic. The host runs
+/// [`Vault::run_coach_drafter_retrain`], which pins the policy revision and
+/// the night's cutoff and records how the night ended.
+pub const COACH_DRAFTER_RETRAIN_FACET: &str = "coach.drafter_retrain";
 /// Autoresearch (OF-351): one selection round for each bound campaign whose
 /// measured evidence moved, under the campaign's lease. It runs on the host
 /// (FIX 1331), whose judge tells each round whether the campaign's goal is
@@ -151,10 +156,22 @@ pub const COACH_ROOM_UPKEEP_FACET: &str = "coach.room_upkeep";
 /// type in the owner's run tray. A suggestion only, and a closed-form job
 /// (see [`super::fold_suggestions`]).
 pub const COACH_FOLD_SUGGESTIONS_FACET: &str = "coach.fold_suggestions";
+/// Board layout suggestions per agent type (FIX 12572): what most agents of
+/// one wake role share in their context board layouts, as a Proposed default
+/// layout for that role in the owner's run tray. A suggestion only, and a
+/// closed-form job (see [`super::layout_suggestions`]).
+pub const COACH_LAYOUT_SUGGESTIONS_FACET: &str = "coach.layout_suggestions";
 /// Tradeoff routing (FIX-LIST 817): each pending project-bound skill tradeoff
 /// ask is handed to the leader of every project board it reached, to ask on
 /// one of that project's TASKs.
 pub const COACH_TRADEOFF_ROUTE_FACET: &str = "coach.tradeoff_route";
+/// The unclear-note clustering (ARCH-0056 §5 #unclear, FIX 7824): each
+/// recurring `no_label_fits` note put to the host's ladder as a same-pattern
+/// choice within its scope, and a Proposed label for a pattern whose notes
+/// come from enough distinct outcomes (see [`super::attribution_labels`]).
+pub const COACH_ATTRIBUTION_LABELS_FACET: &str = "coach.attribution_labels";
+/// Predicate of the Coach's Proposed attribution label, its subject the Coach.
+pub const COACH_ATTRIBUTION_LABEL_PROPOSAL_PREDICATE: &str = "coach.attribution_label.proposal";
 /// Predicate of the Coach's Proposed person-threshold row.
 pub const COACH_PERSON_THRESHOLD_PROPOSAL_PREDICATE: &str = "coach.person_threshold.proposal";
 /// Predicate of the Coach's Proposed think-threshold row.
@@ -164,6 +181,9 @@ pub const COACH_ROOM_NUDGE_PREDICATE: &str = "coach.room_upkeep.nudge";
 /// Predicate of the Coach's Proposed fold default, its subject the agent
 /// type's AGENT_DEF row.
 pub const COACH_FOLD_DEFAULT_PREDICATE: &str = "coach.fold_default.suggestion";
+/// Predicate of the Coach's Proposed board layout default for one wake role,
+/// its subject the Coach.
+pub const COACH_LAYOUT_DEFAULT_PREDICATE: &str = "coach.board_layout_default.suggestion";
 /// One room nudge as `read` reads it in `txn`, for the host's own upkeep
 /// read and voice (OF-417); `None` for anything else. It writes nothing.
 pub(crate) fn room_upkeep_nudge_in_txn(
@@ -176,7 +196,7 @@ pub(crate) fn room_upkeep_nudge_in_txn(
 /// Producer name of a pending training offer's inbox NOTIFICATION.
 pub const TRAINING_OFFER_NOTIFICATION_PRODUCER: &str = "coach.training_offer";
 
-const HOST_FACETS: [&str; 19] = [
+const HOST_FACETS: [&str; 21] = [
     COACH_SKILL_DISTILL_FACET,
     COACH_SKILL_DISCOVERY_FACET,
     COACH_PERSON_THRESHOLD_FACET,
@@ -192,15 +212,18 @@ const HOST_FACETS: [&str; 19] = [
     COACH_FORK_PROMOTE_FACET,
     COACH_ATTRIBUTION_AUDITS_FACET,
     COACH_JUDGE_LABEL_RECHECKS_FACET,
+    COACH_ATTRIBUTION_LABELS_FACET,
     COACH_WEAVE_DIGEST_SETTINGS_FACET,
     COACH_RESEARCH_SELECT_FACET,
     // The feedback sweep (OF-420): the inbox and each bound GitHub source,
     // under the fixed dedupe key the owner's run-now door shares.
     crate::feedback::COACH_FEEDBACK_SWEEP_FACET,
     COACH_FEEDBACK_DELIVERY_FACET,
+    // FIX 12569: one pending retrain per vault, under the fixed facet key.
+    COACH_DRAFTER_RETRAIN_FACET,
 ];
 /// The Coach's closed-form nightly jobs, which the wake driver runs.
-const MAINTENANCE_FACETS: [&str; 11] = [
+const MAINTENANCE_FACETS: [&str; 12] = [
     COACH_READ_HARDENING_FACET,
     COACH_TRIPWIRES_FACET,
     COACH_TRADEOFF_ESCALATION_FACET,
@@ -213,6 +236,7 @@ const MAINTENANCE_FACETS: [&str; 11] = [
     super::calibration_asks::COACH_CALIBRATION_ASKS_FACET,
     COACH_ROOM_UPKEEP_FACET,
     COACH_FOLD_SUGGESTIONS_FACET,
+    COACH_LAYOUT_SUGGESTIONS_FACET,
 ];
 const READ_HARDENING_SCOPE: &str = "retrieval";
 /// Hours a pending tradeoff ask waits on one rung before it climbs, a learned

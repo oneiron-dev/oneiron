@@ -12,10 +12,9 @@ use oneiron::{
 
 pub(crate) use super::boundary::host_device_class;
 use super::boundary::{
-    DEFAULT_NAPI_SEARCH_LIMIT, NAPI_BATCH_FRAME_ENTITIES, entity_ids_to_buffers, parse_created_at,
-    parse_edge_kind, parse_entity_id, parse_search_limit, parse_u8, read_bounded_array,
-    read_codebase_snapshot, read_query, read_vector, to_napi_err, ts_to_u64,
-    validate_entity_payload_len,
+    DEFAULT_NAPI_SEARCH_LIMIT, entity_ids_to_buffers, parse_created_at, parse_edge_kind,
+    parse_entity_id, parse_search_limit, parse_u8, read_bounded_array, read_codebase_snapshot,
+    read_query, read_vector, to_napi_err, ts_to_u64, validate_entity_payload_len,
 };
 use super::codebase::{
     CodebaseContents, CodebaseMemory, CodebaseScope, core_codebase_snapshot,
@@ -91,6 +90,8 @@ pub struct NapiVault {
     binding: Option<RawBinding>,
     /// `openWithHostRoot`'s wrong-root fact (FIX 4730); `false` otherwise.
     wrong_host_root: bool,
+    /// Owned verified READ proof; writes keep the original bound identity.
+    read_proof: Option<oneiron::authority::VerifiedSlip>,
     /// This handle's own engine-question collector, installed where the vault
     /// opened; `None` on bound views, which share the vault and its sink but
     /// expose no whole-vault crossing metadata.
@@ -99,6 +100,7 @@ pub struct NapiVault {
 
 /// The principal a bound vault's app host named, and its off-record
 /// session, if any: this handle's alone, never process state.
+#[derive(Clone)]
 struct RawBinding {
     actor: EntityId,
     actor_class: EdgeActorClass,
@@ -130,8 +132,8 @@ impl NapiVault {
         )))
     }
 
-    /// One frame of [`Self::batch_put_entities`], in one transaction.
-    fn put_entity_frame(&self, puts: &[RawEntityPut<'_>]) -> napi::Result<()> {
+    /// Every put of [`Self::batch_put_entities`], in one transaction.
+    fn put_entity_batch(&self, puts: &[RawEntityPut<'_>]) -> napi::Result<()> {
         if let Some(memory) = self.bound_memory() {
             return memory.raw_put_entities(puts).map_err(facade_error);
         }
@@ -202,6 +204,7 @@ impl NapiVault {
             dimensions,
             binding: None,
             wrong_host_root: false,
+            read_proof: None,
             limit_questions: Some(limit_questions),
         })
     }
@@ -240,6 +243,23 @@ impl NapiVault {
     #[napi]
     pub fn wrong_host_root(&self) -> bool {
         self.wrong_host_root
+    }
+
+    /// A new handle whose raw content and codebase metadata reads use this
+    /// credential. Unbound reads use its actual verified subject; bound reads
+    /// also prove the holder matches the bound actor. Writes are unchanged.
+    #[napi]
+    pub fn with_read_credential(&self, credential: String) -> napi::Result<NapiVault> {
+        let proof = oneiron_remote::verify_read_credential(&self.vault, &credential)
+            .map_err(facade_error)?;
+        Ok(NapiVault {
+            vault: Arc::clone(&self.vault),
+            dimensions: self.dimensions,
+            binding: self.binding.clone(),
+            wrong_host_root: self.wrong_host_root,
+            read_proof: Some(proof),
+            limit_questions: self.limit_questions.clone(),
+        })
     }
 
     /// The engine `[limits]` rows this vault crossed, as this host kept them
@@ -298,6 +318,7 @@ impl NapiVault {
                 session,
             }),
             wrong_host_root: false,
+            read_proof: self.read_proof.clone(),
             // Same vault and sink, but a bound view serves no crossings.
             limit_questions: None,
         })
@@ -546,9 +567,7 @@ impl NapiVault {
     #[napi]
     pub fn get_codebase_snapshot(&self, id: Buffer) -> napi::Result<Option<NapiCodebaseSnapshot>> {
         let eid = parse_entity_id(&id)?;
-        self.vault
-            .get_codebase_snapshot(&eid)
-            .map_err(to_napi_err)?
+        self.snapshot_for(&eid)?
             .map(napi_codebase_snapshot)
             .transpose()
             .map_err(napi::Error::from_reason)
@@ -558,10 +577,7 @@ impl NapiVault {
     #[napi]
     pub fn codebase_snapshots_by_repo_ref(&self, repo_ref: String) -> napi::Result<Vec<Buffer>> {
         let repo_ref = RepoRef::parse(&repo_ref).map_err(to_napi_err)?;
-        let ids = self
-            .vault
-            .codebase_snapshots_by_repo_ref(&repo_ref)
-            .map_err(to_napi_err)?;
+        let ids = self.snapshots_for_repo(&repo_ref)?;
         Ok(entity_ids_to_buffers(ids))
     }
 
@@ -571,10 +587,7 @@ impl NapiVault {
         &self,
         project_id: String,
     ) -> napi::Result<Vec<Buffer>> {
-        let ids = self
-            .vault
-            .codebase_snapshots_by_project_id(&project_id)
-            .map_err(to_napi_err)?;
+        let ids = self.snapshots_for_project(&project_id)?;
         Ok(entity_ids_to_buffers(ids))
     }
 
@@ -697,14 +710,16 @@ impl NapiVault {
 
     // ─── Batch Writes ──────────────────────────────────────────
 
-    /// Write multiple entities, in frames of `NAPI_BATCH_FRAME_ENTITIES`
-    /// (FIX 11125): every entity is checked first, then each frame is written
-    /// in order in one atomic transaction, so a batch within one frame is
-    /// one transaction, as before, and a larger one is written whole rather
-    /// than refused. A frame that fails stops the call with its own error;
-    /// the frames before it stay written.
+    /// Write multiple entities in one atomic transaction: all of them, or
+    /// none. The JS array's length is measured against
+    /// `legacy_batch_entities` before any element is read (FIX 72): past it
+    /// the row asks, and every entity is still checked and written in that
+    /// one transaction, never refused for the count.
     #[napi]
     pub fn batch_put_entities(&self, entities: Array<'_>) -> napi::Result<()> {
+        let _ = self
+            .vault
+            .measure_limit(EngineLimit::LegacyBatchEntities, u64::from(entities.len()));
         let entities: Vec<NapiBatchEntity> = read_bounded_array(&entities, |_| Ok(()))?;
         for e in &entities {
             validate_entity_payload_len(e.data.len()).map_err(napi::Error::from_reason)?;
@@ -723,8 +738,7 @@ impl NapiVault {
                 data: e.data.as_ref(),
             });
         }
-        puts.chunks(NAPI_BATCH_FRAME_ENTITIES)
-            .try_for_each(|frame| self.put_entity_frame(frame))
+        self.put_entity_batch(&puts)
     }
 
     // ─── Tree Queries ──────────────────────────────────────────

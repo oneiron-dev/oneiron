@@ -27,6 +27,12 @@ both bindings and their export-census tests in one change.
 - `self.focus.scratchpad.recall`
 - `self.focus.scratchpad.append`
 - `self.focus.scratchpad.seal`
+- `self.board.layout`
+- `self.board.fold`
+- `self.board.unfold`
+- `self.board.size`
+- `self.board.filter`
+- `self.board.replace`
 - `self.memory.diary`
 - `self.memory.diary.reads`
 - `self.memory.diary.review`
@@ -218,6 +224,7 @@ both bindings and their export-census tests in one change.
 - `vault.weave.digest_feedback.put`
 - `vault.weave.owner.digest.render`
 - `vault.inbox.concerns.review`
+- `vault.proactivity.digest`
 - `vault.inbox.lens`
 - `vault.inbox.groups`
 - `vault.inbox.groups.resolve`
@@ -343,6 +350,7 @@ both bindings and their export-census tests in one change.
 - `vault.members.projection`
 - `vault.members.add`
 - `vault.members.invitation_slip`
+- `vault.members.invitation_code`
 - `vault.members.change`
 - `vault.members.remove`
 - `vault.members.leave`
@@ -477,6 +485,12 @@ both bindings and their export-census tests in one change.
 - `vault.coach.training_offers.pilots.complete`
 - `vault.coach.training_offers.pilots.get`
 - `vault.coach.training_offers.sources`
+- `vault.drafters.list`
+- `vault.drafters.list_as`
+- `vault.drafters.status`
+- `vault.drafters.policy.set`
+- `vault.drafters.revert`
+- `vault.drafters.revert_as`
 - `vault.research.bind`
 - `vault.research.fork`
 - `vault.research.weave`
@@ -578,6 +592,7 @@ both bindings and their export-census tests in one change.
 - `vault.settings.learning.put`
 - `vault.settings.learning.clear`
 - `vault.secrets.code_run_lifts`
+- `vault.secrets.code_run_room_lifts`
 - `vault.secrets.lift_history`
 - `vault.secrets.register`
 - `vault.secrets.rotate`
@@ -1039,6 +1054,8 @@ both bindings and their export-census tests in one change.
 - `vault.habits.checkin`
 - `vault.productivity.create`
 - `vault.productivity.tree`
+- `vault.ingest.ag_ui.import`
+- `vault.ingest.ag_ui.read`
 - `vault.claims.admit`
 - `vault.artifacts.create`
 - `vault.esign.create`

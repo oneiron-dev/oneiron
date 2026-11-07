@@ -1,7 +1,8 @@
 # Your vault: where it lives, backups, restore, export, and one-act approvals
 
-Everything here works with no model configured. Each action has a CLI command and, for a
-running server, a route under `/v1/owner`. The CLI commands read the same config as
+Everything here works with no model configured. Each action has a CLI command. Except for
+notes-to-Files conversion, each also has a running-server route under `/v1/owner`.
+The CLI commands read the same config as
 `oneiron serve` (`--config FILE`, `--vault-path DIR`, `ONEIRON_*`). Commands that open the
 vault need the server stopped, because one process holds a vault at a time. Two commands
 also work while `serve` runs: `restore --rehearse`, which never opens the vault, and
@@ -71,6 +72,25 @@ has none; a rehearsal or a restore on this device unlocks it from that wrap, and
 host from a password, passkey or escrow wrap the backup carries (*The vault key on a new host*).
 The install that takes a backup signs it, and a restore checks that signature first. While any
 legal hold stands, no backup is pruned, whatever `keep` says.
+
+An explicit owner backup (`oneiron backup` or `POST /v1/owner/backups`) keeps the whole
+canonical selection, including private worlds. Scheduled, managed-hourly and pre-idle backups
+use a separate automatic selection. When an entity's known world dependencies are all resolved
+to sealed copies **Off**, that selection leaves out its core row, text/phonetic index sources,
+and the document rows the native checkpoint getter assigns wholly to it. It also leaves out
+known Off worlds' window snapshots and durable window updates. Shared document proposals keep
+their other owners' fragments. Authority-log rows and non-payload links stay intact.
+
+This is partial world selection, not a guarantee that an Off world's every byte is absent.
+Unknown or mixed world placement keeps its existing behavior. Digest-keyed body families,
+queued or mixed carriers and exterior custody publication still need their own world
+projection. The read setting **One machine** alone does not exclude a sealed backup.
+
+Backup watermark markers use schema 2 and record `whole_vault` or `automatic` selection.
+Content and custody positions must match exactly. A whole-vault artifact can satisfy an
+automatic idle-backup duty at that same position, keeping its original mark; an automatic mark
+never certifies a whole-vault backup. Reusing an artifact copies or publishes nothing new.
+Old marker formats read as changed; there is no marker migration or old-format reader.
 
 `oneiron serve` can take backups on its own. The schedule is opt-in; turn it on in the config
 file or environment, or with the owner's backup setting (below):
@@ -319,6 +339,7 @@ bound; a pass stops starting sweeps after 20 seconds and the rest run on the nex
 | `gate_decision_retention` | hour, and at start | gate decisions past the horizon you set |
 | `hard_erase_sweep` | day; hour while an erasure waits | the history an erase left in sync carriers (the 30-day erasure deadline) |
 | `ppr_cache_eviction` | day | cached graph walks older than the longest serve window (168 h) |
+| `drafter_corpus_sweep` | day, and at start | drafter training examples past the newest `DRAFTER_EXAMPLES_KEPT` (their keys retire), sealed drafter corpora no prepared, training or returned drafter version names, and stray files in a kept one |
 
 The signing sweeps and the cache eviction walk their records a page at a time and go on from
 where they stopped on the next pass. A sweep that fails, or that could not finish some of its
@@ -771,6 +792,21 @@ files one holds, and `oneiron files detach <folder>` stops every rescan from rea
 it again (a folder that is gone is detached by the name it was attached by; its notes
 stay).
 
+`oneiron files convert <folder>` changes a folder already attached as notes into a
+Files source in one owner act. Its include patterns, note kind and source attribution
+stay. The notes already imported, their history and their links stay where they are;
+they are not moved into the Files world. The conversion clears only the old rescan
+ledger and replaces the source placement in the same transaction. It then runs the
+ordinary Files rescan, which creates Files copies under that source's own identity.
+A first rescan that reports an error does not undo the conversion; `oneiron files
+rescan <folder>` retries it. A missing source or one already attached as Files is not
+converted, and its ledger is unchanged.
+
+Conversion uses the Files default exclusions. `--exclude <pattern>` adds to them;
+`--no-default-exclude` drops the defaults, just as for attach. The command requires a
+stopped vault. There is no running-server conversion verb in this slice; the existing
+attach, rescan and detach verbs keep their behavior.
+
 ## Approve an import in one act
 
 To bring your ChatGPT, Claude, Claude Code or Codex history itself in, use
@@ -829,6 +865,22 @@ every one as rejected. Either way one receipt represents the run. Routes: `GET
 `/decline` with `{"run_id": "…", "bundle_id": "…"}` (or `"run_ref"` in place of `"run_id"`).
 
 The SDK verbs `vault.fanout.resume` (approve a held fan-out once, approve and remember it under a cap, or deny it) and `vault.fanout.ack` (acknowledge the width check of one that already went out) take the plan digest you saw from `vault.fanout.launch` and run under the owner's credential, over the facade and MCP.
+
+### Coach case escalations
+
+When the Coach routes a stored failed-attempt case to a person, its `coach.heal`
+proposal can carry `repair.route` with `route: "escalate_with_diagnosis"`, the
+original failing agent's `agent_ref`, and the case's evidence as `diagnosis_ref`.
+This uses the same evidence reference as a Coach skill-repair diagnosis. The
+proposal still carries the case, failed attempt, evidence, checkpoint and Q&A
+thread references; it does not claim a new diagnosis artifact or a Q&A exchange.
+
+The intent is attached only while the durable case and its failed attempt still
+match in the proposal's write transaction. Otherwise the ordinary route-only
+proposal remains, with `repair: null`. This changes no consent or repair execution:
+review and approve or decline it through the ordinary run review. It does not
+apply a fix, resume the failed attempt or change a grant. Person proposals for bare
+blocked reports remain route-only.
 
 ## Settle an open contradiction
 
@@ -1352,9 +1404,16 @@ carries its arrival number `seq`; a sweep keeps the last one it read and passes 
 
 The Coach reads the open inbox with a triage skill you bind, and files what it finds as
 proposals in your run tray. It never closes, moderates or deletes a note. Bind the skill first:
-`GET /v1/owner/feedback/triage/binding` returns `{skill, revision}`, and `PUT` with
-`{"skill": "<SKILL id>", "seen": <revision>}` binds it (`"skill": null` unbinds; a stale `seen`
-is refused). The repo's `skills/feedback-triage/SKILL.md` is a starting skill.
+`GET /v1/owner/feedback/triage/binding` returns
+`{skill, enqueue_on_intake, revision, set_at}`. `PUT` with
+`{"skill": "<SKILL id>", "enqueue_on_intake": false, "seen": <revision>}` binds it
+(`"skill": null` unbinds; a stale `seen` is refused). The required
+`enqueue_on_intake` boolean defaults to false while never set, keeping manual/nightly
+batching. Set it true to queue the same ordinary sweep as each new inbox note lands;
+running work retains one coalesced later sweep. Turning it off leaves already admitted
+work intact. This is scheduling under the owner's setting, not anonymous authority.
+The repo's `skills/feedback-triage/SKILL.md` is a starting skill. Details:
+[`Feedback triage on intake`](feedback-triage-intake.md).
 
 `POST /v1/owner/feedback/triage/run` with `{}` starts a sweep and returns `{attempt}`; a run
 already going is joined. If that sweep is already running, the request also retains one later
@@ -1469,6 +1528,25 @@ recall is `memory_miss`, a consolidation error `task_failure`, a consent storm o
 diagnostic does not say which agent failed, so these counts carry the agent `unattributed`.
 Counts wait in the vault, across restarts, until the publisher takes them.
 
+## Coach prompt repair drafts
+
+When a case is routed to `prompt_inject`, the served Coach author can now draft prompt text
+using its configured Coach model and the pass's existing draft budget. It receives the recorded
+case, agent, pre-failure checkpoint, diagnosis and cause context as data. The existing engine
+writer binds those references again and files a `coach.prompt_repair` Proposed artifact with
+the heal. This draft does not inject text, resume a run, grant authority or prove a replay passed.
+
+The shipped instruction lives in `prompts/coach-prompt-repair.md`. Override it through
+`[models.dreamer.wording]` with `coach_prompt_repair_prompt` or
+`coach_prompt_repair_prompt_file`, using the same inline/file resolution as the other Coach
+wording. A relative file path resolves from the config directory.
+
+The answer is `{"prompt":"<exact text>","rationale":"<why>"}`. A null `prompt` declines.
+The engine still handles an empty draft, unavailable model, author error, stale case or missing
+binding as a route-only heal. Custom `CoachHealAuthor` implementations keep the default `None`
+unless they implement this method. Skill edits, producer fixes and environment repairs keep
+their existing behavior.
+
 ## Model-graded self-heal detectors
 
 Canon ships no detector wording, so no model-graded detector runs until you write one. Each
@@ -1555,6 +1633,17 @@ exists. Otherwise its state is `waiting`, `filling`, `applied`, `not_applied` or
 `.get` views also include `staged`, read anew on each request. An embedder approval
 can therefore be shown as waiting or filling while the old index still serves;
 answering the offer does not mean that its new binding is already applied.
+
+For an approved stock embedder with no compatible declared space, the media worker now
+observes its native vector width from the first eligible stored input. It uses the existing
+configured offer order for that exact model and the ordinary inference, source-release,
+egress and device-local checks. It never guesses a width from the old index or sends a
+synthetic input. The space accepts the kinds the current text-slot incumbent serves and
+encodes those same query kinds through the ordinary `ai.embed` operation. The worker declares
+it only while the complete approval and kind-slot snapshot still match, then the ordinary
+space move begins. The old index keeps serving throughout. With no admitted input, the
+binding stays waiting until a later pass has one. Existing compatible spaces, refills and
+trained embedder bindings keep their current paths; this does not supply a trained-weight loader.
 
 ## Swap in a trained model
 
@@ -1959,6 +2048,14 @@ bundle upkeep last did on this install, each part with its time:
 - `pending`: `pending_pad_access` and `pending_erases`, from the last relay whose erase sweep
   counted them.
 - `relay_failure`: the last relay that failed, and its error.
+- `unmerged_uploads`: for each home, the last upload this install assembled for it, by the slot
+  or by a publication you asked for, when that upload carries a world section this install may
+  read unchanged because it did not open, decode or merge here. Each names the home, the
+  generation, and per section the world, the window whose merge failed, the stage and the
+  error's kind. The erased-actor cleanup did not run on that section. The upload keeps the
+  section and still publishes; the section is yours to repair. A tick that uploads nothing leaves
+  this part; only a later upload for the same home replaces it. Left out when no upload carries
+  such a section.
 - `grant`: the last kit grant answered here.
 
 A part with no observation yet says `unobserved`, which is not zero. The counts are what the
@@ -2132,6 +2229,12 @@ an owner pin replaces the spawn call's own seed, and the call's own pin always s
 row counts only where a seat serves that model. A pin that disagrees with a pinned pattern or
 width is passed over for the next row, and a budget only ever narrows the caller's budget.
 
+An unplanned named-agent launch with no explicit budget also takes the owner's budget pin or
+seed, for its inherited project and placed task type. Its launch preview reads the same setting;
+actual admission records and reserves under that cap through the normal spend path. An explicit
+budget always stands. Planned launches, workflows and reader loans keep their existing handling.
+The setting supplies a cap, not funds, and does not change the identity of a retried request.
+
 ```sh
 oneiron learning-settings list                                  # catalog, values now, your rows
 oneiron learning-settings list --key health.loop.repeats
@@ -2194,6 +2297,25 @@ room turn, or when it comes from a credential that binds no principal or read ke
 writes. A refusal answers with the code, words and suggestions the verb's own route refused
 with, and a retry under a refused key answers with the same words. A TURN write wakes the Dreamer once on either
 path.
+
+## Pairing code guesses
+
+A pairing code is short enough to type, so `POST /v1/core/pairing/redeem` counts each client
+address's redemptions. An address may make five that no success answers. After that it waits
+before its next code is read: one second, then twice as long after each try, up to an hour.
+While it waits the door answers `429 TOO_MANY_ATTEMPTS` with `Retry-After`. A success, or an
+hour with no redemption from the address, starts it over. Every address counts alike, loopback
+and paired mesh machines too, and no address ever waits for another, so a stranger cannot block
+your own pairing. Behind a managed host's supervisor or relay the server sees no caller's own
+address, so it counts nothing there; the managed edge bounds those callers. A restart forgets the
+count. Change the rows in `[limits]`:
+
+```toml
+[limits]
+pairing_redeem_free_failures = 5          # redemptions an address makes before it waits
+pairing_redeem_wait_ceiling_ms = 3600000  # the longest wait
+pairing_redeem_quiet_ms = 3600000         # no redemption this long starts the address over
+```
 
 ## Live agent runs
 
@@ -2328,16 +2450,16 @@ Routes take targets as `{"record": "<hex>"}`, `{"gate_partition": "<hex>"}` or
   before you `POST` it with `{"records": ["<hex>", ...]}`. Each record answers `erased` with its
   receipt once the receipt is complete, `completion_pending` with the receipt and
   `"reason": "historical_sweep"` while its history sweep is queued (the same rule self-hosted and
-  hosted), `retained_for_law` with the order's `bound` (the law, jurisdiction, issuing authority
-  and end) and what self-hosting changes, or `failed` (the hold is lifted; a plain delete retries).
+  hosted), or `failed` (the hold is lifted; a plain delete retries).
 
 The SDK verbs `vault.legal_holds.place`, `.widen`, `.list`, `.log` and `.lift_and_erase` do the
 same under the owner's credential. Where Oneiron hosts the bytes, a legal order Oneiron must obey
-can also hold records. You cannot lift it, and an erase you confirm waits until it ends. You see
-the order whole, with its reference and terms, unless the order itself requires silence; then you
-see nothing of it until that silence ends, and an erase it keeps reads only `completion_pending`.
+can also cover records. It keeps nothing in your vault: what it covers is copied, sealed, into the
+host's separate legal-hold store, and your deletes and erases run as usual. You cannot lift it. You
+see the order whole, with its reference and terms, unless the order itself requires silence; then
+you see nothing of it until that silence ends.
 
-An erase that still waits, on such an order or on a shared vault's veto window, is yours to
+An erase that still waits on a shared vault's veto window is yours to
 withdraw: the SDK verb `vault.legal_holds.withdraw_erase` with `{"records": ["<hex>", ...]}`
 answers each record `withdrawn`, `not_waiting`, `confirmed_by_another_owner` (only the Owner who
 confirmed it withdraws it; yours is the objection to its `erase` act), or `under_way` when its

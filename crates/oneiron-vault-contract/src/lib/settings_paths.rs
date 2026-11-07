@@ -67,8 +67,16 @@ pub const OWNER_PATHS: &[&str] = &[
     "browser.runtime",
     "desktop.runtime",
     "models.prompt_file",
+    "models.dreamer.wording.coach_skill_workflow_answer_prompt_file",
+    "models.dreamer.wording.coach_skill_draft_prompt_file",
+    "models.dreamer.wording.coach_skill_cause_prompt_file",
+    "models.dreamer.wording.coach_producer_fix_prompt_file",
+    "models.dreamer.wording.coach_prompt_repair_prompt_file",
     "models.roles.*.prompt_file",
     "models.roles.*.rungs.prompt_file",
+    "models.dreamer.wording.code_fix_reproduced_prompt_file",
+    "models.dreamer.wording.code_fix_fixed_prompt_file",
+    "models.dreamer.wording.code_fix_export_safe_prompt_file",
     "models.dreamer.summary_prompt_file",
     "models.dreamer.resident_prompt_file",
     "models.dreamer.task_prompt_file",
@@ -77,6 +85,8 @@ pub const OWNER_PATHS: &[&str] = &[
     "models.code_mode.check.microsoft_tsc",
     "models.decision_read.recipe",
     "models.voice.extraction_prompt_file",
+    "models.dreamer.wording.coach_heal_route_prompt_file",
+    "models.dreamer.wording.coach_health_draft_prompt_file",
 ];
 
 /// The import queue's source roots, as leaves of `[import]`. A queue that is

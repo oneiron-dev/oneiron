@@ -6,7 +6,6 @@
 use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
-use crate::error::LegalHoldNotice;
 
 /// The title of the owner's one confirm.
 pub const LIFT_AND_ERASE_TITLE: &str = "Lift the hold and erase?";
@@ -14,21 +13,12 @@ pub const LIFT_AND_ERASE_TITLE: &str = "Lift the hold and erase?";
 /// The prompt the owner's one confirm shows (C7).
 pub const LIFT_AND_ERASE_PROMPT: &str = "This lifts your hold and erases these records. It does not end any legal duty to keep them. This choice is recorded.";
 
-/// What an owner erase shows until its deletion receipt completes, wherever
-/// the bytes live, and while a secret order keeps them (C2, C4).
+/// What an owner erase shows until its deletion receipt completes or its
+/// shared vault's veto window clears (C4).
 pub const ERASE_COMPLETION_PENDING: &str = "erase confirmed; completion pending";
-
-/// What a legal order's refusal says self-hosting changes (WILL-PLAN L01 row
-/// 01): the act works on bytes the owner hosts that no hold covers, never on
-/// the copy Oneiron must preserve, and the owner's own legal duties stand.
-pub const LEGAL_HOLD_SELF_HOSTED_NOTE: &str = "The same delete works on owner-hosted bytes that no hold covers; it cannot erase the copy we must preserve, or end your own legal duties.";
 
 /// The named refusal a delete of a held record fails with.
 pub const LEGAL_HOLD_REFUSAL: &str = "legal hold: a hold names this record, so it is not deleted";
-
-/// The refusal a delete fails with while only a secret order keeps the
-/// record: it says nothing about the order.
-pub const LEGAL_HOLD_DEFERRAL: &str = "delete deferred: completion pending";
 
 /// How long a hold's log rows outlive the hold, in calendar months (C3: the
 /// hold's life, then 24 months).
@@ -142,6 +132,18 @@ impl LegalHold {
         self.lifted_at.is_none()
     }
 
+    /// Whether this hold keeps its records in the live vault, its backups
+    /// and its body keys: a standing customer hold, the owner's own "keep
+    /// these records". A host order never does (LEGAL-HOLD-USE = B as a
+    /// clone, owner 2026-11-05): what the order covers is copied into the
+    /// host's separate legal-hold store, and the vault's own erases, scrubs,
+    /// compaction and backup expiry run as they would without it. Its row,
+    /// its log and its notice stay.
+    #[must_use]
+    pub fn keeps_vault_data(&self) -> bool {
+        self.kind == LegalHoldKind::Customer && self.stands()
+    }
+
     /// An order forbids telling the owner about it at `now`.
     #[must_use]
     pub fn secret_at(&self, now: u64) -> bool {
@@ -167,9 +169,9 @@ pub enum LegalHoldEventKind {
     ScopeChanged,
     DeleteRefused,
     LiftAndEraseConfirmed,
-    /// The owner's plain delete of a record only secret orders keep was
-    /// accepted: erase confirmed, completion pending, no hold lifted (FIX
-    /// 1465).
+    /// The owner's plain delete of a record only secret orders kept was
+    /// accepted (FIX 1465). No longer written: host orders keep nothing in
+    /// the vault; earlier logs keep it.
     EraseConfirmed,
     /// The owner withdrew an erase they confirmed that still waited: nothing
     /// of the record is erased by it, and no hold is placed again (FIX
@@ -203,7 +205,8 @@ pub enum LegalHoldReason {
     OwnerConfirmed,
     /// The owner withdrew their waiting erase (FIX 10401).
     OwnerWithdrew,
-    /// The owner's erase waits on a host order: completion pending.
+    /// The owner's erase waited on a host order. No longer written: host
+    /// orders keep nothing in the vault; earlier logs keep it.
     CompletionPending,
     /// The ARCH-0038 receipt's signed final row is appended: its hard purge,
     /// its historical sweep and every custody retirement it bound finished
@@ -276,15 +279,12 @@ pub enum LiftAndEraseStatus {
     /// finished (C4, FIX 5844). No receipt when nothing was there to erase.
     Erased { receipt_ref: Option<String> },
     /// "Erase confirmed; completion pending" ([`ERASE_COMPLETION_PENDING`]):
-    /// the erase ran and `reason` is still outstanding on its receipt, or,
-    /// with neither, an order the owner may not be told of keeps the bytes.
+    /// the erase still waits on its receipt's `reason` or on its shared
+    /// vault's veto window.
     CompletionPending {
         receipt_ref: Option<String>,
         reason: Option<ErasePendingReason>,
     },
-    /// A legal order binding Oneiron's hosting keeps the bytes; the notice
-    /// names its bound. The erase runs when the order lifts.
-    RetainedForLaw(LegalHoldNotice),
     /// The hold was lifted, then the erase failed; a plain delete retries it.
     Failed { message: String },
 }
@@ -336,10 +336,10 @@ pub struct LiftAndEraseOutcome {
 }
 
 /// A record kept after a refused privacy erasure: it serves only the legal
-/// reason that kept it (C6, hosted only), while any standing hold, customer
-/// or host order, still names it, for that hold's whole retention (FIX 8849).
-/// A host order's [`HostOrderHold::requires_non_use`] is its own term, not
-/// what makes this limit. Read enforcement is the scope checks' (L02).
+/// reason that kept it (C6, hosted only), while a standing customer hold
+/// still names it, for that hold's whole retention (FIX 8849). A host order's
+/// [`HostOrderHold::requires_non_use`] binds its clone, not this limit. Read
+/// enforcement is the scope checks' (L02).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LegalHoldUseLimit {

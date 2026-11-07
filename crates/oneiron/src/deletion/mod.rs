@@ -79,13 +79,19 @@ pub use delete::{
 };
 // A maintenance pass's audited corrupt-CLAIM classification (FIX 7800).
 pub use erase::CorruptClaimRepair;
+#[cfg(unix)]
+pub(crate) use legal_hold::clone::HostLegalCaptures;
+#[cfg(unix)]
+pub use legal_hold::clone::{HostLegalChannel, HostLegalConnection, HostLegalConnectionRole};
+pub(crate) use legal_hold::prospective::{
+    ProspectiveBatch, prospective_standing_in_txn, seal_prospective_message_in_txn,
+};
 pub use legal_hold::{
     ERASE_COMPLETION_PENDING, ErasePendingReason, EraseWithdrawal, HostOrderHold,
-    LEGAL_HOLD_DEFERRAL, LEGAL_HOLD_LOG_RETENTION_MONTHS, LEGAL_HOLD_REFUSAL,
-    LEGAL_HOLD_SELF_HOSTED_NOTE, LIFT_AND_ERASE_PROMPT, LIFT_AND_ERASE_TITLE, LegalHold,
-    LegalHoldActorKind, LegalHoldEvent, LegalHoldEventKind, LegalHoldKind, LegalHoldMaintenance,
-    LegalHoldReason, LegalHoldTarget, LegalHoldUseLimit, LiftAndEraseOutcome,
-    LiftAndEraseShownState, LiftAndEraseStatus, ShownCustomerHold,
+    LEGAL_HOLD_LOG_RETENTION_MONTHS, LEGAL_HOLD_REFUSAL, LIFT_AND_ERASE_PROMPT,
+    LIFT_AND_ERASE_TITLE, LegalHold, LegalHoldActorKind, LegalHoldEvent, LegalHoldEventKind,
+    LegalHoldKind, LegalHoldMaintenance, LegalHoldReason, LegalHoldTarget, LegalHoldUseLimit,
+    LiftAndEraseOutcome, LiftAndEraseShownState, LiftAndEraseStatus, ShownCustomerHold,
 };
 // A source's dependents go in bounded batches (`Vault::finish_dependent_walks`).
 pub use crate::ports::{
@@ -117,6 +123,7 @@ pub(crate) use actor_fields::{ActorErasureWriter, names_no_actor};
 pub(crate) use actor_fields::{
     hard_erased_ids_in, rerun_actor_scrubs_in_txn, restore_erased_payload_targets_in_txn,
 };
+pub(crate) use checkpoint_payload::settle_checkpoint_payloads_for_reason_in_txn;
 // A due owner-confirmed erase rechecks its pending row (FIX 6337).
 pub(crate) use delete::{ConfirmedEraseOutcome, due_erase_requester_in_txn};
 pub(crate) use derived_rows::tear_derived_rows_in_txn;
@@ -135,7 +142,9 @@ pub(crate) use receipt_final::{
 };
 pub(crate) use receipt_grammar::validate_redaction_receipt_body;
 // This device attests only the erase receipts it made (FIX 2596).
-pub(crate) use receipt_origin::receipt_attested_by_this_device_in_txn;
+pub(crate) use receipt_origin::{
+    receipt_attested_by_this_device_in_txn, requeue_successor_sweeps_in_txn,
+};
 #[cfg(feature = "sync")]
 pub(crate) use sweep_queue::withdrawn_generation_cutoff_in_txn;
 pub(crate) use sweep_queue::{

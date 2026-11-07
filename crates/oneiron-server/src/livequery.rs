@@ -156,6 +156,9 @@ pub(crate) struct RpcReply {
     frames: Vec<Vec<u8>>,
     /// `None` for a refusal, which carries no rows.
     rows: Option<Option<Vec<oneiron::EntityId>>>,
+    /// A forwarded search's reply to a caller off the carrying device
+    /// (FIX 11991): its send judges the rows for an unknown destination too.
+    off_carrier: bool,
 }
 
 impl RpcReply {
@@ -263,6 +266,7 @@ impl RpcReply {
             request_id,
             frames,
             rows,
+            off_carrier: false,
         })
     }
 
@@ -312,6 +316,7 @@ impl RpcReply {
             request_id,
             frames,
             rows,
+            off_carrier: false,
         })
     }
 
@@ -321,9 +326,45 @@ impl RpcReply {
         let Some(rows) = self.rows else {
             return self.frames;
         };
+        let incarnation = if self.off_carrier {
+            routing::OFF_CARRIER_RPC_INCARNATION
+        } else {
+            0
+        };
         self.frames
             .into_iter()
-            .map(|frame| routing::wrap(conn, self.request_id, 0, rows.as_deref(), frame))
+            .map(|frame| routing::wrap(conn, self.request_id, incarnation, rows.as_deref(), frame))
+            .collect()
+    }
+
+    /// This reply, released as a forwarded search's to a caller off the
+    /// carrying device when `off_carrier` (FIX 11991).
+    pub(crate) fn released_off_carrier(mut self, off_carrier: bool) -> Self {
+        self.off_carrier = off_carrier;
+        self
+    }
+}
+
+impl RpcReply {
+    pub(crate) fn queued_for_machine(self, conn: u32, own_machine_only: bool) -> Vec<Vec<u8>> {
+        if !own_machine_only {
+            return self.queued(conn);
+        }
+        let Some(rows) = self.rows else {
+            return self.frames;
+        };
+        self.frames
+            .into_iter()
+            .map(|frame| {
+                // Request incarnations are otherwise zero. Subscriptions use TAG_SUB.
+                routing::wrap(
+                    conn,
+                    self.request_id,
+                    routing::OWN_MACHINE_RPC_INCARNATION,
+                    rows.as_deref(),
+                    frame,
+                )
+            })
             .collect()
     }
 }
@@ -503,9 +544,9 @@ fn facade_limit(requested: Option<usize>, default: usize) -> Result<usize, AppEr
     Ok(limit)
 }
 
-/// A count a receipt or pending-consent subscription asks for, or `default`
-/// (FIX 8859): read in scoped pages ([`scoped_pages`]), so no count past the
-/// list page is refused.
+/// A positive subscription count, or `default`, without the facade's list-page
+/// ceiling. Receipts and pending-consent read in scoped pages ([`scoped_pages`])
+/// (FIX 8859).
 fn facade_count(requested: Option<usize>, default: usize) -> Result<usize, AppError> {
     let limit = requested.unwrap_or(default);
     if limit == 0 {

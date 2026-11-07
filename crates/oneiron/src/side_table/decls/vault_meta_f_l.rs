@@ -30,6 +30,10 @@ side_tables! {
     /// The owner's confidence scale for claims one federation peer sends, this device's local
     /// truth (OF-149). Key: id16(peer principal).
     FEDERATION_PEER_CONFIDENCE: VaultMeta b"federation:peer_confidence:v1:" Named;
+    /// An administrative ruling's admission, kept before the grant row that admitted it was
+    /// rewritten or deleted (FIX 8740): the grant and the hash of that row. Immutable. Key: id16
+    /// (the ruling).
+    FEDERATION_RULING_WITNESS: VaultMeta b"federation:ruling_witness:v1:" Named;
     /// One note the open feedback inbox took, kept for the triage sweep. Key: u64be(sequence).
     FEEDBACK_INBOX: VaultMeta b"feedback:inbox:v1:" Named;
     /// An owner feedback preview as it was shown, kept until it expires (FIX 5212): its exact
@@ -63,6 +67,15 @@ side_tables! {
     /// The SKILL the Coach's feedback triage runs, as the owner bound it, with the binding's
     /// revision (OF-420 T1); absent until the owner binds one. Key: ().
     FEEDBACK_TRIAGE_BINDING: VaultMeta b"feedback:triage-binding:v1:" Named;
+    /// Each acknowledged feedback triage handoff whose evidence is retained, under its evidence
+    /// ASSET (FIX 7550). Key: id16(evidence) + bytes32(handoff key). Value: empty.
+    FEEDBACK_TRIAGE_HANDOFF_BY_EVIDENCE: VaultMeta b"feedback:triage-handoff-by-evidence:v1:" Raw;
+    /// Each feedback triage handoff under the sweep that handed it off and the sweep that queued
+    /// its current job (FIX 7550). Key: id16(sweep attempt) + bytes32(handoff key). Value: empty.
+    FEEDBACK_TRIAGE_HANDOFF_BY_SWEEP: VaultMeta b"feedback:triage-handoff-by-sweep:v1:" Raw;
+    /// Each feedback triage handoff a requeue pass visits: unacknowledged, or settled erased
+    /// (FIX 7550). Key: bytes32(handoff key). Value: empty.
+    FEEDBACK_TRIAGE_HANDOFF_OPEN: VaultMeta b"feedback:triage-handoff-open:v1:" Raw;
     /// One feedback revision a triage sweep handed off: its source, id and revision, the ASSET
     /// holding the exact item the triage reads, the sweeps that handed it off and queued its
     /// current job, that job, and the committed result once acknowledged. Source and result
@@ -251,6 +264,19 @@ side_tables! {
     HOOKS_LINEAGE: VaultMeta b"hooks:lineage:v1:" Named;
     /// A hook run's saved result and pinned input. Key: hash32 (run key).
     HOOKS_MEMO: VaultMeta b"hooks:memo:v1:" Named Authored [accepts: crate::runtime_hooks::hooks_memo_accepts_masked];
+    /// A verb call a count-bound budget window paced, held in its caller's fair line until its
+    /// turn (FIX 8753, ARCH-0044 C5): the call, its args with its ids fixed, the credential
+    /// reference it resumes under, its arrival, its fixed deadline and when it may run, and what
+    /// it came to. Key: id16 (invocation).
+    HOOKS_PACED_VERB: VaultMeta b"hooks:paced_verb:v1:" Named;
+    /// The paced line's bookkeeping: the last arrival handed out and the principal whose turn ran
+    /// last. Key: ().
+    HOOKS_PACED_VERB_LINE: VaultMeta b"hooks:paced_verb_line:v1" Named;
+    /// The instrument a paced credential call's request was admitted on, pinned beside it for the
+    /// drain to verify again: a slip, its holder's challenge and signature, or a managed vault's
+    /// attested owner's person, never a secret. Dropped when the call ends. Key: id16
+    /// (invocation).
+    HOOKS_PACED_VERB_WITNESS: VaultMeta b"hooks:paced_verb_witness:v1:" Named;
     /// A hook run's Hook receipt. Key: hash32 (run key).
     HOOKS_RECEIPT: VaultMeta b"hooks:receipt:v1:" Named Authored [accepts: crate::runtime_hooks::hooks_receipt_accepts_masked];
     /// A hook's regen record: the contract its last good body passed under, its intent, and a
@@ -346,7 +372,8 @@ side_tables! {
     /// key material. Pinned by the first publication with what it protects. Key: ().
     KEY_CUSTODY_BINDING: VaultMeta b"key_custody:binding:v1" Raw;
     /// One erasable custody key's ref-keyed metadata (FIX 8875): its purpose, its parent (the
-    /// actor a home handoff key seals for, or a grant) and its incarnation; never the key.
+    /// actor a home handoff key seals for, a grant, or a drafter version, FIX 12569) and its
+    /// incarnation; never the key.
     /// Key: bytes32 (the key's random ref).
     KEY_CUSTODY_ERASABLE_REF: VaultMeta b"key_custody:erasable_ref:v1:" Named Engine
         => crate::store::home_handoff_custody::scrub_actor_in_txn;
@@ -396,18 +423,24 @@ side_tables! {
     /// order's events are in `LEGAL_HOLD_HOST_EVENT`; the owner reads those through
     /// `LegalHold::owner_may_see`. Key: id16 (hold) + u64be (sequence).
     LEGAL_HOLD_EVENT: VaultMeta b"legal_hold:event:v1:" Named;
-    /// The host orders an owner's confirmed erase met (OF-470 C4). Host-only and runtime-tier:
-    /// no checkpoint image carries it. Key: id16 (record).
-    LEGAL_HOLD_HOST_ERASE_LINK: VaultMeta b"legal_hold:host:erase_link:v1:" Named;
     /// The host-only legal-hold log (OF-470 C2). Runtime-tier: no checkpoint image carries it.
     /// Key: id16 (hold) + u64be (sequence).
     LEGAL_HOLD_HOST_EVENT: VaultMeta b"legal_hold:host:event:v1:" Named;
+    /// A HOST order's standing explicit prospective capture (LEGAL-HOLD-USE = B as a clone,
+    /// FIX 13866): its capture binding, term, public recipient key and next outbox ordinal.
+    /// Host-only, runtime-tier, carried with the host-order family. Key: id16 (order) + u64be
+    /// (generation).
+    LEGAL_HOLD_HOST_PROSPECTIVE: VaultMeta b"legal_hold:host:prospective:v1:" Named;
+    /// A new MESSAGE row sealed to its prospective order when it landed, until the HOST
+    /// acknowledges its batch or the order ends: clone custody, never vault data. Host-only,
+    /// runtime-tier. Key: id16 (order) + u64be (generation) + u64be (ordinal).
+    LEGAL_HOLD_HOST_PROSPECTIVE_OUTBOX: VaultMeta b"legal_hold:host:prospective_outbox:v1:" Named;
+    /// A released prospective order generation, so a late reconnect never stands it again.
+    /// Content-free. Key: id16 (order) + u64be (generation).
+    LEGAL_HOLD_HOST_PROSPECTIVE_RELEASED: VaultMeta b"legal_hold:host:prospective_released:v1:" Raw;
     /// A host-order legal hold Oneiron placed on an authority order (OF-470 C1). Runtime-tier: no
     /// checkpoint image carries it. Key: id16 (hold).
     LEGAL_HOLD_HOST_ROW: VaultMeta b"legal_hold:host:row:v1:" Named;
-    /// What a standing host-order hold holds; the value is empty. Key: held key (1 + id16, or 17
-    /// zero bytes for the claim-free gate partition) + id16 (hold).
-    LEGAL_HOLD_HOST_TARGET: VaultMeta b"legal_hold:host:target:v1:" Raw;
     /// An owner erase that waits: one the owner confirmed while a host order keeps it, or the
     /// owner's plain delete only secret orders keep (FIX 1465), with its request's kind, reason
     /// and generation, and the `erase` act a shared vault's veto window adds (FIX 9781). It names

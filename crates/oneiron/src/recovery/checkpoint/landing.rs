@@ -52,6 +52,7 @@ impl Vault {
         custody: Custody<'_>,
         erased: &BTreeSet<EntityId>,
         budget: &dyn RecoveryWriteBudget,
+        mut archives: Option<super::removal_files::LiveArchives>,
     ) -> std::result::Result<(MadeDestination, ForkedCustody, Self, RestoreReport), Rejected> {
         validate_image_rows_before_destination(&image)?;
         // The compartments its payload is sealed in, carried apart from the
@@ -86,10 +87,11 @@ impl Vault {
         // holds is refused as the image's are, and the image's rows naming
         // an owner that did not open go (KS7-5, FIX 6376).
         let plan = gate_custody.plan_mut();
-        let opened = super::payload::open_image_payload(sealed_payload, plan, &mut image)?;
+        let mut opened = super::payload::open_image_payload(sealed_payload, plan, &mut image)?;
         let opened_entities = opened
             .as_ref()
             .map(super::payload::OpenedPayload::entity_rows)
+            .transpose()?
             .unwrap_or_default();
         for (_, blob) in &opened_entities {
             validate_checkpoint_entity_row(blob)?;
@@ -106,6 +108,9 @@ impl Vault {
         // takes its rows out (KS-2A).
         let (retired, retired_digests) =
             carried_bodies::require(&mut image, gate_custody.plan_mut())?;
+        if let Some(opened) = &mut opened {
+            opened.retire_message_results(&retired_digests)?;
+        }
         // The known-value history the rows commit to, through the same plan
         // (KS-3): every retained entry and the master, or the restore is
         // refused by name, so it never claims to mask what the vault masked
@@ -155,7 +160,12 @@ impl Vault {
             .map(super::payload::OpenedPayload::row_lengths)
             .unwrap_or_default();
         let mut room = write_budget::RestoreRoom::new(budget, &image, &lengths, &config)
-            .with_payload(&payload_rows);
+            .with_payload(&payload_rows)
+            .with_files(
+                archives
+                    .iter()
+                    .flat_map(super::removal_files::LiveArchives::landing_lens),
+            );
         room.admit()?;
         let mut made = MadeDestination::make(destination, home)?;
         // A sealed copy's open writes its page-seal mirror beside it, outside
@@ -173,14 +183,28 @@ impl Vault {
         // result body with its line index, an ASSET's file raw (FIX 3677),
         // a sealed vault's envelope checked frame by frame under its key row
         // (FIX 5348).
+        let mut unlanded_bodies = Vec::new();
         carried_bodies::restore(
             &vault,
             &mut image,
             bodies,
             &mut room,
             (body_custody.as_ref(), &retired),
+            &mut unlanded_bodies,
         )
         .map_err(Rejected::landing)?;
+        // So do the kept removal archives' files the live vault carried in
+        // and the image does not (FIX 3679).
+        if let Some(archives) = &mut archives {
+            archives
+                .land(
+                    &vault.store.body_dir()?,
+                    body_custody.as_ref(),
+                    &mut room,
+                    &mut image,
+                )
+                .map_err(Rejected::landing)?;
+        }
         // A queue row landed from its carried bytes goes unleased, as the
         // snapshot unleased every other (FIX 7115).
         response_rows::unlease_carried_attempts(&mut image, &retired).map_err(Rejected::landing)?;
@@ -210,6 +234,12 @@ impl Vault {
             } else {
                 Vec::new()
             };
+            // Each kept removal archive's descriptor stands as the live vault
+            // holds it, and no other descriptor of its receipts does, an
+            // opened payload's included (FIX 3679).
+            if let Some(archives) = &archives {
+                archives.settle_in_txn(&vault.store, txn)?;
+            }
             // The rows came back without a put: every entity kind is judged
             // against the image's own registry, now readable in this
             // transaction. A refusal discards the copy before it commits.
@@ -302,6 +332,11 @@ impl Vault {
                 &BTreeSet::new(),
                 &BTreeSet::new(),
             )?;
+            // A NOTE that cites a record this restore did not open, or one
+            // the source erased since the cut, loses that citation and its
+            // quote, history included, as the live erase scrubs it (FIX
+            // 18270). Every row it reads is back by now.
+            crate::note::erase_restored_citations_in_txn(&vault, txn, &erased)?;
             #[cfg(test)]
             fail_at(RestoreStep::ImageWrite)?;
             Ok(cancelled)
@@ -330,6 +365,19 @@ impl Vault {
                 .map_err(Rejected::receipt)?;
             #[cfg(test)]
             fail_at(RestoreStep::ReceiptCheck)?;
+        }
+        // The reopened destination now has its actual custody binding.
+        // Journal each released instance there before dropping its mapping.
+        if !unlanded_bodies.is_empty()
+            && matches!(custody, Custody::Keep | Custody::Landed | Custody::Fork(_))
+        {
+            vault.with_write_txn_grouped(|txn| {
+                crate::code_run::retire_unlanded_inline_body_keys_in_txn(
+                    &vault.store,
+                    txn,
+                    &unlanded_bodies,
+                )
+            })?;
         }
         // Each pad a row names by reference rests again with the pad its
         // custody holds, or is withheld by its world's setting; any other is

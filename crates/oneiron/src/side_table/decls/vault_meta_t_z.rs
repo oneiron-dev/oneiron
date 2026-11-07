@@ -116,6 +116,8 @@ side_tables! {
     /// Retired consult fan-out policy carrier; the policy manifest now governs.
     /// Declared so bytes written by older engines stay owned. Key: ().
     TASK_FANOUT_POLICY: VaultMeta b"tasks/fanout_policy/v1" Named;
+    /// One participant's explicit team choice. Key: caller attempt hex, `:`, team reference.
+    TEAM_BALLOT: VaultMeta b"team:ballot:v1:" Named;
     /// A team deliverable's owner review: team, leader, root TASK, output revision, reviewed
     /// claim fingerprint and what the review asks. Key: id16 (reviewed claim).
     TEAM_DELIVERABLE: VaultMeta b"team:deliverable:v1:" Named;
@@ -225,6 +227,10 @@ side_tables! {
     /// One recorded vault-cleanup decision (accepted/auto), listing archived and skipped candidates.
     /// Key: id16.
     VAULT_CLEANUP_DIGEST: VaultMeta b"vault_cleanup.digest.v1:" Raw;
+    /// Which cleanup proposal, digest and run rows name an id, so an erase reads only those
+    /// (FIX 7616). Key: the named id16, the listing's tag byte (`p`, `d` or `r`), then the
+    /// listing row's id16. Value: empty.
+    VAULT_CLEANUP_ENTITY_ROW: VaultMeta b"vault_cleanup.entity_row.v1:" Raw;
     /// Mint-time evidence pinning a PERSON as extraction-produced and eligible for the claimless-
     /// person cleanup arm. Key: id16 (PERSON id).
     VAULT_CLEANUP_EXTRACTION_PERSON: VaultMeta b"vault_cleanup.extraction_person.v1:" Raw;
@@ -307,6 +313,8 @@ side_tables! {
     /// the send is on, to the reader's primary route. Key: id16 (reader).
     WEAVE_DIGEST_CHANNEL_OVERRIDE: VaultMeta b"weave:digest_channel_override:v1:" Named Engine
         => crate::outbound::erase_weave_digest_channel_override_actor_in_txn;
+    /// Empty lens-rerender intent after erasure. Key: the full saved digest key.
+    WEAVE_DIGEST_RERENDER: VaultMeta b"weave:digest_rerender:v1:" Raw;
     /// One Coach change to an owner's digest rhythm or section order (FIX 5495): proposed,
     /// applied under his Grant, answered or undone, with the settings before and after. Key: id16
     /// (owner) + id16 (change).
@@ -316,6 +324,8 @@ side_tables! {
     WEAVE_DIGEST_SETTINGS: VaultMeta b"weave:digest_settings:v1:" Named;
     /// Source-to-digest invalidation index. Key: source id16 ‖ digest key.
     WEAVE_DIGEST_SOURCE: VaultMeta b"weave:digest_source:v1:" Raw;
+    /// The newest live lens of one reader. Key: reader kind byte + id16.
+    WEAVE_LIVE: VaultMeta b"weave:live:v1:" Raw;
     /// Weave digest schedule of one reader. Key: reader kind byte + id16.
     WEAVE_DIGEST_SCHEDULE: VaultMeta b"weave:schedule:v1:" Raw;
     /// One immutable wrong-item label (a claim, project or budget row) filed from a live weave

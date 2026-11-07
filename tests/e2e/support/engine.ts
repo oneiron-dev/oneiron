@@ -79,7 +79,7 @@ export class EngineFixture {
     this.url=`http://127.0.0.1:${port}`;
     this.artifacts=new Artifacts(resolve(process.env.E2E_ARTIFACTS_DIR??resolve(root,"artifacts"),`${options.id??"engine"}-${secretHex(4)}`));
     this.cli=new CliClient(requireAsset(build,"cli"),root,env,this.artifacts);
-    this.sdk=new SdkProcessDriver(build,root,env);
+    this.sdk=new SdkProcessDriver(build,root,env,this.artifacts);
   }
   static async start(options:EngineOptions):Promise<EngineFixture> {
     const profile=process.env.E2E_PROFILE;
@@ -110,11 +110,11 @@ export class EngineFixture {
         ...("allowAll" in embedder.egress?["--embedder-egress-allow-all"]:["--embedder-egress-allow",embedder.egress.entityIds.join(",")])]:["--embedder","none"];
       const taggerArgs=tagger?["--oneironer","endpoint","--oneironer-url",tagger.url,"--oneironer-checkpoint-sha16",tagger.checkpointSha16,
         "--oneironer-label-count",String(tagger.labelCount),"--oneironer-mode",tagger.mode??"save"]:["--oneironer","none"];
-      await writeFile(config,`host = "127.0.0.1"\nport = ${reservation.port}\n${options.fastDims===undefined?"":`fast_dims = ${options.fastDims}\n`}\n[keystore]\nbackend = "off"\n${options.serverConfig??""}`,{mode:0o600});
-      const init=await engine.cli.run(["init",resolve(root,"vault"),"--config",config,...endpointArgs,...taggerArgs,...(options.initArgs??[])],undefined,LIMITS.readyMs,true);
-      if(init.exitCode!==0) throw new CliError(init);
+      await writeFile(config,`host = "127.0.0.1"\nport = ${reservation.port}\n${options.fastDims===undefined?"":`fast_dims = ${options.fastDims}\n`}\n[keystore]\nbackend = "platform"\ndir = ${JSON.stringify(resolve(root,"keys"))}\n${options.serverConfig??""}`,{mode:0o600});
+      const init=await engine.cli.run(["init",resolve(root,"vault"),"--config",config,...endpointArgs,...taggerArgs,...(options.initArgs??[])],undefined,LIMITS.readyMs,true,true);
+      if(init.exitCode!==0) throw new CliError(init,"vault-init");
       const bootstrap=await engine.cli.run(["token","bootstrap","--url",engine.url,"--config",config],undefined,LIMITS.readyMs,true);
-      if(bootstrap.exitCode!==0) throw new CliError(bootstrap);
+      if(bootstrap.exitCode!==0) throw new CliError(bootstrap,"owner-bootstrap");
       const link=bootstrap.stdout.trim();redactor.add(link);
       const principalRef=new URL(link).hash.slice(1).split(".")[1];
       if(!principalRef||!/^[a-f0-9]{32}$/.test(principalRef)) throw new Error("Owner bootstrap returned no bound principal");
@@ -150,7 +150,7 @@ export class EngineFixture {
   }
   private async launch():Promise<void> {
     const server=await ManagedProcess.start([requireAsset(this.build,"server"),"serve","--config",resolve(this.root,"oneiron.toml")],
-      {cwd:this.root,env:this.env,label:`server-${secretHex(4)}`,artifacts:this.artifacts});
+      {cwd:this.root,env:this.env,label:`server-${secretHex(4)}`,artifacts:this.artifacts,diagnosticOutput:true});
     this.server=server;
     const publicClient=new PublicHttpClient(this.url,{timeoutMs:1000});
     await awaitPublic(async()=>{
@@ -161,7 +161,7 @@ export class EngineFixture {
   async pairActor(options:PairActorOptions):Promise<PairedActor> {
     const result=await this.pairedActor.cli.run(["token","pair","--url",this.url,"--principal-ref",options.principalRef,"--actor-class",options.actorClass,
       ...(options.scope?["--scope",options.scope.join(",")]:[]),...(options.lifetimeSeconds===undefined?[]:["--lifetime-secs",String(options.lifetimeSeconds)])],undefined,LIMITS.requestMs,true);
-    if(result.exitCode!==0) throw new CliError(result);
+    if(result.exitCode!==0) throw new CliError(result,"actor-pair");
     const link=result.stdout.trim();redactor.add(link);
     return this.actor(options.principalRef,options.actorClass,await this.sdk.pair(link));
   }

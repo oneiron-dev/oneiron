@@ -80,9 +80,10 @@ impl BaseWriteOrigin<'_> {
 /// separate table that could drift: it is this function's own exhaustive match
 /// over [`BatchOp`], so a new id-bearing variant fails to compile until it names
 /// its refs here. Raw base CLAIM puts hide their subject/world refs inside an
-/// opaque body, so they decode through the same landed decoder their apply path
-/// uses ([`crate::claim::validate_claim_body_and_decode`]) and an undecodable
-/// body fails closed.
+/// opaque body, so they envelope-decode through
+/// [`crate::claim::decode_claim_body`] for ref enumeration, and an undecodable
+/// body fails closed. Full class validation runs in the actual write transaction
+/// at `admit_claim_put`, using its synchronized descriptor rather than a seed.
 ///
 /// Membership is read from live registry state INSIDE the transaction, at the
 /// moment the op is decoded — there is no preflight pass and no membership-epoch
@@ -168,8 +169,7 @@ pub(super) fn check_decode_point_taint_guard(
             // cannot see — the ones below, which materialize nothing and so
             // never reach it.
             if *entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-                let Ok(body) =
-                    crate::claim::validate_claim_body_and_decode(data, *allow_reserved_predicate)
+                let Ok(body) = crate::claim::decode_claim_body(data, *allow_reserved_predicate)
                 else {
                     // Undecodable body: its refs cannot be enumerated, so
                     // membership cannot be disproved. FAIL CLOSED with the
@@ -478,6 +478,18 @@ pub(crate) fn apply_ops_session(
                         )));
                     }
                 }
+                // Base's one RECEIPT_RECORD put door, on the room's view and
+                // the entry's own stamps (FIX 7354): a carrier decodes, binds
+                // its id and time, and no body replaces a stored one.
+                crate::receipt::validate_receipt_record_put(
+                    view,
+                    wtxn,
+                    id,
+                    *entity_type,
+                    data,
+                    entry.occurred,
+                    entry.learned_at,
+                )?;
                 // The ENTRY's stamps, not the op's: they are the witnessing
                 // write's own and are what promote replays into the right
                 // month window (ARCH-0052 D4).

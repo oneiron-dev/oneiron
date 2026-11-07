@@ -13,6 +13,10 @@ use oneiron::{commitment_schedule, commitment_wake};
 
 use super::{CommitmentDeadline, DeadlineSource, IdleSample, NowMillis, system_now_ms};
 
+/// The host's gate over a deadline read's writes (FIX 7441): what it returns
+/// is held to the read's end, before the tick waits; `None` refuses them.
+type DeadlineWriteGate = Arc<dyn Fn() -> Option<Box<dyn Send>> + Send + Sync>;
+
 /// [`DeadlineSource`] over the vault's advisory attempt table: the earliest due
 /// pending Dreamer consolidation attempt THIS NODE could admit. A queued attempt
 /// with no retry backoff is due at its enqueue stamp; a backoff-delayed attempt
@@ -41,6 +45,11 @@ pub struct AttemptQueueDeadlines<'v> {
     commitment_now: Option<NowMillis>,
     /// The host's liveness, read only for the Arc deadline (FIX 7509 P8).
     idle: Option<IdleSample>,
+    /// The scope of the last deadline this source returned already due, so
+    /// due work of several scopes is served in turn (FIX 12042).
+    last_served: Option<DreamerConsolidationScope>,
+    /// The host's gate over this read's writes; `None` admits them all.
+    write_gate: Option<DeadlineWriteGate>,
 }
 
 impl<'v> AttemptQueueDeadlines<'v> {
@@ -54,6 +63,8 @@ impl<'v> AttemptQueueDeadlines<'v> {
             lease_owner: None,
             commitment_now: None,
             idle: None,
+            last_served: None,
+            write_gate: None,
         }
     }
 
@@ -78,6 +89,8 @@ impl<'v> AttemptQueueDeadlines<'v> {
             lease_owner: None,
             commitment_now: Some(now),
             idle: None,
+            last_served: None,
+            write_gate: None,
         }
     }
 
@@ -88,6 +101,17 @@ impl<'v> AttemptQueueDeadlines<'v> {
     #[must_use]
     pub fn with_idle(mut self, idle: IdleSample) -> Self {
         self.idle = Some(idle);
+        self
+    }
+
+    /// The host's gate over each read's writes (FIX 7441): the home
+    /// handoff's adoption and the commitment lane's reconcile and fired
+    /// wakes run only while it admits, held to the read's end. A refused
+    /// read (a reap freeze) reads the due index and the queue alone; the
+    /// next admitted read does the writes. `None` admits every write.
+    #[must_use]
+    pub fn with_write_gate(mut self, gate: Option<DeadlineWriteGate>) -> Self {
+        self.write_gate = gate;
         self
     }
 
@@ -145,11 +169,19 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
     }
 
     fn next_deadline(&mut self) -> oneiron::Result<Option<CommitmentDeadline>> {
+        // FIX 7441: this read's writes run under the host's gate, held to
+        // the read's end; a refused gate leaves them to the next read.
+        let held = match &self.write_gate {
+            Some(gate) => gate(),
+            None => Some(Box::new(()) as Box<dyn Send>),
+        };
         // FIX 5661 C2b (FIX 6211): a new home adopts the handoff its move
         // carried, or records that none came, before this read arms any
         // free-time cadence. Best effort: a failure is logged and the read
         // goes on with today's opening.
-        if let Err(error) = oneiron::sync::residence::prepare_home_handoff(self.vault) {
+        if held.is_some()
+            && let Err(error) = oneiron::sync::residence::prepare_home_handoff(self.vault)
+        {
             tracing::warn!(
                 kind = ?error.kind(),
                 "home handoff not prepared before the deadline read"
@@ -159,17 +191,21 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
         // phase COMMITS a Dreamer attempt, so reading the attempt queue after
         // it is what makes that brand-new attempt visible in the same caller
         // read — without relocating this merge into the commitment source.
-        let commitment = match &self.commitment_now {
+        let mut commitment = match &self.commitment_now {
             Some(clock) => CommitmentDueDeadlines::with_clock(self.vault, Arc::clone(clock)),
             None => CommitmentDueDeadlines::new(self.vault),
-        }
-        .next_deadline()?;
+        };
+        let commitment = if held.is_some() {
+            commitment.next_deadline()?
+        } else {
+            commitment.read_next_deadline()?
+        };
         let queue = AttemptQueue::new(self.vault);
         let macro_ready = DreamerRunnerStore::new(self.vault).macro_schedulable_attempts()?;
         let free_time = free_time_arming(self.vault);
         let mut macro_admissible = None;
         let mut macro_error = None;
-        let mut next: Option<CommitmentDeadline> = None;
+        let mut next = ScopeDeadlines::default();
         // The ready index holds exactly the Queued and Scheduled tries, so no
         // other row of the ledger is decoded here (FIX 11940).
         for attempt in queue.ready_rows()? {
@@ -233,9 +269,7 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
                 .or(attempt.backoff_until)
                 .unwrap_or(attempt.created_at);
             let due_at_ms = due_secs.saturating_mul(1_000);
-            if next.is_none_or(|current| due_at_ms < current.due_at_ms) {
-                next = Some(CommitmentDeadline { due_at_ms, scope });
-            }
+            next.offer(CommitmentDeadline { due_at_ms, scope });
         }
         // A Checkpoint park whose cutting pass ended is due at once, a Retry
         // park its retry delay later (Engine 10-21): the next pass of its
@@ -278,9 +312,7 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
                         }
                     }
                     let due_at_ms = park.due_at.saturating_mul(1_000);
-                    if next.is_none_or(|current| due_at_ms < current.due_at_ms) {
-                        next = Some(CommitmentDeadline { due_at_ms, scope });
-                    }
+                    next.offer(CommitmentDeadline { due_at_ms, scope });
                 }
             }
             Err(error) => tracing::warn!(
@@ -294,12 +326,10 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
         match DreamerRunnerStore::new(self.vault).next_owed_stop_retry() {
             Ok(Some(due_secs)) => {
                 let due_at_ms = due_secs.saturating_mul(1_000);
-                if next.is_none_or(|current| due_at_ms < current.due_at_ms) {
-                    next = Some(CommitmentDeadline {
-                        due_at_ms,
-                        scope: DreamerConsolidationScope::Micro,
-                    });
-                }
+                next.offer(CommitmentDeadline {
+                    due_at_ms,
+                    scope: DreamerConsolidationScope::Micro,
+                });
             }
             Ok(None) => {}
             Err(error) => tracing::warn!(
@@ -339,9 +369,7 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
                     due_at_ms: at.saturating_mul(1_000),
                     scope: DreamerConsolidationScope::Micro,
                 };
-                if next.is_none_or(|current| due.due_at_ms < current.due_at_ms) {
-                    next = Some(due);
-                }
+                next.offer(due);
             }
             // Each reader's weave digest schedule (OF-499) arms the same
             // home-only cadence, and is as independent of the rest.
@@ -361,9 +389,7 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
                     due_at_ms: at.saturating_mul(1_000),
                     scope: DreamerConsolidationScope::Micro,
                 };
-                if next.is_none_or(|current| due.due_at_ms < current.due_at_ms) {
-                    next = Some(due);
-                }
+                next.offer(due);
             }
             // Each agent's next owner-set free-time boundary (FIX 4453) arms
             // a Macro pass on the home alone, whose Timer begin opens the
@@ -384,9 +410,7 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
                     due_at_ms: at.saturating_mul(1_000),
                     scope: DreamerConsolidationScope::Macro,
                 };
-                if next.is_none_or(|current| due.due_at_ms < current.due_at_ms) {
-                    next = Some(due);
-                }
+                next.offer(due);
             }
             // Each standing question's refresh (OF-506) and each held
             // artifact answer's wake (ARCH-0075 §4) arm the same home-only
@@ -410,9 +434,7 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
                     due_at_ms: at.saturating_mul(1_000),
                     scope: DreamerConsolidationScope::Micro,
                 };
-                if next.is_none_or(|current| due.due_at_ms < current.due_at_ms) {
-                    next = Some(due);
-                }
+                next.offer(due);
             }
             // Each owed Arc (FIX 7509 P8) arms a Macro pass on the home
             // alone, whose Timer begin sweeps it; as independent of the rest.
@@ -432,26 +454,145 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
                     due_at_ms: at.saturating_mul(1_000),
                     scope: DreamerConsolidationScope::Macro,
                 };
-                if next.is_none_or(|current| due.due_at_ms < current.due_at_ms) {
-                    next = Some(due);
-                }
+                next.offer(due);
             }
         }
         // An unreadable home designation refuses Macro and digest, but
         // independent Micro/Meso/maintenance or commitment work continues.
-        if next.is_none()
+        if !next.is_some()
             && commitment.is_none()
             && let Some(error) = macro_error
         {
             return Err(error);
         }
         // The lanes are independent durable sources; the earlier one arms
-        // the timer. A tie keeps the attempt deadline.
-        Ok(match (next, commitment) {
-            (Some(attempt), Some(due)) if due.due_at_ms < attempt.due_at_ms => Some(due),
-            (Some(attempt), _) => Some(attempt),
-            (None, commitment) => commitment,
-        })
+        // the timer. A tie keeps the attempt deadline: the commitment is
+        // offered last.
+        if let Some(due) = commitment {
+            next.offer(due);
+        }
+        let now_ms = self
+            .commitment_now
+            .as_ref()
+            .map_or_else(system_now_ms, |clock| clock());
+        let served = next.serve(now_ms, self.last_served);
+        if let Some(deadline) = served
+            && deadline.due_at_ms <= now_ms
+        {
+            self.last_served = Some(deadline.scope);
+        }
+        Ok(served)
+    }
+}
+
+/// The order the deadline lane serves scopes in while work of more than one
+/// is already due (FIX 12042).
+const SCOPE_TURNS: [DreamerConsolidationScope; 3] = [
+    DreamerConsolidationScope::Micro,
+    DreamerConsolidationScope::Meso,
+    DreamerConsolidationScope::Macro,
+];
+
+/// One scope's earliest deadline in a read, and when in the read it was
+/// offered: a tie keeps the earlier offer, as one running minimum did.
+#[derive(Debug, Clone, Copy)]
+struct ScopeDue {
+    scope: DreamerConsolidationScope,
+    due_at_ms: u64,
+    offered: usize,
+}
+
+impl ScopeDue {
+    const fn deadline(&self) -> CommitmentDeadline {
+        CommitmentDeadline {
+            due_at_ms: self.due_at_ms,
+            scope: self.scope,
+        }
+    }
+}
+
+/// The earliest deadline of each scope one deadline read found.
+///
+/// A pass drains only its own scope, so one minimum over every scope lets a
+/// scope whose work keeps falling due earlier (a Micro backlog the wake-pass
+/// cut leaves queued, a checkpoint resume, an overdue digest) hold back a
+/// sitting's Meso round for as long as it lasts (FIX 12042, Dreamer proof
+/// run 4: eleven Micro passes and no Meso pass in 1200 s). While work of
+/// more than one scope is already due, the scopes take turns instead; a
+/// future deadline still arms the timer at the earliest instant.
+#[derive(Debug, Default)]
+struct ScopeDeadlines {
+    dues: Vec<ScopeDue>,
+    offers: usize,
+}
+
+impl ScopeDeadlines {
+    fn offer(&mut self, deadline: CommitmentDeadline) {
+        let offered = self.offers;
+        self.offers += 1;
+        match self.dues.iter_mut().find(|due| due.scope == deadline.scope) {
+            Some(due) => {
+                if deadline.due_at_ms < due.due_at_ms {
+                    due.due_at_ms = deadline.due_at_ms;
+                    due.offered = offered;
+                }
+            }
+            None => self.dues.push(ScopeDue {
+                scope: deadline.scope,
+                due_at_ms: deadline.due_at_ms,
+                offered,
+            }),
+        }
+    }
+
+    fn is_some(&self) -> bool {
+        !self.dues.is_empty()
+    }
+
+    fn earliest(&self) -> Option<CommitmentDeadline> {
+        self.dues
+            .iter()
+            .min_by_key(|due| (due.due_at_ms, due.offered))
+            .map(ScopeDue::deadline)
+    }
+
+    /// The deadline to arm at `now_ms`: the earliest, unless work of more
+    /// than one scope is already due and a scope was served last; then the
+    /// first due scope after `last` in [`SCOPE_TURNS`], `last` itself after
+    /// every other.
+    fn serve(
+        &self,
+        now_ms: u64,
+        last: Option<DreamerConsolidationScope>,
+    ) -> Option<CommitmentDeadline> {
+        let due_now = self
+            .dues
+            .iter()
+            .filter(|due| due.due_at_ms <= now_ms)
+            .count();
+        let Some(last) = last.filter(|_| due_now > 1) else {
+            return self.earliest();
+        };
+        // A scope outside the turn order takes the place after the last.
+        let turns = SCOPE_TURNS.len() + 1;
+        let turn = |scope: DreamerConsolidationScope| {
+            SCOPE_TURNS
+                .iter()
+                .position(|candidate| *candidate == scope)
+                .unwrap_or(SCOPE_TURNS.len())
+        };
+        let after = turn(last);
+        self.dues
+            .iter()
+            .filter(|due| due.due_at_ms <= now_ms)
+            .min_by_key(|due| {
+                (
+                    (turn(due.scope) + turns - after - 1) % turns,
+                    due.due_at_ms,
+                    due.offered,
+                )
+            })
+            .map(ScopeDue::deadline)
     }
 }
 
@@ -554,12 +695,10 @@ impl<'v> CommitmentDueDeadlines<'v> {
     }
 }
 
-impl DeadlineSource for CommitmentDueDeadlines<'_> {
-    fn next_deadline(&mut self) -> oneiron::Result<Option<CommitmentDeadline>> {
-        // The index stores seconds; the tick lane speaks milliseconds.
-        let now_secs = (self.now)() / 1_000;
-        self.reconcile_due_projects(now_secs)?;
-        self.fire_due_wake_phases(now_secs)?;
+impl CommitmentDueDeadlines<'_> {
+    /// The lane's next timer from the due index alone, with no reconcile
+    /// and no fired wake: a read the host's gate refused (FIX 7441).
+    fn read_next_deadline(&self) -> oneiron::Result<Option<CommitmentDeadline>> {
         Ok(self
             .vault
             .commitment_due_index_snapshot()?
@@ -568,6 +707,16 @@ impl DeadlineSource for CommitmentDueDeadlines<'_> {
                 due_at_ms: due_secs.saturating_mul(1_000),
                 scope: DreamerConsolidationScope::Micro,
             }))
+    }
+}
+
+impl DeadlineSource for CommitmentDueDeadlines<'_> {
+    fn next_deadline(&mut self) -> oneiron::Result<Option<CommitmentDeadline>> {
+        // The index stores seconds; the tick lane speaks milliseconds.
+        let now_secs = (self.now)() / 1_000;
+        self.reconcile_due_projects(now_secs)?;
+        self.fire_due_wake_phases(now_secs)?;
+        self.read_next_deadline()
     }
 }
 

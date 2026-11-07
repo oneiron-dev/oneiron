@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use oneiron::{HostingPrivacyPosture, VaultDataKeyCustody, VaultPrivacyConfig};
 
+use super::apns::ApnsConfig;
 use super::backup::BackupConfig;
 use super::channel_endpoints::ChannelEndpointsConfig;
 use super::embedder::EmbedderConfig;
@@ -52,8 +53,9 @@ mod debug;
 ///   forgets its least recently requested window subscription (the window's
 ///   next change reaches the peer as `WINDOW_INVALIDATE`) and the row asks
 ///   its OF-520 question once; no socket is refused for the count.
-/// - `max_ephemeral_payload_bytes` — ENFORCED on each ephemeral frame. The
-///   hub itself is charged to `limits.retained_memory_bytes`, never capped.
+/// - Ephemeral (presence) frames carry no byte bound of their own (FIX 161):
+///   a frame is bounded by the socket's message floor, and the hub is charged
+///   to `limits.retained_memory_bytes`, never capped.
 /// - `max_ephemeral_snapshot_bytes` — the most one late-join presence frame
 ///   carries; a larger hub is sent in parts.
 /// - `max_connections_per_user` — not enforced until auth has per-user
@@ -131,8 +133,6 @@ pub struct SyncServerConfig {
     pub max_messages_per_sec: u32,
     /// Loro ephemeral-store inactivity timeout in milliseconds.
     pub ephemeral_timeout_ms: i64,
-    /// Maximum Loro-native ephemeral payload bytes accepted from one frame.
-    pub max_ephemeral_payload_bytes: usize,
     /// Maximum presence bytes in one late-join frame; a larger hub is sent in
     /// parts.
     pub max_ephemeral_snapshot_bytes: usize,
@@ -160,6 +160,9 @@ pub struct SyncServerConfig {
     /// `[channel_endpoints]`: where the served sinks reach each provider's
     /// API; the public APIs unless the file names others.
     pub channel_endpoints: ChannelEndpointsConfig,
+    /// `[apns]`: the Apple push applications the served sinks send through;
+    /// none unless the file names applications.
+    pub apns: ApnsConfig,
     /// `[linear]`: the Linear mirror this server runs and its webhook's
     /// tracker mapping, nonsecret. A plain serve with no section reads its
     /// `ONEIRON_LINEAR_*` environment into this before the server starts
@@ -171,6 +174,8 @@ pub struct SyncServerConfig {
     /// `[merge_queue]`: the queue checker's executor (FIX 6868). `None` is
     /// isolated and unconfigured.
     pub merge_queue: Option<super::MergeQueueCheckerConfig>,
+    /// Explicit failure healer for served agent runs; None keeps human-only escalation.
+    pub agent_failure_healer: Option<oneiron::failure_ladder::healer_dispatch::HealerSlot>,
     /// The organ builds this server runs as first party, by blake3 (64 lowercase
     /// hex), from `--trusted-organ-build` alone (FIX 7644), which a vault VM's
     /// init passes from its config drive's list (FIX 7889). Listing a digest is
@@ -233,7 +238,6 @@ impl Default for SyncServerConfig {
             max_windows_per_connection: 65_536,
             max_messages_per_sec: 200,
             ephemeral_timeout_ms: 30_000,
-            max_ephemeral_payload_bytes: 64 * 1024,   // 64 KB
             max_ephemeral_snapshot_bytes: 256 * 1024, // 256 KB
             max_entity_blob: 64 * 1024,               // 64 KB
             max_lfs_object_bytes: oneiron::origin::lfs::LFS_DEFAULT_OBJECT_CAP,
@@ -244,9 +248,11 @@ impl Default for SyncServerConfig {
             skills: SkillsConfig::default(),
             line: LineConfig::default(),
             channel_endpoints: ChannelEndpointsConfig::default(),
+            apns: ApnsConfig::default(),
             linear: None,
             ingress: IngressAuth::Configured,
             merge_queue: None,
+            agent_failure_healer: None,
             trusted_organ_builds: std::collections::BTreeSet::new(),
             hosted_private_origins: std::collections::BTreeSet::new(),
         }
@@ -260,17 +266,11 @@ impl SyncServerConfig {
     }
 
     pub fn validate(&self) -> Result<(), oneiron::Error> {
+        super::self_heal::validate_agent_failure_healer(self.agent_failure_healer.as_ref())?;
         if self.ephemeral_timeout_ms <= 0 {
             return Err(oneiron::Error::sync_protocol(
                 oneiron::SyncProtocolValidation::InvalidConfig {
                     field: oneiron::SyncConfigField::EphemeralTimeoutMs,
-                },
-            ));
-        }
-        if self.max_ephemeral_payload_bytes == 0 {
-            return Err(oneiron::Error::sync_protocol(
-                oneiron::SyncProtocolValidation::InvalidConfig {
-                    field: oneiron::SyncConfigField::MaxEphemeralPayloadBytes,
                 },
             ));
         }
@@ -359,7 +359,6 @@ pub struct ServeConfig {
     pub max_windows_per_connection: usize,
     pub max_messages_per_sec: u32,
     pub ephemeral_timeout_ms: i64,
-    pub max_ephemeral_payload_bytes: usize,
     pub max_ephemeral_snapshot_bytes: usize,
     pub max_entity_blob: usize,
     /// Per-object LFS upload cap in bytes, `LFS_DEFAULT_OBJECT_CAP` unless
@@ -382,8 +381,8 @@ pub struct ServeConfig {
     /// The `[failure_signals]` section: the publisher this deployment's
     /// failure signals go to.
     pub failure_signals: FailureSignalsConfig,
-    /// The `[self_heal]` section: the model-graded detectors over retrieval
-    /// telemetry.
+    /// The `[self_heal]` section: model-graded detectors over retrieval telemetry
+    /// and explicit failure-healer routing for served agent runs.
     pub self_heal: SelfHealConfig,
     /// The `[recall]` section: call mode's deadline.
     pub recall: RecallConfig,
@@ -421,6 +420,9 @@ pub struct ServeConfig {
     /// The `[device_sync]` section: the home this machine dials, absent until
     /// the config file names it. Absent means it dials no one.
     pub device_sync: Option<super::DeviceSyncConfig>,
+    /// Each `[[shared_env]]` entry: one dedicated shared vault environment
+    /// this host keeps open for leave checks and housekeeping (FIX 2051).
+    pub shared_env: Vec<super::SharedEnvConfig>,
     /// The `[connectors.<name>]` sections: each catalog connector's installed
     /// transport and endpoint, empty until the config file names one.
     pub connectors: std::collections::BTreeMap<String, super::ConnectorHostConfig>,
@@ -433,6 +435,9 @@ pub struct ServeConfig {
     /// The `[channel_endpoints]` section: the provider APIs the served sinks
     /// reach, the public ones unless the config file names others.
     pub channel_endpoints: ChannelEndpointsConfig,
+    /// The `[apns]` section: the Apple push applications the served sinks
+    /// send through, none unless the config file names applications.
+    pub apns: ApnsConfig,
     /// The `[linear]` section: the Linear mirror and its webhook's tracker
     /// mapping, absent until the config file names it.
     pub linear: Option<LinearConfig>,
@@ -532,7 +537,6 @@ impl Default for ServeConfig {
             max_windows_per_connection: server.max_windows_per_connection,
             max_messages_per_sec: server.max_messages_per_sec,
             ephemeral_timeout_ms: server.ephemeral_timeout_ms,
-            max_ephemeral_payload_bytes: server.max_ephemeral_payload_bytes,
             max_ephemeral_snapshot_bytes: server.max_ephemeral_snapshot_bytes,
             max_entity_blob: server.max_entity_blob,
             max_lfs_object_bytes: server.max_lfs_object_bytes,
@@ -557,10 +561,12 @@ impl Default for ServeConfig {
             gpu: None,
             native_mail: None,
             device_sync: None,
+            shared_env: Vec::new(),
             connectors: std::collections::BTreeMap::new(),
             embedding: None,
             line: server.line,
             channel_endpoints: server.channel_endpoints.clone(),
+            apns: server.apns.clone(),
             linear: None,
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
@@ -617,7 +623,6 @@ impl ServeConfig {
             max_windows_per_connection: self.max_windows_per_connection,
             max_messages_per_sec: self.max_messages_per_sec,
             ephemeral_timeout_ms: self.ephemeral_timeout_ms,
-            max_ephemeral_payload_bytes: self.max_ephemeral_payload_bytes,
             max_ephemeral_snapshot_bytes: self.max_ephemeral_snapshot_bytes,
             max_entity_blob: self.max_entity_blob,
             max_lfs_object_bytes: self.max_lfs_object_bytes,
@@ -628,11 +633,13 @@ impl ServeConfig {
             skills: self.skills.clone(),
             line: self.line,
             channel_endpoints: self.channel_endpoints.clone(),
+            apns: self.apns.clone(),
             linear: self.linear.clone(),
             // A plain serve's own auth config; a managed vault declares its
             // supervisor's.
             ingress: IngressAuth::Configured,
             merge_queue: self.merge_queue.clone(),
+            agent_failure_healer: self.self_heal.agent_failure_healer.clone(),
             trusted_organ_builds: self.trusted_organ_builds.clone(),
             // Managed boot alone sets it (FIX 7657).
             hosted_private_origins: std::collections::BTreeSet::new(),

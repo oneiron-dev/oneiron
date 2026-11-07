@@ -18,6 +18,7 @@ pub struct HomeSearch {
     vault: Arc<Vault>,
     config: SyncClientConfig,
     mode: watch::Receiver<SyncResidenceMode>,
+    claim_vector_cursor: std::sync::Mutex<Option<Vec<u8>>>,
 }
 
 /// The vault's hold on its own sync connection's home search: the live
@@ -58,6 +59,7 @@ impl HomeSearch {
             vault: Arc::clone(vault),
             config,
             mode,
+            claim_vector_cursor: std::sync::Mutex::new(None),
         });
         let mut slot = vault
             .home_search
@@ -151,6 +153,42 @@ impl HomeSearch {
             caller,
         )
         .await
+    }
+}
+
+impl HomeSearch {
+    pub(crate) async fn default_claim_vector(
+        &self,
+        id: crate::EntityId,
+    ) -> crate::Result<Option<crate::embed::home_vectors::ReceivedHomeClaimVector>> {
+        // Unlike an opened-item search, this derivation read is also used by
+        // an All device. The machine proof, not a selector, grants this read.
+        crate::sync::client::default_claim_vector(&self.vault, &self.config, id).await
+    }
+}
+
+impl Vault {
+    pub(crate) fn embedding_home(&self) -> Option<Arc<HomeSearch>> {
+        self.home_search
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .search
+            .upgrade()
+    }
+}
+
+impl HomeSearch {
+    pub(crate) fn next_claim_vector_job(
+        &self,
+    ) -> crate::Result<Option<crate::sync::queue::EmbedQueueRow>> {
+        let mut cursor = self
+            .claim_vector_cursor
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let queue = crate::sync::queue::SyncQueue::new(Arc::clone(&self.vault))?;
+        let row = queue.next_embed_job(cursor.as_deref())?;
+        *cursor = row.as_ref().map(|row| row.key.clone());
+        Ok(row)
     }
 }
 

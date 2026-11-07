@@ -28,8 +28,13 @@
 //! report's content-free issue signature to the publisher the owner bound to
 //! this server's configured destination (`coach.feedback_delivery`, FIX 739,
 //! [`super::feedback_report_delivery`]). An owner-authorized training run
-//! trains on its own thread, then scores ([`super::training_pack`]).
+//! trains on its own thread, then scores ([`super::training_pack`]). The
+//! nightly drafter retrain trains the vault's own drafter on its own thread
+//! while its night stays parked ([`super::drafter`], FIX 14974).
 use std::collections::BTreeMap;
+mod wake;
+pub(super) use wake::WakeExecutor;
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -39,14 +44,15 @@ use oneiron::actor_claims::{
 };
 use oneiron::autoreason_campaign::research::research_work_pending;
 use oneiron::dreamer_runner::maintenance::coach::{
-    COACH_ATTRIBUTION_AUDITS_FACET, COACH_BROWSER_PROGRAMS_FACET, COACH_EVAL_AUTHORING_FACET,
-    COACH_EVAL_MEASUREMENT_FACET, COACH_FORK_PROMOTE_FACET, COACH_JUDGE_LABEL_RECHECKS_FACET,
-    COACH_JUDGE_SWAP_FACET, COACH_OFFER_CHECK_FACET, COACH_PERSON_THRESHOLD_FACET,
-    COACH_RESEARCH_RUN_FACET, COACH_RESEARCH_SELECT_FACET, COACH_SEAL_CHECKS_FACET,
-    COACH_SITE_SKILLS_FACET, COACH_SKILL_DISCOVERY_FACET, COACH_SKILL_DISTILL_FACET,
-    COACH_THINK_THRESHOLD_FACET, COACH_TRADEOFF_ROUTE_FACET, COACH_TRAINING_OFFER_FACET,
-    COACH_TRAINING_RUN_FACET, COACH_TYPE_TREE_UPKEEP_FACET, COACH_WEAVE_DIGEST_SETTINGS_FACET,
-    PersonThresholdPolicy, ThinkThresholdPolicy,
+    COACH_ATTRIBUTION_AUDITS_FACET, COACH_ATTRIBUTION_LABELS_FACET, COACH_BROWSER_PROGRAMS_FACET,
+    COACH_DRAFTER_RETRAIN_FACET, COACH_EVAL_AUTHORING_FACET, COACH_EVAL_MEASUREMENT_FACET,
+    COACH_FORK_PROMOTE_FACET, COACH_JUDGE_LABEL_RECHECKS_FACET, COACH_JUDGE_SWAP_FACET,
+    COACH_OFFER_CHECK_FACET, COACH_PERSON_THRESHOLD_FACET, COACH_RESEARCH_RUN_FACET,
+    COACH_RESEARCH_SELECT_FACET, COACH_SEAL_CHECKS_FACET, COACH_SITE_SKILLS_FACET,
+    COACH_SKILL_DISCOVERY_FACET, COACH_SKILL_DISTILL_FACET, COACH_THINK_THRESHOLD_FACET,
+    COACH_TRADEOFF_ROUTE_FACET, COACH_TRAINING_OFFER_FACET, COACH_TRAINING_RUN_FACET,
+    COACH_TYPE_TREE_UPKEEP_FACET, COACH_WEAVE_DIGEST_SETTINGS_FACET, PersonThresholdPolicy,
+    ThinkThresholdPolicy,
 };
 use oneiron::dreamer_runner::{
     AbortDreamerBudgetReservation, AdmitDreamerAttempt, DreamerAdmissionOutcome,
@@ -71,10 +77,11 @@ use super::code_fix::{HostModels, message};
 use crate::server::SyncServer;
 
 mod attribution_audits;
+mod attribution_labels;
 mod fork_promote;
 mod judge_label_rechecks;
 mod research_oracle;
-mod seal_checks;
+pub(super) mod seal_checks;
 mod type_tree_upkeep;
 mod weave_digest_settings;
 
@@ -123,6 +130,10 @@ pub(crate) fn spawn(
     server: &Arc<SyncServer>,
     admit: crate::server::HousekeepingAdmission,
 ) -> tokio::task::JoinHandle<()> {
+    let _ = server
+        .ai
+        .coach_host_wake
+        .set(tokio::runtime::Handle::current());
     // The Coach's model drafts the digest settings steps once a round of
     // this worker served, so the digest timer then only queues their job
     // (FIX 5609); until then, after a round that errs, once the worker ends
@@ -206,6 +217,9 @@ fn round(server: &SyncServer) -> oneiron::Result<()> {
     if research_work_pending(vault)? {
         store.enqueue_coach_research_run(vault.now_recorded_at())?;
     }
+    // FIX 14974: a drafter job a restart left behind is read again, and a
+    // night parked on a job that ended is resumed.
+    super::drafter::recover(server, vault.now_recorded_at());
     for _ in 0..ROUND {
         let now = vault.now_recorded_at();
         let admitted = match store.admit_next_coach_host_job(AdmitDreamerAttempt {
@@ -223,7 +237,9 @@ fn round(server: &SyncServer) -> oneiron::Result<()> {
         // A triage revision parked on its part children stays pending under
         // its park, and only its unit goes back (FIX 7549).
         let ran = match ran {
-            Ok(()) => match super::feedback_triage::yielded(&store, &admitted, now) {
+            Ok(()) => match super::feedback_triage::yielded(&store, &admitted, now)
+                .and_then(|parked| Ok(parked || super::drafter::yielded(&store, &admitted)?))
+            {
                 Ok(true) => {
                     store.abort_budget_reservation(AbortDreamerBudgetReservation {
                         budget_id: BUDGET_ID.to_owned(),
@@ -242,7 +258,7 @@ fn round(server: &SyncServer) -> oneiron::Result<()> {
     Ok(())
 }
 
-fn run_one(
+pub(super) fn run_one(
     server: &SyncServer,
     admitted: &DreamerAdmittedAttempt,
     now: u64,
@@ -268,9 +284,20 @@ fn run_one(
         COACH_OFFER_CHECK_FACET => super::training_offer::check(server, admitted, now),
         COACH_EVAL_MEASUREMENT_FACET => super::eval_measurement::run(server, admitted, now),
         COACH_TRAINING_RUN_FACET => super::training_pack::run(server, admitted, now),
+        // FIX 12569: a version a trainer returned is evaluated first (FIX
+        // 14975), its held-out side read before the night's corpus sweep, and
+        // activated and observed on its own task. The night then exports its
+        // corpus (FIX 14973) for the drafter target this process serves (FIX
+        // 14976) and trains it on this host's drafter trainer (FIX 14974), or
+        // holds with its reason.
+        COACH_DRAFTER_RETRAIN_FACET => {
+            crate::models::start_drafter_evaluations(vault);
+            super::drafter::run(server, admitted, now)
+        }
         COACH_SEAL_CHECKS_FACET => seal_checks::run(server, admitted, now),
         COACH_ATTRIBUTION_AUDITS_FACET => attribution_audits::run(server, admitted, now),
         COACH_JUDGE_LABEL_RECHECKS_FACET => judge_label_rechecks::run(server, admitted, now),
+        COACH_ATTRIBUTION_LABELS_FACET => attribution_labels::run(server, admitted, now),
         COACH_TYPE_TREE_UPKEEP_FACET => type_tree_upkeep::run(server, admitted, now),
         COACH_FORK_PROMOTE_FACET => fork_promote::run(server, admitted, now),
         COACH_WEAVE_DIGEST_SETTINGS_FACET => weave_digest_settings::run(server, admitted, now),

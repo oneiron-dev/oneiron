@@ -160,6 +160,8 @@ struct KnownClaim {
     /// The relationships the head holds within, when it names a set (FIX
     /// 7575).
     rel: crate::claim::RelationshipScope,
+    /// The stored question key as JSON, when the claim carries one.
+    topic_key: Option<String>,
 }
 
 impl Neighbourhood {
@@ -325,11 +327,12 @@ pub(super) struct Passage<'p> {
     pub(super) destination: ReadDestination,
 }
 
-/// The destination a neighbourhood listing is read for (FIX 5588 S1,
-/// Unknown-always): both plan points resolve through here, so the later
-/// FIX 12712 flip is one value. Today it is a destination nobody proved,
-/// which judges exactly as the bare off-device locality did (C2); it reads
-/// no role table, so the direct and driver paths cannot diverge (C8).
+/// The destination a neighbourhood listing is read for where no vended
+/// executor stated a bound (FIX 5588 S1, FIX 12735): a destination nobody
+/// proved, which judges exactly as the bare off-device locality did (C2).
+/// A driven pass lists for the bound its vended executors stated instead
+/// ([`super::PreparedWake::listing_destination`]); a direct execution, and
+/// a NOTE review outside a driven wake, list here. It reads no role table.
 pub(super) fn listing_destination() -> ReadDestination {
     ReadDestination::toward(crate::machine_destination::PeerMachine::Unknown)
 }
@@ -688,6 +691,13 @@ fn listable(
         predicate: prior.body.predicate.clone(),
         value: rmpv_to_json(&prior.body.value).to_string(),
         rel: prior.body.rel.clone(),
+        topic_key: prior.body.scope.as_ref().and_then(|scope| {
+            scope
+                .as_map()?
+                .iter()
+                .find(|(key, _)| key.as_str() == Some("topic_key"))
+                .map(|(_, topic)| rmpv_to_json(topic).to_string())
+        }),
     })
 }
 

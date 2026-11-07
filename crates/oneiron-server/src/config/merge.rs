@@ -329,7 +329,6 @@ struct FileServeConfig {
     max_windows_per_connection: Option<usize>,
     max_messages_per_sec: Option<u32>,
     ephemeral_timeout_ms: Option<i64>,
-    max_ephemeral_payload_bytes: Option<usize>,
     max_ephemeral_snapshot_bytes: Option<usize>,
     max_entity_blob: Option<usize>,
     max_lfs_object_bytes: Option<u64>,
@@ -354,10 +353,12 @@ struct FileServeConfig {
     gpu: Option<crate::runtime::GpuPoolConfig>,
     native_mail: Option<super::NativeMailConfig>,
     device_sync: Option<super::DeviceSyncConfig>,
+    shared_env: Option<Vec<super::SharedEnvConfig>>,
     connectors: Option<std::collections::BTreeMap<String, super::ConnectorHostConfig>>,
     embedding: Option<super::EmbeddingConfig>,
     line: Option<super::LineConfig>,
     channel_endpoints: Option<super::ChannelEndpointsConfig>,
+    apns: Option<super::ApnsConfig>,
     linear: Option<super::LinearConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
@@ -401,7 +402,6 @@ impl From<FileServeConfig> for PartialServeConfig {
             max_windows_per_connection: value.max_windows_per_connection,
             max_messages_per_sec: value.max_messages_per_sec,
             ephemeral_timeout_ms: value.ephemeral_timeout_ms,
-            max_ephemeral_payload_bytes: value.max_ephemeral_payload_bytes,
             max_ephemeral_snapshot_bytes: value.max_ephemeral_snapshot_bytes,
             max_entity_blob: value.max_entity_blob,
             max_lfs_object_bytes: value.max_lfs_object_bytes,
@@ -426,10 +426,12 @@ impl From<FileServeConfig> for PartialServeConfig {
             gpu: value.gpu,
             native_mail: value.native_mail,
             device_sync: value.device_sync,
+            shared_env: value.shared_env,
             connectors: value.connectors,
             embedding: value.embedding,
             line: value.line,
             channel_endpoints: value.channel_endpoints,
+            apns: value.apns,
             linear: value.linear,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
@@ -479,7 +481,6 @@ struct PartialServeConfig {
     max_windows_per_connection: Option<usize>,
     max_messages_per_sec: Option<u32>,
     ephemeral_timeout_ms: Option<i64>,
-    max_ephemeral_payload_bytes: Option<usize>,
     max_ephemeral_snapshot_bytes: Option<usize>,
     max_entity_blob: Option<usize>,
     max_lfs_object_bytes: Option<u64>,
@@ -511,6 +512,9 @@ struct PartialServeConfig {
     native_mail: Option<super::NativeMailConfig>,
     /// `[device_sync]` is file-only, as `[native_mail]` is.
     device_sync: Option<super::DeviceSyncConfig>,
+    /// `[[shared_env]]` is file-only: explicit dedicated-env paths and
+    /// credentials, never discovered through the process environment.
+    shared_env: Option<Vec<super::SharedEnvConfig>>,
     /// `[connectors.<name>]` is file-only, as `[native_mail]` is.
     connectors: Option<std::collections::BTreeMap<String, super::ConnectorHostConfig>>,
     /// `[embedding]` is file-only, as `[models]` is.
@@ -519,6 +523,8 @@ struct PartialServeConfig {
     line: Option<super::LineConfig>,
     /// `[channel_endpoints]` is file-only, as `[line]` is.
     channel_endpoints: Option<super::ChannelEndpointsConfig>,
+    /// `[apns]` is file-only, as `[channel_endpoints]` is.
+    apns: Option<super::ApnsConfig>,
     /// `[linear]` is file-only, as `[native_mail]` is; a plain serve's
     /// `ONEIRON_LINEAR_*` environment is read beside it at serve start.
     linear: Option<super::LinearConfig>,
@@ -584,10 +590,6 @@ impl fmt::Debug for PartialServeConfig {
             .field("max_messages_per_sec", &self.max_messages_per_sec)
             .field("ephemeral_timeout_ms", &self.ephemeral_timeout_ms)
             .field(
-                "max_ephemeral_payload_bytes",
-                &self.max_ephemeral_payload_bytes,
-            )
-            .field(
                 "max_ephemeral_snapshot_bytes",
                 &self.max_ephemeral_snapshot_bytes,
             )
@@ -614,10 +616,12 @@ impl fmt::Debug for PartialServeConfig {
             .field("gpu", &self.gpu)
             .field("native_mail", &self.native_mail)
             .field("device_sync", &self.device_sync)
+            .field("shared_env", &self.shared_env)
             .field("connectors", &self.connectors)
             .field("embedding", &self.embedding)
             .field("line", &self.line)
             .field("channel_endpoints", &self.channel_endpoints)
+            .field("apns", &self.apns)
             .field("linear", &self.linear)
             .field("privacy_posture", &self.privacy_posture)
             .field(
@@ -683,7 +687,6 @@ impl From<&ServeArgs> for PartialServeConfig {
             max_windows_per_connection: value.max_windows_per_connection,
             max_messages_per_sec: value.max_messages_per_sec,
             ephemeral_timeout_ms: value.ephemeral_timeout_ms,
-            max_ephemeral_payload_bytes: value.max_ephemeral_payload_bytes,
             max_ephemeral_snapshot_bytes: value.max_ephemeral_snapshot_bytes,
             max_entity_blob: value.max_entity_blob,
             max_lfs_object_bytes: value.max_lfs_object_bytes,
@@ -715,10 +718,12 @@ impl From<&ServeArgs> for PartialServeConfig {
             gpu: None,
             native_mail: None,
             device_sync: None,
+            shared_env: None,
             connectors: None,
             embedding: None,
             line: None,
             channel_endpoints: None,
+            apns: None,
             linear: None,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,

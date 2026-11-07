@@ -165,6 +165,52 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             ["claims", claim] | ["claims", "by-id", claim] => Ok(self
                 .read_claim_file(&normalized, &parse_entity_id(claim)?)?
                 .into()),
+            // Every claim leaf a listing names reads where it is listed
+            // (FIX 7973), kept only while it is still a member there.
+            ["entities", entity, "claims", claim] => {
+                let subject = parse_entity_id(entity)?;
+                if !self.scoped_read.is_entity_readable(&subject)? {
+                    return Ok(GraphFsFileRead {
+                        value: None,
+                        receipt: None,
+                    });
+                }
+                let claim = parse_entity_id(claim)?;
+                let store = &self.scoped_read.vault().store;
+                Ok(self
+                    .read_listed_claim_file(&normalized, &claim, |_| {
+                        let rtxn = store.env.read_txn()?;
+                        Ok(crate::ports::EdgeStoreRead::port_edge_get(
+                            store,
+                            &rtxn,
+                            &claim,
+                            crate::edge::EdgeKind::ClaimOf,
+                            &subject,
+                        )?
+                        .is_some())
+                    })?
+                    .into())
+            }
+            ["worlds", world, "claims", claim] => {
+                let world = parse_world_scope(world)?;
+                let claim = parse_entity_id(claim)?;
+                let store = &self.scoped_read.vault().store;
+                Ok(self
+                    .read_listed_claim_file(&normalized, &claim, |_| {
+                        let rtxn = store.env.read_txn()?;
+                        claim_matches_world_in(store, &rtxn, &claim, world)
+                    })?
+                    .into())
+            }
+            ["claims", "by-time", day, claim] => {
+                let day = parse_day_shard(day)?;
+                let claim = parse_entity_id(claim)?;
+                Ok(self
+                    .read_listed_claim_file(&normalized, &claim, |row| {
+                        Ok(row.learned_at / 86_400 == day)
+                    })?
+                    .into())
+            }
             ["entities", entity, "body"] => {
                 let id = parse_entity_id(entity)?;
                 let mount = self.options.mount;
@@ -255,13 +301,45 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         path: &str,
         claim_id: &EntityId,
     ) -> Result<ScopedReadResult<Option<GraphFsFile>>> {
+        self.read_listed_claim_file(path, claim_id, |_| Ok(true))
+    }
+
+    /// [`Self::read_claim_file`] for a leaf a listing names under its parent
+    /// (FIX 7973): read through the same scoped claim read, then kept only
+    /// while `member` holds for the row the reader was admitted to. A claim
+    /// the reader may not read is never judged, so the answer says nothing of
+    /// its membership; one no longer listed there reads as no file.
+    fn read_listed_claim_file(
+        &self,
+        path: &str,
+        claim_id: &EntityId,
+        member: impl FnOnce(&ReadRow) -> Result<bool>,
+    ) -> Result<ScopedReadResult<Option<GraphFsFile>>> {
         let ScopedReadResult { value, receipt } = self.file_row(*claim_id)?;
-        let Some(ReadRow {
-            entity_type: ENTITY_TYPE_CLAIM,
+        let Some(
+            row @ ReadRow {
+                entity_type: ENTITY_TYPE_CLAIM,
+                body: Some(_),
+                ..
+            },
+        ) = value
+        else {
+            return Ok(ScopedReadResult {
+                value: None,
+                receipt,
+            });
+        };
+        if !member(&row)? {
+            return Ok(ScopedReadResult {
+                value: None,
+                receipt,
+            });
+        }
+        let ReadRow {
             learned_at,
             body: Some(body),
             ..
-        }) = value
+        } = row
         else {
             return Ok(ScopedReadResult {
                 value: None,
@@ -315,7 +393,8 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             if !after.is_empty() && entry.name.as_str() <= after {
                 continue;
             }
-            if !builder.try_push(entry.clone()) {
+            let after = entry.name.clone();
+            if !builder.try_push_after(entry.clone(), after) {
                 next_cursor = builder.last_entry_name();
                 break;
             }
@@ -346,7 +425,10 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let mut builder = PageBuilder::new(path, self.options);
         if after.is_none()
             && self.world_visible(&rtxn, &policy, None)?
-            && !builder.try_push(GraphFsEntry::directory("base"))
+            && !builder.try_push_after(
+                GraphFsEntry::directory("base"),
+                scope.seal(&WorldPosition(None)),
+            )
         {
             return Ok(builder.finish(None));
         }
@@ -364,7 +446,8 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             if !self.world_visible(&rtxn, &policy, Some(id))? {
                 continue;
             }
-            if !builder.try_push(GraphFsEntry::directory(id.to_hex())) {
+            let entry = GraphFsEntry::directory(id.to_hex());
+            if !builder.try_push_after(entry, scope.seal(&WorldPosition(Some(id)))) {
                 next_cursor = builder
                     .last_entry_name()
                     .map(|_| scope.seal(&WorldPosition(last_listed)));
@@ -428,7 +511,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 continue;
             }
             let entry = GraphFsEntry::directory(cursor.id.to_hex());
-            if !builder.try_push(entry) {
+            if !builder.try_push_after(entry, scope.seal(&cursor)) {
                 next_cursor = builder
                     .last_temporal_cursor()
                     .map(|cursor| scope.seal(&cursor));
@@ -482,7 +565,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 continue;
             }
             let entry = GraphFsEntry::file(temporal.id.to_hex(), None);
-            if !builder.try_push(entry) {
+            if !builder.try_push_after(entry, scope.seal(&temporal)) {
                 next_cursor = builder
                     .last_temporal_cursor()
                     .map(|cursor| scope.seal(&cursor));
@@ -537,7 +620,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             }
             let name = format!("{}-{}", edge.kind as u8, edge.target.to_hex());
             let entry = GraphFsEntry::symlink(name, format!("/entities/{}", edge.target.to_hex()));
-            if !builder.try_push(entry) {
+            if !builder.try_push_after(entry, scope.seal(&cursor)) {
                 next_cursor = last_emitted.map(|cursor| scope.seal(&cursor));
                 break;
             }
@@ -600,7 +683,9 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             if listed.is_some_and(|listed| day <= listed) {
                 continue;
             }
-            if !builder.try_push(GraphFsEntry::directory(format_day_shard(day))) {
+            // After this day: past its first row, the rest of the day listed.
+            let after = scope.seal(&resume(Some(temporal), Some(day)));
+            if !builder.try_push_after(GraphFsEntry::directory(format_day_shard(day)), after) {
                 // Resumes before this row, the first of a day not listed yet.
                 next_cursor = Some(scope.seal(&resume(scanned_before, listed)));
                 break;
@@ -658,7 +743,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 continue;
             }
             let entry = GraphFsEntry::file(temporal.id.to_hex(), None);
-            if !builder.try_push(entry) {
+            if !builder.try_push_after(entry, scope.seal(&temporal)) {
                 next_cursor = builder
                     .last_temporal_cursor()
                     .map(|cursor| scope.seal(&cursor));
@@ -733,6 +818,7 @@ pub(super) fn empty_page(path: &str, mount: GraphFsMount) -> GraphFsPage {
         next_cursor: None,
         byte_count: 0,
         read_receipt: None,
+        entry_cursors: Vec::new(),
     }
 }
 

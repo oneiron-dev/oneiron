@@ -200,7 +200,7 @@ impl SyncConnection {
     /// Publishes the count of valid run-buffer updates an explicit leave arm
     /// discards unqueued (OF-158), then clears that buffer as the explicit
     /// owner discard. After an arm's single-try `queue_on_exit`, a Pause
-    /// writes nothing; an admitted flush drains the buffer, so this adds 0.
+    /// writes nothing; an admitted flush leaves only failed queue writes.
     /// A leave that interrupts a send publishes its owned buffer directly,
     /// without another queue admission. Additive (`fetch_add`, never a
     /// storing overwrite) plus the
@@ -221,30 +221,33 @@ impl SyncConnection {
 
     /// Ends this lane for good before a leave discards its queue, once its
     /// loop has stopped and queued what it buffered.
-    async fn stop_for_leave(&self) {
+    /// Stops the lane for a confirmed leave: no new connect starts once
+    /// `left` is set, and this waits for the running loop to end. Returns
+    /// whether the lane actually stopped: a loop still importing past the
+    /// quiesce timeout must refuse confirmation and retry, never purge
+    /// under a live writer.
+    async fn stop_for_leave(&self) -> bool {
         self.left.send_replace(true);
         let mut running = self.running.subscribe();
         // A loop that does not stop in time may queue its last buffer after
         // the discard.
-        let _ = tokio::time::timeout(LEAVE_QUIESCE, running.wait_for(|running| !*running)).await;
+        tokio::time::timeout(LEAVE_QUIESCE, running.wait_for(|running| !*running))
+            .await
+            .is_ok()
     }
 
-    /// Asks the sync server for this member's own leave notices with the
-    /// lane's slip, revoked or not (`POST /v1/shared/left-notices`), and
-    /// confirms the first one this env verifies that ends `member`'s
-    /// membership in `vault_id`, the vault's deletion included
-    /// ([`crate::sync::shared_leave::VerifiedLeaveNotice`]). The request
-    /// names the heads this env's authority fold stands at, so the home
-    /// sends beside its notices only the signed handoff past them (FIX 2053).
-    /// The lane ends for good before the leave discards its queue. `None`
-    /// while no verified notice says so. A refused or failed request is an
-    /// error, never a leave.
-    pub async fn check_shared_leave(
+    /// This member's own leave notices and the signed handoff beside them,
+    /// asked of the sync server with the lane's slip, revoked or not (`POST
+    /// /v1/shared/left-notices`), naming `heads` as where this env's
+    /// authority chain stands; naming none asks for the whole handoff. A
+    /// refused request, or an answer that does not decode, is an error.
+    async fn left_notices(
         &self,
-        vault_id: u64,
-        member: &str,
-    ) -> Result<Option<crate::sync::shared_leave::SharedLeaveReceipt>, crate::sync::TransportError>
-    {
+        heads: &[String],
+    ) -> Result<
+        (Vec<crate::federation::SignedSharedActOutcome>, Vec<Vec<u8>>),
+        crate::sync::TransportError,
+    > {
         use crate::sync::TransportError;
 
         #[derive(serde::Deserialize)]
@@ -276,15 +279,6 @@ impl SyncConnection {
         let headers = credential
             .left_notice_headers(crate::unix_seconds_now())
             .map_err(TransportError::InvalidPayload)?;
-        // Where this env's authority chain stands (FIX 2053).
-        let heads: Vec<String> = self
-            .manager
-            .vault()
-            .leave_notice_heads()
-            .map_err(|e| TransportError::Storage(e.to_string()))?
-            .iter()
-            .map(|head| crate::entity_id::bytes_to_hex_lower(head))
-            .collect();
         // FIX 6969: a redirect is answered, never followed with the slip
         // headers; the status check below refuses a redirect answer.
         let client = reqwest::Client::builder()
@@ -326,29 +320,75 @@ impl SyncConnection {
             .ok_or(TransportError::InvalidPayload(
                 "the leave notice handoff does not decode",
             ))?;
+        Ok((answer.notices, handoff))
+    }
+
+    /// Asks the sync server for this member's own leave notices with the
+    /// lane's slip, revoked or not (`POST /v1/shared/left-notices`), and
+    /// confirms the first one this env verifies that ends `member`'s
+    /// membership in `vault_id`, the vault's deletion included
+    /// ([`crate::sync::shared_leave::VerifiedLeaveNotice`]). The request
+    /// names the heads this env's authority fold stands at, so the home
+    /// sends beside its notices only the signed handoff past them (FIX 2053).
+    /// Where that handoff and this env's rows do not close, so a leave
+    /// notice is pending ([`crate::sync::shared_leave::LeaveNoticeCheck`]),
+    /// it asks once more naming no head, and the home sends every row its
+    /// root edges stand on (FIX 7919). A notice still pending confirms and
+    /// purges nothing: the home keeps it, and the next round asks again.
+    /// The lane ends for good before the leave discards its queue. `None`
+    /// while no verified notice says so. A refused or failed request is an
+    /// error, never a leave.
+    pub async fn check_shared_leave(
+        &self,
+        vault_id: u64,
+        member: &str,
+    ) -> Result<Option<crate::sync::shared_leave::SharedLeaveReceipt>, crate::sync::TransportError>
+    {
+        use crate::sync::TransportError;
+        use crate::sync::shared_leave::{LeaveNoticeCheck, first_verified_leave};
+
+        // Where this env's authority chain stands (FIX 2053).
+        let heads: Vec<String> = self
+            .manager
+            .vault()
+            .leave_notice_heads()
+            .map_err(|e| TransportError::Storage(e.to_string()))?
+            .iter()
+            .map(|head| crate::entity_id::bytes_to_hex_lower(head))
+            .collect();
         // The home signs every notice (FIX 2053). One this env does not
         // verify against the home root it already trusts, or that root's
         // successor the handoff names, changes nothing.
-        let mut confirmed = None;
-        for signed in &answer.notices {
-            if let Some(notice) = crate::sync::shared_leave::VerifiedLeaveNotice::verify(
-                self.manager.vault(),
-                vault_id,
-                member,
-                signed,
-                &handoff,
-            )
-            .map_err(|e| TransportError::Storage(e.to_string()))?
-                && notice.kind().is_some()
-            {
-                confirmed = Some(notice);
-                break;
-            }
-        }
-        let Some(notice) = confirmed else {
-            return Ok(None);
+        let judge = |notices: &[crate::federation::SignedSharedActOutcome], handoff: &[Vec<u8>]| {
+            first_verified_leave(self.manager.vault(), vault_id, member, notices, handoff)
+                .map_err(|e| TransportError::Storage(e.to_string()))
         };
-        self.stop_for_leave().await;
+        let (notices, handoff) = self.left_notices(&heads).await?;
+        let mut check = judge(&notices, &handoff)?;
+        if matches!(check, LeaveNoticeCheck::Pending(_)) && !heads.is_empty() {
+            // The handoff past this env's heads does not close its evidence:
+            // the whole handoff, every row the root edges stand on (FIX 7919).
+            let (notices, handoff) = self.left_notices(&[]).await?;
+            check = judge(&notices, &handoff)?;
+        }
+        let notice = match check {
+            LeaveNoticeCheck::Verified(notice) => notice,
+            LeaveNoticeCheck::Pending(missing) => {
+                tracing::warn!(
+                    vault_id = vault_id,
+                    missing = missing.len(),
+                    "a leave notice waits on authority rows that prove its signer; \
+                     nothing is confirmed or purged, and the next round asks again"
+                );
+                return Ok(None);
+            }
+            LeaveNoticeCheck::Refused => return Ok(None),
+        };
+        if !self.stop_for_leave().await {
+            return Err(TransportError::Storage(
+                "the sync lane did not quiesce for the leave; retry next round".to_owned(),
+            ));
+        }
         // Bind after the wait, with no await before confirmation: cancellation
         // while waiting must not strand this count on an unconfirmed notice.
         // Keep this owner on a failed transaction so its retry keeps the count.
@@ -356,11 +396,10 @@ impl SyncConnection {
             .leave_unqueued_receipt
             .get_or_init(|| notice.outcome().receipt_id.clone())
             == &notice.outcome().receipt_id;
-        // Published before `running=false` when the wait succeeded: the leave
-        // arms publish before any `Close`/cleanup await, and the final slot
-        // before `running=false`. 0 when every flush was admitted. When the
-        // 10s wait expired before publish, the count is missed and the receipt
-        // undercounts (FIX 12816, NOT fixed here).
+        // Published before `running=false`: the leave arms publish before any
+        // `Close`/cleanup await, and the final slot before `running=false`.
+        // A failed quiesce returned above, before binding or confirmation.
+        // 0 when every flush was admitted.
         let unqueued = if owns_unqueued {
             self.leave_unqueued
                 .load(std::sync::atomic::Ordering::Acquire)
@@ -659,6 +698,18 @@ impl SyncConnection {
         client.search_resident(query, limit).await
     }
 
+    /// One page of a home search, the first with no `cursor` (FIX 9258):
+    /// [`crate::sync::SyncClient::search_resident_page`].
+    pub async fn search_resident_page(
+        &self,
+        query: &str,
+        limit: usize,
+        cursor: Option<&crate::sync::residence::ResidenceSearchCursor>,
+    ) -> Result<crate::sync::ResidenceSearchPage, crate::sync::TransportError> {
+        let client = self.client()?;
+        client.search_resident_page(query, limit, cursor).await
+    }
+
     /// Clear the queued updates whose bytes the home has durably
     /// acknowledged, window by window. In each window only the contiguous
     /// acknowledged rows clear: a different digest fails the clear, and a
@@ -720,22 +771,25 @@ impl SyncConnection {
     }
 }
 
-/// Flush all buffered local updates to the persistent offline queue.
-/// Logs errors but does not fail — best-effort during disconnect/shutdown.
+/// Flush buffered local updates to the persistent offline queue.
+/// Logs errors and keeps failed updates in the buffer; shutdown stays best-effort.
 fn flush_to_queue(queue: &SyncQueue, buffer: &mut Vec<LocalUpdate>) {
-    for local_update in buffer.drain(..) {
+    buffer.retain(|local_update| {
         if parse_window_key_str(&local_update.window_key).is_none() {
             tracing::error!(
                 "Rejected invalid local update window key during queue flush: {}",
                 local_update.window_key
             );
-            continue;
+            return false;
         }
-        let queue_result = queue.push(&local_update.window_key, &local_update.update_bytes);
-        if let Err(e) = queue_result {
-            tracing::error!("Failed to persist update to offline queue: {e}");
+        match queue.push(&local_update.window_key, &local_update.update_bytes) {
+            Ok(_) => false,
+            Err(e) => {
+                tracing::error!("Failed to persist update to offline queue: {e}");
+                true
+            }
         }
-    }
+    });
 }
 
 /// Reason the steady-state loop exited.

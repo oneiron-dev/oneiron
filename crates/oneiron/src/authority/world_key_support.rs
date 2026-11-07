@@ -47,7 +47,7 @@ pub(crate) fn sign_side_entry(
     op: AuthorityOp,
     now: u64,
 ) -> Result<AuthorityLogEntry> {
-    let signer = signing.verifying_key().to_bytes();
+    let signer = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
     let mut entry = unsigned_side_entry(fold, signer, seq, parents, op, now)?;
     entry.signer.signature = signing
         .sign(&authority_transcript(&entry)?)
@@ -56,18 +56,23 @@ pub(crate) fn sign_side_entry(
     Ok(entry)
 }
 
-/// [`sign_side_entry`]'s entry before its signature: the Ed25519 key
-/// `signer` alone over `parents`, its signature zeroed, for a signer held
-/// behind a callback (FIX 11867).
+/// [`sign_side_entry`]'s entry before its signature: the key `signer`
+/// alone over `parents`, in its own suite, its signature zeroed, for a
+/// signer held behind a callback (FIX 11867, 11993). A frontier join names
+/// every head it joins, past [`MAX_PARENTS`] (FIX 8527).
 pub(crate) fn unsigned_side_entry(
     fold: &AuthorityFold,
-    signer: [u8; 32],
+    signer: AuthorityKey,
     seq: u64,
     parents: BTreeSet<AuthorityEntryHash>,
     op: AuthorityOp,
     now: u64,
 ) -> Result<AuthorityLogEntry> {
-    if fold.vault_id.is_none() || parents.is_empty() || parents.len() > MAX_PARENTS {
+    let joins_frontier = matches!(op, AuthorityOp::FrontierJoin(_));
+    if fold.vault_id.is_none()
+        || parents.is_empty()
+        || (!joins_frontier && parents.len() > MAX_PARENTS)
+    {
         return Err(invalid_authority());
     }
     Ok(AuthorityLogEntry {
@@ -77,8 +82,8 @@ pub(crate) fn unsigned_side_entry(
         parent_hashes: parents.into_iter().collect(),
         op,
         signer: AuthoritySignature {
-            suite: AuthoritySignatureSuite::Ed25519,
-            public_key: AuthorityKey::Ed25519(signer),
+            suite: signer.suite(),
+            public_key: signer,
             signature: vec![0; 64],
         },
         cosigns: Vec::new(),

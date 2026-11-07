@@ -122,8 +122,7 @@ impl Drop for SnapshotLease {
             return;
         }
         let (custody, vault) = (self.custody.clone(), self.vault.clone());
-        let spawned = std::thread::Builder::new()
-            .name("vm-snapshot-evict".into())
+        let spawned = crate::engine_thread("vm-snapshot-evict".into())
             .spawn(move || evict_blocking(&custody, &vault));
         if let Err(error) = spawned {
             warn_not_evicted(&self.vault, &anyhow::Error::from(error));
@@ -426,6 +425,7 @@ impl VaultVm {
     }
 
     pub(super) async fn restore(&mut self, timeout: Duration) -> anyhow::Result<()> {
+        self.observe_snapshot_image_release();
         // Consumed before load: a crash from here on never resumes this RAM
         // a second time, it boots cold from the vault disk instead. A restore
         // that fails, or is dropped, after a rename unlinks the name it took

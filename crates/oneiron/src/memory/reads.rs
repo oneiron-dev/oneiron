@@ -24,6 +24,7 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 mod receipt_page;
 
 pub use receipt_page::VaultReceiptsPage;
+pub(crate) use receipt_page::{ReceiptReader, receipts_page_for};
 
 const SNIPPET_MAX_CHARS: usize = 160;
 
@@ -731,6 +732,17 @@ impl Memory<'_> {
             id_hex: id.to_hex(),
             receipt_ref: format!("put:{}", id.to_hex()),
         })
+    }
+}
+
+impl Memory<'_> {
+    /// A room's own Hook `records` in the `vault.receipts` shape
+    /// ([`family_receipt`]), for the receipt tail a verb hook chain in that
+    /// room reads beside base's (FIX 5429).
+    pub(crate) fn room_tail_receipts(
+        records: Vec<crate::receipt::ReceiptRecord>,
+    ) -> Vec<MemoryReceipt> {
+        records.into_iter().map(family_receipt).collect()
     }
 }
 

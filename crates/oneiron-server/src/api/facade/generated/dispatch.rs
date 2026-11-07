@@ -694,6 +694,138 @@ async fn self_focus_scratchpad_seal(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn self_board_layout(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "self.board.layout",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn self_board_fold(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "self.board.fold",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn self_board_unfold(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "self.board.unfold",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn self_board_size(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "self.board.size",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn self_board_filter(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "self.board.filter",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn self_board_replace(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "self.board.replace",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn self_memory_diary(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -6429,6 +6561,46 @@ async fn vault_inbox_concerns_review(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_proactivity_digest(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.proactivity.digest")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.proactivity.digest", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.proactivity.digest", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_proactivity_digest(
+            server,
+            auth,
+            caller,
+            Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+                &server.vault,
+                &hooks,
+            )),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_inbox_lens(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -10551,6 +10723,40 @@ async fn vault_members_invitation_slip(
     let mut hooks = facade_hooks_pre(server, call, "vault.members.invitation_slip", value).await?;
     let ran = async {
         let (output, listed) = super::host_doors::vault_members_invitation_slip(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_members_invitation_code(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.members.invitation_code")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.members.invitation_code", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.members.invitation_code", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_members_invitation_code(
             server,
             auth,
             facade_door_input(&mut hooks)?,
@@ -15105,6 +15311,198 @@ async fn vault_coach_training_offers_sources(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_drafters_list(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.drafters.list")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.drafters.list", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.drafters.list", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::vault_drafters_list(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_drafters_list_as(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.drafters.list_as")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.drafters.list_as", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.drafters.list_as", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::vault_drafters_list_as(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_drafters_status(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.drafters.status")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.drafters.status", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.drafters.status", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::vault_drafters_status(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_drafters_policy_set(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.drafters.policy.set")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.drafters.policy.set", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.drafters.policy.set", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_drafters_policy_set(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_drafters_revert(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.drafters.revert")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.drafters.revert", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.drafters.revert", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::vault_drafters_revert(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_drafters_revert_as(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.drafters.revert_as")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.drafters.revert_as", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.drafters.revert_as", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_drafters_revert_as(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_research_bind(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -18260,6 +18658,41 @@ async fn vault_secrets_code_run_lifts(
     let mut hooks = facade_hooks_pre(server, call, "vault.secrets.code_run_lifts", value).await?;
     let ran = async {
         let (output, listed) = super::host_doors::vault_secrets_code_run_lifts(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_secrets_code_run_room_lifts(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.secrets.code_run_room_lifts")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.secrets.code_run_room_lifts", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.secrets.code_run_room_lifts", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_secrets_code_run_room_lifts(
             server,
             auth,
             facade_door_input(&mut hooks)?,
@@ -32411,6 +32844,62 @@ async fn vault_productivity_tree(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_ingest_ag_ui_import(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.ingest.ag_ui.import")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.ingest.ag_ui.import", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.ingest.ag_ui.import", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_ingest_ag_ui_import(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_ingest_ag_ui_read(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.ingest.ag_ui.read",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_claims_admit(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -35118,6 +35607,7 @@ async fn vault_channel_identities_provision(
         let (output, listed) = super::host_doors::vault_channel_identities_provision(
             server,
             auth,
+            Some(super::FacadePacedCall::of(call)?),
             facade_door_input(&mut hooks)?,
         )
         .await;
@@ -35152,6 +35642,7 @@ async fn vault_channel_identities_bind(
         let (output, listed) = super::host_doors::vault_channel_identities_bind(
             server,
             auth,
+            Some(super::FacadePacedCall::of(call)?),
             facade_door_input(&mut hooks)?,
         )
         .await;
@@ -35222,6 +35713,7 @@ async fn vault_channel_identities_rotate(
         let (output, listed) = super::host_doors::vault_channel_identities_rotate(
             server,
             auth,
+            Some(super::FacadePacedCall::of(call)?),
             facade_door_input(&mut hooks)?,
         )
         .await;
@@ -35257,6 +35749,7 @@ async fn vault_channel_identities_release(
         let (output, listed) = super::host_doors::vault_channel_identities_release(
             server,
             auth,
+            Some(super::FacadePacedCall::of(call)?),
             facade_door_input(&mut hooks)?,
         )
         .await;
@@ -35297,6 +35790,7 @@ async fn vault_channel_identities_route_inbound(
         let (output, listed) = super::host_doors::vault_channel_identities_route_inbound(
             server,
             auth,
+            Some(super::FacadePacedCall::of(call)?),
             facade_door_input(&mut hooks)?,
         )
         .await;
@@ -39499,6 +39993,10171 @@ pub(super) fn nested_readable_paths(verb: &str) -> &'static [&'static str] {
         None => &[],
     }
 }
+type FacadeRowFuture<'a> = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<FacadeCallOutput, FacadeApiError>> + Send + 'a>,
+>;
+#[inline(never)]
+fn boxed_vault_commitments_create<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_commitments_create(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_commitments_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_commitments_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_commitments_instances<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_commitments_instances(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_commitments_proposals<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_commitments_proposals(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_commitments_fulfill<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_commitments_fulfill(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_commitments_release<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_commitments_release(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_commitments_supersede<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_commitments_supersede(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_commitments_reminder_route_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_commitments_reminder_route_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_commitments_reminder_route_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_commitments_reminder_route_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_fetch<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(fetch(server, call, input))
+}
+#[inline(never)]
+fn boxed_crawl<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(crawl(server, call, input))
+}
+#[inline(never)]
+fn boxed_report<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(report(server, call, input))
+}
+#[inline(never)]
+fn boxed_feedback_preview<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(feedback_preview(server, call, input))
+}
+#[inline(never)]
+fn boxed_feedback_send<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(feedback_send(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_reports_disclosure<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_reports_disclosure(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_reports_route<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_reports_route(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_reports_outbound<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_reports_outbound(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_focus_wakes<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_focus_wakes(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_focus_scratchpad_recall<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_focus_scratchpad_recall(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_focus_scratchpad_append<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_focus_scratchpad_append(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_focus_scratchpad_seal<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_focus_scratchpad_seal(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_board_layout<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_board_layout(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_board_fold<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_board_fold(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_board_unfold<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_board_unfold(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_board_size<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_board_size(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_board_filter<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_board_filter(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_board_replace<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_board_replace(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_memory_diary<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_memory_diary(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_memory_diary_reads<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_memory_diary_reads(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_memory_diary_review<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_memory_diary_review(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_standing_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_standing_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_standing_list<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_standing_list(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_standing_edit<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_standing_edit(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_identity_answer<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_identity_answer(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_identity_settle<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_identity_settle(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_inbox_list<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_inbox_list(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_inbox_mark<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_inbox_mark(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_inbox_concern<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_inbox_concern(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_inbox_concern_outcome<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_inbox_concern_outcome(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_inbox_concern_move<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_inbox_concern_move(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_diagnostics_list<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_diagnostics_list(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_diagnostics_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_diagnostics_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_coach_inspect<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_coach_inspect(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_people_list<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_people_list(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_people_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_people_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_people_create<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_people_create(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_entities_look_before_mint<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_entities_look_before_mint(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_identity_mention<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_identity_mention(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_shape_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_shape_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_shape_plan<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_shape_plan(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_shape_apply<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_shape_apply(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_shape_plan_card<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_shape_plan_card(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_shape_items_receipt<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_shape_items_receipt(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_shape_groups<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_shape_groups(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_shape_groups_resolve<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_shape_groups_resolve(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_message<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_message(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_grants_ask<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_grants_ask(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_grants_asked<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_grants_asked(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_companions_access_requests_answer<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_companions_access_requests_answer(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_grants_answer<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_grants_answer(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_personas_preview<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_personas_preview(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_personas_export<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_personas_export(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_personas_edit<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_personas_edit(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_memory_diary_query<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_memory_diary_query(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_memory_pads_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_memory_pads_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_memory_pads_admin_reads<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_memory_pads_admin_reads(server, call, input))
+}
+#[inline(never)]
+fn boxed_cancel<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(cancel(server, call, input))
+}
+#[inline(never)]
+fn boxed_steer<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(steer(server, call, input))
+}
+#[inline(never)]
+fn boxed_describe<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(describe(server, call, input))
+}
+#[inline(never)]
+fn boxed_tasks_create<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(tasks_create(server, call, input))
+}
+#[inline(never)]
+fn boxed_tasks_wave<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(tasks_wave(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_fanout_spawn<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_fanout_spawn(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_fanout_slots<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_fanout_slots(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_fanout_launch<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_fanout_launch(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_budget<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_budget(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_budget_land<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_budget_land(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_billing_account_file<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_billing_account_file(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_budgets_lease_open<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_budgets_lease_open(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_budgets_lease<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_budgets_lease(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_budgets_lease_top_up<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_budgets_lease_top_up(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_budgets_hold<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_budgets_hold(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_budgets_hold_resume<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_budgets_hold_resume(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_budgets_local<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_budgets_local(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_budgets_reservations<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_budgets_reservations(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_budgets_settlements<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_budgets_settlements(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_budgets_rsi_configure<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_budgets_rsi_configure(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_budgets_rsi<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_budgets_rsi(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_budgets_rsi_top_up<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_budgets_rsi_top_up(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_budgets_rsi_hold<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_budgets_rsi_hold(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_budgets_rsi_hold_resume<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_budgets_rsi_hold_resume(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_budgets_resident_shares<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_budgets_resident_shares(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_budgets_resident_shares_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_budgets_resident_shares_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_runners_seats_quotas<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_runners_seats_quotas(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_runners_seats_top_up<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_runners_seats_top_up(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_runners_seats_resume<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_runners_seats_resume(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_fanout_resume<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_fanout_resume(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_fanout_resume_as<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_fanout_resume_as(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_fanout_ack<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_fanout_ack(server, call, input))
+}
+#[inline(never)]
+fn boxed_tasks_update<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(tasks_update(server, call, input))
+}
+#[inline(never)]
+fn boxed_tasks_accept<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(tasks_accept(server, call, input))
+}
+#[inline(never)]
+fn boxed_tasks_redo<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(tasks_redo(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_commit_message<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_commit_message(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_begin_message_stream<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_begin_message_stream(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_append_to_stream<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_append_to_stream(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_flush_stream<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_flush_stream(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_finalize_stream<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_finalize_stream(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_cancel_stream<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_cancel_stream(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_message_stream_partial<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_message_stream_partial(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_message_streams_refused<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_message_streams_refused(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_messages_durability<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_messages_durability(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_witness<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_witness(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_claims_upsert<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_claims_upsert(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_recall<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_recall(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_retrieval_aging_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_retrieval_aging_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_retrieval_aging_configure<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_retrieval_aging_configure(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_retrieval_weights_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_retrieval_weights_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_retrieval_weights_configure<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_retrieval_weights_configure(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_retrieval_hyde_configure<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_retrieval_hyde_configure(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_retrieval_hyde_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_retrieval_hyde_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_retrieval_hyde_pending<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_retrieval_hyde_pending(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_retrieval_hyde_complete<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_retrieval_hyde_complete(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_retrieval_hyde_receipt<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_retrieval_hyde_receipt(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_affect_annotations_put<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_affect_annotations_put(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_tagging_status<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_tagging_status(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_tagging_tags<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_tagging_tags(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_tagging_history<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_tagging_history(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_tagging_mentions<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_tagging_mentions(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_affect_claims_consolidate<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_affect_claims_consolidate(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_affect_coping_record<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_affect_coping_record(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_affect_coping_update<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_affect_coping_update(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_affect_coping_aggregate<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_affect_coping_aggregate(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_affect_wellness_policy_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_affect_wellness_policy_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_affect_wellness_policy_configure<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_affect_wellness_policy_configure(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_affect_wellness_derive<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_affect_wellness_derive(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_affect_wellness_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_affect_wellness_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_cluster<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_cluster(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_cluster_proposal<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_cluster_proposal(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_cluster_propose<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_cluster_propose(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_cluster_merge<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_cluster_merge(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_cluster_split<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_cluster_split(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_cluster_resolve_proposal<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_cluster_resolve_proposal(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_retrieval_recall<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_retrieval_recall(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_retrieval_runs<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_retrieval_runs(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_retrieval_run<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_retrieval_run(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_retrieval_turn<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_retrieval_turn(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_retrieval_outcomes_put<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_retrieval_outcomes_put(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_retrieval_outcomes_end<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_retrieval_outcomes_end(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_retrieval_trace<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_retrieval_trace(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_retrieval_export<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_retrieval_export(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_retrieval_replay<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_retrieval_replay(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_retrieval_policy_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_retrieval_policy_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_retrieval_policy_pin<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_retrieval_policy_pin(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_retrieval_policy_train<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_retrieval_policy_train(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_retrieval_policy_evaluate<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_retrieval_policy_evaluate(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_retrieval_policy_admit<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_retrieval_policy_admit(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_retrieval_policy_update<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_retrieval_policy_update(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_export<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_export(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_export_transfer_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_export_transfer_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_export_transfer_release<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_export_transfer_release(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_credential_attenuate<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_credential_attenuate(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_actor<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_actor(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_scope_position<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_scope_position(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_scope_ceiling<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_scope_ceiling(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_export_scoped<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_export_scoped(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_receipts<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_receipts(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_assets_ingest<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_assets_ingest(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_assets_resolve<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_assets_resolve(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_search_vector<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_search_vector(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_images_view<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_images_view(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_receipts_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_receipts_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_admission_status<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_admission_status(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_admission_receipts<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_admission_receipts(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_explain_memory<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_explain_memory(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_explain_gate<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_explain_gate(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_kv_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_kv_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_kv_put<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_kv_put(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_kv_delete<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_kv_delete(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_kv_search<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_kv_search(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_kv_namespaces<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_kv_namespaces(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_campaign_compliance_install<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_campaign_compliance_install(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_campaign_compliance_amend<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_campaign_compliance_amend(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_campaign_compliance_approve<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_campaign_compliance_approve(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_campaign_compliance_reject<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_campaign_compliance_reject(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_campaign_compliance_verify<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_campaign_compliance_verify(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_campaign_compliance_result<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_campaign_compliance_result(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_campaign_enroll<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_campaign_enroll(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_campaign_stage_evidence<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_campaign_stage_evidence(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_campaign_unsubscribe<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_campaign_unsubscribe(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_campaign_program_create<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_campaign_program_create(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_campaign_program_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_campaign_program_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_campaign_program_update<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_campaign_program_update(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_campaign_program_archive<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_campaign_program_archive(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_turn_programs_arm<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_turn_programs_arm(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_turn_programs_disarm<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_turn_programs_disarm(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_turn_programs_rebind<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_turn_programs_rebind(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_saved_query_create<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_saved_query_create(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_saved_query_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_saved_query_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_saved_query_update<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_saved_query_update(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_saved_query_archive<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_saved_query_archive(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_saved_query_members<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_saved_query_members(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_saved_query_evaluate<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_saved_query_evaluate(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_weave_report<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_weave_report(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_weave_digest<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_weave_digest(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_weave_lens<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_weave_lens(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_weave_link_wrong<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_weave_link_wrong(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_weave_owner_link_wrong<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_weave_owner_link_wrong(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_weave_item_wrong<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_weave_item_wrong(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_weave_owner_item_wrong<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_weave_owner_item_wrong(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_weave_enqueue<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_weave_enqueue(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_weave_schedules_list<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_weave_schedules_list(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_weave_schedules_put<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_weave_schedules_put(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_weave_schedules_clear<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_weave_schedules_clear(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_weave_setting_changes_list<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_weave_setting_changes_list(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_weave_setting_changes_answer<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_weave_setting_changes_answer(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_weave_setting_changes_undo<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_weave_setting_changes_undo(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_weave_digest_feedback_put<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_weave_digest_feedback_put(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_weave_owner_digest_render<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_weave_owner_digest_render(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_inbox_concerns_review<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_inbox_concerns_review(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_proactivity_digest<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_proactivity_digest(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_inbox_lens<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_inbox_lens(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_inbox_groups<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_inbox_groups(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_inbox_groups_resolve<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_inbox_groups_resolve(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_weave_digest_render<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_weave_digest_render(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_weave_link_corrections<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_weave_link_corrections(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_inbox_lens<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_inbox_lens(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_inbox_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_inbox_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_inbox_done<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_inbox_done(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_inbox_later<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_inbox_later(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_bootstrap<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_bootstrap(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skill_hubs_default_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skill_hubs_default_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_restoreDefaults<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_restoreDefaults(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skill_hubs_put<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skill_hubs_put(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skill_hubs_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skill_hubs_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skill_hubs_publishers_admit<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skill_hubs_publishers_admit(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skill_hubs_publishers_revoke<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skill_hubs_publishers_revoke(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skill_hubs_refs_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skill_hubs_refs_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skill_hubs_refs_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skill_hubs_refs_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_packs_install<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_packs_install(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_packs_sync<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_packs_sync(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_packs_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_packs_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_import<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_import(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_sync<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_sync(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_receipts<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_receipts(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_convert<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_convert(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_list<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_list(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_archive<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_archive(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_restore<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_restore(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_fork<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_fork(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_rules_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_rules_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_code_auto_install_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_code_auto_install_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_fit_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_fit_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_advisory_ask_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_advisory_ask_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_permissions_approve<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_permissions_approve(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_optimize_start<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_optimize_start(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_optimize_result<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_optimize_result(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_projects_goal_intake_complete<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_projects_goal_intake_complete(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_projects_goal_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_projects_goal_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_optimize_propose<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_optimize_propose(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_optimize_measure<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_optimize_measure(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_optimize_score<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_optimize_score(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_optimize_admit<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_optimize_admit(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_optimize_goal_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_optimize_goal_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_optimize_goal_bind<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_optimize_goal_bind(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_optimize_preferences_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_optimize_preferences_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_optimize_preferences_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_optimize_preferences_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_optimize_tradeoff_asks<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_optimize_tradeoff_asks(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_optimize_tradeoff_asks_pick<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_optimize_tradeoff_asks_pick(
+        server, call, input,
+    ))
+}
+#[inline(never)]
+fn boxed_vault_skills_optimize_tradeoff_asks_resolve<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_optimize_tradeoff_asks_resolve(
+        server, call, input,
+    ))
+}
+#[inline(never)]
+fn boxed_vault_skills_governance_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_governance_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_governance_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_governance_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_packs_hooks_bind<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_packs_hooks_bind(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_packs_hooks_list<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_packs_hooks_list(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_packs_hooks_grant_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_packs_hooks_grant_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_packs_hooks_grant_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_packs_hooks_grant_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_packs_hooks_qualify<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_packs_hooks_qualify(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_packs_put<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_packs_put(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_packs_preview<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_packs_preview(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_packs_connector_prepare<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_packs_connector_prepare(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_packs_connector_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_packs_connector_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_packs_connector_qualify<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_packs_connector_qualify(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_packs_connector_accept<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_packs_connector_accept(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_packs_connector_update<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_packs_connector_update(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_packs_connector_grants_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_packs_connector_grants_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_packs_connector_grants_put<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_packs_connector_grants_put(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_packs_remove<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_packs_remove(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_packs_sections_propose<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_packs_sections_propose(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_packs_sections_list<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_packs_sections_list(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_packs_sections_grant<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_packs_sections_grant(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_packs_sections_revoke<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_packs_sections_revoke(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_packs_sections_suggest<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_packs_sections_suggest(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_packs_sections_suggestions_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_packs_sections_suggestions_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_packs_sections_suggestions_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_packs_sections_suggestions_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_chat_completions<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_chat_completions(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_connectors_proxy_admit<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_connectors_proxy_admit(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_connectors_proxy_revoke_write<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_connectors_proxy_revoke_write(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_connectors_slates_redraft<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_connectors_slates_redraft(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_connectors_slates_narrow<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_connectors_slates_narrow(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_connectors_slates_scope_outcome<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_connectors_slates_scope_outcome(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_connectors_slates_revision_offers<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_connectors_slates_revision_offers(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_connectors_slates_defer_revision<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_connectors_slates_defer_revision(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_connectors_slates_accept_revision<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_connectors_slates_accept_revision(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_connectors_slates_reask_issuer<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_connectors_slates_reask_issuer(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_connectors_subscriptions_put<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_connectors_subscriptions_put(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_connectors_subscriptions_list<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_connectors_subscriptions_list(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_connectors_subscriptions_revoke<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_connectors_subscriptions_revoke(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_packs_setup_prepare<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_packs_setup_prepare(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_packs_setup_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_packs_setup_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_packs_setup_answer<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_packs_setup_answer(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_packs_setup_verify<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_packs_setup_verify(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_authority_audit<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_authority_audit(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_authority_history_export<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_authority_history_export(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_authority_history_import<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_authority_history_import(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_authority_clock_repair<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_authority_clock_repair(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_wire_health_thresholds_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_wire_health_thresholds_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_wire_health_thresholds_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_wire_health_thresholds_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_slim_policy<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_slim_policy(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_slim_state<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_slim_state(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_slim_resume_step<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_slim_resume_step(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_slim_drop_heavy<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_slim_drop_heavy(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_slim_resume<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_slim_resume(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_mesh_path_receipts<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_mesh_path_receipts(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_mesh_identity<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_mesh_identity(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_mesh_bind_machine<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_mesh_bind_machine(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_mesh_set_alpn_grant<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_mesh_set_alpn_grant(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_mesh_revoke_machine<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_mesh_revoke_machine(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_mesh_dial<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_mesh_dial(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_outbox_diverged_list<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_outbox_diverged_list(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_outbox_diverged_answer<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_outbox_diverged_answer(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_inspection_resolve<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_inspection_resolve(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_shared_propose_delete<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_shared_propose_delete(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_shared_propose_transfer<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_shared_propose_transfer(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_shared_propose_remove_owner<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_shared_propose_remove_owner(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_shared_execute<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_shared_execute(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_shared_receipt<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_shared_receipt(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_shared_outcomes<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_shared_outcomes(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_shared_deletion<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_shared_deletion(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_org_admin_configure<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_org_admin_configure(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_org_admin_powers<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_org_admin_powers(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_members_reset_project_access<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_members_reset_project_access(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_members_delegate<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_members_delegate(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_members_projection<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_members_projection(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_members_add<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_members_add(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_members_invitation_slip<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_members_invitation_slip(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_members_invitation_code<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_members_invitation_code(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_members_change<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_members_change(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_members_remove<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_members_remove(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_members_leave<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_members_leave(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_members_invitations<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_members_invitations(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_members_accept<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_members_accept(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_members_decline<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_members_decline(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_members_withdraw_invitation<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_members_withdraw_invitation(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_shared_object<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_shared_object(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_shared_withdraw_objection<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_shared_withdraw_objection(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_shared_started<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_shared_started(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_shared_matured<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_shared_matured(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_shared_erase_ask<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_shared_erase_ask(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_shared_erase_asks<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_shared_erase_asks(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_shared_close_erase_ask<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_shared_close_erase_ask(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_shared_policy_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_shared_policy_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_shared_policy_propose<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_shared_policy_propose(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_shared_policy_answer<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_shared_policy_answer(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_shared_policy_change<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_shared_policy_change(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_shared_policy_changes<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_shared_policy_changes(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_federation_coreference_link<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_federation_coreference_link(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_federation_coreference_confirm<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_federation_coreference_confirm(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_federation_coreference_share_consent<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_federation_coreference_share_consent(
+        server, call, input,
+    ))
+}
+#[inline(never)]
+fn boxed_vault_federation_coreference_unlink<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_federation_coreference_unlink(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_federation_burst_baseline<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_federation_burst_baseline(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_federation_burst_policy<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_federation_burst_policy(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_federation_burst_policy_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_federation_burst_policy_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_sync_quarantine_held_edits<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_sync_quarantine_held_edits(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_sync_retained_work_wait_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_sync_retained_work_wait_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_federation_burst_ingress<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_federation_burst_ingress(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_federation_burst_disposition<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_federation_burst_disposition(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_federation_burst_review<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_federation_burst_review(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_federation_burst_review_release<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_federation_burst_review_release(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_federation_burst_review_reject<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_federation_burst_review_reject(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_federation_burst_replay<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_federation_burst_replay(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_federation_connect_identity<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_federation_connect_identity(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_federation_connect_grants_mint<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_federation_connect_grants_mint(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_federation_connect_offer<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_federation_connect_offer(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_federation_connect_accept<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_federation_connect_accept(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_federation_connect_narrow<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_federation_connect_narrow(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_federation_connect_rescope_offer<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_federation_connect_rescope_offer(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_federation_connect_rescope_accept<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_federation_connect_rescope_accept(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_federation_connect_disconnect<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_federation_connect_disconnect(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_federation_connect_export<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_federation_connect_export(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_federation_connect_rejoin<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_federation_connect_rejoin(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_federation_connect_world_privacy_export<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_federation_connect_world_privacy_export(
+        server, call, input,
+    ))
+}
+#[inline(never)]
+fn boxed_vault_federation_connect_world_privacy_receive<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_federation_connect_world_privacy_receive(
+        server, call, input,
+    ))
+}
+#[inline(never)]
+fn boxed_vault_trusted_contacts_name<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_trusted_contacts_name(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_trusted_contacts_list<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_trusted_contacts_list(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_trusted_contacts_consent<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_trusted_contacts_consent(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_trusted_contacts_revoke<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_trusted_contacts_revoke(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_trusted_contacts_dial_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_trusted_contacts_dial_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_trusted_contacts_tier_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_trusted_contacts_tier_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_trusted_contacts_concern_asks<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_trusted_contacts_concern_asks(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_trusted_contacts_concern_authorize<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_trusted_contacts_concern_authorize(
+        server, call, input,
+    ))
+}
+#[inline(never)]
+fn boxed_vault_trusted_contacts_concern_propose<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_trusted_contacts_concern_propose(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_trusted_contacts_concern_deliver<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_trusted_contacts_concern_deliver(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_guests_share<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_guests_share(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_guests_export_envelope<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_guests_export_envelope(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_guests_reshare<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_guests_reshare(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_guests_revoke<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_guests_revoke(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_guests_mint_slip<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_guests_mint_slip(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_support_grants_mint<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_support_grants_mint(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_support_grants_list<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_support_grants_list(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_support_grants_revoke<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_support_grants_revoke(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_files_sources_attach<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_files_sources_attach(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_files_sources_rescan<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_files_sources_rescan(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_files_sources_detach<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_files_sources_detach(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_files_sources_list<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_files_sources_list(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_files_sources_files<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_files_sources_files(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_residence_mode<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_residence_mode(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_residence_open<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_residence_open(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_residence_index<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_residence_index(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_residence_prune<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_residence_prune(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_residence_directives<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_residence_directives(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_off_record_start<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_off_record_start(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_off_record_status<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_off_record_status(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_off_record_witness<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_off_record_witness(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_off_record_discard<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_off_record_discard(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_off_record_recall<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_off_record_recall(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_off_record_notes_create<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_off_record_notes_create(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_off_record_artifacts_save<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_off_record_artifacts_save(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_off_record_claims_upsert<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_off_record_claims_upsert(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_off_record_execute<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_off_record_execute(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_off_record_results_list<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_off_record_results_list(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_off_record_results_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_off_record_results_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_off_record_waits_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_off_record_waits_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_off_record_waits_answer<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_off_record_waits_answer(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_off_record_rooms_status<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_off_record_rooms_status(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_off_record_rooms_start<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_off_record_rooms_start(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_off_record_rooms_witness<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_off_record_rooms_witness(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_off_record_rooms_save<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_off_record_rooms_save(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_off_record_rooms_save_from_here<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_off_record_rooms_save_from_here(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_off_record_rooms_export<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_off_record_rooms_export(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_off_record_rooms_suggest_save<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_off_record_rooms_suggest_save(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_off_record_rooms_confirm_save<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_off_record_rooms_confirm_save(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_off_record_rooms_decline_save<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_off_record_rooms_decline_save(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_records_erase_preview<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_records_erase_preview(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_records_erase_confirm<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_records_erase_confirm(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_records_erase_sweep<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_records_erase_sweep(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_outbound_calls_request_erase<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_outbound_calls_request_erase(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_research_create_child<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_research_create_child(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_research_archive<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_research_archive(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_research_archive_install<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_research_archive_install(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_research_archive_record<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_research_archive_record(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_research_archive_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_research_archive_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_research_archive_best<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_research_archive_best(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_research_archive_repropose<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_research_archive_repropose(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_research_archive_coverage<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_research_archive_coverage(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_evals_inventory<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_evals_inventory(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_evals_cohorts_setup<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_evals_cohorts_setup(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_evals_author_now<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_evals_author_now(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_evals_authoring_result<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_evals_authoring_result(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_evals_families<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_evals_families(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_evals_families_assign<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_evals_families_assign(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_evals_cases<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_evals_cases(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_evals_cases_record<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_evals_cases_record(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_evals_cohorts<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_evals_cohorts(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_evals_cohorts_open<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_evals_cohorts_open(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_evals_exposure<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_evals_exposure(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_evals_sufficiency<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_evals_sufficiency(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_evals_labels_blocked<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_evals_labels_blocked(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_evals_labels_pick<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_evals_labels_pick(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_coach_training_offers<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_coach_training_offers(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_coach_training_offers_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_coach_training_offers_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_coach_training_offers_trigger<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_coach_training_offers_trigger(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_coach_training_offers_result<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_coach_training_offers_result(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_coach_training_offers_answer<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_coach_training_offers_answer(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_coach_training_offers_undo<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_coach_training_offers_undo(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_coach_training_offers_candidates<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_coach_training_offers_candidates(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_coach_training_offers_candidates_prepare<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_coach_training_offers_candidates_prepare(
+        server, call, input,
+    ))
+}
+#[inline(never)]
+fn boxed_vault_coach_training_offers_pilots_prepare<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_coach_training_offers_pilots_prepare(
+        server, call, input,
+    ))
+}
+#[inline(never)]
+fn boxed_vault_coach_training_offers_pilots_complete<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_coach_training_offers_pilots_complete(
+        server, call, input,
+    ))
+}
+#[inline(never)]
+fn boxed_vault_coach_training_offers_pilots_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_coach_training_offers_pilots_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_coach_training_offers_sources<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_coach_training_offers_sources(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_drafters_list<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_drafters_list(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_drafters_list_as<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_drafters_list_as(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_drafters_status<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_drafters_status(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_drafters_policy_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_drafters_policy_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_drafters_revert<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_drafters_revert(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_drafters_revert_as<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_drafters_revert_as(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_research_bind<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_research_bind(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_research_fork<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_research_fork(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_research_weave<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_research_weave(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_research_measure_search<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_research_measure_search(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_research_measure_held_out<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_research_measure_held_out(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_research_evaluate_split<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_research_evaluate_split(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_research_mark_invalid<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_research_mark_invalid(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_research_prune<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_research_prune(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_research_select<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_research_select(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_research_promotion_basis<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_research_promotion_basis(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_research_reserve_confirmation<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_research_reserve_confirmation(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_research_promote<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_research_promote(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_research_reserve_work<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_research_reserve_work(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_research_settle_work<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_research_settle_work(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_research_refund_work<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_research_refund_work(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_research_reserve_exploration<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_research_reserve_exploration(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_research_budget<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_research_budget(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_research_record_benchmark<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_research_record_benchmark(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_authority_handoff_alarms<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_authority_handoff_alarms(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_authority_handoff_alarms_acknowledge<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_authority_handoff_alarms_acknowledge(
+        server, call, input,
+    ))
+}
+#[inline(never)]
+fn boxed_vault_roots_requests_cancel<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_roots_requests_cancel(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_roots_requests_create<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_roots_requests_create(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_roots_requests_list<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_roots_requests_list(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_owner_work_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_owner_work_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_cleanup_run<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_cleanup_run(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_cleanup_review<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_cleanup_review(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_cleanup_decide<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_cleanup_decide(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_archive_delete_preview<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_archive_delete_preview(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_archive_delete_confirm<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_archive_delete_confirm(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_usage_events_undecodable<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_usage_events_undecodable(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_usage_events_remove_undecodable<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_usage_events_remove_undecodable(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_usage_repair_receipts<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_usage_repair_receipts(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_entities_mention<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_entities_mention(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_legal_holds_place<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_legal_holds_place(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_legal_holds_widen<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_legal_holds_widen(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_legal_holds_list<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_legal_holds_list(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_legal_holds_log<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_legal_holds_log(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_legal_holds_lift_and_erase<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_legal_holds_lift_and_erase(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_legal_holds_withdraw_erase<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_legal_holds_withdraw_erase(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_courtesy_delete_send<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_courtesy_delete_send(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_courtesy_delete_sent<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_courtesy_delete_sent(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_courtesy_delete_incoming<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_courtesy_delete_incoming(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_courtesy_delete_answer<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_courtesy_delete_answer(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_embedding_spaces_list<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_embedding_spaces_list(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_embedding_spaces_declare<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_embedding_spaces_declare(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_embedding_spaces_bind<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_embedding_spaces_bind(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_embedding_spaces_one_space<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_embedding_spaces_one_space(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_embedding_spaces_retire<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_embedding_spaces_retire(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_embedding_spaces_move<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_embedding_spaces_move(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_embedding_spaces_move_check<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_embedding_spaces_move_check(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_embedding_spaces_move_approve<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_embedding_spaces_move_approve(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_embedding_spaces_move_undo<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_embedding_spaces_move_undo(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_embedding_spaces_move_abandon<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_embedding_spaces_move_abandon(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_embedding_spaces_probes_list<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_embedding_spaces_probes_list(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_embedding_spaces_probes_put<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_embedding_spaces_probes_put(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_embedding_spaces_probes_delete<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_embedding_spaces_probes_delete(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_policy_owner_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_policy_owner_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_policy_owner_configure<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_policy_owner_configure(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_policy_owner_row_change<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_policy_owner_row_change(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_policy_outbound_decide<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_policy_outbound_decide(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_policy_relay_decide<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_policy_relay_decide(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consent_approve_once<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consent_approve_once(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_connectors_calls_approve_once<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_connectors_calls_approve_once(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consent_deny<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consent_deny(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consent_create_standing_grant<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consent_create_standing_grant(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consent_create_auto_weave_grant<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consent_create_auto_weave_grant(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consent_registry<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consent_registry(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consent_failure_signals_held<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consent_failure_signals_held(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consent_revoke<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consent_revoke(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consent_bypass_grant_warning<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consent_bypass_grant_warning(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consent_create_bypass_grant<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consent_create_bypass_grant(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consent_active_bypass_grants<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consent_active_bypass_grants(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consent_bypassed_effect_receipts<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consent_bypassed_effect_receipts(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consent_graduation_policy<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consent_graduation_policy(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consent_graduation_policy_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consent_graduation_policy_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consent_graduation_policy_clear<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consent_graduation_policy_clear(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consent_graduation_stats<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consent_graduation_stats(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consent_graduation_outcome<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consent_graduation_outcome(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consent_graduation_offers<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consent_graduation_offers(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consent_graduation_answer<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consent_graduation_answer(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consent_graduation_trust_table<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consent_graduation_trust_table(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consent_graduation_settings_unpin<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consent_graduation_settings_unpin(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consent_graduation_demote<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consent_graduation_demote(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_consent_graduation_demote<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_consent_graduation_demote(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_gate_policy_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_gate_policy_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_gate_policy_put<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_gate_policy_put(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_gate_policy_propose<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_gate_policy_propose(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_gate_checker_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_gate_checker_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_gate_checker_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_gate_checker_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_learning_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_learning_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_learning_projection<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_learning_projection(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_seal_confess<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_seal_confess(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_seal_audit<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_seal_audit(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_seal_receipt<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_seal_receipt(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_seal_pending<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_seal_pending(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_seal_run<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_seal_run(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_seal_complete<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_seal_complete(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_settings_learning<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_settings_learning(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_settings_learning_put<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_settings_learning_put(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_settings_learning_clear<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_settings_learning_clear(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_secrets_code_run_lifts<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_secrets_code_run_lifts(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_secrets_code_run_room_lifts<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_secrets_code_run_room_lifts(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_secrets_lift_history<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_secrets_lift_history(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_secrets_register<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_secrets_register(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_secrets_rotate<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_secrets_rotate(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_secrets_rewrap<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_secrets_rewrap(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_secrets_revoke<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_secrets_revoke(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_secrets_custody_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_secrets_custody_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_secrets_custody_submit<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_secrets_custody_submit(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_widen_proposals<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_widen_proposals(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_widen_proposals_approve<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_widen_proposals_approve(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_widen_proposals_decline<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_widen_proposals_decline(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_claims_review<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_claims_review(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_claims_settle<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_claims_settle(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_craft_candidates<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_craft_candidates(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_craft_candidates_answer<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_craft_candidates_answer(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_settings_wake_policy_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_settings_wake_policy_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_settings_inference_defaults<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_settings_inference_defaults(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_settings_inference_defaults_replace<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_settings_inference_defaults_replace(
+        server, call, input,
+    ))
+}
+#[inline(never)]
+fn boxed_vault_lenses_propose<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_lenses_propose(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_lenses_propose_from_pack<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_lenses_propose_from_pack(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_lenses_activate<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_lenses_activate(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_lenses_deactivate<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_lenses_deactivate(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_lenses_list<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_lenses_list(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_lenses_export_pack<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_lenses_export_pack(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_lenses_select<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_lenses_select(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_lenses_resolve<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_lenses_resolve(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_lenses_result_set_action<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_lenses_result_set_action(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_lenses_default<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_lenses_default(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_disclosure_offer<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_disclosure_offer(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_disclosure_ceiling_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_disclosure_ceiling_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_disclosure_ceiling_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_disclosure_ceiling_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_disclosure_ceiling_clear<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_disclosure_ceiling_clear(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_disclosure_reveals<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_disclosure_reveals(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_disclosure_reveals_answer<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_disclosure_reveals_answer(server, call, input))
+}
+#[inline(never)]
+fn boxed_reveal<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(reveal(server, call, input))
+}
+#[inline(never)]
+fn boxed_reveal_wait<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(reveal_wait(server, call, input))
+}
+#[inline(never)]
+fn boxed_reveal_describe<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(reveal_describe(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_use<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_use(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_secrets_materialize<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_secrets_materialize(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_secrets_renew<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_secrets_renew(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_secrets_teardown<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_secrets_teardown(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_secrets_use<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_secrets_use(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_shares_create<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_shares_create(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_shares_revoke<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_shares_revoke(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_shares_view<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_shares_view(server, call, input))
+}
+#[inline(never)]
+fn boxed_host_compact<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(host_compact(server, call, input))
+}
+#[inline(never)]
+fn boxed_host_wake<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(host_wake(server, call, input))
+}
+#[inline(never)]
+fn boxed_host_budget_hit<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(host_budget_hit(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_hooks_replay<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_hooks_replay(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_hooks_regen_due<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_hooks_regen_due(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_hooks_regen_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_hooks_regen_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_hooks_regen_adopt<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_hooks_regen_adopt(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_publish_approval<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_publish_approval(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_publish<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_publish(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_repoint<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_repoint(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_pointer<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_pointer(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_unpublish<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_unpublish(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_link_token<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_link_token(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_live_preview_register<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_live_preview_register(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_live_preview_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_live_preview_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_live_preview_close<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_live_preview_close(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_live_preview_invite<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_live_preview_invite(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_live_preview_revoke_invite<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_live_preview_revoke_invite(
+        server, call, input,
+    ))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_live_preview_share<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_live_preview_share(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_live_preview_revoke_share<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_live_preview_revoke_share(
+        server, call, input,
+    ))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_view<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_view(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_units<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_units(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_anchors_pin<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_anchors_pin(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_threads_open<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_threads_open(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_threads_comment<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_threads_comment(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_threads_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_threads_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_threads_list<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_threads_list(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_threads_assign<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_threads_assign(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_threads_state<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_threads_state(server, call, input))
+}
+#[inline(never)]
+fn boxed_mount<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(mount(server, call, input))
+}
+#[inline(never)]
+fn boxed_graph_fs_readdir<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(graph_fs_readdir(server, call, input))
+}
+#[inline(never)]
+fn boxed_graph_fs_read_file<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(graph_fs_read_file(server, call, input))
+}
+#[inline(never)]
+fn boxed_graph_fs_read_link<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(graph_fs_read_link(server, call, input))
+}
+#[inline(never)]
+fn boxed_graph_fs_ls<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(graph_fs_ls(server, call, input))
+}
+#[inline(never)]
+fn boxed_graph_fs_find<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(graph_fs_find(server, call, input))
+}
+#[inline(never)]
+fn boxed_graph_fs_grep<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(graph_fs_grep(server, call, input))
+}
+#[inline(never)]
+fn boxed_graph_fs_cat<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(graph_fs_cat(server, call, input))
+}
+#[inline(never)]
+fn boxed_graph_fs_head<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(graph_fs_head(server, call, input))
+}
+#[inline(never)]
+fn boxed_graph_fs_wc<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(graph_fs_wc(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_diff<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_diff(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_blame<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_blame(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_proposal_view<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_proposal_view(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_symbols_declare<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_symbols_declare(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_symbols_renew<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_symbols_renew(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_symbols_release<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_symbols_release(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_proposal_submit<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_proposal_submit(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_conflict_record<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_conflict_record(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_conflict_view<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_conflict_view(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_proposal_resolve<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_proposal_resolve(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_proposal_review<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_proposal_review(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_proposal_settle<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_proposal_settle(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_proposal_settlement<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_proposal_settlement(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_oplog<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_oplog(server, call, input))
+}
+#[inline(never)]
+fn boxed_execute_code<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(execute_code(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_model_heal_count<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_model_heal_count(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_type_diagnostics<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_type_diagnostics(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_waits_resolve<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_waits_resolve(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_waits_receipt<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_waits_receipt(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_results_status<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_results_status(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_results_recover<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_results_recover(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_results_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_results_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_results_slice<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_results_slice(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_repo_diff<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_repo_diff(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_export<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_export(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_export_preview<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_export_preview(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_export_preview_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_export_preview_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_import<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_import(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_repos_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_repos_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_forks_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_forks_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_imports_create<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_imports_create(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_imports_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_imports_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_ingress_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_ingress_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_origin_register<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_origin_register(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_origin_mirror_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_origin_mirror_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_origin_mirror_plan<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_origin_mirror_plan(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_origin_mirror_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_origin_mirror_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_origin_mirror_strategy<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_origin_mirror_strategy(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_origin_mirror_clear<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_origin_mirror_clear(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_origin_mirror_push<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_origin_mirror_push(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_origin_publish_request<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_origin_publish_request(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_origin_publish_review<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_origin_publish_review(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_origin_publish_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_origin_publish_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_origin_publish_approve<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_origin_publish_approve(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_origin_publish_execute<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_origin_publish_execute(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_origin_publish_cancel<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_origin_publish_cancel(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_origin_authority_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_origin_authority_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_origin_authority_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_origin_authority_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_origin_publications<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_origin_publications(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_checkout_bind<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_checkout_bind(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_checkout_claim<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_checkout_claim(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_checkout_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_checkout_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_checkout_renew<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_checkout_renew(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_checkout_reclaim<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_checkout_reclaim(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_checkout_takeover<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_checkout_takeover(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_checkout_publish<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_checkout_publish(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_checkout_settle<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_checkout_settle(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_checkout_teardown<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_checkout_teardown(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_views_materialize<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_views_materialize(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_views_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_views_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_views_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_views_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_views_action<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_views_action(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_views_build<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_views_build(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_cache_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_cache_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_cache_reuse<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_cache_reuse(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_snapshots_ingest<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_snapshots_ingest(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_snapshots_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_snapshots_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_snapshots_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_snapshots_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_symbols_definitions<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_symbols_definitions(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_merge_queue_enqueue<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_merge_queue_enqueue(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_merge_queue_stage<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_merge_queue_stage(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_merge_queue_observe<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_merge_queue_observe(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_merge_queue_requeue_survivors<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_merge_queue_requeue_survivors(
+        server, call, input,
+    ))
+}
+#[inline(never)]
+fn boxed_vault_code_merge_queue_land_reviewed<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_merge_queue_land_reviewed(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_merge_queue_settle_slow<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_merge_queue_settle_slow(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_merge_queue_recover<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_merge_queue_recover(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_merge_queue_init<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_merge_queue_init(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_merge_queue_check<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_merge_queue_check(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_merge_queue_diagnose<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_merge_queue_diagnose(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_merge_queue_check_status<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_merge_queue_check_status(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_checks_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_checks_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_code_merge_queue_review_policy_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_merge_queue_review_policy_get(
+        server, call, input,
+    ))
+}
+#[inline(never)]
+fn boxed_vault_code_merge_queue_review_policy_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_merge_queue_review_policy_set(
+        server, call, input,
+    ))
+}
+#[inline(never)]
+fn boxed_vault_code_merge_queue_export_green<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_merge_queue_export_green(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_export<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_export(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_agents_create<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_agents_create(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_agents_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_agents_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_agents_update<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_agents_update(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_agents_dreaming_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_agents_dreaming_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_agents_dreaming_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_agents_dreaming_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_agents_grants_mint<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_agents_grants_mint(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_agents_grants_revoke<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_agents_grants_revoke(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_repo_git_push_mint<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_repo_git_push_mint(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_repo_git_push_revoke<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_repo_git_push_revoke(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_connectors_read_grants_grant<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_connectors_read_grants_grant(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_connectors_read_grants_revoke<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_connectors_read_grants_revoke(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_repo_anchor_bind<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_repo_anchor_bind(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_repo_snapshots_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_repo_snapshots_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_repo_snapshots_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_repo_snapshots_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_repo_symbols_definitions<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_repo_symbols_definitions(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_repo_views_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_repo_views_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_repo_views_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_repo_views_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_repo_merge_queue_observe<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_repo_merge_queue_observe(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_repo_snapshots_ingest<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_repo_snapshots_ingest(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_repo_work_open<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_repo_work_open(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_repo_symbols_declare<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_repo_symbols_declare(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_repo_symbols_renew<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_repo_symbols_renew(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_repo_symbols_release<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_repo_symbols_release(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_repo_proposal_submit<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_repo_proposal_submit(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_repo_merge_queue_enqueue<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_repo_merge_queue_enqueue(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_repo_checkout_bind<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_repo_checkout_bind(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_repo_export<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_repo_export(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_agents_base<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_agents_base(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_standing_blocks_configure<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_standing_blocks_configure(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_standing_blocks_reconfigure<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_standing_blocks_reconfigure(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_standing_blocks_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_standing_blocks_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_standing_blocks_list<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_standing_blocks_list(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_workflows_save<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_workflows_save(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_workflows_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_workflows_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_workflows_update<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_workflows_update(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_workflows_dispatch<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_workflows_dispatch(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_workflows_dispatch_bound<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_workflows_dispatch_bound(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_workflows_status<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_workflows_status(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_task_types_pin<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_task_types_pin(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_task_types_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_task_types_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_agents_spawn_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_agents_spawn_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_agents_spawn<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_agents_spawn(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_tasks_cancel_force<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_tasks_cancel_force(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_tasks_comm_widen_revoke<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_tasks_comm_widen_revoke(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_runs_branches_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_runs_branches_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_runs_pause<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_runs_pause(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_runs_resume<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_runs_resume(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consults_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consults_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_workspace_establish<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_workspace_establish(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_workspace_members_onboard<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_workspace_members_onboard(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_workspace_roster<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_workspace_roster(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_agents_export_pack<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_agents_export_pack(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_born_from<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_born_from(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_proposals<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_proposals(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_waits<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_waits(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_release_wait<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_release_wait(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_review_slides<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_review_slides(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_ask<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_ask(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_admit<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_admit(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_critic_review<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_critic_review(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_propose_outline<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_propose_outline(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_outline<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_outline(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_keep_outline<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_keep_outline(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_decline_outline<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_decline_outline(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_design_deck<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_design_deck(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_create_deck<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_create_deck(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_inspect_deck<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_inspect_deck(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_propose_deck<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_propose_deck(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_propose_output<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_propose_output(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_keep<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_keep(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_discard<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_discard(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_undo<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_undo(server, call, input))
+}
+#[inline(never)]
+fn boxed_can<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(can(server, call, input))
+}
+#[inline(never)]
+fn boxed_peek<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(peek(server, call, input))
+}
+#[inline(never)]
+fn boxed_ask<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ask(server, call, input))
+}
+#[inline(never)]
+fn boxed_wait<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(wait(server, call, input))
+}
+#[inline(never)]
+fn boxed_tasks_answer<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(tasks_answer(server, call, input))
+}
+#[inline(never)]
+fn boxed_tasks_outcomes<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(tasks_outcomes(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_list<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_list(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_messages<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_messages(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_participants<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_participants(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_render<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_render(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_find<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_find(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_trunk<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_trunk(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_reply_strips<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_reply_strips(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_claim<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_claim(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_speak<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_speak(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_thread_audience_add<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_thread_audience_add(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_thread_audience_open_full_history<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_thread_audience_open_full_history(
+        server, call, input,
+    ))
+}
+#[inline(never)]
+fn boxed_vault_rooms_thread_audience_remove<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_thread_audience_remove(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_private_threads<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_private_threads(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_thread_delete<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_thread_delete(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_thread_join_request<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_thread_join_request(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_thread_join_requests<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_thread_join_requests(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_thread_join_approve<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_thread_join_approve(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_thread_join_deny<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_thread_join_deny(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_projects_propose<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_projects_propose(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_projects_proposals<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_projects_proposals(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_projects_dismiss_card<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_projects_dismiss_card(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_projects_confirm<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_projects_confirm(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_projects_roster_write<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_projects_roster_write(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_projects_goal_intake<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_projects_goal_intake(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_join<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_join(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_invite<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_invite(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_consent<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_consent(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_offer<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_offer(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_offer_answer<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_offer_answer(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_offer_vote<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_offer_vote(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_offer_reopen<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_offer_reopen(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_offers<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_offers(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_projects_goal_revisions<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_projects_goal_revisions(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_projects_goal_dismiss<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_projects_goal_dismiss(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_projects_route_tradeoff<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_projects_route_tradeoff(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_conversations_turn_continue<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_conversations_turn_continue(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_conversations_turn_retry<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_conversations_turn_retry(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_conversations_turn_rebind<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_conversations_turn_rebind(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_messages_react<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_messages_react(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_host<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_host(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_host_pin<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_host_pin(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_host_hand<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_host_hand(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_upkeep_pending<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_upkeep_pending(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_upkeep_voice<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_upkeep_voice(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_rooms_sharing<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_sharing(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_companions_sharing_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_companions_sharing_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_companions_sharing_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_companions_sharing_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_workspace_work_companion_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_workspace_work_companion_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_workspace_work_companion_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_workspace_work_companion_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_skills_save<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_skills_save(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_skills_fork<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_skills_fork(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_skills_callables<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_skills_callables(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_callable_amend<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_callable_amend(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_pack_receipt<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_pack_receipt(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_outcomes_project<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_outcomes_project(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_outcomes_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_outcomes_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_models_manifest_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_models_manifest_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_models_manifest_replace<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_models_manifest_replace(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_settings_web_connector<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_settings_web_connector(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_settings_web_connector_replace<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_settings_web_connector_replace(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_connectors_web_usage<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_connectors_web_usage(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_models_oneironer_bind<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_models_oneironer_bind(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_models_routes_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_models_routes_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_models_routes_replace<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_models_routes_replace(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_models_roles_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_models_roles_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_models_roles_invoke<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_models_roles_invoke(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_attribution_settle<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_attribution_settle(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_attribution_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_attribution_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_attribution_evidence_record<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_attribution_evidence_record(
+        server, call, input,
+    ))
+}
+#[inline(never)]
+fn boxed_vault_skills_attribution_project<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_attribution_project(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_attribution_judgments<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_attribution_judgments(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_attribution_proposals<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_attribution_proposals(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_skills_attribution_positive_retire<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_skills_attribution_positive_retire(
+        server, call, input,
+    ))
+}
+#[inline(never)]
+fn boxed_ai_steps_submit<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_steps_submit(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_steps_receipt<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_steps_receipt(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_streams_open<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_streams_open(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_streams_subscribe<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_streams_subscribe(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_streams_events<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_streams_events(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_streams_detach<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_streams_detach(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_streams_abort<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_streams_abort(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_streams_terminal<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_streams_terminal(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_reply<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_reply(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_receipts_context<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_receipts_context(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_receipts_craft_reply_manifest<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_receipts_craft_reply_manifest(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_voice_asr_open<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_voice_asr_open(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_voice_asr_hypothesis<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_voice_asr_hypothesis(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_voice_asr_finalize<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_voice_asr_finalize(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_voice_asr_close<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_voice_asr_close(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_voice_start<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_voice_start(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_voice_audio<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_voice_audio(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_voice_events<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_voice_events(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_voice_ack<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_voice_ack(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_voice_usage<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_voice_usage(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_voice_tool<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_voice_tool(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_voice_end<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_voice_end(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_voice_close<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_voice_close(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_anonymous_chat<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_anonymous_chat(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_models_catalog_refresh<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_models_catalog_refresh(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_models_catalog_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_models_catalog_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_models_catalog_diff<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_models_catalog_diff(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_models_trials_nominate<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_models_trials_nominate(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_models_trials_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_models_trials_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_models_trials_approve<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_models_trials_approve(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_models_trials_run<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_models_trials_run(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_models_trials_resend_arm<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_models_trials_resend_arm(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_models_trials_complete<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_models_trials_complete(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_models_bindings_propose<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_models_bindings_propose(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_models_bindings_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_models_bindings_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_models_bindings_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_models_bindings_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_models_bindings_accept<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_models_bindings_accept(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_models_bindings_deny<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_models_bindings_deny(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_options<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_options(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_image<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_image(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_speech<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_speech(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_voices_packs_put<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_voices_packs_put(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_voices_render_consent<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_voices_render_consent(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_voices_targets_provision<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_voices_targets_provision(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_voices_targets_evict<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_voices_targets_evict(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_voices_inspect<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_voices_inspect(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_voices_lineage<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_voices_lineage(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_transcribe<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_transcribe(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_embed<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_embed(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_video<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_video(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_video_poll<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_video_poll(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_video_cancel<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_video_cancel(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_ask_image<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_ask_image(server, call, input))
+}
+#[inline(never)]
+fn boxed_ai_verdict<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(ai_verdict(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_graph_ask<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_graph_ask(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_graph_admit<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_graph_admit(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_questions_create<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_questions_create(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_questions_edit<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_questions_edit(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_questions_pause<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_questions_pause(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_questions_backfill<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_questions_backfill(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_questions_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_questions_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_questions_outcome_windows<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_questions_outcome_windows(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_questions_answers<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_questions_answers(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_questions_refresh<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_questions_refresh(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_questions_outcomes<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_questions_outcomes(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_questions_outcomes_project<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_questions_outcomes_project(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_questions_schedule<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_questions_schedule(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_decisions_bands_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_decisions_bands_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_decisions_bands_learn<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_decisions_bands_learn(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_decisions_bands_enforce<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_decisions_bands_enforce(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_decisions_asks_answer<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_decisions_asks_answer(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_decisions_asks_climb<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_decisions_asks_climb(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_decisions_asks_confirm_grant<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_decisions_asks_confirm_grant(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_decisions_asks<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_decisions_asks(server, call, input))
+}
+#[inline(never)]
+fn boxed_connector_list<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(connector_list(server, call, input))
+}
+#[inline(never)]
+fn boxed_connector_status<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(connector_status(server, call, input))
+}
+#[inline(never)]
+fn boxed_connector_call<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(connector_call(server, call, input))
+}
+#[inline(never)]
+fn boxed_connector_schema<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(connector_schema(server, call, input))
+}
+#[inline(never)]
+fn boxed_connector_call_status<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(connector_call_status(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_commit<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_commit(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_remember<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_remember(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_claims_retract<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_claims_retract(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_forget<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_forget(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_booking_availability<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_booking_availability(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_booking_book<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_booking_book(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_booking_reschedule<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_booking_reschedule(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_booking_cancel<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_booking_cancel(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_booking_constraint_turn<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_booking_constraint_turn(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_booking_page_token<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_booking_page_token(server, call, input))
+}
+#[inline(never)]
+fn boxed_calendar_invite<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(calendar_invite(server, call, input))
+}
+#[inline(never)]
+fn boxed_calendar_ics_configure<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(calendar_ics_configure(server, call, input))
+}
+#[inline(never)]
+fn boxed_calendar_ics_poll<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(calendar_ics_poll(server, call, input))
+}
+#[inline(never)]
+fn boxed_calendar_ics_status<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(calendar_ics_status(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_calendar_passports_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_calendar_passports_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_calendar_passports_history<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_calendar_passports_history(server, call, input))
+}
+#[inline(never)]
+fn boxed_calendar_connector_configure<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(calendar_connector_configure(server, call, input))
+}
+#[inline(never)]
+fn boxed_calendar_connector_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(calendar_connector_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_calendar_connector_pull<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(calendar_connector_pull(server, call, input))
+}
+#[inline(never)]
+fn boxed_calendar_connector_write<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(calendar_connector_write(server, call, input))
+}
+#[inline(never)]
+fn boxed_calendar_connector_kill<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(calendar_connector_kill(server, call, input))
+}
+#[inline(never)]
+fn boxed_calendar_imip_configure<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(calendar_imip_configure(server, call, input))
+}
+#[inline(never)]
+fn boxed_calendar_imip_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(calendar_imip_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_calendar_create<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_calendar_create(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_calendar_ics_import<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_calendar_ics_import(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_calendar_occurrences<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_calendar_occurrences(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_calendar_instances_move<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_calendar_instances_move(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_calendar_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_calendar_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_calendar_search<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_calendar_search(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_calendar_freebusy<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_calendar_freebusy(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_calendar_prep<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_calendar_prep(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_calendar_event_outcome<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_calendar_event_outcome(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_calendar_check_in_due<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_calendar_check_in_due(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_calendar_check_in_answer<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_calendar_check_in_answer(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_calendar_outcome_policy_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_calendar_outcome_policy_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_calendar_outcome_policy_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_calendar_outcome_policy_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_calendar_transcript_ingest<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_calendar_transcript_ingest(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_claims_list<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_claims_list(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_claims_demote<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_claims_demote(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_claims_list_filtered<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_claims_list_filtered(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_claims_read_filtered<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_claims_read_filtered(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_claims_history<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_claims_history(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_delete<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_delete(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_writes_critical_confirm_pending<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_writes_critical_confirm_pending(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_writes_critical_confirm_clear<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_writes_critical_confirm_clear(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_writes_critical_confirm_decline<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_writes_critical_confirm_decline(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_writes_critical_confirm_receipt<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_writes_critical_confirm_receipt(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_writes_pending<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_writes_pending(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_hydrate<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_hydrate(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_refs_resolve<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_refs_resolve(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_refs_links<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_refs_links(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_search_vector_config<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_search_vector_config(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_vectors_put<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_vectors_put(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_search_hybrid<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_search_hybrid(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_search_temporal<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_search_temporal(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_search_bm25<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_search_bm25(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_neighbors<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_neighbors(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_structural_put<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_structural_put(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_habits_checkin<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_habits_checkin(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_productivity_create<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_productivity_create(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_productivity_tree<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_productivity_tree(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_ingest_ag_ui_import<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_ingest_ag_ui_import(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_ingest_ag_ui_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_ingest_ag_ui_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_claims_admit<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_claims_admit(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_create<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_create(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_esign_create<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_esign_create(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_esign_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_esign_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_esign_links_issue<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_esign_links_issue(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_esign_send_for_signature<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_esign_send_for_signature(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_esign_notices_dispatch<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_esign_notices_dispatch(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_esign_remind<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_esign_remind(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_esign_void<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_esign_void(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_esign_signing_act<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_esign_signing_act(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_esign_signing_pdf<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_esign_signing_pdf(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_esign_signing_image<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_esign_signing_image(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_esign_signing_signature<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_esign_signing_signature(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_esign_seal_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_esign_seal_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_conversations_create<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_conversations_create(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_conversations_turns_create<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_conversations_turns_create(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_conversations_records_append<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_conversations_records_append(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_batch<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_batch(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_put<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_put(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_body_import<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_body_import(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_body_head<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_body_head(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_body_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_body_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_body_commits<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_body_commits(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_body_edit<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_body_edit(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_body_fork_open<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_body_fork_open(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_body_fork_edit<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_body_fork_edit(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_body_fork_diff<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_body_fork_diff(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_body_fork_merge<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_body_fork_merge(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_body_fork_discard<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_body_fork_discard(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_body_proposal_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_body_proposal_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_body_proposal_settle<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_body_proposal_settle(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_body_export<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_body_export(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_body_preview<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_body_preview(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_body_deck_review<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_body_deck_review(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_body_deck_merge<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_body_deck_merge(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_body_deck_export<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_body_deck_export(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_body_deck_gate<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_body_deck_gate(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_body_deck_oracle<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_body_deck_oracle(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_body_deck_preview<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_body_deck_preview(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_append<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_append(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_artifacts_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_artifacts_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consolidation_enqueue<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consolidation_enqueue(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consolidation_status<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consolidation_status(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consolidation_wake_status<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consolidation_wake_status(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_runs_step<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_runs_step(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_runs_checkpoint<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_runs_checkpoint(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_turn_programs_admission<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_turn_programs_admission(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_runs_program<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_runs_program(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_runs_program_step<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_runs_program_step(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_runs_program_checkpoint<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_runs_program_checkpoint(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_runs_program_hold_release<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_runs_program_hold_release(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consolidation_home_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consolidation_home_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consolidation_home_pick<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consolidation_home_pick(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consolidation_lineage<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consolidation_lineage(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consolidation_candidate_decisions<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consolidation_candidate_decisions(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consolidation_promote<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consolidation_promote(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consolidation_pin<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consolidation_pin(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consolidation_frontier<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consolidation_frontier(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consolidation_accounting<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consolidation_accounting(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_consolidation_evidence<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_consolidation_evidence(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_sieve_evidence<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_sieve_evidence(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_sieve_evidence_replay<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_sieve_evidence_replay(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_sieve_cadence<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_sieve_cadence(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_sieve_settlements<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_sieve_settlements(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_sieve_settlements_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_sieve_settlements_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_sieve_queue<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_sieve_queue(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_sieve_retained<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_sieve_retained(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_sieve_receipts<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_sieve_receipts(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_sieve_policy<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_sieve_policy(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_sieve_policy_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_sieve_policy_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_sieve_recipe_policy<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_sieve_recipe_policy(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_sieve_recipe_policy_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_sieve_recipe_policy_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_sieve_lease<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_sieve_lease(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_sieve_lease_refill<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_sieve_lease_refill(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_free_time_policy_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_free_time_policy_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_free_time_policy_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_free_time_policy_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_free_time_policy_set_as<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_free_time_policy_set_as(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_free_time_cycles<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_free_time_cycles(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_free_time_cycle<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_free_time_cycle(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_claims_vet<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_claims_vet(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_claims_vetting<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_claims_vetting(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_memory_signal_extraction<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_memory_signal_extraction(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_memory_signal_extraction_result<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_memory_signal_extraction_result(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_claims_seed<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_claims_seed(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_channel_identities_provision<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_channel_identities_provision(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_channel_identities_bind<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_channel_identities_bind(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_channel_identities_fulfill<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_channel_identities_fulfill(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_channel_identities_rotate<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_channel_identities_rotate(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_channel_identities_release<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_channel_identities_release(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_channel_identities_route_inbound<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_channel_identities_route_inbound(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_channel_identities_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_channel_identities_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_channel_identities_selection_rules<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_channel_identities_selection_rules(
+        server, call, input,
+    ))
+}
+#[inline(never)]
+fn boxed_vault_channel_identities_selection_update<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_channel_identities_selection_update(
+        server, call, input,
+    ))
+}
+#[inline(never)]
+fn boxed_vault_channel_identities_select<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_channel_identities_select(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_channel_identities_passports_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_channel_identities_passports_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_channel_identities_passports_list<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_channel_identities_passports_list(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_delivery_window_policy_put<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_delivery_window_policy_put(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_delivery_window_policy_list<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_delivery_window_policy_list(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_delivery_window_policy_retract<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_delivery_window_policy_retract(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_delivery_window_evaluate<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_delivery_window_evaluate(server, call, input))
+}
+#[inline(never)]
+fn boxed_connector_outbound_schedule<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(connector_outbound_schedule(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_summaries_create<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_summaries_create(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_summaries_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_summaries_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_summaries_status<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_summaries_status(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_summaries_keep<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_summaries_keep(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_summaries_edit<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_summaries_edit(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_summaries_patch<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_summaries_patch(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_summaries_regenerate<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_summaries_regenerate(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_summaries_proposals_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_summaries_proposals_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_summaries_proposals_merge<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_summaries_proposals_merge(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_summaries_proposals_switch<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_summaries_proposals_switch(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_summaries_proposals_reject<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_summaries_proposals_reject(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_notes_bless_brief_kind<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_notes_bless_brief_kind(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_notes_author_brief<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_notes_author_brief(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_notes_follow_citation<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_notes_follow_citation(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_notes_create<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_notes_create(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_notes_author_take<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_notes_author_take(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_notes_from_entity<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_notes_from_entity(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_notes_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_notes_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_notes_history<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_notes_history(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_notes_fork<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_notes_fork(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_notes_forks_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_notes_forks_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_notes_proposals_open<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_notes_proposals_open(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_notes_proposals_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_notes_proposals_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_notes_proposals_merge<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_notes_proposals_merge(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_notes_proposals_switch<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_notes_proposals_switch(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_notes_proposals_reject<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_notes_proposals_reject(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_notes_version_tree<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_notes_version_tree(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_notes_history_purge<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_notes_history_purge(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_notes_history_purge_execute<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_notes_history_purge_execute(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_notes_history_purge_receipts<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_notes_history_purge_receipts(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_notes_editor_bind<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_notes_editor_bind(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_notes_editor_close<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_notes_editor_close(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_notes_edit<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_notes_edit(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_notes_seal<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_notes_seal(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_notes_lifecycle<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_notes_lifecycle(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_notes_set_overrides<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_notes_set_overrides(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_notes_defaults<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_notes_defaults(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_tasks_linear_mapping<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_tasks_linear_mapping(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_tasks_linear_mapping_edit<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_tasks_linear_mapping_edit(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_tasks_linear_provenance<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_tasks_linear_provenance(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_run_attach<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_run_attach(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_folds_describe<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_folds_describe(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_history<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_history(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_runs_review<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_runs_review(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_runs_settle<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_runs_settle(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_runs_settlement<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_runs_settlement(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_revert_run<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_revert_run(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_identity_merge<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_identity_merge(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_identity_split<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_identity_split(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_identity_facet<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_identity_facet(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_identity_assert_distinct<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_identity_assert_distinct(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_identity_propose<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_identity_propose(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_identity_undo<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_identity_undo(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_identity_resolve<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_identity_resolve(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_identity_events_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_identity_events_get(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_identity_proposals_resolve<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_identity_proposals_resolve(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_identity_proposals_for_pair<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_identity_proposals_for_pair(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_custody_members_drain_begin<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_custody_members_drain_begin(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_custody_members_drain_commit<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_custody_members_drain_commit(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_custody_members_drain_folder<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_custody_members_drain_folder(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_custody_members_reenrol<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_custody_members_reenrol(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_mail_pack_install<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_mail_pack_install(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_mail_sources_connect<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_mail_sources_connect(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_mail_sources_list<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_mail_sources_list(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_mail_sources_settings_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_mail_sources_settings_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_mail_sources_members_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_mail_sources_members_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_mail_sources_audience_events<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_mail_sources_audience_events(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_mail_threads_share<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_mail_threads_share(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_mail_threads_unshare<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_mail_threads_unshare(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_mail_compliance_setting<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_mail_compliance_setting(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_mail_compliance_set<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_mail_compliance_set(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_mail_compliance_log<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_mail_compliance_log(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_mail_sources_sync_status<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_mail_sources_sync_status(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_mail_inbox<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_mail_inbox(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_mail_threads_read<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_mail_threads_read(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_mail_compliance_search<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_mail_compliance_search(server, call, input))
+}
+#[inline(never)]
+fn boxed_connector_answer<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(connector_answer(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_browser_open<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_browser_open(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_browser_observe<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_browser_observe(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_browser_find<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_browser_find(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_browser_click<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_browser_click(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_browser_click_at<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_browser_click_at(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_browser_type<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_browser_type(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_browser_select<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_browser_select(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_browser_wait_for<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_browser_wait_for(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_browser_expect<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_browser_expect(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_browser_screenshot<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_browser_screenshot(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_browser_view<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_browser_view(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_browser_crop<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_browser_crop(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_browser_zoom<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_browser_zoom(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_browser_batch<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_browser_batch(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_browser_library_find<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_browser_library_find(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_browser_library_draft<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_browser_library_draft(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_browser_demonstration_start<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_browser_demonstration_start(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_browser_demonstration_stop<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_browser_demonstration_stop(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_browser_library_propose<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_browser_library_propose(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_browser_library_retire<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_browser_library_retire(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_browser_library_retired<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_browser_library_retired(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_browser_library_run<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_browser_library_run(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_browser_handover<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_browser_handover(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_browser_switch_engine<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_browser_switch_engine(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_claims_supersede<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_claims_supersede(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_fold<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_fold(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_compact<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_compact(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_unfold<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_unfold(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_folds<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_folds(server, call, input))
+}
+#[inline(never)]
+fn boxed_tasks_refuse<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(tasks_refuse(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_report_blocked<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_report_blocked(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_agents_spawn<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_agents_spawn(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_leader_split<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_leader_split(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_skills_call<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_skills_call(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_focus_refresh<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_focus_refresh(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_focus_subscribe<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_focus_subscribe(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_focus_unsubscribe<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_focus_unsubscribe(server, call, input))
+}
 /// Runs facade verb `verb` for `call` over `input`, as its row admits it:
 /// the one verb table every server transport serves. A board, browser or run
 /// row is refused by the context it needs, which no facade call carries; any
@@ -39515,8 +50174,9 @@ pub(crate) async fn call_verb(
     let restrictive = super::clock_ingress::restrictive_call(server, verb, input.as_ref().ok());
     super::clock_ingress::scoped(restrictive, call_verb_row(server, call, verb, input)).await
 }
-/// [`call_verb`]'s row for `verb`. Each row's future is on the heap, so this
-/// one stays small however large its largest row is (FIX 12072).
+/// [`call_verb`]'s row for `verb`. Each row's concrete future is constructed
+/// and boxed in its own non-inlined function (FIX 19837); this match receives
+/// only its boxed handle.
 async fn call_verb_row(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -39524,2607 +50184,2281 @@ async fn call_verb_row(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     match verb {
-        "vault.commitments.create" => Box::pin(vault_commitments_create(server, call, input)).await,
-        "vault.commitments.get" => Box::pin(vault_commitments_get(server, call, input)).await,
+        "vault.commitments.create" => boxed_vault_commitments_create(server, call, input).await,
+        "vault.commitments.get" => boxed_vault_commitments_get(server, call, input).await,
         "vault.commitments.instances" => {
-            Box::pin(vault_commitments_instances(server, call, input)).await
+            boxed_vault_commitments_instances(server, call, input).await
         }
         "vault.commitments.proposals" => {
-            Box::pin(vault_commitments_proposals(server, call, input)).await
+            boxed_vault_commitments_proposals(server, call, input).await
         }
-        "vault.commitments.fulfill" => {
-            Box::pin(vault_commitments_fulfill(server, call, input)).await
-        }
-        "vault.commitments.release" => {
-            Box::pin(vault_commitments_release(server, call, input)).await
-        }
+        "vault.commitments.fulfill" => boxed_vault_commitments_fulfill(server, call, input).await,
+        "vault.commitments.release" => boxed_vault_commitments_release(server, call, input).await,
         "vault.commitments.supersede" => {
-            Box::pin(vault_commitments_supersede(server, call, input)).await
+            boxed_vault_commitments_supersede(server, call, input).await
         }
         "vault.commitments.reminder_route.get" => {
-            Box::pin(vault_commitments_reminder_route_get(server, call, input)).await
+            boxed_vault_commitments_reminder_route_get(server, call, input).await
         }
         "vault.commitments.reminder_route.set" => {
-            Box::pin(vault_commitments_reminder_route_set(server, call, input)).await
+            boxed_vault_commitments_reminder_route_set(server, call, input).await
         }
-        "fetch" => Box::pin(fetch(server, call, input)).await,
-        "crawl" => Box::pin(crawl(server, call, input)).await,
-        "report" => Box::pin(report(server, call, input)).await,
-        "feedback.preview" => Box::pin(feedback_preview(server, call, input)).await,
-        "feedback.send" => Box::pin(feedback_send(server, call, input)).await,
-        "vault.reports.disclosure" => Box::pin(vault_reports_disclosure(server, call, input)).await,
-        "vault.reports.route" => Box::pin(vault_reports_route(server, call, input)).await,
-        "vault.reports.outbound" => Box::pin(vault_reports_outbound(server, call, input)).await,
-        "self.focus.wakes" => Box::pin(self_focus_wakes(server, call, input)).await,
+        "fetch" => boxed_fetch(server, call, input).await,
+        "crawl" => boxed_crawl(server, call, input).await,
+        "report" => boxed_report(server, call, input).await,
+        "feedback.preview" => boxed_feedback_preview(server, call, input).await,
+        "feedback.send" => boxed_feedback_send(server, call, input).await,
+        "vault.reports.disclosure" => boxed_vault_reports_disclosure(server, call, input).await,
+        "vault.reports.route" => boxed_vault_reports_route(server, call, input).await,
+        "vault.reports.outbound" => boxed_vault_reports_outbound(server, call, input).await,
+        "self.focus.wakes" => boxed_self_focus_wakes(server, call, input).await,
         "self.focus.scratchpad.recall" => {
-            Box::pin(self_focus_scratchpad_recall(server, call, input)).await
+            boxed_self_focus_scratchpad_recall(server, call, input).await
         }
         "self.focus.scratchpad.append" => {
-            Box::pin(self_focus_scratchpad_append(server, call, input)).await
+            boxed_self_focus_scratchpad_append(server, call, input).await
         }
-        "self.focus.scratchpad.seal" => {
-            Box::pin(self_focus_scratchpad_seal(server, call, input)).await
-        }
-        "self.memory.diary" => Box::pin(self_memory_diary(server, call, input)).await,
-        "self.memory.diary.reads" => Box::pin(self_memory_diary_reads(server, call, input)).await,
-        "self.memory.diary.review" => Box::pin(self_memory_diary_review(server, call, input)).await,
-        "self.standing.get" => Box::pin(self_standing_get(server, call, input)).await,
-        "self.standing.list" => Box::pin(self_standing_list(server, call, input)).await,
-        "self.standing.edit" => Box::pin(self_standing_edit(server, call, input)).await,
-        "self.identity.answer" => Box::pin(self_identity_answer(server, call, input)).await,
-        "self.identity.settle" => Box::pin(self_identity_settle(server, call, input)).await,
-        "self.inbox.list" => Box::pin(self_inbox_list(server, call, input)).await,
-        "self.inbox.mark" => Box::pin(self_inbox_mark(server, call, input)).await,
-        "self.inbox.concern" => Box::pin(self_inbox_concern(server, call, input)).await,
-        "self.inbox.concern.outcome" => {
-            Box::pin(self_inbox_concern_outcome(server, call, input)).await
-        }
-        "self.inbox.concern.move" => Box::pin(self_inbox_concern_move(server, call, input)).await,
-        "vault.diagnostics.list" => Box::pin(vault_diagnostics_list(server, call, input)).await,
-        "vault.diagnostics.get" => Box::pin(vault_diagnostics_get(server, call, input)).await,
-        "vault.coach.inspect" => Box::pin(vault_coach_inspect(server, call, input)).await,
-        "vault.people.list" => Box::pin(vault_people_list(server, call, input)).await,
-        "vault.people.get" => Box::pin(vault_people_get(server, call, input)).await,
-        "vault.people.create" => Box::pin(vault_people_create(server, call, input)).await,
+        "self.focus.scratchpad.seal" => boxed_self_focus_scratchpad_seal(server, call, input).await,
+        "self.board.layout" => boxed_self_board_layout(server, call, input).await,
+        "self.board.fold" => boxed_self_board_fold(server, call, input).await,
+        "self.board.unfold" => boxed_self_board_unfold(server, call, input).await,
+        "self.board.size" => boxed_self_board_size(server, call, input).await,
+        "self.board.filter" => boxed_self_board_filter(server, call, input).await,
+        "self.board.replace" => boxed_self_board_replace(server, call, input).await,
+        "self.memory.diary" => boxed_self_memory_diary(server, call, input).await,
+        "self.memory.diary.reads" => boxed_self_memory_diary_reads(server, call, input).await,
+        "self.memory.diary.review" => boxed_self_memory_diary_review(server, call, input).await,
+        "self.standing.get" => boxed_self_standing_get(server, call, input).await,
+        "self.standing.list" => boxed_self_standing_list(server, call, input).await,
+        "self.standing.edit" => boxed_self_standing_edit(server, call, input).await,
+        "self.identity.answer" => boxed_self_identity_answer(server, call, input).await,
+        "self.identity.settle" => boxed_self_identity_settle(server, call, input).await,
+        "self.inbox.list" => boxed_self_inbox_list(server, call, input).await,
+        "self.inbox.mark" => boxed_self_inbox_mark(server, call, input).await,
+        "self.inbox.concern" => boxed_self_inbox_concern(server, call, input).await,
+        "self.inbox.concern.outcome" => boxed_self_inbox_concern_outcome(server, call, input).await,
+        "self.inbox.concern.move" => boxed_self_inbox_concern_move(server, call, input).await,
+        "vault.diagnostics.list" => boxed_vault_diagnostics_list(server, call, input).await,
+        "vault.diagnostics.get" => boxed_vault_diagnostics_get(server, call, input).await,
+        "vault.coach.inspect" => boxed_vault_coach_inspect(server, call, input).await,
+        "vault.people.list" => boxed_vault_people_list(server, call, input).await,
+        "vault.people.get" => boxed_vault_people_get(server, call, input).await,
+        "vault.people.create" => boxed_vault_people_create(server, call, input).await,
         "vault.entities.look_before_mint" => {
-            Box::pin(vault_entities_look_before_mint(server, call, input)).await
+            boxed_vault_entities_look_before_mint(server, call, input).await
         }
-        "vault.identity.mention" => Box::pin(vault_identity_mention(server, call, input)).await,
-        "vault.shape.read" => Box::pin(vault_shape_read(server, call, input)).await,
-        "vault.shape.plan" => Box::pin(vault_shape_plan(server, call, input)).await,
-        "vault.shape.apply" => Box::pin(vault_shape_apply(server, call, input)).await,
-        "vault.shape.plan.card" => Box::pin(vault_shape_plan_card(server, call, input)).await,
-        "vault.shape.items.receipt" => {
-            Box::pin(vault_shape_items_receipt(server, call, input)).await
-        }
-        "vault.shape.groups" => Box::pin(vault_shape_groups(server, call, input)).await,
-        "vault.shape.groups.resolve" => {
-            Box::pin(vault_shape_groups_resolve(server, call, input)).await
-        }
-        "self.message" => Box::pin(self_message(server, call, input)).await,
-        "self.grants.ask" => Box::pin(self_grants_ask(server, call, input)).await,
-        "self.grants.asked" => Box::pin(self_grants_asked(server, call, input)).await,
+        "vault.identity.mention" => boxed_vault_identity_mention(server, call, input).await,
+        "vault.shape.read" => boxed_vault_shape_read(server, call, input).await,
+        "vault.shape.plan" => boxed_vault_shape_plan(server, call, input).await,
+        "vault.shape.apply" => boxed_vault_shape_apply(server, call, input).await,
+        "vault.shape.plan.card" => boxed_vault_shape_plan_card(server, call, input).await,
+        "vault.shape.items.receipt" => boxed_vault_shape_items_receipt(server, call, input).await,
+        "vault.shape.groups" => boxed_vault_shape_groups(server, call, input).await,
+        "vault.shape.groups.resolve" => boxed_vault_shape_groups_resolve(server, call, input).await,
+        "self.message" => boxed_self_message(server, call, input).await,
+        "self.grants.ask" => boxed_self_grants_ask(server, call, input).await,
+        "self.grants.asked" => boxed_self_grants_asked(server, call, input).await,
         "vault.companions.access_requests.answer" => {
-            Box::pin(vault_companions_access_requests_answer(server, call, input)).await
+            boxed_vault_companions_access_requests_answer(server, call, input).await
         }
-        "self.grants.answer" => Box::pin(self_grants_answer(server, call, input)).await,
-        "vault.personas.preview" => Box::pin(vault_personas_preview(server, call, input)).await,
-        "vault.personas.export" => Box::pin(vault_personas_export(server, call, input)).await,
-        "vault.personas.edit" => Box::pin(vault_personas_edit(server, call, input)).await,
-        "self.memory.diary.query" => Box::pin(self_memory_diary_query(server, call, input)).await,
-        "self.memory.pads.read" => Box::pin(self_memory_pads_read(server, call, input)).await,
+        "self.grants.answer" => boxed_self_grants_answer(server, call, input).await,
+        "vault.personas.preview" => boxed_vault_personas_preview(server, call, input).await,
+        "vault.personas.export" => boxed_vault_personas_export(server, call, input).await,
+        "vault.personas.edit" => boxed_vault_personas_edit(server, call, input).await,
+        "self.memory.diary.query" => boxed_self_memory_diary_query(server, call, input).await,
+        "self.memory.pads.read" => boxed_self_memory_pads_read(server, call, input).await,
         "self.memory.pads.admin_reads" => {
-            Box::pin(self_memory_pads_admin_reads(server, call, input)).await
+            boxed_self_memory_pads_admin_reads(server, call, input).await
         }
-        "cancel" => Box::pin(cancel(server, call, input)).await,
-        "steer" => Box::pin(steer(server, call, input)).await,
-        "describe" => Box::pin(describe(server, call, input)).await,
-        "tasks.create" => Box::pin(tasks_create(server, call, input)).await,
-        "tasks.wave" => Box::pin(tasks_wave(server, call, input)).await,
-        "vault.fanout.spawn" => Box::pin(vault_fanout_spawn(server, call, input)).await,
-        "vault.fanout.slots" => Box::pin(vault_fanout_slots(server, call, input)).await,
-        "vault.fanout.launch" => Box::pin(vault_fanout_launch(server, call, input)).await,
-        "self.budget" => Box::pin(self_budget(server, call, input)).await,
-        "self.budget.land" => Box::pin(self_budget_land(server, call, input)).await,
-        "self.billing.account.file" => {
-            Box::pin(self_billing_account_file(server, call, input)).await
-        }
-        "vault.budgets.lease.open" => Box::pin(vault_budgets_lease_open(server, call, input)).await,
-        "vault.budgets.lease" => Box::pin(vault_budgets_lease(server, call, input)).await,
-        "vault.budgets.lease.top_up" => {
-            Box::pin(vault_budgets_lease_top_up(server, call, input)).await
-        }
-        "vault.budgets.hold" => Box::pin(vault_budgets_hold(server, call, input)).await,
-        "vault.budgets.hold.resume" => {
-            Box::pin(vault_budgets_hold_resume(server, call, input)).await
-        }
-        "vault.budgets.local" => Box::pin(vault_budgets_local(server, call, input)).await,
-        "vault.budgets.reservations" => {
-            Box::pin(vault_budgets_reservations(server, call, input)).await
-        }
-        "vault.budgets.settlements" => {
-            Box::pin(vault_budgets_settlements(server, call, input)).await
-        }
+        "cancel" => boxed_cancel(server, call, input).await,
+        "steer" => boxed_steer(server, call, input).await,
+        "describe" => boxed_describe(server, call, input).await,
+        "tasks.create" => boxed_tasks_create(server, call, input).await,
+        "tasks.wave" => boxed_tasks_wave(server, call, input).await,
+        "vault.fanout.spawn" => boxed_vault_fanout_spawn(server, call, input).await,
+        "vault.fanout.slots" => boxed_vault_fanout_slots(server, call, input).await,
+        "vault.fanout.launch" => boxed_vault_fanout_launch(server, call, input).await,
+        "self.budget" => boxed_self_budget(server, call, input).await,
+        "self.budget.land" => boxed_self_budget_land(server, call, input).await,
+        "self.billing.account.file" => boxed_self_billing_account_file(server, call, input).await,
+        "vault.budgets.lease.open" => boxed_vault_budgets_lease_open(server, call, input).await,
+        "vault.budgets.lease" => boxed_vault_budgets_lease(server, call, input).await,
+        "vault.budgets.lease.top_up" => boxed_vault_budgets_lease_top_up(server, call, input).await,
+        "vault.budgets.hold" => boxed_vault_budgets_hold(server, call, input).await,
+        "vault.budgets.hold.resume" => boxed_vault_budgets_hold_resume(server, call, input).await,
+        "vault.budgets.local" => boxed_vault_budgets_local(server, call, input).await,
+        "vault.budgets.reservations" => boxed_vault_budgets_reservations(server, call, input).await,
+        "vault.budgets.settlements" => boxed_vault_budgets_settlements(server, call, input).await,
         "vault.budgets.rsi.configure" => {
-            Box::pin(vault_budgets_rsi_configure(server, call, input)).await
+            boxed_vault_budgets_rsi_configure(server, call, input).await
         }
-        "vault.budgets.rsi" => Box::pin(vault_budgets_rsi(server, call, input)).await,
-        "vault.budgets.rsi.top_up" => Box::pin(vault_budgets_rsi_top_up(server, call, input)).await,
-        "vault.budgets.rsi.hold" => Box::pin(vault_budgets_rsi_hold(server, call, input)).await,
+        "vault.budgets.rsi" => boxed_vault_budgets_rsi(server, call, input).await,
+        "vault.budgets.rsi.top_up" => boxed_vault_budgets_rsi_top_up(server, call, input).await,
+        "vault.budgets.rsi.hold" => boxed_vault_budgets_rsi_hold(server, call, input).await,
         "vault.budgets.rsi.hold.resume" => {
-            Box::pin(vault_budgets_rsi_hold_resume(server, call, input)).await
+            boxed_vault_budgets_rsi_hold_resume(server, call, input).await
         }
         "vault.budgets.resident_shares" => {
-            Box::pin(vault_budgets_resident_shares(server, call, input)).await
+            boxed_vault_budgets_resident_shares(server, call, input).await
         }
         "vault.budgets.resident_shares.set" => {
-            Box::pin(vault_budgets_resident_shares_set(server, call, input)).await
+            boxed_vault_budgets_resident_shares_set(server, call, input).await
         }
-        "vault.runners.seats.quotas" => {
-            Box::pin(vault_runners_seats_quotas(server, call, input)).await
-        }
-        "vault.runners.seats.top_up" => {
-            Box::pin(vault_runners_seats_top_up(server, call, input)).await
-        }
-        "vault.runners.seats.resume" => {
-            Box::pin(vault_runners_seats_resume(server, call, input)).await
-        }
-        "vault.fanout.resume" => Box::pin(vault_fanout_resume(server, call, input)).await,
-        "vault.fanout.resume_as" => Box::pin(vault_fanout_resume_as(server, call, input)).await,
-        "vault.fanout.ack" => Box::pin(vault_fanout_ack(server, call, input)).await,
-        "tasks.update" => Box::pin(tasks_update(server, call, input)).await,
-        "tasks.accept" => Box::pin(tasks_accept(server, call, input)).await,
-        "tasks.redo" => Box::pin(tasks_redo(server, call, input)).await,
-        "vault.commit_message" => Box::pin(vault_commit_message(server, call, input)).await,
-        "vault.begin_message_stream" => {
-            Box::pin(vault_begin_message_stream(server, call, input)).await
-        }
-        "vault.append_to_stream" => Box::pin(vault_append_to_stream(server, call, input)).await,
-        "vault.flush_stream" => Box::pin(vault_flush_stream(server, call, input)).await,
-        "vault.finalize_stream" => Box::pin(vault_finalize_stream(server, call, input)).await,
-        "vault.cancel_stream" => Box::pin(vault_cancel_stream(server, call, input)).await,
+        "vault.runners.seats.quotas" => boxed_vault_runners_seats_quotas(server, call, input).await,
+        "vault.runners.seats.top_up" => boxed_vault_runners_seats_top_up(server, call, input).await,
+        "vault.runners.seats.resume" => boxed_vault_runners_seats_resume(server, call, input).await,
+        "vault.fanout.resume" => boxed_vault_fanout_resume(server, call, input).await,
+        "vault.fanout.resume_as" => boxed_vault_fanout_resume_as(server, call, input).await,
+        "vault.fanout.ack" => boxed_vault_fanout_ack(server, call, input).await,
+        "tasks.update" => boxed_tasks_update(server, call, input).await,
+        "tasks.accept" => boxed_tasks_accept(server, call, input).await,
+        "tasks.redo" => boxed_tasks_redo(server, call, input).await,
+        "vault.commit_message" => boxed_vault_commit_message(server, call, input).await,
+        "vault.begin_message_stream" => boxed_vault_begin_message_stream(server, call, input).await,
+        "vault.append_to_stream" => boxed_vault_append_to_stream(server, call, input).await,
+        "vault.flush_stream" => boxed_vault_flush_stream(server, call, input).await,
+        "vault.finalize_stream" => boxed_vault_finalize_stream(server, call, input).await,
+        "vault.cancel_stream" => boxed_vault_cancel_stream(server, call, input).await,
         "vault.message_stream_partial" => {
-            Box::pin(vault_message_stream_partial(server, call, input)).await
+            boxed_vault_message_stream_partial(server, call, input).await
         }
         "vault.message_streams.refused" => {
-            Box::pin(vault_message_streams_refused(server, call, input)).await
+            boxed_vault_message_streams_refused(server, call, input).await
         }
-        "vault.messages.durability" => {
-            Box::pin(vault_messages_durability(server, call, input)).await
-        }
-        "vault.witness" => Box::pin(vault_witness(server, call, input)).await,
-        "vault.claims.upsert" => Box::pin(vault_claims_upsert(server, call, input)).await,
-        "vault.recall" => Box::pin(vault_recall(server, call, input)).await,
-        "vault.retrieval.aging.get" => {
-            Box::pin(vault_retrieval_aging_get(server, call, input)).await
-        }
+        "vault.messages.durability" => boxed_vault_messages_durability(server, call, input).await,
+        "vault.witness" => boxed_vault_witness(server, call, input).await,
+        "vault.claims.upsert" => boxed_vault_claims_upsert(server, call, input).await,
+        "vault.recall" => boxed_vault_recall(server, call, input).await,
+        "vault.retrieval.aging.get" => boxed_vault_retrieval_aging_get(server, call, input).await,
         "vault.retrieval.aging.configure" => {
-            Box::pin(vault_retrieval_aging_configure(server, call, input)).await
+            boxed_vault_retrieval_aging_configure(server, call, input).await
         }
         "vault.retrieval.weights.get" => {
-            Box::pin(vault_retrieval_weights_get(server, call, input)).await
+            boxed_vault_retrieval_weights_get(server, call, input).await
         }
         "vault.retrieval.weights.configure" => {
-            Box::pin(vault_retrieval_weights_configure(server, call, input)).await
+            boxed_vault_retrieval_weights_configure(server, call, input).await
         }
         "vault.retrieval.hyde.configure" => {
-            Box::pin(vault_retrieval_hyde_configure(server, call, input)).await
+            boxed_vault_retrieval_hyde_configure(server, call, input).await
         }
-        "vault.retrieval.hyde.get" => Box::pin(vault_retrieval_hyde_get(server, call, input)).await,
+        "vault.retrieval.hyde.get" => boxed_vault_retrieval_hyde_get(server, call, input).await,
         "vault.retrieval.hyde.pending" => {
-            Box::pin(vault_retrieval_hyde_pending(server, call, input)).await
+            boxed_vault_retrieval_hyde_pending(server, call, input).await
         }
         "vault.retrieval.hyde.complete" => {
-            Box::pin(vault_retrieval_hyde_complete(server, call, input)).await
+            boxed_vault_retrieval_hyde_complete(server, call, input).await
         }
         "vault.retrieval.hyde.receipt" => {
-            Box::pin(vault_retrieval_hyde_receipt(server, call, input)).await
+            boxed_vault_retrieval_hyde_receipt(server, call, input).await
         }
         "vault.affect.annotations.put" => {
-            Box::pin(vault_affect_annotations_put(server, call, input)).await
+            boxed_vault_affect_annotations_put(server, call, input).await
         }
-        "vault.tagging.status" => Box::pin(vault_tagging_status(server, call, input)).await,
-        "vault.tagging.tags" => Box::pin(vault_tagging_tags(server, call, input)).await,
-        "vault.tagging.history" => Box::pin(vault_tagging_history(server, call, input)).await,
-        "vault.tagging.mentions" => Box::pin(vault_tagging_mentions(server, call, input)).await,
+        "vault.tagging.status" => boxed_vault_tagging_status(server, call, input).await,
+        "vault.tagging.tags" => boxed_vault_tagging_tags(server, call, input).await,
+        "vault.tagging.history" => boxed_vault_tagging_history(server, call, input).await,
+        "vault.tagging.mentions" => boxed_vault_tagging_mentions(server, call, input).await,
         "vault.affect.claims.consolidate" => {
-            Box::pin(vault_affect_claims_consolidate(server, call, input)).await
+            boxed_vault_affect_claims_consolidate(server, call, input).await
         }
-        "vault.affect.coping.record" => {
-            Box::pin(vault_affect_coping_record(server, call, input)).await
-        }
-        "vault.affect.coping.update" => {
-            Box::pin(vault_affect_coping_update(server, call, input)).await
-        }
+        "vault.affect.coping.record" => boxed_vault_affect_coping_record(server, call, input).await,
+        "vault.affect.coping.update" => boxed_vault_affect_coping_update(server, call, input).await,
         "vault.affect.coping.aggregate" => {
-            Box::pin(vault_affect_coping_aggregate(server, call, input)).await
+            boxed_vault_affect_coping_aggregate(server, call, input).await
         }
         "vault.affect.wellness.policy.get" => {
-            Box::pin(vault_affect_wellness_policy_get(server, call, input)).await
+            boxed_vault_affect_wellness_policy_get(server, call, input).await
         }
         "vault.affect.wellness.policy.configure" => {
-            Box::pin(vault_affect_wellness_policy_configure(server, call, input)).await
+            boxed_vault_affect_wellness_policy_configure(server, call, input).await
         }
         "vault.affect.wellness.derive" => {
-            Box::pin(vault_affect_wellness_derive(server, call, input)).await
+            boxed_vault_affect_wellness_derive(server, call, input).await
         }
-        "vault.affect.wellness.get" => {
-            Box::pin(vault_affect_wellness_get(server, call, input)).await
-        }
-        "vault.cluster" => Box::pin(vault_cluster(server, call, input)).await,
-        "vault.cluster.proposal" => Box::pin(vault_cluster_proposal(server, call, input)).await,
-        "vault.cluster.propose" => Box::pin(vault_cluster_propose(server, call, input)).await,
-        "vault.cluster.merge" => Box::pin(vault_cluster_merge(server, call, input)).await,
-        "vault.cluster.split" => Box::pin(vault_cluster_split(server, call, input)).await,
+        "vault.affect.wellness.get" => boxed_vault_affect_wellness_get(server, call, input).await,
+        "vault.cluster" => boxed_vault_cluster(server, call, input).await,
+        "vault.cluster.proposal" => boxed_vault_cluster_proposal(server, call, input).await,
+        "vault.cluster.propose" => boxed_vault_cluster_propose(server, call, input).await,
+        "vault.cluster.merge" => boxed_vault_cluster_merge(server, call, input).await,
+        "vault.cluster.split" => boxed_vault_cluster_split(server, call, input).await,
         "vault.cluster.resolve_proposal" => {
-            Box::pin(vault_cluster_resolve_proposal(server, call, input)).await
+            boxed_vault_cluster_resolve_proposal(server, call, input).await
         }
-        "vault.retrieval.recall" => Box::pin(vault_retrieval_recall(server, call, input)).await,
-        "vault.retrieval.runs" => Box::pin(vault_retrieval_runs(server, call, input)).await,
-        "vault.retrieval.run" => Box::pin(vault_retrieval_run(server, call, input)).await,
-        "vault.retrieval.turn" => Box::pin(vault_retrieval_turn(server, call, input)).await,
+        "vault.retrieval.recall" => boxed_vault_retrieval_recall(server, call, input).await,
+        "vault.retrieval.runs" => boxed_vault_retrieval_runs(server, call, input).await,
+        "vault.retrieval.run" => boxed_vault_retrieval_run(server, call, input).await,
+        "vault.retrieval.turn" => boxed_vault_retrieval_turn(server, call, input).await,
         "vault.retrieval.outcomes.put" => {
-            Box::pin(vault_retrieval_outcomes_put(server, call, input)).await
+            boxed_vault_retrieval_outcomes_put(server, call, input).await
         }
         "vault.retrieval.outcomes.end" => {
-            Box::pin(vault_retrieval_outcomes_end(server, call, input)).await
+            boxed_vault_retrieval_outcomes_end(server, call, input).await
         }
-        "vault.retrieval.trace" => Box::pin(vault_retrieval_trace(server, call, input)).await,
-        "vault.retrieval.export" => Box::pin(vault_retrieval_export(server, call, input)).await,
-        "vault.retrieval.replay" => Box::pin(vault_retrieval_replay(server, call, input)).await,
-        "vault.retrieval.policy.get" => {
-            Box::pin(vault_retrieval_policy_get(server, call, input)).await
-        }
-        "vault.retrieval.policy.pin" => {
-            Box::pin(vault_retrieval_policy_pin(server, call, input)).await
-        }
+        "vault.retrieval.trace" => boxed_vault_retrieval_trace(server, call, input).await,
+        "vault.retrieval.export" => boxed_vault_retrieval_export(server, call, input).await,
+        "vault.retrieval.replay" => boxed_vault_retrieval_replay(server, call, input).await,
+        "vault.retrieval.policy.get" => boxed_vault_retrieval_policy_get(server, call, input).await,
+        "vault.retrieval.policy.pin" => boxed_vault_retrieval_policy_pin(server, call, input).await,
         "vault.retrieval.policy.train" => {
-            Box::pin(vault_retrieval_policy_train(server, call, input)).await
+            boxed_vault_retrieval_policy_train(server, call, input).await
         }
         "vault.retrieval.policy.evaluate" => {
-            Box::pin(vault_retrieval_policy_evaluate(server, call, input)).await
+            boxed_vault_retrieval_policy_evaluate(server, call, input).await
         }
         "vault.retrieval.policy.admit" => {
-            Box::pin(vault_retrieval_policy_admit(server, call, input)).await
+            boxed_vault_retrieval_policy_admit(server, call, input).await
         }
         "vault.retrieval.policy.update" => {
-            Box::pin(vault_retrieval_policy_update(server, call, input)).await
+            boxed_vault_retrieval_policy_update(server, call, input).await
         }
-        "vault.export" => Box::pin(vault_export(server, call, input)).await,
-        "vault.export.transfer.read" => {
-            Box::pin(vault_export_transfer_read(server, call, input)).await
-        }
+        "vault.export" => boxed_vault_export(server, call, input).await,
+        "vault.export.transfer.read" => boxed_vault_export_transfer_read(server, call, input).await,
         "vault.export.transfer.release" => {
-            Box::pin(vault_export_transfer_release(server, call, input)).await
+            boxed_vault_export_transfer_release(server, call, input).await
         }
-        "self.credential.attenuate" => {
-            Box::pin(self_credential_attenuate(server, call, input)).await
-        }
-        "self.actor" => Box::pin(self_actor(server, call, input)).await,
-        "vault.scope.position" => Box::pin(vault_scope_position(server, call, input)).await,
-        "vault.scope.ceiling" => Box::pin(vault_scope_ceiling(server, call, input)).await,
-        "vault.export.scoped" => Box::pin(vault_export_scoped(server, call, input)).await,
-        "vault.receipts" => Box::pin(vault_receipts(server, call, input)).await,
-        "vault.assets.ingest" => Box::pin(vault_assets_ingest(server, call, input)).await,
-        "vault.assets.resolve" => Box::pin(vault_assets_resolve(server, call, input)).await,
-        "vault.search.vector" => Box::pin(vault_search_vector(server, call, input)).await,
-        "vault.images.view" => Box::pin(vault_images_view(server, call, input)).await,
-        "vault.receipts.get" => Box::pin(vault_receipts_get(server, call, input)).await,
-        "self.admission.status" => Box::pin(self_admission_status(server, call, input)).await,
-        "self.admission.receipts" => Box::pin(self_admission_receipts(server, call, input)).await,
-        "vault.explain.memory" => Box::pin(vault_explain_memory(server, call, input)).await,
-        "vault.explain.gate" => Box::pin(vault_explain_gate(server, call, input)).await,
-        "vault.kv.get" => Box::pin(vault_kv_get(server, call, input)).await,
-        "vault.kv.put" => Box::pin(vault_kv_put(server, call, input)).await,
-        "vault.kv.delete" => Box::pin(vault_kv_delete(server, call, input)).await,
-        "vault.kv.search" => Box::pin(vault_kv_search(server, call, input)).await,
-        "vault.kv.namespaces" => Box::pin(vault_kv_namespaces(server, call, input)).await,
+        "self.credential.attenuate" => boxed_self_credential_attenuate(server, call, input).await,
+        "self.actor" => boxed_self_actor(server, call, input).await,
+        "vault.scope.position" => boxed_vault_scope_position(server, call, input).await,
+        "vault.scope.ceiling" => boxed_vault_scope_ceiling(server, call, input).await,
+        "vault.export.scoped" => boxed_vault_export_scoped(server, call, input).await,
+        "vault.receipts" => boxed_vault_receipts(server, call, input).await,
+        "vault.assets.ingest" => boxed_vault_assets_ingest(server, call, input).await,
+        "vault.assets.resolve" => boxed_vault_assets_resolve(server, call, input).await,
+        "vault.search.vector" => boxed_vault_search_vector(server, call, input).await,
+        "vault.images.view" => boxed_vault_images_view(server, call, input).await,
+        "vault.receipts.get" => boxed_vault_receipts_get(server, call, input).await,
+        "self.admission.status" => boxed_self_admission_status(server, call, input).await,
+        "self.admission.receipts" => boxed_self_admission_receipts(server, call, input).await,
+        "vault.explain.memory" => boxed_vault_explain_memory(server, call, input).await,
+        "vault.explain.gate" => boxed_vault_explain_gate(server, call, input).await,
+        "vault.kv.get" => boxed_vault_kv_get(server, call, input).await,
+        "vault.kv.put" => boxed_vault_kv_put(server, call, input).await,
+        "vault.kv.delete" => boxed_vault_kv_delete(server, call, input).await,
+        "vault.kv.search" => boxed_vault_kv_search(server, call, input).await,
+        "vault.kv.namespaces" => boxed_vault_kv_namespaces(server, call, input).await,
         "vault.campaign.compliance.install" => {
-            Box::pin(vault_campaign_compliance_install(server, call, input)).await
+            boxed_vault_campaign_compliance_install(server, call, input).await
         }
         "vault.campaign.compliance.amend" => {
-            Box::pin(vault_campaign_compliance_amend(server, call, input)).await
+            boxed_vault_campaign_compliance_amend(server, call, input).await
         }
         "vault.campaign.compliance.approve" => {
-            Box::pin(vault_campaign_compliance_approve(server, call, input)).await
+            boxed_vault_campaign_compliance_approve(server, call, input).await
         }
         "vault.campaign.compliance.reject" => {
-            Box::pin(vault_campaign_compliance_reject(server, call, input)).await
+            boxed_vault_campaign_compliance_reject(server, call, input).await
         }
         "vault.campaign.compliance.verify" => {
-            Box::pin(vault_campaign_compliance_verify(server, call, input)).await
+            boxed_vault_campaign_compliance_verify(server, call, input).await
         }
         "vault.campaign.compliance.result" => {
-            Box::pin(vault_campaign_compliance_result(server, call, input)).await
+            boxed_vault_campaign_compliance_result(server, call, input).await
         }
-        "vault.campaign.enroll" => Box::pin(vault_campaign_enroll(server, call, input)).await,
+        "vault.campaign.enroll" => boxed_vault_campaign_enroll(server, call, input).await,
         "vault.campaign.stage.evidence" => {
-            Box::pin(vault_campaign_stage_evidence(server, call, input)).await
+            boxed_vault_campaign_stage_evidence(server, call, input).await
         }
-        "vault.campaign.unsubscribe" => {
-            Box::pin(vault_campaign_unsubscribe(server, call, input)).await
-        }
+        "vault.campaign.unsubscribe" => boxed_vault_campaign_unsubscribe(server, call, input).await,
         "vault.campaign.program.create" => {
-            Box::pin(vault_campaign_program_create(server, call, input)).await
+            boxed_vault_campaign_program_create(server, call, input).await
         }
         "vault.campaign.program.read" => {
-            Box::pin(vault_campaign_program_read(server, call, input)).await
+            boxed_vault_campaign_program_read(server, call, input).await
         }
         "vault.campaign.program.update" => {
-            Box::pin(vault_campaign_program_update(server, call, input)).await
+            boxed_vault_campaign_program_update(server, call, input).await
         }
         "vault.campaign.program.archive" => {
-            Box::pin(vault_campaign_program_archive(server, call, input)).await
+            boxed_vault_campaign_program_archive(server, call, input).await
         }
-        "vault.turn_programs.arm" => Box::pin(vault_turn_programs_arm(server, call, input)).await,
-        "vault.turn_programs.disarm" => {
-            Box::pin(vault_turn_programs_disarm(server, call, input)).await
-        }
-        "vault.turn_programs.rebind" => {
-            Box::pin(vault_turn_programs_rebind(server, call, input)).await
-        }
-        "self.saved_query.create" => Box::pin(self_saved_query_create(server, call, input)).await,
-        "self.saved_query.read" => Box::pin(self_saved_query_read(server, call, input)).await,
-        "self.saved_query.update" => Box::pin(self_saved_query_update(server, call, input)).await,
-        "self.saved_query.archive" => Box::pin(self_saved_query_archive(server, call, input)).await,
-        "self.saved_query.members" => Box::pin(self_saved_query_members(server, call, input)).await,
-        "self.saved_query.evaluate" => {
-            Box::pin(self_saved_query_evaluate(server, call, input)).await
-        }
-        "vault.weave.report" => Box::pin(vault_weave_report(server, call, input)).await,
-        "vault.weave.digest" => Box::pin(vault_weave_digest(server, call, input)).await,
-        "vault.weave.lens" => Box::pin(vault_weave_lens(server, call, input)).await,
-        "vault.weave.link.wrong" => Box::pin(vault_weave_link_wrong(server, call, input)).await,
+        "vault.turn_programs.arm" => boxed_vault_turn_programs_arm(server, call, input).await,
+        "vault.turn_programs.disarm" => boxed_vault_turn_programs_disarm(server, call, input).await,
+        "vault.turn_programs.rebind" => boxed_vault_turn_programs_rebind(server, call, input).await,
+        "self.saved_query.create" => boxed_self_saved_query_create(server, call, input).await,
+        "self.saved_query.read" => boxed_self_saved_query_read(server, call, input).await,
+        "self.saved_query.update" => boxed_self_saved_query_update(server, call, input).await,
+        "self.saved_query.archive" => boxed_self_saved_query_archive(server, call, input).await,
+        "self.saved_query.members" => boxed_self_saved_query_members(server, call, input).await,
+        "self.saved_query.evaluate" => boxed_self_saved_query_evaluate(server, call, input).await,
+        "vault.weave.report" => boxed_vault_weave_report(server, call, input).await,
+        "vault.weave.digest" => boxed_vault_weave_digest(server, call, input).await,
+        "vault.weave.lens" => boxed_vault_weave_lens(server, call, input).await,
+        "vault.weave.link.wrong" => boxed_vault_weave_link_wrong(server, call, input).await,
         "vault.weave.owner.link.wrong" => {
-            Box::pin(vault_weave_owner_link_wrong(server, call, input)).await
+            boxed_vault_weave_owner_link_wrong(server, call, input).await
         }
-        "vault.weave.item.wrong" => Box::pin(vault_weave_item_wrong(server, call, input)).await,
+        "vault.weave.item.wrong" => boxed_vault_weave_item_wrong(server, call, input).await,
         "vault.weave.owner.item.wrong" => {
-            Box::pin(vault_weave_owner_item_wrong(server, call, input)).await
+            boxed_vault_weave_owner_item_wrong(server, call, input).await
         }
-        "vault.weave.enqueue" => Box::pin(vault_weave_enqueue(server, call, input)).await,
-        "vault.weave.schedules.list" => {
-            Box::pin(vault_weave_schedules_list(server, call, input)).await
-        }
-        "vault.weave.schedules.put" => {
-            Box::pin(vault_weave_schedules_put(server, call, input)).await
-        }
+        "vault.weave.enqueue" => boxed_vault_weave_enqueue(server, call, input).await,
+        "vault.weave.schedules.list" => boxed_vault_weave_schedules_list(server, call, input).await,
+        "vault.weave.schedules.put" => boxed_vault_weave_schedules_put(server, call, input).await,
         "vault.weave.schedules.clear" => {
-            Box::pin(vault_weave_schedules_clear(server, call, input)).await
+            boxed_vault_weave_schedules_clear(server, call, input).await
         }
         "vault.weave.setting_changes.list" => {
-            Box::pin(vault_weave_setting_changes_list(server, call, input)).await
+            boxed_vault_weave_setting_changes_list(server, call, input).await
         }
         "vault.weave.setting_changes.answer" => {
-            Box::pin(vault_weave_setting_changes_answer(server, call, input)).await
+            boxed_vault_weave_setting_changes_answer(server, call, input).await
         }
         "vault.weave.setting_changes.undo" => {
-            Box::pin(vault_weave_setting_changes_undo(server, call, input)).await
+            boxed_vault_weave_setting_changes_undo(server, call, input).await
         }
         "vault.weave.digest_feedback.put" => {
-            Box::pin(vault_weave_digest_feedback_put(server, call, input)).await
+            boxed_vault_weave_digest_feedback_put(server, call, input).await
         }
         "vault.weave.owner.digest.render" => {
-            Box::pin(vault_weave_owner_digest_render(server, call, input)).await
+            boxed_vault_weave_owner_digest_render(server, call, input).await
         }
         "vault.inbox.concerns.review" => {
-            Box::pin(vault_inbox_concerns_review(server, call, input)).await
+            boxed_vault_inbox_concerns_review(server, call, input).await
         }
-        "vault.inbox.lens" => Box::pin(vault_inbox_lens(server, call, input)).await,
-        "vault.inbox.groups" => Box::pin(vault_inbox_groups(server, call, input)).await,
-        "vault.inbox.groups.resolve" => {
-            Box::pin(vault_inbox_groups_resolve(server, call, input)).await
-        }
-        "vault.weave.digest.render" => {
-            Box::pin(vault_weave_digest_render(server, call, input)).await
-        }
+        "vault.proactivity.digest" => boxed_vault_proactivity_digest(server, call, input).await,
+        "vault.inbox.lens" => boxed_vault_inbox_lens(server, call, input).await,
+        "vault.inbox.groups" => boxed_vault_inbox_groups(server, call, input).await,
+        "vault.inbox.groups.resolve" => boxed_vault_inbox_groups_resolve(server, call, input).await,
+        "vault.weave.digest.render" => boxed_vault_weave_digest_render(server, call, input).await,
         "vault.weave.link.corrections" => {
-            Box::pin(vault_weave_link_corrections(server, call, input)).await
+            boxed_vault_weave_link_corrections(server, call, input).await
         }
-        "self.inbox.lens" => Box::pin(self_inbox_lens(server, call, input)).await,
-        "self.inbox.get" => Box::pin(self_inbox_get(server, call, input)).await,
-        "self.inbox.done" => Box::pin(self_inbox_done(server, call, input)).await,
-        "self.inbox.later" => Box::pin(self_inbox_later(server, call, input)).await,
-        "vault.skills.bootstrap" => Box::pin(vault_skills_bootstrap(server, call, input)).await,
+        "self.inbox.lens" => boxed_self_inbox_lens(server, call, input).await,
+        "self.inbox.get" => boxed_self_inbox_get(server, call, input).await,
+        "self.inbox.done" => boxed_self_inbox_done(server, call, input).await,
+        "self.inbox.later" => boxed_self_inbox_later(server, call, input).await,
+        "vault.skills.bootstrap" => boxed_vault_skills_bootstrap(server, call, input).await,
         "vault.skill_hubs.default.get" => {
-            Box::pin(vault_skill_hubs_default_get(server, call, input)).await
+            boxed_vault_skill_hubs_default_get(server, call, input).await
         }
         "vault.skills.restoreDefaults" => {
-            Box::pin(vault_skills_restoreDefaults(server, call, input)).await
+            boxed_vault_skills_restoreDefaults(server, call, input).await
         }
-        "vault.skill_hubs.put" => Box::pin(vault_skill_hubs_put(server, call, input)).await,
-        "vault.skill_hubs.get" => Box::pin(vault_skill_hubs_get(server, call, input)).await,
+        "vault.skill_hubs.put" => boxed_vault_skill_hubs_put(server, call, input).await,
+        "vault.skill_hubs.get" => boxed_vault_skill_hubs_get(server, call, input).await,
         "vault.skill_hubs.publishers.admit" => {
-            Box::pin(vault_skill_hubs_publishers_admit(server, call, input)).await
+            boxed_vault_skill_hubs_publishers_admit(server, call, input).await
         }
         "vault.skill_hubs.publishers.revoke" => {
-            Box::pin(vault_skill_hubs_publishers_revoke(server, call, input)).await
+            boxed_vault_skill_hubs_publishers_revoke(server, call, input).await
         }
-        "vault.skill_hubs.refs.get" => {
-            Box::pin(vault_skill_hubs_refs_get(server, call, input)).await
-        }
-        "vault.skill_hubs.refs.set" => {
-            Box::pin(vault_skill_hubs_refs_set(server, call, input)).await
-        }
-        "vault.packs.install" => Box::pin(vault_packs_install(server, call, input)).await,
-        "vault.packs.sync" => Box::pin(vault_packs_sync(server, call, input)).await,
-        "vault.packs.get" => Box::pin(vault_packs_get(server, call, input)).await,
-        "vault.skills.import" => Box::pin(vault_skills_import(server, call, input)).await,
-        "vault.skills.sync" => Box::pin(vault_skills_sync(server, call, input)).await,
-        "vault.skills.receipts" => Box::pin(vault_skills_receipts(server, call, input)).await,
-        "vault.skills.convert" => Box::pin(vault_skills_convert(server, call, input)).await,
-        "vault.skills.get" => Box::pin(vault_skills_get(server, call, input)).await,
-        "vault.skills.list" => Box::pin(vault_skills_list(server, call, input)).await,
-        "vault.skills.archive" => Box::pin(vault_skills_archive(server, call, input)).await,
-        "vault.skills.restore" => Box::pin(vault_skills_restore(server, call, input)).await,
-        "vault.skills.fork" => Box::pin(vault_skills_fork(server, call, input)).await,
-        "vault.skills.rules.set" => Box::pin(vault_skills_rules_set(server, call, input)).await,
+        "vault.skill_hubs.refs.get" => boxed_vault_skill_hubs_refs_get(server, call, input).await,
+        "vault.skill_hubs.refs.set" => boxed_vault_skill_hubs_refs_set(server, call, input).await,
+        "vault.packs.install" => boxed_vault_packs_install(server, call, input).await,
+        "vault.packs.sync" => boxed_vault_packs_sync(server, call, input).await,
+        "vault.packs.get" => boxed_vault_packs_get(server, call, input).await,
+        "vault.skills.import" => boxed_vault_skills_import(server, call, input).await,
+        "vault.skills.sync" => boxed_vault_skills_sync(server, call, input).await,
+        "vault.skills.receipts" => boxed_vault_skills_receipts(server, call, input).await,
+        "vault.skills.convert" => boxed_vault_skills_convert(server, call, input).await,
+        "vault.skills.get" => boxed_vault_skills_get(server, call, input).await,
+        "vault.skills.list" => boxed_vault_skills_list(server, call, input).await,
+        "vault.skills.archive" => boxed_vault_skills_archive(server, call, input).await,
+        "vault.skills.restore" => boxed_vault_skills_restore(server, call, input).await,
+        "vault.skills.fork" => boxed_vault_skills_fork(server, call, input).await,
+        "vault.skills.rules.set" => boxed_vault_skills_rules_set(server, call, input).await,
         "vault.skills.code_auto_install.set" => {
-            Box::pin(vault_skills_code_auto_install_set(server, call, input)).await
+            boxed_vault_skills_code_auto_install_set(server, call, input).await
         }
-        "vault.skills.fit.set" => Box::pin(vault_skills_fit_set(server, call, input)).await,
+        "vault.skills.fit.set" => boxed_vault_skills_fit_set(server, call, input).await,
         "vault.skills.advisory_ask.set" => {
-            Box::pin(vault_skills_advisory_ask_set(server, call, input)).await
+            boxed_vault_skills_advisory_ask_set(server, call, input).await
         }
         "vault.skills.permissions.approve" => {
-            Box::pin(vault_skills_permissions_approve(server, call, input)).await
+            boxed_vault_skills_permissions_approve(server, call, input).await
         }
         "vault.skills.optimize.start" => {
-            Box::pin(vault_skills_optimize_start(server, call, input)).await
+            boxed_vault_skills_optimize_start(server, call, input).await
         }
         "vault.skills.optimize.result" => {
-            Box::pin(vault_skills_optimize_result(server, call, input)).await
+            boxed_vault_skills_optimize_result(server, call, input).await
         }
         "vault.projects.goal.intake.complete" => {
-            Box::pin(vault_projects_goal_intake_complete(server, call, input)).await
+            boxed_vault_projects_goal_intake_complete(server, call, input).await
         }
-        "vault.projects.goal.get" => Box::pin(vault_projects_goal_get(server, call, input)).await,
+        "vault.projects.goal.get" => boxed_vault_projects_goal_get(server, call, input).await,
         "vault.skills.optimize.propose" => {
-            Box::pin(vault_skills_optimize_propose(server, call, input)).await
+            boxed_vault_skills_optimize_propose(server, call, input).await
         }
         "vault.skills.optimize.measure" => {
-            Box::pin(vault_skills_optimize_measure(server, call, input)).await
+            boxed_vault_skills_optimize_measure(server, call, input).await
         }
         "vault.skills.optimize.score" => {
-            Box::pin(vault_skills_optimize_score(server, call, input)).await
+            boxed_vault_skills_optimize_score(server, call, input).await
         }
         "vault.skills.optimize.admit" => {
-            Box::pin(vault_skills_optimize_admit(server, call, input)).await
+            boxed_vault_skills_optimize_admit(server, call, input).await
         }
         "vault.skills.optimize.goal.get" => {
-            Box::pin(vault_skills_optimize_goal_get(server, call, input)).await
+            boxed_vault_skills_optimize_goal_get(server, call, input).await
         }
         "vault.skills.optimize.goal.bind" => {
-            Box::pin(vault_skills_optimize_goal_bind(server, call, input)).await
+            boxed_vault_skills_optimize_goal_bind(server, call, input).await
         }
         "vault.skills.optimize.preferences.get" => {
-            Box::pin(vault_skills_optimize_preferences_get(server, call, input)).await
+            boxed_vault_skills_optimize_preferences_get(server, call, input).await
         }
         "vault.skills.optimize.preferences.set" => {
-            Box::pin(vault_skills_optimize_preferences_set(server, call, input)).await
+            boxed_vault_skills_optimize_preferences_set(server, call, input).await
         }
         "vault.skills.optimize.tradeoff_asks" => {
-            Box::pin(vault_skills_optimize_tradeoff_asks(server, call, input)).await
+            boxed_vault_skills_optimize_tradeoff_asks(server, call, input).await
         }
         "vault.skills.optimize.tradeoff_asks.pick" => {
-            Box::pin(vault_skills_optimize_tradeoff_asks_pick(
-                server, call, input,
-            ))
-            .await
+            boxed_vault_skills_optimize_tradeoff_asks_pick(server, call, input).await
         }
         "vault.skills.optimize.tradeoff_asks.resolve" => {
-            Box::pin(vault_skills_optimize_tradeoff_asks_resolve(
-                server, call, input,
-            ))
-            .await
+            boxed_vault_skills_optimize_tradeoff_asks_resolve(server, call, input).await
         }
         "vault.skills.governance.get" => {
-            Box::pin(vault_skills_governance_get(server, call, input)).await
+            boxed_vault_skills_governance_get(server, call, input).await
         }
         "vault.skills.governance.set" => {
-            Box::pin(vault_skills_governance_set(server, call, input)).await
+            boxed_vault_skills_governance_set(server, call, input).await
         }
-        "vault.packs.hooks.bind" => Box::pin(vault_packs_hooks_bind(server, call, input)).await,
-        "vault.packs.hooks.list" => Box::pin(vault_packs_hooks_list(server, call, input)).await,
+        "vault.packs.hooks.bind" => boxed_vault_packs_hooks_bind(server, call, input).await,
+        "vault.packs.hooks.list" => boxed_vault_packs_hooks_list(server, call, input).await,
         "vault.packs.hooks.grant.set" => {
-            Box::pin(vault_packs_hooks_grant_set(server, call, input)).await
+            boxed_vault_packs_hooks_grant_set(server, call, input).await
         }
         "vault.packs.hooks.grant.get" => {
-            Box::pin(vault_packs_hooks_grant_get(server, call, input)).await
+            boxed_vault_packs_hooks_grant_get(server, call, input).await
         }
-        "vault.packs.hooks.qualify" => {
-            Box::pin(vault_packs_hooks_qualify(server, call, input)).await
-        }
-        "vault.packs.put" => Box::pin(vault_packs_put(server, call, input)).await,
-        "vault.packs.preview" => Box::pin(vault_packs_preview(server, call, input)).await,
+        "vault.packs.hooks.qualify" => boxed_vault_packs_hooks_qualify(server, call, input).await,
+        "vault.packs.put" => boxed_vault_packs_put(server, call, input).await,
+        "vault.packs.preview" => boxed_vault_packs_preview(server, call, input).await,
         "vault.packs.connector.prepare" => {
-            Box::pin(vault_packs_connector_prepare(server, call, input)).await
+            boxed_vault_packs_connector_prepare(server, call, input).await
         }
-        "vault.packs.connector.get" => {
-            Box::pin(vault_packs_connector_get(server, call, input)).await
-        }
+        "vault.packs.connector.get" => boxed_vault_packs_connector_get(server, call, input).await,
         "vault.packs.connector.qualify" => {
-            Box::pin(vault_packs_connector_qualify(server, call, input)).await
+            boxed_vault_packs_connector_qualify(server, call, input).await
         }
         "vault.packs.connector.accept" => {
-            Box::pin(vault_packs_connector_accept(server, call, input)).await
+            boxed_vault_packs_connector_accept(server, call, input).await
         }
         "vault.packs.connector.update" => {
-            Box::pin(vault_packs_connector_update(server, call, input)).await
+            boxed_vault_packs_connector_update(server, call, input).await
         }
         "vault.packs.connector.grants.get" => {
-            Box::pin(vault_packs_connector_grants_get(server, call, input)).await
+            boxed_vault_packs_connector_grants_get(server, call, input).await
         }
         "vault.packs.connector.grants.put" => {
-            Box::pin(vault_packs_connector_grants_put(server, call, input)).await
+            boxed_vault_packs_connector_grants_put(server, call, input).await
         }
-        "vault.packs.remove" => Box::pin(vault_packs_remove(server, call, input)).await,
+        "vault.packs.remove" => boxed_vault_packs_remove(server, call, input).await,
         "vault.packs.sections.propose" => {
-            Box::pin(vault_packs_sections_propose(server, call, input)).await
+            boxed_vault_packs_sections_propose(server, call, input).await
         }
-        "vault.packs.sections.list" => {
-            Box::pin(vault_packs_sections_list(server, call, input)).await
-        }
-        "vault.packs.sections.grant" => {
-            Box::pin(vault_packs_sections_grant(server, call, input)).await
-        }
+        "vault.packs.sections.list" => boxed_vault_packs_sections_list(server, call, input).await,
+        "vault.packs.sections.grant" => boxed_vault_packs_sections_grant(server, call, input).await,
         "vault.packs.sections.revoke" => {
-            Box::pin(vault_packs_sections_revoke(server, call, input)).await
+            boxed_vault_packs_sections_revoke(server, call, input).await
         }
         "vault.packs.sections.suggest" => {
-            Box::pin(vault_packs_sections_suggest(server, call, input)).await
+            boxed_vault_packs_sections_suggest(server, call, input).await
         }
         "vault.packs.sections.suggestions.get" => {
-            Box::pin(vault_packs_sections_suggestions_get(server, call, input)).await
+            boxed_vault_packs_sections_suggestions_get(server, call, input).await
         }
         "vault.packs.sections.suggestions.set" => {
-            Box::pin(vault_packs_sections_suggestions_set(server, call, input)).await
+            boxed_vault_packs_sections_suggestions_set(server, call, input).await
         }
-        "ai.chat.completions" => Box::pin(ai_chat_completions(server, call, input)).await,
+        "ai.chat.completions" => boxed_ai_chat_completions(server, call, input).await,
         "vault.connectors.proxy.admit" => {
-            Box::pin(vault_connectors_proxy_admit(server, call, input)).await
+            boxed_vault_connectors_proxy_admit(server, call, input).await
         }
         "vault.connectors.proxy.revoke_write" => {
-            Box::pin(vault_connectors_proxy_revoke_write(server, call, input)).await
+            boxed_vault_connectors_proxy_revoke_write(server, call, input).await
         }
         "vault.connectors.slates.redraft" => {
-            Box::pin(vault_connectors_slates_redraft(server, call, input)).await
+            boxed_vault_connectors_slates_redraft(server, call, input).await
         }
         "vault.connectors.slates.narrow" => {
-            Box::pin(vault_connectors_slates_narrow(server, call, input)).await
+            boxed_vault_connectors_slates_narrow(server, call, input).await
         }
         "vault.connectors.slates.scope_outcome" => {
-            Box::pin(vault_connectors_slates_scope_outcome(server, call, input)).await
+            boxed_vault_connectors_slates_scope_outcome(server, call, input).await
         }
         "vault.connectors.slates.revision_offers" => {
-            Box::pin(vault_connectors_slates_revision_offers(server, call, input)).await
+            boxed_vault_connectors_slates_revision_offers(server, call, input).await
         }
         "vault.connectors.slates.defer_revision" => {
-            Box::pin(vault_connectors_slates_defer_revision(server, call, input)).await
+            boxed_vault_connectors_slates_defer_revision(server, call, input).await
         }
         "vault.connectors.slates.accept_revision" => {
-            Box::pin(vault_connectors_slates_accept_revision(server, call, input)).await
+            boxed_vault_connectors_slates_accept_revision(server, call, input).await
         }
         "vault.connectors.slates.reask_issuer" => {
-            Box::pin(vault_connectors_slates_reask_issuer(server, call, input)).await
+            boxed_vault_connectors_slates_reask_issuer(server, call, input).await
         }
         "vault.connectors.subscriptions.put" => {
-            Box::pin(vault_connectors_subscriptions_put(server, call, input)).await
+            boxed_vault_connectors_subscriptions_put(server, call, input).await
         }
         "vault.connectors.subscriptions.list" => {
-            Box::pin(vault_connectors_subscriptions_list(server, call, input)).await
+            boxed_vault_connectors_subscriptions_list(server, call, input).await
         }
         "vault.connectors.subscriptions.revoke" => {
-            Box::pin(vault_connectors_subscriptions_revoke(server, call, input)).await
+            boxed_vault_connectors_subscriptions_revoke(server, call, input).await
         }
-        "vault.packs.setup.prepare" => {
-            Box::pin(vault_packs_setup_prepare(server, call, input)).await
-        }
-        "vault.packs.setup.get" => Box::pin(vault_packs_setup_get(server, call, input)).await,
-        "vault.packs.setup.answer" => Box::pin(vault_packs_setup_answer(server, call, input)).await,
-        "vault.packs.setup.verify" => Box::pin(vault_packs_setup_verify(server, call, input)).await,
-        "vault.authority.audit" => Box::pin(vault_authority_audit(server, call, input)).await,
+        "vault.packs.setup.prepare" => boxed_vault_packs_setup_prepare(server, call, input).await,
+        "vault.packs.setup.get" => boxed_vault_packs_setup_get(server, call, input).await,
+        "vault.packs.setup.answer" => boxed_vault_packs_setup_answer(server, call, input).await,
+        "vault.packs.setup.verify" => boxed_vault_packs_setup_verify(server, call, input).await,
+        "vault.authority.audit" => boxed_vault_authority_audit(server, call, input).await,
         "vault.authority.history.export" => {
-            Box::pin(vault_authority_history_export(server, call, input)).await
+            boxed_vault_authority_history_export(server, call, input).await
         }
         "vault.authority.history.import" => {
-            Box::pin(vault_authority_history_import(server, call, input)).await
+            boxed_vault_authority_history_import(server, call, input).await
         }
         "vault.authority.clock.repair" => {
-            Box::pin(vault_authority_clock_repair(server, call, input)).await
+            boxed_vault_authority_clock_repair(server, call, input).await
         }
         "vault.wire_health.thresholds.get" => {
-            Box::pin(vault_wire_health_thresholds_get(server, call, input)).await
+            boxed_vault_wire_health_thresholds_get(server, call, input).await
         }
         "vault.wire_health.thresholds.set" => {
-            Box::pin(vault_wire_health_thresholds_set(server, call, input)).await
+            boxed_vault_wire_health_thresholds_set(server, call, input).await
         }
-        "vault.slim.policy" => Box::pin(vault_slim_policy(server, call, input)).await,
-        "vault.slim.state" => Box::pin(vault_slim_state(server, call, input)).await,
-        "vault.slim.resume_step" => Box::pin(vault_slim_resume_step(server, call, input)).await,
-        "vault.slim.drop_heavy" => Box::pin(vault_slim_drop_heavy(server, call, input)).await,
-        "vault.slim.resume" => Box::pin(vault_slim_resume(server, call, input)).await,
-        "vault.mesh.path_receipts" => Box::pin(vault_mesh_path_receipts(server, call, input)).await,
-        "vault.mesh.identity" => Box::pin(vault_mesh_identity(server, call, input)).await,
-        "vault.mesh.bind_machine" => Box::pin(vault_mesh_bind_machine(server, call, input)).await,
-        "vault.mesh.set_alpn_grant" => {
-            Box::pin(vault_mesh_set_alpn_grant(server, call, input)).await
-        }
-        "vault.mesh.revoke_machine" => {
-            Box::pin(vault_mesh_revoke_machine(server, call, input)).await
-        }
-        "vault.mesh.dial" => Box::pin(vault_mesh_dial(server, call, input)).await,
-        "vault.outbox.diverged.list" => {
-            Box::pin(vault_outbox_diverged_list(server, call, input)).await
-        }
+        "vault.slim.policy" => boxed_vault_slim_policy(server, call, input).await,
+        "vault.slim.state" => boxed_vault_slim_state(server, call, input).await,
+        "vault.slim.resume_step" => boxed_vault_slim_resume_step(server, call, input).await,
+        "vault.slim.drop_heavy" => boxed_vault_slim_drop_heavy(server, call, input).await,
+        "vault.slim.resume" => boxed_vault_slim_resume(server, call, input).await,
+        "vault.mesh.path_receipts" => boxed_vault_mesh_path_receipts(server, call, input).await,
+        "vault.mesh.identity" => boxed_vault_mesh_identity(server, call, input).await,
+        "vault.mesh.bind_machine" => boxed_vault_mesh_bind_machine(server, call, input).await,
+        "vault.mesh.set_alpn_grant" => boxed_vault_mesh_set_alpn_grant(server, call, input).await,
+        "vault.mesh.revoke_machine" => boxed_vault_mesh_revoke_machine(server, call, input).await,
+        "vault.mesh.dial" => boxed_vault_mesh_dial(server, call, input).await,
+        "vault.outbox.diverged.list" => boxed_vault_outbox_diverged_list(server, call, input).await,
         "vault.outbox.diverged.answer" => {
-            Box::pin(vault_outbox_diverged_answer(server, call, input)).await
+            boxed_vault_outbox_diverged_answer(server, call, input).await
         }
-        "vault.inspection.resolve" => Box::pin(vault_inspection_resolve(server, call, input)).await,
+        "vault.inspection.resolve" => boxed_vault_inspection_resolve(server, call, input).await,
         "vault.shared.propose_delete" => {
-            Box::pin(vault_shared_propose_delete(server, call, input)).await
+            boxed_vault_shared_propose_delete(server, call, input).await
         }
         "vault.shared.propose_transfer" => {
-            Box::pin(vault_shared_propose_transfer(server, call, input)).await
+            boxed_vault_shared_propose_transfer(server, call, input).await
         }
         "vault.shared.propose_remove_owner" => {
-            Box::pin(vault_shared_propose_remove_owner(server, call, input)).await
+            boxed_vault_shared_propose_remove_owner(server, call, input).await
         }
-        "vault.shared.execute" => Box::pin(vault_shared_execute(server, call, input)).await,
-        "vault.shared.receipt" => Box::pin(vault_shared_receipt(server, call, input)).await,
-        "vault.shared.outcomes" => Box::pin(vault_shared_outcomes(server, call, input)).await,
-        "vault.shared.deletion" => Box::pin(vault_shared_deletion(server, call, input)).await,
-        "vault.org_admin.configure" => {
-            Box::pin(vault_org_admin_configure(server, call, input)).await
-        }
-        "vault.org_admin.powers" => Box::pin(vault_org_admin_powers(server, call, input)).await,
+        "vault.shared.execute" => boxed_vault_shared_execute(server, call, input).await,
+        "vault.shared.receipt" => boxed_vault_shared_receipt(server, call, input).await,
+        "vault.shared.outcomes" => boxed_vault_shared_outcomes(server, call, input).await,
+        "vault.shared.deletion" => boxed_vault_shared_deletion(server, call, input).await,
+        "vault.org_admin.configure" => boxed_vault_org_admin_configure(server, call, input).await,
+        "vault.org_admin.powers" => boxed_vault_org_admin_powers(server, call, input).await,
         "vault.members.reset_project_access" => {
-            Box::pin(vault_members_reset_project_access(server, call, input)).await
+            boxed_vault_members_reset_project_access(server, call, input).await
         }
-        "vault.members.delegate" => Box::pin(vault_members_delegate(server, call, input)).await,
-        "vault.members.projection" => Box::pin(vault_members_projection(server, call, input)).await,
-        "vault.members.add" => Box::pin(vault_members_add(server, call, input)).await,
+        "vault.members.delegate" => boxed_vault_members_delegate(server, call, input).await,
+        "vault.members.projection" => boxed_vault_members_projection(server, call, input).await,
+        "vault.members.add" => boxed_vault_members_add(server, call, input).await,
         "vault.members.invitation_slip" => {
-            Box::pin(vault_members_invitation_slip(server, call, input)).await
+            boxed_vault_members_invitation_slip(server, call, input).await
         }
-        "vault.members.change" => Box::pin(vault_members_change(server, call, input)).await,
-        "vault.members.remove" => Box::pin(vault_members_remove(server, call, input)).await,
-        "vault.members.leave" => Box::pin(vault_members_leave(server, call, input)).await,
-        "vault.members.invitations" => {
-            Box::pin(vault_members_invitations(server, call, input)).await
+        "vault.members.invitation_code" => {
+            boxed_vault_members_invitation_code(server, call, input).await
         }
-        "vault.members.accept" => Box::pin(vault_members_accept(server, call, input)).await,
-        "vault.members.decline" => Box::pin(vault_members_decline(server, call, input)).await,
+        "vault.members.change" => boxed_vault_members_change(server, call, input).await,
+        "vault.members.remove" => boxed_vault_members_remove(server, call, input).await,
+        "vault.members.leave" => boxed_vault_members_leave(server, call, input).await,
+        "vault.members.invitations" => boxed_vault_members_invitations(server, call, input).await,
+        "vault.members.accept" => boxed_vault_members_accept(server, call, input).await,
+        "vault.members.decline" => boxed_vault_members_decline(server, call, input).await,
         "vault.members.withdraw_invitation" => {
-            Box::pin(vault_members_withdraw_invitation(server, call, input)).await
+            boxed_vault_members_withdraw_invitation(server, call, input).await
         }
-        "vault.shared.object" => Box::pin(vault_shared_object(server, call, input)).await,
+        "vault.shared.object" => boxed_vault_shared_object(server, call, input).await,
         "vault.shared.withdraw_objection" => {
-            Box::pin(vault_shared_withdraw_objection(server, call, input)).await
+            boxed_vault_shared_withdraw_objection(server, call, input).await
         }
-        "vault.shared.started" => Box::pin(vault_shared_started(server, call, input)).await,
-        "vault.shared.matured" => Box::pin(vault_shared_matured(server, call, input)).await,
-        "vault.shared.erase_ask" => Box::pin(vault_shared_erase_ask(server, call, input)).await,
-        "vault.shared.erase_asks" => Box::pin(vault_shared_erase_asks(server, call, input)).await,
+        "vault.shared.started" => boxed_vault_shared_started(server, call, input).await,
+        "vault.shared.matured" => boxed_vault_shared_matured(server, call, input).await,
+        "vault.shared.erase_ask" => boxed_vault_shared_erase_ask(server, call, input).await,
+        "vault.shared.erase_asks" => boxed_vault_shared_erase_asks(server, call, input).await,
         "vault.shared.close_erase_ask" => {
-            Box::pin(vault_shared_close_erase_ask(server, call, input)).await
+            boxed_vault_shared_close_erase_ask(server, call, input).await
         }
-        "vault.shared.policy.get" => Box::pin(vault_shared_policy_get(server, call, input)).await,
+        "vault.shared.policy.get" => boxed_vault_shared_policy_get(server, call, input).await,
         "vault.shared.policy.propose" => {
-            Box::pin(vault_shared_policy_propose(server, call, input)).await
+            boxed_vault_shared_policy_propose(server, call, input).await
         }
-        "vault.shared.policy.answer" => {
-            Box::pin(vault_shared_policy_answer(server, call, input)).await
-        }
-        "vault.shared.policy.change" => {
-            Box::pin(vault_shared_policy_change(server, call, input)).await
-        }
+        "vault.shared.policy.answer" => boxed_vault_shared_policy_answer(server, call, input).await,
+        "vault.shared.policy.change" => boxed_vault_shared_policy_change(server, call, input).await,
         "vault.shared.policy.changes" => {
-            Box::pin(vault_shared_policy_changes(server, call, input)).await
+            boxed_vault_shared_policy_changes(server, call, input).await
         }
         "vault.federation.coreference.link" => {
-            Box::pin(vault_federation_coreference_link(server, call, input)).await
+            boxed_vault_federation_coreference_link(server, call, input).await
         }
         "vault.federation.coreference.confirm" => {
-            Box::pin(vault_federation_coreference_confirm(server, call, input)).await
+            boxed_vault_federation_coreference_confirm(server, call, input).await
         }
         "vault.federation.coreference.share_consent" => {
-            Box::pin(vault_federation_coreference_share_consent(
-                server, call, input,
-            ))
-            .await
+            boxed_vault_federation_coreference_share_consent(server, call, input).await
         }
         "vault.federation.coreference.unlink" => {
-            Box::pin(vault_federation_coreference_unlink(server, call, input)).await
+            boxed_vault_federation_coreference_unlink(server, call, input).await
         }
         "vault.federation.burst.baseline" => {
-            Box::pin(vault_federation_burst_baseline(server, call, input)).await
+            boxed_vault_federation_burst_baseline(server, call, input).await
         }
         "vault.federation.burst.policy" => {
-            Box::pin(vault_federation_burst_policy(server, call, input)).await
+            boxed_vault_federation_burst_policy(server, call, input).await
         }
         "vault.federation.burst.policy.set" => {
-            Box::pin(vault_federation_burst_policy_set(server, call, input)).await
+            boxed_vault_federation_burst_policy_set(server, call, input).await
         }
         "vault.sync.quarantine.held_edits" => {
-            Box::pin(vault_sync_quarantine_held_edits(server, call, input)).await
+            boxed_vault_sync_quarantine_held_edits(server, call, input).await
         }
         "vault.sync.retained_work.wait.set" => {
-            Box::pin(vault_sync_retained_work_wait_set(server, call, input)).await
+            boxed_vault_sync_retained_work_wait_set(server, call, input).await
         }
         "vault.federation.burst.ingress" => {
-            Box::pin(vault_federation_burst_ingress(server, call, input)).await
+            boxed_vault_federation_burst_ingress(server, call, input).await
         }
         "vault.federation.burst.disposition" => {
-            Box::pin(vault_federation_burst_disposition(server, call, input)).await
+            boxed_vault_federation_burst_disposition(server, call, input).await
         }
         "vault.federation.burst.review" => {
-            Box::pin(vault_federation_burst_review(server, call, input)).await
+            boxed_vault_federation_burst_review(server, call, input).await
         }
         "vault.federation.burst.review.release" => {
-            Box::pin(vault_federation_burst_review_release(server, call, input)).await
+            boxed_vault_federation_burst_review_release(server, call, input).await
         }
         "vault.federation.burst.review.reject" => {
-            Box::pin(vault_federation_burst_review_reject(server, call, input)).await
+            boxed_vault_federation_burst_review_reject(server, call, input).await
         }
         "vault.federation.burst.replay" => {
-            Box::pin(vault_federation_burst_replay(server, call, input)).await
+            boxed_vault_federation_burst_replay(server, call, input).await
         }
         "vault.federation.connect.identity" => {
-            Box::pin(vault_federation_connect_identity(server, call, input)).await
+            boxed_vault_federation_connect_identity(server, call, input).await
         }
         "vault.federation.connect.grants.mint" => {
-            Box::pin(vault_federation_connect_grants_mint(server, call, input)).await
+            boxed_vault_federation_connect_grants_mint(server, call, input).await
         }
         "vault.federation.connect.offer" => {
-            Box::pin(vault_federation_connect_offer(server, call, input)).await
+            boxed_vault_federation_connect_offer(server, call, input).await
         }
         "vault.federation.connect.accept" => {
-            Box::pin(vault_federation_connect_accept(server, call, input)).await
+            boxed_vault_federation_connect_accept(server, call, input).await
         }
         "vault.federation.connect.narrow" => {
-            Box::pin(vault_federation_connect_narrow(server, call, input)).await
+            boxed_vault_federation_connect_narrow(server, call, input).await
         }
         "vault.federation.connect.rescope.offer" => {
-            Box::pin(vault_federation_connect_rescope_offer(server, call, input)).await
+            boxed_vault_federation_connect_rescope_offer(server, call, input).await
         }
         "vault.federation.connect.rescope.accept" => {
-            Box::pin(vault_federation_connect_rescope_accept(server, call, input)).await
+            boxed_vault_federation_connect_rescope_accept(server, call, input).await
         }
         "vault.federation.connect.disconnect" => {
-            Box::pin(vault_federation_connect_disconnect(server, call, input)).await
+            boxed_vault_federation_connect_disconnect(server, call, input).await
         }
         "vault.federation.connect.export" => {
-            Box::pin(vault_federation_connect_export(server, call, input)).await
+            boxed_vault_federation_connect_export(server, call, input).await
         }
         "vault.federation.connect.rejoin" => {
-            Box::pin(vault_federation_connect_rejoin(server, call, input)).await
+            boxed_vault_federation_connect_rejoin(server, call, input).await
         }
         "vault.federation.connect.world_privacy.export" => {
-            Box::pin(vault_federation_connect_world_privacy_export(
-                server, call, input,
-            ))
-            .await
+            boxed_vault_federation_connect_world_privacy_export(server, call, input).await
         }
         "vault.federation.connect.world_privacy.receive" => {
-            Box::pin(vault_federation_connect_world_privacy_receive(
-                server, call, input,
-            ))
-            .await
+            boxed_vault_federation_connect_world_privacy_receive(server, call, input).await
         }
         "vault.trusted_contacts.name" => {
-            Box::pin(vault_trusted_contacts_name(server, call, input)).await
+            boxed_vault_trusted_contacts_name(server, call, input).await
         }
         "vault.trusted_contacts.list" => {
-            Box::pin(vault_trusted_contacts_list(server, call, input)).await
+            boxed_vault_trusted_contacts_list(server, call, input).await
         }
         "vault.trusted_contacts.consent" => {
-            Box::pin(vault_trusted_contacts_consent(server, call, input)).await
+            boxed_vault_trusted_contacts_consent(server, call, input).await
         }
         "vault.trusted_contacts.revoke" => {
-            Box::pin(vault_trusted_contacts_revoke(server, call, input)).await
+            boxed_vault_trusted_contacts_revoke(server, call, input).await
         }
         "vault.trusted_contacts.dial.set" => {
-            Box::pin(vault_trusted_contacts_dial_set(server, call, input)).await
+            boxed_vault_trusted_contacts_dial_set(server, call, input).await
         }
         "vault.trusted_contacts.tier.set" => {
-            Box::pin(vault_trusted_contacts_tier_set(server, call, input)).await
+            boxed_vault_trusted_contacts_tier_set(server, call, input).await
         }
         "vault.trusted_contacts.concern.asks" => {
-            Box::pin(vault_trusted_contacts_concern_asks(server, call, input)).await
+            boxed_vault_trusted_contacts_concern_asks(server, call, input).await
         }
         "vault.trusted_contacts.concern.authorize" => {
-            Box::pin(vault_trusted_contacts_concern_authorize(
-                server, call, input,
-            ))
-            .await
+            boxed_vault_trusted_contacts_concern_authorize(server, call, input).await
         }
         "vault.trusted_contacts.concern.propose" => {
-            Box::pin(vault_trusted_contacts_concern_propose(server, call, input)).await
+            boxed_vault_trusted_contacts_concern_propose(server, call, input).await
         }
         "vault.trusted_contacts.concern.deliver" => {
-            Box::pin(vault_trusted_contacts_concern_deliver(server, call, input)).await
+            boxed_vault_trusted_contacts_concern_deliver(server, call, input).await
         }
-        "vault.guests.share" => Box::pin(vault_guests_share(server, call, input)).await,
+        "vault.guests.share" => boxed_vault_guests_share(server, call, input).await,
         "vault.guests.export_envelope" => {
-            Box::pin(vault_guests_export_envelope(server, call, input)).await
+            boxed_vault_guests_export_envelope(server, call, input).await
         }
-        "vault.guests.reshare" => Box::pin(vault_guests_reshare(server, call, input)).await,
-        "vault.guests.revoke" => Box::pin(vault_guests_revoke(server, call, input)).await,
-        "vault.guests.mint_slip" => Box::pin(vault_guests_mint_slip(server, call, input)).await,
-        "vault.support_grants.mint" => {
-            Box::pin(vault_support_grants_mint(server, call, input)).await
-        }
-        "vault.support_grants.list" => {
-            Box::pin(vault_support_grants_list(server, call, input)).await
-        }
+        "vault.guests.reshare" => boxed_vault_guests_reshare(server, call, input).await,
+        "vault.guests.revoke" => boxed_vault_guests_revoke(server, call, input).await,
+        "vault.guests.mint_slip" => boxed_vault_guests_mint_slip(server, call, input).await,
+        "vault.support_grants.mint" => boxed_vault_support_grants_mint(server, call, input).await,
+        "vault.support_grants.list" => boxed_vault_support_grants_list(server, call, input).await,
         "vault.support_grants.revoke" => {
-            Box::pin(vault_support_grants_revoke(server, call, input)).await
+            boxed_vault_support_grants_revoke(server, call, input).await
         }
-        "vault.files.sources.attach" => {
-            Box::pin(vault_files_sources_attach(server, call, input)).await
-        }
-        "vault.files.sources.rescan" => {
-            Box::pin(vault_files_sources_rescan(server, call, input)).await
-        }
-        "vault.files.sources.detach" => {
-            Box::pin(vault_files_sources_detach(server, call, input)).await
-        }
-        "vault.files.sources.list" => Box::pin(vault_files_sources_list(server, call, input)).await,
-        "vault.files.sources.files" => {
-            Box::pin(vault_files_sources_files(server, call, input)).await
-        }
-        "vault.residence.mode" => Box::pin(vault_residence_mode(server, call, input)).await,
-        "vault.residence.open" => Box::pin(vault_residence_open(server, call, input)).await,
-        "vault.residence.index" => Box::pin(vault_residence_index(server, call, input)).await,
-        "vault.residence.prune" => Box::pin(vault_residence_prune(server, call, input)).await,
-        "vault.residence.directives" => {
-            Box::pin(vault_residence_directives(server, call, input)).await
-        }
-        "vault.off_record.start" => Box::pin(vault_off_record_start(server, call, input)).await,
-        "vault.off_record.status" => Box::pin(vault_off_record_status(server, call, input)).await,
-        "vault.off_record.witness" => Box::pin(vault_off_record_witness(server, call, input)).await,
-        "vault.off_record.discard" => Box::pin(vault_off_record_discard(server, call, input)).await,
-        "vault.off_record.recall" => Box::pin(vault_off_record_recall(server, call, input)).await,
+        "vault.files.sources.attach" => boxed_vault_files_sources_attach(server, call, input).await,
+        "vault.files.sources.rescan" => boxed_vault_files_sources_rescan(server, call, input).await,
+        "vault.files.sources.detach" => boxed_vault_files_sources_detach(server, call, input).await,
+        "vault.files.sources.list" => boxed_vault_files_sources_list(server, call, input).await,
+        "vault.files.sources.files" => boxed_vault_files_sources_files(server, call, input).await,
+        "vault.residence.mode" => boxed_vault_residence_mode(server, call, input).await,
+        "vault.residence.open" => boxed_vault_residence_open(server, call, input).await,
+        "vault.residence.index" => boxed_vault_residence_index(server, call, input).await,
+        "vault.residence.prune" => boxed_vault_residence_prune(server, call, input).await,
+        "vault.residence.directives" => boxed_vault_residence_directives(server, call, input).await,
+        "vault.off_record.start" => boxed_vault_off_record_start(server, call, input).await,
+        "vault.off_record.status" => boxed_vault_off_record_status(server, call, input).await,
+        "vault.off_record.witness" => boxed_vault_off_record_witness(server, call, input).await,
+        "vault.off_record.discard" => boxed_vault_off_record_discard(server, call, input).await,
+        "vault.off_record.recall" => boxed_vault_off_record_recall(server, call, input).await,
         "vault.off_record.notes.create" => {
-            Box::pin(vault_off_record_notes_create(server, call, input)).await
+            boxed_vault_off_record_notes_create(server, call, input).await
         }
         "vault.off_record.artifacts.save" => {
-            Box::pin(vault_off_record_artifacts_save(server, call, input)).await
+            boxed_vault_off_record_artifacts_save(server, call, input).await
         }
         "vault.off_record.claims.upsert" => {
-            Box::pin(vault_off_record_claims_upsert(server, call, input)).await
+            boxed_vault_off_record_claims_upsert(server, call, input).await
         }
-        "self.off_record.execute" => Box::pin(self_off_record_execute(server, call, input)).await,
+        "self.off_record.execute" => boxed_self_off_record_execute(server, call, input).await,
         "self.off_record.results.list" => {
-            Box::pin(self_off_record_results_list(server, call, input)).await
+            boxed_self_off_record_results_list(server, call, input).await
         }
         "self.off_record.results.read" => {
-            Box::pin(self_off_record_results_read(server, call, input)).await
+            boxed_self_off_record_results_read(server, call, input).await
         }
-        "self.off_record.waits.get" => {
-            Box::pin(self_off_record_waits_get(server, call, input)).await
-        }
+        "self.off_record.waits.get" => boxed_self_off_record_waits_get(server, call, input).await,
         "self.off_record.waits.answer" => {
-            Box::pin(self_off_record_waits_answer(server, call, input)).await
+            boxed_self_off_record_waits_answer(server, call, input).await
         }
         "vault.off_record.rooms.status" => {
-            Box::pin(vault_off_record_rooms_status(server, call, input)).await
+            boxed_vault_off_record_rooms_status(server, call, input).await
         }
         "vault.off_record.rooms.start" => {
-            Box::pin(vault_off_record_rooms_start(server, call, input)).await
+            boxed_vault_off_record_rooms_start(server, call, input).await
         }
         "vault.off_record.rooms.witness" => {
-            Box::pin(vault_off_record_rooms_witness(server, call, input)).await
+            boxed_vault_off_record_rooms_witness(server, call, input).await
         }
         "vault.off_record.rooms.save" => {
-            Box::pin(vault_off_record_rooms_save(server, call, input)).await
+            boxed_vault_off_record_rooms_save(server, call, input).await
         }
         "vault.off_record.rooms.save_from_here" => {
-            Box::pin(vault_off_record_rooms_save_from_here(server, call, input)).await
+            boxed_vault_off_record_rooms_save_from_here(server, call, input).await
         }
         "vault.off_record.rooms.export" => {
-            Box::pin(vault_off_record_rooms_export(server, call, input)).await
+            boxed_vault_off_record_rooms_export(server, call, input).await
         }
         "vault.off_record.rooms.suggest_save" => {
-            Box::pin(vault_off_record_rooms_suggest_save(server, call, input)).await
+            boxed_vault_off_record_rooms_suggest_save(server, call, input).await
         }
         "vault.off_record.rooms.confirm_save" => {
-            Box::pin(vault_off_record_rooms_confirm_save(server, call, input)).await
+            boxed_vault_off_record_rooms_confirm_save(server, call, input).await
         }
         "vault.off_record.rooms.decline_save" => {
-            Box::pin(vault_off_record_rooms_decline_save(server, call, input)).await
+            boxed_vault_off_record_rooms_decline_save(server, call, input).await
         }
         "vault.records.erase_preview" => {
-            Box::pin(vault_records_erase_preview(server, call, input)).await
+            boxed_vault_records_erase_preview(server, call, input).await
         }
         "vault.records.erase_confirm" => {
-            Box::pin(vault_records_erase_confirm(server, call, input)).await
+            boxed_vault_records_erase_confirm(server, call, input).await
         }
-        "vault.records.erase_sweep" => {
-            Box::pin(vault_records_erase_sweep(server, call, input)).await
-        }
+        "vault.records.erase_sweep" => boxed_vault_records_erase_sweep(server, call, input).await,
         "vault.outbound_calls.request.erase" => {
-            Box::pin(vault_outbound_calls_request_erase(server, call, input)).await
+            boxed_vault_outbound_calls_request_erase(server, call, input).await
         }
         "vault.research.create_child" => {
-            Box::pin(vault_research_create_child(server, call, input)).await
+            boxed_vault_research_create_child(server, call, input).await
         }
-        "vault.research.archive" => Box::pin(vault_research_archive(server, call, input)).await,
+        "vault.research.archive" => boxed_vault_research_archive(server, call, input).await,
         "vault.research.archive.install" => {
-            Box::pin(vault_research_archive_install(server, call, input)).await
+            boxed_vault_research_archive_install(server, call, input).await
         }
         "vault.research.archive.record" => {
-            Box::pin(vault_research_archive_record(server, call, input)).await
+            boxed_vault_research_archive_record(server, call, input).await
         }
-        "vault.research.archive.get" => {
-            Box::pin(vault_research_archive_get(server, call, input)).await
-        }
+        "vault.research.archive.get" => boxed_vault_research_archive_get(server, call, input).await,
         "vault.research.archive.best" => {
-            Box::pin(vault_research_archive_best(server, call, input)).await
+            boxed_vault_research_archive_best(server, call, input).await
         }
         "vault.research.archive.repropose" => {
-            Box::pin(vault_research_archive_repropose(server, call, input)).await
+            boxed_vault_research_archive_repropose(server, call, input).await
         }
         "vault.research.archive.coverage" => {
-            Box::pin(vault_research_archive_coverage(server, call, input)).await
+            boxed_vault_research_archive_coverage(server, call, input).await
         }
-        "vault.evals.inventory" => Box::pin(vault_evals_inventory(server, call, input)).await,
-        "vault.evals.cohorts.setup" => {
-            Box::pin(vault_evals_cohorts_setup(server, call, input)).await
-        }
-        "vault.evals.author_now" => Box::pin(vault_evals_author_now(server, call, input)).await,
+        "vault.evals.inventory" => boxed_vault_evals_inventory(server, call, input).await,
+        "vault.evals.cohorts.setup" => boxed_vault_evals_cohorts_setup(server, call, input).await,
+        "vault.evals.author_now" => boxed_vault_evals_author_now(server, call, input).await,
         "vault.evals.authoring.result" => {
-            Box::pin(vault_evals_authoring_result(server, call, input)).await
+            boxed_vault_evals_authoring_result(server, call, input).await
         }
-        "vault.evals.families" => Box::pin(vault_evals_families(server, call, input)).await,
+        "vault.evals.families" => boxed_vault_evals_families(server, call, input).await,
         "vault.evals.families.assign" => {
-            Box::pin(vault_evals_families_assign(server, call, input)).await
+            boxed_vault_evals_families_assign(server, call, input).await
         }
-        "vault.evals.cases" => Box::pin(vault_evals_cases(server, call, input)).await,
-        "vault.evals.cases.record" => Box::pin(vault_evals_cases_record(server, call, input)).await,
-        "vault.evals.cohorts" => Box::pin(vault_evals_cohorts(server, call, input)).await,
-        "vault.evals.cohorts.open" => Box::pin(vault_evals_cohorts_open(server, call, input)).await,
-        "vault.evals.exposure" => Box::pin(vault_evals_exposure(server, call, input)).await,
-        "vault.evals.sufficiency" => Box::pin(vault_evals_sufficiency(server, call, input)).await,
-        "vault.evals.labels.blocked" => {
-            Box::pin(vault_evals_labels_blocked(server, call, input)).await
-        }
-        "vault.evals.labels.pick" => Box::pin(vault_evals_labels_pick(server, call, input)).await,
+        "vault.evals.cases" => boxed_vault_evals_cases(server, call, input).await,
+        "vault.evals.cases.record" => boxed_vault_evals_cases_record(server, call, input).await,
+        "vault.evals.cohorts" => boxed_vault_evals_cohorts(server, call, input).await,
+        "vault.evals.cohorts.open" => boxed_vault_evals_cohorts_open(server, call, input).await,
+        "vault.evals.exposure" => boxed_vault_evals_exposure(server, call, input).await,
+        "vault.evals.sufficiency" => boxed_vault_evals_sufficiency(server, call, input).await,
+        "vault.evals.labels.blocked" => boxed_vault_evals_labels_blocked(server, call, input).await,
+        "vault.evals.labels.pick" => boxed_vault_evals_labels_pick(server, call, input).await,
         "vault.coach.training_offers" => {
-            Box::pin(vault_coach_training_offers(server, call, input)).await
+            boxed_vault_coach_training_offers(server, call, input).await
         }
         "vault.coach.training_offers.get" => {
-            Box::pin(vault_coach_training_offers_get(server, call, input)).await
+            boxed_vault_coach_training_offers_get(server, call, input).await
         }
         "vault.coach.training_offers.trigger" => {
-            Box::pin(vault_coach_training_offers_trigger(server, call, input)).await
+            boxed_vault_coach_training_offers_trigger(server, call, input).await
         }
         "vault.coach.training_offers.result" => {
-            Box::pin(vault_coach_training_offers_result(server, call, input)).await
+            boxed_vault_coach_training_offers_result(server, call, input).await
         }
         "vault.coach.training_offers.answer" => {
-            Box::pin(vault_coach_training_offers_answer(server, call, input)).await
+            boxed_vault_coach_training_offers_answer(server, call, input).await
         }
         "vault.coach.training_offers.undo" => {
-            Box::pin(vault_coach_training_offers_undo(server, call, input)).await
+            boxed_vault_coach_training_offers_undo(server, call, input).await
         }
         "vault.coach.training_offers.candidates" => {
-            Box::pin(vault_coach_training_offers_candidates(server, call, input)).await
+            boxed_vault_coach_training_offers_candidates(server, call, input).await
         }
         "vault.coach.training_offers.candidates.prepare" => {
-            Box::pin(vault_coach_training_offers_candidates_prepare(
-                server, call, input,
-            ))
-            .await
+            boxed_vault_coach_training_offers_candidates_prepare(server, call, input).await
         }
         "vault.coach.training_offers.pilots.prepare" => {
-            Box::pin(vault_coach_training_offers_pilots_prepare(
-                server, call, input,
-            ))
-            .await
+            boxed_vault_coach_training_offers_pilots_prepare(server, call, input).await
         }
         "vault.coach.training_offers.pilots.complete" => {
-            Box::pin(vault_coach_training_offers_pilots_complete(
-                server, call, input,
-            ))
-            .await
+            boxed_vault_coach_training_offers_pilots_complete(server, call, input).await
         }
         "vault.coach.training_offers.pilots.get" => {
-            Box::pin(vault_coach_training_offers_pilots_get(server, call, input)).await
+            boxed_vault_coach_training_offers_pilots_get(server, call, input).await
         }
         "vault.coach.training_offers.sources" => {
-            Box::pin(vault_coach_training_offers_sources(server, call, input)).await
+            boxed_vault_coach_training_offers_sources(server, call, input).await
         }
-        "vault.research.bind" => Box::pin(vault_research_bind(server, call, input)).await,
-        "vault.research.fork" => Box::pin(vault_research_fork(server, call, input)).await,
-        "vault.research.weave" => Box::pin(vault_research_weave(server, call, input)).await,
+        "vault.drafters.list" => boxed_vault_drafters_list(server, call, input).await,
+        "vault.drafters.list_as" => boxed_vault_drafters_list_as(server, call, input).await,
+        "vault.drafters.status" => boxed_vault_drafters_status(server, call, input).await,
+        "vault.drafters.policy.set" => boxed_vault_drafters_policy_set(server, call, input).await,
+        "vault.drafters.revert" => boxed_vault_drafters_revert(server, call, input).await,
+        "vault.drafters.revert_as" => boxed_vault_drafters_revert_as(server, call, input).await,
+        "vault.research.bind" => boxed_vault_research_bind(server, call, input).await,
+        "vault.research.fork" => boxed_vault_research_fork(server, call, input).await,
+        "vault.research.weave" => boxed_vault_research_weave(server, call, input).await,
         "vault.research.measure_search" => {
-            Box::pin(vault_research_measure_search(server, call, input)).await
+            boxed_vault_research_measure_search(server, call, input).await
         }
         "vault.research.measure_held_out" => {
-            Box::pin(vault_research_measure_held_out(server, call, input)).await
+            boxed_vault_research_measure_held_out(server, call, input).await
         }
         "vault.research.evaluate_split" => {
-            Box::pin(vault_research_evaluate_split(server, call, input)).await
+            boxed_vault_research_evaluate_split(server, call, input).await
         }
         "vault.research.mark_invalid" => {
-            Box::pin(vault_research_mark_invalid(server, call, input)).await
+            boxed_vault_research_mark_invalid(server, call, input).await
         }
-        "vault.research.prune" => Box::pin(vault_research_prune(server, call, input)).await,
-        "vault.research.select" => Box::pin(vault_research_select(server, call, input)).await,
+        "vault.research.prune" => boxed_vault_research_prune(server, call, input).await,
+        "vault.research.select" => boxed_vault_research_select(server, call, input).await,
         "vault.research.promotion_basis" => {
-            Box::pin(vault_research_promotion_basis(server, call, input)).await
+            boxed_vault_research_promotion_basis(server, call, input).await
         }
         "vault.research.reserve_confirmation" => {
-            Box::pin(vault_research_reserve_confirmation(server, call, input)).await
+            boxed_vault_research_reserve_confirmation(server, call, input).await
         }
-        "vault.research.promote" => Box::pin(vault_research_promote(server, call, input)).await,
+        "vault.research.promote" => boxed_vault_research_promote(server, call, input).await,
         "vault.research.reserve_work" => {
-            Box::pin(vault_research_reserve_work(server, call, input)).await
+            boxed_vault_research_reserve_work(server, call, input).await
         }
-        "vault.research.settle_work" => {
-            Box::pin(vault_research_settle_work(server, call, input)).await
-        }
-        "vault.research.refund_work" => {
-            Box::pin(vault_research_refund_work(server, call, input)).await
-        }
+        "vault.research.settle_work" => boxed_vault_research_settle_work(server, call, input).await,
+        "vault.research.refund_work" => boxed_vault_research_refund_work(server, call, input).await,
         "vault.research.reserve_exploration" => {
-            Box::pin(vault_research_reserve_exploration(server, call, input)).await
+            boxed_vault_research_reserve_exploration(server, call, input).await
         }
-        "vault.research.budget" => Box::pin(vault_research_budget(server, call, input)).await,
+        "vault.research.budget" => boxed_vault_research_budget(server, call, input).await,
         "vault.research.record_benchmark" => {
-            Box::pin(vault_research_record_benchmark(server, call, input)).await
+            boxed_vault_research_record_benchmark(server, call, input).await
         }
         "vault.authority.handoff_alarms" => {
-            Box::pin(vault_authority_handoff_alarms(server, call, input)).await
+            boxed_vault_authority_handoff_alarms(server, call, input).await
         }
         "vault.authority.handoff_alarms.acknowledge" => {
-            Box::pin(vault_authority_handoff_alarms_acknowledge(
-                server, call, input,
-            ))
-            .await
+            boxed_vault_authority_handoff_alarms_acknowledge(server, call, input).await
         }
         "vault.roots.requests.cancel" => {
-            Box::pin(vault_roots_requests_cancel(server, call, input)).await
+            boxed_vault_roots_requests_cancel(server, call, input).await
         }
         "vault.roots.requests.create" => {
-            Box::pin(vault_roots_requests_create(server, call, input)).await
+            boxed_vault_roots_requests_create(server, call, input).await
         }
-        "vault.roots.requests.list" => {
-            Box::pin(vault_roots_requests_list(server, call, input)).await
-        }
-        "vault.owner_work.get" => Box::pin(vault_owner_work_get(server, call, input)).await,
-        "vault.cleanup.run" => Box::pin(vault_cleanup_run(server, call, input)).await,
-        "vault.cleanup.review" => Box::pin(vault_cleanup_review(server, call, input)).await,
-        "vault.cleanup.decide" => Box::pin(vault_cleanup_decide(server, call, input)).await,
+        "vault.roots.requests.list" => boxed_vault_roots_requests_list(server, call, input).await,
+        "vault.owner_work.get" => boxed_vault_owner_work_get(server, call, input).await,
+        "vault.cleanup.run" => boxed_vault_cleanup_run(server, call, input).await,
+        "vault.cleanup.review" => boxed_vault_cleanup_review(server, call, input).await,
+        "vault.cleanup.decide" => boxed_vault_cleanup_decide(server, call, input).await,
         "vault.archive.delete.preview" => {
-            Box::pin(vault_archive_delete_preview(server, call, input)).await
+            boxed_vault_archive_delete_preview(server, call, input).await
         }
         "vault.archive.delete.confirm" => {
-            Box::pin(vault_archive_delete_confirm(server, call, input)).await
+            boxed_vault_archive_delete_confirm(server, call, input).await
         }
         "vault.usage.events.undecodable" => {
-            Box::pin(vault_usage_events_undecodable(server, call, input)).await
+            boxed_vault_usage_events_undecodable(server, call, input).await
         }
         "vault.usage.events.remove_undecodable" => {
-            Box::pin(vault_usage_events_remove_undecodable(server, call, input)).await
+            boxed_vault_usage_events_remove_undecodable(server, call, input).await
         }
         "vault.usage.repair.receipts" => {
-            Box::pin(vault_usage_repair_receipts(server, call, input)).await
+            boxed_vault_usage_repair_receipts(server, call, input).await
         }
-        "vault.entities.mention" => Box::pin(vault_entities_mention(server, call, input)).await,
-        "vault.legal_holds.place" => Box::pin(vault_legal_holds_place(server, call, input)).await,
-        "vault.legal_holds.widen" => Box::pin(vault_legal_holds_widen(server, call, input)).await,
-        "vault.legal_holds.list" => Box::pin(vault_legal_holds_list(server, call, input)).await,
-        "vault.legal_holds.log" => Box::pin(vault_legal_holds_log(server, call, input)).await,
+        "vault.entities.mention" => boxed_vault_entities_mention(server, call, input).await,
+        "vault.legal_holds.place" => boxed_vault_legal_holds_place(server, call, input).await,
+        "vault.legal_holds.widen" => boxed_vault_legal_holds_widen(server, call, input).await,
+        "vault.legal_holds.list" => boxed_vault_legal_holds_list(server, call, input).await,
+        "vault.legal_holds.log" => boxed_vault_legal_holds_log(server, call, input).await,
         "vault.legal_holds.lift_and_erase" => {
-            Box::pin(vault_legal_holds_lift_and_erase(server, call, input)).await
+            boxed_vault_legal_holds_lift_and_erase(server, call, input).await
         }
         "vault.legal_holds.withdraw_erase" => {
-            Box::pin(vault_legal_holds_withdraw_erase(server, call, input)).await
+            boxed_vault_legal_holds_withdraw_erase(server, call, input).await
         }
-        "vault.courtesy_delete.send" => {
-            Box::pin(vault_courtesy_delete_send(server, call, input)).await
-        }
-        "vault.courtesy_delete.sent" => {
-            Box::pin(vault_courtesy_delete_sent(server, call, input)).await
-        }
+        "vault.courtesy_delete.send" => boxed_vault_courtesy_delete_send(server, call, input).await,
+        "vault.courtesy_delete.sent" => boxed_vault_courtesy_delete_sent(server, call, input).await,
         "vault.courtesy_delete.incoming" => {
-            Box::pin(vault_courtesy_delete_incoming(server, call, input)).await
+            boxed_vault_courtesy_delete_incoming(server, call, input).await
         }
         "vault.courtesy_delete.answer" => {
-            Box::pin(vault_courtesy_delete_answer(server, call, input)).await
+            boxed_vault_courtesy_delete_answer(server, call, input).await
         }
         "vault.embedding_spaces.list" => {
-            Box::pin(vault_embedding_spaces_list(server, call, input)).await
+            boxed_vault_embedding_spaces_list(server, call, input).await
         }
         "vault.embedding_spaces.declare" => {
-            Box::pin(vault_embedding_spaces_declare(server, call, input)).await
+            boxed_vault_embedding_spaces_declare(server, call, input).await
         }
         "vault.embedding_spaces.bind" => {
-            Box::pin(vault_embedding_spaces_bind(server, call, input)).await
+            boxed_vault_embedding_spaces_bind(server, call, input).await
         }
         "vault.embedding_spaces.one_space" => {
-            Box::pin(vault_embedding_spaces_one_space(server, call, input)).await
+            boxed_vault_embedding_spaces_one_space(server, call, input).await
         }
         "vault.embedding_spaces.retire" => {
-            Box::pin(vault_embedding_spaces_retire(server, call, input)).await
+            boxed_vault_embedding_spaces_retire(server, call, input).await
         }
         "vault.embedding_spaces.move" => {
-            Box::pin(vault_embedding_spaces_move(server, call, input)).await
+            boxed_vault_embedding_spaces_move(server, call, input).await
         }
         "vault.embedding_spaces.move_check" => {
-            Box::pin(vault_embedding_spaces_move_check(server, call, input)).await
+            boxed_vault_embedding_spaces_move_check(server, call, input).await
         }
         "vault.embedding_spaces.move_approve" => {
-            Box::pin(vault_embedding_spaces_move_approve(server, call, input)).await
+            boxed_vault_embedding_spaces_move_approve(server, call, input).await
         }
         "vault.embedding_spaces.move_undo" => {
-            Box::pin(vault_embedding_spaces_move_undo(server, call, input)).await
+            boxed_vault_embedding_spaces_move_undo(server, call, input).await
         }
         "vault.embedding_spaces.move_abandon" => {
-            Box::pin(vault_embedding_spaces_move_abandon(server, call, input)).await
+            boxed_vault_embedding_spaces_move_abandon(server, call, input).await
         }
         "vault.embedding_spaces.probes.list" => {
-            Box::pin(vault_embedding_spaces_probes_list(server, call, input)).await
+            boxed_vault_embedding_spaces_probes_list(server, call, input).await
         }
         "vault.embedding_spaces.probes.put" => {
-            Box::pin(vault_embedding_spaces_probes_put(server, call, input)).await
+            boxed_vault_embedding_spaces_probes_put(server, call, input).await
         }
         "vault.embedding_spaces.probes.delete" => {
-            Box::pin(vault_embedding_spaces_probes_delete(server, call, input)).await
+            boxed_vault_embedding_spaces_probes_delete(server, call, input).await
         }
-        "vault.policy.owner.get" => Box::pin(vault_policy_owner_get(server, call, input)).await,
+        "vault.policy.owner.get" => boxed_vault_policy_owner_get(server, call, input).await,
         "vault.policy.owner.configure" => {
-            Box::pin(vault_policy_owner_configure(server, call, input)).await
+            boxed_vault_policy_owner_configure(server, call, input).await
         }
         "vault.policy.owner.row.change" => {
-            Box::pin(vault_policy_owner_row_change(server, call, input)).await
+            boxed_vault_policy_owner_row_change(server, call, input).await
         }
         "vault.policy.outbound.decide" => {
-            Box::pin(vault_policy_outbound_decide(server, call, input)).await
+            boxed_vault_policy_outbound_decide(server, call, input).await
         }
-        "vault.policy.relay.decide" => {
-            Box::pin(vault_policy_relay_decide(server, call, input)).await
-        }
-        "vault.consent.approve_once" => {
-            Box::pin(vault_consent_approve_once(server, call, input)).await
-        }
+        "vault.policy.relay.decide" => boxed_vault_policy_relay_decide(server, call, input).await,
+        "vault.consent.approve_once" => boxed_vault_consent_approve_once(server, call, input).await,
         "vault.connectors.calls.approve_once" => {
-            Box::pin(vault_connectors_calls_approve_once(server, call, input)).await
+            boxed_vault_connectors_calls_approve_once(server, call, input).await
         }
-        "vault.consent.deny" => Box::pin(vault_consent_deny(server, call, input)).await,
+        "vault.consent.deny" => boxed_vault_consent_deny(server, call, input).await,
         "vault.consent.create_standing_grant" => {
-            Box::pin(vault_consent_create_standing_grant(server, call, input)).await
+            boxed_vault_consent_create_standing_grant(server, call, input).await
         }
         "vault.consent.create_auto_weave_grant" => {
-            Box::pin(vault_consent_create_auto_weave_grant(server, call, input)).await
+            boxed_vault_consent_create_auto_weave_grant(server, call, input).await
         }
-        "vault.consent.registry" => Box::pin(vault_consent_registry(server, call, input)).await,
+        "vault.consent.registry" => boxed_vault_consent_registry(server, call, input).await,
         "vault.consent.failure_signals_held" => {
-            Box::pin(vault_consent_failure_signals_held(server, call, input)).await
+            boxed_vault_consent_failure_signals_held(server, call, input).await
         }
-        "vault.consent.revoke" => Box::pin(vault_consent_revoke(server, call, input)).await,
+        "vault.consent.revoke" => boxed_vault_consent_revoke(server, call, input).await,
         "vault.consent.bypass_grant_warning" => {
-            Box::pin(vault_consent_bypass_grant_warning(server, call, input)).await
+            boxed_vault_consent_bypass_grant_warning(server, call, input).await
         }
         "vault.consent.create_bypass_grant" => {
-            Box::pin(vault_consent_create_bypass_grant(server, call, input)).await
+            boxed_vault_consent_create_bypass_grant(server, call, input).await
         }
         "vault.consent.active_bypass_grants" => {
-            Box::pin(vault_consent_active_bypass_grants(server, call, input)).await
+            boxed_vault_consent_active_bypass_grants(server, call, input).await
         }
         "vault.consent.bypassed_effect_receipts" => {
-            Box::pin(vault_consent_bypassed_effect_receipts(server, call, input)).await
+            boxed_vault_consent_bypassed_effect_receipts(server, call, input).await
         }
         "vault.consent.graduation.policy" => {
-            Box::pin(vault_consent_graduation_policy(server, call, input)).await
+            boxed_vault_consent_graduation_policy(server, call, input).await
         }
         "vault.consent.graduation.policy.set" => {
-            Box::pin(vault_consent_graduation_policy_set(server, call, input)).await
+            boxed_vault_consent_graduation_policy_set(server, call, input).await
         }
         "vault.consent.graduation.policy.clear" => {
-            Box::pin(vault_consent_graduation_policy_clear(server, call, input)).await
+            boxed_vault_consent_graduation_policy_clear(server, call, input).await
         }
         "vault.consent.graduation.stats" => {
-            Box::pin(vault_consent_graduation_stats(server, call, input)).await
+            boxed_vault_consent_graduation_stats(server, call, input).await
         }
         "vault.consent.graduation.outcome" => {
-            Box::pin(vault_consent_graduation_outcome(server, call, input)).await
+            boxed_vault_consent_graduation_outcome(server, call, input).await
         }
         "vault.consent.graduation.offers" => {
-            Box::pin(vault_consent_graduation_offers(server, call, input)).await
+            boxed_vault_consent_graduation_offers(server, call, input).await
         }
         "vault.consent.graduation.answer" => {
-            Box::pin(vault_consent_graduation_answer(server, call, input)).await
+            boxed_vault_consent_graduation_answer(server, call, input).await
         }
         "vault.consent.graduation.trust_table" => {
-            Box::pin(vault_consent_graduation_trust_table(server, call, input)).await
+            boxed_vault_consent_graduation_trust_table(server, call, input).await
         }
         "vault.consent.graduation.settings.unpin" => {
-            Box::pin(vault_consent_graduation_settings_unpin(server, call, input)).await
+            boxed_vault_consent_graduation_settings_unpin(server, call, input).await
         }
         "vault.consent.graduation.demote" => {
-            Box::pin(vault_consent_graduation_demote(server, call, input)).await
+            boxed_vault_consent_graduation_demote(server, call, input).await
         }
         "self.consent.graduation.demote" => {
-            Box::pin(self_consent_graduation_demote(server, call, input)).await
+            boxed_self_consent_graduation_demote(server, call, input).await
         }
-        "vault.gate.policy.get" => Box::pin(vault_gate_policy_get(server, call, input)).await,
-        "vault.gate.policy.put" => Box::pin(vault_gate_policy_put(server, call, input)).await,
-        "vault.gate.policy.propose" => {
-            Box::pin(vault_gate_policy_propose(server, call, input)).await
-        }
-        "vault.gate.checker.get" => Box::pin(vault_gate_checker_get(server, call, input)).await,
-        "vault.gate.checker.set" => Box::pin(vault_gate_checker_set(server, call, input)).await,
-        "vault.learning.read" => Box::pin(vault_learning_read(server, call, input)).await,
-        "vault.learning.projection" => {
-            Box::pin(vault_learning_projection(server, call, input)).await
-        }
-        "vault.seal.confess" => Box::pin(vault_seal_confess(server, call, input)).await,
-        "vault.seal.audit" => Box::pin(vault_seal_audit(server, call, input)).await,
-        "vault.seal.receipt" => Box::pin(vault_seal_receipt(server, call, input)).await,
-        "vault.seal.pending" => Box::pin(vault_seal_pending(server, call, input)).await,
-        "vault.seal.run" => Box::pin(vault_seal_run(server, call, input)).await,
-        "vault.seal.complete" => Box::pin(vault_seal_complete(server, call, input)).await,
-        "vault.settings.learning" => Box::pin(vault_settings_learning(server, call, input)).await,
+        "vault.gate.policy.get" => boxed_vault_gate_policy_get(server, call, input).await,
+        "vault.gate.policy.put" => boxed_vault_gate_policy_put(server, call, input).await,
+        "vault.gate.policy.propose" => boxed_vault_gate_policy_propose(server, call, input).await,
+        "vault.gate.checker.get" => boxed_vault_gate_checker_get(server, call, input).await,
+        "vault.gate.checker.set" => boxed_vault_gate_checker_set(server, call, input).await,
+        "vault.learning.read" => boxed_vault_learning_read(server, call, input).await,
+        "vault.learning.projection" => boxed_vault_learning_projection(server, call, input).await,
+        "vault.seal.confess" => boxed_vault_seal_confess(server, call, input).await,
+        "vault.seal.audit" => boxed_vault_seal_audit(server, call, input).await,
+        "vault.seal.receipt" => boxed_vault_seal_receipt(server, call, input).await,
+        "vault.seal.pending" => boxed_vault_seal_pending(server, call, input).await,
+        "vault.seal.run" => boxed_vault_seal_run(server, call, input).await,
+        "vault.seal.complete" => boxed_vault_seal_complete(server, call, input).await,
+        "vault.settings.learning" => boxed_vault_settings_learning(server, call, input).await,
         "vault.settings.learning.put" => {
-            Box::pin(vault_settings_learning_put(server, call, input)).await
+            boxed_vault_settings_learning_put(server, call, input).await
         }
         "vault.settings.learning.clear" => {
-            Box::pin(vault_settings_learning_clear(server, call, input)).await
+            boxed_vault_settings_learning_clear(server, call, input).await
         }
         "vault.secrets.code_run_lifts" => {
-            Box::pin(vault_secrets_code_run_lifts(server, call, input)).await
+            boxed_vault_secrets_code_run_lifts(server, call, input).await
         }
-        "vault.secrets.lift_history" => {
-            Box::pin(vault_secrets_lift_history(server, call, input)).await
+        "vault.secrets.code_run_room_lifts" => {
+            boxed_vault_secrets_code_run_room_lifts(server, call, input).await
         }
-        "vault.secrets.register" => Box::pin(vault_secrets_register(server, call, input)).await,
-        "vault.secrets.rotate" => Box::pin(vault_secrets_rotate(server, call, input)).await,
-        "vault.secrets.rewrap" => Box::pin(vault_secrets_rewrap(server, call, input)).await,
-        "vault.secrets.revoke" => Box::pin(vault_secrets_revoke(server, call, input)).await,
-        "vault.secrets.custody.get" => {
-            Box::pin(vault_secrets_custody_get(server, call, input)).await
-        }
+        "vault.secrets.lift_history" => boxed_vault_secrets_lift_history(server, call, input).await,
+        "vault.secrets.register" => boxed_vault_secrets_register(server, call, input).await,
+        "vault.secrets.rotate" => boxed_vault_secrets_rotate(server, call, input).await,
+        "vault.secrets.rewrap" => boxed_vault_secrets_rewrap(server, call, input).await,
+        "vault.secrets.revoke" => boxed_vault_secrets_revoke(server, call, input).await,
+        "vault.secrets.custody.get" => boxed_vault_secrets_custody_get(server, call, input).await,
         "vault.secrets.custody.submit" => {
-            Box::pin(vault_secrets_custody_submit(server, call, input)).await
+            boxed_vault_secrets_custody_submit(server, call, input).await
         }
-        "vault.widen_proposals" => Box::pin(vault_widen_proposals(server, call, input)).await,
+        "vault.widen_proposals" => boxed_vault_widen_proposals(server, call, input).await,
         "vault.widen_proposals.approve" => {
-            Box::pin(vault_widen_proposals_approve(server, call, input)).await
+            boxed_vault_widen_proposals_approve(server, call, input).await
         }
         "vault.widen_proposals.decline" => {
-            Box::pin(vault_widen_proposals_decline(server, call, input)).await
+            boxed_vault_widen_proposals_decline(server, call, input).await
         }
-        "vault.claims.review" => Box::pin(vault_claims_review(server, call, input)).await,
-        "vault.claims.settle" => Box::pin(vault_claims_settle(server, call, input)).await,
-        "vault.craft_candidates" => Box::pin(vault_craft_candidates(server, call, input)).await,
+        "vault.claims.review" => boxed_vault_claims_review(server, call, input).await,
+        "vault.claims.settle" => boxed_vault_claims_settle(server, call, input).await,
+        "vault.craft_candidates" => boxed_vault_craft_candidates(server, call, input).await,
         "vault.craft_candidates.answer" => {
-            Box::pin(vault_craft_candidates_answer(server, call, input)).await
+            boxed_vault_craft_candidates_answer(server, call, input).await
         }
         "vault.settings.wake_policy.set" => {
-            Box::pin(vault_settings_wake_policy_set(server, call, input)).await
+            boxed_vault_settings_wake_policy_set(server, call, input).await
         }
         "vault.settings.inference_defaults" => {
-            Box::pin(vault_settings_inference_defaults(server, call, input)).await
+            boxed_vault_settings_inference_defaults(server, call, input).await
         }
         "vault.settings.inference_defaults.replace" => {
-            Box::pin(vault_settings_inference_defaults_replace(
-                server, call, input,
-            ))
-            .await
+            boxed_vault_settings_inference_defaults_replace(server, call, input).await
         }
-        "vault.lenses.propose" => Box::pin(vault_lenses_propose(server, call, input)).await,
+        "vault.lenses.propose" => boxed_vault_lenses_propose(server, call, input).await,
         "vault.lenses.propose_from_pack" => {
-            Box::pin(vault_lenses_propose_from_pack(server, call, input)).await
+            boxed_vault_lenses_propose_from_pack(server, call, input).await
         }
-        "vault.lenses.activate" => Box::pin(vault_lenses_activate(server, call, input)).await,
-        "vault.lenses.deactivate" => Box::pin(vault_lenses_deactivate(server, call, input)).await,
-        "vault.lenses.list" => Box::pin(vault_lenses_list(server, call, input)).await,
-        "vault.lenses.export_pack" => Box::pin(vault_lenses_export_pack(server, call, input)).await,
-        "vault.lenses.select" => Box::pin(vault_lenses_select(server, call, input)).await,
-        "vault.lenses.resolve" => Box::pin(vault_lenses_resolve(server, call, input)).await,
+        "vault.lenses.activate" => boxed_vault_lenses_activate(server, call, input).await,
+        "vault.lenses.deactivate" => boxed_vault_lenses_deactivate(server, call, input).await,
+        "vault.lenses.list" => boxed_vault_lenses_list(server, call, input).await,
+        "vault.lenses.export_pack" => boxed_vault_lenses_export_pack(server, call, input).await,
+        "vault.lenses.select" => boxed_vault_lenses_select(server, call, input).await,
+        "vault.lenses.resolve" => boxed_vault_lenses_resolve(server, call, input).await,
         "vault.lenses.result_set.action" => {
-            Box::pin(vault_lenses_result_set_action(server, call, input)).await
+            boxed_vault_lenses_result_set_action(server, call, input).await
         }
-        "vault.lenses.default" => Box::pin(vault_lenses_default(server, call, input)).await,
-        "vault.disclosure.offer" => Box::pin(vault_disclosure_offer(server, call, input)).await,
+        "vault.lenses.default" => boxed_vault_lenses_default(server, call, input).await,
+        "vault.disclosure.offer" => boxed_vault_disclosure_offer(server, call, input).await,
         "vault.disclosure.ceiling.get" => {
-            Box::pin(vault_disclosure_ceiling_get(server, call, input)).await
+            boxed_vault_disclosure_ceiling_get(server, call, input).await
         }
         "vault.disclosure.ceiling.set" => {
-            Box::pin(vault_disclosure_ceiling_set(server, call, input)).await
+            boxed_vault_disclosure_ceiling_set(server, call, input).await
         }
         "vault.disclosure.ceiling.clear" => {
-            Box::pin(vault_disclosure_ceiling_clear(server, call, input)).await
+            boxed_vault_disclosure_ceiling_clear(server, call, input).await
         }
-        "vault.disclosure.reveals" => Box::pin(vault_disclosure_reveals(server, call, input)).await,
+        "vault.disclosure.reveals" => boxed_vault_disclosure_reveals(server, call, input).await,
         "vault.disclosure.reveals.answer" => {
-            Box::pin(vault_disclosure_reveals_answer(server, call, input)).await
+            boxed_vault_disclosure_reveals_answer(server, call, input).await
         }
-        "reveal" => Box::pin(reveal(server, call, input)).await,
-        "reveal.wait" => Box::pin(reveal_wait(server, call, input)).await,
-        "reveal.describe" => Box::pin(reveal_describe(server, call, input)).await,
-        "self.use" => Box::pin(self_use(server, call, input)).await,
-        "self.secrets.materialize" => Box::pin(self_secrets_materialize(server, call, input)).await,
-        "self.secrets.renew" => Box::pin(self_secrets_renew(server, call, input)).await,
-        "self.secrets.teardown" => Box::pin(self_secrets_teardown(server, call, input)).await,
-        "self.secrets.use" => Box::pin(self_secrets_use(server, call, input)).await,
-        "vault.shares.create" => Box::pin(vault_shares_create(server, call, input)).await,
-        "vault.shares.revoke" => Box::pin(vault_shares_revoke(server, call, input)).await,
-        "vault.shares.view" => Box::pin(vault_shares_view(server, call, input)).await,
-        "host.compact" => Box::pin(host_compact(server, call, input)).await,
-        "host.wake" => Box::pin(host_wake(server, call, input)).await,
-        "host.budget.hit" => Box::pin(host_budget_hit(server, call, input)).await,
-        "vault.hooks.replay" => Box::pin(vault_hooks_replay(server, call, input)).await,
-        "vault.hooks.regen.due" => Box::pin(vault_hooks_regen_due(server, call, input)).await,
-        "vault.hooks.regen.get" => Box::pin(vault_hooks_regen_get(server, call, input)).await,
-        "vault.hooks.regen.adopt" => Box::pin(vault_hooks_regen_adopt(server, call, input)).await,
+        "reveal" => boxed_reveal(server, call, input).await,
+        "reveal.wait" => boxed_reveal_wait(server, call, input).await,
+        "reveal.describe" => boxed_reveal_describe(server, call, input).await,
+        "self.use" => boxed_self_use(server, call, input).await,
+        "self.secrets.materialize" => boxed_self_secrets_materialize(server, call, input).await,
+        "self.secrets.renew" => boxed_self_secrets_renew(server, call, input).await,
+        "self.secrets.teardown" => boxed_self_secrets_teardown(server, call, input).await,
+        "self.secrets.use" => boxed_self_secrets_use(server, call, input).await,
+        "vault.shares.create" => boxed_vault_shares_create(server, call, input).await,
+        "vault.shares.revoke" => boxed_vault_shares_revoke(server, call, input).await,
+        "vault.shares.view" => boxed_vault_shares_view(server, call, input).await,
+        "host.compact" => boxed_host_compact(server, call, input).await,
+        "host.wake" => boxed_host_wake(server, call, input).await,
+        "host.budget.hit" => boxed_host_budget_hit(server, call, input).await,
+        "vault.hooks.replay" => boxed_vault_hooks_replay(server, call, input).await,
+        "vault.hooks.regen.due" => boxed_vault_hooks_regen_due(server, call, input).await,
+        "vault.hooks.regen.get" => boxed_vault_hooks_regen_get(server, call, input).await,
+        "vault.hooks.regen.adopt" => boxed_vault_hooks_regen_adopt(server, call, input).await,
         "vault.artifacts.publish_approval" => {
-            Box::pin(vault_artifacts_publish_approval(server, call, input)).await
+            boxed_vault_artifacts_publish_approval(server, call, input).await
         }
-        "vault.artifacts.publish" => Box::pin(vault_artifacts_publish(server, call, input)).await,
-        "vault.artifacts.repoint" => Box::pin(vault_artifacts_repoint(server, call, input)).await,
-        "vault.artifacts.pointer" => Box::pin(vault_artifacts_pointer(server, call, input)).await,
-        "vault.artifacts.unpublish" => {
-            Box::pin(vault_artifacts_unpublish(server, call, input)).await
-        }
-        "vault.artifacts.link_token" => {
-            Box::pin(vault_artifacts_link_token(server, call, input)).await
-        }
+        "vault.artifacts.publish" => boxed_vault_artifacts_publish(server, call, input).await,
+        "vault.artifacts.repoint" => boxed_vault_artifacts_repoint(server, call, input).await,
+        "vault.artifacts.pointer" => boxed_vault_artifacts_pointer(server, call, input).await,
+        "vault.artifacts.unpublish" => boxed_vault_artifacts_unpublish(server, call, input).await,
+        "vault.artifacts.link_token" => boxed_vault_artifacts_link_token(server, call, input).await,
         "vault.artifacts.live_preview.register" => {
-            Box::pin(vault_artifacts_live_preview_register(server, call, input)).await
+            boxed_vault_artifacts_live_preview_register(server, call, input).await
         }
         "vault.artifacts.live_preview.read" => {
-            Box::pin(vault_artifacts_live_preview_read(server, call, input)).await
+            boxed_vault_artifacts_live_preview_read(server, call, input).await
         }
         "vault.artifacts.live_preview.close" => {
-            Box::pin(vault_artifacts_live_preview_close(server, call, input)).await
+            boxed_vault_artifacts_live_preview_close(server, call, input).await
         }
         "vault.artifacts.live_preview.invite" => {
-            Box::pin(vault_artifacts_live_preview_invite(server, call, input)).await
+            boxed_vault_artifacts_live_preview_invite(server, call, input).await
         }
         "vault.artifacts.live_preview.revoke_invite" => {
-            Box::pin(vault_artifacts_live_preview_revoke_invite(
-                server, call, input,
-            ))
-            .await
+            boxed_vault_artifacts_live_preview_revoke_invite(server, call, input).await
         }
         "vault.artifacts.live_preview.share" => {
-            Box::pin(vault_artifacts_live_preview_share(server, call, input)).await
+            boxed_vault_artifacts_live_preview_share(server, call, input).await
         }
         "vault.artifacts.live_preview.revoke_share" => {
-            Box::pin(vault_artifacts_live_preview_revoke_share(
-                server, call, input,
-            ))
-            .await
+            boxed_vault_artifacts_live_preview_revoke_share(server, call, input).await
         }
-        "vault.artifacts.view" => Box::pin(vault_artifacts_view(server, call, input)).await,
-        "vault.artifacts.units" => Box::pin(vault_artifacts_units(server, call, input)).await,
+        "vault.artifacts.view" => boxed_vault_artifacts_view(server, call, input).await,
+        "vault.artifacts.units" => boxed_vault_artifacts_units(server, call, input).await,
         "vault.artifacts.anchors.pin" => {
-            Box::pin(vault_artifacts_anchors_pin(server, call, input)).await
+            boxed_vault_artifacts_anchors_pin(server, call, input).await
         }
         "vault.artifacts.threads.open" => {
-            Box::pin(vault_artifacts_threads_open(server, call, input)).await
+            boxed_vault_artifacts_threads_open(server, call, input).await
         }
         "vault.artifacts.threads.comment" => {
-            Box::pin(vault_artifacts_threads_comment(server, call, input)).await
+            boxed_vault_artifacts_threads_comment(server, call, input).await
         }
         "vault.artifacts.threads.read" => {
-            Box::pin(vault_artifacts_threads_read(server, call, input)).await
+            boxed_vault_artifacts_threads_read(server, call, input).await
         }
         "vault.artifacts.threads.list" => {
-            Box::pin(vault_artifacts_threads_list(server, call, input)).await
+            boxed_vault_artifacts_threads_list(server, call, input).await
         }
         "vault.artifacts.threads.assign" => {
-            Box::pin(vault_artifacts_threads_assign(server, call, input)).await
+            boxed_vault_artifacts_threads_assign(server, call, input).await
         }
         "vault.artifacts.threads.state" => {
-            Box::pin(vault_artifacts_threads_state(server, call, input)).await
+            boxed_vault_artifacts_threads_state(server, call, input).await
         }
-        "mount" => Box::pin(mount(server, call, input)).await,
-        "graph_fs.readdir" => Box::pin(graph_fs_readdir(server, call, input)).await,
-        "graph_fs.read_file" => Box::pin(graph_fs_read_file(server, call, input)).await,
-        "graph_fs.read_link" => Box::pin(graph_fs_read_link(server, call, input)).await,
-        "graph_fs.ls" => Box::pin(graph_fs_ls(server, call, input)).await,
-        "graph_fs.find" => Box::pin(graph_fs_find(server, call, input)).await,
-        "graph_fs.grep" => Box::pin(graph_fs_grep(server, call, input)).await,
-        "graph_fs.cat" => Box::pin(graph_fs_cat(server, call, input)).await,
-        "graph_fs.head" => Box::pin(graph_fs_head(server, call, input)).await,
-        "graph_fs.wc" => Box::pin(graph_fs_wc(server, call, input)).await,
-        "vault.code.diff" => Box::pin(vault_code_diff(server, call, input)).await,
-        "vault.code.blame" => Box::pin(vault_code_blame(server, call, input)).await,
-        "vault.code.proposal_view" => Box::pin(vault_code_proposal_view(server, call, input)).await,
-        "vault.code.symbols.declare" => {
-            Box::pin(vault_code_symbols_declare(server, call, input)).await
-        }
-        "vault.code.symbols.renew" => Box::pin(vault_code_symbols_renew(server, call, input)).await,
-        "vault.code.symbols.release" => {
-            Box::pin(vault_code_symbols_release(server, call, input)).await
-        }
-        "vault.code.proposal_submit" => {
-            Box::pin(vault_code_proposal_submit(server, call, input)).await
-        }
-        "vault.code.conflict_record" => {
-            Box::pin(vault_code_conflict_record(server, call, input)).await
-        }
-        "vault.code.conflict_view" => Box::pin(vault_code_conflict_view(server, call, input)).await,
+        "mount" => boxed_mount(server, call, input).await,
+        "graph_fs.readdir" => boxed_graph_fs_readdir(server, call, input).await,
+        "graph_fs.read_file" => boxed_graph_fs_read_file(server, call, input).await,
+        "graph_fs.read_link" => boxed_graph_fs_read_link(server, call, input).await,
+        "graph_fs.ls" => boxed_graph_fs_ls(server, call, input).await,
+        "graph_fs.find" => boxed_graph_fs_find(server, call, input).await,
+        "graph_fs.grep" => boxed_graph_fs_grep(server, call, input).await,
+        "graph_fs.cat" => boxed_graph_fs_cat(server, call, input).await,
+        "graph_fs.head" => boxed_graph_fs_head(server, call, input).await,
+        "graph_fs.wc" => boxed_graph_fs_wc(server, call, input).await,
+        "vault.code.diff" => boxed_vault_code_diff(server, call, input).await,
+        "vault.code.blame" => boxed_vault_code_blame(server, call, input).await,
+        "vault.code.proposal_view" => boxed_vault_code_proposal_view(server, call, input).await,
+        "vault.code.symbols.declare" => boxed_vault_code_symbols_declare(server, call, input).await,
+        "vault.code.symbols.renew" => boxed_vault_code_symbols_renew(server, call, input).await,
+        "vault.code.symbols.release" => boxed_vault_code_symbols_release(server, call, input).await,
+        "vault.code.proposal_submit" => boxed_vault_code_proposal_submit(server, call, input).await,
+        "vault.code.conflict_record" => boxed_vault_code_conflict_record(server, call, input).await,
+        "vault.code.conflict_view" => boxed_vault_code_conflict_view(server, call, input).await,
         "vault.code.proposal_resolve" => {
-            Box::pin(vault_code_proposal_resolve(server, call, input)).await
+            boxed_vault_code_proposal_resolve(server, call, input).await
         }
-        "vault.code.proposal_review" => {
-            Box::pin(vault_code_proposal_review(server, call, input)).await
-        }
-        "vault.code.proposal_settle" => {
-            Box::pin(vault_code_proposal_settle(server, call, input)).await
-        }
+        "vault.code.proposal_review" => boxed_vault_code_proposal_review(server, call, input).await,
+        "vault.code.proposal_settle" => boxed_vault_code_proposal_settle(server, call, input).await,
         "vault.code.proposal_settlement" => {
-            Box::pin(vault_code_proposal_settlement(server, call, input)).await
+            boxed_vault_code_proposal_settlement(server, call, input).await
         }
-        "vault.code.oplog" => Box::pin(vault_code_oplog(server, call, input)).await,
-        "execute_code" => Box::pin(execute_code(server, call, input)).await,
+        "vault.code.oplog" => boxed_vault_code_oplog(server, call, input).await,
+        "execute_code" => boxed_execute_code(server, call, input).await,
         "vault.code.model_heal_count" => {
-            Box::pin(vault_code_model_heal_count(server, call, input)).await
+            boxed_vault_code_model_heal_count(server, call, input).await
         }
         "vault.code.type_diagnostics" => {
-            Box::pin(vault_code_type_diagnostics(server, call, input)).await
+            boxed_vault_code_type_diagnostics(server, call, input).await
         }
-        "vault.code.waits.resolve" => Box::pin(vault_code_waits_resolve(server, call, input)).await,
-        "vault.code.waits.receipt" => Box::pin(vault_code_waits_receipt(server, call, input)).await,
-        "vault.results.status" => Box::pin(vault_results_status(server, call, input)).await,
-        "vault.results.recover" => Box::pin(vault_results_recover(server, call, input)).await,
-        "vault.results.read" => Box::pin(vault_results_read(server, call, input)).await,
-        "vault.results.slice" => Box::pin(vault_results_slice(server, call, input)).await,
-        "vault.code.repo_diff" => Box::pin(vault_code_repo_diff(server, call, input)).await,
-        "vault.code.export" => Box::pin(vault_code_export(server, call, input)).await,
-        "vault.code.export.preview" => {
-            Box::pin(vault_code_export_preview(server, call, input)).await
-        }
+        "vault.code.waits.resolve" => boxed_vault_code_waits_resolve(server, call, input).await,
+        "vault.code.waits.receipt" => boxed_vault_code_waits_receipt(server, call, input).await,
+        "vault.results.status" => boxed_vault_results_status(server, call, input).await,
+        "vault.results.recover" => boxed_vault_results_recover(server, call, input).await,
+        "vault.results.read" => boxed_vault_results_read(server, call, input).await,
+        "vault.results.slice" => boxed_vault_results_slice(server, call, input).await,
+        "vault.code.repo_diff" => boxed_vault_code_repo_diff(server, call, input).await,
+        "vault.code.export" => boxed_vault_code_export(server, call, input).await,
+        "vault.code.export.preview" => boxed_vault_code_export_preview(server, call, input).await,
         "vault.code.export.preview.read" => {
-            Box::pin(vault_code_export_preview_read(server, call, input)).await
+            boxed_vault_code_export_preview_read(server, call, input).await
         }
-        "vault.code.import" => Box::pin(vault_code_import(server, call, input)).await,
-        "vault.code.repos.get" => Box::pin(vault_code_repos_get(server, call, input)).await,
-        "vault.code.forks.get" => Box::pin(vault_code_forks_get(server, call, input)).await,
-        "vault.code.imports.create" => {
-            Box::pin(vault_code_imports_create(server, call, input)).await
-        }
-        "vault.code.imports.get" => Box::pin(vault_code_imports_get(server, call, input)).await,
-        "vault.code.ingress.get" => Box::pin(vault_code_ingress_get(server, call, input)).await,
-        "vault.code.origin.register" => {
-            Box::pin(vault_code_origin_register(server, call, input)).await
-        }
+        "vault.code.import" => boxed_vault_code_import(server, call, input).await,
+        "vault.code.repos.get" => boxed_vault_code_repos_get(server, call, input).await,
+        "vault.code.forks.get" => boxed_vault_code_forks_get(server, call, input).await,
+        "vault.code.imports.create" => boxed_vault_code_imports_create(server, call, input).await,
+        "vault.code.imports.get" => boxed_vault_code_imports_get(server, call, input).await,
+        "vault.code.ingress.get" => boxed_vault_code_ingress_get(server, call, input).await,
+        "vault.code.origin.register" => boxed_vault_code_origin_register(server, call, input).await,
         "vault.code.origin.mirror.get" => {
-            Box::pin(vault_code_origin_mirror_get(server, call, input)).await
+            boxed_vault_code_origin_mirror_get(server, call, input).await
         }
         "vault.code.origin.mirror.plan" => {
-            Box::pin(vault_code_origin_mirror_plan(server, call, input)).await
+            boxed_vault_code_origin_mirror_plan(server, call, input).await
         }
         "vault.code.origin.mirror.set" => {
-            Box::pin(vault_code_origin_mirror_set(server, call, input)).await
+            boxed_vault_code_origin_mirror_set(server, call, input).await
         }
         "vault.code.origin.mirror.strategy" => {
-            Box::pin(vault_code_origin_mirror_strategy(server, call, input)).await
+            boxed_vault_code_origin_mirror_strategy(server, call, input).await
         }
         "vault.code.origin.mirror.clear" => {
-            Box::pin(vault_code_origin_mirror_clear(server, call, input)).await
+            boxed_vault_code_origin_mirror_clear(server, call, input).await
         }
         "vault.code.origin.mirror.push" => {
-            Box::pin(vault_code_origin_mirror_push(server, call, input)).await
+            boxed_vault_code_origin_mirror_push(server, call, input).await
         }
         "vault.code.origin.publish.request" => {
-            Box::pin(vault_code_origin_publish_request(server, call, input)).await
+            boxed_vault_code_origin_publish_request(server, call, input).await
         }
         "vault.code.origin.publish.review" => {
-            Box::pin(vault_code_origin_publish_review(server, call, input)).await
+            boxed_vault_code_origin_publish_review(server, call, input).await
         }
         "vault.code.origin.publish.get" => {
-            Box::pin(vault_code_origin_publish_get(server, call, input)).await
+            boxed_vault_code_origin_publish_get(server, call, input).await
         }
         "vault.code.origin.publish.approve" => {
-            Box::pin(vault_code_origin_publish_approve(server, call, input)).await
+            boxed_vault_code_origin_publish_approve(server, call, input).await
         }
         "vault.code.origin.publish.execute" => {
-            Box::pin(vault_code_origin_publish_execute(server, call, input)).await
+            boxed_vault_code_origin_publish_execute(server, call, input).await
         }
         "vault.code.origin.publish.cancel" => {
-            Box::pin(vault_code_origin_publish_cancel(server, call, input)).await
+            boxed_vault_code_origin_publish_cancel(server, call, input).await
         }
         "vault.code.origin.authority.get" => {
-            Box::pin(vault_code_origin_authority_get(server, call, input)).await
+            boxed_vault_code_origin_authority_get(server, call, input).await
         }
         "vault.code.origin.authority.set" => {
-            Box::pin(vault_code_origin_authority_set(server, call, input)).await
+            boxed_vault_code_origin_authority_set(server, call, input).await
         }
         "vault.code.origin.publications" => {
-            Box::pin(vault_code_origin_publications(server, call, input)).await
+            boxed_vault_code_origin_publications(server, call, input).await
         }
-        "vault.code.checkout.bind" => Box::pin(vault_code_checkout_bind(server, call, input)).await,
-        "vault.code.checkout.claim" => {
-            Box::pin(vault_code_checkout_claim(server, call, input)).await
-        }
-        "vault.code.checkout.get" => Box::pin(vault_code_checkout_get(server, call, input)).await,
-        "vault.code.checkout.renew" => {
-            Box::pin(vault_code_checkout_renew(server, call, input)).await
-        }
+        "vault.code.checkout.bind" => boxed_vault_code_checkout_bind(server, call, input).await,
+        "vault.code.checkout.claim" => boxed_vault_code_checkout_claim(server, call, input).await,
+        "vault.code.checkout.get" => boxed_vault_code_checkout_get(server, call, input).await,
+        "vault.code.checkout.renew" => boxed_vault_code_checkout_renew(server, call, input).await,
         "vault.code.checkout.reclaim" => {
-            Box::pin(vault_code_checkout_reclaim(server, call, input)).await
+            boxed_vault_code_checkout_reclaim(server, call, input).await
         }
         "vault.code.checkout.takeover" => {
-            Box::pin(vault_code_checkout_takeover(server, call, input)).await
+            boxed_vault_code_checkout_takeover(server, call, input).await
         }
         "vault.code.checkout.publish" => {
-            Box::pin(vault_code_checkout_publish(server, call, input)).await
+            boxed_vault_code_checkout_publish(server, call, input).await
         }
-        "vault.code.checkout.settle" => {
-            Box::pin(vault_code_checkout_settle(server, call, input)).await
-        }
+        "vault.code.checkout.settle" => boxed_vault_code_checkout_settle(server, call, input).await,
         "vault.code.checkout.teardown" => {
-            Box::pin(vault_code_checkout_teardown(server, call, input)).await
+            boxed_vault_code_checkout_teardown(server, call, input).await
         }
         "vault.code.views.materialize" => {
-            Box::pin(vault_code_views_materialize(server, call, input)).await
+            boxed_vault_code_views_materialize(server, call, input).await
         }
-        "vault.code.views.get" => Box::pin(vault_code_views_get(server, call, input)).await,
-        "vault.code.views.read" => Box::pin(vault_code_views_read(server, call, input)).await,
-        "vault.code.views.action" => Box::pin(vault_code_views_action(server, call, input)).await,
-        "vault.code.views.build" => Box::pin(vault_code_views_build(server, call, input)).await,
-        "vault.code.cache.get" => Box::pin(vault_code_cache_get(server, call, input)).await,
-        "vault.code.cache.reuse" => Box::pin(vault_code_cache_reuse(server, call, input)).await,
+        "vault.code.views.get" => boxed_vault_code_views_get(server, call, input).await,
+        "vault.code.views.read" => boxed_vault_code_views_read(server, call, input).await,
+        "vault.code.views.action" => boxed_vault_code_views_action(server, call, input).await,
+        "vault.code.views.build" => boxed_vault_code_views_build(server, call, input).await,
+        "vault.code.cache.get" => boxed_vault_code_cache_get(server, call, input).await,
+        "vault.code.cache.reuse" => boxed_vault_code_cache_reuse(server, call, input).await,
         "vault.code.snapshots.ingest" => {
-            Box::pin(vault_code_snapshots_ingest(server, call, input)).await
+            boxed_vault_code_snapshots_ingest(server, call, input).await
         }
-        "vault.code.snapshots.get" => Box::pin(vault_code_snapshots_get(server, call, input)).await,
-        "vault.code.snapshots.read" => {
-            Box::pin(vault_code_snapshots_read(server, call, input)).await
-        }
+        "vault.code.snapshots.get" => boxed_vault_code_snapshots_get(server, call, input).await,
+        "vault.code.snapshots.read" => boxed_vault_code_snapshots_read(server, call, input).await,
         "vault.code.symbols.definitions" => {
-            Box::pin(vault_code_symbols_definitions(server, call, input)).await
+            boxed_vault_code_symbols_definitions(server, call, input).await
         }
         "vault.code.merge_queue.enqueue" => {
-            Box::pin(vault_code_merge_queue_enqueue(server, call, input)).await
+            boxed_vault_code_merge_queue_enqueue(server, call, input).await
         }
         "vault.code.merge_queue.stage" => {
-            Box::pin(vault_code_merge_queue_stage(server, call, input)).await
+            boxed_vault_code_merge_queue_stage(server, call, input).await
         }
         "vault.code.merge_queue.observe" => {
-            Box::pin(vault_code_merge_queue_observe(server, call, input)).await
+            boxed_vault_code_merge_queue_observe(server, call, input).await
         }
         "vault.code.merge_queue.requeue_survivors" => {
-            Box::pin(vault_code_merge_queue_requeue_survivors(
-                server, call, input,
-            ))
-            .await
+            boxed_vault_code_merge_queue_requeue_survivors(server, call, input).await
         }
         "vault.code.merge_queue.land_reviewed" => {
-            Box::pin(vault_code_merge_queue_land_reviewed(server, call, input)).await
+            boxed_vault_code_merge_queue_land_reviewed(server, call, input).await
         }
         "vault.code.merge_queue.settle_slow" => {
-            Box::pin(vault_code_merge_queue_settle_slow(server, call, input)).await
+            boxed_vault_code_merge_queue_settle_slow(server, call, input).await
         }
         "vault.code.merge_queue.recover" => {
-            Box::pin(vault_code_merge_queue_recover(server, call, input)).await
+            boxed_vault_code_merge_queue_recover(server, call, input).await
         }
         "vault.code.merge_queue.init" => {
-            Box::pin(vault_code_merge_queue_init(server, call, input)).await
+            boxed_vault_code_merge_queue_init(server, call, input).await
         }
         "vault.code.merge_queue.check" => {
-            Box::pin(vault_code_merge_queue_check(server, call, input)).await
+            boxed_vault_code_merge_queue_check(server, call, input).await
         }
         "vault.code.merge_queue.diagnose" => {
-            Box::pin(vault_code_merge_queue_diagnose(server, call, input)).await
+            boxed_vault_code_merge_queue_diagnose(server, call, input).await
         }
         "vault.code.merge_queue.check_status" => {
-            Box::pin(vault_code_merge_queue_check_status(server, call, input)).await
+            boxed_vault_code_merge_queue_check_status(server, call, input).await
         }
-        "vault.code.checks.get" => Box::pin(vault_code_checks_get(server, call, input)).await,
+        "vault.code.checks.get" => boxed_vault_code_checks_get(server, call, input).await,
         "vault.code.merge_queue.review_policy.get" => {
-            Box::pin(vault_code_merge_queue_review_policy_get(
-                server, call, input,
-            ))
-            .await
+            boxed_vault_code_merge_queue_review_policy_get(server, call, input).await
         }
         "vault.code.merge_queue.review_policy.set" => {
-            Box::pin(vault_code_merge_queue_review_policy_set(
-                server, call, input,
-            ))
-            .await
+            boxed_vault_code_merge_queue_review_policy_set(server, call, input).await
         }
         "vault.code.merge_queue.export_green" => {
-            Box::pin(vault_code_merge_queue_export_green(server, call, input)).await
+            boxed_vault_code_merge_queue_export_green(server, call, input).await
         }
-        "vault.artifacts.export" => Box::pin(vault_artifacts_export(server, call, input)).await,
-        "vault.agents.create" => Box::pin(vault_agents_create(server, call, input)).await,
-        "vault.agents.get" => Box::pin(vault_agents_get(server, call, input)).await,
-        "vault.agents.update" => Box::pin(vault_agents_update(server, call, input)).await,
-        "vault.agents.dreaming.get" => {
-            Box::pin(vault_agents_dreaming_get(server, call, input)).await
-        }
-        "vault.agents.dreaming.set" => {
-            Box::pin(vault_agents_dreaming_set(server, call, input)).await
-        }
-        "vault.agents.grants.mint" => Box::pin(vault_agents_grants_mint(server, call, input)).await,
-        "vault.agents.grants.revoke" => {
-            Box::pin(vault_agents_grants_revoke(server, call, input)).await
-        }
-        "vault.repo.git_push.mint" => Box::pin(vault_repo_git_push_mint(server, call, input)).await,
-        "vault.repo.git_push.revoke" => {
-            Box::pin(vault_repo_git_push_revoke(server, call, input)).await
-        }
+        "vault.artifacts.export" => boxed_vault_artifacts_export(server, call, input).await,
+        "vault.agents.create" => boxed_vault_agents_create(server, call, input).await,
+        "vault.agents.get" => boxed_vault_agents_get(server, call, input).await,
+        "vault.agents.update" => boxed_vault_agents_update(server, call, input).await,
+        "vault.agents.dreaming.get" => boxed_vault_agents_dreaming_get(server, call, input).await,
+        "vault.agents.dreaming.set" => boxed_vault_agents_dreaming_set(server, call, input).await,
+        "vault.agents.grants.mint" => boxed_vault_agents_grants_mint(server, call, input).await,
+        "vault.agents.grants.revoke" => boxed_vault_agents_grants_revoke(server, call, input).await,
+        "vault.repo.git_push.mint" => boxed_vault_repo_git_push_mint(server, call, input).await,
+        "vault.repo.git_push.revoke" => boxed_vault_repo_git_push_revoke(server, call, input).await,
         "vault.connectors.read_grants.grant" => {
-            Box::pin(vault_connectors_read_grants_grant(server, call, input)).await
+            boxed_vault_connectors_read_grants_grant(server, call, input).await
         }
         "vault.connectors.read_grants.revoke" => {
-            Box::pin(vault_connectors_read_grants_revoke(server, call, input)).await
+            boxed_vault_connectors_read_grants_revoke(server, call, input).await
         }
-        "vault.repo.anchor.bind" => Box::pin(vault_repo_anchor_bind(server, call, input)).await,
-        "vault.repo.snapshots.get" => Box::pin(vault_repo_snapshots_get(server, call, input)).await,
-        "vault.repo.snapshots.read" => {
-            Box::pin(vault_repo_snapshots_read(server, call, input)).await
-        }
+        "vault.repo.anchor.bind" => boxed_vault_repo_anchor_bind(server, call, input).await,
+        "vault.repo.snapshots.get" => boxed_vault_repo_snapshots_get(server, call, input).await,
+        "vault.repo.snapshots.read" => boxed_vault_repo_snapshots_read(server, call, input).await,
         "vault.repo.symbols.definitions" => {
-            Box::pin(vault_repo_symbols_definitions(server, call, input)).await
+            boxed_vault_repo_symbols_definitions(server, call, input).await
         }
-        "vault.repo.views.get" => Box::pin(vault_repo_views_get(server, call, input)).await,
-        "vault.repo.views.read" => Box::pin(vault_repo_views_read(server, call, input)).await,
+        "vault.repo.views.get" => boxed_vault_repo_views_get(server, call, input).await,
+        "vault.repo.views.read" => boxed_vault_repo_views_read(server, call, input).await,
         "vault.repo.merge_queue.observe" => {
-            Box::pin(vault_repo_merge_queue_observe(server, call, input)).await
+            boxed_vault_repo_merge_queue_observe(server, call, input).await
         }
         "vault.repo.snapshots.ingest" => {
-            Box::pin(vault_repo_snapshots_ingest(server, call, input)).await
+            boxed_vault_repo_snapshots_ingest(server, call, input).await
         }
-        "vault.repo.work.open" => Box::pin(vault_repo_work_open(server, call, input)).await,
-        "vault.repo.symbols.declare" => {
-            Box::pin(vault_repo_symbols_declare(server, call, input)).await
-        }
-        "vault.repo.symbols.renew" => Box::pin(vault_repo_symbols_renew(server, call, input)).await,
-        "vault.repo.symbols.release" => {
-            Box::pin(vault_repo_symbols_release(server, call, input)).await
-        }
-        "vault.repo.proposal_submit" => {
-            Box::pin(vault_repo_proposal_submit(server, call, input)).await
-        }
+        "vault.repo.work.open" => boxed_vault_repo_work_open(server, call, input).await,
+        "vault.repo.symbols.declare" => boxed_vault_repo_symbols_declare(server, call, input).await,
+        "vault.repo.symbols.renew" => boxed_vault_repo_symbols_renew(server, call, input).await,
+        "vault.repo.symbols.release" => boxed_vault_repo_symbols_release(server, call, input).await,
+        "vault.repo.proposal_submit" => boxed_vault_repo_proposal_submit(server, call, input).await,
         "vault.repo.merge_queue.enqueue" => {
-            Box::pin(vault_repo_merge_queue_enqueue(server, call, input)).await
+            boxed_vault_repo_merge_queue_enqueue(server, call, input).await
         }
-        "vault.repo.checkout.bind" => Box::pin(vault_repo_checkout_bind(server, call, input)).await,
-        "vault.repo.export" => Box::pin(vault_repo_export(server, call, input)).await,
-        "vault.agents.base" => Box::pin(vault_agents_base(server, call, input)).await,
+        "vault.repo.checkout.bind" => boxed_vault_repo_checkout_bind(server, call, input).await,
+        "vault.repo.export" => boxed_vault_repo_export(server, call, input).await,
+        "vault.agents.base" => boxed_vault_agents_base(server, call, input).await,
         "vault.standing_blocks.configure" => {
-            Box::pin(vault_standing_blocks_configure(server, call, input)).await
+            boxed_vault_standing_blocks_configure(server, call, input).await
         }
         "vault.standing_blocks.reconfigure" => {
-            Box::pin(vault_standing_blocks_reconfigure(server, call, input)).await
+            boxed_vault_standing_blocks_reconfigure(server, call, input).await
         }
-        "vault.standing_blocks.get" => {
-            Box::pin(vault_standing_blocks_get(server, call, input)).await
-        }
-        "vault.standing_blocks.list" => {
-            Box::pin(vault_standing_blocks_list(server, call, input)).await
-        }
-        "vault.workflows.save" => Box::pin(vault_workflows_save(server, call, input)).await,
-        "vault.workflows.get" => Box::pin(vault_workflows_get(server, call, input)).await,
-        "vault.workflows.update" => Box::pin(vault_workflows_update(server, call, input)).await,
-        "vault.workflows.dispatch" => Box::pin(vault_workflows_dispatch(server, call, input)).await,
+        "vault.standing_blocks.get" => boxed_vault_standing_blocks_get(server, call, input).await,
+        "vault.standing_blocks.list" => boxed_vault_standing_blocks_list(server, call, input).await,
+        "vault.workflows.save" => boxed_vault_workflows_save(server, call, input).await,
+        "vault.workflows.get" => boxed_vault_workflows_get(server, call, input).await,
+        "vault.workflows.update" => boxed_vault_workflows_update(server, call, input).await,
+        "vault.workflows.dispatch" => boxed_vault_workflows_dispatch(server, call, input).await,
         "vault.workflows.dispatch_bound" => {
-            Box::pin(vault_workflows_dispatch_bound(server, call, input)).await
+            boxed_vault_workflows_dispatch_bound(server, call, input).await
         }
-        "vault.workflows.status" => Box::pin(vault_workflows_status(server, call, input)).await,
-        "vault.task_types.pin" => Box::pin(vault_task_types_pin(server, call, input)).await,
-        "vault.task_types.get" => Box::pin(vault_task_types_get(server, call, input)).await,
-        "vault.agents.spawn.get" => Box::pin(vault_agents_spawn_get(server, call, input)).await,
-        "vault.agents.spawn" => Box::pin(vault_agents_spawn(server, call, input)).await,
-        "vault.tasks.cancel.force" => Box::pin(vault_tasks_cancel_force(server, call, input)).await,
+        "vault.workflows.status" => boxed_vault_workflows_status(server, call, input).await,
+        "vault.task_types.pin" => boxed_vault_task_types_pin(server, call, input).await,
+        "vault.task_types.get" => boxed_vault_task_types_get(server, call, input).await,
+        "vault.agents.spawn.get" => boxed_vault_agents_spawn_get(server, call, input).await,
+        "vault.agents.spawn" => boxed_vault_agents_spawn(server, call, input).await,
+        "vault.tasks.cancel.force" => boxed_vault_tasks_cancel_force(server, call, input).await,
         "vault.tasks.comm_widen.revoke" => {
-            Box::pin(vault_tasks_comm_widen_revoke(server, call, input)).await
+            boxed_vault_tasks_comm_widen_revoke(server, call, input).await
         }
-        "vault.runs.branches.get" => Box::pin(vault_runs_branches_get(server, call, input)).await,
-        "vault.runs.pause" => Box::pin(vault_runs_pause(server, call, input)).await,
-        "vault.runs.resume" => Box::pin(vault_runs_resume(server, call, input)).await,
-        "vault.consults.get" => Box::pin(vault_consults_get(server, call, input)).await,
-        "vault.workspace.establish" => {
-            Box::pin(vault_workspace_establish(server, call, input)).await
-        }
+        "vault.runs.branches.get" => boxed_vault_runs_branches_get(server, call, input).await,
+        "vault.runs.pause" => boxed_vault_runs_pause(server, call, input).await,
+        "vault.runs.resume" => boxed_vault_runs_resume(server, call, input).await,
+        "vault.consults.get" => boxed_vault_consults_get(server, call, input).await,
+        "vault.workspace.establish" => boxed_vault_workspace_establish(server, call, input).await,
         "vault.workspace.members.onboard" => {
-            Box::pin(vault_workspace_members_onboard(server, call, input)).await
+            boxed_vault_workspace_members_onboard(server, call, input).await
         }
-        "vault.workspace.roster" => Box::pin(vault_workspace_roster(server, call, input)).await,
-        "vault.agents.export_pack" => Box::pin(vault_agents_export_pack(server, call, input)).await,
-        "vault.artifacts.born_from" => {
-            Box::pin(vault_artifacts_born_from(server, call, input)).await
-        }
-        "vault.artifacts.proposals" => {
-            Box::pin(vault_artifacts_proposals(server, call, input)).await
-        }
-        "vault.artifacts.waits" => Box::pin(vault_artifacts_waits(server, call, input)).await,
+        "vault.workspace.roster" => boxed_vault_workspace_roster(server, call, input).await,
+        "vault.agents.export_pack" => boxed_vault_agents_export_pack(server, call, input).await,
+        "vault.artifacts.born_from" => boxed_vault_artifacts_born_from(server, call, input).await,
+        "vault.artifacts.proposals" => boxed_vault_artifacts_proposals(server, call, input).await,
+        "vault.artifacts.waits" => boxed_vault_artifacts_waits(server, call, input).await,
         "vault.artifacts.release_wait" => {
-            Box::pin(vault_artifacts_release_wait(server, call, input)).await
+            boxed_vault_artifacts_release_wait(server, call, input).await
         }
         "vault.artifacts.review_slides" => {
-            Box::pin(vault_artifacts_review_slides(server, call, input)).await
+            boxed_vault_artifacts_review_slides(server, call, input).await
         }
-        "vault.artifacts.ask" => Box::pin(vault_artifacts_ask(server, call, input)).await,
-        "vault.artifacts.admit" => Box::pin(vault_artifacts_admit(server, call, input)).await,
-        "vault.critic.review" => Box::pin(vault_critic_review(server, call, input)).await,
+        "vault.artifacts.ask" => boxed_vault_artifacts_ask(server, call, input).await,
+        "vault.artifacts.admit" => boxed_vault_artifacts_admit(server, call, input).await,
+        "vault.critic.review" => boxed_vault_critic_review(server, call, input).await,
         "vault.artifacts.propose_outline" => {
-            Box::pin(vault_artifacts_propose_outline(server, call, input)).await
+            boxed_vault_artifacts_propose_outline(server, call, input).await
         }
-        "vault.artifacts.outline" => Box::pin(vault_artifacts_outline(server, call, input)).await,
+        "vault.artifacts.outline" => boxed_vault_artifacts_outline(server, call, input).await,
         "vault.artifacts.keep_outline" => {
-            Box::pin(vault_artifacts_keep_outline(server, call, input)).await
+            boxed_vault_artifacts_keep_outline(server, call, input).await
         }
         "vault.artifacts.decline_outline" => {
-            Box::pin(vault_artifacts_decline_outline(server, call, input)).await
+            boxed_vault_artifacts_decline_outline(server, call, input).await
         }
         "vault.artifacts.design_deck" => {
-            Box::pin(vault_artifacts_design_deck(server, call, input)).await
+            boxed_vault_artifacts_design_deck(server, call, input).await
         }
         "vault.artifacts.create_deck" => {
-            Box::pin(vault_artifacts_create_deck(server, call, input)).await
+            boxed_vault_artifacts_create_deck(server, call, input).await
         }
         "vault.artifacts.inspect_deck" => {
-            Box::pin(vault_artifacts_inspect_deck(server, call, input)).await
+            boxed_vault_artifacts_inspect_deck(server, call, input).await
         }
         "vault.artifacts.propose_deck" => {
-            Box::pin(vault_artifacts_propose_deck(server, call, input)).await
+            boxed_vault_artifacts_propose_deck(server, call, input).await
         }
         "vault.artifacts.propose_output" => {
-            Box::pin(vault_artifacts_propose_output(server, call, input)).await
+            boxed_vault_artifacts_propose_output(server, call, input).await
         }
-        "vault.artifacts.keep" => Box::pin(vault_artifacts_keep(server, call, input)).await,
-        "vault.artifacts.discard" => Box::pin(vault_artifacts_discard(server, call, input)).await,
-        "vault.artifacts.undo" => Box::pin(vault_artifacts_undo(server, call, input)).await,
-        "can" => Box::pin(can(server, call, input)).await,
-        "peek" => Box::pin(peek(server, call, input)).await,
-        "ask" => Box::pin(ask(server, call, input)).await,
-        "wait" => Box::pin(wait(server, call, input)).await,
-        "tasks.answer" => Box::pin(tasks_answer(server, call, input)).await,
-        "tasks.outcomes" => Box::pin(tasks_outcomes(server, call, input)).await,
-        "vault.rooms.list" => Box::pin(vault_rooms_list(server, call, input)).await,
-        "vault.rooms.messages" => Box::pin(vault_rooms_messages(server, call, input)).await,
-        "vault.rooms.participants" => Box::pin(vault_rooms_participants(server, call, input)).await,
-        "vault.rooms.render" => Box::pin(vault_rooms_render(server, call, input)).await,
-        "vault.rooms.find" => Box::pin(vault_rooms_find(server, call, input)).await,
-        "vault.rooms.get" => Box::pin(vault_rooms_get(server, call, input)).await,
-        "vault.rooms.trunk" => Box::pin(vault_rooms_trunk(server, call, input)).await,
-        "vault.rooms.reply_strips" => Box::pin(vault_rooms_reply_strips(server, call, input)).await,
-        "vault.rooms.claim" => Box::pin(vault_rooms_claim(server, call, input)).await,
-        "vault.rooms.speak" => Box::pin(vault_rooms_speak(server, call, input)).await,
+        "vault.artifacts.keep" => boxed_vault_artifacts_keep(server, call, input).await,
+        "vault.artifacts.discard" => boxed_vault_artifacts_discard(server, call, input).await,
+        "vault.artifacts.undo" => boxed_vault_artifacts_undo(server, call, input).await,
+        "can" => boxed_can(server, call, input).await,
+        "peek" => boxed_peek(server, call, input).await,
+        "ask" => boxed_ask(server, call, input).await,
+        "wait" => boxed_wait(server, call, input).await,
+        "tasks.answer" => boxed_tasks_answer(server, call, input).await,
+        "tasks.outcomes" => boxed_tasks_outcomes(server, call, input).await,
+        "vault.rooms.list" => boxed_vault_rooms_list(server, call, input).await,
+        "vault.rooms.messages" => boxed_vault_rooms_messages(server, call, input).await,
+        "vault.rooms.participants" => boxed_vault_rooms_participants(server, call, input).await,
+        "vault.rooms.render" => boxed_vault_rooms_render(server, call, input).await,
+        "vault.rooms.find" => boxed_vault_rooms_find(server, call, input).await,
+        "vault.rooms.get" => boxed_vault_rooms_get(server, call, input).await,
+        "vault.rooms.trunk" => boxed_vault_rooms_trunk(server, call, input).await,
+        "vault.rooms.reply_strips" => boxed_vault_rooms_reply_strips(server, call, input).await,
+        "vault.rooms.claim" => boxed_vault_rooms_claim(server, call, input).await,
+        "vault.rooms.speak" => boxed_vault_rooms_speak(server, call, input).await,
         "vault.rooms.thread_audience.add" => {
-            Box::pin(vault_rooms_thread_audience_add(server, call, input)).await
+            boxed_vault_rooms_thread_audience_add(server, call, input).await
         }
         "vault.rooms.thread_audience.open_full_history" => {
-            Box::pin(vault_rooms_thread_audience_open_full_history(
-                server, call, input,
-            ))
-            .await
+            boxed_vault_rooms_thread_audience_open_full_history(server, call, input).await
         }
         "vault.rooms.thread_audience.remove" => {
-            Box::pin(vault_rooms_thread_audience_remove(server, call, input)).await
+            boxed_vault_rooms_thread_audience_remove(server, call, input).await
         }
         "vault.rooms.private_threads" => {
-            Box::pin(vault_rooms_private_threads(server, call, input)).await
+            boxed_vault_rooms_private_threads(server, call, input).await
         }
-        "vault.rooms.thread_delete" => {
-            Box::pin(vault_rooms_thread_delete(server, call, input)).await
-        }
+        "vault.rooms.thread_delete" => boxed_vault_rooms_thread_delete(server, call, input).await,
         "vault.rooms.thread_join.request" => {
-            Box::pin(vault_rooms_thread_join_request(server, call, input)).await
+            boxed_vault_rooms_thread_join_request(server, call, input).await
         }
         "vault.rooms.thread_join.requests" => {
-            Box::pin(vault_rooms_thread_join_requests(server, call, input)).await
+            boxed_vault_rooms_thread_join_requests(server, call, input).await
         }
         "vault.rooms.thread_join.approve" => {
-            Box::pin(vault_rooms_thread_join_approve(server, call, input)).await
+            boxed_vault_rooms_thread_join_approve(server, call, input).await
         }
         "vault.rooms.thread_join.deny" => {
-            Box::pin(vault_rooms_thread_join_deny(server, call, input)).await
+            boxed_vault_rooms_thread_join_deny(server, call, input).await
         }
-        "vault.projects.propose" => Box::pin(vault_projects_propose(server, call, input)).await,
-        "vault.projects.proposals" => Box::pin(vault_projects_proposals(server, call, input)).await,
+        "vault.projects.propose" => boxed_vault_projects_propose(server, call, input).await,
+        "vault.projects.proposals" => boxed_vault_projects_proposals(server, call, input).await,
         "vault.projects.dismiss_card" => {
-            Box::pin(vault_projects_dismiss_card(server, call, input)).await
+            boxed_vault_projects_dismiss_card(server, call, input).await
         }
-        "vault.projects.confirm" => Box::pin(vault_projects_confirm(server, call, input)).await,
+        "vault.projects.confirm" => boxed_vault_projects_confirm(server, call, input).await,
         "vault.projects.roster.write" => {
-            Box::pin(vault_projects_roster_write(server, call, input)).await
+            boxed_vault_projects_roster_write(server, call, input).await
         }
-        "vault.projects.goal.intake" => {
-            Box::pin(vault_projects_goal_intake(server, call, input)).await
-        }
-        "vault.rooms.join" => Box::pin(vault_rooms_join(server, call, input)).await,
-        "vault.rooms.invite" => Box::pin(vault_rooms_invite(server, call, input)).await,
-        "vault.rooms.consent" => Box::pin(vault_rooms_consent(server, call, input)).await,
-        "vault.rooms.offer" => Box::pin(vault_rooms_offer(server, call, input)).await,
-        "vault.rooms.offer.answer" => Box::pin(vault_rooms_offer_answer(server, call, input)).await,
-        "vault.rooms.offer.vote" => Box::pin(vault_rooms_offer_vote(server, call, input)).await,
-        "vault.rooms.offer.reopen" => Box::pin(vault_rooms_offer_reopen(server, call, input)).await,
-        "vault.rooms.offers" => Box::pin(vault_rooms_offers(server, call, input)).await,
+        "vault.projects.goal.intake" => boxed_vault_projects_goal_intake(server, call, input).await,
+        "vault.rooms.join" => boxed_vault_rooms_join(server, call, input).await,
+        "vault.rooms.invite" => boxed_vault_rooms_invite(server, call, input).await,
+        "vault.rooms.consent" => boxed_vault_rooms_consent(server, call, input).await,
+        "vault.rooms.offer" => boxed_vault_rooms_offer(server, call, input).await,
+        "vault.rooms.offer.answer" => boxed_vault_rooms_offer_answer(server, call, input).await,
+        "vault.rooms.offer.vote" => boxed_vault_rooms_offer_vote(server, call, input).await,
+        "vault.rooms.offer.reopen" => boxed_vault_rooms_offer_reopen(server, call, input).await,
+        "vault.rooms.offers" => boxed_vault_rooms_offers(server, call, input).await,
         "vault.projects.goal.revisions" => {
-            Box::pin(vault_projects_goal_revisions(server, call, input)).await
+            boxed_vault_projects_goal_revisions(server, call, input).await
         }
         "vault.projects.goal.dismiss" => {
-            Box::pin(vault_projects_goal_dismiss(server, call, input)).await
+            boxed_vault_projects_goal_dismiss(server, call, input).await
         }
         "vault.projects.route_tradeoff" => {
-            Box::pin(vault_projects_route_tradeoff(server, call, input)).await
+            boxed_vault_projects_route_tradeoff(server, call, input).await
         }
         "vault.conversations.turn.continue" => {
-            Box::pin(vault_conversations_turn_continue(server, call, input)).await
+            boxed_vault_conversations_turn_continue(server, call, input).await
         }
         "vault.conversations.turn.retry" => {
-            Box::pin(vault_conversations_turn_retry(server, call, input)).await
+            boxed_vault_conversations_turn_retry(server, call, input).await
         }
         "vault.conversations.turn.rebind" => {
-            Box::pin(vault_conversations_turn_rebind(server, call, input)).await
+            boxed_vault_conversations_turn_rebind(server, call, input).await
         }
-        "vault.messages.react" => Box::pin(vault_messages_react(server, call, input)).await,
-        "vault.rooms.host" => Box::pin(vault_rooms_host(server, call, input)).await,
-        "vault.rooms.host.pin" => Box::pin(vault_rooms_host_pin(server, call, input)).await,
-        "vault.rooms.host.hand" => Box::pin(vault_rooms_host_hand(server, call, input)).await,
-        "vault.rooms.upkeep.pending" => {
-            Box::pin(vault_rooms_upkeep_pending(server, call, input)).await
-        }
-        "vault.rooms.upkeep.voice" => Box::pin(vault_rooms_upkeep_voice(server, call, input)).await,
-        "vault.rooms.sharing" => Box::pin(vault_rooms_sharing(server, call, input)).await,
+        "vault.messages.react" => boxed_vault_messages_react(server, call, input).await,
+        "vault.rooms.host" => boxed_vault_rooms_host(server, call, input).await,
+        "vault.rooms.host.pin" => boxed_vault_rooms_host_pin(server, call, input).await,
+        "vault.rooms.host.hand" => boxed_vault_rooms_host_hand(server, call, input).await,
+        "vault.rooms.upkeep.pending" => boxed_vault_rooms_upkeep_pending(server, call, input).await,
+        "vault.rooms.upkeep.voice" => boxed_vault_rooms_upkeep_voice(server, call, input).await,
+        "vault.rooms.sharing" => boxed_vault_rooms_sharing(server, call, input).await,
         "vault.companions.sharing.get" => {
-            Box::pin(vault_companions_sharing_get(server, call, input)).await
+            boxed_vault_companions_sharing_get(server, call, input).await
         }
         "vault.companions.sharing.set" => {
-            Box::pin(vault_companions_sharing_set(server, call, input)).await
+            boxed_vault_companions_sharing_set(server, call, input).await
         }
         "vault.workspace.work_companion.get" => {
-            Box::pin(vault_workspace_work_companion_get(server, call, input)).await
+            boxed_vault_workspace_work_companion_get(server, call, input).await
         }
         "vault.workspace.work_companion.set" => {
-            Box::pin(vault_workspace_work_companion_set(server, call, input)).await
+            boxed_vault_workspace_work_companion_set(server, call, input).await
         }
-        "self.skills.save" => Box::pin(self_skills_save(server, call, input)).await,
-        "self.skills.fork" => Box::pin(self_skills_fork(server, call, input)).await,
-        "self.skills.callables" => Box::pin(self_skills_callables(server, call, input)).await,
+        "self.skills.save" => boxed_self_skills_save(server, call, input).await,
+        "self.skills.fork" => boxed_self_skills_fork(server, call, input).await,
+        "self.skills.callables" => boxed_self_skills_callables(server, call, input).await,
         "vault.skills.callable.amend" => {
-            Box::pin(vault_skills_callable_amend(server, call, input)).await
+            boxed_vault_skills_callable_amend(server, call, input).await
         }
-        "vault.skills.pack_receipt" => {
-            Box::pin(vault_skills_pack_receipt(server, call, input)).await
-        }
+        "vault.skills.pack_receipt" => boxed_vault_skills_pack_receipt(server, call, input).await,
         "vault.skills.outcomes.project" => {
-            Box::pin(vault_skills_outcomes_project(server, call, input)).await
+            boxed_vault_skills_outcomes_project(server, call, input).await
         }
-        "vault.skills.outcomes.get" => {
-            Box::pin(vault_skills_outcomes_get(server, call, input)).await
-        }
-        "vault.models.manifest.read" => {
-            Box::pin(vault_models_manifest_read(server, call, input)).await
-        }
+        "vault.skills.outcomes.get" => boxed_vault_skills_outcomes_get(server, call, input).await,
+        "vault.models.manifest.read" => boxed_vault_models_manifest_read(server, call, input).await,
         "vault.models.manifest.replace" => {
-            Box::pin(vault_models_manifest_replace(server, call, input)).await
+            boxed_vault_models_manifest_replace(server, call, input).await
         }
         "vault.settings.web_connector" => {
-            Box::pin(vault_settings_web_connector(server, call, input)).await
+            boxed_vault_settings_web_connector(server, call, input).await
         }
         "vault.settings.web_connector.replace" => {
-            Box::pin(vault_settings_web_connector_replace(server, call, input)).await
+            boxed_vault_settings_web_connector_replace(server, call, input).await
         }
-        "vault.connectors.web.usage" => {
-            Box::pin(vault_connectors_web_usage(server, call, input)).await
-        }
+        "vault.connectors.web.usage" => boxed_vault_connectors_web_usage(server, call, input).await,
         "vault.models.oneironer.bind" => {
-            Box::pin(vault_models_oneironer_bind(server, call, input)).await
+            boxed_vault_models_oneironer_bind(server, call, input).await
         }
-        "vault.models.routes.read" => Box::pin(vault_models_routes_read(server, call, input)).await,
+        "vault.models.routes.read" => boxed_vault_models_routes_read(server, call, input).await,
         "vault.models.routes.replace" => {
-            Box::pin(vault_models_routes_replace(server, call, input)).await
+            boxed_vault_models_routes_replace(server, call, input).await
         }
-        "vault.models.roles.read" => Box::pin(vault_models_roles_read(server, call, input)).await,
-        "vault.models.roles.invoke" => {
-            Box::pin(vault_models_roles_invoke(server, call, input)).await
-        }
+        "vault.models.roles.read" => boxed_vault_models_roles_read(server, call, input).await,
+        "vault.models.roles.invoke" => boxed_vault_models_roles_invoke(server, call, input).await,
         "vault.skills.attribution.settle" => {
-            Box::pin(vault_skills_attribution_settle(server, call, input)).await
+            boxed_vault_skills_attribution_settle(server, call, input).await
         }
         "vault.skills.attribution.read" => {
-            Box::pin(vault_skills_attribution_read(server, call, input)).await
+            boxed_vault_skills_attribution_read(server, call, input).await
         }
         "vault.skills.attribution.evidence.record" => {
-            Box::pin(vault_skills_attribution_evidence_record(
-                server, call, input,
-            ))
-            .await
+            boxed_vault_skills_attribution_evidence_record(server, call, input).await
         }
         "vault.skills.attribution.project" => {
-            Box::pin(vault_skills_attribution_project(server, call, input)).await
+            boxed_vault_skills_attribution_project(server, call, input).await
         }
         "vault.skills.attribution.judgments" => {
-            Box::pin(vault_skills_attribution_judgments(server, call, input)).await
+            boxed_vault_skills_attribution_judgments(server, call, input).await
         }
         "vault.skills.attribution.proposals" => {
-            Box::pin(vault_skills_attribution_proposals(server, call, input)).await
+            boxed_vault_skills_attribution_proposals(server, call, input).await
         }
         "vault.skills.attribution.positive.retire" => {
-            Box::pin(vault_skills_attribution_positive_retire(
-                server, call, input,
-            ))
-            .await
+            boxed_vault_skills_attribution_positive_retire(server, call, input).await
         }
-        "ai.steps.submit" => Box::pin(ai_steps_submit(server, call, input)).await,
-        "ai.steps.receipt" => Box::pin(ai_steps_receipt(server, call, input)).await,
-        "ai.streams.open" => Box::pin(ai_streams_open(server, call, input)).await,
-        "ai.streams.subscribe" => Box::pin(ai_streams_subscribe(server, call, input)).await,
-        "ai.streams.events" => Box::pin(ai_streams_events(server, call, input)).await,
-        "ai.streams.detach" => Box::pin(ai_streams_detach(server, call, input)).await,
-        "ai.streams.abort" => Box::pin(ai_streams_abort(server, call, input)).await,
-        "ai.streams.terminal" => Box::pin(ai_streams_terminal(server, call, input)).await,
-        "ai.reply" => Box::pin(ai_reply(server, call, input)).await,
-        "vault.receipts.context" => Box::pin(vault_receipts_context(server, call, input)).await,
+        "ai.steps.submit" => boxed_ai_steps_submit(server, call, input).await,
+        "ai.steps.receipt" => boxed_ai_steps_receipt(server, call, input).await,
+        "ai.streams.open" => boxed_ai_streams_open(server, call, input).await,
+        "ai.streams.subscribe" => boxed_ai_streams_subscribe(server, call, input).await,
+        "ai.streams.events" => boxed_ai_streams_events(server, call, input).await,
+        "ai.streams.detach" => boxed_ai_streams_detach(server, call, input).await,
+        "ai.streams.abort" => boxed_ai_streams_abort(server, call, input).await,
+        "ai.streams.terminal" => boxed_ai_streams_terminal(server, call, input).await,
+        "ai.reply" => boxed_ai_reply(server, call, input).await,
+        "vault.receipts.context" => boxed_vault_receipts_context(server, call, input).await,
         "vault.receipts.craft_reply_manifest" => {
-            Box::pin(vault_receipts_craft_reply_manifest(server, call, input)).await
+            boxed_vault_receipts_craft_reply_manifest(server, call, input).await
         }
-        "ai.voice.asr.open" => Box::pin(ai_voice_asr_open(server, call, input)).await,
-        "ai.voice.asr.hypothesis" => Box::pin(ai_voice_asr_hypothesis(server, call, input)).await,
-        "ai.voice.asr.finalize" => Box::pin(ai_voice_asr_finalize(server, call, input)).await,
-        "ai.voice.asr.close" => Box::pin(ai_voice_asr_close(server, call, input)).await,
-        "ai.voice.start" => Box::pin(ai_voice_start(server, call, input)).await,
-        "ai.voice.audio" => Box::pin(ai_voice_audio(server, call, input)).await,
-        "ai.voice.events" => Box::pin(ai_voice_events(server, call, input)).await,
-        "ai.voice.ack" => Box::pin(ai_voice_ack(server, call, input)).await,
-        "ai.voice.usage" => Box::pin(ai_voice_usage(server, call, input)).await,
-        "ai.voice.tool" => Box::pin(ai_voice_tool(server, call, input)).await,
-        "ai.voice.end" => Box::pin(ai_voice_end(server, call, input)).await,
-        "ai.voice.close" => Box::pin(ai_voice_close(server, call, input)).await,
-        "ai.anonymous_chat" => Box::pin(ai_anonymous_chat(server, call, input)).await,
+        "ai.voice.asr.open" => boxed_ai_voice_asr_open(server, call, input).await,
+        "ai.voice.asr.hypothesis" => boxed_ai_voice_asr_hypothesis(server, call, input).await,
+        "ai.voice.asr.finalize" => boxed_ai_voice_asr_finalize(server, call, input).await,
+        "ai.voice.asr.close" => boxed_ai_voice_asr_close(server, call, input).await,
+        "ai.voice.start" => boxed_ai_voice_start(server, call, input).await,
+        "ai.voice.audio" => boxed_ai_voice_audio(server, call, input).await,
+        "ai.voice.events" => boxed_ai_voice_events(server, call, input).await,
+        "ai.voice.ack" => boxed_ai_voice_ack(server, call, input).await,
+        "ai.voice.usage" => boxed_ai_voice_usage(server, call, input).await,
+        "ai.voice.tool" => boxed_ai_voice_tool(server, call, input).await,
+        "ai.voice.end" => boxed_ai_voice_end(server, call, input).await,
+        "ai.voice.close" => boxed_ai_voice_close(server, call, input).await,
+        "ai.anonymous_chat" => boxed_ai_anonymous_chat(server, call, input).await,
         "vault.models.catalog.refresh" => {
-            Box::pin(vault_models_catalog_refresh(server, call, input)).await
+            boxed_vault_models_catalog_refresh(server, call, input).await
         }
-        "vault.models.catalog.get" => Box::pin(vault_models_catalog_get(server, call, input)).await,
-        "vault.models.catalog.diff" => {
-            Box::pin(vault_models_catalog_diff(server, call, input)).await
-        }
+        "vault.models.catalog.get" => boxed_vault_models_catalog_get(server, call, input).await,
+        "vault.models.catalog.diff" => boxed_vault_models_catalog_diff(server, call, input).await,
         "vault.models.trials.nominate" => {
-            Box::pin(vault_models_trials_nominate(server, call, input)).await
+            boxed_vault_models_trials_nominate(server, call, input).await
         }
-        "vault.models.trials.get" => Box::pin(vault_models_trials_get(server, call, input)).await,
+        "vault.models.trials.get" => boxed_vault_models_trials_get(server, call, input).await,
         "vault.models.trials.approve" => {
-            Box::pin(vault_models_trials_approve(server, call, input)).await
+            boxed_vault_models_trials_approve(server, call, input).await
         }
-        "vault.models.trials.run" => Box::pin(vault_models_trials_run(server, call, input)).await,
+        "vault.models.trials.run" => boxed_vault_models_trials_run(server, call, input).await,
         "vault.models.trials.resend_arm" => {
-            Box::pin(vault_models_trials_resend_arm(server, call, input)).await
+            boxed_vault_models_trials_resend_arm(server, call, input).await
         }
         "vault.models.trials.complete" => {
-            Box::pin(vault_models_trials_complete(server, call, input)).await
+            boxed_vault_models_trials_complete(server, call, input).await
         }
         "vault.models.bindings.propose" => {
-            Box::pin(vault_models_bindings_propose(server, call, input)).await
+            boxed_vault_models_bindings_propose(server, call, input).await
         }
-        "vault.models.bindings.get" => {
-            Box::pin(vault_models_bindings_get(server, call, input)).await
-        }
-        "vault.models.bindings.read" => {
-            Box::pin(vault_models_bindings_read(server, call, input)).await
-        }
+        "vault.models.bindings.get" => boxed_vault_models_bindings_get(server, call, input).await,
+        "vault.models.bindings.read" => boxed_vault_models_bindings_read(server, call, input).await,
         "vault.models.bindings.accept" => {
-            Box::pin(vault_models_bindings_accept(server, call, input)).await
+            boxed_vault_models_bindings_accept(server, call, input).await
         }
-        "vault.models.bindings.deny" => {
-            Box::pin(vault_models_bindings_deny(server, call, input)).await
-        }
-        "ai.options" => Box::pin(ai_options(server, call, input)).await,
-        "ai.image" => Box::pin(ai_image(server, call, input)).await,
-        "ai.speech" => Box::pin(ai_speech(server, call, input)).await,
-        "vault.voices.packs.put" => Box::pin(vault_voices_packs_put(server, call, input)).await,
+        "vault.models.bindings.deny" => boxed_vault_models_bindings_deny(server, call, input).await,
+        "ai.options" => boxed_ai_options(server, call, input).await,
+        "ai.image" => boxed_ai_image(server, call, input).await,
+        "ai.speech" => boxed_ai_speech(server, call, input).await,
+        "vault.voices.packs.put" => boxed_vault_voices_packs_put(server, call, input).await,
         "vault.voices.render_consent" => {
-            Box::pin(vault_voices_render_consent(server, call, input)).await
+            boxed_vault_voices_render_consent(server, call, input).await
         }
         "vault.voices.targets.provision" => {
-            Box::pin(vault_voices_targets_provision(server, call, input)).await
+            boxed_vault_voices_targets_provision(server, call, input).await
         }
-        "vault.voices.targets.evict" => {
-            Box::pin(vault_voices_targets_evict(server, call, input)).await
-        }
-        "vault.voices.inspect" => Box::pin(vault_voices_inspect(server, call, input)).await,
-        "vault.voices.lineage" => Box::pin(vault_voices_lineage(server, call, input)).await,
-        "ai.transcribe" => Box::pin(ai_transcribe(server, call, input)).await,
-        "ai.embed" => Box::pin(ai_embed(server, call, input)).await,
-        "ai.video" => Box::pin(ai_video(server, call, input)).await,
-        "ai.video.poll" => Box::pin(ai_video_poll(server, call, input)).await,
-        "ai.video.cancel" => Box::pin(ai_video_cancel(server, call, input)).await,
-        "ai.ask_image" => Box::pin(ai_ask_image(server, call, input)).await,
-        "ai.verdict" => Box::pin(ai_verdict(server, call, input)).await,
-        "vault.graph.ask" => Box::pin(vault_graph_ask(server, call, input)).await,
-        "vault.graph.admit" => Box::pin(vault_graph_admit(server, call, input)).await,
-        "vault.questions.create" => Box::pin(vault_questions_create(server, call, input)).await,
-        "vault.questions.edit" => Box::pin(vault_questions_edit(server, call, input)).await,
-        "vault.questions.pause" => Box::pin(vault_questions_pause(server, call, input)).await,
-        "vault.questions.backfill" => Box::pin(vault_questions_backfill(server, call, input)).await,
-        "vault.questions.read" => Box::pin(vault_questions_read(server, call, input)).await,
+        "vault.voices.targets.evict" => boxed_vault_voices_targets_evict(server, call, input).await,
+        "vault.voices.inspect" => boxed_vault_voices_inspect(server, call, input).await,
+        "vault.voices.lineage" => boxed_vault_voices_lineage(server, call, input).await,
+        "ai.transcribe" => boxed_ai_transcribe(server, call, input).await,
+        "ai.embed" => boxed_ai_embed(server, call, input).await,
+        "ai.video" => boxed_ai_video(server, call, input).await,
+        "ai.video.poll" => boxed_ai_video_poll(server, call, input).await,
+        "ai.video.cancel" => boxed_ai_video_cancel(server, call, input).await,
+        "ai.ask_image" => boxed_ai_ask_image(server, call, input).await,
+        "ai.verdict" => boxed_ai_verdict(server, call, input).await,
+        "vault.graph.ask" => boxed_vault_graph_ask(server, call, input).await,
+        "vault.graph.admit" => boxed_vault_graph_admit(server, call, input).await,
+        "vault.questions.create" => boxed_vault_questions_create(server, call, input).await,
+        "vault.questions.edit" => boxed_vault_questions_edit(server, call, input).await,
+        "vault.questions.pause" => boxed_vault_questions_pause(server, call, input).await,
+        "vault.questions.backfill" => boxed_vault_questions_backfill(server, call, input).await,
+        "vault.questions.read" => boxed_vault_questions_read(server, call, input).await,
         "vault.questions.outcome_windows" => {
-            Box::pin(vault_questions_outcome_windows(server, call, input)).await
+            boxed_vault_questions_outcome_windows(server, call, input).await
         }
-        "vault.questions.answers" => Box::pin(vault_questions_answers(server, call, input)).await,
-        "vault.questions.refresh" => Box::pin(vault_questions_refresh(server, call, input)).await,
-        "vault.questions.outcomes" => Box::pin(vault_questions_outcomes(server, call, input)).await,
+        "vault.questions.answers" => boxed_vault_questions_answers(server, call, input).await,
+        "vault.questions.refresh" => boxed_vault_questions_refresh(server, call, input).await,
+        "vault.questions.outcomes" => boxed_vault_questions_outcomes(server, call, input).await,
         "vault.questions.outcomes.project" => {
-            Box::pin(vault_questions_outcomes_project(server, call, input)).await
+            boxed_vault_questions_outcomes_project(server, call, input).await
         }
-        "vault.questions.schedule" => Box::pin(vault_questions_schedule(server, call, input)).await,
-        "vault.decisions.bands.read" => {
-            Box::pin(vault_decisions_bands_read(server, call, input)).await
-        }
+        "vault.questions.schedule" => boxed_vault_questions_schedule(server, call, input).await,
+        "vault.decisions.bands.read" => boxed_vault_decisions_bands_read(server, call, input).await,
         "vault.decisions.bands.learn" => {
-            Box::pin(vault_decisions_bands_learn(server, call, input)).await
+            boxed_vault_decisions_bands_learn(server, call, input).await
         }
         "vault.decisions.bands.enforce" => {
-            Box::pin(vault_decisions_bands_enforce(server, call, input)).await
+            boxed_vault_decisions_bands_enforce(server, call, input).await
         }
         "vault.decisions.asks.answer" => {
-            Box::pin(vault_decisions_asks_answer(server, call, input)).await
+            boxed_vault_decisions_asks_answer(server, call, input).await
         }
-        "vault.decisions.asks.climb" => {
-            Box::pin(vault_decisions_asks_climb(server, call, input)).await
-        }
+        "vault.decisions.asks.climb" => boxed_vault_decisions_asks_climb(server, call, input).await,
         "vault.decisions.asks.confirm_grant" => {
-            Box::pin(vault_decisions_asks_confirm_grant(server, call, input)).await
+            boxed_vault_decisions_asks_confirm_grant(server, call, input).await
         }
-        "self.decisions.asks" => Box::pin(self_decisions_asks(server, call, input)).await,
-        "connector.list" => Box::pin(connector_list(server, call, input)).await,
-        "connector.status" => Box::pin(connector_status(server, call, input)).await,
-        "connector.call" => Box::pin(connector_call(server, call, input)).await,
-        "connector.schema" => Box::pin(connector_schema(server, call, input)).await,
-        "connector.call_status" => Box::pin(connector_call_status(server, call, input)).await,
-        "vault.commit" => Box::pin(vault_commit(server, call, input)).await,
-        "vault.remember" => Box::pin(vault_remember(server, call, input)).await,
-        "vault.claims.retract" => Box::pin(vault_claims_retract(server, call, input)).await,
-        "vault.forget" => Box::pin(vault_forget(server, call, input)).await,
-        "vault.booking.availability" => {
-            Box::pin(vault_booking_availability(server, call, input)).await
-        }
-        "vault.booking.book" => Box::pin(vault_booking_book(server, call, input)).await,
-        "vault.booking.reschedule" => Box::pin(vault_booking_reschedule(server, call, input)).await,
-        "vault.booking.cancel" => Box::pin(vault_booking_cancel(server, call, input)).await,
+        "self.decisions.asks" => boxed_self_decisions_asks(server, call, input).await,
+        "connector.list" => boxed_connector_list(server, call, input).await,
+        "connector.status" => boxed_connector_status(server, call, input).await,
+        "connector.call" => boxed_connector_call(server, call, input).await,
+        "connector.schema" => boxed_connector_schema(server, call, input).await,
+        "connector.call_status" => boxed_connector_call_status(server, call, input).await,
+        "vault.commit" => boxed_vault_commit(server, call, input).await,
+        "vault.remember" => boxed_vault_remember(server, call, input).await,
+        "vault.claims.retract" => boxed_vault_claims_retract(server, call, input).await,
+        "vault.forget" => boxed_vault_forget(server, call, input).await,
+        "vault.booking.availability" => boxed_vault_booking_availability(server, call, input).await,
+        "vault.booking.book" => boxed_vault_booking_book(server, call, input).await,
+        "vault.booking.reschedule" => boxed_vault_booking_reschedule(server, call, input).await,
+        "vault.booking.cancel" => boxed_vault_booking_cancel(server, call, input).await,
         "vault.booking.constraint_turn" => {
-            Box::pin(vault_booking_constraint_turn(server, call, input)).await
+            boxed_vault_booking_constraint_turn(server, call, input).await
         }
-        "vault.booking.page_token" => Box::pin(vault_booking_page_token(server, call, input)).await,
-        "calendar.invite" => Box::pin(calendar_invite(server, call, input)).await,
-        "calendar.ics.configure" => Box::pin(calendar_ics_configure(server, call, input)).await,
-        "calendar.ics.poll" => Box::pin(calendar_ics_poll(server, call, input)).await,
-        "calendar.ics.status" => Box::pin(calendar_ics_status(server, call, input)).await,
+        "vault.booking.page_token" => boxed_vault_booking_page_token(server, call, input).await,
+        "calendar.invite" => boxed_calendar_invite(server, call, input).await,
+        "calendar.ics.configure" => boxed_calendar_ics_configure(server, call, input).await,
+        "calendar.ics.poll" => boxed_calendar_ics_poll(server, call, input).await,
+        "calendar.ics.status" => boxed_calendar_ics_status(server, call, input).await,
         "vault.calendar.passports.read" => {
-            Box::pin(vault_calendar_passports_read(server, call, input)).await
+            boxed_vault_calendar_passports_read(server, call, input).await
         }
         "vault.calendar.passports.history" => {
-            Box::pin(vault_calendar_passports_history(server, call, input)).await
+            boxed_vault_calendar_passports_history(server, call, input).await
         }
         "calendar.connector.configure" => {
-            Box::pin(calendar_connector_configure(server, call, input)).await
+            boxed_calendar_connector_configure(server, call, input).await
         }
-        "calendar.connector.get" => Box::pin(calendar_connector_get(server, call, input)).await,
-        "calendar.connector.pull" => Box::pin(calendar_connector_pull(server, call, input)).await,
-        "calendar.connector.write" => Box::pin(calendar_connector_write(server, call, input)).await,
-        "calendar.connector.kill" => Box::pin(calendar_connector_kill(server, call, input)).await,
-        "calendar.imip.configure" => Box::pin(calendar_imip_configure(server, call, input)).await,
-        "calendar.imip.get" => Box::pin(calendar_imip_get(server, call, input)).await,
-        "vault.calendar.create" => Box::pin(vault_calendar_create(server, call, input)).await,
-        "vault.calendar.ics.import" => {
-            Box::pin(vault_calendar_ics_import(server, call, input)).await
-        }
-        "vault.calendar.occurrences" => {
-            Box::pin(vault_calendar_occurrences(server, call, input)).await
-        }
+        "calendar.connector.get" => boxed_calendar_connector_get(server, call, input).await,
+        "calendar.connector.pull" => boxed_calendar_connector_pull(server, call, input).await,
+        "calendar.connector.write" => boxed_calendar_connector_write(server, call, input).await,
+        "calendar.connector.kill" => boxed_calendar_connector_kill(server, call, input).await,
+        "calendar.imip.configure" => boxed_calendar_imip_configure(server, call, input).await,
+        "calendar.imip.get" => boxed_calendar_imip_get(server, call, input).await,
+        "vault.calendar.create" => boxed_vault_calendar_create(server, call, input).await,
+        "vault.calendar.ics.import" => boxed_vault_calendar_ics_import(server, call, input).await,
+        "vault.calendar.occurrences" => boxed_vault_calendar_occurrences(server, call, input).await,
         "vault.calendar.instances.move" => {
-            Box::pin(vault_calendar_instances_move(server, call, input)).await
+            boxed_vault_calendar_instances_move(server, call, input).await
         }
-        "vault.calendar.read" => Box::pin(vault_calendar_read(server, call, input)).await,
-        "vault.calendar.search" => Box::pin(vault_calendar_search(server, call, input)).await,
-        "vault.calendar.freebusy" => Box::pin(vault_calendar_freebusy(server, call, input)).await,
-        "vault.calendar.prep" => Box::pin(vault_calendar_prep(server, call, input)).await,
+        "vault.calendar.read" => boxed_vault_calendar_read(server, call, input).await,
+        "vault.calendar.search" => boxed_vault_calendar_search(server, call, input).await,
+        "vault.calendar.freebusy" => boxed_vault_calendar_freebusy(server, call, input).await,
+        "vault.calendar.prep" => boxed_vault_calendar_prep(server, call, input).await,
         "vault.calendar.event_outcome" => {
-            Box::pin(vault_calendar_event_outcome(server, call, input)).await
+            boxed_vault_calendar_event_outcome(server, call, input).await
         }
         "vault.calendar.check_in.due" => {
-            Box::pin(vault_calendar_check_in_due(server, call, input)).await
+            boxed_vault_calendar_check_in_due(server, call, input).await
         }
         "vault.calendar.check_in.answer" => {
-            Box::pin(vault_calendar_check_in_answer(server, call, input)).await
+            boxed_vault_calendar_check_in_answer(server, call, input).await
         }
         "vault.calendar.outcome_policy.get" => {
-            Box::pin(vault_calendar_outcome_policy_get(server, call, input)).await
+            boxed_vault_calendar_outcome_policy_get(server, call, input).await
         }
         "vault.calendar.outcome_policy.set" => {
-            Box::pin(vault_calendar_outcome_policy_set(server, call, input)).await
+            boxed_vault_calendar_outcome_policy_set(server, call, input).await
         }
         "vault.calendar.transcript.ingest" => {
-            Box::pin(vault_calendar_transcript_ingest(server, call, input)).await
+            boxed_vault_calendar_transcript_ingest(server, call, input).await
         }
-        "vault.claims.list" => Box::pin(vault_claims_list(server, call, input)).await,
-        "vault.claims.demote" => Box::pin(vault_claims_demote(server, call, input)).await,
-        "vault.claims.list_filtered" => {
-            Box::pin(vault_claims_list_filtered(server, call, input)).await
-        }
-        "vault.claims.read_filtered" => {
-            Box::pin(vault_claims_read_filtered(server, call, input)).await
-        }
-        "vault.claims.history" => Box::pin(vault_claims_history(server, call, input)).await,
-        "vault.delete" => Box::pin(vault_delete(server, call, input)).await,
+        "vault.claims.list" => boxed_vault_claims_list(server, call, input).await,
+        "vault.claims.demote" => boxed_vault_claims_demote(server, call, input).await,
+        "vault.claims.list_filtered" => boxed_vault_claims_list_filtered(server, call, input).await,
+        "vault.claims.read_filtered" => boxed_vault_claims_read_filtered(server, call, input).await,
+        "vault.claims.history" => boxed_vault_claims_history(server, call, input).await,
+        "vault.delete" => boxed_vault_delete(server, call, input).await,
         "vault.writes.critical_confirm.pending" => {
-            Box::pin(vault_writes_critical_confirm_pending(server, call, input)).await
+            boxed_vault_writes_critical_confirm_pending(server, call, input).await
         }
         "vault.writes.critical_confirm.clear" => {
-            Box::pin(vault_writes_critical_confirm_clear(server, call, input)).await
+            boxed_vault_writes_critical_confirm_clear(server, call, input).await
         }
         "vault.writes.critical_confirm.decline" => {
-            Box::pin(vault_writes_critical_confirm_decline(server, call, input)).await
+            boxed_vault_writes_critical_confirm_decline(server, call, input).await
         }
         "vault.writes.critical_confirm.receipt" => {
-            Box::pin(vault_writes_critical_confirm_receipt(server, call, input)).await
+            boxed_vault_writes_critical_confirm_receipt(server, call, input).await
         }
-        "vault.writes.pending" => Box::pin(vault_writes_pending(server, call, input)).await,
-        "vault.hydrate" => Box::pin(vault_hydrate(server, call, input)).await,
-        "vault.get" => Box::pin(vault_get(server, call, input)).await,
-        "vault.refs.resolve" => Box::pin(vault_refs_resolve(server, call, input)).await,
-        "vault.refs.links" => Box::pin(vault_refs_links(server, call, input)).await,
-        "vault.search.vector.config" => {
-            Box::pin(vault_search_vector_config(server, call, input)).await
-        }
-        "vault.vectors.put" => Box::pin(vault_vectors_put(server, call, input)).await,
-        "vault.search.hybrid" => Box::pin(vault_search_hybrid(server, call, input)).await,
-        "vault.search.temporal" => Box::pin(vault_search_temporal(server, call, input)).await,
-        "vault.search.bm25" => Box::pin(vault_search_bm25(server, call, input)).await,
-        "vault.neighbors" => Box::pin(vault_neighbors(server, call, input)).await,
-        "vault.structural.put" => Box::pin(vault_structural_put(server, call, input)).await,
-        "vault.habits.checkin" => Box::pin(vault_habits_checkin(server, call, input)).await,
-        "vault.productivity.create" => {
-            Box::pin(vault_productivity_create(server, call, input)).await
-        }
-        "vault.productivity.tree" => Box::pin(vault_productivity_tree(server, call, input)).await,
-        "vault.claims.admit" => Box::pin(vault_claims_admit(server, call, input)).await,
-        "vault.artifacts.create" => Box::pin(vault_artifacts_create(server, call, input)).await,
-        "vault.esign.create" => Box::pin(vault_esign_create(server, call, input)).await,
-        "vault.esign.get" => Box::pin(vault_esign_get(server, call, input)).await,
-        "vault.esign.links.issue" => Box::pin(vault_esign_links_issue(server, call, input)).await,
+        "vault.writes.pending" => boxed_vault_writes_pending(server, call, input).await,
+        "vault.hydrate" => boxed_vault_hydrate(server, call, input).await,
+        "vault.get" => boxed_vault_get(server, call, input).await,
+        "vault.refs.resolve" => boxed_vault_refs_resolve(server, call, input).await,
+        "vault.refs.links" => boxed_vault_refs_links(server, call, input).await,
+        "vault.search.vector.config" => boxed_vault_search_vector_config(server, call, input).await,
+        "vault.vectors.put" => boxed_vault_vectors_put(server, call, input).await,
+        "vault.search.hybrid" => boxed_vault_search_hybrid(server, call, input).await,
+        "vault.search.temporal" => boxed_vault_search_temporal(server, call, input).await,
+        "vault.search.bm25" => boxed_vault_search_bm25(server, call, input).await,
+        "vault.neighbors" => boxed_vault_neighbors(server, call, input).await,
+        "vault.structural.put" => boxed_vault_structural_put(server, call, input).await,
+        "vault.habits.checkin" => boxed_vault_habits_checkin(server, call, input).await,
+        "vault.productivity.create" => boxed_vault_productivity_create(server, call, input).await,
+        "vault.productivity.tree" => boxed_vault_productivity_tree(server, call, input).await,
+        "vault.ingest.ag_ui.import" => boxed_vault_ingest_ag_ui_import(server, call, input).await,
+        "vault.ingest.ag_ui.read" => boxed_vault_ingest_ag_ui_read(server, call, input).await,
+        "vault.claims.admit" => boxed_vault_claims_admit(server, call, input).await,
+        "vault.artifacts.create" => boxed_vault_artifacts_create(server, call, input).await,
+        "vault.esign.create" => boxed_vault_esign_create(server, call, input).await,
+        "vault.esign.get" => boxed_vault_esign_get(server, call, input).await,
+        "vault.esign.links.issue" => boxed_vault_esign_links_issue(server, call, input).await,
         "vault.esign.send_for_signature" => {
-            Box::pin(vault_esign_send_for_signature(server, call, input)).await
+            boxed_vault_esign_send_for_signature(server, call, input).await
         }
         "vault.esign.notices.dispatch" => {
-            Box::pin(vault_esign_notices_dispatch(server, call, input)).await
+            boxed_vault_esign_notices_dispatch(server, call, input).await
         }
-        "vault.esign.remind" => Box::pin(vault_esign_remind(server, call, input)).await,
-        "vault.esign.void" => Box::pin(vault_esign_void(server, call, input)).await,
-        "vault.esign.signing.act" => Box::pin(vault_esign_signing_act(server, call, input)).await,
-        "vault.esign.signing.pdf" => Box::pin(vault_esign_signing_pdf(server, call, input)).await,
-        "vault.esign.signing.image" => {
-            Box::pin(vault_esign_signing_image(server, call, input)).await
-        }
+        "vault.esign.remind" => boxed_vault_esign_remind(server, call, input).await,
+        "vault.esign.void" => boxed_vault_esign_void(server, call, input).await,
+        "vault.esign.signing.act" => boxed_vault_esign_signing_act(server, call, input).await,
+        "vault.esign.signing.pdf" => boxed_vault_esign_signing_pdf(server, call, input).await,
+        "vault.esign.signing.image" => boxed_vault_esign_signing_image(server, call, input).await,
         "vault.esign.signing.signature" => {
-            Box::pin(vault_esign_signing_signature(server, call, input)).await
+            boxed_vault_esign_signing_signature(server, call, input).await
         }
-        "vault.esign.seal.get" => Box::pin(vault_esign_seal_get(server, call, input)).await,
-        "vault.conversations.create" => {
-            Box::pin(vault_conversations_create(server, call, input)).await
-        }
+        "vault.esign.seal.get" => boxed_vault_esign_seal_get(server, call, input).await,
+        "vault.conversations.create" => boxed_vault_conversations_create(server, call, input).await,
         "vault.conversations.turns.create" => {
-            Box::pin(vault_conversations_turns_create(server, call, input)).await
+            boxed_vault_conversations_turns_create(server, call, input).await
         }
         "vault.conversations.records.append" => {
-            Box::pin(vault_conversations_records_append(server, call, input)).await
+            boxed_vault_conversations_records_append(server, call, input).await
         }
-        "vault.batch" => Box::pin(vault_batch(server, call, input)).await,
-        "vault.artifacts.put" => Box::pin(vault_artifacts_put(server, call, input)).await,
+        "vault.batch" => boxed_vault_batch(server, call, input).await,
+        "vault.artifacts.put" => boxed_vault_artifacts_put(server, call, input).await,
         "vault.artifacts.body.import" => {
-            Box::pin(vault_artifacts_body_import(server, call, input)).await
+            boxed_vault_artifacts_body_import(server, call, input).await
         }
-        "vault.artifacts.body.head" => {
-            Box::pin(vault_artifacts_body_head(server, call, input)).await
-        }
-        "vault.artifacts.body.read" => {
-            Box::pin(vault_artifacts_body_read(server, call, input)).await
-        }
+        "vault.artifacts.body.head" => boxed_vault_artifacts_body_head(server, call, input).await,
+        "vault.artifacts.body.read" => boxed_vault_artifacts_body_read(server, call, input).await,
         "vault.artifacts.body.commits" => {
-            Box::pin(vault_artifacts_body_commits(server, call, input)).await
+            boxed_vault_artifacts_body_commits(server, call, input).await
         }
-        "vault.artifacts.body.edit" => {
-            Box::pin(vault_artifacts_body_edit(server, call, input)).await
-        }
+        "vault.artifacts.body.edit" => boxed_vault_artifacts_body_edit(server, call, input).await,
         "vault.artifacts.body.fork.open" => {
-            Box::pin(vault_artifacts_body_fork_open(server, call, input)).await
+            boxed_vault_artifacts_body_fork_open(server, call, input).await
         }
         "vault.artifacts.body.fork.edit" => {
-            Box::pin(vault_artifacts_body_fork_edit(server, call, input)).await
+            boxed_vault_artifacts_body_fork_edit(server, call, input).await
         }
         "vault.artifacts.body.fork.diff" => {
-            Box::pin(vault_artifacts_body_fork_diff(server, call, input)).await
+            boxed_vault_artifacts_body_fork_diff(server, call, input).await
         }
         "vault.artifacts.body.fork.merge" => {
-            Box::pin(vault_artifacts_body_fork_merge(server, call, input)).await
+            boxed_vault_artifacts_body_fork_merge(server, call, input).await
         }
         "vault.artifacts.body.fork.discard" => {
-            Box::pin(vault_artifacts_body_fork_discard(server, call, input)).await
+            boxed_vault_artifacts_body_fork_discard(server, call, input).await
         }
         "vault.artifacts.body.proposal.read" => {
-            Box::pin(vault_artifacts_body_proposal_read(server, call, input)).await
+            boxed_vault_artifacts_body_proposal_read(server, call, input).await
         }
         "vault.artifacts.body.proposal.settle" => {
-            Box::pin(vault_artifacts_body_proposal_settle(server, call, input)).await
+            boxed_vault_artifacts_body_proposal_settle(server, call, input).await
         }
         "vault.artifacts.body.export" => {
-            Box::pin(vault_artifacts_body_export(server, call, input)).await
+            boxed_vault_artifacts_body_export(server, call, input).await
         }
         "vault.artifacts.body.preview" => {
-            Box::pin(vault_artifacts_body_preview(server, call, input)).await
+            boxed_vault_artifacts_body_preview(server, call, input).await
         }
         "vault.artifacts.body.deck.review" => {
-            Box::pin(vault_artifacts_body_deck_review(server, call, input)).await
+            boxed_vault_artifacts_body_deck_review(server, call, input).await
         }
         "vault.artifacts.body.deck.merge" => {
-            Box::pin(vault_artifacts_body_deck_merge(server, call, input)).await
+            boxed_vault_artifacts_body_deck_merge(server, call, input).await
         }
         "vault.artifacts.body.deck.export" => {
-            Box::pin(vault_artifacts_body_deck_export(server, call, input)).await
+            boxed_vault_artifacts_body_deck_export(server, call, input).await
         }
         "vault.artifacts.body.deck.gate" => {
-            Box::pin(vault_artifacts_body_deck_gate(server, call, input)).await
+            boxed_vault_artifacts_body_deck_gate(server, call, input).await
         }
         "vault.artifacts.body.deck.oracle" => {
-            Box::pin(vault_artifacts_body_deck_oracle(server, call, input)).await
+            boxed_vault_artifacts_body_deck_oracle(server, call, input).await
         }
         "vault.artifacts.body.deck.preview" => {
-            Box::pin(vault_artifacts_body_deck_preview(server, call, input)).await
+            boxed_vault_artifacts_body_deck_preview(server, call, input).await
         }
-        "vault.artifacts.append" => Box::pin(vault_artifacts_append(server, call, input)).await,
-        "vault.artifacts.read" => Box::pin(vault_artifacts_read(server, call, input)).await,
+        "vault.artifacts.append" => boxed_vault_artifacts_append(server, call, input).await,
+        "vault.artifacts.read" => boxed_vault_artifacts_read(server, call, input).await,
         "vault.consolidation.enqueue" => {
-            Box::pin(vault_consolidation_enqueue(server, call, input)).await
+            boxed_vault_consolidation_enqueue(server, call, input).await
         }
-        "vault.consolidation.status" => {
-            Box::pin(vault_consolidation_status(server, call, input)).await
-        }
+        "vault.consolidation.status" => boxed_vault_consolidation_status(server, call, input).await,
         "vault.consolidation.wake.status" => {
-            Box::pin(vault_consolidation_wake_status(server, call, input)).await
+            boxed_vault_consolidation_wake_status(server, call, input).await
         }
-        "vault.runs.step" => Box::pin(vault_runs_step(server, call, input)).await,
-        "vault.runs.checkpoint" => Box::pin(vault_runs_checkpoint(server, call, input)).await,
+        "vault.runs.step" => boxed_vault_runs_step(server, call, input).await,
+        "vault.runs.checkpoint" => boxed_vault_runs_checkpoint(server, call, input).await,
         "vault.turn_programs.admission" => {
-            Box::pin(vault_turn_programs_admission(server, call, input)).await
+            boxed_vault_turn_programs_admission(server, call, input).await
         }
-        "vault.runs.program" => Box::pin(vault_runs_program(server, call, input)).await,
-        "vault.runs.program_step" => Box::pin(vault_runs_program_step(server, call, input)).await,
+        "vault.runs.program" => boxed_vault_runs_program(server, call, input).await,
+        "vault.runs.program_step" => boxed_vault_runs_program_step(server, call, input).await,
         "vault.runs.program_checkpoint" => {
-            Box::pin(vault_runs_program_checkpoint(server, call, input)).await
+            boxed_vault_runs_program_checkpoint(server, call, input).await
         }
         "vault.runs.program_hold.release" => {
-            Box::pin(vault_runs_program_hold_release(server, call, input)).await
+            boxed_vault_runs_program_hold_release(server, call, input).await
         }
         "vault.consolidation.home.get" => {
-            Box::pin(vault_consolidation_home_get(server, call, input)).await
+            boxed_vault_consolidation_home_get(server, call, input).await
         }
         "vault.consolidation.home.pick" => {
-            Box::pin(vault_consolidation_home_pick(server, call, input)).await
+            boxed_vault_consolidation_home_pick(server, call, input).await
         }
         "vault.consolidation.lineage" => {
-            Box::pin(vault_consolidation_lineage(server, call, input)).await
+            boxed_vault_consolidation_lineage(server, call, input).await
         }
         "vault.consolidation.candidate_decisions" => {
-            Box::pin(vault_consolidation_candidate_decisions(server, call, input)).await
+            boxed_vault_consolidation_candidate_decisions(server, call, input).await
         }
         "vault.consolidation.promote" => {
-            Box::pin(vault_consolidation_promote(server, call, input)).await
+            boxed_vault_consolidation_promote(server, call, input).await
         }
-        "vault.consolidation.pin" => Box::pin(vault_consolidation_pin(server, call, input)).await,
+        "vault.consolidation.pin" => boxed_vault_consolidation_pin(server, call, input).await,
         "vault.consolidation.frontier" => {
-            Box::pin(vault_consolidation_frontier(server, call, input)).await
+            boxed_vault_consolidation_frontier(server, call, input).await
         }
         "vault.consolidation.accounting" => {
-            Box::pin(vault_consolidation_accounting(server, call, input)).await
+            boxed_vault_consolidation_accounting(server, call, input).await
         }
         "vault.consolidation.evidence" => {
-            Box::pin(vault_consolidation_evidence(server, call, input)).await
+            boxed_vault_consolidation_evidence(server, call, input).await
         }
-        "vault.sieve.evidence" => Box::pin(vault_sieve_evidence(server, call, input)).await,
+        "vault.sieve.evidence" => boxed_vault_sieve_evidence(server, call, input).await,
         "vault.sieve.evidence.replay" => {
-            Box::pin(vault_sieve_evidence_replay(server, call, input)).await
+            boxed_vault_sieve_evidence_replay(server, call, input).await
         }
-        "vault.sieve.cadence" => Box::pin(vault_sieve_cadence(server, call, input)).await,
-        "vault.sieve.settlements" => Box::pin(vault_sieve_settlements(server, call, input)).await,
+        "vault.sieve.cadence" => boxed_vault_sieve_cadence(server, call, input).await,
+        "vault.sieve.settlements" => boxed_vault_sieve_settlements(server, call, input).await,
         "vault.sieve.settlements.get" => {
-            Box::pin(vault_sieve_settlements_get(server, call, input)).await
+            boxed_vault_sieve_settlements_get(server, call, input).await
         }
-        "vault.sieve.queue" => Box::pin(vault_sieve_queue(server, call, input)).await,
-        "vault.sieve.retained" => Box::pin(vault_sieve_retained(server, call, input)).await,
-        "vault.sieve.receipts" => Box::pin(vault_sieve_receipts(server, call, input)).await,
-        "vault.sieve.policy" => Box::pin(vault_sieve_policy(server, call, input)).await,
-        "vault.sieve.policy.set" => Box::pin(vault_sieve_policy_set(server, call, input)).await,
-        "vault.sieve.recipe_policy" => {
-            Box::pin(vault_sieve_recipe_policy(server, call, input)).await
-        }
+        "vault.sieve.queue" => boxed_vault_sieve_queue(server, call, input).await,
+        "vault.sieve.retained" => boxed_vault_sieve_retained(server, call, input).await,
+        "vault.sieve.receipts" => boxed_vault_sieve_receipts(server, call, input).await,
+        "vault.sieve.policy" => boxed_vault_sieve_policy(server, call, input).await,
+        "vault.sieve.policy.set" => boxed_vault_sieve_policy_set(server, call, input).await,
+        "vault.sieve.recipe_policy" => boxed_vault_sieve_recipe_policy(server, call, input).await,
         "vault.sieve.recipe_policy.set" => {
-            Box::pin(vault_sieve_recipe_policy_set(server, call, input)).await
+            boxed_vault_sieve_recipe_policy_set(server, call, input).await
         }
-        "vault.sieve.lease" => Box::pin(vault_sieve_lease(server, call, input)).await,
-        "vault.sieve.lease.refill" => Box::pin(vault_sieve_lease_refill(server, call, input)).await,
-        "vault.free_time.policy.get" => {
-            Box::pin(vault_free_time_policy_get(server, call, input)).await
-        }
-        "vault.free_time.policy.set" => {
-            Box::pin(vault_free_time_policy_set(server, call, input)).await
-        }
+        "vault.sieve.lease" => boxed_vault_sieve_lease(server, call, input).await,
+        "vault.sieve.lease.refill" => boxed_vault_sieve_lease_refill(server, call, input).await,
+        "vault.free_time.policy.get" => boxed_vault_free_time_policy_get(server, call, input).await,
+        "vault.free_time.policy.set" => boxed_vault_free_time_policy_set(server, call, input).await,
         "vault.free_time.policy.set_as" => {
-            Box::pin(vault_free_time_policy_set_as(server, call, input)).await
+            boxed_vault_free_time_policy_set_as(server, call, input).await
         }
-        "vault.free_time.cycles" => Box::pin(vault_free_time_cycles(server, call, input)).await,
-        "vault.free_time.cycle" => Box::pin(vault_free_time_cycle(server, call, input)).await,
-        "vault.claims.vet" => Box::pin(vault_claims_vet(server, call, input)).await,
-        "vault.claims.vetting" => Box::pin(vault_claims_vetting(server, call, input)).await,
+        "vault.free_time.cycles" => boxed_vault_free_time_cycles(server, call, input).await,
+        "vault.free_time.cycle" => boxed_vault_free_time_cycle(server, call, input).await,
+        "vault.claims.vet" => boxed_vault_claims_vet(server, call, input).await,
+        "vault.claims.vetting" => boxed_vault_claims_vetting(server, call, input).await,
         "vault.memory.signal_extraction" => {
-            Box::pin(vault_memory_signal_extraction(server, call, input)).await
+            boxed_vault_memory_signal_extraction(server, call, input).await
         }
         "vault.memory.signal_extraction.result" => {
-            Box::pin(vault_memory_signal_extraction_result(server, call, input)).await
+            boxed_vault_memory_signal_extraction_result(server, call, input).await
         }
-        "vault.claims.seed" => Box::pin(vault_claims_seed(server, call, input)).await,
+        "vault.claims.seed" => boxed_vault_claims_seed(server, call, input).await,
         "vault.channel_identities.provision" => {
-            Box::pin(vault_channel_identities_provision(server, call, input)).await
+            boxed_vault_channel_identities_provision(server, call, input).await
         }
         "vault.channel_identities.bind" => {
-            Box::pin(vault_channel_identities_bind(server, call, input)).await
+            boxed_vault_channel_identities_bind(server, call, input).await
         }
         "vault.channel_identities.fulfill" => {
-            Box::pin(vault_channel_identities_fulfill(server, call, input)).await
+            boxed_vault_channel_identities_fulfill(server, call, input).await
         }
         "vault.channel_identities.rotate" => {
-            Box::pin(vault_channel_identities_rotate(server, call, input)).await
+            boxed_vault_channel_identities_rotate(server, call, input).await
         }
         "vault.channel_identities.release" => {
-            Box::pin(vault_channel_identities_release(server, call, input)).await
+            boxed_vault_channel_identities_release(server, call, input).await
         }
         "vault.channel_identities.route_inbound" => {
-            Box::pin(vault_channel_identities_route_inbound(server, call, input)).await
+            boxed_vault_channel_identities_route_inbound(server, call, input).await
         }
         "vault.channel_identities.get" => {
-            Box::pin(vault_channel_identities_get(server, call, input)).await
+            boxed_vault_channel_identities_get(server, call, input).await
         }
         "vault.channel_identities.selection.rules" => {
-            Box::pin(vault_channel_identities_selection_rules(
-                server, call, input,
-            ))
-            .await
+            boxed_vault_channel_identities_selection_rules(server, call, input).await
         }
         "vault.channel_identities.selection.update" => {
-            Box::pin(vault_channel_identities_selection_update(
-                server, call, input,
-            ))
-            .await
+            boxed_vault_channel_identities_selection_update(server, call, input).await
         }
         "vault.channel_identities.select" => {
-            Box::pin(vault_channel_identities_select(server, call, input)).await
+            boxed_vault_channel_identities_select(server, call, input).await
         }
         "vault.channel_identities.passports.get" => {
-            Box::pin(vault_channel_identities_passports_get(server, call, input)).await
+            boxed_vault_channel_identities_passports_get(server, call, input).await
         }
         "vault.channel_identities.passports.list" => {
-            Box::pin(vault_channel_identities_passports_list(server, call, input)).await
+            boxed_vault_channel_identities_passports_list(server, call, input).await
         }
         "vault.delivery_window.policy.put" => {
-            Box::pin(vault_delivery_window_policy_put(server, call, input)).await
+            boxed_vault_delivery_window_policy_put(server, call, input).await
         }
         "vault.delivery_window.policy.list" => {
-            Box::pin(vault_delivery_window_policy_list(server, call, input)).await
+            boxed_vault_delivery_window_policy_list(server, call, input).await
         }
         "vault.delivery_window.policy.retract" => {
-            Box::pin(vault_delivery_window_policy_retract(server, call, input)).await
+            boxed_vault_delivery_window_policy_retract(server, call, input).await
         }
         "vault.delivery_window.evaluate" => {
-            Box::pin(vault_delivery_window_evaluate(server, call, input)).await
+            boxed_vault_delivery_window_evaluate(server, call, input).await
         }
         "connector.outbound.schedule" => {
-            Box::pin(connector_outbound_schedule(server, call, input)).await
+            boxed_connector_outbound_schedule(server, call, input).await
         }
-        "vault.summaries.create" => Box::pin(vault_summaries_create(server, call, input)).await,
-        "vault.summaries.read" => Box::pin(vault_summaries_read(server, call, input)).await,
-        "vault.summaries.status" => Box::pin(vault_summaries_status(server, call, input)).await,
-        "vault.summaries.keep" => Box::pin(vault_summaries_keep(server, call, input)).await,
-        "vault.summaries.edit" => Box::pin(vault_summaries_edit(server, call, input)).await,
-        "vault.summaries.patch" => Box::pin(vault_summaries_patch(server, call, input)).await,
-        "vault.summaries.regenerate" => {
-            Box::pin(vault_summaries_regenerate(server, call, input)).await
-        }
+        "vault.summaries.create" => boxed_vault_summaries_create(server, call, input).await,
+        "vault.summaries.read" => boxed_vault_summaries_read(server, call, input).await,
+        "vault.summaries.status" => boxed_vault_summaries_status(server, call, input).await,
+        "vault.summaries.keep" => boxed_vault_summaries_keep(server, call, input).await,
+        "vault.summaries.edit" => boxed_vault_summaries_edit(server, call, input).await,
+        "vault.summaries.patch" => boxed_vault_summaries_patch(server, call, input).await,
+        "vault.summaries.regenerate" => boxed_vault_summaries_regenerate(server, call, input).await,
         "vault.summaries.proposals.read" => {
-            Box::pin(vault_summaries_proposals_read(server, call, input)).await
+            boxed_vault_summaries_proposals_read(server, call, input).await
         }
         "vault.summaries.proposals.merge" => {
-            Box::pin(vault_summaries_proposals_merge(server, call, input)).await
+            boxed_vault_summaries_proposals_merge(server, call, input).await
         }
         "vault.summaries.proposals.switch" => {
-            Box::pin(vault_summaries_proposals_switch(server, call, input)).await
+            boxed_vault_summaries_proposals_switch(server, call, input).await
         }
         "vault.summaries.proposals.reject" => {
-            Box::pin(vault_summaries_proposals_reject(server, call, input)).await
+            boxed_vault_summaries_proposals_reject(server, call, input).await
         }
         "vault.notes.bless_brief_kind" => {
-            Box::pin(vault_notes_bless_brief_kind(server, call, input)).await
+            boxed_vault_notes_bless_brief_kind(server, call, input).await
         }
-        "vault.notes.author_brief" => Box::pin(vault_notes_author_brief(server, call, input)).await,
+        "vault.notes.author_brief" => boxed_vault_notes_author_brief(server, call, input).await,
         "vault.notes.follow_citation" => {
-            Box::pin(vault_notes_follow_citation(server, call, input)).await
+            boxed_vault_notes_follow_citation(server, call, input).await
         }
-        "vault.notes.create" => Box::pin(vault_notes_create(server, call, input)).await,
-        "vault.notes.author_take" => Box::pin(vault_notes_author_take(server, call, input)).await,
-        "vault.notes.from_entity" => Box::pin(vault_notes_from_entity(server, call, input)).await,
-        "vault.notes.read" => Box::pin(vault_notes_read(server, call, input)).await,
-        "vault.notes.history" => Box::pin(vault_notes_history(server, call, input)).await,
-        "vault.notes.fork" => Box::pin(vault_notes_fork(server, call, input)).await,
-        "vault.notes.forks.read" => Box::pin(vault_notes_forks_read(server, call, input)).await,
-        "vault.notes.proposals.open" => {
-            Box::pin(vault_notes_proposals_open(server, call, input)).await
-        }
-        "vault.notes.proposals.read" => {
-            Box::pin(vault_notes_proposals_read(server, call, input)).await
-        }
+        "vault.notes.create" => boxed_vault_notes_create(server, call, input).await,
+        "vault.notes.author_take" => boxed_vault_notes_author_take(server, call, input).await,
+        "vault.notes.from_entity" => boxed_vault_notes_from_entity(server, call, input).await,
+        "vault.notes.read" => boxed_vault_notes_read(server, call, input).await,
+        "vault.notes.history" => boxed_vault_notes_history(server, call, input).await,
+        "vault.notes.fork" => boxed_vault_notes_fork(server, call, input).await,
+        "vault.notes.forks.read" => boxed_vault_notes_forks_read(server, call, input).await,
+        "vault.notes.proposals.open" => boxed_vault_notes_proposals_open(server, call, input).await,
+        "vault.notes.proposals.read" => boxed_vault_notes_proposals_read(server, call, input).await,
         "vault.notes.proposals.merge" => {
-            Box::pin(vault_notes_proposals_merge(server, call, input)).await
+            boxed_vault_notes_proposals_merge(server, call, input).await
         }
         "vault.notes.proposals.switch" => {
-            Box::pin(vault_notes_proposals_switch(server, call, input)).await
+            boxed_vault_notes_proposals_switch(server, call, input).await
         }
         "vault.notes.proposals.reject" => {
-            Box::pin(vault_notes_proposals_reject(server, call, input)).await
+            boxed_vault_notes_proposals_reject(server, call, input).await
         }
-        "vault.notes.version_tree" => Box::pin(vault_notes_version_tree(server, call, input)).await,
-        "vault.notes.history_purge" => {
-            Box::pin(vault_notes_history_purge(server, call, input)).await
-        }
+        "vault.notes.version_tree" => boxed_vault_notes_version_tree(server, call, input).await,
+        "vault.notes.history_purge" => boxed_vault_notes_history_purge(server, call, input).await,
         "vault.notes.history_purge_execute" => {
-            Box::pin(vault_notes_history_purge_execute(server, call, input)).await
+            boxed_vault_notes_history_purge_execute(server, call, input).await
         }
         "vault.notes.history_purge_receipts" => {
-            Box::pin(vault_notes_history_purge_receipts(server, call, input)).await
+            boxed_vault_notes_history_purge_receipts(server, call, input).await
         }
-        "vault.notes.editor.bind" => Box::pin(vault_notes_editor_bind(server, call, input)).await,
-        "vault.notes.editor.close" => Box::pin(vault_notes_editor_close(server, call, input)).await,
-        "vault.notes.edit" => Box::pin(vault_notes_edit(server, call, input)).await,
-        "vault.notes.seal" => Box::pin(vault_notes_seal(server, call, input)).await,
-        "vault.notes.lifecycle" => Box::pin(vault_notes_lifecycle(server, call, input)).await,
-        "vault.notes.set_overrides" => {
-            Box::pin(vault_notes_set_overrides(server, call, input)).await
-        }
-        "vault.notes.defaults" => Box::pin(vault_notes_defaults(server, call, input)).await,
-        "vault.tasks.linear.mapping" => {
-            Box::pin(vault_tasks_linear_mapping(server, call, input)).await
-        }
+        "vault.notes.editor.bind" => boxed_vault_notes_editor_bind(server, call, input).await,
+        "vault.notes.editor.close" => boxed_vault_notes_editor_close(server, call, input).await,
+        "vault.notes.edit" => boxed_vault_notes_edit(server, call, input).await,
+        "vault.notes.seal" => boxed_vault_notes_seal(server, call, input).await,
+        "vault.notes.lifecycle" => boxed_vault_notes_lifecycle(server, call, input).await,
+        "vault.notes.set_overrides" => boxed_vault_notes_set_overrides(server, call, input).await,
+        "vault.notes.defaults" => boxed_vault_notes_defaults(server, call, input).await,
+        "vault.tasks.linear.mapping" => boxed_vault_tasks_linear_mapping(server, call, input).await,
         "vault.tasks.linear.mapping.edit" => {
-            Box::pin(vault_tasks_linear_mapping_edit(server, call, input)).await
+            boxed_vault_tasks_linear_mapping_edit(server, call, input).await
         }
         "vault.tasks.linear.provenance" => {
-            Box::pin(vault_tasks_linear_provenance(server, call, input)).await
+            boxed_vault_tasks_linear_provenance(server, call, input).await
         }
-        "self.run.attach" => Box::pin(self_run_attach(server, call, input)).await,
-        "self.folds.describe" => Box::pin(self_folds_describe(server, call, input)).await,
-        "self.history" => Box::pin(self_history(server, call, input)).await,
-        "vault.runs.review" => Box::pin(vault_runs_review(server, call, input)).await,
-        "vault.runs.settle" => Box::pin(vault_runs_settle(server, call, input)).await,
-        "vault.runs.settlement" => Box::pin(vault_runs_settlement(server, call, input)).await,
-        "vault.revert_run" => Box::pin(vault_revert_run(server, call, input)).await,
-        "vault.identity.merge" => Box::pin(vault_identity_merge(server, call, input)).await,
-        "vault.identity.split" => Box::pin(vault_identity_split(server, call, input)).await,
-        "vault.identity.facet" => Box::pin(vault_identity_facet(server, call, input)).await,
+        "self.run.attach" => boxed_self_run_attach(server, call, input).await,
+        "self.folds.describe" => boxed_self_folds_describe(server, call, input).await,
+        "self.history" => boxed_self_history(server, call, input).await,
+        "vault.runs.review" => boxed_vault_runs_review(server, call, input).await,
+        "vault.runs.settle" => boxed_vault_runs_settle(server, call, input).await,
+        "vault.runs.settlement" => boxed_vault_runs_settlement(server, call, input).await,
+        "vault.revert_run" => boxed_vault_revert_run(server, call, input).await,
+        "vault.identity.merge" => boxed_vault_identity_merge(server, call, input).await,
+        "vault.identity.split" => boxed_vault_identity_split(server, call, input).await,
+        "vault.identity.facet" => boxed_vault_identity_facet(server, call, input).await,
         "vault.identity.assert_distinct" => {
-            Box::pin(vault_identity_assert_distinct(server, call, input)).await
+            boxed_vault_identity_assert_distinct(server, call, input).await
         }
-        "vault.identity.propose" => Box::pin(vault_identity_propose(server, call, input)).await,
-        "vault.identity.undo" => Box::pin(vault_identity_undo(server, call, input)).await,
-        "vault.identity.resolve" => Box::pin(vault_identity_resolve(server, call, input)).await,
-        "vault.identity.events.get" => {
-            Box::pin(vault_identity_events_get(server, call, input)).await
-        }
+        "vault.identity.propose" => boxed_vault_identity_propose(server, call, input).await,
+        "vault.identity.undo" => boxed_vault_identity_undo(server, call, input).await,
+        "vault.identity.resolve" => boxed_vault_identity_resolve(server, call, input).await,
+        "vault.identity.events.get" => boxed_vault_identity_events_get(server, call, input).await,
         "vault.identity.proposals.resolve" => {
-            Box::pin(vault_identity_proposals_resolve(server, call, input)).await
+            boxed_vault_identity_proposals_resolve(server, call, input).await
         }
         "vault.identity.proposals.for_pair" => {
-            Box::pin(vault_identity_proposals_for_pair(server, call, input)).await
+            boxed_vault_identity_proposals_for_pair(server, call, input).await
         }
         "vault.custody.members.drain.begin" => {
-            Box::pin(vault_custody_members_drain_begin(server, call, input)).await
+            boxed_vault_custody_members_drain_begin(server, call, input).await
         }
         "vault.custody.members.drain.commit" => {
-            Box::pin(vault_custody_members_drain_commit(server, call, input)).await
+            boxed_vault_custody_members_drain_commit(server, call, input).await
         }
         "vault.custody.members.drain.folder" => {
-            Box::pin(vault_custody_members_drain_folder(server, call, input)).await
+            boxed_vault_custody_members_drain_folder(server, call, input).await
         }
         "vault.custody.members.reenrol" => {
-            Box::pin(vault_custody_members_reenrol(server, call, input)).await
+            boxed_vault_custody_members_reenrol(server, call, input).await
         }
-        "vault.mail.pack.install" => Box::pin(vault_mail_pack_install(server, call, input)).await,
-        "vault.mail.sources.connect" => {
-            Box::pin(vault_mail_sources_connect(server, call, input)).await
-        }
-        "vault.mail.sources.list" => Box::pin(vault_mail_sources_list(server, call, input)).await,
+        "vault.mail.pack.install" => boxed_vault_mail_pack_install(server, call, input).await,
+        "vault.mail.sources.connect" => boxed_vault_mail_sources_connect(server, call, input).await,
+        "vault.mail.sources.list" => boxed_vault_mail_sources_list(server, call, input).await,
         "vault.mail.sources.settings.set" => {
-            Box::pin(vault_mail_sources_settings_set(server, call, input)).await
+            boxed_vault_mail_sources_settings_set(server, call, input).await
         }
         "vault.mail.sources.members.set" => {
-            Box::pin(vault_mail_sources_members_set(server, call, input)).await
+            boxed_vault_mail_sources_members_set(server, call, input).await
         }
         "vault.mail.sources.audience_events" => {
-            Box::pin(vault_mail_sources_audience_events(server, call, input)).await
+            boxed_vault_mail_sources_audience_events(server, call, input).await
         }
-        "vault.mail.threads.share" => Box::pin(vault_mail_threads_share(server, call, input)).await,
-        "vault.mail.threads.unshare" => {
-            Box::pin(vault_mail_threads_unshare(server, call, input)).await
-        }
+        "vault.mail.threads.share" => boxed_vault_mail_threads_share(server, call, input).await,
+        "vault.mail.threads.unshare" => boxed_vault_mail_threads_unshare(server, call, input).await,
         "vault.mail.compliance.setting" => {
-            Box::pin(vault_mail_compliance_setting(server, call, input)).await
+            boxed_vault_mail_compliance_setting(server, call, input).await
         }
-        "vault.mail.compliance.set" => {
-            Box::pin(vault_mail_compliance_set(server, call, input)).await
-        }
-        "vault.mail.compliance.log" => {
-            Box::pin(vault_mail_compliance_log(server, call, input)).await
-        }
+        "vault.mail.compliance.set" => boxed_vault_mail_compliance_set(server, call, input).await,
+        "vault.mail.compliance.log" => boxed_vault_mail_compliance_log(server, call, input).await,
         "vault.mail.sources.sync_status" => {
-            Box::pin(vault_mail_sources_sync_status(server, call, input)).await
+            boxed_vault_mail_sources_sync_status(server, call, input).await
         }
-        "vault.mail.inbox" => Box::pin(vault_mail_inbox(server, call, input)).await,
-        "vault.mail.threads.read" => Box::pin(vault_mail_threads_read(server, call, input)).await,
+        "vault.mail.inbox" => boxed_vault_mail_inbox(server, call, input).await,
+        "vault.mail.threads.read" => boxed_vault_mail_threads_read(server, call, input).await,
         "vault.mail.compliance.search" => {
-            Box::pin(vault_mail_compliance_search(server, call, input)).await
+            boxed_vault_mail_compliance_search(server, call, input).await
         }
-        "connector.answer" => Box::pin(connector_answer(server, call, input)).await,
-        "self.browser.open" => Box::pin(self_browser_open(server, call, input)).await,
-        "self.browser.observe" => Box::pin(self_browser_observe(server, call, input)).await,
-        "self.browser.find" => Box::pin(self_browser_find(server, call, input)).await,
-        "self.browser.click" => Box::pin(self_browser_click(server, call, input)).await,
-        "self.browser.click_at" => Box::pin(self_browser_click_at(server, call, input)).await,
-        "self.browser.type" => Box::pin(self_browser_type(server, call, input)).await,
-        "self.browser.select" => Box::pin(self_browser_select(server, call, input)).await,
-        "self.browser.wait_for" => Box::pin(self_browser_wait_for(server, call, input)).await,
-        "self.browser.expect" => Box::pin(self_browser_expect(server, call, input)).await,
-        "self.browser.screenshot" => Box::pin(self_browser_screenshot(server, call, input)).await,
-        "self.browser.view" => Box::pin(self_browser_view(server, call, input)).await,
-        "self.browser.crop" => Box::pin(self_browser_crop(server, call, input)).await,
-        "self.browser.zoom" => Box::pin(self_browser_zoom(server, call, input)).await,
-        "self.browser.batch" => Box::pin(self_browser_batch(server, call, input)).await,
-        "self.browser.library.find" => {
-            Box::pin(self_browser_library_find(server, call, input)).await
-        }
-        "self.browser.library.draft" => {
-            Box::pin(self_browser_library_draft(server, call, input)).await
-        }
+        "connector.answer" => boxed_connector_answer(server, call, input).await,
+        "self.browser.open" => boxed_self_browser_open(server, call, input).await,
+        "self.browser.observe" => boxed_self_browser_observe(server, call, input).await,
+        "self.browser.find" => boxed_self_browser_find(server, call, input).await,
+        "self.browser.click" => boxed_self_browser_click(server, call, input).await,
+        "self.browser.click_at" => boxed_self_browser_click_at(server, call, input).await,
+        "self.browser.type" => boxed_self_browser_type(server, call, input).await,
+        "self.browser.select" => boxed_self_browser_select(server, call, input).await,
+        "self.browser.wait_for" => boxed_self_browser_wait_for(server, call, input).await,
+        "self.browser.expect" => boxed_self_browser_expect(server, call, input).await,
+        "self.browser.screenshot" => boxed_self_browser_screenshot(server, call, input).await,
+        "self.browser.view" => boxed_self_browser_view(server, call, input).await,
+        "self.browser.crop" => boxed_self_browser_crop(server, call, input).await,
+        "self.browser.zoom" => boxed_self_browser_zoom(server, call, input).await,
+        "self.browser.batch" => boxed_self_browser_batch(server, call, input).await,
+        "self.browser.library.find" => boxed_self_browser_library_find(server, call, input).await,
+        "self.browser.library.draft" => boxed_self_browser_library_draft(server, call, input).await,
         "self.browser.demonstration.start" => {
-            Box::pin(self_browser_demonstration_start(server, call, input)).await
+            boxed_self_browser_demonstration_start(server, call, input).await
         }
         "self.browser.demonstration.stop" => {
-            Box::pin(self_browser_demonstration_stop(server, call, input)).await
+            boxed_self_browser_demonstration_stop(server, call, input).await
         }
         "self.browser.library.propose" => {
-            Box::pin(self_browser_library_propose(server, call, input)).await
+            boxed_self_browser_library_propose(server, call, input).await
         }
         "self.browser.library.retire" => {
-            Box::pin(self_browser_library_retire(server, call, input)).await
+            boxed_self_browser_library_retire(server, call, input).await
         }
         "self.browser.library.retired" => {
-            Box::pin(self_browser_library_retired(server, call, input)).await
+            boxed_self_browser_library_retired(server, call, input).await
         }
-        "self.browser.library.run" => Box::pin(self_browser_library_run(server, call, input)).await,
-        "self.browser.handover" => Box::pin(self_browser_handover(server, call, input)).await,
-        "self.browser.switch_engine" => {
-            Box::pin(self_browser_switch_engine(server, call, input)).await
-        }
-        "vault.claims.supersede" => Box::pin(vault_claims_supersede(server, call, input)).await,
-        "self.fold" => Box::pin(self_fold(server, call, input)).await,
-        "self.compact" => Box::pin(self_compact(server, call, input)).await,
-        "self.unfold" => Box::pin(self_unfold(server, call, input)).await,
-        "self.folds" => Box::pin(self_folds(server, call, input)).await,
-        "tasks.refuse" => Box::pin(tasks_refuse(server, call, input)).await,
-        "self.report_blocked" => Box::pin(self_report_blocked(server, call, input)).await,
-        "self.agents.spawn" => Box::pin(self_agents_spawn(server, call, input)).await,
-        "self.leader.split" => Box::pin(self_leader_split(server, call, input)).await,
-        "self.skills.call" => Box::pin(self_skills_call(server, call, input)).await,
-        "self.focus.refresh" => Box::pin(self_focus_refresh(server, call, input)).await,
-        "self.focus.subscribe" => Box::pin(self_focus_subscribe(server, call, input)).await,
-        "self.focus.unsubscribe" => Box::pin(self_focus_unsubscribe(server, call, input)).await,
+        "self.browser.library.run" => boxed_self_browser_library_run(server, call, input).await,
+        "self.browser.handover" => boxed_self_browser_handover(server, call, input).await,
+        "self.browser.switch_engine" => boxed_self_browser_switch_engine(server, call, input).await,
+        "vault.claims.supersede" => boxed_vault_claims_supersede(server, call, input).await,
+        "self.fold" => boxed_self_fold(server, call, input).await,
+        "self.compact" => boxed_self_compact(server, call, input).await,
+        "self.unfold" => boxed_self_unfold(server, call, input).await,
+        "self.folds" => boxed_self_folds(server, call, input).await,
+        "tasks.refuse" => boxed_tasks_refuse(server, call, input).await,
+        "self.report_blocked" => boxed_self_report_blocked(server, call, input).await,
+        "self.agents.spawn" => boxed_self_agents_spawn(server, call, input).await,
+        "self.leader.split" => boxed_self_leader_split(server, call, input).await,
+        "self.skills.call" => boxed_self_skills_call(server, call, input).await,
+        "self.focus.refresh" => boxed_self_focus_refresh(server, call, input).await,
+        "self.focus.subscribe" => boxed_self_focus_subscribe(server, call, input).await,
+        "self.focus.unsubscribe" => boxed_self_focus_unsubscribe(server, call, input).await,
         "self.desktop.open"
         | "self.desktop.observe"
         | "self.desktop.find"
@@ -42170,6 +52504,7 @@ async fn call_verb_row(
         | "self.leader.pattern"
         | "self.team.start"
         | "self.team.record"
+        | "self.team.vote"
         | "self.team.submit"
         | "self.spawn"
         | "tasks.wait"

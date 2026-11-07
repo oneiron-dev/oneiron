@@ -13,6 +13,8 @@ use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::vault::ReadMode;
 
+mod hydrate_filtered;
+
 /// One resolved read target: the entity a reference names, at its frontier.
 /// `None` is a reference that resolves to nothing, never a withheld row.
 pub(super) type ReadTargetSlot = Option<(EntityId, ReadMode)>;
@@ -40,6 +42,48 @@ impl Memory<'_> {
         // The room resolver opens its own snapshots, so it runs only once the
         // verification snapshot here has closed: LMDB allows one per thread.
         let key = self.actor_read_key()?;
+        Ok(self
+            .vault
+            .scoped_read(self.in_room_turn(key)?)
+            .with_claim_status(claims))
+    }
+
+    /// [`Self::read_lane`] for rows that go on to `destination` as well
+    /// (FIX 10105): the key meets it, so it only narrows, and the caller's
+    /// grants and room ceilings stay. A row a world keeps from there reads
+    /// as withheld.
+    pub(crate) fn read_lane_for_destination(
+        &self,
+        claims: ClaimReadStatus,
+        destination: &crate::settings::ReadDestination,
+    ) -> MemoryResult<ScopedRead<'_>> {
+        let key = self.actor_read_key()?.for_destination(destination);
+        Ok(self
+            .vault
+            .scoped_read(self.in_room_turn(key)?)
+            .with_claim_status(claims))
+    }
+
+    /// The queue-exhaust Owner's reader, retaining this handle's actual
+    /// credential, destination and room ceiling. It never changes the
+    /// ordinary read key's owner-binding rule.
+    pub(crate) fn queue_check_owner_read_lane(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        claims: ClaimReadStatus,
+    ) -> MemoryResult<ScopedRead<'_>> {
+        let actor = owner.actor_for_read(self.vault)?;
+        if actor != self.actor || self.actor_class != crate::edge::EdgeActorClass::Human {
+            return Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "queue-check Owner proof does not belong to this caller",
+                &[],
+            ));
+        }
+        let key = self
+            .vault
+            .queue_check_owner_read_key(owner, self.read_proof.as_ref(), self.host_action.as_ref())?
+            .for_destination(&self.destination);
         Ok(self
             .vault
             .scoped_read(self.in_room_turn(key)?)
@@ -157,6 +201,14 @@ impl Memory<'_> {
         }
         self.host_action = Some(action.clone());
         Ok(self)
+    }
+
+    /// Rechecks a bound host action in the caller's writing snapshot.
+    pub(crate) fn recheck_host_action_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {
+        if let Some(action) = &self.host_action {
+            action.guard().holds_in(self.vault, txn)?;
+        }
+        Ok(())
     }
 
     /// The bound actor's read key by identity alone.
@@ -580,6 +632,7 @@ impl Memory<'_> {
         row: ReadRow,
         mode: ReadMode,
     ) -> MemoryResult<Option<EntityView>> {
+        let read_candidate = self.read_world_candidate(lane, txn, &row);
         let Some(body) = row.body else {
             return Ok(None);
         };
@@ -612,7 +665,7 @@ impl Memory<'_> {
         {
             super::message_parts::withhold_modified_reasoning_parts(&stored_body, value);
         }
-        Ok(Some(EntityView {
+        let view = EntityView {
             id_hex: row.id.to_hex(),
             short_ref,
             kind: kind_string_for_type(row.entity_type),
@@ -621,7 +674,11 @@ impl Memory<'_> {
             learned_at: row.learned_at,
             made_by: self.made_by_in_lane(lane, txn, &row.id)?,
             body,
-        }))
+        };
+        if let Some(candidate) = read_candidate {
+            candidate.served();
+        }
+        Ok(Some(view))
     }
 }
 

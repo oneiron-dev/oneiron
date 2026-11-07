@@ -13,8 +13,11 @@
 //! gone, a hosted vault's checkpoint carries the family itself, sealed to its
 //! host's recipient and never to the owner (`seal`, FIX 6598).
 //!
-//! A backup holds every record its image carries, so while any hold stands,
-//! customer or host order, none expires ([`Vault::legal_hold_keeps_backups`]).
+//! A backup holds every record its image carries, so while a customer hold
+//! stands none expires ([`Vault::legal_hold_keeps_backups`]). A host order
+//! keeps no backup: what it covers is copied into the host's separate
+//! legal-hold store (LEGAL-HOLD-USE = B as a clone, owner 2026-11-05), so
+//! only that clone and its custody outlive the vault's own expiry.
 //! An expiry that unlinks reads the holds under the LMDB writer and unlinks
 //! inside it ([`Vault::with_backup_hold_exclusion`]): a hold placed meanwhile
 //! commits before the read or after the unlink, never between (FIX 1488).
@@ -122,17 +125,19 @@ impl Vault {
         })
     }
 
-    /// Whether a standing legal hold keeps every backup of this vault: one
-    /// that expires a backup asks first, and keeps them all while it does.
+    /// Whether a standing customer hold keeps every backup of this vault: one
+    /// that expires a backup asks first, and keeps them all while it does. A
+    /// host order keeps none ([`crate::deletion::LegalHold::keeps_vault_data`]).
     pub fn legal_hold_keeps_backups(&self) -> Result<bool> {
         let txn = self.store.env.read_txn()?;
         Ok(backup_holds_in_txn(self, &txn)?.keeps_backups())
     }
 
-    /// How many legal holds stand on this vault, customer and host order
-    /// alike, read as [`Self::legal_hold_keeps_backups`] reads them: what a
-    /// host asks before it erases the whole vault. A count, nothing of any
-    /// hold.
+    /// How many holds keep this vault's data, read as
+    /// [`Self::legal_hold_keeps_backups`] reads them: the standing customer
+    /// holds, what a host asks before it erases the whole vault. A host order
+    /// is not counted: its clone lives in the host's own legal-hold store,
+    /// which the host consults itself. A count, nothing of any hold.
     pub fn standing_legal_holds(&self) -> Result<u64> {
         let txn = self.store.env.read_txn()?;
         Ok(backup_holds_in_txn(self, &txn)?.standing)
@@ -179,7 +184,7 @@ impl Vault {
 }
 
 /// The holds that keep this vault's backups, as an expiry reads them: every
-/// standing legal hold, customer and host order alike. A count, nothing of
+/// standing customer hold. A host order keeps no backup. A count, nothing of
 /// any hold.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BackupHolds {
@@ -194,10 +199,9 @@ pub struct BackupHolds {
 /// purpose (FIX 9500): no order, issuer, count, date or ordering.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BackupHoldVisibility {
-    /// A hold the owner may see stands, whatever else stands beside it.
+    /// A hold the owner may see stands. Only customer holds keep backups, and
+    /// the owner sees each one.
     Visible,
-    /// Only host orders whose silence still runs stand.
-    SilentOnly,
 }
 
 impl BackupHolds {
@@ -217,21 +221,11 @@ impl BackupHolds {
 }
 
 fn backup_holds_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<BackupHolds> {
-    let now = vault.store.clock.now_recorded_at();
-    let mut standing = 0_u64;
-    let mut visible = false;
-    for hold in crate::store::legal_hold::holds_in_txn(&vault.store, txn)?
+    let standing = crate::store::legal_hold::holds_in_txn(&vault.store, txn)?
         .iter()
-        .filter(|hold| hold.stands())
-    {
-        standing = standing.saturating_add(1);
-        visible |= hold.owner_may_see(now);
-    }
-    let held_visibility = (standing > 0).then_some(if visible {
-        BackupHoldVisibility::Visible
-    } else {
-        BackupHoldVisibility::SilentOnly
-    });
+        .filter(|hold| hold.keeps_vault_data())
+        .count() as u64;
+    let held_visibility = (standing > 0).then_some(BackupHoldVisibility::Visible);
     Ok(BackupHolds {
         standing,
         held_visibility,

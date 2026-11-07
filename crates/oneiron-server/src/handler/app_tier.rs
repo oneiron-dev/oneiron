@@ -145,8 +145,8 @@ pub(super) async fn handle_sync_message(
             // (rule 5, row 19).
             let mut presence = server.presence.lock();
             presence.expire(&server.ephemeral_store);
-            let states = validate_ephemeral_payload(server, &payload)?;
-            if !presence.fit(ephemeral_hub_candidate(server, &payload, &states)?) {
+            let states = validate_ephemeral_payload(&payload)?;
+            if !presence.fit(ephemeral_hub_candidate(server, &payload)?) {
                 tracing::warn!(
                     conn_id,
                     kind = "memory_floor",
@@ -476,7 +476,9 @@ fn answer_app_message(
             let conn = connection
                 .as_deref()
                 .map_or(0, crate::livequery::connection::Connection::conn_id);
-            for frame in crate::livequery::machine_handoff_rpc(server, peer, request)?.queued(conn)
+            let own_machine_only = request.method == "residence.claim.vector";
+            for frame in crate::livequery::machine_handoff_rpc(server, peer, request)?
+                .queued_for_machine(conn, own_machine_only)
             {
                 direct_tx
                     .send(frame)
@@ -560,7 +562,8 @@ fn answer_app_message(
                 auth,
                 context,
                 connection.as_deref(),
-            );
+            )
+            .with_signing_request_transport(state.signing_request_transport.clone());
             return Ok(Some(VerbCall::Verb {
                 auth: auth.clone(),
                 request,

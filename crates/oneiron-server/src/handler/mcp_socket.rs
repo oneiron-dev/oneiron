@@ -71,8 +71,9 @@ const MAX_MCP_CALLS_IN_FLIGHT: usize = 8;
 const MAX_ANSWER_BYTES: usize = 24 * 1024 * 1024;
 
 /// The upgrade headers each call's request repeats, so the routes judge where
-/// the caller sits and where it came from as they did for the upgrade.
-const CARRIED_HEADERS: [header::HeaderName; 2] = [header::HOST, header::ORIGIN];
+/// the caller sits and where it came from as they did for the upgrade. The
+/// User-Agent is the same connection's upgrade observation, for signing audit.
+const CARRIED_HEADERS: [header::HeaderName; 3] = [header::HOST, header::ORIGIN, header::USER_AGENT];
 const CARRIED_FORWARDING_HEADERS: [&str; 4] = [
     "forwarded",
     "x-forwarded-for",
@@ -364,6 +365,8 @@ pub(super) fn upgrade(
     let hold = crate::embedded::UpgradeHold::take(extensions);
     Ok(ws
         .protocols([MCP_SUBPROTOCOL])
+        // ABC transport row T25: the request floor bounds a message.
+        .max_message_size(server.socket_message_bytes())
         .max_frame_size(server.config.max_frame_size)
         .write_buffer_size(WS_WRITE_BUFFER_SIZE)
         .max_write_buffer_size(WS_MAX_WRITE_BUFFER_SIZE)
@@ -381,7 +384,8 @@ pub(super) fn upgrade(
 /// The attested holder of an upgrade with no credential of anyone's beside
 /// him, whom the managed vault does not record as its live owner now: a
 /// stale owner sign-in (FIX 5935). `None` for the live owner, a slip's
-/// upgrade and any vault no supervisor manages.
+/// upgrade and any vault no supervisor manages. The MCP carrier's upgrade
+/// and the app tier's (FIX 11712) both recognize him by it.
 pub(super) fn stale_booking_holder(
     headers: &HeaderMap,
     extensions: &Extensions,
@@ -457,6 +461,8 @@ pub(super) fn booking_upgrade(
     let hold = crate::embedded::UpgradeHold::take(extensions);
     Ok(ws
         .protocols([MCP_SUBPROTOCOL])
+        // ABC transport row T25: the request floor bounds a message.
+        .max_message_size(server.socket_message_bytes())
         .max_frame_size(server.config.max_frame_size)
         .write_buffer_size(WS_WRITE_BUFFER_SIZE)
         .max_write_buffer_size(WS_MAX_WRITE_BUFFER_SIZE)

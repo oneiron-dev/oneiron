@@ -116,16 +116,23 @@ fn loads(kind: WorkerKind, draft: bool) -> Option<(ArtifactClass, ArtifactFormat
     Some((class, format))
 }
 
-/// Makes `artifact`'s weights present and verified: the offline directory
-/// checked file by file, or an install through `store`.
-pub(super) async fn weights(
-    store: Arc<ArtifactStore>,
+/// Resolves the exact manifest and checks the kind a worker loads, without
+/// installing, downloading or changing any file.
+pub(super) fn weights_manifest(
     artifact: &WorkerArtifact,
     kind: WorkerKind,
     draft: bool,
-    hub_token_env: Option<&str>,
-) -> Result<InstalledWeights, LaunchFailure> {
+) -> Result<ArtifactManifest, LaunchFailure> {
     let manifest = match &artifact.source {
+        // A vault's own load set is verified by its launch, never installed
+        // through the shared artifact store (FIX 14976).
+        ArtifactSource::VaultLoadSet(_) => {
+            return Err(permanent(
+                WorkerFailure::LoadFailed,
+                "a vault's own drafter is never installed through the model artifact store"
+                    .to_owned(),
+            ));
+        }
         ArtifactSource::Catalog(id) => house_artifact(id).cloned().ok_or_else(|| {
             permanent(
                 WorkerFailure::LoadFailed,
@@ -159,6 +166,19 @@ pub(super) async fn weights(
             ),
         ));
     }
+    Ok(manifest)
+}
+
+/// Makes `artifact`'s weights present and verified: the offline directory
+/// checked file by file, or an install through `store`.
+pub(super) async fn weights(
+    store: Arc<ArtifactStore>,
+    artifact: &WorkerArtifact,
+    kind: WorkerKind,
+    draft: bool,
+    hub_token_env: Option<&str>,
+) -> Result<InstalledWeights, LaunchFailure> {
+    let manifest = weights_manifest(artifact, kind, draft)?;
     let token = hub_token_env
         .and_then(|env| std::env::var(env).ok())
         .and_then(|token| HubToken::bearer(&token));

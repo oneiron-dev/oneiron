@@ -8,8 +8,19 @@ impl SyncServer {
     /// Sets the vault's credential-broker context, which serve builds once
     /// after the vault opens: the System One seat `[models.decisions]` binds
     /// at the model attach sends through it when its key is a `key_secret`.
+    /// The vault's exact publishes send their mirror git through it too
+    /// (FIX 19083): the transport is installed here, holding the vault and
+    /// the broker weakly.
     #[must_use]
     pub(crate) fn with_broker(mut self, broker: Option<crate::models::BrokerContext>) -> Self {
+        if let Some(broker) = &broker {
+            crate::api::install_origin_git_transport(
+                &self.vault,
+                broker,
+                self.transfers.idle,
+                self.transfers.disk.clone(),
+            );
+        }
         self.decisions.broker = broker;
         self
     }
@@ -84,6 +95,7 @@ impl SyncServer {
             .clone()
             .with_system_one(
                 models.decisions.system_one.as_ref(),
+                self.ai.models(),
                 models.raw_budget_units,
                 posture,
                 tokio::runtime::Handle::current(),

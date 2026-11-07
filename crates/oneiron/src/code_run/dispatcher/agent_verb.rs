@@ -22,6 +22,7 @@ use crate::code_run::types::{
 };
 use crate::error::{Error, Result};
 use crate::memory::HostWriteOrigin;
+use crate::memory::read_capture::ReadCapture;
 use crate::runtime_hooks::VerbHookStop;
 use crate::secret_custody::SECRET_USE_CONNECTOR_CALL;
 use crate::task_verb::sdk::AgentVerb;
@@ -29,7 +30,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
 
-const AGENT_VERB_RECEIPT_DOMAIN: &[u8] = b"oneiron:executor-agent-verb-receipt:v1";
+const AGENT_VERB_RECEIPT_DOMAIN: &[u8] =
+    crate::entity_id::derived_domains::EXECUTOR_AGENT_VERB_RECEIPT;
 
 /// The reason a receipt's refusal row carries, so that no row read back from
 /// the receipt's answer, a refusal or not, is ever taken for one.
@@ -48,6 +50,9 @@ const VERB_HOOK_HIDDEN: &str = "verb_hook_hidden";
 /// (FIX 3194): nothing was written, so the run parks, and a replay of the
 /// step asks the door again.
 const PROVIDER_UNAVAILABLE: &str = "provider_unavailable";
+
+/// A media call's admission trapped before its physical effect ran.
+const MEDIA_STEP_TRAPPED: &str = "media_step_trapped";
 
 impl HostSelfDispatcher<'_> {
     /// A refused verb is the guest's to handle, like any typed refusal: it
@@ -70,8 +75,8 @@ impl HostSelfDispatcher<'_> {
     /// room's overlay instead (DOOR-127, Engine ruling 10-18), as the door
     /// admits it for its caller, through the run's captured route and under
     /// this same receipt (WILL L11-01 S01-2a, `session_write`).
-    /// `vault.get`, `vault.hydrate`, `vault.refs.resolve` and
-    /// `vault.search.bm25` read the room's view on the key the door admits
+    /// `vault.get`, `vault.hydrate`, `vault.refs.resolve`, `vault.search.bm25`
+    /// and `vault.receipts` read the room's view on the key the door admits
     /// for its caller (WILL L11-01, `session_verbs`); every other call is
     /// refused.
     ///
@@ -134,15 +139,29 @@ impl HostSelfDispatcher<'_> {
         let origin = origin
             .with_hook_ask(self.parked_ask(&parked, site)?)
             .with_step(site.map(|_| invocation));
+        // Only the native point-view producer is covered here. Other verbs
+        // keep their existing unknown ledger until their reads are captured.
+        let read_capture =
+            (call.verb == AgentVerb::VaultGet && site.is_some()).then(ReadCapture::default);
+        let origin = match &read_capture {
+            Some(capture) => origin.with_read_capture(capture.clone()),
+            None => origin,
+        };
+        let read_site = site;
         let Some(site) = site.filter(|_| call.verb.writes()) else {
-            let answer = self.program_door_call(&**door, &call, &origin, invocation)?;
-            return Ok(connector_call_answer(
+            let answer = self.program_door_call(&**door, &call, &origin, invocation);
+            let captured = read_capture.and_then(|capture| capture.finish());
+            let outcome = connector_call_answer(
                 call.verb,
                 worded(
-                    answered(self.keep_no_secret_value(call.verb, answer)),
+                    answered(self.keep_no_secret_value(call.verb, answer?)),
                     &**door,
                 ),
-            ));
+            );
+            if let (Some(site), SelfDispatchOutcome::AgentVerb(answer)) = (read_site, &outcome) {
+                self.note_verb_read_worlds(site, answer, captured);
+            }
+            return Ok(outcome);
         };
         // Every write before this one in the step met its receipt: a write
         // that does not (refused at the gate, or recorded after the bridge
@@ -213,6 +232,22 @@ impl HostSelfDispatcher<'_> {
                     0,
                     &SelfCall::AgentVerb(call),
                     &never_ran_mark(PROVIDER_UNAVAILABLE),
+                    0,
+                    0,
+                )?);
+                self.storage
+                    .put_code_run_replay_record_if_generation_with_heal(
+                        &receipt,
+                        Some(generation),
+                        None,
+                    )?;
+                return Err(error);
+            }
+            Err(error @ Error::DurableStepTrapped) => {
+                receipt.bridge_calls.push(CodeRunBridgeCall::record(
+                    0,
+                    &SelfCall::AgentVerb(call),
+                    &never_ran_mark(MEDIA_STEP_TRAPPED),
                     0,
                     0,
                 )?);
@@ -595,8 +630,8 @@ fn meets(receipt: &CodeRunReplayRecord, made: &CodeRunBridgeCall) -> bool {
 }
 
 /// The mark a write's receipt keeps when it never ran: a verb hook stopped it
-/// ([`VERB_HOOK_STOPPED`]), or no provider answered it
-/// ([`PROVIDER_UNAVAILABLE`]).
+/// ([`VERB_HOOK_STOPPED`]), no provider answered it ([`PROVIDER_UNAVAILABLE`]),
+/// or its media admission trapped ([`MEDIA_STEP_TRAPPED`]).
 fn never_ran_mark(why: &str) -> SelfDispatchOutcome {
     SelfDispatchOutcome::Denied(SelfDeniedResult {
         effect: SelfEffect::AgentVerb,
@@ -612,6 +647,7 @@ fn never_ran(row: &CodeRunBridgeCall) -> bool {
         Ok(SelfDispatchOutcome::Denied(refused))
             if refused.reason_codes == [VERB_HOOK_STOPPED]
                 || refused.reason_codes == [PROVIDER_UNAVAILABLE]
+                || refused.reason_codes == [MEDIA_STEP_TRAPPED]
     )
 }
 

@@ -94,7 +94,7 @@ oneiron-llm-own-server = { path = "../oneiron-llm-own-server", optional = true }
 # A device renews its paired owner credential at its home (FIX 3377), with
 # the device sync the mesh feature carries.
 oneiron-remote = { path = "../oneiron-remote", optional = true }
-loro = "1.10"
+loro = { workspace = true }
 axum = { version = "0.8", features = ["ws"] }
 # The accept loop (`http_listener`) drives hyper's HTTP/1 connection itself, so
 # it can set the header deadline and hold a permit inside each socket. Both
@@ -103,6 +103,8 @@ hyper = { version = "1", features = ["http1", "server", "client"] }
 hyper-util = { version = "0.1", features = ["tokio", "server", "service"] }
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"], optional = true }
+webpki-roots = { version = "1", optional = true }
 # The WebSocket codec PRODUCTION runs, under a name that says so.
 #
 # `src/handler/protocol_close.rs` reads a socket's read error by its type
@@ -266,6 +268,8 @@ code-sandbox-wasmtime = ["oneiron/code-sandbox-wasmtime"]
 # The paired-machine mesh listener (OF-535); off by default, and on only when
 # the host also names a bind address.
 mesh = [
+  "dep:tokio-rustls",
+  "dep:webpki-roots",
   "dep:oneiron-llm-own-server",
   "dep:oneiron-mesh-transport",
   "dep:oneiron-remote",

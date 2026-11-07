@@ -108,34 +108,135 @@ pub(crate) fn unstage_session_position(
     Ok(())
 }
 
-/// Whether every row `view`'s room stages a body, words, a vector or an
-/// out-edge for is one the room placed itself (WILL L11-01): a room birth
-/// carrying the position its write staged beside it
-/// ([`stage_session_position`]). A room that restages or hides a base row,
-/// or adds an edge from one, or holds a row whose position it could not
-/// derive, has not placed all its rows: a read that must place each row it
-/// serves (a credential for only some worlds) reads base alone there, so no
-/// base row is placed for it by what the room wrote.
-pub(crate) fn room_rows_placed(view: &crate::store::SessionStoreView<'_>) -> bool {
-    // Each of these keys starts with the row's id; an out-edge's with its
-    // source's.
-    let placed = |key: &[u8]| {
-        key.get(..16)
-            .and_then(|id| <[u8; 16]>::try_from(id).ok())
-            .and_then(|bytes| EntityId::from_bytes(bytes).ok())
-            .is_some_and(|id| view.vault_meta.stages_row(&SCOPE_RECORD.key_bytes(&id)))
+/// Whether the body `data` of `kind` for `id` keeps the birth position
+/// `stamp` holds, with `id`'s birth facet read on `store` (Sol R22). A
+/// CLAIM body names its whole record scope and its facet. A FACET or
+/// RELATIONSHIP body names its sensitivity. Any other body names no
+/// position: the stamp holds it. A promoted edit and a room read
+/// ([`room_row_placed`]) share this one comparison. A body that moves the
+/// position is refused as `InvalidClaimBody`.
+pub(super) fn body_keeps_stamp(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    data: &[u8],
+    stamp: &Stamp,
+) -> Result<()> {
+    if !stamp_bound_on(store, txn, id, kind, stamp)? {
+        return Err(Error::InvalidClaimBody("record scope restamp refused"));
+    }
+    if kind == crate::registry::ENTITY_TYPE_CLAIM {
+        let body = crate::claim::decode_claim_body(data, true)?;
+        let mut proposed = body.record_scope("read");
+        proposed.verbs = ScopeAxis::Bottom;
+        if proposed != stamp.scope || stamp.birth_facet != *body.scope_facet.as_bytes() {
+            return Err(Error::InvalidClaimBody("record scope restamp refused"));
+        }
+    }
+    if matches!(
+        kind,
+        crate::registry::ENTITY_TYPE_FACET | crate::registry::ENTITY_TYPE_RELATIONSHIP
+    ) {
+        let proposed = match rmpv::decode::read_value(&mut &data[..]) {
+            Ok(rmpv::Value::Map(entries)) => {
+                let bands: Vec<_> = entries
+                    .iter()
+                    .filter(|(key, _)| key.as_str() == Some("sensitivity"))
+                    .collect();
+                match bands.as_slice() {
+                    [] => Sensitivity::Sensitive,
+                    [(_, value)] => match value.as_str() {
+                        Some("public") => Sensitivity::Public,
+                        Some("private") => Sensitivity::Private,
+                        Some("sensitive") => Sensitivity::Sensitive,
+                        Some("restricted") => Sensitivity::Restricted,
+                        _ => return Err(Error::InvalidClaimBody("invalid facet sensitivity")),
+                    },
+                    _ => return Err(Error::InvalidClaimBody("duplicate facet sensitivity")),
+                }
+            }
+            _ => Sensitivity::Sensitive,
+        };
+        if stamp.scope.sensitivity != SensitivityCeiling::AtMost(proposed) {
+            return Err(Error::InvalidClaimBody("record scope restamp refused"));
+        }
+    }
+    Ok(())
+}
+
+/// Whether the row `view`'s room serves for `id`, of `kind` with body
+/// `data`, stands at a position a read limited to some worlds may place it
+/// by (FIX 5161, Sol R22). Each row is placed alone: a row that fails
+/// withholds itself, never the whole room, and never falls back to base's
+/// body under the same id.
+///
+/// - A base row the room does not restage stands at base's position. A
+///   NOTE or ASSET also keeps base's birth facet: a `FacetOf` the room adds
+///   does not move it.
+/// - A base row the room restages keeps base's own stamp, read on base,
+///   and the room's body must keep it ([`body_keeps_stamp`]).
+/// - A base NOTE, restaged or not, keeps base's worlds: an `InWorld` edge
+///   the room adds or drops would widen or move where it reads, so the NOTE
+///   stands nowhere for this read (review P1 #5926).
+/// - A room birth keeps the position its write staged beside it
+///   ([`stage_session_position`]). With no staged position it stands
+///   nowhere: no position is inferred.
+/// - A position the room stages for a base row stands in for base's, so
+///   that row stands nowhere.
+///
+/// A row the room hides is no row of the union, so it never reaches here.
+/// Storage errors stay errors.
+pub(crate) fn room_row_placed(
+    view: &crate::store::SessionStoreView<'_>,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    data: &[u8],
+) -> Result<bool> {
+    let base = view.read().base();
+    let room_stamp = view.vault_meta.stages_row(&SCOPE_RECORD.key_bytes(&id));
+    // A row the room does not stage is base's own row.
+    if !view.entities.stages_row(id.as_bytes()) {
+        return Ok(!room_stamp
+            && (!carries_birth_stamp(kind)
+                || birth_facet(view, txn, id)? == birth_facet(base, txn, id)?)
+            && keeps_base_worlds(view, txn, id, kind));
+    }
+    // A restaged base row keeps base's stamp, read on base; a room birth
+    // keeps the stamp its write staged. Exactly one of them stands.
+    let base_row = crate::ports::EntityStoreRead::port_entity_present(base, txn, &id)?;
+    if base_row && !keeps_base_worlds(view, txn, id, kind) {
+        return Ok(false);
+    }
+    let stamp = match (base_row, room_stamp) {
+        (true, false) => SCOPE_RECORD.get(base, txn, &id)?,
+        (false, true) => SCOPE_RECORD.get(view, txn, &id)?,
+        _ => None,
     };
-    let rows = [
-        &view.entities,
-        &view.text_forward,
-        &view.vectors,
-        &view.edges_out,
-    ];
-    rows.into_iter().all(|keyspace| {
-        keyspace.staged_rows().is_none_or(|staged| {
-            !staged.clear_base && staged.rows.iter().all(|(key, _)| placed(key))
-        })
-    })
+    let Some(stamp) = stamp else {
+        return Ok(false);
+    };
+    match body_keeps_stamp(view, txn, id, kind, data, &stamp) {
+        Ok(()) => Ok(true),
+        Err(Error::InvalidClaimBody(_)) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+/// Whether the base row `id` of `kind` sits in the same worlds in `view`'s
+/// room as on base: always for a row that is not a NOTE, whose world is
+/// stamped; for a NOTE, whose world its live `InWorld` edges name, only when
+/// the room's edges name the same worlds (review P1 #5926).
+fn keeps_base_worlds(
+    view: &crate::store::SessionStoreView<'_>,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+) -> bool {
+    kind != crate::registry::ENTITY_TYPE_NOTE
+        || super::note_world::note_worlds_in(view, txn, id)
+            == super::note_world::note_worlds_in(view.read().base(), txn, id)
 }
 
 /// Settles an epoch SUMMARY's birth position in its mint transaction: born
@@ -500,4 +601,66 @@ pub(crate) fn stamp_blob_project(
         },
     )?;
     Ok(())
+}
+
+/// Settles only the fresh artifact named by an actual queue-check completion.
+/// Its input placement and taint were captured before the command ran. The
+/// structural birth anchor stays the artifact's own; its effective placement
+/// stays the input's, with the output kind and no capability verbs.
+pub(crate) fn stamp_queue_check_exhaust_birth(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    token: &crate::merge_queue::QueueCheckFieldToken<'_>,
+) -> Result<()> {
+    let id = token.artifact_id();
+    let kind = crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
+    let facet = crate::claim::substrate_facet_id(id)?;
+    let birth = default_stamp(kind, facet);
+    let prior = SCOPE_RECORD.get(store, txn, &id)?;
+    let scope = token.input_scope().map(|source| {
+        let mut scope = source.clone();
+        scope.bands = singleton(kind);
+        scope.verbs = ScopeAxis::Bottom;
+        if let SensitivityCeiling::AtMost(band) = scope.sensitivity
+            && band < Sensitivity::Sensitive
+        {
+            scope.sensitivity = SensitivityCeiling::AtMost(Sensitivity::Sensitive);
+        }
+        scope
+    });
+    let Some(prior) = prior else {
+        return if scope.is_none() {
+            Ok(())
+        } else {
+            Err(Error::InvalidClaimBody("unstamped queue-check exhaust"))
+        };
+    };
+    if prior.version != 2
+        || prior.kind != kind
+        || prior.birth_facet != *facet.as_bytes()
+        || (prior.scope != birth && scope.as_ref() != Some(&prior.scope))
+    {
+        return Err(Error::InvalidClaimBody(
+            "queue-check exhaust restamp refused",
+        ));
+    }
+    let Some(scope) = scope else {
+        SCOPE_RECORD.delete(store, txn, &id)?;
+        return bump_scope_revision(store, txn);
+    };
+    if prior.scope == scope {
+        return Ok(());
+    }
+    bump_scope_revision(store, txn)?;
+    SCOPE_RECORD.put(
+        store,
+        txn,
+        &id,
+        &Stamp {
+            version: 2,
+            kind,
+            birth_facet: *facet.as_bytes(),
+            scope,
+        },
+    )
 }

@@ -3,7 +3,7 @@ use super::access_class::ClassVerdicts;
 use super::agent_grants::{AskedFilter, HeldGrants};
 use super::{ScopedRead, ScopedReadActorKey};
 use crate::EntityId;
-use crate::access_grant::AccessContext;
+use crate::access_grant::{AccessContext, AccessContextSnapshot};
 use crate::claim::ClaimRecordScope;
 use crate::claim::{ClaimBody, RelationshipScope, decode_claim_body};
 use crate::edge::EdgeKind;
@@ -49,14 +49,14 @@ pub(crate) fn claim_access_axes(body: &ClaimBody) -> (RelationshipScope, bool) {
 /// The fourth holds, for the same serving txn, each reader's verdict on each
 /// CLAIM access class it judged (FIX 11915).
 #[derive(Default)]
-pub(super) struct HeldAuthority<'v>(
-    RefCell<Option<AccessContext<'v>>>,
+pub(super) struct HeldAuthority(
+    RefCell<Option<AccessContextSnapshot>>,
     Option<EntityId>,
     HeldGrants,
     ClassVerdicts,
 );
 
-impl<'v> HeldAuthority<'v> {
+impl HeldAuthority {
     /// The row checks of one serving txn whose filter the read resolved from
     /// `requested` over its key's own floor (`None`: the floor alone).
     pub(super) fn for_request(requested: Option<&super::RetrievalFilter>) -> Self {
@@ -64,6 +64,18 @@ impl<'v> HeldAuthority<'v> {
             RefCell::default(),
             None,
             HeldGrants::fresh(AskedFilter::Known(requested.cloned())),
+            ClassVerdicts::default(),
+        )
+    }
+
+    /// The same read's row checks in another transaction (FIX 7528): nothing
+    /// held, since what this one holds belongs to its own txn, and the same
+    /// request asked of the rows.
+    pub(super) fn for_another_txn(&self) -> Self {
+        Self(
+            RefCell::default(),
+            None,
+            HeldGrants::fresh(self.2.asked().clone()),
             ClassVerdicts::default(),
         )
     }
@@ -112,15 +124,15 @@ impl<'v> HeldAuthority<'v> {
     /// read's error.
     pub(super) fn relationship_allows_in(
         &self,
-        vault: &'v crate::Vault,
+        vault: &crate::Vault,
         txn: &heed::RoTxn<'_>,
         principal: Option<EntityId>,
-        judge: impl FnOnce(&AccessContext<'v>) -> bool,
+        judge: impl FnOnce(&AccessContextSnapshot) -> bool,
     ) -> Result<bool> {
         let mut held = self.0.borrow_mut();
         let context = match held.take() {
             Some(context) => context,
-            None => AccessContext::load(vault, txn, principal)?,
+            None => AccessContextSnapshot::load(vault, txn, principal)?,
         };
         let allowed = judge(&context);
         *held = Some(context);
@@ -154,7 +166,7 @@ impl ScopedReadActorKey {
     }
 }
 
-impl<'v> ScopedRead<'v> {
+impl ScopedRead<'_> {
     /// Persist grant time before the read snapshot, never inside it. Inside
     /// a room turn, or with peer reads, each peer's access grants are judged
     /// at that time too, and the snapshot may hold a member who joined after
@@ -174,6 +186,22 @@ impl<'v> ScopedRead<'v> {
         Ok(self.vault.store.env.read_txn()?)
     }
 
+    /// Runs `read` in one read snapshot of this lane's vault, opened as this
+    /// lane's own reads open theirs: its grant time persisted first, never
+    /// inside the snapshot. A door that judges a row for this lane and
+    /// serves it does both here, in one snapshot (FIX 10782).
+    ///
+    /// # Errors
+    ///
+    /// The grant time's or the snapshot's failure, or `read`'s.
+    pub fn with_grant_read_snapshot<T, E: From<crate::Error>>(
+        &self,
+        read: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<T, E>,
+    ) -> std::result::Result<T, E> {
+        let txn = self.grant_read_txn()?;
+        read(&txn)
+    }
+
     /// Whether this read's relationship gate binds in `txn`; see
     /// [`ScopedReadActorKey::relationship_gated_in`].
     pub(super) fn relationship_gated_in(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {
@@ -189,7 +217,7 @@ impl<'v> ScopedRead<'v> {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         body: &ClaimBody,
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
         if !self.relationship_gated_in(txn)? {
             return Ok(true);
@@ -199,7 +227,7 @@ impl<'v> ScopedRead<'v> {
             return Ok(true);
         }
         authority.relationship_allows_in(self.vault, txn, self.actor_key.principal_ref, |context| {
-            read.allowed_by(context)
+            read.allowed_by_snapshot(context)
         })
     }
 
@@ -266,7 +294,7 @@ impl<'v> ScopedRead<'v> {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         raw: &[u8],
-        authority: &HeldAuthority<'v>,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
         if !self.relationship_gated_in(txn)? {
             return Ok(true);
@@ -288,7 +316,7 @@ impl<'v> ScopedRead<'v> {
             return Ok(true);
         }
         authority.relationship_allows_in(self.vault, txn, self.actor_key.principal_ref, |context| {
-            read.allowed_by(context)
+            read.allowed_by_snapshot(context)
                 || self.conversation_message_granted_in(txn, id, &read, context)
         })
     }
@@ -307,7 +335,7 @@ impl<'v> ScopedRead<'v> {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         read: &RelationshipRead,
-        context: &AccessContext<'_>,
+        context: &AccessContextSnapshot,
     ) -> bool {
         let RelationshipRead::Gated {
             kind: ENTITY_TYPE_MESSAGE,
@@ -388,6 +416,10 @@ impl RelationshipRead {
 
     /// Whether the principal `context` was loaded for may read the row.
     pub(crate) fn allowed_by(&self, context: &AccessContext<'_>) -> bool {
+        self.allowed_by_snapshot(context.snapshot())
+    }
+
+    pub(crate) fn allowed_by_snapshot(&self, context: &AccessContextSnapshot) -> bool {
         match self {
             Self::Decided(allowed) => *allowed,
             // A scoped row reads through any one relationship of its set the

@@ -164,6 +164,17 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for TurnProgramExecutor<'
         }
     }
 
+    /// A window holds plain Micro partitions only, never a turn program, so
+    /// it goes to the inner executor whole: the trait's serial default here
+    /// ran every window of the host's wrapped executor one partition after
+    /// another (FIX 12487 windows, Dreamer proof run 4).
+    async fn execute_partition_window<'w>(
+        &mut self,
+        window: &mut [(&'w DreamerAdmittedAttempt, WakeAttemptContext<'w>)],
+    ) -> Vec<Result<DreamerAttemptExecution>> {
+        self.inner.execute_partition_window(window).await
+    }
+
     async fn judge_done(&self, question: RunnerDoneQuestion) -> Option<RunnerDoneAnswer> {
         self.inner.judge_done(question).await
     }
@@ -174,6 +185,13 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for TurnProgramExecutor<'
 
     fn runs_turn_programs(&self) -> bool {
         self.runtime.is_some()
+    }
+
+    /// The wrapped executor's bound (FIX 12735): a turn program reads under
+    /// its own code run, never the sources this wake lists, so the listing's
+    /// legs are the wrapped executor's alone.
+    fn destination_bound(&self) -> Option<crate::settings::ReadDestination> {
+        self.inner.destination_bound()
     }
 }
 

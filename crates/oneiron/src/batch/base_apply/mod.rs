@@ -6,7 +6,7 @@ use super::claim_materialization::consume_claim_materialization;
 use super::verified_claim_transition::consume_next;
 use super::*;
 
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 use heed::RwTxn;
 
@@ -46,6 +46,18 @@ fn prepare_replay_op(
         crate::session_overlay::zeroize_batch_op_payload(op);
     }
     result
+}
+
+/// Whether every op of a batch is an ASSET put of exactly the bytes
+/// `BatchBuilder::put_marked_carrier` bound its id to (FIX 9034).
+fn marked_carriers_only(marked: &BTreeMap<EntityId, [u8; 32]>, ops: &[BatchOp]) -> bool {
+    !marked.is_empty()
+        && !ops.is_empty()
+        && ops.iter().all(|op| {
+            matches!(op, BatchOp::Put { id, entity_type, data, .. }
+                if *entity_type == crate::registry::ENTITY_TYPE_ASSET
+                    && marked.get(id) == Some(blake3::hash(data).as_bytes()))
+        })
 }
 
 fn require_gated_claim_materializations(
@@ -252,6 +264,11 @@ pub(super) fn apply_ops_with_authority_beside(
     authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
     own_device: Option<&VerifiedOwnDeviceLane>,
 ) -> Result<()> {
+    // FIX 9398: the batch's deletes drop the rooms' media copies once, as it ends.
+    let _room_media_drops = crate::embed::RoomMediaDrops::open(store, wtxn);
+    // A nested apply of this store in this writer is part of its outer batch:
+    // only the outermost seals HOST prospective messages' edges.
+    let prospective = crate::deletion::ProspectiveBatch::open(store);
     let replay = matches!(origin, BaseWriteOrigin::PromoteReplay(_));
     let mut ops = ReplayOps { ops, replay };
     let run_derivations = crate::skill_attribution::run_derivations(&ops.ops, replay);
@@ -262,6 +279,7 @@ pub(super) fn apply_ops_with_authority_beside(
     let births = std::mem::take(&mut gate_mode.births);
     let mut asset_files = std::mem::take(&mut gate_mode.asset_files);
     let replicated_puts = std::mem::take(&mut gate_mode.replicated_puts);
+    let marked_carriers = std::mem::take(&mut gate_mode.marked_carriers);
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     let authority_generation = crate::authority::authority_cache_generation(store, wtxn)?;
     let record_gate_decisions = gate_mode.record_decisions;
@@ -279,19 +297,25 @@ pub(super) fn apply_ops_with_authority_beside(
     // The owner's `secrets` switch is read in this transaction, so a batch
     // and the mode it was admitted under are one snapshot. A secret the door
     // places goes to custody and leaves its handle (OF-560); a file keeps
-    // its bytes and is marked.
-    let (masked_files, masked_claim_pre) = secret_scan::mask_batch_ops(
-        store,
-        config,
-        analyzer,
-        wtxn,
-        &mut ops.ops,
-        text_index_trusted,
-        !replay
-            || matches!(origin, BaseWriteOrigin::PromoteReplay(grant)
-                if grant.selected_saver().is_some()),
-        mutation_recorded_at,
-    )?;
+    // its bytes and is marked. A batch of nothing but a marked carrier's own
+    // bytes, scanned whole by its writer, is stored as it is: a detection on
+    // them is the carrier's mark (FIX 9034).
+    let (masked_files, masked_claim_pre) = if marked_carriers_only(&marked_carriers, &ops.ops) {
+        (secret_scan::MaskedFiles::default(), Vec::new())
+    } else {
+        secret_scan::mask_batch_ops(
+            store,
+            config,
+            analyzer,
+            wtxn,
+            &mut ops.ops,
+            text_index_trusted,
+            !replay
+                || matches!(origin, BaseWriteOrigin::PromoteReplay(grant)
+                    if grant.selected_saver().is_some()),
+            mutation_recorded_at,
+        )?
+    };
     // The pre-mask body of each MACHINE candidate the mask rewrote in this
     // transaction (FIX 11356), in op order per id: the candidate apply
     // renews a proof only over its verified pre-mask body. A replayed batch
@@ -587,5 +611,8 @@ pub(super) fn apply_ops_with_authority_beside(
         op_index += 1;
     }
 
+    // A new message a HOST prospective order sealed in this batch takes its
+    // outgoing edge rows, as the batch wrote them, in this writer.
+    prospective.seal_edges_in_txn(wtxn)?;
     tail::apply_tail(store, config, analyzer, wtxn, state, text_index_trusted)
 }

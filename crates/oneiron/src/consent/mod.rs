@@ -48,6 +48,7 @@
 //! rewrite, or a byte/status/codec change to the source record.
 
 mod adapters;
+mod answer_wake;
 pub mod approval_proof;
 mod ask_holders;
 mod bound;
@@ -78,7 +79,7 @@ pub use self::adapters::{
 pub use self::bound::{
     ActionClass, ActionEnvelope, ActorBound, AudienceBound, BoundClass, BoundEnvelope,
     BoundSubject, ConsentDomain, DisclosureClass, DisclosureEnvelope, GrantBound,
-    MAX_AUDIENCE_MEMBERS, MAX_CONSENT_REF_LEN, MAX_ENVELOPE_SELECTORS,
+    MAX_CONSENT_REF_LEN,
 };
 pub use self::browser::{BrowserConsentFacts, BrowserSendScope, browser_approve_once_digest};
 pub use self::bypass::{BypassActive, BypassExtent, BypassGrantWarning, BypassScope};

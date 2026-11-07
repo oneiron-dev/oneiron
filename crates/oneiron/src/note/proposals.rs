@@ -9,6 +9,7 @@ use super::sync_rows::SYNC_DS_E;
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
 use crate::memory::MemoryResult;
+use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot, UpdateSeq};
 use crate::side_table::{self, HexId, Named, SideTable};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
@@ -123,6 +124,11 @@ pub(crate) fn erase_fork_actor_in_txn(
                 wtxn,
                 &HexPair(HexId(fork.note), HexId(fork.fork)),
             )?;
+            // A replica's queued upload of the fork, and its mark when the
+            // authority sent it, go with it (FIX 12789).
+            let pair = HexPair(HexId(fork.note), HexId(fork.fork));
+            super::sync_rows::SYNC_QN_E.delete(&vault.store, wtxn, &pair)?;
+            super::sync_rows::NOTE_FORK_AUTHORITY.delete(&vault.store, wtxn, &pair)?;
         } else {
             NOTE_FORK.put(&vault.store, wtxn, &key, &fork)?;
         }
@@ -220,19 +226,170 @@ pub(super) fn remember_fork(
     fork: &NoteDocument,
     actor: EntityId,
     rewrite: bool,
+    stored: super::documents::StoredProposal,
 ) -> Result<()> {
+    let recovery_merge = match stored {
+        super::documents::StoredProposal::Value(text) if !rewrite => Some((parent.text(), text)),
+        _ => None,
+    };
     let record = NoteFork {
         note: parent.note,
         fork: fork.head,
         parent: parent.head,
         frontier: parent.doc.state_frontiers().encode(),
-        recovery_merge: (!rewrite).then(|| (parent.text(), fork.text())),
+        recovery_merge,
         actor: NoteActor::Actor(actor),
         rewrite,
         proposal: None,
         decided: false,
     };
     NOTE_FORK.put(&vault.store, txn, &fork.head, &record)
+}
+
+/// Resolve a native pending fork's exact value basis before its history is cut.
+/// Only the stored snapshot's opening frontier supplies the parent text.
+pub(crate) fn recovery_fork_value(fork: &NoteFork, doc: &loro::LoroDoc) -> Result<NoteFork> {
+    let mut value = fork.clone();
+    if !fork.decided && !fork.rewrite && fork.recovery_merge.is_none() {
+        let proposal = super::document::NoteDocument::from_loro(fork.note, doc.fork())?;
+        // Checkout only a read-only clone. Unlike SnapshotAt, it supports a
+        // retained frontier at or after an existing shallow floor.
+        let base = proposal.doc.fork();
+        base.checkout(&super::document::frontier(&fork.frontier)?)
+            .map_err(|_| invalid("NOTE base frontier unavailable"))?;
+        value.recovery_merge = Some((base.get_text("body").to_string(), proposal.view()?.markdown));
+    }
+    Ok(value)
+}
+
+/// Keep the actual fork row and every waiting bundle copy identical when a
+/// destructive scrub has to turn its native operations into a value basis.
+pub(super) fn preserve_recovery_basis(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    note: EntityId,
+    head: EntityId,
+    doc: &loro::LoroDoc,
+) -> Result<()> {
+    let Some(fork) = NOTE_FORK.get(&vault.store, txn, &head)? else {
+        return Ok(());
+    };
+    if fork.note != note || fork.fork != head {
+        return Err(invalid("stored fork key"));
+    }
+    let value = recovery_fork_value(&fork, doc)?;
+    if value == fork {
+        return Ok(());
+    }
+    if let Some(id) = fork.proposal {
+        let mut bundle = NOTE_PROPOSAL_BUNDLE
+            .get(&vault.store, txn, &id)?
+            .ok_or(invalid("missing proposal record"))?;
+        let waiting = bundle
+            .waiting
+            .iter_mut()
+            .find(|waiting| waiting.fork == head)
+            .ok_or(invalid("proposal fork divergence"))?;
+        if *waiting != fork {
+            return Err(invalid("proposal fork divergence"));
+        }
+        *waiting = value.clone();
+        NOTE_PROPOSAL_BUNDLE.put(&vault.store, txn, &id, &bundle)?;
+    }
+    NOTE_FORK.put(&vault.store, txn, &head, &value)
+}
+
+/// Apply the owner's selected cut to each retained head's actual history.
+/// A carrier already cut farther keeps that floor; unrelated histories are no-ops.
+pub(super) fn purge_stored_history(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    note: EntityId,
+    selected: &loro::VersionVector,
+) -> Result<()> {
+    let prefix = format!("{}:", note.to_hex());
+    for (key, raw) in NOTE_PROPOSAL_DOC.scan_from(&vault.store, txn, prefix.as_bytes())? {
+        let doc = super::document::NoteDocument::load(note, &raw)?;
+        let mut cut = doc.doc.oplog_vv().intersection(selected);
+        let floor = doc.doc.shallow_since_vv().to_vv();
+        if floor.includes_vv(&cut) {
+            continue;
+        }
+        cut.merge(&floor);
+        let through = doc.doc.vv_to_frontiers(&cut);
+        if let Some(fork) = NOTE_FORK.get(&vault.store, txn, &(key.1).0)?
+            && !fork.decided
+            && !fork.rewrite
+            && fork.recovery_merge.is_none()
+        {
+            let base = super::document::frontier(&fork.frontier)?;
+            let base = doc
+                .doc
+                .frontiers_to_vv(&base)
+                .ok_or(invalid("NOTE base frontier unavailable"))?;
+            if !base.includes_vv(&cut) {
+                preserve_recovery_basis(vault, txn, note, (key.1).0, &doc.doc)?;
+            }
+        }
+        let snapshot = doc
+            .doc
+            .export(loro::ExportMode::shallow_snapshot(&through))
+            .map_err(|_| invalid("NOTE history purge failed"))?;
+        super::document::NoteDocument::load(note, &snapshot)?;
+        NOTE_PROPOSAL_DOC.put(&vault.store, txn, &key, &snapshot)?;
+    }
+    // Switch leaves the old canonical slot intact. It is still a real
+    // retained parent even when no proposal row duplicates its snapshot.
+    let current = super::documents::head_in(&vault.store, txn, note)?.0;
+    let mut heads = std::collections::BTreeSet::from([note]);
+    for ((_, head), ()) in
+        super::documents::NOTE_HEAD_DOC.scan_from(&vault.store, txn, note.as_bytes())?
+    {
+        heads.insert(head);
+    }
+    for head in heads.into_iter().filter(|head| *head != current) {
+        let slot = DocumentSlot::of(head);
+        let Some(snapshot) = vault
+            .store
+            .port_document_row(txn, slot, DocumentRow::Snapshot)?
+        else {
+            continue;
+        };
+        let retained = loro::LoroDoc::new();
+        super::storage::import_complete(&retained, &snapshot)?;
+        for update in vault.store.port_document_updates(txn, slot)? {
+            if !matches!(update.seq, Some(UpdateSeq::Sequence(_))) {
+                return Err(invalid("invalid canonical document update key"));
+            }
+            super::storage::import_complete(&retained, &update.bytes)?;
+        }
+        let retained = super::document::NoteDocument::from_loro(note, retained)?;
+        let mut cut = retained.doc.oplog_vv().intersection(selected);
+        let floor = retained.doc.shallow_since_vv().to_vv();
+        if floor.includes_vv(&cut) {
+            continue;
+        }
+        cut.merge(&floor);
+        let through = retained.doc.vv_to_frontiers(&cut);
+        let snapshot = retained
+            .doc
+            .export(loro::ExportMode::shallow_snapshot(&through))
+            .map_err(|_| invalid("NOTE history purge failed"))?;
+        let shallow = super::document::NoteDocument::load(note, &snapshot)?;
+        vault
+            .store
+            .port_document_snapshot_put(txn, slot, &snapshot)?;
+        vault
+            .store
+            .port_document_state_vector_put(txn, slot, &shallow.doc.oplog_vv().encode())?;
+        vault.store.port_document_shallow_since_put(
+            txn,
+            slot,
+            &shallow.doc.shallow_since_vv().to_vv().encode(),
+        )?;
+        vault.store.port_document_updates_delete(txn, slot)?;
+    }
+    Ok(())
 }
 
 /// One resolver for both direct edits and proposal routing. Owner authority
@@ -404,8 +561,21 @@ impl Vault {
     }
     fn notify_landed(&self, bundle: &NoteReviewBundle) {
         #[cfg(feature = "sync")]
-        for receipt in &bundle.landed {
-            self.notify_note_document(receipt.note);
+        {
+            for receipt in &bundle.landed {
+                self.notify_note_document(receipt.note);
+            }
+            // A bundle's members left the pending forks an own device holds
+            // outside one (FIX 12789).
+            let notes: std::collections::BTreeSet<EntityId> = bundle
+                .waiting
+                .iter()
+                .map(|fork| fork.note)
+                .chain(bundle.landed.iter().map(|receipt| receipt.note))
+                .collect();
+            for note in notes {
+                self.notify_note_forks(note);
+            }
         }
         #[cfg(not(feature = "sync"))]
         let _ = bundle;
@@ -427,7 +597,8 @@ impl Vault {
         edit: &NoteProgramEdit,
         actor: WriteActor,
     ) -> MemoryResult<EntityId> {
-        self.memory(actor.entity_ref(), actor.actor_class())
+        let fork = self
+            .memory(actor.entity_ref(), actor.actor_class())
             .with_actor_content_write_txn_as(actor, |content| {
                 content.update_note(note, |txn| {
                     // A sealed NOTE forks too: the fork leaves its seal intact.
@@ -438,10 +609,7 @@ impl Vault {
                         Some(base) => parent.at_version(base)?,
                         None => parent,
                     };
-                    let fork_doc = parent
-                        .doc
-                        .fork_at(&parent.doc.state_frontiers())
-                        .map_err(|_| invalid("fork frontier"))?;
+                    let fork_doc = parent.doc.fork();
                     let mut fork = NoteDocument {
                         note,
                         head: parent.head,
@@ -460,11 +628,24 @@ impl Vault {
                         fork = replacement;
                     }
                     fork.head = self.store.clock.entity_id()?;
-                    store_doc(self, txn, &fork)?;
-                    remember_fork(self, txn, &parent, &fork, actor.entity_ref(), rewrite)?;
+                    super::operations::record_fork_authorship(&fork, edit, actor, stamp)?;
+                    let stored = store_doc(self, txn, &fork)?;
+                    remember_fork(
+                        self,
+                        txn,
+                        &parent,
+                        &fork,
+                        actor.entity_ref(),
+                        rewrite,
+                        stored,
+                    )?;
                     Ok(fork.head)
                 })
-            })
+            })?;
+        // An authority's own devices hold its pending forks (FIX 12789).
+        #[cfg(feature = "sync")]
+        self.notify_note_forks(note);
+        Ok(fork)
     }
 }
 pub(super) fn land(
@@ -492,16 +673,26 @@ pub(super) fn land(
             if let Some((base, merged)) = &fork.recovery_merge {
                 Some(recovered_merge(base, merged, &current.text())?)
             } else {
-                let scratch = current.doc.fork();
-                super::storage::import_complete(
-                    &scratch,
-                    &super::documents::snapshot(&proposed.doc)?,
-                )?;
-                Some(scratch.get_text("body").to_string())
+                None
             }
         }
         NoteVerdict::Switch | NoteVerdict::Reject => None,
     };
+    let native_receipt = if verdict == NoteVerdict::Merge && fork.recovery_merge.is_none() {
+        Some(
+            vault
+                .memory(actor.entity_ref(), actor.actor_class())
+                .apply_native_note_fork_in_txn(txn, fork.fork)
+                .map_err(|_| invalid("canonical NOTE proposal admission failed"))?,
+        )
+    } else {
+        None
+    };
+    if native_receipt
+        .is_some_and(|receipt| matches!(receipt.outcome, super::NoteScalarEditOutcome::Proposed(_)))
+    {
+        return Ok(None);
+    }
     if let Some(text) = text {
         let operation = super::NoteOperation {
             request_id: vault.store.clock.entity_id()?,
@@ -545,6 +736,15 @@ pub(super) fn land(
     };
     fork.decided = true;
     fork.recovery_merge = None;
+    // A decided fork is no longer uploaded: a replica's queued upload of it
+    // goes, and so does its mark, so no fork set takes the decided record
+    // (FIX 12789).
+    let pair = HexPair(HexId(fork.note), HexId(fork.fork));
+    super::sync_rows::SYNC_QN_E.delete(&vault.store, txn, &pair)?;
+    super::sync_rows::NOTE_FORK_AUTHORITY.delete(&vault.store, txn, &pair)?;
+    // Once it commits, the NOTE's subscribers read its text and pending
+    // forks again, whichever door decided it.
+    vault.queue_note_document_update_in_txn(txn, fork.note);
     NOTE_FORK.put(&vault.store, txn, &fork.fork, fork)?;
     let receipt = NoteLandingReceipt {
         id: vault.store.clock.entity_id()?,

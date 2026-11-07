@@ -30,6 +30,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SECRET_CUSTODY_INPUT, LIVE),
     (&t::SECRET_CUSTODY_NAME_INDEX, SECRET_CUSTODY),
     (&t::SECRET_CUSTODY_OUTPUT, LIVE),
+    // An owed import mark stands with the custody whose relay it ends (FIX 12291).
+    (&t::SECRET_CUSTODY_PENDING_IMPORT_MARK, LIVE),
     (&t::SECRET_CUSTODY_PENDING_REVOKE, LIVE),
     (&t::SECRET_CUSTODY_REBIND, LIVE),
     // A restore's pending credentials stand with the custody they wait on (FIX-LIST 10671).
@@ -72,6 +74,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SESSION_TURN_MEMBERSHIP, CONTENT),
     (&t::SESSION_TURNS, CONTENT),
     (&t::BACKUP_POLICY, LIVE),
+    (&t::BOARD_LAYOUT_SETTINGS, LIVE),
     (&t::CUSTOMIZATION_EVENT, LIVE),
     (&t::CUSTOMIZATION_EVENT_SEQUENCE, LIVE),
     (&t::CUSTOMIZATION_SETTINGS, LIVE),
@@ -108,6 +111,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SHARED_ACT_ERASE_ASK, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_ACT_EVENT, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_ACT_MATURED, SHARED_VAULT_MEMBERSHIP),
+    // A membership record still owed stands as the live vault owes it: a
+    // restore neither drops one nor revives one already signed (FIX 12335).
+    (&t::SHARED_ACT_MEMBERSHIP_PENDING, LIVE),
     (&t::SHARED_ACT_OUTCOME, SHARED_VAULT_MEMBERSHIP),
     // A proposed policy change binds the digest of the rows it was proposed
     // against, so a restore that moves the policy manifest leaves it stale:
@@ -130,10 +136,12 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SHARED_ACT_REMOVAL_IMPORT, LIVE),
     (&t::SHARED_VAULT_CREATION, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_VAULT_DELETION, SHARED_VAULT_MEMBERSHIP),
+    (&t::SHARED_VAULT_INVITATION_KEY, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_VAULT_INVITATION, SHARED_VAULT_MEMBERSHIP),
     (&t::SHORT_ID_ALIAS, CONTENT),
     (&t::SHORT_ID_GRAMMAR_VERSION, CONTENT),
     (&t::SHORT_ID_COUNTER, CONTENT),
+    (&t::SHORT_ID_KIND_COUNTER, CONTENT),
     (&t::SKILL_CALLABLE_CASE, CONTENT),
     (&t::SKILL_CALLABLE_CASE_INDEX, CONTENT),
     (&t::SKILL_CALLABLE_GATE, CONTENT),
@@ -296,6 +304,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::TASK_FANOUT_LAUNCH, LIVE),
     (&t::TASK_FANOUT_RUN, CONTENT),
     (&t::TASK_FANOUT_POLICY, CONTENT),
+    (&t::TEAM_BALLOT, CONTENT),
     (&t::TEAM_DELIVERABLE, CONTENT),
     (&t::TEAM_MARKET, CONTENT),
     (&t::TEAM_PATTERN_SKILL, CONTENT),
@@ -337,6 +346,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::AFFECT_VAD_ANNOTATION_META, CONTENT),
     (&t::VAULT_CLEANUP_ATTEMPT_ARCHIVE, CONTENT),
     (&t::VAULT_CLEANUP_DIGEST, CONTENT),
+    (&t::VAULT_CLEANUP_ENTITY_ROW, CONTENT),
     (&t::VAULT_CLEANUP_EXTRACTION_PERSON, CONTENT),
     (&t::VAULT_CLEANUP_POSTURE, LIVE),
     (&t::VAULT_CLEANUP_PROPOSAL, CONTENT),
@@ -368,6 +378,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::VOICE_IDENTITY_SAMPLE, LIVE),
     (&t::TASK_WAVE_PLAN_INDEX, CONTENT),
     (&t::WEAVE_DIGEST, CONTENT),
+    (&t::WEAVE_DIGEST_RERENDER, CONTENT),
     // The owner's digest settings and their change history are his content,
     // as the digest schedule is (FIX 5495).
     (&t::WEAVE_DIGEST_BEHAVIOUR, CONTENT),
@@ -376,6 +387,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::WEAVE_DIGEST_SETTINGS, CONTENT),
     (&t::WEAVE_DIGEST_SOURCE, CONTENT),
     (&t::WEAVE_DIGEST_SCHEDULE, CONTENT),
+    (&t::WEAVE_LIVE, CONTENT),
     (&t::WEAVE_WRONG_ITEM_LABEL, CONTENT),
     (&t::WEAVE_WRONG_LINK_LABEL, CONTENT),
     (&t::WEB_CONNECTOR_SETTING, CONTENT),

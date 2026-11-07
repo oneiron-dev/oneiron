@@ -331,10 +331,27 @@ plan completion additionally requires all 242 IDs. Partial and optional-profile
 results never claim default completeness. The 585-second planning
 estimate has not been measured.
 
-Bun 1.3.4's JUnit is sent to `/dev/stdout` (a pipe), parsed in memory, and checked
-against registered IDs. Raw JUnit is not written to disk. Persisted artifacts
-are redacted first. Process logs are bounded rings; incomplete lines are not
-persisted before redaction. Call `redactor.add(secretOrSentinel)` **before** any
+Bun 1.3.4 writes JUnit to a real per-file `.junit.xml` outfile under the protected
+report directory. The runner reads that file and checks it against registered IDs;
+subprocess stdout is not a JUnit outfile. A separate `.junit.json` artifact carries a
+redacted XML copy for export. The original XML stays local to the fleet job. Owned file
+process artifacts retain bounded, redacted stdout/stderr separately. `fileDiagnostics`
+in the aggregate records JUnit presence, case/match/unknown/duplicate counts, file
+exit/signal, and registration errors. A harness error remains a FAIL but does not replace an existing
+per-file reason; it is recorded separately as `harnessError`. Wrapper cleanup errors are
+recorded separately as `cleanupError`, preserving an earlier reason.
+
+Persisted artifacts are redacted first. Credential-bearing private stdout remains withheld.
+Private stderr is retained only as decoded JSON with its fields redacted before serialization;
+non-JSON private stderr is withheld. This also redacts registered values containing quotes
+that were escaped in an SDK error envelope. CLI/SDK errors identify a static setup/operation stage and exit/signal without printing argv,
+stdin or credentials. SDK top-level failures also write their error envelope to stderr for
+redaction and diagnosis. Stderr diagnostics additionally remove long hexadecimal values. Any truncated stdout/stderr
+stream is withheld entirely, with a truncation flag, because a cut secret fragment cannot be
+reliably redacted by matching the original full value.
+Bun receives a redacted error message rather than raw exception properties, so its JUnit
+cannot inspect a failing CLI's private stdout. Process logs are bounded rings; incomplete
+lines are not persisted before redaction. Call `redactor.add(secretOrSentinel)` **before** any
 operation carrying a generated secret-test value. Never log credentials, raw
 SDK process output, pairing links, or recognisable secret sentinels. Use
 `artifacts.json(name, value)` rather than direct log files. HTTP automatic logs

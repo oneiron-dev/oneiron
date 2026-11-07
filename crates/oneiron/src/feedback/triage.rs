@@ -40,6 +40,7 @@
 //! the `jobs` child's; the graph's writers are the `work_store` child's.
 mod erased;
 mod github;
+mod handoff_index;
 mod jobs;
 mod owner;
 mod source;
@@ -172,16 +173,33 @@ impl FeedbackTriageSourceRef {
 
 /// The skill the triage runs, as the owner bound it. Unset until the owner
 /// binds one: no skill is bound for him.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FeedbackTriageBinding {
     /// The SKILL entity the triage loads; `None` while none is bound.
     pub skill: Option<EntityId>,
+    /// Queue the ordinary sweep when a new inbox note lands. Off keeps
+    /// the existing manual and nightly batching.
+    pub enqueue_on_intake: bool,
     /// 0 while never set, then one more for each change. A change names
     /// the revision it read.
     pub revision: u64,
     /// Vault seconds of the last change; `None` while never set.
     pub set_at: Option<u64>,
+}
+
+/// Keep intake batched unless the owner enables an ordinary sweep per intake.
+const DEFAULT_ENQUEUE_ON_INTAKE: bool = false;
+
+impl Default for FeedbackTriageBinding {
+    fn default() -> Self {
+        Self {
+            skill: None,
+            enqueue_on_intake: DEFAULT_ENQUEUE_ON_INTAKE,
+            revision: 0,
+            set_at: None,
+        }
+    }
 }
 
 /// One source's state: where the next sweep resumes it, the walk that last
@@ -408,6 +426,19 @@ fn binding_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<FeedbackTriage
     Ok(BINDING.get(&vault.store, txn, &())?.unwrap_or_default())
 }
 
+/// The owner's standing intake policy, read with the note's write. Anonymous
+/// feedback supplies no authority; an enabled owner binding requests the sweep.
+pub(super) fn queue_intake_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    received_at: u64,
+) -> Result<()> {
+    if binding_in_txn(vault, txn)?.enqueue_on_intake {
+        sweep_pending::requested_in_txn(vault, txn, received_at)?;
+    }
+    Ok(())
+}
+
 /// The handoff of `source_ref`, checked against the key it is stored under.
 fn handoff_in_txn(
     vault: &Vault,
@@ -452,7 +483,7 @@ pub(crate) fn acknowledge_feedback_triage_in_txn(
     }
     erased::refuse_erased_in_txn(vault, txn, &row)?;
     row.result = Some(result);
-    HANDOFFS.put(&vault.store, txn, &key, &row)
+    handoff_index::put_handoff_in_txn(&vault.store, txn, &key, &row)
 }
 
 /// One revision as its source read it: its name, the exact bytes its
@@ -521,7 +552,7 @@ fn hand_off_revision_in_txn(
         result: None,
         work: None,
     };
-    HANDOFFS.put(&vault.store, txn, &key, &handoff)?;
+    handoff_index::put_handoff_in_txn(&vault.store, txn, &key, &handoff)?;
     Ok((handoff, true))
 }
 

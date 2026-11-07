@@ -15,6 +15,7 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::io::{self, Read};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -526,12 +527,9 @@ pub(super) fn spawn_worker<T: Send + 'static>(
     let (answer, answered) = tokio::sync::oneshot::channel();
     // A thread that cannot start drops `work`, and with it the permit; the
     // caller reads a worker that ended without an answer.
-    if let Err(error) = std::thread::Builder::new()
-        .name("transfer-worker".to_owned())
-        .spawn(move || {
-            let _ = answer.send(work());
-        })
-    {
+    if let Err(error) = crate::engine_thread("transfer-worker".to_owned()).spawn(move || {
+        let _ = answer.send(work());
+    }) {
         tracing::warn!(kind = ?error.kind(), "a transfer worker thread did not start");
     }
     answered
@@ -555,7 +553,7 @@ pub(super) fn feed_body(
 ) -> impl std::future::Future<Output = ()> {
     // Capture before a caller spawns this future on a different task.
     let revocation = crate::http_listener::current_body_revocation();
-    feed_pieces(body, pieces, Some(idle), max_piece, revocation)
+    feed_pieces(body, pieces, Some(idle), max_piece, revocation, None)
 }
 
 /// [`feed_body`] with no wait of its own on the client: only the listener's
@@ -566,7 +564,29 @@ pub(super) async fn feed_body_untimed(
     pieces: mpsc::Sender<BodyPiece>,
     max_piece: usize,
 ) {
-    feed_pieces(body, pieces, None, max_piece, None).await;
+    feed_pieces(body, pieces, None, max_piece, None, None).await;
+}
+
+/// Feeds a spool worker, ending its memory wait before enqueueing a failed input.
+pub(super) fn feed_body_stoppable(
+    body: Body,
+    pieces: mpsc::Sender<BodyPiece>,
+    idle: Option<Duration>,
+    max_piece: usize,
+    stopped: Arc<AtomicBool>,
+) -> impl std::future::Future<Output = ()> {
+    let revocation = idle.and_then(|_| crate::http_listener::current_body_revocation());
+    async move {
+        feed_pieces(
+            body,
+            pieces,
+            idle,
+            max_piece,
+            revocation,
+            Some(stopped.as_ref()),
+        )
+        .await;
+    }
 }
 
 async fn feed_pieces(
@@ -575,8 +595,14 @@ async fn feed_pieces(
     idle: Option<Duration>,
     max_piece: usize,
     revocation: Option<crate::http_listener::BodyRevocation>,
+    stopped: Option<&AtomicBool>,
 ) {
     let mut stream = body.into_data_stream();
+    let stop_failed_feed = || {
+        if let Some(stopped) = stopped {
+            stopped.store(true, Ordering::Relaxed);
+        }
+    };
     loop {
         let next = match idle {
             Some(idle) => match crate::http_listener::body_read_timeout(
@@ -588,6 +614,7 @@ async fn feed_pieces(
             {
                 Some(next) => next,
                 None => {
+                    stop_failed_feed();
                     let _ = pieces
                         .send(Err(io::Error::new(
                             io::ErrorKind::TimedOut,
@@ -606,6 +633,7 @@ async fn feed_pieces(
                 return;
             }
             Some(Err(error)) => {
+                stop_failed_feed();
                 let _ = pieces.send(Err(body_failure(error))).await;
                 return;
             }
@@ -618,6 +646,7 @@ async fn feed_pieces(
                 .await
                 .is_err()
             {
+                stop_failed_feed();
                 return;
             }
         }

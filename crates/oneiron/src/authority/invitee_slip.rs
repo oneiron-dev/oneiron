@@ -1,11 +1,14 @@
-//! FIX 1925: an invitee's own credential. When an `add_member` holder invites
-//! a person and names the public key that person generated on their own
-//! device, the invitation's writer mints them a human slip under the host's
-//! issuer. Its signed claims name the invitation (`invitation_ref`); the host
-//! admits it only at that invitation's list, accept and decline doors, and
-//! every slip door reads the invitation beside the fold's revocation check,
-//! so the slip stands only while the invitation is pending and unexpired.
-//! Once they have joined, the member pairs an ordinary credential.
+//! FIX 1925: an invitee's own credential. The invitee binds their pending
+//! invitation to a key of their own (FIX 8745): the key of an independent
+//! live human slip of theirs, or the key they redeem an owner's invitation
+//! pairing code with; an `add_member` holder names none. The binding writer
+//! mints them a human slip to that key under the host's issuer. Its signed
+//! claims name the invitation (`invitation_ref`); the host admits it only at
+//! that invitation's list, accept and decline doors, and every slip door
+//! reads the invitation beside the fold's revocation check, so the slip
+//! stands only while the invitation is pending and unexpired, while its key
+//! is the one the invitation records and while the credential that bound it
+//! is live. Once they have joined, the member pairs an ordinary credential.
 
 use std::collections::BTreeSet;
 
@@ -17,10 +20,10 @@ use crate::error::{Error, RecordError, Result};
 use oneiron_authority::federation::{Scope, ScopeAxis};
 
 impl Vault {
-    /// Mints, in the invitation's writer, the human slip of `invitee` for
-    /// their invitation `invitation` (entity id hex), under the host's
-    /// `issuer`. It binds `holder_key`, the public key the invitee generated
-    /// on their own device; no private key is delivered anywhere. It holds
+    /// Mints, in the binding writer, the human slip of `invitee` for their
+    /// invitation `invitation` (entity id hex), under the host's `issuer`. It
+    /// binds `holder_key`, the key the invitee bound the invitation to
+    /// (FIX 8745); no private key is delivered anywhere. It holds
     /// for the invitee PERSON, carries no verb (the host grants it its
     /// invitation's doors alone), and ends at `expires_at`, the invitation's
     /// own expiry.
@@ -62,13 +65,16 @@ impl Vault {
             delegation: None,
             comm: None,
             trusted_contact: None,
+            seat_claim: None,
         };
         self.mint_slip_in_txn(txn, issuer, claims)
     }
 
     /// An invitation-bound slip stands only while its invitation does: the
     /// invitation its claims name, its holder's own, is pending and unexpired
-    /// at `now`. A slip that names no invitation passes.
+    /// at `now`, its binding key is the one the invitation records, and the
+    /// credential that bound it is live (FIX 8745). A slip that names no
+    /// invitation passes.
     fn require_live_slip_invitation_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -79,7 +85,7 @@ impl Vault {
             return Ok(());
         };
         let invitee = EntityId::from_hex(&claims.holder_ref).map_err(|_| invalid_authority())?;
-        if !self.shared_invitation_pending_in_txn(txn, invitee, invitation, now) {
+        if !self.invitation_slip_stands_in_txn(txn, invitee, invitation, &claims.binding_key, now) {
             return Err(invalid_authority());
         }
         Ok(())
@@ -111,8 +117,9 @@ impl Vault {
 
     /// What every slip door reads beside the fold's revocation check: a
     /// grant-bound slip's grant (OF-232), an invitation-bound slip's
-    /// invitation, a support slip's delegation (OF-606) and a contact-bound
-    /// slip's naming (FIX 4325) still stand.
+    /// invitation, a support slip's delegation (OF-606), a contact-bound
+    /// slip's naming (FIX 4325) and a seat-child slip's claim (FIX 10624)
+    /// still stand.
     pub(super) fn require_live_slip_refs_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -122,13 +129,14 @@ impl Vault {
         self.require_live_slip_grant_in_txn(txn, claims, now)?;
         self.require_live_slip_invitation_in_txn(txn, claims, now)?;
         self.require_live_delegation_in_txn(txn, claims)?;
-        self.require_live_trusted_contact_binding_in_txn(txn, claims, now)
+        self.require_live_trusted_contact_binding_in_txn(txn, claims, now)?;
+        self.require_live_seat_claim_in_txn(txn, claims)
     }
 
     /// [`Self::require_live_slip_refs_in_txn`] as a judgment, for a slip
     /// verified earlier and checked again (FIX 5952): `false` once its grant,
-    /// invitation, delegation or contact naming no longer stands, an error
-    /// only when that cannot be judged.
+    /// invitation, delegation, contact naming or seat claim no longer stands,
+    /// an error only when that cannot be judged.
     pub(super) fn slip_refs_stand_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,

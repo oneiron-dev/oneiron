@@ -17,28 +17,26 @@ use super::act_admission::{EngineCause, ResolvedSeal, TopologySeal, resolve_seal
 use super::event_body_codec::{decode_action, decode_str_field, encode_action_entries};
 use super::ledger_fold::{IdentityTopologyAction, fold_identity_topology_log};
 use super::op_apply::{IdentityOpOutcome, IdentityOpWrite};
-use super::op_vocabulary::{IdentityOpEvidence, IdentityTopologyOp, MergeOp, SplitOp};
+use super::op_vocabulary::{FacetOp, IdentityOpEvidence, IdentityTopologyOp, MergeOp, SplitOp};
 use super::reassignment_map::{ReassignmentEntry, ReassignmentTarget};
-use super::store_entity_helpers::{
-    identity_topology_entity_type_for_store_in_txn, identity_topology_event_for_store_in_txn,
-};
+use super::store_entity_helpers::identity_topology_entity_type_for_store_in_txn;
 use super::stored_event::{StoredIdentityOpAction, StoredIdentityOpEvent};
 use super::transition_table::{
     IdentityTopologyRejection, ProposalOutcome, ProposalRuling, ProposalScope,
 };
-use super::wire_keys::{
-    BODY_KEY_KIND, EVENT_KIND_MERGE, EVENT_KIND_SPLIT, PROPOSAL_SCOPE_ACTOR_UNATTRIBUTED,
-};
+use super::wire_keys::{BODY_KEY_KIND, EVENT_KIND_FACET, EVENT_KIND_MERGE, EVENT_KIND_SPLIT};
 use crate::error::SyncError;
 
 /// The op's primary target — the entity whose registry class names the
-/// ramp scope: the merge SURVIVOR (what the merged records become) and the
-/// split ORIGINAL (what is being divided).
+/// ramp scope: the merge SURVIVOR (what the merged records become), the
+/// split ORIGINAL (what is being divided) and the facet BASE (whose masks are
+/// being partitioned, FIX 7814).
 pub(super) fn proposal_scope_target(op: &IdentityTopologyOp) -> Result<EntityId> {
     match op {
         IdentityTopologyOp::Merge(merge) => Ok(merge.survivor),
         IdentityTopologyOp::Split(split) => Ok(split.entity),
-        IdentityTopologyOp::Facet(_) | IdentityTopologyOp::AssertDistinct(_) => Err(Error::Sync(
+        IdentityTopologyOp::Facet(facet) => Ok(facet.entity),
+        IdentityTopologyOp::AssertDistinct(_) => Err(Error::Sync(
             SyncError::IdentityTopologyUnarmed("resolution of this op kind"),
         )),
     }
@@ -59,6 +57,10 @@ pub(super) fn proposal_scope_target(op: &IdentityTopologyOp) -> Result<EntityId>
 /// every head target stay bounded to the proposal's named set, and an
 /// amendment may narrow the map but never route through an entity the
 /// decider never saw. Bare claim items are not routes ([`reassignment_entry_in_scope`]).
+///
+/// A FACET amendment keeps its base (the one subject) and its map rows under
+/// the same bound; it may replace the parked specs, which name no entity
+/// until its ruling mints them (FIX 7814).
 pub(super) fn assert_amendment_in_scope(
     proposed: &IdentityTopologyOp,
     amended: &IdentityTopologyOp,
@@ -75,15 +77,18 @@ pub(super) fn assert_amendment_in_scope(
             "amended body names a subject outside the proposal",
         )));
     }
-    if let IdentityTopologyOp::Split(split) = amended
-        && split
-            .reassignment
-            .entries
+    let amended_map = match amended {
+        IdentityTopologyOp::Split(split) => Some(&split.reassignment),
+        IdentityTopologyOp::Facet(facet) => Some(&facet.reassignment),
+        IdentityTopologyOp::Merge(_) | IdentityTopologyOp::AssertDistinct(_) => None,
+    };
+    if amended_map.is_some_and(|map| {
+        map.entries
             .iter()
             .any(|entry| !reassignment_entry_in_scope(entry, &proposed_subjects))
-    {
+    }) {
         return Err(Error::Sync(SyncError::IdentityProposalAmendmentOutOfScope(
-            "amended split map references an entity outside the proposal",
+            "amended map references an entity outside the proposal",
         )));
     }
     Ok(())
@@ -113,20 +118,6 @@ fn reassignment_entry_in_scope(
         ReassignmentTarget::Facet { .. } | ReassignmentTarget::Residue => true,
     };
     item_in_scope && target_in_scope
-}
-
-/// The scope tuple one proposal row derives: op kind, registry class of the
-/// op's primary target, and the PROPOSAL's actor ref. Pure so the wire
-/// check below and the vault stamp share ONE derivation.
-fn proposal_scope_of(record: &StoredIdentityOpEvent, target_class: &str) -> ProposalScope {
-    ProposalScope {
-        op_kind: record.action.kind_str(),
-        target_class: target_class.to_owned(),
-        actor: record.actor.map_or_else(
-            || PROPOSAL_SCOPE_ACTOR_UNATTRIBUTED.to_owned(),
-            |actor| actor.entity_ref().to_hex(),
-        ),
-    }
 }
 
 /// The cells of [`Vault::validate_identity_proposal_resolution_in_txn`] that
@@ -159,7 +150,10 @@ pub(super) fn resolution_rule_holds_for_store_in_txn(
     ) {
         return Ok(false);
     }
-    let Some(proposal_record) = identity_topology_event_for_store_in_txn(store, rtxn, proposal)?
+    // The proposal read whole (FIX 10188); a manifest still waiting on a
+    // part has nothing to rule on yet.
+    let Some(proposal_record) =
+        super::operation_parts::identity_topology_decision_for_store_in_txn(store, rtxn, proposal)?
     else {
         return Ok(false);
     };
@@ -177,11 +171,14 @@ pub(super) fn resolution_rule_holds_for_store_in_txn(
             let Some(entry) = entity_type_registry_entry(kind) else {
                 return Ok(false);
             };
-            let derived = proposal_scope_of(&proposal_record, entry.kind);
-            if scope.op_kind != derived.op_kind
-                || scope.target_class != derived.target_class
-                || scope.actor != derived.actor
-            {
+            // The proposer handle is the settling seal's to vouch for (FIX
+            // 9870); the structural axes are the proposal's own.
+            let derived = super::proposer_scope::derive_proposal_scope(
+                &proposal_record,
+                entry.kind,
+                &scope.actor,
+            );
+            if *scope != derived {
                 return Ok(false);
             }
         }
@@ -216,24 +213,35 @@ pub(super) fn validate_resolution_scope_stateless(record: &StoredIdentityOpEvent
     let StoredIdentityOpAction::ProposalResolution { scope, .. } = &record.action else {
         return Ok(());
     };
-    let proposal_is_op = matches!(scope.op_kind, EVENT_KIND_MERGE | EVENT_KIND_SPLIT);
+    let proposal_is_op = matches!(
+        scope.op_kind,
+        EVENT_KIND_MERGE | EVENT_KIND_SPLIT | EVENT_KIND_FACET
+    );
     if !proposal_is_op {
         return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
             "identity topology proposal resolution scope names a non-op kind",
         )));
     }
+    // A proposer is a handle or the unattributed scope, never an actor ref
+    // (FIX 9870).
+    if !super::proposer_scope::is_scope_actor_spelling(&scope.actor) {
+        return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+            "identity topology proposal resolution scope names no proposer handle",
+        )));
+    }
     Ok(())
 }
 
-/// The AMENDABLE op kinds: only the two ops whose apply door is armed and
-/// whose subject set is expressible on the wire. A resolution's scope
-/// `op_kind` is one of these by construction (a proposal of an unarmed kind
-/// never reaches the ledger), so a stored value outside the set is
-/// malformed.
+/// The AMENDABLE op kinds: the three ops the resolution door rules — merge,
+/// split and facet (FIX 7814) — whose subject set is expressible on the wire.
+/// A resolution's scope `op_kind` is one of these by construction (a parked
+/// assert_distinct is ruled by re-assertion, never here), so a stored value
+/// outside the set is malformed.
 pub(super) fn decode_amendable_kind(value: &str) -> Result<&'static str> {
     match value {
         EVENT_KIND_MERGE => Ok(EVENT_KIND_MERGE),
         EVENT_KIND_SPLIT => Ok(EVENT_KIND_SPLIT),
+        EVENT_KIND_FACET => Ok(EVENT_KIND_FACET),
         _ => Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
             "identity topology proposal scope op kind is unknown",
         ))),
@@ -263,9 +271,15 @@ pub fn encode_identity_op_amendment(op: &IdentityTopologyOp) -> Result<Vec<u8>> 
             applied_assigned: 0,
             applied_residue: 0,
         },
-        // A facet op has no propose lane (see `apply_identity_topology_op`),
-        // so it has no park to amend either.
-        IdentityTopologyOp::Facet(_) | IdentityTopologyOp::AssertDistinct(_) => {
+        // A facet amendment is a parked body (FIX 7814): the specs a ruling
+        // mints, never minted ids.
+        IdentityTopologyOp::Facet(facet) => StoredIdentityOpAction::ParkedFacet {
+            entity: facet.entity,
+            specs: facet.facets.clone(),
+            reassignment: facet.reassignment.canonicalized(),
+        },
+        // A parked assert_distinct is ruled by re-assertion, never amended.
+        IdentityTopologyOp::AssertDistinct(_) => {
             return Err(Error::Sync(SyncError::IdentityTopologyUnarmed(
                 "amendment of this op kind",
             )));
@@ -359,11 +373,7 @@ impl Vault {
             let IdentityTopologyAction::Apply(op) = event.action else {
                 continue;
             };
-            if !matches!(
-                op,
-                IdentityTopologyOp::Merge(_) | IdentityTopologyOp::Split(_)
-            ) || !op.participants().contains(participant)
-            {
+            if !op.is_resolvable_when_parked() || !op.participants().contains(participant) {
                 continue;
             }
             let write = IdentityOpWrite::auto(crate::claim::ClaimSource::Inferred);
@@ -492,9 +502,19 @@ impl Vault {
         let seal = resolve_seal_in_txn(self, wtxn, seal, Some(*proposal))?;
         self.validate_identity_op_actor_in_txn(&*wtxn, write)?;
 
-        let record = self
+        // The proposal as stored and read whole (FIX 10188): its seal binds
+        // the stored record, a manifest for a large decision, while its op,
+        // evidence and structural scope are the whole decision's.
+        let stored = self
             .identity_topology_event_in_txn(&*wtxn, proposal)?
             .ok_or(Error::EntityNotFound)?;
+        let record = super::operation_parts::logical_identity_topology_event_for_store_in_txn(
+            &self.store,
+            &*wtxn,
+            proposal,
+            stored.clone(),
+        )?
+        .ok_or(Error::EntityNotFound)?;
         // The resolution rule, shared with replicated admission: the park
         // is still open, the fold has not retired it, and the ruling's own
         // axis is effective. The replicated replay of the row this door is
@@ -522,7 +542,12 @@ impl Vault {
             ProposalRuling::Approve | ProposalRuling::Reject => None,
         };
 
-        let scope = self.proposal_scope_in_txn(&*wtxn, &record, &proposed_op)?;
+        // FIX 9870: the proposer handle the proposal's seal binds, or this
+        // vault's own for the author its own carrier names.
+        let proposer = super::proposer_scope::settled_proposer_scope_actor_in_txn(
+            self, wtxn, *proposal, &stored,
+        )?;
+        let scope = self.proposal_scope_in_txn(&*wtxn, &record, &proposed_op, &proposer)?;
         let proposer_evidence = record.evidence.as_ref();
         let (outcome, amended_body, applied) = match (&ruling, amended) {
             (ProposalRuling::Reject, _) => (ProposalOutcome::Rejected, None, None),
@@ -630,6 +655,12 @@ impl Vault {
                     ..split.clone()
                 })
             }
+            (Some(evidence), IdentityTopologyOp::Facet(facet)) => {
+                IdentityTopologyOp::Facet(FacetOp {
+                    evidence: evidence.clone(),
+                    ..facet.clone()
+                })
+            }
             _ => op.clone(),
         };
         match self.apply_identity_topology_op_resolved_in_txn(
@@ -647,13 +678,14 @@ impl Vault {
     }
 
     /// Stamps the DEC-0006 ramp scope of a resolved proposal: the op kind,
-    /// the registry class name of the op's primary target, and the
-    /// PROPOSING actor.
+    /// the registry class name of the op's primary target, and `proposer`,
+    /// the PROPOSING actor's opaque handle (FIX 9870).
     fn proposal_scope_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
         record: &StoredIdentityOpEvent,
         op: &IdentityTopologyOp,
+        proposer: &str,
     ) -> Result<ProposalScope> {
         let target = proposal_scope_target(op)?;
         let target_class = self
@@ -661,7 +693,11 @@ impl Vault {
             .and_then(entity_type_registry_entry)
             .ok_or(Error::EntityNotFound)?
             .kind;
-        Ok(proposal_scope_of(record, target_class))
+        Ok(super::proposer_scope::derive_proposal_scope(
+            record,
+            target_class,
+            proposer,
+        ))
     }
 
     /// THE proposal-resolution rule, run by BOTH doors a resolution row can
@@ -724,12 +760,13 @@ impl Vault {
                 },
             )));
         }
+        // A stamped scope's proposer handle is its origin's assertion, which
+        // the resolution's own seal vouches for (FIX 9870); its structural
+        // axes must be the proposal's.
         if let Some(stamped) = stamped {
-            let derived = self.proposal_scope_in_txn(rtxn, proposal_record, &proposed_op)?;
-            if stamped.op_kind != derived.op_kind
-                || stamped.target_class != derived.target_class
-                || stamped.actor != derived.actor
-            {
+            let derived =
+                self.proposal_scope_in_txn(rtxn, proposal_record, &proposed_op, &stamped.actor)?;
+            if *stamped != derived {
                 return Err(Error::Sync(SyncError::IdentityTopologyRejected(
                     IdentityTopologyRejection::ResolutionRuleMismatch {
                         reason: "stamped ramp scope is not the proposal's derived tuple",

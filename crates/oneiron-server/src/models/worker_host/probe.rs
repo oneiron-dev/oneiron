@@ -23,9 +23,10 @@
 //! actual render or transcription ([`super::media_worker::probe`]).
 //!
 //! A pinned value the answer contradicts is `Failed`; a pin or a piece of
-//! evidence that is missing is `Unverified`; no answer is `Unreachable`.
+//! evidence that is missing is `Unverified`; no answer is `Unreachable`. A
+//! launch that names its draft's identity (FIX 14976) is pinned to it the
+//! same way: a vault's own draft qualifies only when the answer names it.
 use std::collections::BTreeMap;
-use std::path::Path;
 use std::sync::Arc;
 use std::sync::PoisonError;
 
@@ -82,7 +83,9 @@ impl HouseProbe {
     ) -> Self {
         let mut provider = provider.clone();
         if let Some(endpoint) = endpoint {
-            endpoint.clone_into(&mut provider.base_url);
+            endpoint
+                .trim_end_matches('/')
+                .clone_into(&mut provider.base_url);
         }
         // A VoxCPM2 worker's paths sit at its root, as its media client
         // reaches them.
@@ -133,8 +136,8 @@ impl HouseProbe {
         http: &ProviderHttp,
         launch: Option<&LaunchRecord>,
     ) -> Result<(JsonValue, Option<JsonValue>), WorkerReadiness> {
-        match launch.and_then(|launch| launch.native_socket.as_deref()) {
-            Some(socket) => native_answer(socket, &qualification_request(&self.wire_model))
+        match launch.filter(|launch| launch.native_socket.is_some()) {
+            Some(launch) => native_answer(launch, &qualification_request(&self.wire_model))
                 .await
                 .map(|(hello, body)| (body, Some(hello)))
                 .map_err(|failure| failed(failure, None)),
@@ -306,18 +309,25 @@ fn epoch_only(epoch: CacheEpoch) -> WorkerDescriptor {
 /// shape.
 #[cfg(unix)]
 async fn native_answer(
-    socket: &Path,
+    launch: &LaunchRecord,
     request: &JsonValue,
 ) -> Result<(JsonValue, JsonValue), WorkerFailure> {
-    super::super::native_exl3::qualify(socket, request).await
+    let wire_model = request
+        .get("model")
+        .and_then(JsonValue::as_str)
+        .ok_or(WorkerFailure::InvalidReply)?;
+    let launch = launch
+        .native_launch(wire_model)
+        .ok_or(WorkerFailure::Unreachable)?;
+    super::super::native_exl3::qualify(&launch, request).await
 }
 
 #[cfg(not(unix))]
 async fn native_answer(
-    socket: &Path,
+    launch: &LaunchRecord,
     request: &JsonValue,
 ) -> Result<(JsonValue, JsonValue), WorkerFailure> {
-    let _ = (socket, request);
+    let _ = (launch, request);
     Err(WorkerFailure::Unreachable)
 }
 
@@ -427,10 +437,25 @@ pub(super) fn judge_pins(
             return failed(failure, Some(observed));
         }
     }
+    // A launch that names its draft's identity (FIX 14976): an answer naming
+    // another draft contradicts it, and one naming none is unverified.
+    let draft_pins: Vec<&String> = pins
+        .iter()
+        .filter_map(|pin| pin.draft_weights_digest.as_ref())
+        .collect();
+    let draft_contradicted = draft_pins.iter().any(|want| {
+        seen.draft_weights_digest
+            .as_ref()
+            .is_some_and(|got| got != *want)
+    });
+    if draft_contradicted {
+        return failed(WorkerFailure::ModelMismatch, Some(observed));
+    }
     let pinned = |field: Field| pins.iter().any(|pin| field(pin).is_some());
     let complete = required
         .iter()
         .all(|&field| pinned(field) && field(seen).is_some())
+        && (draft_pins.is_empty() || seen.draft_weights_digest.is_some())
         && (!pinned(tokenizer) || seen.tokenizer.is_some())
         && seen.backend_epoch.is_some()
         && observed.build_evidence == WorkerBuildEvidence::VerifiedArtifacts;

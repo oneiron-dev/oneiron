@@ -2,6 +2,13 @@
 
 side_tables! {
     SYNC_STATE;
+    /// A file-plane ASSET body this machine received from its home (FIX 14534): the home
+    /// machine (16 bytes), the carrier's BLAKE3 (32), the body's BLAKE3 (32) and its length
+    /// (u64be), written in the own-device client's landing commit. The owner's discard of a
+    /// world copy releases the ASSET's file only while its manifest names that body and the
+    /// row stands at the revision (16 bytes, last) the landing wrote. Runtime: never imaged,
+    /// a restore drops it. Key: hex32 (ASSET id).
+    SYNC_ASSET_BODY_FROM_HOME: SyncState b"ab:h:" Raw;
     /// Archived claim-less shell marker. Key: hex32.
     DELETION_ARCHIVE_MARKER: SyncState b"ac:" Raw;
     /// Per-admission disclosure floor: the VV as of the last full-state text-document export to one
@@ -61,6 +68,11 @@ side_tables! {
     /// Permanent presence-only marker (empty value) that a FEDERATION_GRANT was positively
     /// withdrawn here (FIX-LIST 5107): read before a carried act's Grant standing. Key: hex32.
     AUTHORITY_WITHDRAWN_GRANT: SyncState b"authority:withdrawn-grant:v1:" Raw;
+    /// A BASE window the owner's discard of a world copy took rows from (FIX 14534 part E): a
+    /// first byte of 1 while its persisted copy still waits for its projection, 0 once
+    /// installed, then the version vector the last projection kept, the floor below which no
+    /// send of the window goes to the home. Key: window key.
+    SYNC_BASE_WINDOW_DISCARD: SyncState b"bd:w:" Raw;
     /// Cached currency-converted spend budget limit for one owner/vault pair. Key: hex ":" hex
     /// (owner, vault).
     USAGE_BUDGET_LIMIT: SyncState b"budget:usage:rollup:vault:" Named;
@@ -185,6 +197,10 @@ side_tables! {
     /// Digest of which install keys counted as mine-machine signers when an authority write last
     /// reconciled the identity-topology shell edges (32 bytes). Local only. Key: ().
     IDENTITY_TOPOLOGY_MINE_SIGNERS: SyncState b"it:mine_signers" Raw;
+    /// One proposing actor's opaque ramp-scope handle on this vault (FIX 9870): 32 random bytes.
+    /// Local and erasable; never replicates, never restored from an image. Key: hex32 (actor
+    /// entity id).
+    IDENTITY_TOPOLOGY_PROPOSER_SCOPE: SyncState b"it:proposer-scope:" Raw;
     /// An identity-topology admission seal this vault wrote itself: the signer key and signature (96
     /// bytes) of the fact row. Local truth that never replicates. Key: hex32 (fact entity id).
     IDENTITY_TOPOLOGY_SEALED_HERE: SyncState b"it:sealed:" Raw;
@@ -287,9 +303,20 @@ side_tables! {
     /// One paired-machine mesh connection's path receipt (OF-535): direct or relayed, admitted,
     /// refused or failed; local only, never synced. Key: hex16 (open time, ms) hex32 (minted id).
     SYNC_MESH_PATH_RECEIPT: SyncState b"mp:" Named;
+    /// Which machine wrote the MESSAGE row this install stores (FIX 12113): the row's BLAKE3
+    /// (32 bytes) when this install's local put wrote it, or the writer's whole proof (the row's
+    /// BLAKE3, the writer machine and its Ed25519 signature, 112 bytes) when the own-device lane
+    /// admitted it. The reverse scan vouches for a row beside it only while its bytes are the
+    /// ones named here. Runtime: never imaged, a restore drops it. Key: hex32 (MESSAGE id).
+    SYNC_MESSAGE_WRITER: SyncState b"mw:" Raw;
     /// Durable receipt for one applied/rejected NOTE-operation request, kept for reconnect/reopen.
     /// Key: hex32 (entity id) ":" hex32 (request id).
     SYNC_NC_E: SyncState b"nc:e:" LegacyJson;
+    /// Marks a replica's NOTE fork its authority sent (FIX 12789): the
+    /// authority's fork set settles it, and a fork made here carries no mark.
+    /// Key: hex32(note) ":" hex32(fork); value: BLAKE3 of the fork document
+    /// as sent.
+    NOTE_FORK_AUTHORITY: SyncState b"note_fork_authority:v1:" Raw;
     /// Marks a window whose peer-authored NOTE inbox residue was staged, consulted by the note
     /// module's erasure sweep. Key: yyyy-mm (window key).
     SYNC_NOTE_INBOX: SyncState b"note_inbox:v1:" Raw;
@@ -310,10 +337,11 @@ side_tables! {
     /// Deduplicated marker (single byte) recording which sync window a promoted turn's replayed
     /// closure spans, picked up by later sync replay. Key: yyyy-mm ":" hex32.
     OFF_RECORD_PROMOTE_PICKUP_MARKER: SyncState b"pm:" Raw;
-    /// The bytes a federation peer's import brought for one row of a window whose door judges a
-    /// peer's row apart from this vault's own (Docs Q04): their blake3 digest (32 bytes), recorded
-    /// before the import lands them. Local to this vault, never replicated. Key: hex32 (entity
-    /// id) ":" window key.
+    /// Latest peer carrier's wire digest (32 bytes), plus an ASSET logical body digest (32).
+    /// A distinct still-canonical peer ASSET entry (wire + logical, 64 bytes) precedes it:
+    /// pending replacement never erases the stored row's origin. Logical identity survives
+    /// native inline/file/reference echoes; each wire digest binds exact carrier cleanup.
+    /// Local to this vault, never replicated. Key: hex32 (entity id) ":" window key.
     SYNC_PEER_ORIGIN: SyncState b"po:" Raw;
     /// Digest of the project-depth birth contribution this vault minted locally. Key: hex32
     /// (contribution id).
@@ -410,6 +438,10 @@ side_tables! {
     SYNC_ROOM_FACT_DIRTY: SyncState b"rfd:" Raw;
     /// A thin-residence item's opened entity blob. Key: hex32 (entity id).
     SYNC_RESIDENCE_ITEM_BLOB: SyncState b"ri:b:" Raw;
+    /// Where a thin-residence item's row sits, as the home witnessed it with the item's blob
+    /// (FIX 14534): `ContentWorld`'s tag, then a world id for one in a single world. Key: hex32
+    /// (entity id).
+    SYNC_RESIDENCE_ITEM_CONTENT_WORLD: SyncState b"ri:c:" Raw;
     /// A thin-residence item's opened document state. Key: hex32 (entity id).
     SYNC_RESIDENCE_ITEM_DOCUMENT: SyncState b"ri:d:" Raw;
     /// The thin-residence index rows fetched for one window. Key: window key ":" item tag.
@@ -452,6 +484,11 @@ side_tables! {
     DOCUMENT_SHALLOW_SINCE: SyncState b"ssv:e:" Raw;
     /// An entity document's state vector (document family). Key: hex32.
     DOCUMENT_STATE_VECTOR: SyncState b"sv:e:" Raw;
+    /// The home's version vector of a world window, as this device last
+    /// exchanged it (FIX 14534): what a world eviction waits to see cover the
+    /// window. Local only, never imaged; the next exchange writes it again.
+    /// Key: window key.
+    SYNC_HOME_WINDOW_VV: SyncState b"sv:hw:" Raw;
     /// ARCH-0023b document family: the root document's state vector, paired with d:root. Key: ().
     SYNC_SV_ROOT: SyncState b"sv:root" Raw;
     /// A sync window's state vector (document family). Key: yyyy-mm.
@@ -531,16 +568,25 @@ side_tables! {
     /// Aggregated usage-metering rollup totals (cost/units) for one owner/vault pair. Key: hex ":"
     /// hex (owner, vault).
     USAGE_VAULT_ROLLUP: SyncState b"usage:rollup:vault:" Named;
-    /// Admitted foreign-import payload retained only while its receipt is Pending, so recovery
-    /// survives losing the in-memory stage. Key: hex64.
+    /// The by-reference ASSET bodies a confirmed staged import still owes (FIX 12408): each owed
+    /// body's admitted window and row, and every row its kept content carries. No body bytes.
+    /// Key: hex64 (receipt).
+    VAULT_IMPORT_BODY_WORK: SyncState b"vault_import_body_work:v1:" Raw;
+    /// Admitted foreign-import payload retained while its receipt is Pending, so recovery
+    /// survives losing the in-memory stage, and after its confirmation while it owes bodies.
+    /// Key: hex64.
     VAULT_IMPORT_CONTENT: SyncState b"vault_import_content:v1:" Raw;
     /// Terminal/pending status receipt (hand-rolled MessagePack map) for one foreign vault-import
     /// artifact, keyed by its content-derived receipt id. Key: hex64.
     VAULT_IMPORT_RECEIPT: SyncState b"vault_import_receipt:v1:" Raw;
     /// The facet stamps a foreign artifact staged ahead of their rows, kept with its receipt while
-    /// it is Pending and bound to it by the receipt's digest, so its confirmation holds every one
-    /// of them again. Key: hex64.
+    /// it is Pending, and after its confirmation while it owes bodies, bound to it by the
+    /// receipt's digest, so its confirmation holds every one of them again. Key: hex64.
     VAULT_IMPORT_STAMPS: SyncState b"vault_import_stamps:v1:" Raw;
+    /// A BASE row the owner's discard of a world copy took as that world's alone (FIX 14534):
+    /// the world's id (16 bytes), the ingest ladder's cue to judge the row's body again before
+    /// its window brings it back. Key: hex32 (entity id).
+    SYNC_DISCARDED_WORLD_ROW: SyncState b"wd:e:" Raw;
     /// The newest withdrawn generation of a derived artifact whose historical sweep finished,
     /// and what stands in for it (FIX 931): nine bytes, the `learned_at` u64be, then the
     /// replacement's tag byte (1 an epoch keyframe, 2 a Shell, the header alone). Sync ingest
