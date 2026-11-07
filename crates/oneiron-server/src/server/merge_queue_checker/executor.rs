@@ -22,6 +22,7 @@ use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::time::Duration;
 
 use oneiron::code_sandbox::SandboxGuestTier;
+use oneiron::code_sandbox::egress::ProcessDescriptorFloor;
 use oneiron::code_sandbox::microvm::{MicroVmBackend, select_backend_for_session};
 use oneiron::merge_queue::{
     QueueCheckEnvironment, QueueCheckExecution, QueueCheckHold, QueueCheckHoldReason,
@@ -30,7 +31,7 @@ use oneiron::merge_queue::{
 };
 use oneiron_container::{
     EgressRelay, GuestLimits, GuestSeccomp, GuestSpec, HostNetFloor, HttpRequest, HttpResponse,
-    ImageRef, SessionManifest, UnmeteredFloor,
+    ImageRef, SessionManifest,
 };
 use serde::{Deserialize, Serialize};
 
@@ -713,8 +714,10 @@ impl EgressRelay for QueueCheckRelay {
 
     fn transferred(&self, _target: SocketAddr, _content_hash: [u8; 32], _bytes: u64) {}
 
-    /// Every relay is refused at once, so nothing is charged to a floor.
+    /// Every relay is refused at once, but the guest's socket entries and
+    /// session-local loopback still hold host descriptors and threads: they
+    /// charge the process's descriptor line (FIX 6300).
     fn host_net_floor(&self) -> &dyn HostNetFloor {
-        &UnmeteredFloor
+        &ProcessDescriptorFloor
     }
 }

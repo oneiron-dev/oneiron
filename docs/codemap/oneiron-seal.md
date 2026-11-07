@@ -51,7 +51,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/profile/assembly.rs` | src | m | 6 crate-vis | — | B-B/B-T/B-LTA orchestration: backend signing, TSA failover, capacity ladder, DocTimeStamp, degrade warnings |
 | `src/native/profile/dss.rs` | src | s | 3 crate-vis | — | DSS serialization: stream objects, global Certs/OCSPs/CRLs arrays, DSS revision append |
 | `src/native/profile/material.rs` | src | m | 4 crate-vis | — | B-LT validation material: working CRLs first, then OCSP for uncovered certificates |
-| `src/native/profile/material/ocsp.rs` | src | s | 1 crate-vis | — | OCSP fallback for a certificate not covered by a working CRL |
+| `src/native/profile/material/ocsp.rs` | src | s | 3 crate-vis | — | OCSP fallback for a certificate not covered by a working CRL |
 | `src/native/profile/mod.rs` | src | s | 3 crate-vis | — | PAdES profile assembly: B-B / B-T / B-LT / B-LTA (§7.2, §7.4–§7.6) |
 | `src/native/profile/tests.rs` | test | m | — | — | Profile assembly tests: operation ids, error mapping, DSS bounds, CRL freshness and gather rows |
 | `src/native/tsp.rs` | src | m | 8 crate-vis | — | RFC 3161 timestamp requests and token validation (§7.4, §7.6) |
