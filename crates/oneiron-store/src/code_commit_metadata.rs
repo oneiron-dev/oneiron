@@ -5,9 +5,10 @@ use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodeCommitMetadata {
-    /// The canonical author; `None` when the author was erased before the
-    /// seal (FIX 7348): the record keeps its modes and the chain seals, and
-    /// its export alone holds.
+    /// The attributed author; `None` when the author was erased, before the
+    /// seal (FIX 7348) or after it (FIX 6258). Attribution is not revision
+    /// content: the integrity fold binds the message and modes only, so an
+    /// erase clears this field without resealing, and the export alone holds.
     pub author: Option<EntityId>,
     pub message: String,
     /// Unlisted tested files are ordinary mode 100644 files.
