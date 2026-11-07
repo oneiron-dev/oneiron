@@ -39,6 +39,7 @@ impl From<LexError> for RevisionAnalysisError {
     fn from(err: LexError) -> Self {
         match err {
             LexError::Malformed => Self::Framing,
+            LexError::Memory(refusal) => Self::Memory(refusal),
         }
     }
 }
@@ -162,7 +163,7 @@ fn stream_span(
     // The header is lexed whole however many tokens it holds; they are
     // counted, on a failed read too.
     let mut lex = PdfLexer::new(bytes, object_start);
-    let length = declared_length(bytes, &mut lex, &header, object_start, doc, id);
+    let length = declared_length(bytes, &mut lex, &header, object_start, doc, id, limits);
     limits
         .observed
         .note(Counter::StreamHeaderTokens, lex.work());
@@ -195,6 +196,7 @@ fn declared_length(
     object_start: usize,
     doc: &Document,
     id: ObjectId,
+    limits: &SealResourceLimits,
 ) -> Result<usize, RevisionAnalysisError> {
     let mut length = None;
     while let Some(t) = lex.next()? {
@@ -240,7 +242,8 @@ fn declared_length(
                     .and_then(|t| std::str::from_utf8(t.value).ok()?.parse::<u16>().ok())
                     .ok_or(RevisionAnalysisError::UnresolvedStream)?;
                 let num = u32::try_from(n).map_err(|_| RevisionAnalysisError::UnresolvedStream)?;
-                let value = walk::resolve_id(doc, (num, generation))
+                let value = walk::resolve_id(doc, (num, generation), limits)
+                    .map_err(RevisionAnalysisError::Memory)?
                     .and_then(|o| o.as_i64().ok())
                     .and_then(|v| usize::try_from(v).ok())
                     .ok_or(RevisionAnalysisError::UnresolvedStream)?;
@@ -367,7 +370,7 @@ pub(crate) fn analyze(
     let mut work = 0usize;
     let mut revisions: Vec<RevisionFact> =
         admitted::vec(limits, ends.len()).map_err(RevisionAnalysisError::Memory)?;
-    for end in ends {
+    for end in ends.iter().copied() {
         prefix_work = prefix_work.saturating_add(end);
         limits.observed.note(Counter::PrefixBytes, prefix_work);
         let _revision_pass = limits.memory.pass();

@@ -41,6 +41,7 @@ pub enum RunVerb {
     SelfSkillsCall,
     SelfTeamStart,
     SelfTeamRecord,
+    SelfTeamVote,
     SelfTeamSubmit,
     SelfSpawn,
     TasksWait,
@@ -85,6 +86,7 @@ impl RunVerb {
         Self::SelfSkillsCall,
         Self::SelfTeamStart,
         Self::SelfTeamRecord,
+        Self::SelfTeamVote,
         Self::SelfTeamSubmit,
         Self::SelfSpawn,
         Self::TasksWait,
@@ -132,6 +134,7 @@ impl RunVerb {
             Self::SelfSkillsCall => "self.skills.call",
             Self::SelfTeamStart => "self.team.start",
             Self::SelfTeamRecord => "self.team.record",
+            Self::SelfTeamVote => "self.team.vote",
             Self::SelfTeamSubmit => "self.team.submit",
             Self::SelfSpawn => "self.spawn",
             Self::TasksWait => "tasks.wait",
@@ -167,6 +170,7 @@ impl RunVerb {
                 | Self::SelfSkillsCall
                 | Self::SelfTeamStart
                 | Self::SelfTeamRecord
+                | Self::SelfTeamVote
                 | Self::SelfTeamSubmit
                 | Self::SelfSpawn
                 | Self::Summarize
@@ -211,6 +215,7 @@ impl RunVerb {
             Self::SelfSkillsCall => crate::code_run::SelfEffect::SkillsCall,
             Self::SelfTeamStart => crate::code_run::SelfEffect::Team,
             Self::SelfTeamRecord => crate::code_run::SelfEffect::Team,
+            Self::SelfTeamVote => crate::code_run::SelfEffect::Team,
             Self::SelfTeamSubmit => crate::code_run::SelfEffect::Team,
             Self::SelfSpawn => crate::code_run::SelfEffect::ReaderSpawn,
             Self::TasksWait => crate::code_run::SelfEffect::TasksWaitSet,

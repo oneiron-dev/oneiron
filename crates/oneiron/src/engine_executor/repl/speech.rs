@@ -39,6 +39,10 @@ impl EngineNativeExecutor<'_> {
     /// canonical run a derived shell and turn of its own; the arm choice lives
     /// at the witness door, not in this policy.
     ///
+    /// Reader children return findings to their parent instead of speaking.
+    /// Their implicit selection and terminal recovery are skipped; explicit
+    /// speech still goes through the child's read-only door.
+    ///
     /// # How much is said
     ///
     /// An answer has no size limit, and a bubble is no place for a large one:
@@ -52,6 +56,9 @@ impl EngineNativeExecutor<'_> {
         observation: &CodeRunRawOutput,
         trailing_speak: Option<&str>,
     ) -> EngineExecutorResult<Option<ImplicitSpeechIntent>> {
+        if self.gated_write.reader_child().is_some() {
+            return Ok(None);
+        }
         let answer;
         let text = match trailing_speak {
             Some(text) => text,
@@ -102,7 +109,9 @@ impl EngineNativeExecutor<'_> {
         status: &EngineExecutorStatus,
         config: &EngineExecutorConfig,
     ) -> EngineExecutorResult<()> {
-        if !matches!(status, EngineExecutorStatus::Complete) {
+        if self.gated_write.reader_child().is_some()
+            || !matches!(status, EngineExecutorStatus::Complete)
+        {
             return Ok(());
         }
         let Some(seq) = completed_step_count(record)?.checked_sub(1) else {

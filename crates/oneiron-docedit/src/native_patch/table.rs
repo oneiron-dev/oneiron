@@ -412,15 +412,23 @@ pub(super) fn set_cell(
         Some((out, cut_fields)) => (out, cut_fields),
         None => (
             rebuilt(&bytes, &tree, body, (first, first_node), last_node, value)?,
-            Vec::new(),
+            within(&tree, body)
+                .filter(|(_, node)| {
+                    node.is(DML, "fld")
+                        && node.span.start >= first_node.span.start
+                        && node.span.end <= last_node.span.end
+                })
+                .filter_map(|(_, node)| node.attr("type").map(str::to_owned))
+                .collect(),
         ),
     };
     package.replace_xml_part(slide, out)?;
     Ok(cut_fields)
 }
 
-/// The cell's paragraphs replaced by `value`'s lines, each with the first
-/// paragraph's `a:pPr` and the first run's `a:rPr`.
+/// Replace the cell's paragraphs using the first paragraph's properties and
+/// first run's properties, or the first field's when no run exists. Copied
+/// properties keep their namespace bindings; removed field types are reported.
 fn rebuilt(
     bytes: &[u8],
     tree: &XmlTree,
@@ -435,23 +443,45 @@ fn rebuilt(
         })
     };
     let p_pr = piece(tree.child(first, DML, "pPr")?);
+    let source_run = within(tree, body)
+        .find(|(_, node)| node.is(DML, "r"))
+        .or_else(|| within(tree, body).find(|(_, node)| node.is(DML, "fld")));
     let r_pr = piece(
-        within(tree, body)
-            .find(|(_, node)| node.is(DML, "r"))
+        source_run
             .map(|(run, _)| tree.child(run, DML, "rPr"))
             .transpose()?
             .flatten(),
     );
+    let (r, t, run_bindings) = match source_run {
+        Some((at, node)) => (
+            node.child_name("r"),
+            node.child_name("t"),
+            format!(
+                "{}{}",
+                crate::edit::xml::inherited_bindings(bytes, tree, at),
+                crate::edit::xml::own_bindings(bytes, node),
+            ),
+        ),
+        None => (
+            first_node.child_name("r"),
+            first_node.child_name("t"),
+            String::new(),
+        ),
+    };
+    let end = piece(tree.child(first, DML, "endParaRPr")?);
     let p = first_node.qualified.as_str();
-    let a = p.strip_suffix('p').unwrap_or("");
+    let p_bindings = crate::edit::xml::own_bindings(bytes, first_node);
     let mut out = bytes[..first_node.span.start].to_vec();
     for line in value.split('\n') {
         let run = if line.is_empty() {
             String::new()
         } else {
-            format!("<{a}r>{r_pr}<{a}t>{}</{a}t></{a}r>", escape_text(line))
+            format!(
+                "<{r}{run_bindings}>{r_pr}<{t}>{}</{t}></{r}>",
+                escape_text(line)
+            )
         };
-        out.extend_from_slice(format!("<{p}>{p_pr}{run}</{p}>").as_bytes());
+        out.extend_from_slice(format!("<{p}{p_bindings}>{p_pr}{run}{end}</{p}>").as_bytes());
     }
     out.extend_from_slice(&bytes[last_node.span.end..]);
     Ok(out)

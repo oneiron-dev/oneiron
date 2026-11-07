@@ -420,6 +420,7 @@ impl Vault {
         // stock in its own transaction; the serving host now drops the
         // plaintext and restarts its worker with stock.
         if !ids.is_empty() {
+            self.verb_hook_bindings_changed();
             self.notify_drafter_serving();
         }
         #[cfg(feature = "sync")]

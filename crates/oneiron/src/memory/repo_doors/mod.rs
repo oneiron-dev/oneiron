@@ -20,6 +20,7 @@ mod custody;
 mod neighbor_types;
 mod neighbors;
 pub use neighbor_types::*;
+mod holder;
 mod host;
 mod proposals;
 mod reads;

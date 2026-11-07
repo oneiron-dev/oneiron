@@ -290,7 +290,7 @@ impl Vault {
                 ask.application = Some(application.clone());
             }
             card.updated_at = now;
-            CARDS.put(&self.store, txn, key, &card)?;
+            super::receipt_index::put_card_in_txn(&self.store, txn, key, &card)?;
             // A touched card can arm the digest on its own (FIX 1979).
             crate::batch::queue_proactivity_change(self, txn);
             Ok(application)
@@ -496,7 +496,7 @@ impl Vault {
             ask.application = Some(settled.clone());
         }
         card.updated_at = now;
-        CARDS.put(&self.store, txn, key, &card)?;
+        super::receipt_index::put_card_in_txn(&self.store, txn, key, &card)?;
         // A touched card can arm the digest on its own (FIX 1979).
         crate::batch::queue_proactivity_change(self, txn);
         Ok(settled)
@@ -577,7 +577,7 @@ impl Vault {
             let applied = crate::agent_dispatch::apply_prompt_inject_in_txn(self, txn, &bound)?;
             if !applied.replayed {
                 card.updated_at = now;
-                CARDS.put(&self.store, txn, &key, &card)?;
+                super::receipt_index::put_card_in_txn(&self.store, txn, &key, &card)?;
                 // A touched card can arm the digest on its own (FIX 1979).
                 crate::batch::queue_proactivity_change(self, txn);
             }
