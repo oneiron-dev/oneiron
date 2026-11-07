@@ -2286,7 +2286,7 @@
      "purpose": "Serve-time authority for live artifact pointers",
      "surface": {
       "enum": 1,
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -19657,6 +19657,16 @@
      "path": "src/code_sandbox/firecracker/launch/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/firecracker/oci_mounts.rs",
+     "purpose": "Snapshot caller-selected directories without following descendant host links",
+     "surface": {
+      "crate-vis": 2
+     }
     },
     {
      "bucket": "s",
@@ -52644,8 +52654,8 @@
      "path": "src/memory/witness/program/caller/binding.rs",
      "purpose": "Owned caller/session authority for native work that outlives a borrowed Memory",
      "surface": {
-      "crate-vis": 5,
-      "fn": 5,
+      "crate-vis": 6,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -52985,16 +52995,17 @@
      "notable": [
       "SessionMessageStream",
       "SessionStreamEnd",
+      "SessionStreamFinished",
       "SessionStreamOutcome",
       "SessionStreamPartial"
      ],
      "path": "src/memory/witness/stream/session.rs",
      "purpose": "Native caller-session assistant RAM streaming: one fresh Companion reply",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
-      "fn": 8,
-      "struct": 3
+      "fn": 9,
+      "struct": 4
      }
     },
     {
@@ -93492,7 +93503,7 @@
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls"
     },
     "code_sandbox": {
-     "files": 56,
+     "files": 57,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94824,7 +94835,7 @@
    },
    "over_bar": 187,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6710,
+   "source_files": 6711,
    "test_files": 895
   },
   "oneiron-android": {
@@ -106255,7 +106266,7 @@
      "path": "src/boot.rs",
      "purpose": "Linux-only PID-1 setup, isolated execution, and final-delivery custody",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 1
      }
     },
@@ -106334,6 +106345,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native_mounts.rs",
+     "purpose": "Native mount bytes are staged privately and verified before any execution",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -106406,6 +106427,13 @@
      "layout": "file+dir",
      "purpose": "Native OCI session inside a no-NIC microVM"
     },
+    "native_mounts": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Native mount bytes are staged privately and verified before any execution"
+    },
     "protocol": {
      "files": 1,
      "impl_vault": false,
@@ -106430,7 +106458,7 @@
    },
    "over_bar": 0,
    "purpose": "Linux microVM guest agent and an unprivileged protocol conformance adapter",
-   "source_files": 10,
+   "source_files": 11,
    "test_files": 2
   },
   "oneiron-image": {
@@ -114512,7 +114540,7 @@
      "path": "src/api/ai/chat.rs",
      "purpose": "`POST /v1/ai/chat`: one chat turn on the generative seat",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -114652,7 +114680,7 @@
      "path": "src/api/ai/chat/session_invocation.rs",
      "purpose": "The positively bound Anonymous caller selects a session-owned claim first",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -114673,6 +114701,26 @@
      "purpose": "The rows a live chat turn's call is read from (FIX 6935), ids only, for its run's permits and metered…",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/ai/chat/stream.rs",
+     "purpose": "One reply stream capability: ordinary recorded work or its native caller session",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/ai/chat/terminal.rs",
+     "purpose": "Truthful terminal identity and completion, independent of retention",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -114772,7 +114820,27 @@
      "path": "src/api/artifacts.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/artifacts/backend.rs",
+     "purpose": "Published zero-engine-action backends on the artifact-only listener",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/artifacts/backend_runtime.rs",
+     "purpose": "One HTTP/1 exchange over the native untrusted guest's owned stdio",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -114792,7 +114860,7 @@
      "path": "src/api/artifacts/route.rs",
      "purpose": "One typed codec for artifact bundle entry and canonical file URLs",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 10
      }
     },
     {
@@ -123142,6 +123210,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ArtifactBackendConfig"
+     ],
+     "path": "src/config/artifact_backend.rs",
+     "purpose": "Host-owned execution profile for published artifact HTTP backends",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "BackupConfig",
       "BackupConfigOverride"
      ],
@@ -123529,8 +123611,8 @@
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge",
      "surface": {
       "crate-vis": 5,
-      "mod": 16,
-      "re-export": 30
+      "mod": 17,
+      "re-export": 31
      }
     },
     {
@@ -130622,6 +130704,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/runtime/artifact_backend.rs",
+     "purpose": "Host-configured concurrency custody for artifact backend requests",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/runtime/clock.rs",
      "purpose": "Shared wall-clock time in Unix milliseconds",
      "surface": {
@@ -130704,7 +130796,7 @@
      "path": "src/runtime/mod.rs",
      "purpose": "Runtime configuration, host services, and shared time helpers",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "mod": 2,
       "re-export": 10
      }
@@ -131170,7 +131262,7 @@
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
       "crate-vis": 37,
-      "fn": 16,
+      "fn": 17,
       "re-export": 1,
       "struct": 1
      }
@@ -133050,7 +133142,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 709,
+     "files": 713,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -133134,7 +133226,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 70,
+     "files": 71,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -133477,7 +133569,7 @@
      "purpose": "The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a…"
     },
     "runtime": {
-     "files": 32,
+     "files": 33,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -133584,7 +133676,7 @@
    },
    "over_bar": 58,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1712,
+   "source_files": 1718,
    "test_files": 182
   },
   "oneiron-skill-attribution": {

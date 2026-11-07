@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6710 | 895 | 187 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6711 | 895 | 187 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 4 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 64 | 1 | 0 |
 | [oneiron-base](codemap/oneiron-base.md) | The base layer of the oneiron engine: modules that name nothing above them | 34 | 2 | 0 |
@@ -30,7 +30,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-docedit](codemap/oneiron-docedit.md) | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… | 176 | 14 | 6 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 36 | 10 | 3 |
 | [oneiron-ffi](codemap/oneiron-ffi.md) | C ABI for on-device iOS and macOS access to the Oneiron vault | 13 | 1 | 0 |
-| [oneiron-guest](codemap/oneiron-guest.md) | Linux microVM guest agent and an unprivileged protocol conformance adapter | 10 | 2 | 0 |
+| [oneiron-guest](codemap/oneiron-guest.md) | Linux microVM guest agent and an unprivileged protocol conformance adapter | 11 | 2 | 0 |
 | [oneiron-image](codemap/oneiron-image.md) | The image organ (ART-1, the first slice): still PNG, JPEG and WebP images as a native `image` kind, behind… | 8 | 4 | 1 |
 | [oneiron-image-comfyui](codemap/oneiron-image-comfyui.md) | Self-hosted ComfyUI image adapter | 1 | 0 | 0 |
 | [oneiron-image-openrouter](codemap/oneiron-image-openrouter.md) | OpenRouter Image API adapter | 3 | 0 | 0 |
@@ -56,7 +56,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-run-budget](codemap/oneiron-run-budget.md) | Run budget declarations and paid-job maximum state of the oneiron engine | 4 | 0 | 0 |
 | [oneiron-sandbox-contract](codemap/oneiron-sandbox-contract.md) | Portable, pure shape rules shared by the host and the isolated guest | 5 | 0 | 0 |
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 60 | 12 | 4 |
-| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1712 | 182 | 58 |
+| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1718 | 182 | 58 |
 | [oneiron-skill-attribution](codemap/oneiron-skill-attribution.md) | The skill attribution vocabulary (ARCH-0035, ARCH-0053 §4): an attempt's outcome evidence, the judge's… | 3 | 0 | 0 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
 | [oneiron-store](codemap/oneiron-store.md) | The store layer of the oneiron engine | 637 | 4 | 0 |
@@ -107,7 +107,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `code_memory` | file+dir | 7 | m | — | Symbol-anchored memory slots, transfers and scoped pulls |
 | `code_revision` | dir | 26 | m | yes | Code revisions, tested forks and reviewed import promotion |
 | `code_run` | dir | 223 | L | yes | Host-side skeleton for first-party `self.*` code-mode calls |
-| `code_sandbox` | dir | 56 | L | yes | Sandbox boundary contract for code-mode execution |
+| `code_sandbox` | dir | 57 | L | yes | Sandbox boundary contract for code-mode execution |
 | `code_symbol` | dir | 14 | m | yes | Code-symbol manifests, semantic changes and producing-operation views |
 | `code_view` | dir | 5 | m | — | Per-agent file views over codebase blobs, with one owned shared service set |
 | `codebase` | dir | 17 | m | yes | Repository snapshot ingestion, storage and file access |
@@ -571,6 +571,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `egress` | file | 1 | s | The native microVM supervisor's network reaches only the engine's vsock |
 | `filesystem` | file | 1 | m | Descriptor-relative workspace access |
 | `native` | file+dir | 2 | s | Native OCI session inside a no-NIC microVM |
+| `native_mounts` | file | 1 | s | Native mount bytes are staged privately and verified before any execution |
 | `protocol` | file | 1 | m | Strict, bounded host/guest JSON framing and admission state machine |
 | `runtime` | file | 1 | m | Canonical typed Component Model execution with seven non-write imports and the three that stream a proposed… |
 | `tests` | file | 1 | — | — |
@@ -817,7 +818,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `actions` | file | 1 | s | Host-bound UI and agent action executor over the engine's one verb registry |
 | `admission` | file+dir | 2 | s | Admission for work a remote caller can start |
 | `ai_host` | dir | 129 | XL | The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats… |
-| `api` | dir | 709 | XL | HTTP query routes for web dashboard access |
+| `api` | dir | 713 | XL | HTTP query routes for web dashboard access |
 | `auth` | file+dir | 17 | L | HTTP authentication for log-backed version-two capability slips |
 | `big_rung` | file+dir | 5 | m | The big model on the decision ladder's Big rung (ARCH-0076, OF-495) |
 | `broadcast` | file | 1 | s | Broadcast group for multi-device fan-out with echo suppression |
@@ -829,7 +830,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `cloud_registration` | dir | 11 | m | The engine's native cloud registration client (G7, FIX 5347): the owner links this vault to the Oneiron… |
 | `code_consent_host` | file+dir | 3 | s | The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on… |
 | `commands` | file+dir | 68 | L | The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy |
-| `config` | dir | 70 | L | Server configuration: resolved types, CLI flags, and the file/env/argv merge |
+| `config` | dir | 71 | L | Server configuration: resolved types, CLI flags, and the file/env/argv merge |
 | `connector_admission_host` | file+dir | 3 | m | The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint… |
 | `connector_call_host` | file+dir | 10 | L | The served [`ConnectorCallHost`] (ONE-2510): the generic connector call's transport, credential and reply… |
 | `connector_call_settle` | file | 1 | m | The connector-call settler (ONE-2510): the served loop that re-enters every held or pending-delivery… |
@@ -878,7 +879,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `protocol` | file | 1 | m | Custom Oneiron sync protocol — server-side extensions |
 | `replay_judge` | file+dir | 3 | m | The serve host's skill judge (OF-495) |
 | `residence_machines` | file | 1 | s | The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a… |
-| `runtime` | dir | 32 | m | Runtime configuration, host services, and shared time helpers |
+| `runtime` | dir | 33 | m | Runtime configuration, host services, and shared time helpers |
 | `saved_query_sweep` | file | 1 | m | The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is… |
 | `server` | dir | 89 | L | Sync server state and maintenance jobs, split by concern |
 | `shared_envs` | file+dir | 2 | L | The host's dedicated shared-env registry (FIX 2051, FIX 11136): the membership → env map a member device… |

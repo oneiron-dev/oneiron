@@ -200,7 +200,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/anchored_annotation/threads/brief_text.rs` | src | s | 2 crate-vis | — | Whole annotation transcripts and capped dispatch briefings |
 | `src/anchored_annotation/verbs.rs` | src | m | 8 fn | — | Credential-bound adapters over the engine's anchored annotation lifecycle |
 | `src/anchored_annotation/wire.rs` | src | m | 14 struct · 4 enum | AnnotationAnchorView, AnnotationAssignRequest, AnnotationBodyAnchorView, AnnotationBriefView, AnnotationCommentRequest, AnnotationCommentView, AnnotationDriftView, AnnotationLocator +10 | Typed wire shapes for artifact units and anchored comment threads |
-| `src/artifact_hosting/access.rs` | src | m | 1 struct · 1 enum · 2 fn | ArtifactLinkCapability, ArtifactServeTier | Serve-time authority for live artifact pointers |
+| `src/artifact_hosting/access.rs` | src | m | 1 struct · 1 enum · 3 fn | ArtifactLinkCapability, ArtifactServeTier | Serve-time authority for live artifact pointers |
 | `src/artifact_hosting/checkpoint.rs` | src | s | 4 crate-vis | — | The checkpoint getter of artifact hosting rows (FIX 10436): each blob artifact's channel pointers, publish… |
 | `src/artifact_hosting/door_types.rs` | src | s | 4 struct · 1 re-export | ArtifactLinkToken, ArtifactPointerRequest, ArtifactPublishRequest, ArtifactPublishView | Core half of `artifact_hosting::door_types`: its store-layer items live in… |
 | `src/artifact_hosting/mod.rs` | src | m | 10 fn · 1 mod · 4 re-export · 5 crate-vis | — | Local artifact hosting over pinned code snapshots and blob exports |
@@ -1637,6 +1637,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_sandbox/firecracker/egress.rs` | src | s | 1 crate-vis | — | Native VM network channels terminate at the engine's one egress proxy |
 | `src/code_sandbox/firecracker/launch.rs` | src | m | 10 crate-vis | — | Jailer launch, resource ceilings and process custody for one microVM |
 | `src/code_sandbox/firecracker/launch/tests.rs` | test | s | — | — | — |
+| `src/code_sandbox/firecracker/oci_mounts.rs` | src | s | 2 crate-vis | — | Snapshot caller-selected directories without following descendant host links |
 | `src/code_sandbox/firecracker/oci_session.rs` | src | s | 2 crate-vis | — | Native OCI sessions in a no-NIC Firecracker VM |
 | `src/code_sandbox/firecracker/protocol.rs` | src | m | 3 crate-vis | — | Bounded guest-agent framing; no host filesystem or credential capabilities |
 | `src/code_sandbox/firecracker/protocol/tests.rs` | test | m | — | — | — |
@@ -4241,7 +4242,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/witness/mod.rs` | src | s | 5 re-export · 11 crate-vis | — | Witness/turn-ingestion verbs: one witness program (`program`) landing in base (`base`) or in an off-record… |
 | `src/memory/witness/program.rs` | src | s | 1 re-export · 10 crate-vis | — | The one witness program: request checks, one plan, the ONE-1686 ceiling door and the ONE-1767 mint contract… |
 | `src/memory/witness/program/caller.rs` | src | m | 1 struct · 1 enum · 3 fn · 1 re-export · 4 crate-vis | SessionWitnessContext, SessionWitnessOutcome | Caller-bound session speech |
-| `src/memory/witness/program/caller/binding.rs` | src | s | 1 struct · 5 fn · 5 crate-vis | SessionWitnessBinding | Owned caller/session authority for native work that outlives a borrowed Memory |
+| `src/memory/witness/program/caller/binding.rs` | src | s | 1 struct · 8 fn · 6 crate-vis | SessionWitnessBinding | Owned caller/session authority for native work that outlives a borrowed Memory |
 | `src/memory/witness/program/caller/claims.rs` | src | s | 2 fn | — | Caller-bound invocation outcomes use the actual session's RAM keep |
 | `src/memory/witness/program/execute.rs` | src | s | 3 crate-vis | — | The witness program's run: request shape, target, plan, then one write transaction per landing |
 | `src/memory/witness/program/execute/answer.rs` | src | s | 1 crate-vis | — | A landed witness, after its write commits: the receipt it answers with, and the on-record copy, live window… |
@@ -4271,7 +4272,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/witness/stream/reader.rs` | src | s | 1 crate-vis | — | The handle a stream's terminal reads under: its opener's (FIX 1667) |
 | `src/memory/witness/stream/refused.rs` | src | s | 1 struct · 1 fn · 2 crate-vis | StreamRecoveryRefusal | The stream seeds the vault's open could not replay, kept for the owner (FIX 9974, FIX 11933) |
 | `src/memory/witness/stream/reply_assertions.rs` | src | s | 8 crate-vis | — | A model stream's reply assertions at its terminal (OF-063, FIX 3416) |
-| `src/memory/witness/stream/session.rs` | src | m | 3 struct · 1 enum · 8 fn · 6 crate-vis | SessionMessageStream, SessionStreamEnd, SessionStreamOutcome, SessionStreamPartial | Native caller-session assistant RAM streaming: one fresh Companion reply |
+| `src/memory/witness/stream/session.rs` | src | m | 4 struct · 1 enum · 9 fn · 7 crate-vis | SessionMessageStream, SessionStreamEnd, SessionStreamFinished, SessionStreamOutcome, SessionStreamPartial | Native caller-session assistant RAM streaming: one fresh Companion reply |
 | `src/memory/witness/stream/storage.rs` | src | m | 2 fn · 24 crate-vis | — | Per-handle recovery seed, holding the stream's accepted text as of its last checkpoint, and terminal audit |
 | `src/memory/witness/stream/tests.rs` | test | m | — | — | Observable stream contracts: no partial persistence, cadence, finality and retry |
 | `src/memory/witness/stream/types.rs` | src | s | 4 struct · 7 enum · 1 fn · 1 type · 2 const | MessageStreamError, MessageStreamHandle, MessageStreamPartial, MessageStreamPolicy, MessageStreamReceipt, MessageWriteMode, StreamCadence, StreamCancelReason +3 | Public streaming vocabulary |
