@@ -116,7 +116,7 @@ pub(crate) use person_about::{
 };
 pub use provenance::*;
 pub(crate) use provenance::{
-    decode_verified_citations, decode_verified_locators,
+    VerifiedLocator, decode_verified_citations, decode_verified_locators,
     encode_consolidation_evidence_with_locators, kept_decisions_value,
 };
 pub use request_sources::SourcedBackend;
@@ -178,7 +178,7 @@ pub use thing_agent::{
     ThingPortRequest, ThingProposalRef,
 };
 pub(crate) use turn_text::compaction_span::{
-    ConversationSpanRead, conversation_span_text, conversation_span_text_in,
+    ConversationSpanRead, conversation_span_text, conversation_span_text_in, scoped_turn_text_in,
 };
 pub(crate) use turn_text::{
     TurnText, cited_evidence_bytes, dreamer_may_read_messages_in, dreamer_may_read_turns_in,

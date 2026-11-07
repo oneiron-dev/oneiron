@@ -495,6 +495,13 @@ impl ServeReplayJudge {
         }
     }
 
+    /// The principal its questions ask under (FIX 20607): whose read the
+    /// held-out judge of a contribution pair is.
+    #[must_use]
+    pub const fn principal(&self) -> EntityId {
+        self.principal
+    }
+
     /// The configured live pulls per online axis, across both arms; `None`
     /// when `[skills] live_pulls_per_axis` is unset.
     #[must_use]

@@ -1,6 +1,8 @@
 //! Ordered canonical validation groups shared by synchronous and turn-based recovery.
 
-use super::{CanonicalSnapshot, asset_body_refs, row_births, validation, withdrawn_cutoffs};
+use super::{
+    CanonicalSnapshot, asset_body_refs, row_births, source_audiences, validation, withdrawn_cutoffs,
+};
 use crate::error::Result;
 
 #[derive(Default)]
@@ -24,6 +26,7 @@ enum ValidationStage {
     Documents,
     EntityDocuments,
     RowBirths,
+    SourceAudiences,
     WithdrawnCutoffs,
     Complete,
 }
@@ -76,6 +79,10 @@ impl CanonicalValidation {
                     return Ok(false);
                 }
                 self.row_births = row_births::RowBirthsValidation::default();
+                ValidationStage::SourceAudiences
+            }
+            ValidationStage::SourceAudiences => {
+                source_audiences::validate(snapshot)?;
                 ValidationStage::WithdrawnCutoffs
             }
             ValidationStage::WithdrawnCutoffs => {
@@ -124,6 +131,7 @@ impl CanonicalValidation {
             ValidationStage::Documents => "NOTE documents",
             ValidationStage::EntityDocuments => "entity documents",
             ValidationStage::RowBirths => "row births",
+            ValidationStage::SourceAudiences => "source audiences",
             ValidationStage::WithdrawnCutoffs => "withdrawn cutoffs",
             ValidationStage::Complete => "complete",
         }

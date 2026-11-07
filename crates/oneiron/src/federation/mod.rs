@@ -143,8 +143,8 @@ pub use self::pact_scope::{
     selector_range_of,
 };
 pub use self::peer_authority::{
-    MAX_PEER_AUTHORITY_ENTRIES_PER_PEER, PEER_AUTHORITY_KEY_PREFIX, admit_peer_authority_log_entry,
-    peer_authority_entry_key, peer_authority_roster, peer_consent_roots,
+    PEER_AUTHORITY_KEY_PREFIX, admit_peer_authority_log_entry, peer_authority_entry_key,
+    peer_authority_roster, peer_consent_roots,
 };
 pub use self::relationships::{
     MAX_RELATIONSHIP_LABEL_BYTES, MemberRelationship, MemberRelationshipContext,
