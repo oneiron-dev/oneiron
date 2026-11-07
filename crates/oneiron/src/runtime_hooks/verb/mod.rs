@@ -36,16 +36,19 @@ use crate::{EdgeActorClass, EntityId, Result, Vault};
 
 use super::block::HookTurnTarget;
 pub(crate) use ask::VERB_HOOK_INTENT;
-pub use ask::{HOOK_RESULT_NOT_RETAINED, VerbHookWaitStatus};
+pub use ask::{HOOK_OUTCOME_UNCERTAIN, HOOK_RESULT_NOT_RETAINED, VerbHookWaitStatus};
 pub use call_scope::VerbCallScope;
+pub(super) use chain::admit_verb_outcome;
+pub(super) use chain::projection::merge_withheld;
 pub use credential::{
     VerbAskCredential, VerbAskCredentialCheck, VerbAskCredentialRef, VerbAskCredentialSource,
     VerbAskCredentialWitness, VerbAskDoor, VerbAskDrainPermit, VerbAskDrainScope,
-    VerbAskInstrument, VerbAskRefusal, VerbAskResumed, VerbAskSavedCall,
+    VerbAskInstrument, VerbAskMcpCeiling, VerbAskRefusal, VerbAskResumed, VerbAskSavedCall,
 };
 pub use paced::PACED_VERB_WAIT_DEFAULT_SECS;
 pub(crate) use paced::{
-    hold_paced_verb_call, land_paced_verb_call_in_txn, paced_verb_reply, runs_paced_turn,
+    hold_paced_verb_call, land_paced_verb_call_in_txn, paced_turn_again, paced_verb_reply,
+    runs_paced_turn,
 };
 pub(crate) use plain_resume::PlainRowResume;
 pub(super) use record::{HookVerbRunRecord, VERB_RUNS};
@@ -245,6 +248,21 @@ impl Vault {
         ask::wait_status(self, invocation, verb, actor, class, ask)
     }
 
+    /// The rows the result settlement's drain saved under `invocation` was
+    /// derived from, as its door listed them (FIX 1435). The door that
+    /// answers the caller's retry with that result releases it by them.
+    /// `None` when no result is saved there, or its door listed none.
+    ///
+    /// # Errors
+    ///
+    /// Reading the saved call.
+    pub fn verb_hook_saved_producers(
+        &self,
+        invocation: InvocationId,
+    ) -> Result<Option<Vec<EntityId>>> {
+        ask::saved_producers(self, invocation)
+    }
+
     /// Runs the pre chain of `call` over `args`: the matching pre-hooks in
     /// priority order, each outcome validated. `Err(stop)` when a hook
     /// skipped or asked, or a blocking one failed safe. At hook depth 1 it
@@ -269,6 +287,33 @@ impl Vault {
             None,
             None,
         )
+    }
+
+    /// Whether the pre chain runs hooks now: they are not suppressed for
+    /// this process (`--no-hooks`) and `hooks.enabled` is on. While they are
+    /// not, a retained call answered proceed stays parked (FIX 1765).
+    ///
+    /// # Errors
+    ///
+    /// Reading the binding list.
+    pub fn verb_hooks_running(&self) -> Result<bool> {
+        Ok(!self.verb_hook_state.suppressed() && self.verb_hook_state.bindings(self)?.enabled)
+    }
+
+    /// [`Self::pre_verb_hooks`] for a host's retry of a call it retained on
+    /// an ask (FIX 1765): a saved call that is gone is a skip, never a fresh
+    /// call.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors as they occur; a hook's own failure is never one.
+    pub fn pre_verb_hooks_retained(
+        &self,
+        call: VerbCall,
+        args: Value,
+        check: VerbArgsCheck<'_>,
+    ) -> Result<std::result::Result<VerbHookPre, VerbHookStop>> {
+        self.pre_verb_hooks_retained_in(VerbHookStorage::Canonical, call, args, check, None)
     }
 
     /// [`Self::pre_verb_hooks`] for a call settlement can run again without

@@ -33,6 +33,8 @@ pub struct AgentVerbAnswer {
     pub rows: Option<Vec<EntityId>>,
     pub observations: Vec<RunObservation>,
     pub hooks: Vec<SessionHookDisposition>,
+    /// Native handoff only. The write receipt keeps this in its output manifests.
+    pub(crate) stored_output: Option<crate::code_run::CodeRunRawOutput>,
 }
 
 impl AgentVerbAnswer {
@@ -45,6 +47,7 @@ impl AgentVerbAnswer {
             rows,
             observations: Vec::new(),
             hooks: Vec::new(),
+            stored_output: None,
         }
     }
 
@@ -211,10 +214,11 @@ pub trait AgentVerbDoor: Send + Sync {
 
     /// Admits one read a run bound to an off-record session serves through
     /// the room's view (WILL L11-01): `vault.get`, `vault.hydrate`,
-    /// `vault.refs.resolve` or `vault.search.bm25`. The answer is the key
-    /// the read reads under: this door's caller, as its credential and
-    /// ceiling bind them now, never a wider key. A door that admits no such
-    /// read refuses it as a session-bound run's verbs were refused before.
+    /// `vault.refs.resolve`, `vault.search.bm25` or `vault.receipts` (FIX
+    /// 7355). The answer is the key the read reads under: this door's
+    /// caller, as its credential and ceiling bind them now, never a wider
+    /// key. A door that admits no such read refuses it as a session-bound
+    /// run's verbs were refused before.
     fn admit_session_read(
         &self,
         _verb: crate::task_verb::sdk::AgentVerb,
@@ -276,6 +280,21 @@ pub trait AgentVerbDoor: Send + Sync {
     /// states it again: the replay runs no row and writes no receipt of its
     /// own. A door that states no receipt ignores it.
     fn replay_row_receipt(&self, _receipt: &str) {}
+
+    /// A cached answer an action call's replay returns for `verb` (FIX
+    /// 8158), released again for this door's caller as it stands now. A
+    /// door that judges release refuses one derived from a row its caller
+    /// no longer reads, or one erased since (`Error::EntityNotFound`), and
+    /// withholds what its caller's destination may not hold; nothing runs
+    /// again. A door with no release judgment of its own returns it as it
+    /// was.
+    fn replay_action_answer(
+        &self,
+        _verb: &str,
+        answer: AgentVerbAnswer,
+    ) -> crate::Result<AgentVerbAnswer> {
+        Ok(answer)
+    }
 
     /// The run recorded the write's replay row for the answer this door
     /// just gave (FIX 10633): a door that keeps what its answer holds

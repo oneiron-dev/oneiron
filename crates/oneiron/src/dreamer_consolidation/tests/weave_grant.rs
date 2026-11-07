@@ -55,6 +55,7 @@ fn pass(
             reserve_units: 500,
             now,
             host_scope: None,
+            destination_bound: None,
         },
         &mut executor,
         &WakeCancellation::new(),
