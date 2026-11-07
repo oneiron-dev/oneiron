@@ -184,7 +184,8 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 let expanded = format!("{words}{}", opened_text(&turns));
                 let fits = arc_input(plan, view, &expanded).is_ok_and(|next| {
                     self.session_window(ctx.vault).is_none_or(|window| {
-                        framed_tokens(instruction, &next, &schema).is_ok_and(|tokens| tokens <= window)
+                        framed_tokens(instruction, &next, &schema)
+                            .is_ok_and(|tokens| tokens <= window)
                     })
                 });
                 if fits {

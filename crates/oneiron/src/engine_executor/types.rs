@@ -265,8 +265,10 @@ pub struct StoreReceiptTree {
     pub inputs: Vec<String>,
 }
 
-/// How a program names one of its run's results.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// How a program names one of its run's results. A step's read context
+/// keeps the reference each read of another run's result was made by (FIX
+/// 6352).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum JsResultRef {
     /// A name the run bound (`r7`).
     Name(String),
@@ -399,6 +401,13 @@ pub trait JsCodeModeHost {
     /// program again from its recorded calls keeps the stop; this default
     /// keeps nothing, and the step's outcome reads as not done.
     fn stopped_at_step_deadline(&mut self) {}
+
+    /// An isolated program's own error text with each value this host's run
+    /// knows replaced by its stand-in (FIX 9209). A host with no storage
+    /// knows no value; the release shape sanitizer runs after this either way.
+    fn mask_guest_error(&self, body: &str) -> Result<String> {
+        Ok(body.to_owned())
+    }
 
     /// [`Self::dispatch_self_nested`] for a caller whose step `cancel` may
     /// stop (FIX 600). A host that runs the nested step overrides it and

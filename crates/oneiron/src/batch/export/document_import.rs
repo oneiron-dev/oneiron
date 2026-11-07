@@ -14,8 +14,7 @@ use super::archive_index::{
 };
 use super::{
     ArchiveFiles, ArchiveRecordKind, ExportDerivationEnvelope, ExportEdge, ExportEntity,
-    ExportEpochFloor, ExportResultBody, ExportRun, ExportSkillBundle, WholeVaultDocument,
-    WholeVaultImportReceipt,
+    ExportResultBody, ExportRun, ExportSkillBundle, WholeVaultDocument, WholeVaultImportReceipt,
 };
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -463,18 +462,8 @@ impl Vault {
         let (restored_secrets, unchanged_secrets, skipped_revoked_secrets, missing_secrets) =
             restore_secrets_in_txn(self, &mut wtxn, &mut archive)?;
         let owed_secrets = owed_secrets_in_txn(self, &wtxn, &archive.manifest.fold_only_secrets)?;
-        // OF-013: each session's floor rises to the archive's and never falls,
-        // so numbering here never goes back under an epoch a purge removed.
-        let mut floors = archive.spool.rows(ArchiveRecordKind::EpochFloor);
-        while let Some((_, floor)) = floors.next_parsed::<ExportEpochFloor>(&archive.spool)? {
-            crate::compaction::raise_session_epoch_floor_in_txn(
-                &self.store,
-                &mut wtxn,
-                &parse_id(&floor.session)?,
-                floor.epoch,
-                floor.turn_end,
-            )?;
-        }
+        // OF-013: each lineage's floor rises to the archive's and never falls.
+        super::epoch_floors::restore_epoch_floors_in_txn(&self.store, &mut wtxn, &archive.spool)?;
         // OF-370: the embedding setup declares and binds only what is absent
         // here; its vectors are recomputed after the commit, never before.
         let embedding_setup =

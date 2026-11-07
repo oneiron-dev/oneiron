@@ -36,8 +36,10 @@ use crate::{EdgeActorClass, EntityId, Result, Vault};
 
 use super::block::HookTurnTarget;
 pub(crate) use ask::VERB_HOOK_INTENT;
-pub use ask::{HOOK_RESULT_NOT_RETAINED, VerbHookWaitStatus};
+pub use ask::{HOOK_OUTCOME_UNCERTAIN, HOOK_RESULT_NOT_RETAINED, VerbHookWaitStatus};
 pub use call_scope::VerbCallScope;
+pub(super) use chain::admit_verb_outcome;
+pub(super) use chain::projection::merge_withheld;
 pub use credential::{
     VerbAskCredential, VerbAskCredentialCheck, VerbAskCredentialRef, VerbAskCredentialSource,
     VerbAskCredentialWitness, VerbAskDoor, VerbAskDrainPermit, VerbAskDrainScope,
@@ -285,6 +287,33 @@ impl Vault {
             None,
             None,
         )
+    }
+
+    /// Whether the pre chain runs hooks now: they are not suppressed for
+    /// this process (`--no-hooks`) and `hooks.enabled` is on. While they are
+    /// not, a retained call answered proceed stays parked (FIX 1765).
+    ///
+    /// # Errors
+    ///
+    /// Reading the binding list.
+    pub fn verb_hooks_running(&self) -> Result<bool> {
+        Ok(!self.verb_hook_state.suppressed() && self.verb_hook_state.bindings(self)?.enabled)
+    }
+
+    /// [`Self::pre_verb_hooks`] for a host's retry of a call it retained on
+    /// an ask (FIX 1765): a saved call that is gone is a skip, never a fresh
+    /// call.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors as they occur; a hook's own failure is never one.
+    pub fn pre_verb_hooks_retained(
+        &self,
+        call: VerbCall,
+        args: Value,
+        check: VerbArgsCheck<'_>,
+    ) -> Result<std::result::Result<VerbHookPre, VerbHookStop>> {
+        self.pre_verb_hooks_retained_in(VerbHookStorage::Canonical, call, args, check, None)
     }
 
     /// [`Self::pre_verb_hooks`] for a call settlement can run again without

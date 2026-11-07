@@ -5,7 +5,9 @@
 //! effect history; a pending step names where they start and end, which of
 //! them the program made itself, and what the program ran under.
 
+use super::super::correction::ExecutorWireRepairs;
 use super::{CODE_RUN_REPLAY_HASH_LEN, CodeRunDeterminism};
+use crate::ModelId;
 
 /// One pending step of a code run (FIX 7703): the step's program stopped at
 /// its deadline, after every host call it admitted had settled and its
@@ -38,6 +40,12 @@ pub struct PendingCodeStep {
     pub guest_abi: [u8; CODE_RUN_REPLAY_HASH_LEN],
     /// The canonical hash of the model request the program answers.
     pub request_hash: [u8; CODE_RUN_REPLAY_HASH_LEN],
+    /// The model whose response gave the program.
+    pub model: ModelId,
+    /// The repairs the ONE-1929 normalization made to that response. The
+    /// response's correction record and heal tally commit from them, with
+    /// the checkpoint the step commits once its program ends (FIX 4411).
+    pub repairs: ExecutorWireRepairs,
     /// The frozen clock and RNG seed the program ran under.
     pub determinism: CodeRunDeterminism,
     /// Whether the model reply's trailing speech is kept beside the program,

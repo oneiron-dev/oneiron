@@ -15,7 +15,7 @@
 use super::super::host::DeadlineReplay;
 use super::super::store::SCRIPT_OUTPUT_DIR;
 use super::*;
-use crate::code_run::PendingCodeStep;
+use crate::code_run::{ExecutorWireRepairs, PendingCodeStep};
 use crate::code_sandbox::SandboxBoundaryContract;
 use crate::store::result_manifest::invalid_code_run_replay;
 
@@ -26,11 +26,10 @@ const SCRIPT_CHANGED: &str = "the pending step's stored program changed";
 const PREPARATION_CHANGED: &str = "the pending step's program prepares to other JavaScript";
 const UNREACHED: &str = "the resumed program ended before every call its pending step recorded";
 
-/// A pending step taken off its run's record for this entry: the step, the
+/// What a pending step taken off its run's record runs in this entry: the
 /// program it runs again, and the replay of the calls it already made.
-pub(super) struct ResumedProgram {
-    pub(super) pending: PendingCodeStep,
-    pub(super) program: StepProgram,
+pub(super) struct ResumedProgram<'p> {
+    pub(super) program: StepProgram<'p>,
     pub(super) replay: DeadlineReplay,
 }
 
@@ -45,9 +44,9 @@ pub(super) struct SliceProgram<'p> {
     pub(super) prepared_identity: Option<[u8; 32]>,
     pub(super) guest_abi: [u8; 32],
     pub(super) trailing_speak: Option<&'p str>,
-    /// Whether the reply that wrote the program needed healing and no
-    /// durable append counted it yet.
-    pub(super) healed: bool,
+    /// The repairs the normalization made to the reply that wrote the
+    /// program.
+    pub(super) repairs: ExecutorWireRepairs,
     /// The pending step this entry resumed, when it did.
     pub(super) prior: Option<&'p PendingCodeStep>,
     /// Whether the runtime answered the step with an outcome.
@@ -87,25 +86,29 @@ pub(super) fn check_pending_preparation(
 }
 
 impl EngineNativeExecutor<'_> {
-    /// The pending step of `record`, when it holds one (FIX 7703): its
-    /// stored program, checked against the step (its position, frontiers,
-    /// frozen clock and RNG seed, guest boundary and program digest), and
-    /// the rows its program made, taken off the record so the step's next
-    /// commit writes them again with the rest of its calls. The record holds
-    /// no pending step from here: that commit, whatever it is, replaces the
-    /// stored one under the record's generation. A step that does not check
-    /// out holds: the entry fails with the replay error and commits nothing,
-    /// so the stored step, its rows and its frontier stay as they were. The
-    /// entry's own lease, seat and storage binding checks ran before this.
-    pub(super) fn take_pending_program(
+    /// The program of `pending`, the pending step the caller took off
+    /// `record` (FIX 7703): its stored program, checked against the step
+    /// (its position, frontiers, frozen clock and RNG seed, guest boundary
+    /// and program digest), and the rows its program made, taken off the
+    /// record so the step's next commit writes them again with the rest of
+    /// its calls. The record holds no pending step from here: that commit,
+    /// whatever it is, replaces the stored one under the record's
+    /// generation. A step that does not check out holds: the entry fails
+    /// with the replay error and commits nothing, so the stored step, its
+    /// rows and its frontier stay as they were. The entry's own lease, seat
+    /// and storage binding checks ran before this.
+    ///
+    /// The program carries the correction record of the reply that wrote
+    /// it, with the model and repairs its pending step keeps: the record
+    /// commits once, with the checkpoint the resumed step commits, and the
+    /// reply's heal tally moves in that commit (FIX 4411).
+    pub(super) fn take_pending_program<'p>(
         &self,
         config: &EngineExecutorConfig,
         record: &mut CodeRunReplayRecord,
         boundary: &SandboxBoundaryContract,
-    ) -> EngineExecutorResult<Option<ResumedProgram>> {
-        let Some(pending) = record.pending_step.take() else {
-            return Ok(None);
-        };
+        pending: &'p PendingCodeStep,
+    ) -> EngineExecutorResult<ResumedProgram<'p>> {
         let (Ok(bridge_start), Ok(bridge_frontier), Ok(output_frontier)) = (
             usize::try_from(pending.bridge_start),
             usize::try_from(pending.bridge_frontier),
@@ -147,17 +150,21 @@ impl EngineNativeExecutor<'_> {
         };
         let rows = record.bridge_calls.split_off(bridge_start);
         record.invalidate_verb_rows();
-        Ok(Some(ResumedProgram {
+        Ok(ResumedProgram {
             replay: DeadlineReplay::new(rows, pending.guest_calls.clone()),
             program: StepProgram {
                 request_hash: pending.request_hash,
                 script,
                 trailing_speak,
-                // A healed reply counted with the step's first park.
-                healed: false,
+                repairs: pending.repairs,
+                correction: CodeRunCorrectionDraft::accepted(
+                    config.run_id,
+                    pending.step_seq,
+                    &pending.model,
+                    pending.repairs,
+                ),
             },
-            pending,
-        }))
+        })
     }
 
     /// How a slice of a step ends when its deadline or its replay decides
@@ -201,11 +208,13 @@ impl EngineNativeExecutor<'_> {
     /// Parks the step as the run's pending step (FIX 7703): its rows, its
     /// stored bodies and its callable rows join the record, under the
     /// existing custody, beside the step that names them, and the record is
-    /// compared and put in one transaction with the turn's heal tally when
-    /// this is the step's first park. No checkpoint is written, no result is
-    /// bound, and no output, console line or file of the slice is kept: the
-    /// program makes them again when it runs again. A step parked again keeps
-    /// its first park's request, program, speech and frontier start.
+    /// compared and put in one transaction. No checkpoint is written, no
+    /// result is bound, and no output, console line or file of the slice is
+    /// kept: the program makes them again when it runs again. So the park
+    /// writes no correction record and moves no heal tally: the commit of
+    /// the step's checkpoint does both, once (FIX 4411). A step parked again
+    /// keeps its first park's request, program, speech, model, repairs and
+    /// frontier start.
     fn park_pending_step(
         &self,
         config: &EngineExecutorConfig,
@@ -252,24 +261,28 @@ impl EngineNativeExecutor<'_> {
             prepared_identity: slice.prepared_identity,
             guest_abi: slice.guest_abi,
             request_hash: slice.request_hash,
+            model: slice
+                .prior
+                .map_or(&config.model, |prior| &prior.model)
+                .clone(),
+            repairs: slice.prior.map_or(slice.repairs, |prior| prior.repairs),
             determinism: config.determinism,
             trailing_speech,
             park_generation: slice
                 .prior
                 .map_or(0, |prior| prior.park_generation.saturating_add(1)),
         });
-        let healed = slice.healed.then_some(&config.model);
         // A flaky commit converts to success on one identical retry (FIX
         // 1443); a first commit that actually landed fails the retry closed
         // on its generation mismatch instead.
         match self
             .storage
-            .put_code_run_replay_record_if_generation_with_heal(record, expected, healed)
+            .put_code_run_replay_record_if_generation(record, expected)
         {
             Err(error) if matches!(error, Error::Storage(_) | Error::MapFull) => {
                 tracing::warn!("{error:?}: pending step commit hit a storage error; retrying once");
                 self.storage
-                    .put_code_run_replay_record_if_generation_with_heal(record, expected, healed)?;
+                    .put_code_run_replay_record_if_generation(record, expected)?;
             }
             result => {
                 result?;

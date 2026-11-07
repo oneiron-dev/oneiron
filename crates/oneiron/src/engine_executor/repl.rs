@@ -36,13 +36,13 @@ use super::types::{
     ENGINE_EXECUTOR_FALLBACK_NAME, ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorConfig,
     EngineExecutorOutcome, EngineExecutorResult, EngineExecutorStatus, JsCodeModeStep,
 };
-use super::wire::{HealedExecutorReply, heal_executor_text};
+use super::wire::HealedExecutorReply;
 use super::{compaction, types};
 use crate::code_run::{
-    CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunBridgeCall, CodeRunHistoryTurn, CodeRunRawOutput,
-    CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunResultBinding, CodeRunStepCheckpoint,
-    ReaderFoldReceipt, SelfDurableWait, SelfDurableWaitReason, SelfEffect, StepContextCapture,
-    WaitKey,
+    CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunBridgeCall, CodeRunCorrectionDraft,
+    CodeRunHistoryTurn, CodeRunRawOutput, CodeRunReplayGeneration, CodeRunReplayRecord,
+    CodeRunResultBinding, CodeRunStepCheckpoint, ReaderFoldReceipt, SelfDurableWait,
+    SelfDurableWaitReason, SelfEffect, StepContextCapture, WaitKey,
 };
 use crate::code_sandbox::source::{PreparedSource, TranspiledSource, prepare_source};
 use crate::compaction::output::{OutputAffordance, OutputRef, OutputTier, OutputWorkingContext};
@@ -137,9 +137,13 @@ impl EngineNativeExecutor<'_> {
             // A step its deadline stopped runs its stored program again,
             // from the calls it already made, before any new model turn
             // (FIX 7703).
-            let resumed = self.take_pending_program(config, &mut record, &boundary)?;
-            let (program, pending, replay) = match resumed {
-                Some(resumed) => (resumed.program, Some(resumed.pending), Some(resumed.replay)),
+            let pending = record.pending_step.take();
+            let (program, replay) = match &pending {
+                Some(pending) => {
+                    let resumed =
+                        self.take_pending_program(config, &mut record, &boundary, pending)?;
+                    (resumed.program, Some(resumed.replay))
+                }
                 None => match self
                     .generate_step_program(
                         config,
@@ -151,7 +155,7 @@ impl EngineNativeExecutor<'_> {
                     )
                     .await?
                 {
-                    TurnProgram::Generated(program) => (program, None, None),
+                    TurnProgram::Generated(program) => (program, None),
                     TurnProgram::Ended(status) => {
                         return Ok(self.outcome(status, steps_run, record));
                     }
@@ -161,7 +165,8 @@ impl EngineNativeExecutor<'_> {
                 request_hash,
                 script,
                 trailing_speak,
-                healed,
+                repairs,
+                correction,
             } = program;
             // One preparation per program (FIX 8276): a TypeScript program
             // runs as the JavaScript Oxc prints for it, kept beside the
@@ -222,6 +227,7 @@ impl EngineNativeExecutor<'_> {
                 )?
                 .with_file_output_step(completed_steps)
                 .with_skill_executor(&config.model)
+                .with_summary_prompt_package(&config.prompt_package_root)
                 .with_result_share(&self.result_share)
                 .with_callable_checks(CallableChecks::new(self.code_check, completed_steps))
                 .with_deadline_replay(replay);
@@ -244,7 +250,7 @@ impl EngineNativeExecutor<'_> {
                 prepared_identity: prepared.transpiled().map(TranspiledSource::identity),
                 guest_abi: guest_abi_digest(&boundary),
                 trailing_speak: trailing_speak.as_deref(),
-                healed,
+                repairs,
                 prior: pending.as_ref(),
                 ran: step_outcome.is_ok(),
                 cancelled: cancel.is_cancelled(),
@@ -284,7 +290,7 @@ impl EngineNativeExecutor<'_> {
                             callable_rows,
                             durable_wait,
                             format!("Runtime error after host bridge calls: {err}"),
-                            healed,
+                            &correction,
                             config,
                         )?
                         && !cancelled
@@ -330,7 +336,7 @@ impl EngineNativeExecutor<'_> {
                     callable_rows,
                     durable_wait,
                     format!("Host bridge call failed: {failure}"),
-                    healed,
+                    &correction,
                     config,
                 )? {
                     checking.ended(Some(&status));
@@ -376,7 +382,7 @@ impl EngineNativeExecutor<'_> {
                             format!(
                                 "Runtime output recording failed after host bridge calls: {err}"
                             ),
-                            healed,
+                            &correction,
                             config,
                         )?
                     {
@@ -536,8 +542,9 @@ impl EngineNativeExecutor<'_> {
             // transaction. A generation conflict, tally error, or failed
             // commit advances neither; a durable append has already counted.
             // The fold receipts the step's stores computed land in it too,
-            // beside the bindings they describe, and so does the seal of the
-            // code consent wait the step parks on (DOOR-079 1b).
+            // beside the bindings they describe, and so do the reply's
+            // correction record (FIX 4411) and the seal of the code consent
+            // wait the step parks on (DOOR-079 1b).
             let parked = parked_wait(&record, terminal_status.as_ref(), bridge_start);
             // A flaky commit converts to success on one identical retry
             // (FIX 1443): a first commit that actually landed fails the
@@ -547,7 +554,7 @@ impl EngineNativeExecutor<'_> {
                 .put_code_run_replay_record_with_receipts_if_generation(
                     &record,
                     expected_generation,
-                    healed.then_some(&config.model),
+                    &correction,
                     &host.receipts,
                     parked.as_ref(),
                     &context,
@@ -560,7 +567,7 @@ impl EngineNativeExecutor<'_> {
                         .put_code_run_replay_record_with_receipts_if_generation(
                             &record,
                             expected_generation,
-                            healed.then_some(&config.model),
+                            &correction,
                             &host.receipts,
                             parked.as_ref(),
                             &context,

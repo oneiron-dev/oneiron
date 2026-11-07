@@ -4,25 +4,30 @@
 //! The step that runs the program and its commit stay in `repl`.
 
 use super::*;
+use crate::code_run::ExecutorWireRepairs;
 
 /// The program one step runs, with what its commit keeps of the model turn
 /// that wrote it.
-pub(super) struct StepProgram {
+pub(super) struct StepProgram<'m> {
     /// The canonical hash of the model request the program answers.
     pub(super) request_hash: [u8; 32],
     /// The healed program, recorded at the step's script path.
     pub(super) script: String,
     /// The reply's ONE-1686 implicit-speak payload.
     pub(super) trailing_speak: Option<String>,
-    /// Whether the reply needed wire healing (ONE-1929): counted once,
-    /// with the step's first durable append.
-    pub(super) healed: bool,
+    /// The repairs the ONE-1929 normalization made to the reply. A step its
+    /// deadline parks keeps them on its pending step (FIX 7703).
+    pub(super) repairs: ExecutorWireRepairs,
+    /// The reply's correction record (FIX 4411). It commits with the step's
+    /// checkpoint, on every path that commits one, and the reply's heal
+    /// tally moves in that commit, once.
+    pub(super) correction: CodeRunCorrectionDraft<'m>,
 }
 
 /// How one model turn ended: with the program its step runs, or with the
 /// status that ends the entry before any program exists.
-pub(super) enum TurnProgram {
-    Generated(StepProgram),
+pub(super) enum TurnProgram<'m> {
+    Generated(StepProgram<'m>),
     Ended(EngineExecutorStatus),
 }
 
@@ -32,15 +37,15 @@ impl EngineNativeExecutor<'_> {
     /// program healed out of it recorded at the step's script path. A turn
     /// hook's ask that stays pending, or a full window, ends the entry with
     /// its status instead.
-    pub(super) async fn generate_step_program(
+    pub(super) async fn generate_step_program<'c>(
         &mut self,
-        config: &EngineExecutorConfig,
+        config: &'c EngineExecutorConfig,
         record: &mut CodeRunReplayRecord,
         wire_prompt: &str,
         prompt_fingerprint: &str,
         continuation: Option<&ContinuationNote>,
         completed_steps: u64,
-    ) -> EngineExecutorResult<TurnProgram> {
+    ) -> EngineExecutorResult<TurnProgram<'c>> {
         self.land_finished_compaction()?;
         // A turn hook's ask parks the run before the turn, as a call's
         // ask parks the call; a skip or a hidden result ends the entry.
@@ -141,17 +146,27 @@ impl EngineNativeExecutor<'_> {
         record_reply_evidence(&self.storage, record, completed_steps, &response.message)?;
         // ONE-1929: the ONE normalization seam. Only `code` is executed,
         // staged, hashed, or replayed; the reply's own console bytes are
-        // already gone, and `trailing_speak` belongs to ONE-1686.
-        if response.finish_reason != crate::FinishReason::Stop {
-            return Err(
-                Error::InvalidClaimBody("executor LLM response did not finish cleanly").into(),
-            );
-        }
+        // already gone, and `trailing_speak` belongs to ONE-1686. A reply
+        // the seam refuses keeps its correction record before its error
+        // returns (FIX 4412).
         let HealedExecutorReply {
             code: script,
             trailing_speak,
             repairs,
-        } = heal_executor_text(&execution_text)?;
+        } = self.heal_reply_or_record_rejection(
+            config,
+            completed_steps,
+            &response,
+            &execution_text,
+        )?;
+        // The accepted reply's correction record commits with the step's
+        // checkpoint, on every path that commits one (FIX 4411).
+        let correction = CodeRunCorrectionDraft::accepted(
+            config.run_id,
+            completed_steps,
+            &config.model,
+            repairs,
+        );
         record_script_output(
             &self.storage,
             record,
@@ -162,7 +177,8 @@ impl EngineNativeExecutor<'_> {
             request_hash,
             script,
             trailing_speak,
-            healed: repairs.healed(),
+            repairs,
+            correction,
         }))
     }
 }
