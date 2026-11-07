@@ -35,6 +35,7 @@
 //! landed.
 
 pub(crate) mod carried;
+pub(crate) mod checkpoint;
 mod obligation;
 mod replica;
 mod wake;
