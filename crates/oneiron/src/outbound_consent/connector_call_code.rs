@@ -426,7 +426,7 @@ impl Vault {
             read_code_consent_wait_in_txn(self, &txn, wait_id)?.map(|row| {
                 (
                     row.approved_unsettled(),
-                    original_authority_holds_in_txn(self, &txn, &row.binding),
+                    original_authority_holds_in_txn(self, &txn, &row),
                     row,
                 )
             })
@@ -443,18 +443,37 @@ impl Vault {
                 return Ok((held, pending.source_rows));
             }
             if !authority_holds {
-                self.with_write_txn(|txn| {
-                    refuse_code_consent_wait_in_txn(
-                        self,
-                        txn,
-                        wait_id,
-                        &[CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED],
-                    )
+                let refused = self.with_write_txn(|txn| {
+                    let current = read_code_consent_wait_in_txn(self, txn, wait_id)?;
+                    if current.as_ref().is_some_and(|current| {
+                        current.approved_unsettled()
+                            && current.active_credential() == row.active_credential()
+                    }) {
+                        refuse_code_consent_wait_in_txn(
+                            self,
+                            txn,
+                            wait_id,
+                            &[CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED],
+                        )?;
+                        Ok(true)
+                    } else {
+                        Ok(false)
+                    }
                 })?;
-                self.signal_code_owned_call_asks();
-                let stopped = ConnectorCallOutcome::Refused {
-                    decision_ref: None,
-                    reasons: vec![CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED.to_owned()],
+                let stopped = if refused {
+                    self.signal_code_owned_call_asks();
+                    ConnectorCallOutcome::Refused {
+                        decision_ref: None,
+                        reasons: vec![CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED.to_owned()],
+                    }
+                } else {
+                    // A newer credential or settlement won the writer race.
+                    ConnectorCallOutcome::Held {
+                        call_ref: *call_ref,
+                        decision_ref: None,
+                        reasons: vec![CODE_WAIT_SETTLING.to_owned()],
+                        approval_digest: None,
+                    }
                 };
                 return Ok((stopped, pending.source_rows));
             }
@@ -535,13 +554,16 @@ impl Vault {
     pub fn refuse_answered_code_consent_wait(
         &self,
         wait_id: EntityId,
+        expected: &crate::code_run::CodeConsentSavedCredential,
         refusal: VerbAskRefusal,
     ) -> Result<CodeConsentWaitView, IntentLedgerError> {
         if refusal.names_credential() {
             let code = refusal.code().to_ascii_lowercase();
             self.with_write_txn(|txn| {
-                let answered = read_code_consent_wait_in_txn(self, txn, wait_id)?
-                    .is_some_and(|row| row.approved_unsettled());
+                let answered =
+                    read_code_consent_wait_in_txn(self, txn, wait_id)?.is_some_and(|row| {
+                        row.approved_unsettled() && row.active_credential() == Some(expected)
+                    });
                 if answered {
                     refuse_code_consent_wait_in_txn(
                         self,

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1289 facade rows, 4672 declarations.
-Inputs: 1218 of 1289 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1118 of 1289 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1291 facade rows, 4676 declarations.
+Inputs: 1220 of 1291 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1120 of 1291 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -12988,6 +12988,37 @@ class CodeWaitTarget(TypedDict):
     generation: int
     step_hash: str
     effect_digest: str
+class CodeWaitRebindPrepareRequest(TypedDict):
+    target: CodeWaitTarget
+    revision: int
+class CodeWaitRebindPrepared(TypedDict):
+    target: CodeWaitTarget
+    proposal_ref: EntityId
+    revision: int
+    predecessor: str
+    successor: str
+class CodeWaitRebindRequest(TypedDict):
+    target: CodeWaitTarget
+    revision: int
+    proposal_ref: EntityId
+class CodeWaitRebindReceipt(TypedDict):
+    target: CodeWaitTarget
+    proposal_ref: EntityId
+    prepared_revision: int
+    predecessor: str
+    successor: str
+    binding_digest: str
+    effect_digest: str
+    previous_effect_digest: str
+    intent_id: str
+    original_approval_ref: str
+    previous_marker_ref: str
+    prior_rebind_ref: NotRequired[str | None]
+    owner_ref: EntityId
+    authentication_ref: str
+    receipt_ref: str
+    confirmed_at_ms: int
+    already_rebound: bool
 CodeWaitChoice = Literal["approve_once", "approve_and_stop_asking", "deny"]
 CodeWaitRememberScope = Literal["connection", "asking_lineage"]
 class CodeWaitResolveRequest(TypedDict):
@@ -13025,6 +13056,7 @@ class CodeWaitConsumptionView(TypedDict):
 class CodeWaitReceiptView(TypedDict):
     target: CodeWaitTarget
     state: CodeWaitState
+    revision: int
     verb: str
     connector: str
     tool: str
@@ -13036,6 +13068,8 @@ class CodeWaitReceiptView(TypedDict):
     settlement: NotRequired[CodeWaitSettlementView | None]
     consumption: NotRequired[CodeWaitConsumptionView | None]
     already_answered: bool
+    rebind_proposal: NotRequired[CodeWaitRebindPrepared | None]
+    rebinds: list[CodeWaitRebindReceipt]
 class CodeWaitReceiptRequest(TypedDict):
     run_id: EntityId
     wait_id: EntityId

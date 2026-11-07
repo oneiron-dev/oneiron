@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1289 facade rows, 4668 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1241.
+// UniFFI census: 1291 facade rows, 4672 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1243.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -40918,6 +40918,86 @@ pub struct CodeWaitTarget {
     pub effect_digest: String,
 }
 
+/// `oneiron::memory::code_wait_doors::types::CodeWaitRebindPrepareRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeWaitRebindPrepareRequest {
+    #[serde(rename = "target")]
+    pub target: CodeWaitTarget,
+    #[serde(rename = "revision")]
+    pub revision: u64,
+}
+
+/// `oneiron::memory::code_wait_doors::types::CodeWaitRebindPrepared`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeWaitRebindPrepared {
+    #[serde(rename = "target")]
+    pub target: CodeWaitTarget,
+    #[serde(rename = "proposal_ref")]
+    pub proposal_ref: String,
+    #[serde(rename = "revision")]
+    pub revision: u64,
+    #[serde(rename = "predecessor")]
+    pub predecessor: String,
+    #[serde(rename = "successor")]
+    pub successor: String,
+}
+
+/// `oneiron::memory::code_wait_doors::types::CodeWaitRebindRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeWaitRebindRequest {
+    #[serde(rename = "target")]
+    pub target: CodeWaitTarget,
+    #[serde(rename = "revision")]
+    pub revision: u64,
+    #[serde(rename = "proposal_ref")]
+    pub proposal_ref: String,
+}
+
+/// `oneiron::memory::code_wait_doors::types::CodeWaitRebindReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeWaitRebindReceipt {
+    #[serde(rename = "target")]
+    pub target: CodeWaitTarget,
+    #[serde(rename = "proposal_ref")]
+    pub proposal_ref: String,
+    #[serde(rename = "prepared_revision")]
+    pub prepared_revision: u64,
+    #[serde(rename = "predecessor")]
+    pub predecessor: String,
+    #[serde(rename = "successor")]
+    pub successor: String,
+    #[serde(rename = "binding_digest")]
+    pub binding_digest: String,
+    #[serde(rename = "effect_digest")]
+    pub effect_digest: String,
+    #[serde(rename = "previous_effect_digest")]
+    pub previous_effect_digest: String,
+    #[serde(rename = "intent_id")]
+    pub intent_id: String,
+    #[serde(rename = "original_approval_ref")]
+    pub original_approval_ref: String,
+    #[serde(rename = "previous_marker_ref")]
+    pub previous_marker_ref: String,
+    #[serde(
+        rename = "prior_rebind_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub prior_rebind_ref: Option<String>,
+    #[serde(rename = "owner_ref")]
+    pub owner_ref: String,
+    #[serde(rename = "authentication_ref")]
+    pub authentication_ref: String,
+    #[serde(rename = "receipt_ref")]
+    pub receipt_ref: String,
+    #[serde(rename = "confirmed_at_ms")]
+    pub confirmed_at_ms: u64,
+    #[serde(rename = "already_rebound")]
+    pub already_rebound: bool,
+}
+
 /// `oneiron::memory::code_wait_doors::types::CodeWaitChoice`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum CodeWaitChoice {
@@ -41074,6 +41154,8 @@ pub struct CodeWaitReceiptView {
     pub target: CodeWaitTarget,
     #[serde(rename = "state")]
     pub state: CodeWaitState,
+    #[serde(rename = "revision")]
+    pub revision: u64,
     #[serde(rename = "verb")]
     pub verb: String,
     #[serde(rename = "connector")]
@@ -41104,6 +41186,14 @@ pub struct CodeWaitReceiptView {
     pub consumption: Option<CodeWaitConsumptionView>,
     #[serde(rename = "already_answered")]
     pub already_answered: bool,
+    #[serde(
+        rename = "rebind_proposal",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub rebind_proposal: Option<CodeWaitRebindPrepared>,
+    #[serde(rename = "rebinds")]
+    pub rebinds: Vec<CodeWaitRebindReceipt>,
 }
 
 /// `oneiron::memory::code_wait_doors::types::CodeWaitReceiptRequest`.

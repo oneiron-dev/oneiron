@@ -28,6 +28,8 @@ mod binding;
 mod browser;
 mod host;
 mod ledger;
+mod rebind;
+mod rebind_types;
 mod replay;
 mod settle;
 mod types;
@@ -58,6 +60,10 @@ pub use self::types::{
 pub(crate) use self::types::{
     CodeConsentCallSite, CodeConsentConnectorCall, CodeConsentPendingEffect, CodeConsentPrincipal,
     CodeConsentRememberOffer, CodeConsentWaitRow,
+};
+
+pub(crate) use self::rebind_types::{
+    CodeConsentRebind, CodeConsentRebindProposal, CodeConsentRebindTarget,
 };
 
 use crate::EntityId;

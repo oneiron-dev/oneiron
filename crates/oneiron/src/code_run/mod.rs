@@ -88,7 +88,8 @@ pub use self::consent_wait::{
 };
 pub(crate) use self::consent_wait::{
     CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED, CodeConsentCallSite, CodeConsentConnectorCall,
-    CodeConsentDraft, CodeConsentPendingEffect, CodeConsentPrincipal, CodeConsentRememberOffer,
+    CodeConsentDraft, CodeConsentPendingEffect, CodeConsentPrincipal, CodeConsentRebind,
+    CodeConsentRebindProposal, CodeConsentRebindTarget, CodeConsentRememberOffer,
     CodeConsentResume, CodeConsentWaitRow, ParkedWait, attach_code_consent_ask_in_txn,
     code_consent_admission_in_txn, code_consent_resume_evidence, consume_code_consent_wait_in_txn,
     mint_code_consent_wait_in_txn, offered_choices, original_authority_holds_in_txn,

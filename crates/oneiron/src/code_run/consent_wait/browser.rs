@@ -353,7 +353,7 @@ impl Vault {
                 settle_browser_in_txn(self, txn, row, unknown)?;
                 return Ok(None);
             }
-            if !original_authority_holds_in_txn(self, txn, &row.binding) {
+            if !original_authority_holds_in_txn(self, txn, &row) {
                 refuse_browser_wait_in_txn(
                     self,
                     txn,

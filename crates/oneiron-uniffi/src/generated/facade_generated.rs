@@ -3506,6 +3506,16 @@ export_facade! {
     let output = client.vault_code_type_diagnostics(&input)?;
     crate::codec::lift_record("vault.code.type_diagnostics", &output)
 };
+"vault.code.waits.rebind_prepare" => fn vault_code_waits_rebind_prepare(&self, input: CodeWaitRebindPrepareRequest) -> CodeWaitRebindPrepared = |client| {
+    let input: oneiron::memory::code_wait_doors::CodeWaitRebindPrepareRequest = crate::codec::lower_record("vault.code.waits.rebind_prepare", input)?;
+    let output = client.vault_code_waits_rebind_prepare(&input)?;
+    crate::codec::lift_record("vault.code.waits.rebind_prepare", &output)
+};
+"vault.code.waits.rebind" => fn vault_code_waits_rebind(&self, input: CodeWaitRebindRequest) -> CodeWaitRebindReceipt = |client| {
+    let input: oneiron::memory::code_wait_doors::CodeWaitRebindRequest = crate::codec::lower_record("vault.code.waits.rebind", input)?;
+    let output = client.vault_code_waits_rebind(&input)?;
+    crate::codec::lift_record("vault.code.waits.rebind", &output)
+};
 "vault.code.waits.resolve" => fn vault_code_waits_resolve(&self, input: CodeWaitResolveRequest) -> CodeWaitReceiptView = |client| {
     let input: oneiron::memory::code_wait_doors::CodeWaitResolveRequest = crate::codec::lower_record("vault.code.waits.resolve", input)?;
     let output = client.vault_code_waits_resolve(&input)?;
