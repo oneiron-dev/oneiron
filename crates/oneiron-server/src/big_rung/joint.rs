@@ -45,7 +45,13 @@ impl BigModel {
         call: &DecisionCall<'_>,
         route: &ResolvedDecisionRoute,
     ) -> Option<JointRead> {
-        let paired = self.current_paired()?;
+        let mut paired = self.current_paired()?;
+        if let Some(label) = call
+            .labels
+            .and_then(|labels| labels.question_label(paired.id))
+        {
+            paired.text = format!("{label}: {}", paired.text);
+        }
         let options = match &call.question.contract {
             AnswerContract::Noul => vec!["yes".to_owned(), "no".to_owned()],
             AnswerContract::Choice { options } if options.len() <= MAX_JOINT_OPTIONS => {

@@ -5,9 +5,11 @@
 //! ([`crate::EgressRelay::host_net_floor`]): a socket's entry and its writer
 //! for as long as the socket lives, and each relayed datagram's own socket
 //! and worker until its blocking receive ends. The floor is the host's, never
-//! a second count of this crate's: a served engine lends the descriptor floor
-//! its listener admits connections by, so guest relays and connections share
-//! one bound.
+//! a second count of this crate's: the engine's is its process's one
+//! descriptor line, the line a served engine's listener admits connections
+//! by, so guest relays and connections share one bound, served or not (FIX
+//! 6299). A relay that reaches nothing still charges it: its guest's socket
+//! entries are host descriptors all the same (FIX 6300).
 //!
 //! Past the floor a guest is back-pressured, never refused: the work waits
 //! for the floor, or, where the guest asked not to wait, its call fails with
@@ -59,8 +61,9 @@ impl HostNetPermit {
     }
 }
 
-/// A floor that charges nothing: for a relay that reaches nothing, or whose
-/// host work a floor on the other side of a channel already charges.
+/// A floor that charges nothing: for a relay whose host work a floor on the
+/// other side of a channel already charges, such as a VM's own descriptors
+/// and threads, which the host's relay charges on its side.
 pub struct UnmeteredFloor;
 
 impl HostNetFloor for UnmeteredFloor {
