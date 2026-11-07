@@ -179,6 +179,7 @@ pub struct LiveCompactionFork {
     writer: EntityId,
     source: SelfCompactionSource,
     room: u64,
+    prefix_sources: Vec<EntityId>,
 }
 
 impl LiveCompactionFork {
@@ -187,12 +188,16 @@ impl LiveCompactionFork {
     /// left beside it for the compaction's own input. A capture is always
     /// the resolved live fork: a row on `auto` resolved to it at the
     /// breakpoint (FIX 6029), and a capture never carries `auto` itself.
+    /// `prefix_sources` is every row the request was read from, witnessed
+    /// whole by its host (FIX 9463): a summary the fork writes derives from
+    /// each, so a request read from rows no host witnessed is never captured.
     #[must_use]
     pub const fn capture(
         request: LlmRequest,
         rung: LiveForkRung,
         writer: EntityId,
         room: u64,
+        prefix_sources: Vec<EntityId>,
     ) -> Self {
         Self {
             request,
@@ -200,6 +205,7 @@ impl LiveCompactionFork {
             writer,
             source: SelfCompactionSource::LiveFork,
             room,
+            prefix_sources,
         }
     }
 
@@ -235,6 +241,14 @@ impl LiveCompactionFork {
     #[must_use]
     pub const fn input_room(&self) -> u64 {
         self.room
+    }
+
+    /// Every row the captured request was read from (FIX 9463): what a
+    /// summary and a paid call of its flight derive from beside their
+    /// window and the home they wore.
+    #[must_use]
+    pub fn prefix_sources(&self) -> &[EntityId] {
+        &self.prefix_sources
     }
 }
 

@@ -30,6 +30,10 @@ pub struct RemoteTaskHandle {
     pub id: String,
     /// The provider's polling hint, in seconds, when it gave one.
     pub poll_after_secs: Option<u64>,
+    /// How the served host polls the task (FIX 11023); `None` when the
+    /// send's credential cannot be presented again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poll: Option<super::remote_task_poll::RemoteTaskPoll>,
 }
 
 impl fmt::Debug for RemoteTaskHandle {
@@ -37,6 +41,7 @@ impl fmt::Debug for RemoteTaskHandle {
         f.debug_struct("RemoteTaskHandle")
             .field("id", &format_args!("[{} bytes redacted]", self.id.len()))
             .field("poll_after_secs", &self.poll_after_secs)
+            .field("poll", &self.poll)
             .finish()
     }
 }

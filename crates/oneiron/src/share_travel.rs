@@ -18,6 +18,7 @@ use crate::{Result, Vault};
 pub mod agent_pack;
 mod agent_pack_export;
 mod copy;
+mod guest_window;
 mod pack_notice;
 mod reader_prompts;
 
@@ -27,6 +28,7 @@ pub use self::agent_pack::{
 };
 pub use self::agent_pack_export::{AgentPackExport, AgentPackExportFile, AgentPackExportRequest};
 pub use self::copy::{CopyRefs, CopyTravelChoice, effective_copy_refs};
+pub use self::guest_window::GuestWindowTravelNote;
 pub use self::pack_notice::{
     AGENT_PACK_IMPORT_DOUBLE_CHECK, OWNER_PACK_EXPORT_RECIPIENT_NOTICE, PACK_NOTICE_AUDIENCE,
     PACK_NOTICE_CHANNEL, PACK_NOTICE_VOICE, PACK_NOTICE_WORDING, PackNoticeWording,
@@ -73,6 +75,18 @@ pub enum ExportTarget {
         agent_ref: String,
         version: String,
         omitted: Vec<OmittedKnowledge>,
+    },
+    /// A guest window prepared for export, not a peer-delivery acknowledgement.
+    GuestWindow {
+        grant_ref: String,
+        member_ref: String,
+        scope: crate::federation::FederationGrantScope,
+        window_key: String,
+        /// Local source bindings retained for destination-aware receipt reads.
+        world_ref: EntityId,
+        source_rows: Vec<EntityId>,
+        /// Actual transport row keys after projection, with field names only.
+        rows: std::collections::BTreeMap<String, Vec<BornWithField>>,
     },
 }
 
@@ -130,6 +144,14 @@ impl ExportTarget {
                 }
                 fields
             }
+            Self::GuestWindow {
+                grant_ref,
+                member_ref,
+                scope,
+                window_key,
+                rows,
+                ..
+            } => guest_window::receipt_fields(grant_ref, member_ref, *scope, window_key, rows),
         }
     }
 }
@@ -142,7 +164,8 @@ pub struct ExportTravel {
     pub at: u64,
     pub target: ExportTarget,
     /// The exported copy's digest, lowercase hex: BLAKE3 of an artifact
-    /// file, the canonical tree hash of an agent pack's folder.
+    /// file, the canonical tree hash of an agent pack's folder, or a guest
+    /// window's final released update bytes.
     pub content_hash: String,
     /// The exporting actor as hex.
     pub by: String,
@@ -210,7 +233,12 @@ pub(crate) fn export_travel_receipts(
             occurred_at: travel.at,
             actor: Some(travel.by.clone()),
             on_behalf_of: None,
-            outcome: "exported".to_owned(),
+            outcome: if matches!(travel.target, ExportTarget::GuestWindow { .. }) {
+                "prepared"
+            } else {
+                "exported"
+            }
+            .to_owned(),
             job_ref: None,
             trigger_ref: None,
             policy_trace: Vec::new(),
@@ -233,6 +261,29 @@ pub(crate) fn export_travel_receipts(
         }
     }
     Ok(receipts)
+}
+
+/// The local source bindings of one kept export travel row. These stay out
+/// of its public fields: transport row aliases do not disclose source ids.
+pub(crate) fn export_travel_source_rows(
+    vault: &Vault,
+    sequence: u64,
+) -> Result<Option<Vec<EntityId>>> {
+    let txn = vault.store.env.read_txn()?;
+    let Some(travel) = EXPORT_TRAVEL.get(&vault.store, &txn, &sequence)? else {
+        return Ok(None);
+    };
+    Ok(Some(match travel.target {
+        ExportTarget::GuestWindow {
+            world_ref,
+            mut source_rows,
+            ..
+        } => {
+            source_rows.push(world_ref);
+            source_rows
+        }
+        _ => Vec::new(),
+    }))
 }
 
 /// The born-with text `choice` lets travel with `entity`, read in the door's
