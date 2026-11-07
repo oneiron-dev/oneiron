@@ -13,6 +13,8 @@ mod bundle_access;
 mod bundle_payload;
 mod bundle_stage;
 mod bundle_turn;
+pub(crate) mod cache_worlds;
+pub use cache_worlds::CachedItemWorlds;
 mod content_world;
 mod custody;
 mod directives;
@@ -115,6 +117,7 @@ pub use policy::{
     DeviceSyncPreference, effective_residence_mode, load_device_sync_preference,
     local_is_elected_home, resolve_residence_mode, set_device_sync_preference, synced_as_replica,
 };
+pub(crate) use prune::checkpoint_read_cache_keys;
 pub(crate) use prune::demote_resident_window;
 pub(crate) use prune::erase_item_caches_in_txn;
 pub(crate) use prune::prune_thin_items_in_txn;
