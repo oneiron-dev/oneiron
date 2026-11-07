@@ -280,6 +280,7 @@ impl PolicyDecisions {
                     jurisdiction: policy.jurisdiction.clone(),
                     policy_version: policy.version.clone(),
                     row_ref: registered.row_ref.clone(),
+                    basis: registered.basis.clone(),
                 }
             }
         };

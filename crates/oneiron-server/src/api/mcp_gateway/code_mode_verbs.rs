@@ -149,6 +149,10 @@ pub(crate) struct McpCodeModeVerbs {
     /// built: each verb runs on a spawned task, and a live-run hold made
     /// there reaches the call's receipt only through this (FIX 10938).
     collector: Option<std::sync::mpsc::Sender<oneiron::receipt::CallAttemptWitness>>,
+    /// The serving call's admission observer, taken where the door is built
+    /// as its collector is: a nested verb's wait in a line shows on that
+    /// call's admission receipt, a skill call's among them (FIX 4735).
+    observer: Option<Arc<dyn oneiron::work_line::LineObserver>>,
 }
 
 /// One run's guests: its browser, when the host has a `[browser]` guest to
