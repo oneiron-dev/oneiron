@@ -11295,7 +11295,7 @@
      "path": "src/calendar/claims/codec.rs",
      "purpose": "Calendar claim validation dispatch plus MessagePack encode/decode and field helpers",
      "surface": {
-      "crate-vis": 44,
+      "crate-vis": 47,
       "fn": 2
      }
     },
@@ -11342,6 +11342,7 @@
       "CalendarOrigin",
       "CalendarPassportDirection",
       "CalendarPassportPresence",
+      "CalendarPassportSource",
       "CalendarPassportValue",
       "CalendarSeriesExceptionValue",
       "CalendarSeriesMasterValue",
@@ -11356,9 +11357,10 @@
      "path": "src/calendar/claims/values.rs",
      "purpose": "Calendar claim value types with their wire-token impls",
      "surface": {
+      "crate-vis": 1,
       "enum": 7,
       "fn": 16,
-      "struct": 8
+      "struct": 9
      }
     },
     {
@@ -31304,7 +31306,7 @@
      "purpose": "The Coach's diagnosis of a model finding's issue (OF-418 L3; ARCH-0066 §4, §6)",
      "surface": {
       "const": 1,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 2,
       "re-export": 2,
@@ -38332,6 +38334,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/pending_act/owner_change_wait.rs",
+     "purpose": "The vault's common owner-change wait: one scalar, not per-act rows",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -39829,7 +39842,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 127
+      "crate-vis": 128
      }
     },
     {
@@ -54469,7 +54482,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 1,
-      "fn": 7,
+      "fn": 8,
       "re-export": 1,
       "struct": 5
      }
@@ -59337,7 +59350,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/outbound_intent_ledger/store.rs",
@@ -70966,20 +70979,55 @@
      "path": "src/skill_hub/http_fetch.rs",
      "purpose": "Generic bounded static HTTP index",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1,
+      "re-export": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ClawHubSearchHit",
+      "ClawHubSearchOwner",
+      "ClawHubSearchReply"
+     ],
+     "path": "src/skill_hub/http_fetch/clawhub.rs",
+     "purpose": "Public ClawHub-compatible search",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ClawHubGitHubHandoff"
+     ],
+     "path": "src/skill_hub/http_fetch/clawhub_download.rs",
+     "purpose": "Owner-selected ClawHub bytes",
+     "surface": {
+      "crate-vis": 2,
       "struct": 1
      }
     },
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "ClawHubImportReply",
+      "ClawHubImportRequest"
+     ],
      "path": "src/skill_hub/hub_owner.rs",
      "purpose": "Served hub skill doors (OF-213): the owner imports a skill from a configured hub ref, refetches one at its…",
      "surface": {
       "crate-vis": 4,
-      "fn": 3
+      "enum": 1,
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -71081,7 +71129,7 @@
      "surface": {
       "crate-vis": 21,
       "mod": 2,
-      "re-export": 22
+      "re-export": 24
      }
     },
     {
@@ -86844,7 +86892,7 @@
      "path": "src/vault/search_retrieval.rs",
      "purpose": "Vault text and vector search, batch and query builders, and retrieval telemetry",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 29
      }
     },
@@ -88236,6 +88284,8 @@
       "FilesSourceConvertRequest",
       "FilesSourceDetachAnswer",
       "FilesSourceDetachRequest",
+      "FilesSourceExcludeAnswer",
+      "FilesSourceExcludeRequest",
       "FilesSourceFiles",
       "FilesSourceFilesRequest",
       "FilesSourceList",
@@ -88247,9 +88297,10 @@
      "path": "src/verbs/files.rs",
      "purpose": "The inputs and answers of the Files world's source rows (FIX 6942): `vault.files.sources.attach`…",
      "surface": {
+      "const": 2,
       "enum": 1,
-      "fn": 10,
-      "struct": 18
+      "fn": 12,
+      "struct": 20
      }
     },
     {
@@ -88294,7 +88345,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1325
+      "fn": 1328
      }
     },
     {
@@ -88508,6 +88559,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ClawHubSearchRequest",
       "HookGrantRequest",
       "HookGrantSetRequest",
       "HookGrantView",
@@ -88541,8 +88593,8 @@
      "surface": {
       "crate-vis": 1,
       "enum": 2,
-      "fn": 21,
-      "struct": 25
+      "fn": 23,
+      "struct": 26
      }
     },
     {
@@ -94771,7 +94823,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 75,
+     "files": 76,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -95450,7 +95502,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 103,
+     "files": 105,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -95737,9 +95789,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 196,
+   "over_bar": 197,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6780,
+   "source_files": 6783,
    "test_files": 895
   },
   "oneiron-android": {
@@ -110627,7 +110679,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1293
+      "fn": 1296
      }
     },
     {
@@ -112420,7 +112472,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1294
+      "fn": 1297
      }
     },
     {
@@ -115066,7 +115118,7 @@
      "path": "src/ai_host/shadow_runner/arm_store.rs",
      "purpose": "A shadow arm's bodies at its host (PR-S1), kept for the caller under an opaque lease: one directory per arm…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -117859,7 +117911,7 @@
      "path": "src/api/facade/files_doors.rs",
      "purpose": "The host doors of the Files world's source rows (FIX 6942): `vault.files.sources.attach`, `.convert`…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -118229,7 +118281,7 @@
      "path": "src/api/facade/hub_doors.rs",
      "purpose": "Owner-proof facade doors for configured hubs and pinned foreign imports",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 22
      }
     },
     {
@@ -146155,6 +146207,7 @@
       "CalendarPassportPresence",
       "CalendarPassportReadRequest",
       "CalendarPassportRevision",
+      "CalendarPassportSource",
       "CalendarPassportValue",
       "CalendarRangeDto",
       "CalendarReadRequest",
@@ -146338,6 +146391,13 @@
       "ClaimSettlementRevert",
       "ClaimSettlementVerdict",
       "ClaimSource",
+      "ClawHubGitHubHandoff",
+      "ClawHubImportReply",
+      "ClawHubImportRequest",
+      "ClawHubSearchHit",
+      "ClawHubSearchOwner",
+      "ClawHubSearchReply",
+      "ClawHubSearchRequest",
       "CleanupAcceptEffect",
       "CleanupCandidate",
       "CleanupDecideRequest",
@@ -147351,6 +147411,8 @@
       "FilesSourceConvertRequest",
       "FilesSourceDetachAnswer",
       "FilesSourceDetachRequest",
+      "FilesSourceExcludeAnswer",
+      "FilesSourceExcludeRequest",
       "FilesSourceFiles",
       "FilesSourceFilesRequest",
       "FilesSourceList",
@@ -150385,8 +150447,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1153,
-      "struct": 3528
+      "enum": 1155,
+      "struct": 3536
      }
     },
     {
