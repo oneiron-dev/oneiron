@@ -150,3 +150,23 @@ Managed stop wakes queued capture waiters and shuts all registered stream
 clones before the existing all-socket shutdown and all-worker join. A capture
 already borrowing source must return before its worker can finish. Service
 stop is not authority release, a complete clone or permission to wipe.
+
+## On-record message source
+
+The order can name exact stored MESSAGE entities (`CaptureScope::Messages`,
+strictly increasing 16-byte ids). Each id must be a stored MESSAGE row; a
+missing id, or an id whose row is not a MESSAGE, fails the capture before its
+summary, so no acknowledgement can claim it. For each message, in id order, the
+stream carries its exact entity row (component 8), then its document head and
+every stored row and update of that document slot (component 9), then every
+stored outgoing edge row (component 10), all copied as stored. Every component
+of one message carries the BLAKE3 of its entity row as its revision. The
+summary's `messages` count is the selected id count; `decisions`,
+`live_sessions` and `live_bodies` are zero.
+
+The collector takes the custody read guard before its source writer, as a
+gate capture does, and holds both until the exact HOST acknowledgement; the
+source transaction writes nothing and aborts. Result-attachment bodies, assets
+and model-call records are not part of this extent, and messages stored after
+the request are never included: only an explicit prospective scope may add
+them.
