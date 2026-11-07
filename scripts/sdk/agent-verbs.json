@@ -3414,7 +3414,7 @@
     },
     {
       "name": "vault.weave.item.wrong",
-      "description": "A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays.",
+      "description": "A person labels a claim, project, budget or sieve audit item in their own lens as wrong; the label teaches the loops and the record stays.",
       "input": "crate::claim::WeaveWrongItemRequest",
       "output": "crate::claim::WeaveItemCorrectionView",
       "call": "memory.weave_wrong_item(None, &memory.embedded_owner(\"vault.weave.item.wrong\")?, &input)?",
@@ -3429,7 +3429,7 @@
     },
     {
       "name": "vault.weave.owner.item.wrong",
-      "description": "The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays.",
+      "description": "The owner labels a claim, project, budget or sieve audit item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays.",
       "input": "crate::claim::WeaveWrongItemRequest",
       "output": "crate::claim::WeaveItemCorrectionView",
       "call": "memory.weave_owner_wrong_item(&memory.embedded_owner(\"vault.weave.owner.item.wrong\")?, &input)?",
@@ -10872,7 +10872,7 @@
     },
     {
       "name": "execute_code",
-      "description": "Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal.",
+      "description": "Run foreign JavaScript or TypeScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal.",
       "input": "crate::memory::foreign_code::ForeignCodeRunRequest",
       "output": "crate::memory::foreign_code::ForeignCodeRunResult",
       "call": "crate::task_verb::sdk::host_only(memory, \"execute_code\", &input)?",
@@ -14051,6 +14051,20 @@
       "scope": "Write",
       "mcp_fields": {
         "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.leave",
+      "description": "Ends a person's current room membership: their own leave or their principal's, or the vault owner's removal; saving that rode on it stops, and a later vault.rooms.join opens a new membership.",
+      "input": "crate::workspace_roster::RoomLeaveRequest",
+      "output": "crate::workspace_roster::RoomLeaveOutcome",
+      "call": "memory.rooms_leave(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$",
+        "room_ref": "=room"
       },
       "mcp_scope": "unrestricted",
       "section": false
