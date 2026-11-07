@@ -178,7 +178,7 @@ pub use thing_agent::{
     ThingPortRequest, ThingProposalRef,
 };
 pub(crate) use turn_text::compaction_span::{
-    ConversationSpanRead, conversation_span_text, conversation_span_text_in,
+    ConversationSpanRead, conversation_span_text, conversation_span_text_in, scoped_turn_text_in,
 };
 pub(crate) use turn_text::{
     TurnText, cited_evidence_bytes, dreamer_may_read_messages_in, dreamer_may_read_turns_in,
