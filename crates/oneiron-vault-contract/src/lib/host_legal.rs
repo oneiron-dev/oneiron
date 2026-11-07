@@ -18,8 +18,9 @@ pub struct LiveSessionTarget {
     pub instance: [u8; 16],
 }
 
-/// Identity kept INSIDE an encrypted descriptor. Gate decisions and live
-/// session entries are separate source families, not interchangeable ids.
+/// Identity kept INSIDE an encrypted descriptor. Gate decisions, live
+/// session entries and on-record messages are separate source families, not
+/// interchangeable ids.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(
     tag = "family",
@@ -30,6 +31,8 @@ pub struct LiveSessionTarget {
 pub enum CaptureSource {
     GateDecision([u8; 16]),
     LiveSession(LiveSessionTarget),
+    /// One stored on-record MESSAGE entity, by its 16-byte id.
+    Message([u8; 16]),
 }
 
 /// Exact native source family chosen by the already admitted HOST order.
@@ -39,6 +42,23 @@ pub enum CaptureScope {
     AllClaimFreeGateDecisions,
     GateDecisions(Vec<[u8; 16]>),
     LiveSession(LiveSessionTarget),
+    /// Exact stored on-record MESSAGE entities, strictly increasing ids. Each
+    /// must be a stored MESSAGE row; it is copied with its document rows and
+    /// its outgoing edge rows. Messages stored later are never included.
+    Messages(Vec<[u8; 16]>),
+    /// New on-record messages, the order's explicit prospective permission:
+    /// each new base MESSAGE row the selector covers is sealed to this order
+    /// when it lands, while the order stands and before its `ends_at`. No
+    /// other scope ever captures a message stored after its request.
+    ProspectiveMessages(MessageSelector),
+}
+
+/// Which new on-record messages a prospective order covers. Closed; a new
+/// selector is a new wire tag.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MessageSelector {
+    /// Every new base on-record MESSAGE row of this vault.
+    Vault,
 }
 
 impl CaptureScope {
@@ -46,7 +66,7 @@ impl CaptureScope {
         match self {
             Self::AllClaimFreeGateDecisions => true,
             Self::GateDecisions(ids) => ids.binary_search(decision).is_ok(),
-            Self::LiveSession(_) => false,
+            Self::LiveSession(_) | Self::Messages(_) | Self::ProspectiveMessages(_) => false,
         }
     }
 
@@ -70,6 +90,18 @@ impl CaptureScope {
                 out.write_all(target.session_ref.as_bytes())?;
                 out.write_all(&target.instance)
             }
+            Self::Messages(ids) => {
+                if !ids.windows(2).all(|pair| pair[0] < pair[1]) {
+                    return Err(invalid("legal capture message order"));
+                }
+                out.write_all(&[4])?;
+                out.write_all(&(ids.len() as u64).to_be_bytes())?;
+                for id in ids {
+                    out.write_all(id)?;
+                }
+                Ok(())
+            }
+            Self::ProspectiveMessages(MessageSelector::Vault) => out.write_all(&[5, 1]),
         }
     }
 
@@ -103,6 +135,23 @@ impl CaptureScope {
                     instance: read_array(input)?,
                 }))
             }
+            4 => {
+                let count = u64::from_be_bytes(read_array(input)?);
+                let mut ids = Vec::new();
+                for _ in 0..count {
+                    let id = read_array(input)?;
+                    if ids.last().is_some_and(|previous| previous >= &id) {
+                        return Err(invalid("legal capture message order"));
+                    }
+                    ids.try_reserve(1).map_err(io::Error::other)?;
+                    ids.push(id);
+                }
+                Ok(Self::Messages(ids))
+            }
+            5 => match read_array::<1>(input)?[0] {
+                1 => Ok(Self::ProspectiveMessages(MessageSelector::Vault)),
+                _ => Err(invalid("legal capture message selector")),
+            },
             _ => Err(invalid("legal capture scope")),
         }
     }
@@ -392,6 +441,12 @@ impl LiveSpillMetadata {
 pub enum CaptureExtent {
     GateDecisions,
     WrittenLiveSessionSpill,
+    /// The selected stored MESSAGE rows with their document and outgoing edge
+    /// rows and the result body each still holds, in one source snapshot.
+    Messages,
+    /// One batch of a prospective order: the exact MESSAGE rows sealed when
+    /// they landed, in ordinal order. Rows only: no document or edge rows.
+    ProspectiveMessages,
 }
 
 /// Immutable completion manifest for its declared extent, encrypted to the
@@ -407,9 +462,31 @@ pub struct CaptureSummary {
     pub decisions: u64,
     pub live_sessions: u64,
     pub live_bodies: u64,
+    /// Selected messages copied; zero for gate and live-session captures.
+    /// In a prospective batch, the sealed message rows it carries.
+    pub messages: u64,
+    /// A prospective batch's first outbox ordinal; zero otherwise.
+    pub batch_first_ordinal: u64,
+    /// A prospective batch's ordinal count (sealed plus missed); zero
+    /// otherwise. Ordinals `batch_first_ordinal..+batch_entries` are exactly
+    /// the batch, so one acknowledgement never covers another batch.
+    pub batch_entries: u64,
+    /// New messages of a prospective batch that landed but could not be
+    /// sealed: a truthful coverage gap, never claimed as captured.
+    pub missed_messages: Vec<[u8; 16]>,
+    /// Selected messages whose result attachment names a body the message
+    /// no longer holds, or that no row holds: their rows are captured, the
+    /// body is not and is never claimed. A held body is component 11
+    /// (`MessageResultBody`), revision the BLAKE3 of that message's full
+    /// stored entity row. Empty for every other capture.
+    pub absent_result_bodies: Vec<[u8; 16]>,
     pub extent: CaptureExtent,
     pub components: u64,
     pub plaintext_bytes: u64,
+    /// BLAKE3 over the exact encoded descriptors in stream order. In a
+    /// prospective batch, BLAKE3 over each component's descriptor digest
+    /// (BLAKE3 of its exact encoded descriptor) in stream order, since those
+    /// descriptors were sealed when their messages landed.
     pub descriptors_hash: [u8; 32],
 }
 
