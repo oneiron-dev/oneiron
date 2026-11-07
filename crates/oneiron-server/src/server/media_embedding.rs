@@ -43,6 +43,9 @@ use super::core::SyncServer;
 use super::housekeeping::{HousekeepingAdmission, admit_every_pass};
 use crate::ai_host::AiHandle;
 
+mod trained;
+use trained::media_part;
+
 /// How long the backfill sleeps after a pass that stored nothing.
 const BACKFILL_IDLE: Duration = Duration::from_secs(30);
 /// Ceiling on the backfill's wait while a space keeps failing.
@@ -56,16 +59,6 @@ const BACKFILL_BATCH: usize = 16;
 /// go; the engine still keeps home every row a device-local world holds. It
 /// judges no row of the text rung's.
 pub(crate) struct MediaEgress;
-
-impl EgressPredicate for MediaEgress {
-    fn decide(&self, _input: &PendingEmbeddingInput) -> EgressDecision {
-        EgressDecision::NoVerdict
-    }
-
-    fn decide_media(&self, _input: &MediaEmbeddingInput<'_>) -> EgressDecision {
-        EgressDecision::Allow
-    }
-}
 
 /// What the live-room pass keeps between rounds (FIX 2345): each room's
 /// refusals, in RAM for the room's life, and the spaces whose room pass last
@@ -201,6 +194,8 @@ pub(crate) struct RuntimeMediaEmbedder {
     /// run's payer, which its caller sets. `None` is the vault owner, as a
     /// backfill's or a door's own query is.
     payer: Option<PayerPerson>,
+    /// A real custody-backed local runtime, never a stock rung alias.
+    trained: Option<Arc<super::trained_embedding::TrainedEmbedding>>,
 }
 
 impl SyncServer {
@@ -211,6 +206,9 @@ impl SyncServer {
         &self,
         space_id: &str,
     ) -> Result<RuntimeMediaEmbedder, MediaEmbedRefusal> {
+        if let Some(trained) = self.trained_media_embedder(space_id)? {
+            return Ok(trained);
+        }
         let media = self.ai.model_runtime().media();
         if media.seat(AiOperation::Embed).is_none() {
             return Err(MediaEmbedRefusal::NoSeat);
@@ -254,11 +252,12 @@ impl SyncServer {
             names_width: AtomicBool::new(false),
             runtime: None,
             payer: None,
+            trained: None,
         })
     }
 
-    /// Starts the media backfill, or returns `None` when no `ai.embed` seat
-    /// serves.
+    /// Starts the media backfill, including checkpoints the owner may approve
+    /// after startup, without requiring a stock `ai.embed` seat.
     pub(crate) fn spawn_media_embedding_worker(
         self: &Arc<Self>,
     ) -> Option<tokio::task::JoinHandle<()>> {
@@ -273,7 +272,6 @@ impl SyncServer {
         self: &Arc<Self>,
         admit: HousekeepingAdmission,
     ) -> Option<tokio::task::JoinHandle<()>> {
-        self.ai.model_runtime().media().seat(AiOperation::Embed)?;
         let server = Arc::clone(self);
         Some(tokio::spawn(async move {
             server.backfill_media_forever(admit).await
@@ -406,6 +404,7 @@ impl SyncServer {
             }
             Err(error) => tracing::warn!(%error, "unfilled embedding space moves not closed"),
         }
+        let trained_failures = self.refresh_trained_embedders();
         let stock_failures = self.declare_waiting_stock_spaces(runtime);
         match self.vault.begin_waiting_embedder_moves() {
             Ok(begun) => {
@@ -456,6 +455,7 @@ impl SyncServer {
                 (space.to_owned(), pass)
             })
             .collect();
+        passes.extend(trained_failures);
         passes.extend(stock_failures);
         self.rederive_repo_index_texts(runtime);
         self.author_space_probes(runtime, &moves);
@@ -526,6 +526,11 @@ impl RuntimeMediaEmbedder {
                 space: self.space.id.clone(),
                 kind,
             });
+        }
+        if let Some(trained) = &self.trained {
+            return self
+                .embed_trained_query(trained, kind, media_type, bytes)
+                .await;
         }
         let (vector, _) = self
             .embed_one(media_part(kind, media_type, bytes)?, None)
@@ -636,6 +641,9 @@ impl RuntimeMediaEmbedder {
     /// rung's call, so a third-party rung reads stored media; `None`
     /// otherwise, which the engine refuses for a third-party rung as before.
     pub(crate) fn media_egress(&self) -> Option<MediaEgress> {
+        if self.trained.is_some() {
+            return None;
+        }
         let request = self.request(Vec::new(), false).admission_request();
         self.egress
             .as_deref()
@@ -791,23 +799,10 @@ impl RuntimeMediaEmbedder {
             .ok_or(oneiron::Error::InvariantViolation(
                 "a media embedder's synchronous door has no runtime to drive its calls on",
             ))?;
+        if let Some(trained) = &self.trained {
+            return self.embed_trained_input(trained, input, release);
+        }
         let part = media_part(input.kind, input.media_type, input.bytes.to_vec())?;
         runtime.block_on(self.embed_one(part, release))
     }
-}
-
-/// The part an input of `kind` sends.
-fn media_part(
-    kind: InputKind,
-    media_type: &str,
-    bytes: Vec<u8>,
-) -> Result<MediaPart, MediaEmbedRefusal> {
-    let media_type = media_type.to_owned();
-    Ok(match kind {
-        InputKind::Image => MediaPart::Image { media_type, bytes },
-        InputKind::Audio => MediaPart::Audio { media_type, bytes },
-        InputKind::Text => MediaPart::Text {
-            text: String::from_utf8(bytes).map_err(|_| MediaEmbedRefusal::NotText)?,
-        },
-    })
 }
