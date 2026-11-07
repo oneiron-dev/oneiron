@@ -270,8 +270,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // ONE-1441: the facade projection is its own nest, not an arm inside
         // `core_routes`. Nesting expands each row into a concrete
         // `/v1/core/facade/<verb>` path, so it neither shadows nor is shadowed
-        // by the storage-shaped `/v1/core` routes above, and its 64 MiB body
-        // limit stays a property of this nest alone.
+        // by the storage-shaped `/v1/core` routes above. Its bodies read up to
+        // the request floor this router sets (ABC transport row T2).
         .nest(
             "/v1/core/facade",
             self::facade::recorded_facade_routes(server.clone()),
@@ -289,6 +289,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .merge(crate::auth::left_notice_routes())
         // FIX 10624 step 2: a seat CLI's credential helper, on its seat slip.
         .merge(crate::auth::seat_credential_helper_routes())
+        // FIX 15702: a seat CLI's model calls, on its run's door reference.
+        .merge(crate::auth::seat_model_door_routes())
         .merge(self::report::routes())
         // OF-495: an agent role holder's skill tradeoff asks and picks.
         .merge(self::facade::role_picks::routes())
@@ -347,10 +349,22 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             self::owner_routes::off_record_routes()
                 .layer(middleware::map_response(call_receipt::no_record_reply)),
         )
+        // ABC transport rows T1, T3, T4: a route that reads its body whole
+        // and sets no bound of its own reads up to `limits.request_body_bytes`
+        // (a route's own layer, closer to its handler, still wins), and a
+        // body declared past the row is refused naming it.
+        .layer(self::request_floor::request_floor_layer(&server))
+        .layer(middleware::from_fn_with_state(
+            server.clone(),
+            self::request_floor::name_request_floor,
+        ))
         .with_state(server.clone())
         // OF-604: inside admission, outside every route and pre-reader, so
         // digests and body limits see the decoded bytes.
-        .layer(middleware::from_fn(self::body_codec::body_codec))
+        .layer(middleware::from_fn_with_state(
+            server.clone(),
+            self::body_codec::body_codec,
+        ))
         .layer(middleware::from_fn_with_state(
             server.clone(),
             crate::auth::admit_http_binding,
