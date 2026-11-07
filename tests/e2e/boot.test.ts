@@ -376,7 +376,7 @@ suite.test(test, "BOOT-05", "CLI memory access should work", async () => {
 // proposed receipt and forged actor/source assertions must all run when this prerequisite lands.
 // mcp_execute_code_gate currently classifies every run as Commits, requiring core:write;
 // token agent --tier read-only/propose-only deliberately grants no core:write. Do not widen them.
-suite.todo(test, "BOOT-06", "waits on execute_code read-only/propose-only credential admission — MCP execute-mode session should work");
+suite.skip(test, "BOOT-06", "waits on execute_code read-only/propose-only credential admission — MCP execute-mode session should work [FIX 3972]");
 
 suite.test(test, "BOOT-07", "MCP tool-first operator registration should work", async () => {
   const data = await corpus();

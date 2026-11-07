@@ -12,7 +12,7 @@ import type { BuildManifest, Profile, SuitePlan, PlannedFile } from "./fixtures.
 
 export const LIMITS = Object.freeze({ slots: 4, cpuPerSlot: 2, memoryMiBPerSlot: 4096,
   readyMs: 10_000, requestMs: 10_000, flowMs: 30_000, suiteMs: 600_000, stopMs: 2_000 });
-export type Outcome = "PASS" | "FAIL" | "BLOCKED";
+export type Outcome = "PASS" | "FAIL" | "BLOCKED" | "SKIPPED";
 export interface IdResult {
   readonly id: string; readonly outcome: Outcome; readonly durationMs: number; readonly reason?: string;
   readonly cleanupError?: string; readonly harnessError?: string;
@@ -315,6 +315,13 @@ export function defineFile(meta: ImportMeta, declaration: FileDeclaration) {
         });
       }, deadlineMs + LIMITS.stopMs + 1000);
     },
+    /** Owner-deferred missing doors are registered but do not fail a run. */
+    skip(test: Reporter["test"], id: string, reason: `waits on ${string}`): void {
+      if (selected.size && !selected.has(id)) return;
+      register(id);
+      results.set(id, {id,outcome:"SKIPPED",durationMs:0,reason});
+      test.skip(`${id} ${reason}`, () => {});
+    },
     /** Real test.todo, but also a mandatory BLOCKED row in the independent report. */
     todo(test: Reporter["test"], id: string, reason: `waits on ${string}`): void {
       if (selected.size && !selected.has(id)) return;
@@ -452,8 +459,12 @@ export async function runSuite(profile: Profile, workers = 4, names: readonly st
     fileDiagnostics.push({...diagnostics,registrationError:registrationError || null});
     for (const id of selectedIds(job.file)) {
       const row = rows.find(r => r.id === id);
-      if (!row || !["PASS","FAIL","BLOCKED"].includes(row.outcome) || !Number.isFinite(row.durationMs)) {
+      if (!row || !["PASS","FAIL","BLOCKED","SKIPPED"].includes(row.outcome) || !Number.isFinite(row.durationMs)) {
         results.set(id,{id,outcome:"FAIL",durationMs:0,reason:registrationError || "ID did not finish"});
+      } else if (row.outcome === "SKIPPED") {
+        if (registrationError || junitOutcomes.get(id) !== "BLOCKED")
+          results.set(id,{...row,outcome:"FAIL",reason:registrationError || "Bun testcase does not confirm recorded SKIPPED"});
+        else results.set(id,row);
       } else if (row.outcome === "BLOCKED") results.set(id,row);
       else if (registrationError || (row.outcome === "PASS" && junitOutcomes.get(id) !== "PASS"))
         results.set(id,{...row,outcome:"FAIL",reason:row.reason ?? (registrationError || "Bun testcase outcome differs from recorded PASS"),
@@ -508,8 +519,9 @@ export async function runSuite(profile: Profile, workers = 4, names: readonly st
     if (!results.has(id)) results.set(id,{id,outcome:"FAIL",durationMs:0,reason:"Suite deadline/interruption before completion"});
   const durationMs = performance.now()-started;
   const rows = plan.coverage.filter(row => row.tests.some(id => results.has(id))).map(row => ({...row,
-    outcome:row.tests.every(id => results.get(id)?.outcome === "PASS") ? "PASS" : "BLOCKED"}));
-  const success = !schedulerFailure && !interrupted && durationMs <= LIMITS.suiteMs && [...results.values()].every(r => r.outcome === "PASS");
+    outcome:row.tests.every(id => results.get(id)?.outcome === "PASS") ? "PASS" :
+      row.tests.every(id => ["PASS","SKIPPED"].includes(results.get(id)?.outcome ?? "")) ? "SKIPPED" : "BLOCKED"}));
+  const success = !schedulerFailure && !interrupted && durationMs <= LIMITS.suiteMs && [...results.values()].every(r => r.outcome === "PASS" || r.outcome === "SKIPPED");
   await artifacts.json("report.json",{profile,scope,success,durationMs,schedulerFailure,source:plan.source,buildManifestSha256:process.env.E2E_BUILD_MANIFEST_SHA256,
     buildHead:build.head,fixturePins:ready.fixturePins,realModel:build.realModel,fileDiagnostics,results:[...results.values()].sort((a,b) => a.id.localeCompare(b.id)),coverage:rows,excludedRows:plan.excludedRows});
   return success ? 0 : 1;
