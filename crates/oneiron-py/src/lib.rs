@@ -5435,6 +5435,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_connectors_replies_retry_failed(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.connectors.replies.retry_failed")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.connectors.replies.retry_failed", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_consent_deny(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.consent.deny")?;
         let output = py
@@ -6641,6 +6655,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_code_secrets_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.secrets.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.secrets.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_secrets_propose(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.secrets.propose")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.secrets.propose", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn execute_code(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "execute_code")?;
         let output = py
@@ -6963,6 +6991,20 @@ impl NativeClient {
             .detach(|| {
                 self.inner
                     .agent_verb("vault.code.origin.publications", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_checkout_holder_bind(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.checkout.holder.bind")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.checkout.holder.bind", input)
             })
             .map_err(raise)?;
         encode(&output)
@@ -8455,6 +8497,34 @@ impl NativeClient {
                 self.inner
                     .agent_verb("vault.settings.web_connector.replace", input)
             })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_settings_model_pack(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.settings.model_pack")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.settings.model_pack", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_settings_model_pack_replace(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.settings.model_pack.replace")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.settings.model_pack.replace", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_model_pack_revert(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.model_pack.revert")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.model_pack.revert", input))
             .map_err(raise)?;
         encode(&output)
     }
