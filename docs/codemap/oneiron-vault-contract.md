@@ -33,7 +33,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/host_adapters/embedded.rs` | src | s | 1 struct · 1 trait · 4 fn | AppHost, EmbeddedHost | The in-process adapter for an engine embedded in a mobile app (NAPI or FFI) |
 | `src/lib/host_adapters/native.rs` | src | s | 1 struct · 3 fn · 1 crate-vis | InProcessHost | Native socket ownership, secret lookup, and cooperative idle wakeup |
 | `src/lib/host_adapters/vsock.rs` | src | m | 4 struct · 11 fn | FirecrackerGuest, GuestLink, VsockListener, VsockStream | The microVM adapter's guest half: AF_VSOCK sockets and the Firecracker backend an engine uses when it runs… |
-| `src/lib/host_legal.rs` | src | m | 8 struct · 6 enum · 16 fn | CaptureAck, CaptureDescriptor, CaptureExtent, CaptureRequest, CaptureScope, CaptureSource, CaptureSummary, FrameHeader +6 | HOST-private legal-clone capture framing |
+| `src/lib/host_legal.rs` | src | m | 8 struct · 7 enum · 16 fn | CaptureAck, CaptureDescriptor, CaptureExtent, CaptureRequest, CaptureScope, CaptureSource, CaptureSummary, FrameHeader +7 | HOST-private legal-clone capture framing |
 | `src/lib/http_headers.rs` | src | s | 2 const | — | Shared names for caller credential headers on vault HTTP doors |
 | `src/lib/ledger.rs` | src | s | 3 struct · 2 fn · 1 crate-vis | LedgerAck, LedgerUpdate, ManagedTrainingSetting | Vault-to-supervisor ledger push and ack wire types |
 | `src/lib/ledger_pages.rs` | src | m | 6 struct · 1 enum · 15 fn | ArtifactOrigin, LedgerPage, LedgerPageRequest, LedgerPulledRequest, LedgerReport, LedgerReportAssembly, LedgerReportHead | The wake ledger's report in bounded pages (FIX 9549): a ledger push and a frozen pull carry every wake… |
