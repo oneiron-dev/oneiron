@@ -314,6 +314,24 @@ impl SessionOverlay {
     }
 
     pub fn close(self: &Arc<Self>) -> Result<()> {
+        self.close_inner(None)
+    }
+
+    /// Closes normally, then visits the final retired rows in one
+    /// single-valued keyspace. The visitor holds no read lease or lifecycle
+    /// lock and cannot refuse the close. Rows stay charged until it returns.
+    pub fn close_with_single_rows(
+        self: &Arc<Self>,
+        keyspace: OverlayKeyspace,
+        visit: &mut dyn FnMut(&[u8], &[u8]),
+    ) -> Result<()> {
+        self.close_inner(Some((keyspace, visit)))
+    }
+
+    fn close_inner(
+        self: &Arc<Self>,
+        visitor: Option<(OverlayKeyspace, &mut dyn FnMut(&[u8], &[u8]))>,
+    ) -> Result<()> {
         // A close nested inside this thread's own active segment would wait on a lease
         // that only this stack can release (the guard drops when it unwinds past here).
         // Fail fast — in the single-writer model close is a session-lifecycle op, never
@@ -369,9 +387,24 @@ impl SessionOverlay {
             .checked_add(1)
             .ok_or(Error::ArithmeticOverflow("session overlay generation"))?;
         lifecycle.state = OverlayLifecycleState::Gone;
+        let closing_rows = visitor
+            .as_ref()
+            .map(|_| self.hold_closed_state(self.state.load_full()));
         let membership = membership_only(&self.state.load_full());
         self.state.store(Arc::new(membership));
         drop(lifecycle);
+        if let (Some((keyspace, visit)), Some(held)) = (visitor, closing_rows.as_ref()) {
+            if let KeyspaceState::Single { rows, .. } =
+                held.state().keyspaces[keyspace.slot()].as_ref()
+            {
+                for (key, value) in rows {
+                    if let OverlayValue::Present(value) = value {
+                        visit(key, value);
+                    }
+                }
+            }
+        }
+        drop(closing_rows);
         self.charge_now();
         Ok(())
     }
