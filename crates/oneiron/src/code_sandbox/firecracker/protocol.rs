@@ -252,7 +252,7 @@ pub(in crate::code_sandbox) fn exchange_cancellable(
                 SandboxProposalWrite::FileWrite(file) => {
                     let edit = match base.files.iter().find(|entry| entry.path == file.path) {
                         Some(entry) => file.lower_to_edit_spooled(&entry.body, cancel, deadline)?,
-                        None => file.lower_to_edit(b"")?,
+                        None => file.lower_to_edit_cancellable(b"", cancel, deadline)?,
                     };
                     if let Some(edit) = edit {
                         edits.push(SandboxProposalWrite::FileEdit(edit));

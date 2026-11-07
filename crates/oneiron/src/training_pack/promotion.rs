@@ -110,8 +110,14 @@ pub(crate) fn bind_staged_role_swap_in_txn(
     receipt: &RoleSwapReceipt,
 ) -> Result<()> {
     let mut run = run_in_txn(vault, txn, &receipt.run)?;
-    SWAPS.put(&vault.store, txn, &receipt.id, receipt)?;
-    ROLES.put(&vault.store, txn, &role_key(receipt.role)?, receipt)?;
+    let key = role_key(receipt.role)?;
+    let mut receipt = receipt.clone();
+    receipt.previous_swap = ROLES
+        .get(&vault.store, txn, &key)?
+        .filter(|previous| Some(&previous.binding) == receipt.previous.as_ref())
+        .map(|previous| previous.id);
+    SWAPS.put(&vault.store, txn, &receipt.id, &receipt)?;
+    ROLES.put(&vault.store, txn, &key, &receipt)?;
     run.state = TrainingState::Bound;
     RUNS.put(&vault.store, txn, &receipt.run, &run)
 }
@@ -123,6 +129,7 @@ pub(crate) fn undo_training_role_swap_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
+    incumbent: Option<&str>,
 ) -> Result<()> {
     let mut run = run_in_txn(vault, txn, id)?;
     if run.state != TrainingState::Bound {
@@ -134,11 +141,18 @@ pub(crate) fn undo_training_role_swap_in_txn(
         .role_binding()
         .ok_or_else(|| invalid(QUESTION_HAS_NO_ROLE))?;
     let key = role_key(role)?;
-    if ROLES
-        .get(&vault.store, txn, &key)?
-        .is_some_and(|receipt| receipt.run == *id)
+    if let Some(current) = ROLES.get(&vault.store, txn, &key)?
+        && current.run == *id
     {
-        ROLES.delete(&vault.store, txn, &key)?;
+        if let Some((previous, mut previous_run)) =
+            previous_role_swap_in_txn(vault, txn, &current, incumbent)?
+        {
+            previous_run.state = TrainingState::Bound;
+            RUNS.put(&vault.store, txn, &previous.run, &previous_run)?;
+            ROLES.put(&vault.store, txn, &key, &previous)?;
+        } else {
+            ROLES.delete(&vault.store, txn, &key)?;
+        }
     }
     run.state = if run.evaluation.is_some() {
         TrainingState::Scored
@@ -146,6 +160,56 @@ pub(crate) fn undo_training_role_swap_in_txn(
         TrainingState::Returned
     };
     RUNS.put(&vault.store, txn, id, &run)
+}
+
+/// Recover the exact replaced receipt and run while their binding, checkpoint
+/// and live custody still match the real incumbent space. Undoing a later swap
+/// may have demoted a reused run; restoring this receipt binds that run again.
+fn previous_role_swap_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    current: &RoleSwapReceipt,
+    incumbent: Option<&str>,
+) -> Result<Option<(RoleSwapReceipt, TrainingRun)>> {
+    let (Some(id), Some(previous), Some(incumbent)) =
+        (current.previous_swap, current.previous.as_ref(), incumbent)
+    else {
+        return Ok(None);
+    };
+    let manifest = crate::llm::manifest::read_manifest(&vault.store, txn)?;
+    if manifest
+        .as_ref()
+        .and_then(|manifest| manifest.roles.get(&current.role))
+        != Some(previous)
+    {
+        return Ok(None);
+    }
+    let Some(receipt) = SWAPS.get(&vault.store, txn, &id)? else {
+        return Ok(None);
+    };
+    if receipt.run == current.run
+        || receipt.role != current.role
+        || &receipt.binding != previous
+        || receipt.checkpoint.embedding_space_id()? != incumbent
+    {
+        return Ok(None);
+    }
+    let Some(run) = RUNS.get(&vault.store, txn, &receipt.run)? else {
+        return Ok(None);
+    };
+    if !matches!(
+        run.state,
+        TrainingState::Returned | TrainingState::Scored | TrainingState::Bound
+    ) || run.plan.target.role_binding() != Some((receipt.role, &receipt.binding))
+        || !run
+            .result
+            .as_ref()
+            .is_some_and(|result| result.exported_checkpoint == receipt.checkpoint)
+        || !receipt.checkpoint.custody_live_in_txn(vault, txn)?
+    {
+        return Ok(None);
+    }
+    Ok(Some((receipt, run)))
 }
 
 /// Every training run as `txn` reads it, in id order. Read-only.
@@ -548,6 +612,14 @@ impl Vault {
             owner: TrainingOwner::Actor(actor),
             at: self.store.clock.now_recorded_at(),
             role,
+            previous_swap: if role == ModelRole::RetrievalEmbedder {
+                None // The actual replaced receipt is captured when the staged move binds.
+            } else {
+                ROLES
+                    .get(&self.store, txn, &key)?
+                    .filter(|receipt| Some(&receipt.binding) == previous.as_ref())
+                    .map(|receipt| receipt.id)
+            },
             previous,
             binding,
             checkpoint: result.exported_checkpoint.clone(),

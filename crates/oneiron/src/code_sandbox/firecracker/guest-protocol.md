@@ -110,14 +110,21 @@ then that many UTF-8 bytes (maximum 8 MiB). Unknown fields are refused.
 
 Frames stay bounded to 8 MiB. Snapshot and proposed files stream without a
 whole-file wire size cap; source text and step-result JSON retain their 1 MiB
-bounds. Guest workspace files are read to EOF; each random-byte output retains a
-1 MiB bound, without a cumulative read/random-output byte ceiling. Source and outbound
+bounds. Guest workspace files are read to EOF. Random-byte outputs use
+fallible native allocation with no separate per-call byte ceiling, without a
+cumulative read/random-output byte ceiling. Source and outbound
 request budgets remain 16384; file chunks and source file closes do not spend source
 requests. Source bytes are copied through the socket. Host source trees are
 never attached as writable devices. Proposed changes do not touch them.
 Collection is consume-once and only possible after successful completion.
-Only changed edit spans become owned strings when a proposal is lowered against
-its exact spooled base; an edit replacing the whole file still owns that span.
+Lowering against the exact spooled base retains immutable UTF-8 views of the
+expected and replacement spans, including a new file's complete replacement.
+Clones share those spools and their disk-floor claims through review. Public
+proposal JSON and durable receipts still contain the exact text as ordinary
+strings, not temporary body IDs. Whole-JSON encoding and receipt-ledger storage
+still allocate their encoded values; this is not end-to-end streamed storage.
+The slice-based lowering API copies an expected span from a borrowed base, which
+it cannot retain, but its replacement remains body-backed.
 
 Protocol v3 requires matching rebuilt guest executables/rootfs images (including
 the container agent) and updated artifact pins and release contract metadata.

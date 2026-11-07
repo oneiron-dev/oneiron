@@ -9,15 +9,15 @@
 //! (FIX 6029). Past the profile's threshold the oldest turns outside the hot
 //! tail seal one window in one SESSION, sized on the writer the flight was
 //! prepared on; the flight runs off the answer's path, its paid tries filed
-//! in the model-step family, its summary minted as the session's next epoch
-//! with a durable receipt keyed by the SUMMARY and the Dreamer's check
-//! declared in the same write. A flight that cannot run keeps the raw log
-//! and names why; it is never handed to the Dreamer or the plain house
-//! writer.
+//! in the model-step family, its summary minted as the next epoch of the
+//! conversation's own lineage within that SESSION (FIX 5029) with a durable
+//! receipt keyed by the SUMMARY and the Dreamer's check declared in the same
+//! write. A flight that cannot run keeps the raw log and names why; it is
+//! never handed to the Dreamer or the plain house writer.
 
 use serde::{Deserialize, Serialize};
 
-use super::driver::WindowLog;
+use super::driver::{ConversationBinding, WindowLog};
 use super::{
     CompactHooks, CompactionBackend, CompactionCheck, CompactionDirective, CompactionDriver,
     CompactionEvidence, CompactionExecution, CompactionGateFailure, CompactionGatePolicy,
@@ -31,11 +31,16 @@ use crate::{EntityId, Vault, WriteActor};
 use oneiron_model::llm::LlmRequest;
 
 mod log;
+mod order;
+mod standing;
 mod storage;
+mod window;
 
-use log::ChatLogWindow;
 pub use log::{ChatLog, ChatLogLine, read_action_pinned_log, read_chat_log};
+pub(crate) use order::validate_conversation_window_in_txn;
+pub(crate) use standing::{FoldedTurnSummary, folded_turn_summary_in};
 pub(crate) use storage::{conversation_receipt_in, put_conversation_receipt_in_txn};
+use window::ChatLogWindow;
 
 /// The run a conversation's paid compaction calls are filed under: the
 /// chat's own source, never a code run's.
@@ -226,6 +231,10 @@ pub fn seal_conversation_flight<'a>(
         driver.abandon();
         return Err(Why::Pending(stop.clone()));
     }
+    let binding = ConversationBinding {
+        conversation: log.conversation,
+        branch: log.branch,
+    };
     let Ok(request) = driver.seal_request(
         vault,
         &window.session,
@@ -233,7 +242,7 @@ pub fn seal_conversation_flight<'a>(
         pins,
         window.sources,
         true,
-        WindowLog::Conversation,
+        WindowLog::Conversation(Some(binding)),
     ) else {
         driver.backend().end_flight();
         driver.abandon();

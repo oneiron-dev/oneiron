@@ -54,10 +54,10 @@ pub use self::paths::{
 };
 pub use self::proposal::{
     ProposalSpoolClaim, ProposalSpoolFloor, SandboxClaimProposal, SandboxDirectoryOpaqueProposal,
-    SandboxFileDeleteProposal, SandboxFileEditProposal, SandboxFileRenameProposal,
+    SandboxFileDeleteProposal, SandboxFileEdit, SandboxFileEditProposal, SandboxFileRenameProposal,
     SandboxFileWriteProposal, SandboxProposalBody, SandboxProposalBodyReader,
-    SandboxProposalBodyWriter, SandboxProposalDelta, SandboxProposalKind, SandboxProposalWrite,
-    SpoolAtFloor, SpoolFloorRefusal,
+    SandboxProposalBodyWriter, SandboxProposalDelta, SandboxProposalKind, SandboxProposalText,
+    SandboxProposalWrite, SpoolAtFloor, SpoolFloorRefusal,
 };
 
 #[cfg(test)]
