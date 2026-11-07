@@ -1,6 +1,8 @@
 //! The authority seam of a host's usage repair (FIX 6476). A server lists
-//! the stored usage events of its own metering scope that no longer decode,
-//! and removes one its caller reviewed, by the hash of its bytes. Those rows
+//! the stored usage events and pending settlements of its own metering scope
+//! that no longer decode, and removes one its caller reviewed, by the hash of
+//! its bytes. A pending row is invalid by redelivery's same scope and codec
+//! checks, not by whether delivery has finished. Those rows
 //! live in the host's side tables under the server's codec; this module
 //! holds their wire shapes and the one writer the server's work runs in,
 //! which admits its caller there first: a live owner of this vault by his
@@ -24,22 +26,23 @@ use crate::{EdgeActorClass, EntityId};
 #[serde(deny_unknown_fields)]
 pub struct UsageRepairListRequest {}
 
-/// Why a stored usage event is listed: it does not decode. It names no part
-/// of the bytes.
+/// Why a stored usage row is listed. Pending settlements also use redelivery's
+/// scope and validation checks. It names no part of the bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum UndecodableUsageReason {
     StoredEventDecodeFailed,
+    StoredPendingDecodeFailed,
 }
 
-/// One stored usage event of the metering scope that does not decode, as its
+/// One stored usage row of the metering scope that does not decode, as its
 /// reviewer sees it before removing it: where it is and what it hashes to,
 /// none of its bytes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UndecodableUsageRow {
-    /// The row's opaque locator: its key past the scope's event prefix, as
-    /// unpadded base64url.
+    /// The row's opaque locator: its event or pending kind and key parts,
+    /// within the host-bound scope, as unpadded base64url.
     pub row_ref: String,
     /// How many bytes the row holds.
     pub byte_length: u64,
@@ -48,8 +51,8 @@ pub struct UndecodableUsageRow {
     pub decode_reason: UndecodableUsageReason,
 }
 
-/// `vault.usage.events.undecodable`'s answer: every stored usage event of the
-/// metering scope that does not decode, in key order.
+/// `vault.usage.events.undecodable`'s answer: every stored usage event or pending
+/// settlement of the metering scope that does not decode, in key order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UndecodableUsageList {
@@ -73,6 +76,7 @@ pub struct UsageRepairRemoveRequest {
 #[serde(rename_all = "snake_case")]
 pub enum UsageRepairReason {
     UndecodableEventRemoved,
+    UndecodablePendingRemoved,
 }
 
 /// The authority a repair ran under: a live owner's own proof, by the

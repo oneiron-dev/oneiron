@@ -270,6 +270,7 @@ fn policy_admits(server: &SyncServer, row: &MediaRow) -> bool {
         operation: row.operation,
         parts: Vec::new(),
         references: Vec::new(),
+        mask: None,
         params: BTreeMap::new(),
         voice: None,
     };

@@ -45,7 +45,8 @@ pub(super) struct PreparedVideo {
 /// reference an image with bytes (all of them, however many), and a
 /// `generationConfig` its params make.
 pub(super) fn prepare_image(request: &MediaRequest) -> LlmResult<PreparedImage> {
-    if request.operation != AiOperation::Image || request.voice.is_some() {
+    if request.operation != AiOperation::Image || request.voice.is_some() || request.mask.is_some()
+    {
         return Err(FatalLlmError::InvalidRequest.into());
     }
     let prompt = request.text();
@@ -62,7 +63,8 @@ pub(super) fn prepare_image(request: &MediaRequest) -> LlmResult<PreparedImage> 
 /// cut), and the `parameters` its params make.
 pub(super) fn prepare_video(request: &MediaRequest) -> LlmResult<PreparedVideo> {
     let prompt = request.text();
-    if request.operation != AiOperation::Video || prompt.trim().is_empty() {
+    if request.operation != AiOperation::Video || prompt.trim().is_empty() || request.mask.is_some()
+    {
         return Err(FatalLlmError::InvalidRequest.into());
     }
     references_are_images(request)?;
