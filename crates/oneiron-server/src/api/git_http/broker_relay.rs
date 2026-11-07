@@ -1,6 +1,6 @@
 //! What every loopback relay that sends Git's exchanges through the
 //! credential broker shares (ARCH-0069 OSH-3): an outside import's source
-//! relay (FIX 15702) and an exact publish's mirror relay (FIX 19083).
+//! relay (FIX 15702) and an origin mirror's relay (FIX 19083).
 //!
 //! Each relay spools a request body to a private unnamed file, decoded from
 //! any gzip, so its digest and its send cover the identity bytes; takes its
