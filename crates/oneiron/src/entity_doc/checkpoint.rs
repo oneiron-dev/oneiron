@@ -31,6 +31,9 @@ mod proposal;
     reason = "L03's sync checkpoint adapter calls these once CHECKPOINT_PAYLOADS_ENABLED is on"
 )]
 pub(crate) use self::loro::{join as join_entity_doc_loro, split as split_entity_doc_loro};
+// A legal-clone read of one checkpoint's message documents
+// (LEGAL-HOLD-USE = B as a clone) joins a group as a restore does.
+pub(crate) use self::documents::join as join_entity_documents;
 
 use std::collections::BTreeMap;
 

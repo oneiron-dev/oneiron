@@ -331,6 +331,32 @@ pub(crate) fn owners_for_store_in_txn(
     })
 }
 
+/// Whether `actor` is a live member of this shared vault whose grant writes
+/// content (an Owner, Admin or Member role; a Viewer, Delegate or Guest reads),
+/// over the same census as [`owners_for_store_in_txn`], each PERSON's
+/// liveness read through the store (FIX 21272). `false` on a personal vault.
+pub(crate) fn is_live_writing_member_for_store_in_txn(
+    store: &crate::store::Store,
+    posture: crate::HostingPrivacyPosture,
+    txn: &heed::RoTxn<'_>,
+    actor: &EntityId,
+) -> Result<bool> {
+    let members = shared_members_with(store, posture, txn, true, &mut |id| {
+        crate::consent::person_is_live_for_store_in_txn(store, txn, id)
+    })?;
+    Ok(members.is_some_and(|members| {
+        members.grants.iter().any(|grant| {
+            grant.member_ref == *actor
+                && matches!(
+                    grant.role,
+                    FederationGrantRole::Owner
+                        | FederationGrantRole::Admin
+                        | FederationGrantRole::Member
+                )
+        })
+    }))
+}
+
 /// The owners census, each PERSON's liveness read by `person_live`.
 fn owners_with(
     store: &crate::store::Store,

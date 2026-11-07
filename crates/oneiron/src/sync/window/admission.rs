@@ -1,6 +1,6 @@
 //! Full-window UPDATE locality admission without live document side effects.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use loro::json::{JsonOpContent, MapOp};
 use loro::{ContainerID, ContainerType, LoroDoc, LoroValue};
@@ -116,26 +116,53 @@ fn validate_window_update(
     vault: Option<&crate::Vault>,
     staged: &HashMap<EntityId, (crate::sync::WindowKey, Vec<u8>)>,
 ) -> Result<()> {
-    let cutoffs = check_window_update(doc, update, key, vault, staged)?;
+    let admitted = check_window_update(doc, update, key, vault, staged)?;
     // OF-013: a cutoff another machine of this vault carries is staged before
     // the update reaches the live window, so its entity doors refuse the
     // withdrawn body from the first import on.
     if let Some(vault) = vault {
-        crate::sync::withdrawn_cutoffs::apply_withdrawn_cutoffs(vault, &cutoffs)?;
+        crate::sync::withdrawn_cutoffs::apply_withdrawn_cutoffs(vault, &admitted.cutoffs)?;
+    }
+    // A source-audience policy revision or change receipt naming an actor
+    // erased here, in any part the update carries, its retained history
+    // included (fix list row 17238): the window is pinned history-free
+    // before the update lands, so no export ships that copy again, and its
+    // refresh takes a live copy down.
+    if let (Some(vault), Some(key)) = (vault, key)
+        && admitted.history_free
+    {
+        crate::sync::window::require_history_free_window(vault, key)?;
+    }
+    // Every policy set a derived row's carriers name in any part of the
+    // update binds the row before the update lands (fix list row 17207).
+    if let Some(vault) = vault {
+        crate::sync::source_audiences::stage_derived_floors(vault, &admitted.derived_floors)?;
     }
     Ok(())
 }
 
-/// Every refusal of [`validate_window_update`]; returns the withdrawn
-/// cutoffs and epoch floors `update` carries, for the caller to stage.
-/// Nothing here writes.
+/// What an admitted update asks [`validate_window_update`] to write.
+struct AdmittedWrites {
+    /// The withdrawn cutoffs and epoch floors the update carries (OF-013).
+    cutoffs: Vec<crate::sync::withdrawn_cutoffs::CarriedCutoff>,
+    /// A source-audience carrier in the update names an actor erased here
+    /// (fix list row 17238), so its window is pinned history-free.
+    history_free: bool,
+    /// The policies a derived row's carriers name, by row (fix list row
+    /// 17207).
+    derived_floors: BTreeMap<EntityId, BTreeSet<EntityId>>,
+}
+
+/// Every refusal of [`validate_window_update`]; returns what the caller
+/// writes for `update`: the withdrawn cutoffs and epoch floors it carries,
+/// and whether its window is pinned history-free. Nothing here writes.
 fn check_window_update(
     doc: &LoroDoc,
     update: &[u8],
     key: Option<&crate::sync::WindowKey>,
     vault: Option<&crate::Vault>,
     staged: &HashMap<EntityId, (crate::sync::WindowKey, Vec<u8>)>,
-) -> Result<Vec<crate::sync::withdrawn_cutoffs::CarriedCutoff>> {
+) -> Result<AdmittedWrites> {
     let decode_error = |source| {
         Error::Sync(SyncError::CrdtDecodeError {
             context: "window locality admission",
@@ -156,6 +183,10 @@ fn check_window_update(
         candidate
     };
     let candidate_tombstones = TombstoneIndex::build(&candidate.get_map("tombstones"));
+    // Engine A: one accumulator of source audience bindings and policy
+    // revisions over the held map and everything the update can leave.
+    let mut audiences = crate::sync::source_audiences::AdmissionRows::default();
+    audiences.note_held(doc);
     // OF-013: the withdrawn cutoffs and epoch floors the update carries,
     // staged once it is admitted.
     let mut cutoffs = Vec::new();
@@ -229,9 +260,14 @@ fn check_window_update(
     if metadata.mode.is_snapshot() {
         let mut refused = None;
         let mut misplaced = false;
-        map_for_each_value_bytes(&candidate.get_map("entities"), |_, blob| {
+        map_for_each_value_bytes(&candidate.get_map("entities"), |raw, blob| {
             if refused.is_none() {
                 refused = blob.and_then(carrier_refusal);
+            }
+            // Fix list row 16256: what each live row says of its
+            // source-audience obligation.
+            if let Some(blob) = blob {
+                audiences.note_row(raw, blob);
             }
             misplaced |= key.is_some_and(|key| {
                 blob.is_none_or(|blob| {
@@ -264,6 +300,12 @@ fn check_window_update(
         crate::sync::room_facts::admit_room_fact_map(
             key,
             &candidate.get_map(crate::sync::room_facts::ROOM_FACTS_MAP),
+        )?;
+        // Engine A: and every source audience binding and policy revision.
+        crate::sync::source_audiences::admit_map(
+            vault,
+            &candidate.get_map(crate::sync::source_audiences::SOURCE_AUDIENCES_MAP),
+            &mut audiences,
         )?;
         // FIX 853: and every document quote pin and MESSAGE document.
         crate::sync::document_pins::admit_document_pin_map(
@@ -319,9 +361,13 @@ fn check_window_update(
             let root = root_as_latest_state(update, sections).ok_or_else(corrupt)?;
             let root = LoroDoc::from_snapshot(&root).map_err(decode_error)?;
             let mut at_root = None;
-            map_for_each_value_bytes(&root.get_map("entities"), |_, blob| {
+            map_for_each_value_bytes(&root.get_map("entities"), |raw, blob| {
                 if at_root.is_none() {
                     at_root = blob.and_then(carrier_refusal);
+                }
+                // Fix list row 16256: and each root row's.
+                if let Some(blob) = blob {
+                    audiences.note_row(raw, blob);
                 }
             });
             if let Some(error) = at_root {
@@ -340,6 +386,11 @@ fn check_window_update(
             crate::sync::room_facts::admit_room_fact_map(
                 key,
                 &root.get_map(crate::sync::room_facts::ROOM_FACTS_MAP),
+            )?;
+            crate::sync::source_audiences::admit_map(
+                vault,
+                &root.get_map(crate::sync::source_audiences::SOURCE_AUDIENCES_MAP),
+                &mut audiences,
             )?;
             crate::sync::document_pins::admit_document_pin_map(
                 key,
@@ -441,6 +492,10 @@ fn check_window_update(
         ContainerID::new_root(crate::sync::room_turns::ROOM_TURNS_MAP, ContainerType::Map);
     let room_facts =
         ContainerID::new_root(crate::sync::room_facts::ROOM_FACTS_MAP, ContainerType::Map);
+    let source_audiences = ContainerID::new_root(
+        crate::sync::source_audiences::SOURCE_AUDIENCES_MAP,
+        ContainerType::Map,
+    );
     let document_pins = ContainerID::new_root(
         crate::sync::document_pins::DOCUMENT_PINS_MAP,
         ContainerType::Map,
@@ -480,6 +535,8 @@ fn check_window_update(
             crate::sync::room_turns::admit_room_turn_carrier(key, &map_key, &value)?;
         } else if op.container == room_facts {
             crate::sync::room_facts::admit_room_fact_carrier(key, &map_key, &value)?;
+        } else if op.container == source_audiences {
+            crate::sync::source_audiences::admit_carrier(vault, &map_key, &value, &mut audiences)?;
         } else if op.container == document_pins {
             crate::sync::document_pins::admit_document_pin_carrier(key, &map_key, &value)?;
         } else if op.container == message_docs {
@@ -510,6 +567,8 @@ fn check_window_update(
                     if let Some(error) = carrier_refusal(&blob) {
                         return Err(error);
                     }
+                    // Fix list row 16256: and each retained insert's.
+                    audiences.note_row(&map_key, &blob);
                     // FIX 5850: a fault reading the shell's history is the
                     // server's, returned as one, never read as "outside".
                     if let Some(key) = key
@@ -554,7 +613,15 @@ fn check_window_update(
             }
         }
     }
-    Ok(cutoffs)
+    // Fix list row 16256: a row any version of which, or whose held row or
+    // binding, states the source-audience obligation refuses every version
+    // that drops or changes it, wherever it comes in the range.
+    audiences.refuse_dropped_obligations(vault, doc)?;
+    Ok(AdmittedWrites {
+        cutoffs,
+        history_free: audiences.names_erased(),
+        derived_floors: audiences.into_derived_floors(),
+    })
 }
 
 fn check_edge_residence(
@@ -700,7 +767,7 @@ fn snapshot_sections(snapshot: &[u8]) -> Option<[&[u8]; 3]> {
 /// (FIX 10165). A full snapshot can keep a root as well as a shallow one.
 /// `None` when the bytes are no fast snapshot whose state sections read one
 /// way, or the root does not load; `Some(None)` when it encodes no root.
-pub(super) fn encoded_root_state(snapshot: &[u8]) -> Option<Option<LoroDoc>> {
+pub(in crate::sync) fn encoded_root_state(snapshot: &[u8]) -> Option<Option<LoroDoc>> {
     let sections = snapshot_sections(snapshot)?;
     let [_, latest, root] = sections;
     if !(latest == EMPTY_STATE || state_section_is_canonical(latest))

@@ -166,7 +166,10 @@ impl Store {
             zone,
             pack.into(),
             None,
-        )
+        )?
+        .ok_or(Error::InvariantViolation(
+            "a named kind slot is always chosen",
+        ))
     }
 
     pub(crate) fn register_structural_kind_in_family(
@@ -182,15 +185,22 @@ impl Store {
             family.allocation().zone,
             pack.into(),
             Some(family),
-        )
+        )?
+        .ok_or(Error::InvariantViolation(
+            "a named kind slot is always chosen",
+        ))
     }
 
+    /// Allocates and persists the lowest free slot of `family`, then of its
+    /// zone's overflow range. `None` when both are full: the caller interns
+    /// the kind through PackByteMap instead (ARCH-0058 `#fail-soft`), never
+    /// a count-full refusal.
     pub(crate) fn allocate_structural_kind(
         &self,
         family: TypeByteFamily,
         short_id_prefix: impl Into<String>,
         pack: impl Into<String>,
-    ) -> Result<StructuralKindRegistration> {
+    ) -> Result<Option<StructuralKindRegistration>> {
         self.register_kind_slot(
             None,
             short_id_prefix.into(),
@@ -200,6 +210,8 @@ impl Store {
         )
     }
 
+    /// Registers the kind at `requested`, or at the lowest free byte of
+    /// `family` and its overflow; `None` when allocation finds none free.
     fn register_kind_slot(
         &self,
         requested: Option<u8>,
@@ -207,7 +219,7 @@ impl Store {
         zone: TypeByteZone,
         pack: String,
         family: Option<TypeByteFamily>,
-    ) -> Result<StructuralKindRegistration> {
+    ) -> Result<Option<StructuralKindRegistration>> {
         secret_scan::scan_metadata_field(&pack)?;
         // Allocation and persistence share the LMDB writer lock. Two callers
         // cannot both choose the same lowest-free slot.
@@ -227,11 +239,11 @@ impl Store {
                 }
                 occupied.push(registration.type_byte);
             }
-            allocate_type_byte(family.expect("allocator requires a family"), &occupied).ok_or(
-                Error::Registry(RegistryError::InvalidStructuralKindRegistration(
-                    "family and its zone overflow are full",
-                )),
-            )?
+            let family = family.ok_or(Error::InvariantViolation("allocator requires a family"))?;
+            match allocate_type_byte(family, &occupied) {
+                Some(byte) => byte,
+                None => return Ok(None),
+            }
         };
         let registration = StructuralKindRegistration {
             type_byte,
@@ -269,7 +281,7 @@ impl Store {
         REGISTRY.put(self, &mut wtxn, &[type_byte], &registration)?;
         wtxn.commit()?;
         registry.insert(type_byte, registration.clone());
-        Ok(registration)
+        Ok(Some(registration))
     }
 }
 
