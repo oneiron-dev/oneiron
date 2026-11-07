@@ -80431,7 +80431,7 @@
      "path": "src/sync/queue/core.rs",
      "purpose": "SyncQueue impl: push/drain/clear/prune",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 13
      }
     },
@@ -82270,7 +82270,7 @@
      "purpose": "Owner review and keep-held resolution for a repo-manifest conflict",
      "surface": {
       "enum": 1,
-      "fn": 6,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -87676,7 +87676,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1311
+      "fn": 1313
      }
     },
     {
@@ -88131,7 +88131,7 @@
      "surface": {
       "fn": 8,
       "mod": 1,
-      "re-export": 101,
+      "re-export": 102,
       "struct": 33
      }
     },
@@ -88406,6 +88406,24 @@
      "purpose": "Context-bearing text replies through the host's configured inference door",
      "surface": {
       "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RepoManifestConflictDiscardRequest",
+      "RepoManifestConflictDiscardView",
+      "RepoManifestConflictQueueView",
+      "RepoManifestConflictReviewRequest",
+      "RepoManifestConflictReviewView"
+     ],
+     "path": "src/verbs/repo_manifest_conflict.rs",
+     "purpose": "Owner review and keep-held discard of one durable repo-manifest conflict",
+     "surface": {
+      "enum": 2,
+      "fn": 3,
+      "struct": 3
      }
     },
     {
@@ -94991,7 +95009,7 @@
      "purpose": "Verb catalog vocabulary used by core admission and action surfaces"
     },
     "verbs": {
-     "files": 116,
+     "files": 117,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -95056,7 +95074,7 @@
    },
    "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6729,
+   "source_files": 6730,
    "test_files": 895
   },
   "oneiron-android": {
@@ -100868,14 +100886,15 @@
       "HttpResponse",
       "LoopbackOperation",
       "LoopbackRefusal",
-      "LoopbackRefusalReason"
+      "LoopbackRefusalReason",
+      "PreparedDatagram"
      ],
      "path": "src/egress.rs",
      "purpose": "Host-owned transport",
      "surface": {
       "enum": 3,
-      "fn": 3,
-      "struct": 4,
+      "fn": 5,
+      "struct": 5,
       "trait": 1
      }
     },
@@ -100888,7 +100907,7 @@
       "UnmeteredFloor"
      ],
      "path": "src/host_net_floor.rs",
-     "purpose": "The host's floor for a guest's network work (FIX 5978, FIX 5979)",
+     "purpose": "The host's floor for a guest's network work (FIX 5978, FIX 5979, FIX 6301)",
      "surface": {
       "const": 3,
       "fn": 4,
@@ -101047,6 +101066,46 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/launcher/unix_rights.rs",
+     "purpose": "Brokered sockets a guest sends over its own Unix sockets (FIX 6185)",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/launcher/unix_rights/receive.rs",
+     "purpose": "A brokered receive on a native Unix socket (FIX 6185)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/launcher/unix_rights/task.rs",
+     "purpose": "The task that made a brokered call, and the descriptor table the launcher copies from (FIX 6185)",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/launcher/unix_rights/wait.rs",
+     "purpose": "The wait of a brokered call on its socket, and the send that waits (FIX 6185)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "ContainerRuntime",
       "Error",
@@ -101077,7 +101136,7 @@
      "path": "src/linux.rs",
      "purpose": "Linux UAPI used on both sides of the seccomp listener",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "fn": 3
      }
     },
@@ -101085,14 +101144,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "RelayAnswer",
       "RelayReply",
       "RelayRequest"
      ],
      "path": "src/relay_protocol.rs",
      "purpose": "Bounded host/guest network transport over the no-NIC VM's private vsock",
      "surface": {
-      "enum": 1,
-      "fn": 2,
+      "enum": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -101175,9 +101235,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/supervisor/relay_workers.rs",
-     "purpose": "Bounded relay workers for a guest's datagrams (FIX 5979)",
+     "purpose": "Bounded relay workers for a guest's datagrams (FIX 5979, FIX 6298)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -101188,6 +101248,16 @@
      "purpose": "A guest's `socket()` (FIX 5978): the guest gets one end of a fresh Unix pair, which the notification's ADDFD…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/supervisor/stream_relay.rs",
+     "purpose": "A guest stream's relay to its remote, and its relay to the host's DNS (FIX 6301)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -101236,7 +101306,7 @@
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file",
-     "purpose": "The host's floor for a guest's network work (FIX 5978, FIX 5979)"
+     "purpose": "The host's floor for a guest's network work (FIX 5978, FIX 5979, FIX 6301)"
     },
     "image_release": {
      "files": 5,
@@ -101246,7 +101316,7 @@
      "purpose": "Signed guest-image releases (FIX 8253, OS-IMAGE phase 1c): the release manifest, ONE signature-verifier…"
     },
     "launcher": {
-     "files": 3,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -101274,7 +101344,7 @@
      "purpose": "The launcher's inventory of the socket inodes its guest still holds (FIX 5978)"
     },
     "supervisor": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -101297,7 +101367,7 @@
    },
    "over_bar": 0,
    "purpose": "Container sessions with an engine-owned Linux Landlock/seccomp fence",
-   "source_files": 27,
+   "source_files": 32,
    "test_files": 0
   },
   "oneiron-contracts": {
@@ -109867,7 +109937,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1279
+      "fn": 1281
      }
     },
     {
@@ -111660,7 +111730,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1280
+      "fn": 1282
      }
     },
     {
@@ -117299,7 +117369,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 172
+      "crate-vis": 173
      }
     },
     {
@@ -117870,6 +117940,16 @@
      "purpose": "The public `vault.repo.*` run doors (FIX 6867, G1 PR3b): an external agent's own attached live run reads and…",
      "surface": {
       "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/repo_manifest_conflict_doors.rs",
+     "purpose": "The owner's durable manifest-conflict review and exact keep-held discard",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -133475,7 +133555,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 716,
+     "files": 717,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -134009,7 +134089,7 @@
    },
    "over_bar": 59,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1729,
+   "source_files": 1730,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -148041,6 +148121,13 @@
       "RepoExportOutput",
       "RepoFileProjectionKind",
       "RepoFileProjectionView",
+      "RepoManifest",
+      "RepoManifestConflictDiscardRequest",
+      "RepoManifestConflictDiscardView",
+      "RepoManifestConflictQueueView",
+      "RepoManifestConflictReviewRequest",
+      "RepoManifestConflictReviewView",
+      "RepoManifestWriter",
       "RepoMergeQueueEnqueueInput",
       "RepoMergeQueueObserveInput",
       "RepoMergeQueueObserveOutput",
@@ -149170,6 +149257,7 @@
       "TupleFloatFloat",
       "TupleI64I64",
       "TupleStringAxisScores",
+      "TupleStringString",
       "TupleStringStringU32",
       "TupleStringU32",
       "TupleTaskAskHandleTaskAskStatus",
@@ -149448,8 +149536,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1140,
-      "struct": 3487
+      "enum": 1142,
+      "struct": 3493
      }
     },
     {

@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6729 | 895 | 190 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 6730 | 895 | 190 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 4 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 64 | 1 | 0 |
 | [oneiron-base](codemap/oneiron-base.md) | The base layer of the oneiron engine: modules that name nothing above them | 34 | 2 | 1 |
@@ -23,7 +23,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-browser](codemap/oneiron-browser.md) | Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`) | 88 | 0 | 0 |
 | [oneiron-code-check](codemap/oneiron-code-check.md) | A type check of code-mode programs, run beside them as feedback | 9 | 1 | 0 |
 | [oneiron-code-source](codemap/oneiron-code-source.md) | Host-side preparation of a code-mode program in the oneiron engine: TypeScript stripped by Oxc in process… | 2 | 0 | 0 |
-| [oneiron-container](codemap/oneiron-container.md) | Container sessions with an engine-owned Linux Landlock/seccomp fence | 27 | 0 | 0 |
+| [oneiron-container](codemap/oneiron-container.md) | Container sessions with an engine-owned Linux Landlock/seccomp fence | 32 | 0 | 0 |
 | [oneiron-contracts](codemap/oneiron-contracts.md) | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… | 65 | 1 | 2 |
 | [oneiron-crypto](codemap/oneiron-crypto.md) | The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table… | 25 | 8 | 0 |
 | [oneiron-delivery-vocabulary](codemap/oneiron-delivery-vocabulary.md) | Delivery-window vocabulary of the oneiron engine: the quiet-hours and channel claim keys, decisions and… | 4 | 0 | 0 |
@@ -56,7 +56,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-run-budget](codemap/oneiron-run-budget.md) | Run budget declarations and paid-job maximum state of the oneiron engine | 4 | 0 | 0 |
 | [oneiron-sandbox-contract](codemap/oneiron-sandbox-contract.md) | Portable, pure shape rules shared by the host and the isolated guest | 5 | 0 | 0 |
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 60 | 12 | 4 |
-| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1729 | 182 | 59 |
+| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1730 | 182 | 59 |
 | [oneiron-skill-attribution](codemap/oneiron-skill-attribution.md) | The skill attribution vocabulary (ARCH-0035, ARCH-0053 §4): an attempt's outcome evidence, the judge's… | 3 | 0 | 0 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
 | [oneiron-store](codemap/oneiron-store.md) | The store layer of the oneiron engine | 637 | 4 | 0 |
@@ -288,7 +288,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `vault_live_rows` | file | 1 | s | yes | The vault's live rows: the inherent `Vault` methods that set and read the rows in [`crate::live_rows`]… |
 | `vault_shape` | dir | 26 | L | yes | Vault shape as code (ARCH-0070): the setup plane held in one hand |
 | `verb_catalog` | file | 1 | s | — | Verb catalog vocabulary used by core admission and action surfaces |
-| `verbs` | dir | 116 | XL | — | Shared typed agent-verb inputs and generated transport dispatch |
+| `verbs` | dir | 117 | XL | — | Shared typed agent-verb inputs and generated transport dispatch |
 | `voice_cascade` | file+dir | 40 | L | yes | ONE-1807: the engine half of a transport-neutral text-brain voice cascade |
 | `voice_identity` | dir | 24 | L | yes | VOX-02 voice identity substrate: consent log, enrollment, local matching |
 | `voice_segment` | file | 1 | s | — | Voice-segment claim vocabulary is defined in the core write envelope |
@@ -454,13 +454,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|
 | `cli_env` | file | 1 | s | The container CLI's environment beyond `PATH`: the `HOME` and `XDG_RUNTIME_DIR` its host binds once for the… |
 | `egress` | file | 1 | s | Host-owned transport |
-| `host_net_floor` | file | 1 | s | The host's floor for a guest's network work (FIX 5978, FIX 5979) |
+| `host_net_floor` | file | 1 | s | The host's floor for a guest's network work (FIX 5978, FIX 5979, FIX 6301) |
 | `image_release` | file+dir | 5 | m | Signed guest-image releases (FIX 8253, OS-IMAGE phase 1c): the release manifest, ONE signature-verifier… |
-| `launcher` | file+dir | 3 | m | Unprivileged in-container launcher and syscall-argument broker |
+| `launcher` | file+dir | 7 | m | Unprivileged in-container launcher and syscall-argument broker |
 | `linux` | file | 1 | m | Linux UAPI used on both sides of the seccomp listener |
 | `relay_protocol` | file | 1 | s | Bounded host/guest network transport over the no-NIC VM's private vsock |
 | `socket_lifetime` | file | 1 | s | The launcher's inventory of the socket inodes its guest still holds (FIX 5978) |
-| `supervisor` | file+dir | 8 | m | Host custody of the seccomp listener and all network transports |
+| `supervisor` | file+dir | 9 | m | Host custody of the seccomp listener and all network transports |
 | `transport` | file | 1 | s | A selected backend's private duplex transport and lifetime custody |
 | `wire` | file | 1 | s | Private, bounded launcher/supervisor protocol |
 
@@ -818,7 +818,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `actions` | file | 1 | s | Host-bound UI and agent action executor over the engine's one verb registry |
 | `admission` | file+dir | 2 | s | Admission for work a remote caller can start |
 | `ai_host` | dir | 130 | XL | The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats… |
-| `api` | dir | 716 | XL | HTTP query routes for web dashboard access |
+| `api` | dir | 717 | XL | HTTP query routes for web dashboard access |
 | `auth` | file+dir | 17 | L | HTTP authentication for log-backed version-two capability slips |
 | `big_rung` | file+dir | 5 | m | The big model on the decision ladder's Big rung (ARCH-0076, OF-495) |
 | `broadcast` | file | 1 | s | Broadcast group for multi-device fan-out with echo suppression |
