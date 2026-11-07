@@ -6725,7 +6725,7 @@ declare const vault: Sdk.VaultHost & {
         /** Sets a group address's members, by an Owner or Admin: a member removed reads none of the group's mail from then on. */
         set(input: Sdk.MailSourceMembersRequest): Promise<Sdk.MailSourceView | StoredResult>;
       };
-      /** The vault's owner searches a Google or Microsoft 365 mailbox they read at its provider, in the provider's own search language; one page of the messages found lands whole and kept, bound to the mailbox's audience. */
+      /** The vault's owner searches a Google, Microsoft 365 or IMAP mailbox they read at its provider, in the provider's own search language; one page of the messages found lands whole and kept, bound to the mailbox's audience. */
       search(input: Sdk.MailSourceSearchRequest): Promise<Sdk.MailSearchReport | StoredResult>;
       settings: {
         /** Sets what a source keeps (mail copy, provider delete rule), a calendar's detail sharing and its sync status: by its own person, or an Owner or Admin for a group address. */

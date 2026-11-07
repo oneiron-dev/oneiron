@@ -29,6 +29,11 @@
 //!   folder it read holds (fix list row 17871): a folder that lost mail is
 //!   checked by one UID search, and only the UIDs it never read are fetched
 //!   for their `Message-ID`, not every message in the folder.
+//! - **Search.** `vault.mail.sources.search` (fix list row 19089) sends the
+//!   caller's `SEARCH` keys (RFC 3501 6.4.4) to each folder it reads, newest
+//!   hits first, a bounded number of folders a page. A quoted string past
+//!   ASCII goes as a UTF-8 literal the server takes without a round trip
+//!   (RFC 7888); a server that takes none is told the search needs ASCII.
 //!
 //! Call it from a blocking context: each call is socket I/O.
 
@@ -78,6 +83,14 @@ const MAX_MESSAGE_BYTES: u64 = 40 * 1024 * 1024;
 const ANCHOR_PREFIX: &str = "imap2";
 /// The prefix of a listing page this wire writes.
 const LIST_PREFIX: &str = "imap1";
+/// The prefix of a search page this wire writes.
+const SEARCH_PREFIX: &str = "imaps1";
+/// The most folders one search page looks in: a mailbox with more answers
+/// the rest on the next pages.
+const SEARCH_FOLDERS_PER_PAGE: usize = 25;
+/// The longest literal a server announcing `LITERAL-` takes without a round
+/// trip (RFC 7888).
+const LITERAL_MINUS_MAX: usize = 4096;
 
 /// Which message each UID of a read folder holds: by the source, the
 /// BLAKE3 of the folder's digest and the UID. A UID names one message for
@@ -420,9 +433,10 @@ fn write_anchor(marks: &BTreeMap<String, Mark>) -> String {
     anchor
 }
 
-/// Where a listing stands: the folder (by its place in the read folders
-/// and its digest), its UIDVALIDITY, the UID the next page is below, and the
-/// sequence number it ends at.
+/// Where a listing or a search stands: the folder (by its place in the read
+/// folders and its digest), its UIDVALIDITY, the UID the next page is below,
+/// and, for a listing, the sequence number it ends at. Each kind of page
+/// carries its own prefix.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct ListCursor {
     folder: usize,
@@ -433,7 +447,7 @@ struct ListCursor {
 }
 
 impl ListCursor {
-    fn parse(page: Option<&str>) -> Result<Self> {
+    fn parse(page: Option<&str>, prefix: &str) -> Result<Self> {
         let Some(page) = page else {
             return Ok(Self::default());
         };
@@ -448,7 +462,7 @@ impl ListCursor {
                 None => Err(refused("imap_list_page_unreadable")),
             }
         };
-        if fields.first() != Some(&LIST_PREFIX) || fields.len() != 6 {
+        if fields.first() != Some(&prefix) || fields.len() != 6 {
             return Err(refused("imap_list_page_unreadable"));
         }
         Ok(Self {
@@ -462,10 +476,10 @@ impl ListCursor {
         })
     }
 
-    fn write(&self) -> String {
+    fn write(&self, prefix: &str) -> String {
         let text = |value: Option<u64>| value.map(|value| format!("{value}")).unwrap_or_default();
         format!(
-            "{LIST_PREFIX}:{}:{}:{}:{}:{}",
+            "{prefix}:{}:{}:{}:{}:{}",
             self.folder,
             self.digest,
             self.uid_validity,
@@ -1118,6 +1132,61 @@ fn search_string(message_id: &str) -> Option<String> {
     Some(format!("\"{escaped}\""))
 }
 
+/// `query`, a caller's `SEARCH` keys, as `session` can send them (fix list
+/// row 19089): grouped, its atoms and parentheses as written, each quoted
+/// string quoted again, and one past ASCII sent as a literal the server
+/// takes without a round trip, under `CHARSET UTF-8`. The caller's own
+/// literal or a backslash outside a string is refused: either would leave
+/// the server reading bytes the command never sends.
+///
+/// # Errors
+///
+/// `imap_search_query_unreadable` for a query the grammar refuses;
+/// `imap_search_needs_ascii` where the server takes no such literal.
+fn search_criteria(query: &str, session: &ImapSession) -> Result<String> {
+    let unreadable = || refused("imap_search_query_unreadable");
+    let mut keys = String::with_capacity(query.len() + 2);
+    let mut utf8 = false;
+    let mut chars = query.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => {
+                let mut text = String::new();
+                loop {
+                    match chars.next().ok_or_else(unreadable)? {
+                        '"' => break,
+                        '\\' => match chars.next().ok_or_else(unreadable)? {
+                            escaped @ ('"' | '\\') => text.push(escaped),
+                            _ => return Err(unreadable()),
+                        },
+                        c if c.is_control() => return Err(unreadable()),
+                        c => text.push(c),
+                    }
+                }
+                if text.is_ascii() {
+                    let escaped = text.replace('\\', "\\\\").replace('"', "\\\"");
+                    let _ = write!(keys, "\"{escaped}\"");
+                } else {
+                    let length = text.len();
+                    if !(session.has("LITERAL+")
+                        || (session.has("LITERAL-") && length <= LITERAL_MINUS_MAX))
+                    {
+                        return Err(refused("imap_search_needs_ascii"));
+                    }
+                    utf8 = true;
+                    let _ = write!(keys, "{{{length}+}}\r\n{text}");
+                }
+            }
+            '{' | '\\' => return Err(unreadable()),
+            c if !c.is_ascii() || c.is_control() => return Err(unreadable()),
+            c => keys.push(c),
+        }
+    }
+    // The query came trimmed; a literal's own bytes are never trimmed.
+    let charset = if utf8 { "CHARSET UTF-8 " } else { "" };
+    Ok(format!("{charset}({keys})"))
+}
+
 /// Opens a session with the credential `secret` for `source`.
 fn open_session(
     source: &MailSyncSource,
@@ -1193,7 +1262,7 @@ impl MailProviderWire for ImapMailWire<'_> {
         query: &MailListQuery,
         page: Option<&str>,
     ) -> Result<MailIdPage> {
-        let mut cursor = ListCursor::parse(page)?;
+        let mut cursor = ListCursor::parse(page, LIST_PREFIX)?;
         let marks = self.anchor_marks(source)?;
         self.with_session(source, |open| {
             let read: Vec<usize> = (0..open.folders.len())
@@ -1308,7 +1377,7 @@ impl MailProviderWire for ImapMailWire<'_> {
             };
             Ok(MailIdPage {
                 messages,
-                next_page: Some(next.write()),
+                next_page: Some(next.write(LIST_PREFIX)),
             })
         })
     }
@@ -1473,6 +1542,106 @@ impl MailProviderWire for ImapMailWire<'_> {
             .borrow()
             .get(provider_id)
             .map(|(headers, _)| headers.labels.clone())
+    }
+
+    /// A quoted string in `SEARCH` keys escapes a quote or a backslash with a
+    /// backslash (RFC 3501 4.3).
+    fn search_escapes(&self) -> bool {
+        true
+    }
+
+    /// The messages `query`, `SEARCH` keys, finds in the folders this wire
+    /// reads (never trash, junk or drafts), folder by folder, the newest of
+    /// each first, at most `limit` (fix list row 19089). A page looks in at
+    /// most [`SEARCH_FOLDERS_PER_PAGE`] folders, so a query that finds
+    /// little still answers in bounded time and names the next page. A
+    /// message filed in several folders is named once a page.
+    fn search_page(
+        &self,
+        source: &MailSyncSource,
+        query: &str,
+        limit: u32,
+        page: Option<&str>,
+    ) -> Result<MailIdPage> {
+        let mut cursor = ListCursor::parse(page, SEARCH_PREFIX)?;
+        let limit = usize::try_from(limit).unwrap_or(usize::MAX).max(1);
+        self.with_session(source, |open| {
+            let criteria = search_criteria(query, &open.session)?;
+            let read: Vec<usize> = (0..open.folders.len())
+                .filter(|&at| open.folders[at].read())
+                .collect();
+            // The folder the page names, found again by its digest when the
+            // folders changed meanwhile.
+            let mut place = read
+                .iter()
+                .position(|&at| open.folders[at].digest == cursor.digest)
+                .unwrap_or(cursor.folder);
+            let mut messages = Vec::new();
+            let mut named = BTreeSet::new();
+            let mut looked = 0_usize;
+            while let Some(&folder) = read.get(place) {
+                if open.folders[folder].digest != cursor.digest {
+                    cursor = ListCursor {
+                        folder: place,
+                        digest: open.folders[folder].digest.clone(),
+                        ..ListCursor::default()
+                    };
+                }
+                let name = open.folders[folder].name.clone();
+                let status = open.session.examine(&name)?;
+                if status.uid_validity != cursor.uid_validity {
+                    cursor.uid_validity = status.uid_validity;
+                    cursor.below = None;
+                }
+                let below = cursor.below;
+                let mut uids = open.session.uid_search(&criteria)?;
+                uids.retain(|&uid| below.is_none_or(|below| uid < below));
+                // The newest hits: the highest UIDs.
+                let start = uids
+                    .len()
+                    .saturating_sub(limit.saturating_sub(messages.len()));
+                let taken = uids.split_off(start);
+                let mut headers = self.read_headers(open, folder, status, &taken)?;
+                headers.sort_by_key(|headers| std::cmp::Reverse(headers.received_at));
+                for headers in headers {
+                    if named.insert(headers.provider_id.clone()) {
+                        messages.push(MailMessageRef {
+                            provider_id: headers.provider_id,
+                            thread_id: headers.thread_id,
+                        });
+                    }
+                }
+                looked += 1;
+                if start > 0 {
+                    // This folder holds older hits: the next page reads on
+                    // below the oldest taken.
+                    cursor.below = taken.first().copied();
+                    return Ok(MailIdPage {
+                        messages,
+                        next_page: Some(cursor.write(SEARCH_PREFIX)),
+                    });
+                }
+                place += 1;
+                let Some(&next) = read.get(place) else {
+                    break;
+                };
+                cursor = ListCursor {
+                    folder: place,
+                    digest: open.folders[next].digest.clone(),
+                    ..ListCursor::default()
+                };
+                if messages.len() >= limit || looked >= SEARCH_FOLDERS_PER_PAGE {
+                    return Ok(MailIdPage {
+                        messages,
+                        next_page: Some(cursor.write(SEARCH_PREFIX)),
+                    });
+                }
+            }
+            Ok(MailIdPage {
+                messages,
+                next_page: None,
+            })
+        })
     }
 
     fn attachment(
