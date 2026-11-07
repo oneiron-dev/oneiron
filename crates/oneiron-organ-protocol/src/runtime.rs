@@ -13,7 +13,12 @@
 //! each call or answer it sends, before the message leaves (FIX 6195): its
 //! frames' bytes and the value they decode into, held in the call's room as
 //! the organ's own, as a `memory.grow` holds them. So the reader books
-//! nothing of its own.
+//! nothing of its own. The engine gives the frames' part back when the call
+//! next asks, and holds the value until the call ends (FIX 12437). It
+//! relies on this order, which the runtime keeps: the reader decodes each
+//! message and frees its frames' bytes before it hands the message on; the
+//! message's descriptor list is freed before the verb holds the message;
+//! and a call asks again only once it holds the answer to its last ask.
 
 use std::collections::HashMap;
 use std::ops::Deref;
@@ -428,6 +433,8 @@ pub fn serve_stream<O: Organ>(organ: Arc<O>, stream: &UnixStream) -> Result<(), 
                 }
             }
             // An answer for a call that has ended is dropped with its fds.
+            // Decoded, its frames' bytes already freed, before the asking
+            // verb wakes (FIX 12437).
             Ok((ToOrgan::Answer(answer), fds)) => {
                 let state = lock(&shared.calls).get(&answer.call).cloned();
                 if let Some(state) = state {
