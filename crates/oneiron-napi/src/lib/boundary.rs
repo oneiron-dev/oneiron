@@ -18,10 +18,6 @@ pub(super) const DEFAULT_NAPI_SEARCH_LIMIT: u32 = 10;
 // sets of limits that agree only by coincidence.
 pub(super) const MAX_NAPI_ENTITY_PAYLOAD_BYTES: usize = oneiron_remote::MAX_ENTITY_PAYLOAD_BYTES;
 
-/// The entities one transaction of a batch write holds (FIX 11125): a batch
-/// past it is written frame by frame, never refused for its size.
-pub(super) const NAPI_BATCH_FRAME_ENTITIES: usize = oneiron_remote::MAX_BATCH_ENTITIES;
-
 pub(super) type BoundaryResult<T> = std::result::Result<T, String>;
 
 /// Convert an oneiron error to a napi error.
