@@ -10,8 +10,8 @@
 
 use super::{Outcome, PreparedShadowStep, Reason, unavailable};
 use crate::code_run::{
-    CapturedGuestResponse, CodeRunReplayRecord, ExecutorStepStart, StepReplayCapsule,
-    StepReplayContext,
+    CapturedCallable, CapturedGuestResponse, CodeRunReplayRecord, ExecutorStepStart,
+    StepReplayCapsule, StepReplayContext,
 };
 
 /// A captured step's replay context, read and checked once: the context and
@@ -31,8 +31,9 @@ pub(crate) enum ArmContext {
 /// row cut to the end its checkpoint records: `Missing` with no body, and
 /// `SourceDigestMismatch` for a body that is no context, names another run
 /// or step, another start or end, keeps a response at a position twice or
-/// past the step's end, or keeps a read of reader state (FIX 6352) for
-/// another run or outside the step's window.
+/// past the step's end, keeps a read of reader state (FIX 6352) for
+/// another run or outside the step's window, or keeps a callable (FIX 3608)
+/// whose calls are not inside the step's own.
 pub(super) fn freeze_context(
     bytes: Option<Vec<u8>>,
     capsule: &StepReplayCapsule,
@@ -53,6 +54,7 @@ pub(super) fn freeze_context(
         || !context
             .reader_reads
             .held_within(capsule.run, start.bridge_start, bridge_end)
+        || !context.callables_placed()
     {
         return Err(mismatch());
     }
@@ -98,6 +100,25 @@ impl PreparedShadowStep {
             return Err(missing("hook_view"));
         }
         Ok(response)
+    }
+
+    /// The callable the step's replay context froze for the call at bridge
+    /// position `seq` (FIX 3608); `None` when it froze none there, or no
+    /// context is read.
+    pub(crate) fn callable_at(&self, seq: u64) -> Option<&CapturedCallable> {
+        match &self.context {
+            ArmContext::Captured { context, .. } => context.callable_at(seq),
+            ArmContext::Missing => None,
+        }
+    }
+
+    /// Each callable the step's replay context froze, in call order (FIX
+    /// 3608); none when no context is read.
+    pub(crate) fn callables(&self) -> &[CapturedCallable] {
+        match &self.context {
+            ArmContext::Captured { context, .. } => context.callables.as_slice(),
+            ArmContext::Missing => &[],
+        }
     }
 
     /// Whether each recorded call an arm matched, from the step's start to
