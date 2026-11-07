@@ -25,7 +25,7 @@ use super::cancel::StepCancellation;
 use super::code_check::{CheckedDoor, ProgramAdmission, ProgramCheck, TypeFeedback};
 use super::host::executor_boundary_contract;
 use super::store::{
-    RECOVERABLE_OUTPUT_CHUNK_BYTES, executed_output_path, is_result_output_path,
+    RECOVERABLE_OUTPUT_CHUNK_BYTES, console_output_path, executed_output_path, is_result_output_path,
     observation_output_path, recoverable_output_path, script_output_path, source_map_output_path,
     validate_runtime_outputs,
 };
@@ -289,19 +289,24 @@ fn step_bodies(
 ) -> Result<(Vec<ShadowBodyRef>, bool)> {
     let seq = prepared.step().step;
     let streams = host.take_streams();
-    let (observation, files, complete) = match ran {
+    let (observation, console, files, complete) = match ran {
         Ok(outcome) => {
-            let (observation, files) = streams.into_bodies(store, outcome)?;
-            (Some(observation), files, true)
+            let (observation, console, files) = streams.into_bodies(store, outcome)?;
+            (Some(observation), console, files, true)
         }
         Err(_) => {
             let (observation, files) = streams.into_partial();
-            (observation, files, false)
+            (observation, None, files, false)
         }
     };
     let mut bodies = Vec::new();
     if let Some(observation) = observation {
         let (output, secret) = store.finish(observation_output_path(seq), observation, complete)?;
+        bodies.push(ShadowBodyRef::of(&output, secret));
+    }
+    // A finished step's console lines, as a run keeps them (FIX 6885).
+    if let Some(console) = console {
+        let (output, secret) = store.finish(console_output_path(seq), console, complete)?;
         bodies.push(ShadowBodyRef::of(&output, secret));
     }
     let named = validate_runtime_outputs(&prepared.prefix, seq, &files).ok();

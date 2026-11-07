@@ -513,6 +513,11 @@ impl JsCodeModeOutput {
 pub struct JsCodeModeStepOutcome {
     pub done: bool,
     pub observation: String,
+    /// A finished step's console lines, beside its finish text in
+    /// `observation` (FIX 6885). Empty when the step did not finish (its
+    /// console is the observation), wrote none, or its host took the
+    /// streamed console itself.
+    pub console: String,
     pub outputs: Vec<JsCodeModeOutput>,
 }
 
@@ -522,6 +527,7 @@ impl JsCodeModeStepOutcome {
         Self {
             done: false,
             observation: observation.into(),
+            console: String::new(),
             outputs: Vec::new(),
         }
     }
@@ -531,6 +537,7 @@ impl JsCodeModeStepOutcome {
         Self {
             done: true,
             observation: observation.into(),
+            console: String::new(),
             outputs: Vec::new(),
         }
     }
