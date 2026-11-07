@@ -321,7 +321,11 @@ impl Vault {
             .as_ref()
             .map(|plan| plan.judge(self, &dbs, &rtxn))
             .transpose()?;
-        let mut lineage = MailboxLineage::default();
+        // What the side ledgers record each row's body was made from (a blob
+        // version's made_by, a code revision's or proposal's references), read
+        // once in this snapshot for an Owner's copy: every row below meets it
+        // before its body is read (fix list row 15416).
+        let mut lineage = MailboxLineage::read_in(&self.store, &rtxn, judge.is_some())?;
         let scope = match (only, cut) {
             (Some(_), _) => ExportScope::Records,
             (None, ExportCut::Archive) => ExportScope::WholeVault,
@@ -413,9 +417,7 @@ impl Vault {
                 if only.is_none()
                     && cut == ExportCut::Archive
                     && row_live_in_txn(&self.store, &rtxn, &id)?
-                    && judge
-                        .as_mut()
-                        .map_or(Ok(true), |judge| judge.carries(id, Some(&raw)))?
+                    && lineage.admits(judge.as_mut(), id, Some(&raw))?
                 {
                     let handle = crate::ports::ShortIdStoreRead::port_short_id_reference(
                         &self.store,
@@ -440,17 +442,18 @@ impl Vault {
                 continue;
             }
             // A member's mailbox the copy does not carry, and what was learned
-            // from it, stay home before the row is read whole (fix list row
-            // 15416).
+            // from it, stay home before the row is read whole, in an archive
+            // and an OKF copy alike: what its own lineage names, and what the
+            // side ledgers record its body was made from. Bytes a blob
+            // version holds stay home only when no recorded use of them goes
+            // whole (fix list row 15416).
             if crate::origin::lfs::unpublished_lfs_chunk_in_txn(
                 &self.store,
                 &rtxn,
                 &id,
                 header.entity_type,
             )? || !row_live_in_txn(&self.store, &rtxn, &id)?
-                || !judge
-                    .as_mut()
-                    .map_or(Ok(true), |judge| judge.carries(id, Some(&raw)))?
+                || !lineage.admits(judge.as_mut(), id, Some(&raw))?
             {
                 continue;
             }
@@ -703,9 +706,7 @@ impl Vault {
                     owner_export,
                 )?
                 .is_none()
-                    || !judge
-                        .as_mut()
-                        .map_or(Ok(true), |judge| judge.carries(session, None))?
+                    || !lineage.admits(judge.as_mut(), session, None)?
                 {
                     continue;
                 }
