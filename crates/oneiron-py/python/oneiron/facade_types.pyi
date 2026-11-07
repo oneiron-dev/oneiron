@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1289 facade rows, 4672 declarations.
-Inputs: 1218 of 1289 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1118 of 1289 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1291 facade rows, 4678 declarations.
+Inputs: 1220 of 1291 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1120 of 1291 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -12938,6 +12938,15 @@ class CodeRunModelHealCountRequest(TypedDict):
 class CodeRunModelHealCountView(TypedDict):
     model_id: str
     healed_turns: int
+class CodeRunSessionModelHealCountRequest(TypedDict):
+    session_ref: str
+    model_id: str
+class CodeRunSessionModelHealCountView(TypedDict):
+    session_ref: str
+    model_id: str
+    canonical_healed_turns: int
+    session_healed_turns: int
+    healed_turns: int
 class CodeRunCorrectionsRequest(TypedDict):
     run_ref: str
     after_step: NotRequired[int | None]
@@ -12978,6 +12987,30 @@ class CodeRunCorrectionsView(TypedDict):
     run_ref: str
     policy: CodeRunCorrectionPolicy
     records: list[CodeRunCorrection]
+    next_after_step: NotRequired[int | None]
+class CodeRunStepEvidenceRequest(TypedDict):
+    run_ref: str
+    after_step: NotRequired[int | None]
+    limit: NotRequired[int | None]
+class CodeRunStepBody(TypedDict):
+    handle: str
+    bytes: int
+    complete: bool
+    withheld: bool
+    text: str
+class CodeRunStepEvidence(TypedDict):
+    step: int
+    state_hash: NotRequired[str | None]
+    source: NotRequired[CodeRunStepBody | None]
+    executed_js: NotRequired[CodeRunStepBody | None]
+    observation: NotRequired[CodeRunStepBody | None]
+    console: NotRequired[CodeRunStepBody | None]
+    corrections: list[CodeRunCorrection]
+class CodeRunStepEvidenceView(TypedDict):
+    run_ref: str
+    completed_steps: int
+    policy: CodeRunCorrectionPolicy
+    steps: list[CodeRunStepEvidence]
     next_after_step: NotRequired[int | None]
 class CodeRunTypeDiagnosticsRequest(TypedDict):
     check_ref: str

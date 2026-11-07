@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1341 code-mode rows (1300 host rows, 41 run rows), 4730 declarations.
-// Replies: 1149 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1343 code-mode rows (1302 host rows, 41 run rows), 4736 declarations.
+// Replies: 1151 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -2617,6 +2617,8 @@ declare namespace Sdk {
   type ForeignCodeRunResult = { run_id: string; actor_ref: string; tier: ForeignCodeTier; linked_imports: string[]; reads: ForeignCodeRead[]; done: boolean; observation: string; outputs: ForeignCodeOutput[]; proposals: ForeignCodeProposal[]; isolation: ForeignCodeIsolation; receipt_ref: string; program_steps?: ProgramStepFeedbackRelease[] };
   type CodeRunModelHealCountRequest = { model_id: string };
   type CodeRunModelHealCountView = { model_id: string; healed_turns: number };
+  type CodeRunSessionModelHealCountRequest = { session_ref: string; model_id: string };
+  type CodeRunSessionModelHealCountView = { session_ref: string; model_id: string; canonical_healed_turns: number; session_healed_turns: number; healed_turns: number };
   type CodeRunCorrectionsRequest = { run_ref: string; after_step?: number | null; limit?: number | null };
   type CodeRunCorrectionPolicy = { normalization_passes: number; model_repair_retries: number };
   type ExecutorWireRepairs = { trimmed_transport_whitespace: boolean; stripped_code_fence: boolean; stripped_exec_wrapper: boolean; discarded_console_blocks: number };
@@ -2624,6 +2626,10 @@ declare namespace Sdk {
   type CodeRunCorrectionCheckpoint = { step: number; state_hash: string };
   type CodeRunCorrection = { schema: number; run_id: EntityId; step: number; attempt: number; recorded_at_ms: number; model_id: string; repairs: ExecutorWireRepairs; outcome: CodeRunCorrectionOutcome; policy: CodeRunCorrectionPolicy; model_repair_retries_used: number; exhausted: boolean; checkpoint?: CodeRunCorrectionCheckpoint | null };
   type CodeRunCorrectionsView = { run_ref: string; policy: CodeRunCorrectionPolicy; records: CodeRunCorrection[]; next_after_step?: number | null };
+  type CodeRunStepEvidenceRequest = { run_ref: string; after_step?: number | null; limit?: number | null };
+  type CodeRunStepBody = { handle: string; bytes: number; complete: boolean; withheld: boolean; text: string };
+  type CodeRunStepEvidence = { step: number; state_hash?: string | null; source?: CodeRunStepBody | null; executed_js?: CodeRunStepBody | null; observation?: CodeRunStepBody | null; console?: CodeRunStepBody | null; corrections: CodeRunCorrection[] };
+  type CodeRunStepEvidenceView = { run_ref: string; completed_steps: number; policy: CodeRunCorrectionPolicy; steps: CodeRunStepEvidence[]; next_after_step?: number | null };
   type CodeRunTypeDiagnosticsRequest = { check_ref: string; session_ref?: string | null };
   type CodeWaitTarget = { run_id: EntityId; wait_id: EntityId; generation: number; step_hash: string; effect_digest: string };
   type CodeWaitChoice = "approve_once" | "approve_and_stop_asking" | "deny";
@@ -5980,6 +5986,8 @@ declare const vault: Sdk.VaultHost & {
       /** Stage one remediation of a repository's current code: marked keys become secret references, committed .env files go, .gitignore and .env.example follow. Owner only. It only proposes. */
       propose(input: Sdk.CodeRepoSecretProposeRequest): Promise<Sdk.CodeRepoSecretRemediation | StoredResult>;
     };
+    /** Read one model's healed-turn tally as one live off-record session the owner is in reads it: the canonical tally, that session's own delta and their sum. Owner only. A closed or unknown session is refused. */
+    session_model_heal_count(input: Sdk.CodeRunSessionModelHealCountRequest): Promise<Sdk.CodeRunSessionModelHealCountView | StoredResult>;
     snapshots: {
       /** Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant. */
       get(input: Sdk.CodeSnapshotRequest): Promise<Sdk.CodeSnapshotView | null | StoredResult>;
@@ -5988,6 +5996,8 @@ declare const vault: Sdk.VaultHost & {
       /** Read one UTF-8 file and its SHA-256 from the frozen blobs of a pinned code snapshot, never from the folder on disk. Owner only. */
       read(input: Sdk.CodeSnapshotReadRequest): Promise<Sdk.CodeSnapshotPinnedFile | null | StoredResult>;
     };
+    /** Read one canonical code run's steps as the owner, paged by step: each step's normalized program, executed JavaScript, committed observation and finished console as stored, bounded or withheld, with its correction records. */
+    step_evidence(input: Sdk.CodeRunStepEvidenceRequest): Promise<Sdk.CodeRunStepEvidenceView | null | StoredResult>;
     symbols: {
       /** Declare the current repository symbols a task will touch, held by the caller until host time plus ttl_seconds. Owner only. An overlap waits behind the tasks it names, never refused; it grants no write, approval or landing. */
       declare(input: Sdk.CodeSymbolsDeclareRequest): Promise<Sdk.CodeSymbolsDeclared | StoredResult>;

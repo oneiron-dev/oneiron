@@ -159,6 +159,7 @@ pub(crate) use self::result_read::{
 };
 pub use self::storage::ReadWorldUnknown;
 pub(crate) use self::storage::SessionCheckpointBody;
+pub(crate) use self::storage::session_model_heal_count;
 pub use self::storage::step_replay_capsules;
 pub(crate) use self::storage::undecodable_step_capsule_in_txn;
 pub(crate) use self::storage::{

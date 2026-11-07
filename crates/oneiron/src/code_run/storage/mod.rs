@@ -21,6 +21,7 @@ pub(crate) use secret_lift::{
     drop_code_run_result_marks_in_txn, erase_retained_result_marks_in_txn,
 };
 mod session_checkpoint;
+mod session_heal_count;
 pub(crate) use session_checkpoint::SessionCheckpointBody;
 mod session_write;
 // FIX 5426: the caller's view a room write's receipt keeps.
@@ -91,6 +92,8 @@ pub use self::secret_lift::{
     CodeRunRoomSecretLiftRequest, CodeRunSecretLiftDismiss, CodeRunSecretLiftDismissal,
     CodeRunSecretLiftProposalView, CodeRunSecretLiftRequest, CodeRunSecretLiftStatus,
 };
+// FIX 4415: a live session's model heal tally, base plus its own delta.
+pub(crate) use self::session_heal_count::session_model_heal_count;
 pub(crate) use self::spawn_erase::erase_spawn_targets_in_txn;
 #[cfg(test)]
 pub(super) use self::speech_identity::canonical_speech_conversation_id;

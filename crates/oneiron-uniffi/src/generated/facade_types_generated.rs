@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1289 facade rows, 4668 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1241.
+// UniFFI census: 1291 facade rows, 4674 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1243.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -40772,6 +40772,31 @@ pub struct CodeRunModelHealCountView {
     pub healed_turns: u64,
 }
 
+/// `oneiron::memory::code_run_doors::types::CodeRunSessionModelHealCountRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeRunSessionModelHealCountRequest {
+    #[serde(rename = "session_ref")]
+    pub session_ref: String,
+    #[serde(rename = "model_id")]
+    pub model_id: String,
+}
+
+/// `oneiron::memory::code_run_doors::types::CodeRunSessionModelHealCountView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeRunSessionModelHealCountView {
+    #[serde(rename = "session_ref")]
+    pub session_ref: String,
+    #[serde(rename = "model_id")]
+    pub model_id: String,
+    #[serde(rename = "canonical_healed_turns")]
+    pub canonical_healed_turns: u64,
+    #[serde(rename = "session_healed_turns")]
+    pub session_healed_turns: u64,
+    #[serde(rename = "healed_turns")]
+    pub healed_turns: u64,
+}
+
 /// `oneiron::memory::code_run_doors::types::CodeRunCorrectionsRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -40880,6 +40905,87 @@ pub struct CodeRunCorrectionsView {
     pub policy: CodeRunCorrectionPolicy,
     #[serde(rename = "records")]
     pub records: Vec<CodeRunCorrection>,
+    #[serde(
+        rename = "next_after_step",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub next_after_step: Option<u64>,
+}
+
+/// `oneiron::memory::code_run_doors::types::CodeRunStepEvidenceRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeRunStepEvidenceRequest {
+    #[serde(rename = "run_ref")]
+    pub run_ref: String,
+    #[serde(
+        rename = "after_step",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub after_step: Option<u64>,
+    #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+/// `oneiron::memory::code_run_doors::types::CodeRunStepBody`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeRunStepBody {
+    #[serde(rename = "handle")]
+    pub handle: String,
+    #[serde(rename = "bytes")]
+    pub bytes: u64,
+    #[serde(rename = "complete")]
+    pub complete: bool,
+    #[serde(rename = "withheld")]
+    pub withheld: bool,
+    #[serde(rename = "text")]
+    pub text: String,
+}
+
+/// `oneiron::memory::code_run_doors::types::CodeRunStepEvidence`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeRunStepEvidence {
+    #[serde(rename = "step")]
+    pub step: u64,
+    #[serde(
+        rename = "state_hash",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub state_hash: Option<String>,
+    #[serde(rename = "source", default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<CodeRunStepBody>,
+    #[serde(
+        rename = "executed_js",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub executed_js: Option<CodeRunStepBody>,
+    #[serde(
+        rename = "observation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub observation: Option<CodeRunStepBody>,
+    #[serde(rename = "console", default, skip_serializing_if = "Option::is_none")]
+    pub console: Option<CodeRunStepBody>,
+    #[serde(rename = "corrections")]
+    pub corrections: Vec<CodeRunCorrection>,
+}
+
+/// `oneiron::memory::code_run_doors::types::CodeRunStepEvidenceView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeRunStepEvidenceView {
+    #[serde(rename = "run_ref")]
+    pub run_ref: String,
+    #[serde(rename = "completed_steps")]
+    pub completed_steps: u64,
+    #[serde(rename = "policy")]
+    pub policy: CodeRunCorrectionPolicy,
+    #[serde(rename = "steps")]
+    pub steps: Vec<CodeRunStepEvidence>,
     #[serde(
         rename = "next_after_step",
         default,

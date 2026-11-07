@@ -705,7 +705,9 @@ both bindings and their export-census tests in one change.
 - `vault.code.secrets.propose`
 - `execute_code`
 - `vault.code.model_heal_count`
+- `vault.code.session_model_heal_count`
 - `vault.code.corrections`
+- `vault.code.step_evidence`
 - `vault.code.type_diagnostics`
 - `vault.code.waits.resolve`
 - `vault.code.waits.receipt`

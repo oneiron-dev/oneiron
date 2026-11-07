@@ -2176,8 +2176,14 @@ impl OneironClient {
                 "vault.code.model_heal_count" => remote_agent_verb_output::<
                     oneiron::memory::code_run_doors::CodeRunModelHealCountView,
                 >(client, verb, &input),
+                "vault.code.session_model_heal_count" => remote_agent_verb_output::<
+                    oneiron::memory::code_run_doors::CodeRunSessionModelHealCountView,
+                >(client, verb, &input),
                 "vault.code.corrections" => remote_agent_verb_output::<
                     oneiron::memory::code_run_doors::CodeRunCorrectionsView,
+                >(client, verb, &input),
+                "vault.code.step_evidence" => remote_agent_verb_output::<
+                    Option<oneiron::memory::code_run_doors::CodeRunStepEvidenceView>,
                 >(client, verb, &input),
                 "vault.code.type_diagnostics" => remote_agent_verb_output::<
                     Option<oneiron::code_run::ProgramStepFeedbackRelease>,
@@ -12592,6 +12598,19 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.code.model_heal_count", value)
     }
+    pub fn vault_code_session_model_heal_count(
+        &self,
+        input: &oneiron::memory::code_run_doors::CodeRunSessionModelHealCountRequest,
+    ) -> Result<oneiron::memory::code_run_doors::CodeRunSessionModelHealCountView, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.session_model_heal_count", value)
+    }
     pub fn vault_code_corrections(
         &self,
         input: &oneiron::memory::code_run_doors::CodeRunCorrectionsRequest,
@@ -12603,6 +12622,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.code.corrections", value)
+    }
+    pub fn vault_code_step_evidence(
+        &self,
+        input: &oneiron::memory::code_run_doors::CodeRunStepEvidenceRequest,
+    ) -> Result<Option<oneiron::memory::code_run_doors::CodeRunStepEvidenceView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.step_evidence", value)
     }
     pub fn vault_code_type_diagnostics(
         &self,
