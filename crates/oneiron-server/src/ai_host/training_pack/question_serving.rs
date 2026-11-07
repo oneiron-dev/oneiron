@@ -62,6 +62,7 @@ fn abstain() -> ProviderDecision {
         paired: None,
         person: None,
         served: None,
+        cost_per_thousand: None,
     }
 }
 
@@ -126,6 +127,8 @@ impl QuestionHeadRung {
             paired: None,
             person: None,
             served: Some(self.head_pin(&binding)?),
+            // A local head's answer costs the provider's rate (#5770).
+            cost_per_thousand: None,
         }))
     }
 
