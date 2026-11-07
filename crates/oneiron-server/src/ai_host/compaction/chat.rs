@@ -11,7 +11,9 @@
 //! its own guard on the chat actor's budget line and bills the payer the
 //! turn resolved: each call takes its own permit and settles once, and
 //! filing settles nothing. It runs off the answer's path, queued with every
-//! other pass.
+//! other pass. One flight per conversation runs at a time (FIX 5030): a
+//! second answer past its threshold while its conversation's flight is held
+//! does not fly, and leaves its log raw for the next turn.
 
 use std::sync::Arc;
 
@@ -93,6 +95,10 @@ pub(crate) struct ChatBreakpointCall {
     pub(crate) budget_units: u64,
     /// The reply's MESSAGE: the flight's paid calls' job.
     pub(crate) message: EntityId,
+    /// Every row the answer's own admitted call was read from, `None` when
+    /// not all were witnessed: its live fork is captured only from a whole
+    /// set (FIX 9463).
+    pub(crate) sources: Option<Vec<EntityId>>,
 }
 
 /// One answer's own admitted call, as its breakpoint captures it: a clone
@@ -119,13 +125,21 @@ impl LiveAdmission for AnswerAdmission {
 impl AiHandle {
     /// The self mode `agent` answers chat in (FIX 4465 D), when its
     /// definition's profile names `self` and the vault's row reads the live
-    /// context, on `live_fork` or `auto` (FIX 6029). `None` keeps the chat
-    /// path as it was. A host whose writer
+    /// context, on `live_fork` or `auto` (FIX 6029). A definition that
+    /// carries no profile names `self` on the host's window (FIX 7744), while
+    /// this host's writer compaction is live. `None` keeps the chat path as
+    /// it was. A host whose writer
     /// factory is off still reads the agent's log this way; its breakpoint
     /// names why no flight runs.
     pub(crate) fn chat_self_mode(&self, vault: &Vault, agent: EntityId) -> Option<ChatSelfMode> {
         let definition = vault.get_agent_definition(&agent).ok().flatten()?;
-        let profile = definition.memory_profile.clone()?;
+        let profile = match definition.memory_profile.clone() {
+            Some(profile) => profile,
+            None => match self.writer_compaction.get() {
+                Some(CodeModeCompaction::Live(live)) => live.profile.clone().as_self_writer(),
+                _ => return None,
+            },
+        };
         let row = vault
             .purpose_default_table()
             .ok()?
@@ -149,8 +163,10 @@ impl AiHandle {
     /// Enters an answer's breakpoint: past its profile's threshold, the
     /// answer's own `admitted` call is captured now, before it is sent (none
     /// under `auto` when its prefix is cold, FIX 6029), and its flight is
-    /// queued to run off the answer's path. Says why no flight is queued
-    /// when none is; the log then stays raw.
+    /// queued to run off the answer's path, holding its conversation's one
+    /// flight claim until it ends (FIX 5030). Says why no flight is queued
+    /// when none is; the log then stays raw. A conversation whose flight is
+    /// held reads `Quiet`, as a driver already in flight does.
     pub(crate) fn enter_chat_breakpoint(
         &self,
         call: ChatBreakpointCall,
@@ -199,7 +215,10 @@ impl AiHandle {
         if call.log.uncompacted_tokens < driver.compact_at() {
             return Err(Why::Quiet);
         }
-        let captured = capture_conversation_fork(&driver, &admitted.request);
+        let Some(claim) = live.chat_flights.claim(call.log.conversation) else {
+            return Err(Why::Quiet);
+        };
+        let captured = capture_conversation_fork(&driver, &admitted.request, call.sources.clone());
         let spawn = ThreadSpawn {
             passes: Arc::clone(&live.passes),
             credential: call.payer.entity_ref().to_hex(),
@@ -208,6 +227,8 @@ impl AiHandle {
         let policy = live.policy;
         let mut driver = driver;
         spawn.spawn(Box::new(move || {
+            // Held to the flight's end, released on every exit.
+            let _flight = claim;
             let ChatBreakpointCall {
                 vault,
                 log,
