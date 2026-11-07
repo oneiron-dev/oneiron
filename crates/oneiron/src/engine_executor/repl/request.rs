@@ -194,7 +194,15 @@ impl EngineNativeExecutor<'_> {
         for (seq, view) in views.iter().enumerate() {
             messages.extend(self.fold_tail(&epochs, record, seq)?);
             match super::compaction::epoch_frame(&epochs, record.run_id, seq, &views)? {
-                Some(Some(frame)) => {
+                Some(Some(mut frame)) => {
+                    // An epoch frame or a whole-step fold stub keeps a
+                    // summary, ids and a note: each is masked at every
+                    // render, so a value custody learns later is masked too.
+                    for part in &mut frame.content {
+                        if let ContentPart::Text { text } = part {
+                            *text = mask_known_text(&self.storage, text)?;
+                        }
+                    }
                     messages.push(frame);
                     swapped = true;
                     continue;
@@ -417,15 +425,18 @@ impl EngineNativeExecutor<'_> {
     }
 }
 
-/// Bound results a post-swap brief lists, newest first.
+/// Bound results a post-swap brief gives a card line, newest first; every
+/// older one is still named (FIX 9843).
 pub(super) const BRIEF_BINDINGS: usize = 64;
 
 /// Characters of a result's preview a brief line carries.
 pub(super) const BRIEF_PREVIEW_CHARS: usize = 120;
 
 impl EngineNativeExecutor<'_> {
-    /// The run's live result names, newest first, a line each from its
-    /// manifest and taint sidecars alone: no body is read.
+    /// The run's live result names, newest first, from their manifests and
+    /// taint sidecars alone: no body is read. The newest [`BRIEF_BINDINGS`]
+    /// get a line each; every older one is named on a line of names, so the
+    /// model can still name each result it holds (FIX 9843).
     pub(super) fn bindings_brief(
         &self,
         record: &CodeRunReplayRecord,
@@ -487,10 +498,17 @@ impl EngineNativeExecutor<'_> {
                 },
             ));
         }
-        if record.bindings.len() > BRIEF_BINDINGS {
+        let older: Vec<&str> = record
+            .bindings
+            .iter()
+            .rev()
+            .skip(BRIEF_BINDINGS)
+            .map(|binding| binding.name.as_str())
+            .collect();
+        if !older.is_empty() {
             lines.push(format!(
-                "\u{2026}and {} more",
-                record.bindings.len() - BRIEF_BINDINGS
+                "Older results, newest first (describe(name) gives a card): {}",
+                older.join(", ")
             ));
         }
         Ok(Some(lines.join("\n")))
