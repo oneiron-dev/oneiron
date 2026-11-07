@@ -18751,6 +18751,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/code_run/task_reporting.rs",
+     "purpose": "Native terminal TASK reports captured by a code run",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_run/task_settlement.rs",
      "purpose": "Native task-decline outcomes captured by a code run",
      "surface": {
@@ -22639,6 +22649,7 @@
       "ConsentRegistryDelegation",
       "ConsentRegistryQuery",
       "ConsentRegistryRow",
+      "ConsentRegrantAction",
       "ConsentRevokeAction"
      ],
      "path": "src/consent/registry.rs",
@@ -22647,7 +22658,7 @@
       "const": 3,
       "crate-vis": 5,
       "fn": 1,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -92885,7 +92896,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 215,
+     "files": 216,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94224,7 +94235,7 @@
    },
    "over_bar": 185,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6659,
+   "source_files": 6660,
    "test_files": 895
   },
   "oneiron-android": {
@@ -144531,6 +144542,7 @@
       "ConsentRegistryDelegation",
       "ConsentRegistryQuery",
       "ConsentRegistryRow",
+      "ConsentRegrantAction",
       "ConsentRequirement",
       "ConsentRevokeAction",
       "ConsentSet",
@@ -148162,7 +148174,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1140,
-      "struct": 3474
+      "struct": 3475
      }
     },
     {
