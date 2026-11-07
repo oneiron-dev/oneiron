@@ -56,6 +56,13 @@ pub enum SourceComponent {
     PendingScrub = 5,
     LiveSessionBody = 6,
     LiveSessionMetadata = 7,
+    /// A stored MESSAGE entity's exact row.
+    MessageRow = 8,
+    /// One exact stored row of that message's document: its head, a slot row
+    /// or one update.
+    MessageDocument = 9,
+    /// One exact stored outgoing edge row of that message.
+    MessageEdge = 10,
 }
 
 impl SourceComponent {
@@ -69,6 +76,9 @@ impl SourceComponent {
             5 => Ok(Self::PendingScrub),
             6 => Ok(Self::LiveSessionBody),
             7 => Ok(Self::LiveSessionMetadata),
+            8 => Ok(Self::MessageRow),
+            9 => Ok(Self::MessageDocument),
+            10 => Ok(Self::MessageEdge),
             _ => Err(Error::NonCanonical),
         }
     }
@@ -84,6 +94,8 @@ pub enum ContentSource {
         session_ref_digest: [u8; 32],
         instance: [u8; 16],
     },
+    /// One stored on-record MESSAGE entity, by its id.
+    Message([u8; 16]),
 }
 
 /// Hashes the registry's exact UTF-8 session reference without normalization.
@@ -168,6 +180,10 @@ impl ContentBinding {
                 out.push(2);
                 out.extend_from_slice(&session_ref_digest);
                 out.extend_from_slice(&instance);
+            }
+            ContentSource::Message(message) => {
+                out.push(3);
+                out.extend_from_slice(&message);
             }
         }
         out.extend_from_slice(&self.source_key_digest);
