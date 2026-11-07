@@ -253,6 +253,12 @@ impl Vault {
         purpose: Option<RsiSpendPurpose>,
         share: Option<String>,
     ) -> RsiResult<()> {
+        // A token reservation under a share may overdraw it, and an overdraft
+        // is signed by this install's device key: its keys load before the
+        // write transaction, as every signing door's do. A failure refuses
+        // only a reservation that overdraws.
+        let signing = (kind == RsiLine::Tokens && share.is_some())
+            .then(|| self.prepare_install_signing().map(|_| ()));
         let mut txn = self.store.env.write_txn()?;
         let mut line = load(self, &txn)?;
         if line.suspended {
@@ -309,10 +315,7 @@ impl Vault {
                             "RSI token pool missing before admission",
                         ))?;
                     if overdrawn > 0 {
-                        return Ok(Some(RsiOverdraftReceipt {
-                            share: share.clone(),
-                            units: overdrawn,
-                        }));
+                        return Ok(Some((share.clone(), overdrawn)));
                     }
                 }
             }
@@ -320,6 +323,22 @@ impl Vault {
         })();
         match admission {
             Ok(overdraft) => {
+                let overdraft = match overdraft {
+                    Some((share, units)) => {
+                        match signing {
+                            Some(Ok(())) => {}
+                            Some(Err(error)) => return Err(error.into()),
+                            None => {
+                                return Err(crate::Error::InvariantViolation(
+                                    "an RSI overdraft without a share",
+                                )
+                                .into());
+                            }
+                        }
+                        Some(self.sign_rsi_overdraft_in_txn(&mut txn, id, share, units)?)
+                    }
+                    None => None,
+                };
                 let row =
                     line.reservations
                         .get_mut(&key)
@@ -438,6 +457,50 @@ impl Vault {
             reserved_exposure,
             suspended: line.suspended,
         })
+    }
+
+    /// Signs the overdraft of `units` on `share` admitted for `reservation`,
+    /// bound to this vault's store, with this install's device key, in the
+    /// reservation's own write transaction.
+    fn sign_rsi_overdraft_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        reservation: EntityId,
+        share: String,
+        units: u64,
+    ) -> RsiResult<RsiOverdraftReceipt> {
+        use ed25519_dalek::Signer;
+        let identity = crate::identity::ensure_device_identity_in_txn(self, txn)?;
+        let mut receipt = RsiOverdraftReceipt {
+            share,
+            units,
+            reservation: crate::research_budget::hex_lower(reservation.as_bytes()),
+            vault: crate::research_budget::hex_lower(self.vault_id().as_bytes()),
+            public_key: crate::research_budget::hex_lower(
+                &identity.signing_key.verifying_key().to_bytes(),
+            ),
+            signature: String::new(),
+        };
+        let signature = identity.signing_key.sign(&receipt.transcript()?);
+        receipt.signature = crate::research_budget::hex_lower(&signature.to_bytes());
+        Ok(receipt)
+    }
+
+    /// Whether `receipt` is a verifiable overdraft receipt of this vault: its
+    /// signature holds, it names this vault's store, and its key is this
+    /// install's device key.
+    ///
+    /// # Errors
+    /// A store failure.
+    pub fn verify_rsi_overdraft(&self, receipt: &RsiOverdraftReceipt) -> RsiResult<bool> {
+        if !receipt.verify()
+            || receipt.vault != crate::research_budget::hex_lower(self.vault_id().as_bytes())
+        {
+            return Ok(false);
+        }
+        let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
+        let device = crate::identity::read_device_verifying_key_in_txn(self, &txn)?;
+        Ok(device.is_some_and(|key| receipt.public_key == crate::research_budget::hex_lower(&key)))
     }
 
     /// Reads the token-share overdraft stamped at reservation, including after settlement.

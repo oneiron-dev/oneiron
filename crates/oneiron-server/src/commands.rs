@@ -169,6 +169,8 @@ pub use self::seat::{
     seat_login_plan, seat_routes, seat_runner_policy, seat_runners, seat_siwc_clear,
     seat_siwc_login, seat_siwc_revoke,
 };
+mod model_workers;
+pub use model_workers::model_workers;
 mod registry;
 pub use self::registry::registry;
 
