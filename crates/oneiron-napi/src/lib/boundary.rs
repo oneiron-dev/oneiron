@@ -20,10 +20,6 @@ pub(super) const MAX_NAPI_QUERY_BYTES: usize = oneiron_remote::MAX_QUERY_BYTES;
 
 pub(super) const MAX_NAPI_ENTITY_PAYLOAD_BYTES: usize = oneiron_remote::MAX_ENTITY_PAYLOAD_BYTES;
 
-/// The entities one transaction of a batch write holds (FIX 11125): a batch
-/// past it is written frame by frame, never refused for its size.
-pub(super) const NAPI_BATCH_FRAME_ENTITIES: usize = oneiron_remote::MAX_BATCH_ENTITIES;
-
 pub(super) type BoundaryResult<T> = std::result::Result<T, String>;
 
 /// Convert an oneiron error to a napi error.

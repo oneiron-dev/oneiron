@@ -8,7 +8,10 @@ use super::super::types::{
     RecordedOutboundOutcome,
 };
 use super::transition::{Transitioned, transition_record_in_txn};
-use super::{force_sync, get_ledger_record, open_payload_in_txn, transition_record_with_outcome};
+use super::{
+    force_sync, get_ledger_record, open_payload_in_txn, put_ledger_record,
+    transition_record_with_outcome,
+};
 use crate::Vault;
 use crate::error::Error;
 
@@ -36,6 +39,10 @@ pub(crate) fn defer_record(
             return Ok(record);
         }
     };
+    // FIX 11023: a task its host can poll gets its first poll.
+    super::super::remote_task_poll::schedule_first_poll_in_txn(
+        vault, &mut wtxn, &id, &handle, now_ms,
+    )?;
     keep_remote_task_in_txn(vault, &mut wtxn, &id, handle)?;
     open_payload_in_txn(vault, &wtxn, &mut record)?;
     wtxn.commit().map_err(Error::from)?;
@@ -75,6 +82,49 @@ fn settle_deferred_record(
         }
     }
     transition_record_with_outcome(vault, id, next, outcome, now_ms)
+}
+
+/// Stops a Deferred row whose remote task ended without its provider
+/// proving whether it delivered (FIX 11023): failed, cancelled, or no
+/// longer known to the provider. Its delivery is marked uncertain first,
+/// in the same writer, so it is abandoned as a failed remote task with its
+/// reserved budget kept, never released as certainly not sent. Returns the
+/// row's state after; its payload is not opened (FIX 10959: nothing opens
+/// before the write is durable).
+pub(crate) fn abandon_unconfirmed_remote_task(
+    vault: &Vault,
+    id: [u8; 32],
+    now_ms: u64,
+) -> IntentLedgerResult<IntentState> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    let mut current = get_ledger_record(vault, &wtxn, &id)?.ok_or(
+        IntentLedgerError::InvalidRecord("deferred outbound intent is missing"),
+    )?;
+    if current.state != IntentState::Deferred {
+        return Err(IntentLedgerError::InvalidTransition {
+            from: current.state,
+            to: IntentState::Abandoned,
+        });
+    }
+    if !current.delivery_uncertain {
+        current.delivery_uncertain = true;
+        put_ledger_record(vault, &mut wtxn, &current)?;
+    }
+    let state = match transition_record_in_txn(
+        vault,
+        &mut wtxn,
+        id,
+        IntentState::Abandoned,
+        RecordedOutboundOutcome::Abandoned(IntentEscalationReason::RemoteTaskFailed),
+        now_ms,
+    )? {
+        Transitioned::Moved(record) | Transitioned::Replayed(record) => record.state,
+    };
+    wtxn.commit().map_err(Error::from)?;
+    let synced = force_sync(vault);
+    vault.wake_owner_shed();
+    synced?;
+    Ok(state)
 }
 
 impl Vault {
