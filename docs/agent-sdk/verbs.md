@@ -920,6 +920,9 @@ both bindings and their export-census tests in one change.
 - `vault.models.manifest.replace`
 - `vault.settings.web_connector`
 - `vault.settings.web_connector.replace`
+- `vault.settings.model_pack`
+- `vault.settings.model_pack.replace`
+- `vault.model_pack.revert`
 - `vault.connectors.web.usage`
 - `vault.models.oneironer.bind`
 - `vault.models.routes.read`
