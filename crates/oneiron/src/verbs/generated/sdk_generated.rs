@@ -3813,6 +3813,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.secrets.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeRepoRequest,
+                >(),
+            ),
+            (
+                "vault.code.secrets.propose",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeRepoSecretProposeRequest,
+                >(),
+            ),
+            (
                 "execute_code",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::foreign_code::ForeignCodeRunRequest,
@@ -7901,6 +7913,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.proposal_review",
     "vault.code.proposal_settle",
     "vault.code.proposal_settlement",
+    "vault.code.secrets.get",
+    "vault.code.secrets.propose",
     "execute_code",
     "vault.code.model_heal_count",
     "vault.code.corrections",
@@ -9814,6 +9828,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.code.proposal_settlement" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_doors::CodeProposalSettlementView,
+        >(),
+        "vault.code.secrets.get" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_doors::CodeRepoSecretsView,
+        >(),
+        "vault.code.secrets.propose" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_doors::CodeRepoSecretRemediation,
         >(),
         "execute_code" => crate::code_run::vault_read::request_schema::<
             crate::memory::foreign_code::ForeignCodeRunResult,
@@ -15890,6 +15910,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.secrets.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.secrets.propose" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "execute_code" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -20984,6 +21018,8 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.code.proposal_settle" => validate_input_vault_code_proposal_settle(value)?,
         "vault.code.proposal_settlement" => validate_input_vault_code_proposal_settlement(value)?,
         "vault.code.oplog" => validate_input_vault_code_oplog(value)?,
+        "vault.code.secrets.get" => validate_input_vault_code_secrets_get(value)?,
+        "vault.code.secrets.propose" => validate_input_vault_code_secrets_propose(value)?,
         "execute_code" => validate_input_execute_code(value)?,
         "vault.code.model_heal_count" => validate_input_vault_code_model_heal_count(value)?,
         "vault.code.corrections" => validate_input_vault_code_corrections(value)?,
@@ -25509,6 +25545,16 @@ fn validate_input_vault_code_oplog(value: &serde_json::Value) -> MemoryResult<()
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_code_secrets_get(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::memory::code_doors::CodeRepoRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_code_secrets_propose(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::memory::code_doors::CodeRepoSecretProposeRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_execute_code(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::memory::foreign_code::ForeignCodeRunRequest = decode(value.clone())?;
     Ok(())
@@ -29869,6 +29915,8 @@ pub fn invoke(
         "vault.code.proposal_settle" => invoke_vault_code_proposal_settle(memory, value),
         "vault.code.proposal_settlement" => invoke_vault_code_proposal_settlement(memory, value),
         "vault.code.oplog" => invoke_vault_code_oplog(memory, value),
+        "vault.code.secrets.get" => invoke_vault_code_secrets_get(memory, value),
+        "vault.code.secrets.propose" => invoke_vault_code_secrets_propose(memory, value),
         "execute_code" => invoke_execute_code(memory, value),
         "vault.code.model_heal_count" => invoke_vault_code_model_heal_count(memory, value),
         "vault.code.corrections" => invoke_vault_code_corrections(memory, value),
@@ -35608,6 +35656,20 @@ fn invoke_vault_code_oplog(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_code_oplog(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_code_secrets_get(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_code_secrets_get(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_code_secrets_propose(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_code_secrets_propose(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_execute_code(
@@ -45892,6 +45954,19 @@ pub fn vault_code_oplog(
     input: crate::memory::code_doors::CodeRepoRequest,
 ) -> MemoryResult<crate::memory::code_doors::CodeMutationLog> {
     memory.code_mutation_log_as(&memory.embedded_owner("vault.code.oplog")?, input)
+}
+pub fn vault_code_secrets_get(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeRepoRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeRepoSecretsView> {
+    memory.code_repo_secrets_get_as(&memory.embedded_owner("vault.code.secrets.get")?, input)
+}
+pub fn vault_code_secrets_propose(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeRepoSecretProposeRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeRepoSecretRemediation> {
+    memory
+        .code_repo_secrets_propose_as(&memory.embedded_owner("vault.code.secrets.propose")?, input)
 }
 pub fn execute_code(
     memory: &Memory<'_>,

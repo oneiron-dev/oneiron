@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1286 facade rows, 4659 declarations.
-Inputs: 1215 of 1286 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1115 of 1286 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1288 facade rows, 4668 declarations.
+Inputs: 1217 of 1288 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1117 of 1288 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -12769,6 +12769,71 @@ class CodeMutationEntry(TypedDict):
 class CodeMutationLog(TypedDict):
     repo: EntityId
     entries: list[CodeMutationEntry]
+class CodeRepoSecretSeenRefMove(TypedDict):
+    kind: Literal["ref_move"]
+    name: str
+    new_commit: str
+class CodeRepoSecretSeenQuarantine(TypedDict):
+    kind: Literal["quarantine"]
+class CodeRepoSecretSeenSyncLanding(TypedDict):
+    kind: Literal["sync_landing"]
+CodeRepoSecretSeen = CodeRepoSecretSeenRefMove | CodeRepoSecretSeenQuarantine | CodeRepoSecretSeenSyncLanding
+class CodeRepoSecretMark(TypedDict):
+    mark: EntityId
+    operation: EntityId
+    blob: str
+    path: NotRequired[str | None]
+    kind: str
+    seen: CodeRepoSecretSeen
+    custody: NotRequired[EntityId | None]
+    handle: NotRequired[str | None]
+    marked_at: int
+class CodeRepoSecretRemediationLink(TypedDict):
+    state: str
+    proposal: EntityId
+    commit: NotRequired[str | None]
+    paths: list[str]
+    linked_at: int
+class CodeRepoSecretsView(TypedDict):
+    repo: EntityId
+    marks: list[CodeRepoSecretMark]
+    remediations: list[CodeRepoSecretRemediationLink]
+class CodeRepoSecretProposeRequest(TypedDict):
+    repo: EntityId
+    session: EntityId
+    provenance_claim: EntityId
+    op_provenance: CodeOpProvenance
+    catalog: NotRequired[LensCatalog | None]
+CodeRepoSecretRemediationStatus = Literal["proposed", "unresolved", "stale", "clean"]
+class CodeRepoSecretRemediationActionReplaceLiterals(TypedDict):
+    action: Literal["replace_literals"]
+    path: str
+    env_names: list[str]
+class CodeRepoSecretRemediationActionRemoveDotenv(TypedDict):
+    action: Literal["remove_dotenv"]
+    path: str
+class CodeRepoSecretRemediationActionWriteExample(TypedDict):
+    action: Literal["write_example"]
+    path: str
+    names: list[str]
+class CodeRepoSecretRemediationActionIgnoreDotenv(TypedDict):
+    action: Literal["ignore_dotenv"]
+    entries: list[str]
+class CodeRepoSecretRemediationActionDeclareEnvNames(TypedDict):
+    action: Literal["declare_env_names"]
+    env_names: list[str]
+CodeRepoSecretRemediationAction = CodeRepoSecretRemediationActionReplaceLiterals | CodeRepoSecretRemediationActionRemoveDotenv | CodeRepoSecretRemediationActionWriteExample | CodeRepoSecretRemediationActionIgnoreDotenv | CodeRepoSecretRemediationActionDeclareEnvNames
+class CodeRepoSecretUnresolved(TypedDict):
+    path: str
+    reason: str
+    custody: NotRequired[EntityId | None]
+class CodeRepoSecretRemediation(TypedDict):
+    repo: EntityId
+    status: CodeRepoSecretRemediationStatus
+    base_commit: str
+    proposal: NotRequired[EntityId | None]
+    actions: list[CodeRepoSecretRemediationAction]
+    unresolved: list[CodeRepoSecretUnresolved]
 class ForeignCodeRunRequest(TypedDict):
     source: str
     reads: NotRequired[list[str]]

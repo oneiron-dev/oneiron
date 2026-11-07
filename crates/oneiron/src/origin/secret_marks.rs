@@ -125,6 +125,14 @@ impl RepoSecretMark {
     /// The one schema these facts are written at.
     pub(crate) const SCHEMA: u16 = 1;
 
+    /// The fact's id, for a reader that names one mark (FIX 7608 slice 8).
+    ///
+    /// # Errors
+    /// A failed id derivation.
+    pub(crate) fn mark_id(&self) -> Result<EntityId> {
+        self.id()
+    }
+
     /// The fact's id: its whole address, each alternative a tagged
     /// MessagePack part, under the derivation's own length framing.
     fn id(&self) -> Result<EntityId> {
