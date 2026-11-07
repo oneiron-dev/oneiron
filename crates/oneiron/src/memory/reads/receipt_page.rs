@@ -509,6 +509,13 @@ fn gate_records_before(
 
 /// One gate decision in the `vault.receipts` shape.
 fn gate_receipt(record: GateDecisionRecord) -> MemoryReceipt {
+    let capture = record.content_kind == crate::codebase::CODE_SNAPSHOT_CAPTURE_CONTENT_KIND;
+    let target_type = if capture {
+        crate::registry::ENTITY_TYPE_CODE_ARTIFACT
+    } else {
+        ENTITY_TYPE_CLAIM
+    };
+    let fields = crate::codebase::code_snapshot_capture_receipt_fields(&record);
     MemoryReceipt {
         receipt_ref: format!("gate:{}", record.decision_id.to_hex()),
         kind: ReceiptKind::Gate.as_str().to_owned(),
@@ -522,7 +529,7 @@ fn gate_receipt(record: GateDecisionRecord) -> MemoryReceipt {
         claim: record
             .claim_id
             .and_then(|id| EntityId::from_bytes(id).ok())
-            .map(|id| crate::lens::RecordRef::from_id(ENTITY_TYPE_CLAIM, &id, None)),
-        fields: std::collections::BTreeMap::new(),
+            .map(|id| crate::lens::RecordRef::from_id(target_type, &id, None)),
+        fields,
     }
 }
