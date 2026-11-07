@@ -11,6 +11,9 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock, PoisonError, RwLock};
 
+/// The decision policy's questions-per-call value until the vault sets one.
+pub const DEFAULT_DECISION_QUESTIONS_PER_CALL: usize = 16;
+
 /// What a memory-derived row comes to when the machine's memory cannot be
 /// read.
 const MEMORY_FALLBACK_BYTES: u64 = 256 << 20;
@@ -611,6 +614,9 @@ pub enum EngineLimit {
     /// past it the row asks whether everything is okay and the whole budget
     /// is offered to the existing execution path.
     MemoryReasonTokens,
+    /// Questions in one logical decision pack. The producer reports its actual
+    /// policy's questions-per-call bound; larger packs are still served whole.
+    DecisionQuestionsPerCall,
     /// Edge-walk depth one context pack hydrates neighbors over (FIX 62).
     /// Past it the row asks whether everything is okay and the pack is
     /// still served whole; nothing is refused or clamped.
