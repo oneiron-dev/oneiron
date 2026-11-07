@@ -11,6 +11,7 @@ pub mod repo_scope;
 pub mod scope;
 pub mod scope_codec;
 pub mod selector_kind;
+pub mod verb_classes;
 
 pub use self::git_push::{
     FederationGrantKind, GIT_PUSH_VERB, GRANT_KIND_GIT_PUSH, GitPushBounds, GitPushRepo,
@@ -26,3 +27,6 @@ pub use self::repo_scope::{
     RepoTarget,
 };
 pub use self::scope::{Scope, ScopeAtom, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
+pub use self::verb_classes::{
+    KEY_VERB_CLASSES, decode_verb_classes_value, verb_class_name_is_valid, verb_classes_value,
+};

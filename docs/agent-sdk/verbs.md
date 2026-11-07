@@ -783,6 +783,8 @@ both bindings and their export-census tests in one change.
 - `vault.agents.dreaming.set`
 - `vault.agents.grants.mint`
 - `vault.agents.grants.revoke`
+- `vault.agents.verb_classes.get`
+- `vault.agents.verb_classes.configure`
 - `vault.repo.git_push.mint`
 - `vault.repo.git_push.revoke`
 - `vault.connectors.read_grants.grant`

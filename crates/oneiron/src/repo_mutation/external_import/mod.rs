@@ -743,9 +743,21 @@ impl Vault {
     ) -> Result<DelegatedBinding> {
         let now = self.instant_in_txn(txn)?.secs();
         let mut lapsed = false;
-        for standing in self.agent_grants_in_txn(txn)? {
+        let grants = self.agent_grants_in_txn(txn)?;
+        let classes = crate::federation::AgentVerbClasses::for_grants_in_txn(
+            &self.store,
+            txn,
+            grants.iter().map(|standing| &standing.grant),
+        )?;
+        for standing in grants {
             if standing.delegated_by != bound
-                || !standing.stands_for(importer, EXTERNAL_IMPORT_CREATE_VERB, now, owners)
+                || !standing.stands_for(
+                    importer,
+                    EXTERNAL_IMPORT_CREATE_VERB,
+                    now,
+                    owners,
+                    &classes,
+                )
             {
                 continue;
             }
@@ -756,6 +768,7 @@ impl Vault {
                 EXTERNAL_IMPORT_CREATE_VERB,
                 now,
                 owners,
+                &classes,
             ) {
                 return Ok(DelegatedBinding::Stands);
             }
