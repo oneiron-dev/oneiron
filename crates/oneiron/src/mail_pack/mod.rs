@@ -67,6 +67,7 @@ mod reply_erase;
 mod reply_mime;
 mod reply_recipients;
 mod reply_send;
+mod reply_smtp;
 mod rest;
 mod share;
 mod smtp_client;
@@ -119,6 +120,10 @@ pub(crate) use reply_ask::MAIL_REPLY_ASK_PRODUCER;
 pub use reply_attachments::{MailReplyAttachment, MailReplyAttachmentView};
 pub(crate) use reply_erase::erase_reply_attachment_dependents_in_txn;
 pub use reply_send::SMTP_SUBMISSION_CONNECTOR_EFFECTOR;
+pub(crate) use reply_smtp::MailHostSlot;
+pub use reply_smtp::{
+    DEFAULT_SMTP_MAX_MESSAGE_OCTETS_UNADVERTISED, MailBlockingRunner, MailHostSettings,
+};
 pub use share::{MailThreadShareReceipt, MailThreadShareRequest};
 pub use source::{
     CalendarDetailSetting, MailCopySetting, MailProvider, MailProviderDeleteSetting,

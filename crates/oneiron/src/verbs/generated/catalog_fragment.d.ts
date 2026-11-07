@@ -4502,7 +4502,7 @@ declare namespace Sdk {
   type MailReplyDraftRequest = { thread_ref: string; parent_turn_ref?: string | null; body: string; body_html?: string | null; reply_all?: boolean; cc?: string[]; attachments?: MailReplyAttachment[]; request_key: string };
   type MailReplyAttachmentView = { artifact_ref: string; version: number; name: string; media_type: string; disposition: string; size: number; content_blake3: string; stored_version_blake3: string };
   type MailReplyDraftState = "proposed" | "approved" | "sent" | "unsettled" | "discarded";
-  type MailReplyDraftView = { draft_ref: string; revision: number; source_ref: string; thread_ref: string; parent_turn_ref: string; to: string[]; cc?: string[]; subject: string; body: string; body_html?: string | null; attachments?: MailReplyAttachmentView[]; message_octets?: number | null; message_blake3?: string | null; plan_ref: string; state: MailReplyDraftState; outcome?: string | null; drafted_at: number; updated_at: number };
+  type MailReplyDraftView = { draft_ref: string; revision: number; source_ref: string; thread_ref: string; parent_turn_ref: string; to: string[]; cc?: string[]; subject: string; body: string; body_html?: string | null; attachments?: MailReplyAttachmentView[]; message_octets?: number | null; message_blake3?: string | null; smtp_limit_octets?: number | null; smtp_limit_read_at?: number | null; plan_ref: string; state: MailReplyDraftState; outcome?: string | null; drafted_at: number; updated_at: number };
   type MailReplyDraftsRequest = { thread_ref?: string | null; include_settled?: boolean };
   type MailReplyDraftPage = { drafts: MailReplyDraftView[] };
   type MailReplyDraftRef = { draft_ref: string };
@@ -6651,9 +6651,9 @@ declare const vault: Sdk.VaultHost & {
       approve(input: Sdk.MailReplyApproveRequest): Promise<Sdk.MailReplyDraftView | StoredResult>;
       /** Discards a drafted reply that was not approved; its drafter or the mailbox owner may. It never sends. */
       discard(input: Sdk.MailReplyDraftRef): Promise<Sdk.MailReplyDraftView | StoredResult>;
-      /** Drafts a reply, or its next revision, to a mail thread the caller reads, in text with optional simple HTML, to its sender (reply_all adds To and Cc; cc adds more), with artifact versions on Google or Microsoft 365. The owner approves it. */
+      /** Drafts a reply, or its next revision, to a mail thread the caller reads, in text with optional simple HTML, to its sender (reply_all adds To and Cc; cc adds more), with pinned artifact versions as files. The owner approves it. */
       draft(input: Sdk.MailReplyDraftRequest): Promise<Sdk.MailReplyDraftView | StoredResult>;
-      /** The drafted replies on the mail threads the caller reads, newest first, each with its words, every To and Cc recipient, each file's name, type, size and digest, the exact message's size and digest, frozen plan and state. */
+      /** The drafted replies on the mail threads the caller reads, newest first, each with its words, every To and Cc recipient, each file's name, type, size and digest, the exact message's size, digest and SMTP limit, frozen plan and state. */
       drafts(input: Sdk.MailReplyDraftsRequest): Promise<Sdk.MailReplyDraftPage | StoredResult>;
     };
     sources: {

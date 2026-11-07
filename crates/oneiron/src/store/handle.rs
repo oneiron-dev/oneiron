@@ -322,6 +322,11 @@ pub struct StoreCore {
     /// worker, none until one attaches (FIX 14976,
     /// [`crate::Vault::attach_drafter_serving`]). Never persisted.
     pub(crate) drafter_serving: RwLock<Option<Arc<dyn crate::drafter::DrafterServingRuntime>>>,
+    /// The host operator's mail settings on this vault and the runner its
+    /// blocking mail work runs on, the defaults and none until a host
+    /// installs them (fix list row 17645, [`crate::Vault::install_mail_host`]).
+    /// Never persisted.
+    pub(crate) mail_host: crate::mail_pack::MailHostSlot,
     /// The pool code-mode result bodies held in memory draw on: this
     /// vault's own until the host installs the process's
     /// ([`crate::Vault::set_result_memory`]).

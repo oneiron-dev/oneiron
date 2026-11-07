@@ -181,6 +181,11 @@ impl SyncServer {
         // FIX 14976: this vault's drafter bindings are served on this
         // process's own managed worker, where it launches one for this vault.
         crate::models::install_drafter_serving(&vault);
+        // Fix list row 17645: the mail pack's blocking network checks (an
+        // IMAP reply with files asks its submission server the size it
+        // takes) run on this server's blocking hop, under its `[mail]`
+        // settings.
+        crate::api::install_mail_host(&vault, &config.mail);
         // Provider media replies are booked on their own line (FIX 8615),
         // this vault's, as its mesh bytes are (FIX 9321, FIX 9323).
         let model_budgets = crate::models::ModelHostBudgets::new(

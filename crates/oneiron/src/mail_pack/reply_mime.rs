@@ -8,9 +8,9 @@
 //! base64 and, when drafted, an HTML alternative beside it, threaded by
 //! `In-Reply-To` and `References` (RFC 5322).
 //!
-//! A Microsoft 365 reply may carry files (fix list row 17645): its message
-//! is then written once, when it is frozen, with no hygiene header, the
-//! shared `multipart/mixed` writer putting its body first and each file
+//! An IMAP or a Microsoft 365 reply may carry files (fix list row 17645): its
+//! message is then written once, when it is frozen, with no hygiene header,
+//! the shared `multipart/mixed` writer putting its body first and each file
 //! after it, and kept sealed beside the draft (`reply_custody`). Its content
 //! ref seals under its own domain and prefix, after every field a reply
 //! without files seals, the digest of its manifest, which seals each file in

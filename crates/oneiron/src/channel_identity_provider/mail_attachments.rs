@@ -9,8 +9,8 @@
 //! message is written once, when it is frozen. A kept plan names its files
 //! and message only by their manifest's digest; their holder keeps them,
 //! and the plan, sealed beside the message. A send with files the ledger
-//! already completed replays through [`CompletedSendSink`], on Gmail and on
-//! Graph alike.
+//! already completed replays through [`CompletedSendSink`], on Gmail, on
+//! Graph and over SMTP alike.
 
 use std::fmt::Write as _;
 
@@ -113,9 +113,9 @@ impl MailManifest {
     }
 }
 
-/// The one message a send with files sends, a Gmail plan's or a Graph
-/// reply's, kept by its holder where it was frozen (fix list row 17645): the
-/// send names its length and BLAKE3, and only its holder opens it. The
+/// The one message a send with files sends, a Gmail plan's or a Graph or an
+/// SMTP reply's, kept by its holder where it was frozen (fix list row 17645):
+/// the send names its length and BLAKE3, and only its holder opens it. The
 /// holder judges the send again in the writer that admits it, at egress, and
 /// in the credential door's writer, and never renders, exports or masks
 /// anything again.
@@ -139,7 +139,7 @@ pub(crate) trait RetainedMailMessage {
     /// A Gmail send's kept plan itself, as its holder keeps it sealed beside
     /// the message: the bytes the plan's own store wrote; `None` once the
     /// holder no longer keeps it, and there is then no plan, and for a Graph
-    /// reply, which keeps none.
+    /// or an SMTP reply, which keeps none.
     ///
     /// # Errors
     ///
@@ -164,8 +164,8 @@ pub(crate) trait RetainedMailMessage {
 }
 
 /// The sink a completed send with files replays through (fix list row
-/// 17645), a Gmail member send's or a Microsoft 365 mailbox's own: the
-/// ledger's completed record answers the dispatch, so nothing asks it to
+/// 17645), a Gmail member send's or a Microsoft 365 or an IMAP mailbox's own:
+/// the ledger's completed record answers the dispatch, so nothing asks it to
 /// send. It admits no new call, so a call the ledger has not completed is
 /// refused before any decision is recorded, and it sends nothing.
 pub(crate) struct CompletedSendSink;

@@ -129,6 +129,7 @@ mod linear_doors;
 mod live_run_doors;
 mod live_voice_doors;
 mod mail_pack_doors;
+pub(crate) use mail_pack_doors::install_mail_host;
 mod merge_queue_checker_doors;
 mod merge_queue_doors;
 mod mesh_doors;

@@ -20,6 +20,7 @@ mod limits;
 mod line;
 mod linear;
 mod lookup;
+mod mail;
 pub mod merge;
 pub mod merge_queue;
 pub mod models;
@@ -64,6 +65,7 @@ pub use line::LineConfig;
 pub(crate) use linear::LinearCredential;
 pub use linear::{LinearConfig, LinearMode};
 pub(crate) use lookup::normalize_list;
+pub use mail::{MailConfig, MailSmtpConfig};
 pub(crate) use merge::layer_serve_config;
 pub use merge::{
     EnvConfig, default_config_path, resolve_backup_config, resolve_serve_config,
