@@ -377,36 +377,29 @@ fn action_read_receipt(
 }
 
 /// The run id and seed of the action: its actor, verb and idempotency key,
-/// and the try of a live run, hashed; the definition and arguments seeded.
+/// and the try of a live run, derived by the one derived-id rule (FIX 9702);
+/// the definition and arguments seeded.
 fn action_identity(
     actor: WriteActor,
     request: &AgentActionCall,
     registered: &RegisteredVerb,
     leased: &Option<crate::attempt_queue::AttemptRecord>,
 ) -> Result<(EntityId, [u8; 32])> {
-    let mut hash = blake3::Hasher::new();
-    hash.update(b"oneiron:shared-action:v1");
-    for part in [
-        actor.entity_ref().as_bytes().as_slice(),
+    let actor_ref = actor.entity_ref();
+    let mut parts: Vec<&[u8]> = vec![
+        &actor_ref.as_bytes()[..],
         request.verb_id.as_str().as_bytes(),
         request.idempotency_key.as_bytes(),
-    ] {
-        hash.update(&(part.len() as u64).to_be_bytes());
-        hash.update(part);
-    }
+    ];
     // A live run's action is that try's own: another try, or another
     // lease of it, never replays its answer.
-    if let Some(record) = &leased {
-        hash.update(b"live-run");
-        hash.update(record.id.as_bytes());
-        hash.update(&record.attempt_count.to_be_bytes());
+    let attempt = leased
+        .as_ref()
+        .map(|record| (record.id.as_bytes(), record.attempt_count.to_be_bytes()));
+    if let Some((id, tries)) = &attempt {
+        parts.extend([&b"live-run"[..], &id[..], &tries[..]]);
     }
-    let digest = hash.finalize();
-    let run_id = EntityId::from_bytes(
-        digest.as_bytes()[..16]
-            .try_into()
-            .map_err(|_| invalid("action identity"))?,
-    )?;
+    let run_id = EntityId::derive(crate::entity_id::derived_domains::SHARED_ACTION, &parts)?;
     let seed = *blake3::hash(
         &serde_json::to_vec(&(&registered.definition, &request.args))
             .map_err(|_| invalid("action encoding"))?,

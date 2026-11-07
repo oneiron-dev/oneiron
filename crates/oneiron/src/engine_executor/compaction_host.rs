@@ -10,6 +10,7 @@ use super::compaction;
 use super::compaction::{FoldJob, KindFolds, RunFrames};
 use super::driver::EngineNativeExecutor;
 use super::record::completed_step_count;
+use super::self_brief::FoldBoundary;
 use super::store::{
     COMPACTION_OBSERVATION_WINDOW_BYTES, RECOVERABLE_OUTPUT_CHUNK_BYTES, load_context_output,
     load_observation_window, load_script_context, observation_output_path, recoverable_chunk_path,
@@ -46,8 +47,12 @@ impl EngineNativeExecutor<'_> {
         // FIX 4465 B: every paid call of a self-written pass is filed before
         // anything lands, so a landing that is refused keeps its steps too.
         self.file_self_passes(&mut finished);
-        if let Some((_, byline, _)) = seat.swap_seat() {
-            self.land_folds(byline, finished.folds, finished.kind_folds);
+        // FIX 17594 (Engine call B): a fold batch that committed is a brief
+        // boundary, before the epoch the flight may swap in after it.
+        if let Some((_, byline, _)) = seat.swap_seat()
+            && let Some(landed) = self.land_folds(byline, finished.folds, finished.kind_folds)
+        {
+            self.brief_fold_committed(landed);
         }
         let hooks = finished.hooks;
         let epoch_execution = finished.epoch_execution;
@@ -231,7 +236,7 @@ impl EngineNativeExecutor<'_> {
         let mut reads = std::collections::BTreeSet::new();
         for seq in mark.from..=mark.through {
             let message = super::compaction::window_message(
-                super::compaction::step_message_id(run_id, seq),
+                super::compaction::step_message_id(run_id, seq)?,
                 turn_id,
                 seq,
                 // A step's program, as its observation, is carried up to the
@@ -324,7 +329,7 @@ impl EngineNativeExecutor<'_> {
         let calls = u64::try_from(record.bridge_calls.len())
             .map_err(|_| crate::Error::ArithmeticOverflow("executor call count"))?;
         let request = driver.fold_request(
-            super::compaction::fold_request_id(run_id, mark.fold),
+            super::compaction::fold_request_id(run_id, mark.fold)?,
             &session,
             window,
             pins,
@@ -350,20 +355,19 @@ impl EngineNativeExecutor<'_> {
     /// stamped Generated under the host's `byline`, with the sources its
     /// request was sealed with (Docs Q24), and a self-written one with each
     /// home part it wore too (FIX 4465 B). A batch that cannot be written
-    /// leaves its marks pending for the next pass.
+    /// leaves its marks pending for the next pass. Returns what the batch
+    /// committed, as its brief boundary (FIX 17594): `None` when it wrote no
+    /// fold, or was not written.
     fn land_folds(
         &self,
         byline: crate::WriteActor,
         folds: Vec<(FoldJob, Result<GatedCompaction, String>)>,
         kind_folds: Option<KindFolds>,
-    ) {
-        let Some(run_id) = folds
+    ) -> Option<FoldBoundary> {
+        let run_id = folds
             .first()
             .map(|(job, _)| job.run_id)
-            .or(kind_folds.as_ref().map(|batch| batch.run_id))
-        else {
-            return;
-        };
+            .or(kind_folds.as_ref().map(|batch| batch.run_id))?;
         // The batch's folds by kind land in the same write as its passes.
         let mut landed = kind_folds.map_or_else(Vec::new, |batch| batch.records);
         let mut failed = Vec::new();
@@ -392,12 +396,12 @@ impl EngineNativeExecutor<'_> {
             }
         }
         landed.sort_by_key(|record| record.fold);
-        if self
-            .storage
-            .land_code_run_folds(run_id, landed, &failed)
-            .is_err()
-        {
-            tracing::warn!("a fold batch did not land");
+        match self.storage.land_code_run_folds(run_id, landed, &failed) {
+            Ok(committed) => FoldBoundary::landed(run_id, committed),
+            Err(_) => {
+                tracing::warn!("a fold batch did not land");
+                None
+            }
         }
     }
 

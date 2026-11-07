@@ -9,6 +9,7 @@ use super::constants::{
     BOOKING_PAYER_DOORS, BOOKING_PAYER_FACADE_ROOT, STALE_BOOKING_KEEPS_OWNER_GRADE,
 };
 use super::{BookingTransport, BookingTransportContext};
+use crate::api::booking_anti_abuse::BookingCaller;
 use crate::api::scoped_auth::check_request_auth;
 use crate::auth::{ClientAddress, CoreAuth};
 use crate::error::ApiError;
@@ -102,6 +103,9 @@ pub(crate) fn booking_payer_verbs() -> impl Iterator<Item = &'static str> {
 #[derive(Clone)]
 pub(crate) struct BookingAdmissionContext {
     pub(super) ip_hash: [u8; 32],
+    /// The hash of the authenticated actor this request is counted for
+    /// (FIX 128-131); `None` for an anonymous visitor.
+    pub(super) actor_hash: Option<[u8; 32]>,
     pub(super) credential: Option<String>,
     pub(super) owner_grade: bool,
     pub(super) principal: Option<WriteActor>,
@@ -121,8 +125,14 @@ impl From<&BookingTransportContext> for BookingAdmissionContext {
             material.push('\0');
             material.push_str(&actor);
         }
+        let actor_hash = transport
+            .credential
+            .as_ref()
+            .and(transport.actor_key())
+            .map(|actor| booking_ip_hash(&format!("actor\0{actor}")));
         Self {
             ip_hash: booking_ip_hash(&material),
+            actor_hash,
             credential: transport.credential.clone(),
             owner_grade: transport.owner_grade,
             principal: transport.principal,
@@ -140,6 +150,14 @@ impl From<&BookingAdmissionContext> for BookingAdmissionContext {
 }
 
 impl BookingAdmissionContext {
+    /// The caller admission counts this request for (FIX 128-131): an
+    /// authenticated actor, or an anonymous visitor.
+    pub(super) fn caller(&self) -> BookingCaller {
+        self.actor_hash.map_or(BookingCaller::Anonymous, |actor| {
+            BookingCaller::Authenticated { actor }
+        })
+    }
+
     /// Who pays the model call this request is about to make: its principal
     /// as the transport resolved it. A stale owner sign-in that pays as
     /// himself (FIX 5327) does so only while the one grant that made him the
@@ -171,6 +189,7 @@ pub(crate) fn credential_transport_context(
     let payer = resolve_booking_payer(server, auth, host_action);
     Ok(BookingAdmissionContext {
         ip_hash: booking_ip_hash(&format!("credential\0{}", auth.principal())),
+        actor_hash: Some(booking_ip_hash(&format!("actor\0{}", auth.principal()))),
         credential: Some(auth.principal().to_owned()),
         owner_grade: payer.owner_grade,
         principal: payer.principal,
