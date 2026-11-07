@@ -27,6 +27,20 @@ pub(in crate::api::facade) async fn as_owner<T: Send + 'static>(
     verb: &'static str,
     act: impl FnOnce(&Memory<'_>, &AuthenticatedOwner) -> MemoryResult<T> + Send + 'static,
 ) -> Listed<T> {
+    as_owner_paced(server, auth, verb, None, act).await
+}
+
+/// [`as_owner`] for a door a budget window paces (FIX 8753): the handle
+/// carries the facade call's invocation and door, so a full window holds
+/// the call in its caller's line, and the drain's run of it enters as its
+/// turn. `None` (an MCP call) answers as [`as_owner`] does.
+pub(in crate::api::facade) async fn as_owner_paced<T: Send + 'static>(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    verb: &'static str,
+    paced: Option<crate::api::facade::FacadePacedCall>,
+    act: impl FnOnce(&Memory<'_>, &AuthenticatedOwner) -> MemoryResult<T> + Send + 'static,
+) -> Listed<T> {
     let admitted = || {
         let owner = owner_proof(server, auth, verb)?;
         let caller =
@@ -45,6 +59,10 @@ pub(in crate::api::facade) async fn as_owner<T: Send + 'static>(
         let memory = match recipient {
             Some(recipient) => memory.for_repo_reveal_recipient(recipient),
             None => memory,
+        };
+        let (memory, _drain) = match &paced {
+            Some(paced) => (paced.bind(memory), paced.enter_drain()),
+            None => (memory, None),
         };
         act(&memory, &owner)
     })

@@ -17,7 +17,7 @@ use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use hkdf::Hkdf;
 use rand_core::TryCryptoRng;
 use sha2::Sha256;
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 use super::{Envelope, Header, Kdf, Purpose, WrapParams, WrapType, hybrid};
 use crate::codec::check_len;
@@ -281,6 +281,51 @@ impl Envelope {
         policy: &OpenPolicy<'_>,
         extra_aad: &[u8],
     ) -> Result<Zeroizing<Vec<u8>>> {
+        let key = self.opening_key(key, policy)?;
+        let aad = aad_with_extra(&self.header_bytes, extra_aad)?;
+        aead_open(
+            self.header.suite,
+            &key,
+            &self.header.nonce,
+            &aad,
+            &self.ciphertext,
+        )
+    }
+
+    /// Opens with the same policy and extra AAD as [`Self::open_with_aad`], writing
+    /// directly into `plaintext` instead of allocating a plaintext Vec. Its length
+    /// must equal the envelope's plaintext length. On any error it is wiped.
+    /// Header parsing, AAD construction and key derivation may still allocate.
+    pub fn open_with_aad_into(
+        &self,
+        key: OpenKey<'_>,
+        policy: &OpenPolicy<'_>,
+        extra_aad: &[u8],
+        plaintext: &mut [u8],
+    ) -> Result<()> {
+        let opened = (|| {
+            let key = self.opening_key(key, policy)?;
+            let aad = aad_with_extra(&self.header_bytes, extra_aad)?;
+            aead_open_into(
+                self.header.suite,
+                &key,
+                &self.header.nonce,
+                &aad,
+                &self.ciphertext,
+                plaintext,
+            )
+        })();
+        if opened.is_err() {
+            plaintext.zeroize();
+        }
+        opened
+    }
+
+    fn opening_key(
+        &self,
+        key: OpenKey<'_>,
+        policy: &OpenPolicy<'_>,
+    ) -> Result<Zeroizing<[u8; 32]>> {
         let h = &self.header;
         if !policy.aead_suites.contains(&h.suite) {
             return Err(Error::SuiteNotAccepted(name_of(h.suite)));
@@ -343,8 +388,7 @@ impl Envelope {
         };
         let mut key = Zeroizing::new([0u8; 32]);
         aead_key(&secret, h.kdf.salt(), &self.header_bytes, &mut key)?;
-        let aad = aad_with_extra(&self.header_bytes, extra_aad)?;
-        aead_open(h.suite, &key, &h.nonce, &aad, &self.ciphertext)
+        Ok(key)
     }
 }
 
@@ -517,6 +561,40 @@ fn aead_open(
         _ => return Err(Error::OpenFailed),
     };
     out.map(Zeroizing::new).map_err(|_| Error::OpenFailed)
+}
+
+fn aead_open_into(
+    suite: SuiteId,
+    key: &[u8; 32],
+    nonce: &[u8],
+    aad: &[u8],
+    ciphertext: &[u8],
+    plaintext: &mut [u8],
+) -> Result<()> {
+    let tag_at = ciphertext
+        .len()
+        .checked_sub(TAG_LEN)
+        .ok_or(Error::OpenFailed)?;
+    let (ciphertext, tag) = ciphertext.split_at(tag_at);
+    let tag = chacha20poly1305::Tag::try_from(tag).map_err(|_| Error::OpenFailed)?;
+    let buffer = InOutBuf::new(ciphertext, plaintext).map_err(|_| Error::OpenFailed)?;
+    let opened = match suite {
+        SuiteId::XCHACHA20POLY1305_V1 => {
+            let nonce = XNonce::try_from(nonce).map_err(|_| Error::OpenFailed)?;
+            XChaCha20Poly1305::new_from_slice(key)
+                .map_err(|_| Error::OpenFailed)?
+                .decrypt_inout_detached(&nonce, aad, buffer, &tag)
+        }
+        SuiteId::AES256GCM_V1 => {
+            let nonce = aes_gcm::aead::Nonce::<Aes256Gcm>::try_from(nonce)
+                .map_err(|_| Error::OpenFailed)?;
+            Aes256Gcm::new_from_slice(key)
+                .map_err(|_| Error::OpenFailed)?
+                .decrypt_inout_detached(&nonce, aad, buffer, &tag)
+        }
+        _ => return Err(Error::OpenFailed),
+    };
+    opened.map_err(|_| Error::OpenFailed)
 }
 
 #[cfg(all(

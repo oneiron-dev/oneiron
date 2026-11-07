@@ -14,6 +14,7 @@ mod codec;
 mod envelope;
 mod error;
 mod keys;
+pub mod legal_clone;
 mod nonce;
 mod record;
 #[cfg(all(
