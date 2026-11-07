@@ -347,6 +347,7 @@ impl Vault {
                         reason: Some("stale_base".to_owned()),
                         sheet_answers: proposal.sheet_answers.clone(),
                         deck: None,
+                        discarded_words: None,
                     };
                     RECORD.put(&self.store, wtxn, &key, &record)?;
                     return Ok((base, ReanchorSummary::default(), record, Some(stranded)));
@@ -501,6 +502,7 @@ impl Vault {
                     reason: None,
                     sheet_answers: proposal.sheet_answers.clone(),
                     deck: checked_deck.map(|checked| Box::new(checked.evidence)),
+                    discarded_words: None,
                 };
                 RECORD.put(&self.store, wtxn, &key, &record)?;
                 if let Some(Some(withdrawal)) = carry {
@@ -568,6 +570,7 @@ impl Vault {
             // The decisions stay on the record; only a Keep's are kept answers.
             sheet_answers: proposal.sheet_answers.clone(),
             deck: None,
+            discarded_words: None,
         };
         RECORD.encode_value(&record)?;
 

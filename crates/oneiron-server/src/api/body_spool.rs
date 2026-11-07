@@ -35,7 +35,7 @@ use crate::server::SyncServer;
 
 pub(super) use self::hex::{HexFileSink, HexRefusal, SpooledHex};
 pub(super) use self::json::{
-    Base64FileSink, BulkMember, JsonInvalid, SinkRefusal, SpooledField, TextFileSink,
+    Base64FileSink, BulkMember, HeadFail, JsonInvalid, SinkRefusal, SpooledField, TextFileSink,
 };
 pub(super) use self::memory::{
     decode_memory_refused, reader_memory_refused, sealed_decode_memory_refused,
@@ -74,12 +74,12 @@ impl BodySpool {
 
     /// Streams bulk strings to their sinks and the remaining object to its
     /// head file under the combined working-buffer lease.
-    pub(super) fn object_head_admitted(
+    pub(super) fn object_head_admitted<const N: usize>(
         &mut self,
-        bulk: &mut [BulkMember<'_>],
+        bulk: &mut [BulkMember<'_>; N],
         head: &mut TextFileSink,
         memory: &mut crate::machine::MemoryLease,
-    ) -> Result<(), JsonInvalid> {
+    ) -> Result<(), HeadFail> {
         self.with_reader_admitted(memory, |reader| json::scan_object_head(reader, bulk, head))
     }
 
@@ -112,18 +112,6 @@ impl BodySpool {
     }
 }
 
-impl SpooledField {
-    /// Decodes a rewound field under an already-admitted reader lease.
-    pub(super) fn json_admitted<T: serde::de::DeserializeOwned>(
-        &self,
-        memory: &mut crate::machine::MemoryLease,
-    ) -> serde_json::Result<T> {
-        let reader = BufReader::with_capacity(SPOOL_PIECE, self.file().0);
-        memory.materialized(SPOOL_PIECE as u64, reader.capacity() as u64);
-        serde_json::from_reader(reader)
-    }
-}
-
 impl BodySpool {
     /// The complete spool length, without allocating a reader buffer.
     pub(in crate::api) fn byte_len(&self) -> io::Result<u64> {
@@ -133,6 +121,18 @@ impl BodySpool {
     /// Reads into caller-owned storage without allocating a reader buffer.
     pub(in crate::api) fn read_exact_into(&mut self, bytes: &mut [u8]) -> io::Result<()> {
         self.file.read_exact(bytes)
+    }
+}
+
+impl SpooledField {
+    /// Decodes a rewound field under an already-admitted reader lease.
+    pub(super) fn json_admitted<T: serde::de::DeserializeOwned>(
+        &self,
+        memory: &mut crate::machine::MemoryLease,
+    ) -> serde_json::Result<T> {
+        let reader = BufReader::with_capacity(SPOOL_PIECE, self.file().0);
+        memory.materialized(SPOOL_PIECE as u64, reader.capacity() as u64);
+        serde_json::from_reader(reader)
     }
 }
 

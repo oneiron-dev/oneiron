@@ -26,6 +26,21 @@ pub(in crate::api) struct JsonInvalid;
 
 type Decoded<T> = Result<T, JsonInvalid>;
 
+/// Invalid JSON, or a source-file failure while replaying a property name.
+#[derive(Debug)]
+pub(in crate::api) enum HeadFail {
+    /// The document is not the object the route reads.
+    Invalid,
+    /// The source position or the original quoted name could not be read.
+    Failed,
+}
+
+impl From<JsonInvalid> for HeadFail {
+    fn from(_: JsonInvalid) -> Self {
+        Self::Invalid
+    }
+}
+
 /// Where a bulk member's string goes as it is read.
 pub(in crate::api) trait StringSink {
     /// The next run of the string, as UTF-8. `false` once the sink refused
@@ -67,11 +82,11 @@ impl<'a> BulkMember<'a> {
 /// to the head file for the route's later DTO decode. A bulk given twice,
 /// given as anything but a string, or missing while required, or anything
 /// after the object, is malformed.
-pub(super) fn scan_object_head(
-    reader: impl BufRead,
-    bulk: &mut [BulkMember<'_>],
+pub(super) fn scan_object_head<const N: usize>(
+    reader: impl BufRead + Seek,
+    bulk: &mut [BulkMember<'_>; N],
     head: &mut TextFileSink,
-) -> Decoded<()> {
+) -> Result<(), HeadFail> {
     let mut scan = Scanner { reader };
     let mut has_members = false;
     scan.skip_whitespace()?;
@@ -83,16 +98,37 @@ pub(super) fn scan_object_head(
     } else {
         loop {
             scan.skip_whitespace()?;
+            let name_start = scan
+                .reader
+                .stream_position()
+                .map_err(|_| HeadFail::Failed)?;
             scan.expect(b'"')?;
-            let mut name = Vec::new();
-            scan.string(&mut |run: &[u8]| name.extend_from_slice(run))?;
-            let name = String::from_utf8(name).map_err(|_| JsonInvalid)?;
+            let mut names = bulk.each_ref().map(|member| Some(member.name.as_bytes()));
+            scan.string(&mut |run| {
+                for name in &mut names {
+                    *name = (*name).and_then(|remaining| remaining.strip_prefix(run));
+                }
+            })?;
+            let name_end = scan
+                .reader
+                .stream_position()
+                .map_err(|_| HeadFail::Failed)?;
+            let index = names
+                .iter()
+                .position(|name| name.is_some_and(<[u8]>::is_empty));
+            if index.is_none() {
+                if has_members {
+                    write_head(head, b",");
+                }
+                copy_raw_name(&mut scan.reader, name_start, name_end, head)?;
+            }
             scan.skip_whitespace()?;
             scan.expect(b':')?;
             scan.skip_whitespace()?;
-            if let Some(member) = bulk.iter_mut().find(|member| member.name == name) {
+            if let Some(index) = index {
+                let member = &mut bulk[index];
                 if member.seen {
-                    return Err(JsonInvalid);
+                    return Err(HeadFail::Invalid);
                 }
                 member.seen = true;
                 scan.expect(b'"')?;
@@ -101,15 +137,6 @@ pub(super) fn scan_object_head(
                     member.refused = true;
                 }
             } else {
-                if has_members {
-                    write_head(head, b",");
-                }
-                write_head(
-                    head,
-                    serde_json::to_string(&name)
-                        .map_err(|_| JsonInvalid)?
-                        .as_bytes(),
-                );
                 write_head(head, b":");
                 scan.copy_value(head)?;
                 has_members = true;
@@ -118,18 +145,42 @@ pub(super) fn scan_object_head(
             match scan.next()? {
                 Some(b',') => {}
                 Some(b'}') => break,
-                _ => return Err(JsonInvalid),
+                _ => return Err(HeadFail::Invalid),
             }
         }
     }
     scan.skip_whitespace()?;
     if scan.peek()?.is_some() {
-        return Err(JsonInvalid);
+        return Err(HeadFail::Invalid);
     }
     if bulk.iter().any(|member| member.required && !member.seen) {
-        return Err(JsonInvalid);
+        return Err(HeadFail::Invalid);
     }
     write_head(head, b"}");
+    Ok(())
+}
+
+/// Replays only the original quoted name, ending at the scanner's saved position.
+fn copy_raw_name(
+    reader: &mut (impl BufRead + Seek),
+    start: u64,
+    end: u64,
+    head: &mut TextFileSink,
+) -> Result<(), HeadFail> {
+    let mut remaining = end.checked_sub(start).ok_or(HeadFail::Failed)?;
+    reader
+        .seek(SeekFrom::Start(start))
+        .map_err(|_| HeadFail::Failed)?;
+    while remaining > 0 {
+        let buffer = reader.fill_buf().map_err(|_| HeadFail::Failed)?;
+        if buffer.is_empty() {
+            return Err(HeadFail::Failed);
+        }
+        let take = remaining.min(buffer.len() as u64) as usize;
+        write_head(head, &buffer[..take]);
+        reader.consume(take);
+        remaining -= take as u64;
+    }
     Ok(())
 }
 

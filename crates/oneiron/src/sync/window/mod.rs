@@ -27,6 +27,7 @@ mod device_only;
 mod discard_ingress;
 mod discard_projection;
 mod egress;
+mod erased_origin;
 mod forward;
 mod history_free;
 mod pad_custody;
@@ -67,8 +68,8 @@ pub(in crate::sync) use self::discard_projection::{
 pub(crate) use self::discard_projection::{
     forget_unprojected_in_txn, mark_base_windows_owed_in_txn, resync_projected_windows_in_txn,
 };
-pub(crate) use self::egress::export_history_free_window_snapshot;
 use self::egress::window_packing_excludes_entity;
+pub(crate) use self::egress::{export_history_free_window_snapshot, persisted_window_snapshot};
 pub(in crate::sync) use self::egress::{
     export_scrubbed_window_snapshot, withdrawn_delete_carriers,
 };

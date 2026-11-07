@@ -21,7 +21,8 @@ use axum::http::HeaderMap;
 use serde::de::DeserializeOwned;
 
 use crate::api::body_spool::{
-    self, Base64FileSink, BulkMember, SinkRefusal, SpoolPolicy, SpooledField, TextFileSink, Unspooled,
+    self, Base64FileSink, BulkMember, HeadFail, SinkRefusal, SpoolPolicy, SpooledField,
+    TextFileSink, Unspooled,
 };
 use crate::error::ApiError;
 use crate::machine::DiskClaim;
@@ -85,7 +86,10 @@ pub(super) async fn read<H: DeserializeOwned + Send + 'static>(
             };
             // No working buffer or lease survives into the next admission.
             // Known syntax or head-file failures never wait for another reader.
-            syntax.map_err(|_| body_spool::invalid_json())?;
+            syntax.map_err(|error| match error {
+                HeadFail::Invalid => body_spool::invalid_json(),
+                HeadFail::Failed => refusal(Unspooled::Failed),
+            })?;
             let head = {
                 let head_file = head.map_err(refusal)?;
                 let mut memory = spool
