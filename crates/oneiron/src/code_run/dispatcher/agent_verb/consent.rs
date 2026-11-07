@@ -2,10 +2,7 @@
 //! `connector.call` or a held browser act parks its run on (DOOR-079 1a,
 //! ONE-2510, FIX 10423).
 
-use serde_json::Value;
-
 use crate::EntityId;
-use crate::code_run::ConnectorCallReply;
 use crate::code_run::consent_wait::{self, CodeConsentCallSite};
 use crate::code_run::payload::agent_verb_call_identity as call_identity;
 use crate::code_run::storage::ExecutorStorage;
@@ -13,11 +10,10 @@ use crate::code_run::types::{
     SelfAgentVerbCall, SelfDispatchOutcome, SelfDurableWait, SelfDurableWaitReason, SelfEffect,
 };
 use crate::error::Result;
-use crate::secret_custody::SECRET_USE_CONNECTOR_CALL;
 use crate::task_verb::sdk::AgentVerb;
 
 use super::super::{ExecutorCallSite, HostSelfDispatcher};
-use super::SecretUseAnswer;
+use super::connector_wait::{connector_call_answer, held_call_ref};
 
 impl HostSelfDispatcher<'_> {
     /// Where a write a code consent wait may bind sits in the run (DOOR-079
@@ -88,49 +84,4 @@ impl HostSelfDispatcher<'_> {
         }
         Ok(connector_call_answer(verb, outcome))
     }
-}
-
-/// `connector.call`'s answer as the run takes it (ONE-2510): a call held for
-/// consent or governance, or a delivery the same send retries, parks the run
-/// on the call's ref as an outbound-effect wait, which the connector settler
-/// answers with the call's settled reply. `self.use`'s `connector.call`
-/// parks the same way on the call its answer holds (OF-560). Any other
-/// answer, and any other verb's, stands.
-pub(super) fn connector_call_answer(
-    verb: AgentVerb,
-    outcome: SelfDispatchOutcome,
-) -> SelfDispatchOutcome {
-    let wait_id = match &outcome {
-        SelfDispatchOutcome::AgentVerb(answer) => held_call_ref(verb, &answer.output),
-        _ => None,
-    };
-    let Some(wait_id) = wait_id else {
-        return outcome;
-    };
-    SelfDispatchOutcome::DurableWait(SelfDurableWait {
-        wait_id,
-        effect: SelfEffect::AgentVerb,
-        reason: SelfDurableWaitReason::OutboundEffect,
-        prompt: Some(format!("connector_call:{}", wait_id.to_hex())),
-    })
-}
-
-/// The ref of the connector call a verb's answer holds or retries: a
-/// `connector.call` reply's, or the one inside a `self.use` answer whose
-/// operation was `connector.call`.
-fn held_call_ref(verb: AgentVerb, output: &Value) -> Option<EntityId> {
-    let reply = match verb {
-        AgentVerb::ConnectorCall => output.clone(),
-        AgentVerb::SelfUse => {
-            let answer = serde_json::from_value::<SecretUseAnswer>(output.clone()).ok()?;
-            if answer.receipt.operation != SECRET_USE_CONNECTOR_CALL {
-                return None;
-            }
-            answer.result?
-        }
-        _ => return None,
-    };
-    serde_json::from_value::<ConnectorCallReply>(reply)
-        .ok()?
-        .wait_ref()
 }
