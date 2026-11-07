@@ -2,6 +2,7 @@
 //! key custody, persistence, legal access audit and destruction. No clone is a
 //! Vault, and no ordinary owner/member/agent surface routes to this channel.
 
+mod artifact;
 mod auth;
 mod collector;
 mod live;
@@ -71,6 +72,13 @@ impl HostLegalConnection {
         self.stream.set_read_timeout(deadline)?;
         self.stream.set_write_timeout(deadline)?;
         if matches!(&request.scope, CaptureScope::LiveSession(_)) {
+            // Teardown's stop trigger leaves this stream open for the
+            // off-record session close; one it already closed never registers.
+            if !self.role.claim_live() {
+                return Err(
+                    io::Error::new(io::ErrorKind::Interrupted, "legal capture stopped").into(),
+                );
+            }
             return self.run_live(vault, request, public);
         }
         if matches!(&request.scope, CaptureScope::ProspectiveMessages(_)) {
@@ -89,11 +97,23 @@ impl HostLegalConnection {
                 check(vault, &request, cancelled)
             });
         }
+        if let CaptureScope::ArtifactMessages(selection) = &request.scope {
+            return artifact::capture(
+                &mut self.stream,
+                vault,
+                &request,
+                &public,
+                selection,
+                || check(vault, &request, cancelled),
+            );
+        }
         let check = || check(vault, &request, cancelled);
-        // Gate custody BEFORE its source writer. Neither guard is reused for
-        // LIVE: K lends its final overlay/spill source at the close boundary.
+        // Gate custody BEFORE its source snapshot, one LMDB read snapshot held
+        // through every stream to the exact ACK: no writer, so the vault's
+        // own writes go on meanwhile. Neither guard is reused for LIVE: K
+        // lends its final overlay/spill source at the close boundary.
         let _custody = vault.store.gate_custody_read_guard()?;
-        let txn = vault.store.env.write_txn()?;
+        let txn = vault.store.env.read_txn()?;
         check()?;
         let mut collector = Collector::pinned(&mut self.stream, &public, &request)?;
         let mut stored_revision = [0; 32];
@@ -137,7 +157,7 @@ impl HostLegalConnection {
             .into());
         }
         collector.finish(decisions, 0, 0, 0, CaptureExtent::GateDecisions, check)?;
-        // Read-only abort, after the exact durable HOST acknowledgement.
+        // The snapshot ends after the exact durable HOST acknowledgement.
         drop(txn);
         Ok(())
     }
