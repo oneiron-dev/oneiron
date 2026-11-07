@@ -38000,7 +38000,7 @@
      "path": "src/federation/peer_authority.rs",
      "purpose": "Peer authority-log admission (FED-03) and roster refolding",
      "surface": {
-      "const": 2,
+      "const": 1,
       "crate-vis": 2,
       "fn": 4
      }
