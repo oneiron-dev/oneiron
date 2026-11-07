@@ -163,6 +163,7 @@ impl CanonicalCapture {
                 // files it again beside a rebuilt row (FIX 12113).
                 "message_writers",
                 "asset_body_refs",
+                "source_audiences",
             ]
             .contains(&name.as_str())
         }) {
@@ -204,6 +205,7 @@ impl CanonicalCapture {
             row_births: Vec::new(),
             withdrawn_cutoffs: Vec::new(),
             asset_body_refs: Vec::new(),
+            source_audiences: Vec::new(),
         };
         for (key, blob) in binary_rows_within(doc, "entities", budget)? {
             // A pad row goes by its bare reference, its pad in current custody
@@ -543,6 +545,8 @@ impl CanonicalCapture {
         }
         // FIX 4550: the peer origins of the final rows, with their final bytes.
         peer_origins::capture(doc, &mut snapshot, budget)?;
+        // Engine A: the final rows' source audiences, with or without sync.
+        source_audiences::capture(vault, txn, doc, &mut snapshot, budget)?;
         // FIX 3069, 8820, 5489: the final rows' births, the window's cutoffs,
         // and the body references that bind the final rows.
         #[cfg(feature = "sync")]
