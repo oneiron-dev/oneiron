@@ -466,10 +466,6 @@ side_tables! {
     /// Key: string (pack name "\0" skill id hex).
     LENS_SLOT: VaultMeta b"lens/slot/v1\0" Named
         => crate::lens::erase_slot_actor_in_txn;
-    /// Native provider archive version captured by a LINE observation. Key: id16(claim).
-    LINE_CHAT_ARCHIVE_PIN: VaultMeta b"line:chat_archive_pin:v1:" Named Engine;
-    /// Exact native join-version release still owed after capture teardown. Key: id16(claim).
-    LINE_CHAT_ARCHIVE_RELEASE: VaultMeta b"line:chat_archive_release:v1:" Named Engine;
     /// Tracker issue id to task id. Key: string.
     LINEAR_ISSUE_REVERSE: VaultMeta b"linear.issue.v1/" Raw;
     /// One TASK's mirror control (OF-427 C6): whether it is opted out, its mapping revision and
