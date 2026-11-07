@@ -1867,7 +1867,7 @@ declare namespace Sdk {
   type CandleParityCheck = { tokens_match: boolean; token_mismatches?: string[]; logits_match?: boolean | null };
   type ExportCheck = { hash_mismatches: string[]; probe_coverage_matches: boolean; probe_checkpoints_match: boolean; settings_match: boolean; harness_matches: boolean; argmax_flips: number; max_logit_difference: number; tolerance: number; question_check?: QuestionExportCheck | null; candle_parity?: CandleParityCheck | null };
   type SwapChoice = { kind: "evaluated" } | { kind: "explicit_override"; reason: string };
-  type RoleSwapReceipt = { id: EntityId; run: EntityId; owner: TrainingOwner; at: number; role: ModelRole; previous?: ModelBinding | null; binding: ModelBinding; checkpoint: PinnedCheckpoint; evaluation?: HeldOutResult | null; checks: ExportCheck; exact_hash_overlaps: number; promotion_exposure?: EvalExposure | null; choice: SwapChoice };
+  type RoleSwapReceipt = { id: EntityId; run: EntityId; owner: TrainingOwner; at: number; role: ModelRole; previous?: ModelBinding | null; previous_swap?: EntityId | null; binding: ModelBinding; checkpoint: PinnedCheckpoint; evaluation?: HeldOutResult | null; checks: ExportCheck; exact_hash_overlaps: number; promotion_exposure?: EvalExposure | null; choice: SwapChoice };
   type BindingSource = { kind: "offer"; offer: EntityId; owner: SwitchOwner } | { kind: "training"; receipt: RoleSwapReceipt };
   type SpaceRef = "text_index" | { declared: string };
   type BindingMoveLink = { candidate: string; incumbent: SpaceRef; started_at: number };
