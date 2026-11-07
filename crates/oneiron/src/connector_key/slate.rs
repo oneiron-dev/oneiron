@@ -647,7 +647,11 @@ fn elicitation_row_expands(old: &ConnectorGrantSlate, next: &ConnectorGrantSlate
 }
 
 /// Only a provable restriction carries consent. Anything unknown re-asks.
-fn schema_narrows(old: Option<&serde_json::Value>, next: Option<&serde_json::Value>) -> bool {
+/// Manifest drift reads the same judgment (FIX 2604).
+pub(in crate::connector_key) fn schema_narrows(
+    old: Option<&serde_json::Value>,
+    next: Option<&serde_json::Value>,
+) -> bool {
     let (Some(old), Some(next)) = (old, next) else {
         return old == next;
     };
