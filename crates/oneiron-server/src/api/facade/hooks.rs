@@ -264,7 +264,13 @@ pub(crate) async fn facade_hooks_pre_admitting(
             call,
         )
         .ok()
-        .and_then(|memory| memory.verb_ask_credential()),
+        .and_then(|memory| match call.room_turn().ok().flatten() {
+            Some(room) => memory
+                .for_room_turn(room)
+                .ok()
+                .and_then(|turn| turn.verb_ask_credential()),
+            None => memory.verb_ask_credential(),
+        }),
         _ => None,
     };
     let resume = RowHookResume {
