@@ -1,5 +1,9 @@
 //! Rule five at the owner's booking windows: authenticated work past one
-//! waits for it to open and is never answered "retry after".
+//! waits for it to open and is never answered "retry after". Since FIX
+//! 128-131 an authenticated caller spends none of the per-minute windows
+//! (its calls are counted against `[limits]` rows that ask and serve), so
+//! what it can still wait on is a hold's one-active-per-session rule and a
+//! quarantine admission's own answer.
 
 use std::time::Duration;
 

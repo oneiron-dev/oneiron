@@ -269,6 +269,7 @@ fn agent_authored_weave_recipe_executes_with_system_write_stamp() -> Result<()> 
             reserve_units: 100,
             now: 4,
             host_scope: None,
+            destination_bound: None,
         },
         &mut worker,
         &WakeCancellation::new(),

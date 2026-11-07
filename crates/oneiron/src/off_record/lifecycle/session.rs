@@ -23,6 +23,7 @@ use super::types::{OffRecordBackendClass, OffRecordCloseOutcome, OffRecordMode};
 use crate::error::OffRecordError;
 
 mod checkpoint;
+mod routed_side;
 mod type_feedback;
 mod vector_search;
 
@@ -662,64 +663,6 @@ impl OffRecordSession<'_> {
         }
     }
 
-    /// One transaction over side tables on a route the caller captured, in
-    /// which `f` reads every row through the composed view and writes along
-    /// the route: [`Self::side_table_compare_and_put_routed`]'s two arms with
-    /// the body handed over. `f` gets the base write transaction too, so a
-    /// base row it writes (a spend scope) commits with the routed ones.
-    ///
-    /// While the room is off record the reads and writes are the view's,
-    /// staged into one segment that commits with the base transaction. Once
-    /// it is on record they write base, and only while the saver holds; the
-    /// reads stay composed, since a row may still be one an earlier
-    /// off-record run of the room wrote.
-    pub(crate) fn routed_side_txn<T>(
-        &self,
-        route: &SessionWriteRoute,
-        f: impl FnOnce(
-            &mut heed::RwTxn<'_>,
-            crate::side_table::RoutedDbs<'_>,
-            crate::side_table::RoutedDbs<'_>,
-        ) -> Result<T>,
-    ) -> Result<T> {
-        use crate::side_table::RoutedDbs;
-        route.require_recording(&self.session_ref)?;
-        match route.target() {
-            RouteTarget::Discard => unreachable!("anonymous recording refused above"),
-            RouteTarget::Overlay => {
-                let overlay = self.entry.overlay.clone();
-                self.vault.with_write_txn_grouped_after_commit(
-                    |wtxn| {
-                        let segment = overlay.install_txn_segment()?;
-                        self.participant_in_txn(wtxn)?;
-                        route.revalidate()?;
-                        let view = self.vault.store.session_view(overlay.clone())?;
-                        let answer = f(wtxn, RoutedDbs::Session(&view), RoutedDbs::Session(&view))?;
-                        Ok((segment, answer))
-                    },
-                    |(segment, answer)| segment.commit().map(|()| answer),
-                )
-            }
-            RouteTarget::Base => self.with_saver_write_txn(self.saver_check_for(route)?, |wtxn| {
-                route.revalidate()?;
-                let view = self.vault.store.session_view(self.entry.overlay.clone())?;
-                f(wtxn, RoutedDbs::Session(&view), RoutedDbs::Base(self.vault))
-            }),
-        }
-    }
-
-    /// One composed read of side tables over overlay ∪ base, while the
-    /// handle's participant is in the room, checked in the read.
-    pub(crate) fn routed_side_read<T>(
-        &self,
-        f: impl FnOnce(&heed::RoTxn<'_>, crate::side_table::RoutedDbs<'_>) -> Result<T>,
-    ) -> Result<T> {
-        let view = self.read_view()?;
-        let rtxn = self.vault.store.env.read_txn()?;
-        self.participant_in_txn(&rtxn)?;
-        f(&rtxn, crate::side_table::RoutedDbs::Session(&view))
-    }
-
     /// The base spend scopes this session's reader children spend under
     /// (OF-532): units and ids, no content.
     pub(crate) fn spend_book(&self) -> crate::code_run::SpendBook<'_> {
@@ -963,13 +906,30 @@ impl OffRecordSession<'_> {
     /// vault's; the vault's `bodies/` once it is on record.
     pub(crate) fn body_dir(&self, target: RouteTarget) -> Result<crate::store::BodyDir> {
         match target {
-            RouteTarget::Overlay => self
-                .vault
-                .store
-                .session_body_dir(&self.session_ref, true)?
-                .ok_or(Error::InvariantViolation(
-                    "off-record body directory missing",
-                )),
+            RouteTarget::Overlay => {
+                let state = session_entry_state(&self.entry)?;
+                if state.gone {
+                    return Err(Error::OffRecord(OffRecordError::OffRecordSessionNotFound {
+                        session_ref: self.session_ref.clone(),
+                    }));
+                }
+                if state.record.closing {
+                    return Err(Error::OffRecord(OffRecordError::OffRecordSessionClosing {
+                        session_ref: self.session_ref.clone(),
+                    }));
+                }
+                let _io = self.entry.live_spill.io()?;
+                let mut dir = self
+                    .vault
+                    .store
+                    .session_body_dir(&self.session_ref, true)?
+                    .ok_or(Error::InvariantViolation(
+                        "off-record body directory missing",
+                    ))?;
+                self.entry.live_spill.attach(&dir)?;
+                dir.live_spill = Some(Arc::clone(&self.entry.live_spill));
+                Ok(dir)
+            }
             RouteTarget::Base => self.vault.store.body_dir(),
             RouteTarget::Discard => Err(Error::InvariantViolation(
                 "anonymous routes write no result bodies",
@@ -1069,6 +1029,11 @@ impl OffRecordSession<'_> {
     /// A share of the result-memory pool for one run in this session.
     pub(crate) fn result_share(&self) -> crate::store::result_memory::ResultShare {
         self.vault.result_share()
+    }
+
+    /// Wall milliseconds from this session's vault clock.
+    pub(crate) fn now_recorded_ms(&self) -> u64 {
+        self.vault.now_recorded_ms()
     }
 
     /// Identity of the vault this session belongs to.

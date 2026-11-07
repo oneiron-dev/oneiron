@@ -30,6 +30,7 @@ use super::{
 };
 
 mod construction;
+mod mcp;
 pub(super) mod pattern_workflow;
 mod usage;
 
@@ -107,6 +108,8 @@ pub struct SyncServer {
     /// deck and slide render takes its turn here, round robin across the
     /// callers it is for, the host's own wakes behind them.
     pub(crate) renderer_turns: crate::admission::Admission<oneiron::EntityId>,
+    /// The operator's renderer scratch source, resolved once with shared disk claims.
+    pub(crate) renderer_scratch: crate::slide_render::RendererScratch,
     /// OF-520 questions retrieval queries past `config.limits` raised.
     pub(crate) query_checks: super::read_shape::QueryChecks,
     /// Set only by managed boot after inherited-credential and DEK checks.
@@ -139,6 +142,9 @@ pub struct SyncServer {
     pub(crate) retained: Arc<crate::byte_line::ByteLine>,
     /// The presence hub's charge on `retained`.
     pub(crate) presence: Arc<super::presence::PresenceCharge>,
+    /// Authenticated booking calls per actor this minute (FIX 128-131),
+    /// measured against their `[limits]` rows; never a window.
+    pub(crate) booking_calls: super::booking_calls::AuthenticatedBookingCalls,
     /// The wakes of removed holders' archive delivery sessions (FIX 3396).
     pub(crate) removal_deliveries: super::removal_delivery::RemovalDeliveries,
     /// Dedicated shared environments retained for leave checks and their own
@@ -164,6 +170,9 @@ pub struct SyncServer {
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
     /// Vault-owned production code host. No request can replace it.
     pub(crate) mcp_code_host: Option<Arc<dyn crate::mcp::McpCodeExecutionHost>>,
+    /// The `execute_code` runs parked on a durable wait, each entered again
+    /// once its reply is delivered (FIX 4606).
+    pub(crate) mcp_code_run_continuations: crate::api::McpCodeRunContinuations,
     /// Runs the reader children code runs spawn, on the code host once one
     /// is bound, and keeps their clock (ARCH-0079 #reader-forks).
     pub(crate) reader_runner: Arc<super::ReaderRunner>,
@@ -173,6 +182,10 @@ pub struct SyncServer {
     /// The T1 secret destinations each run host registered for its runs
     /// (DOOR-124): the `self.secrets.*` doors deliver into them.
     pub(crate) secret_destinations: crate::runtime::SecretDestinations,
+    /// The credential-helper registrations each seat run's host made for it
+    /// (FIX 10624 step 2): `POST /v1/seat/credential-helper` answers into
+    /// them.
+    pub(crate) seat_helpers: crate::runtime::SeatHelperRuns,
     /// This vault's model byte budgets (FIX 9321, FIX 9323): its media-reply
     /// line and its mesh staging budget, one set its runtime's adapters and
     /// every mesh site share.
@@ -292,6 +305,10 @@ pub struct SyncServer {
     /// The port of the artifact-only listener on the API's host, set by the
     /// serve path once it is bound. `None` where none serves.
     artifact_port: Option<u16>,
+    /// Where the API listener is bound, set by the serve path once it is
+    /// bound (FIX 10624 step 2): the origin a seat CLI's credential helper
+    /// calls back on. `None` where no API listener of this process serves.
+    api_addr: Option<std::net::SocketAddr>,
     /// Managed serve's artifact origin on a unix socket of its own
     /// (`--artifact-http-socket`), which has no port to advertise.
     artifact_socket: bool,
@@ -363,32 +380,6 @@ impl SyncServer {
         Ok(())
     }
 
-    /// Bind a readiness-verified QuickJS provider before exposing this vault's
-    /// routes, running at most `runs` at once. Missing components or providers
-    /// keep execute_code unadvertised.
-    #[cfg(feature = "code-sandbox-wasmtime")]
-    #[must_use]
-    pub fn with_mcp_quickjs_provider(
-        mut self,
-        provider: crate::mcp::McpQuickJsProvider,
-        runs: crate::mcp::CodeRunLimits,
-    ) -> Self {
-        let provider = provider.with_run_receipts(self.run_receipts());
-        let host: Arc<dyn crate::mcp::McpCodeExecutionHost> = Arc::new(
-            crate::mcp::McpEngineNativeCodeHost::new(
-                Arc::new(provider),
-                runs,
-                Arc::clone(self.wire_telemetry.limit_questions()),
-            )
-            .with_reader_seats(self.reader_runner.seats())
-            .with_git_door_base(self.config.git_door_base.clone()),
-        );
-        // Reader children run on the same provider and pool.
-        self.reader_runner.bind_host(Arc::clone(&host));
-        self.mcp_code_host = Some(host);
-        self
-    }
-
     /// Installs the node-side account API key verifier a host built
     /// around its control-plane checker (OF-448). Without one, no account
     /// key is ever admitted.
@@ -427,24 +418,6 @@ impl SyncServer {
 
     pub(crate) fn desktop_guest(&self) -> Option<&oneiron_browser::DesktopGuest> {
         self.desktop_guest.as_ref()
-    }
-
-    pub(crate) fn code_execution_host(&self) -> Option<&Arc<dyn crate::mcp::McpCodeExecutionHost>> {
-        self.mcp_code_host
-            .as_ref()
-            .filter(|host| host.production_runtime_available())
-    }
-
-    /// The surface `mode` registers on this server, or the verb row that
-    /// keeps it from registering: callers answer that as a typed error.
-    pub(crate) fn mcp_surface(
-        &self,
-        mode: crate::mcp::McpSurfaceMode,
-    ) -> Result<crate::mcp::McpRegisteredSurface, crate::mcp::McpSurfaceConstructionError> {
-        crate::mcp::McpRegisteredSurface::register_with_execution(
-            mode,
-            self.code_execution_host().is_some(),
-        )
     }
 
     /// Attaches the ONE-207 deep-retrieval host.
@@ -728,6 +701,29 @@ impl SyncServer {
 
     pub(crate) fn artifact_port(&self) -> Option<u16> {
         self.artifact_port
+    }
+
+    /// Records that the API listener is bound at `addr` (FIX 10624 step 2).
+    #[must_use]
+    pub fn with_api_listener(mut self, addr: std::net::SocketAddr) -> Self {
+        self.api_addr = Some(addr);
+        self
+    }
+
+    /// The loopback origin this device's own callers reach the API on: the
+    /// bound port on loopback, when the listener is bound to loopback or to
+    /// every address. `None` when no listener is recorded or it listens on
+    /// one other address alone.
+    pub(crate) fn loopback_api_origin(&self) -> Option<String> {
+        let addr = self.api_addr?;
+        let ip = addr.ip();
+        if ip.is_loopback() {
+            Some(format!("http://{addr}"))
+        } else if ip.is_unspecified() {
+            Some(format!("http://127.0.0.1:{}", addr.port()))
+        } else {
+            None
+        }
     }
 
     /// Records that the artifact-only router serves this server's `/a/` on a
