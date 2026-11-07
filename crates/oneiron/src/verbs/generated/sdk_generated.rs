@@ -5433,6 +5433,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.questions.prepare",
+                crate::code_run::vault_read::request_schema::<crate::receipt::QuestionPrepareRequest>(
+                ),
+            ),
+            (
+                "vault.questions.admit",
+                crate::code_run::vault_read::request_schema::<crate::receipt::QuestionAdmitRequest>(
+                ),
+            ),
+            (
                 "vault.questions.backfill",
                 crate::code_run::vault_read::request_schema::<
                     crate::receipt::QuestionBackfillRequest,
@@ -17879,6 +17889,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.questions.prepare" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.questions.admit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.questions.backfill" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -21269,6 +21293,8 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.questions.create" => validate_input_vault_questions_create(value)?,
         "vault.questions.edit" => validate_input_vault_questions_edit(value)?,
         "vault.questions.pause" => validate_input_vault_questions_pause(value)?,
+        "vault.questions.prepare" => validate_input_vault_questions_prepare(value)?,
+        "vault.questions.admit" => validate_input_vault_questions_admit(value)?,
         "vault.questions.backfill" => validate_input_vault_questions_backfill(value)?,
         "vault.questions.read" => validate_input_vault_questions_read(value)?,
         "vault.questions.outcome_windows" => validate_input_vault_questions_outcome_windows(value)?,
@@ -26957,6 +26983,16 @@ fn validate_input_vault_questions_pause(value: &serde_json::Value) -> MemoryResu
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_questions_prepare(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::receipt::QuestionPrepareRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_questions_admit(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::receipt::QuestionAdmitRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_vault_questions_backfill(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::receipt::QuestionBackfillRequest = decode(value.clone())?;
     Ok(())
@@ -30130,6 +30166,8 @@ pub fn invoke(
         "vault.questions.create" => invoke_vault_questions_create(memory, value),
         "vault.questions.edit" => invoke_vault_questions_edit(memory, value),
         "vault.questions.pause" => invoke_vault_questions_pause(memory, value),
+        "vault.questions.prepare" => invoke_vault_questions_prepare(memory, value),
+        "vault.questions.admit" => invoke_vault_questions_admit(memory, value),
         "vault.questions.backfill" => invoke_vault_questions_backfill(memory, value),
         "vault.questions.read" => invoke_vault_questions_read(memory, value),
         "vault.questions.outcome_windows" => invoke_vault_questions_outcome_windows(memory, value),
@@ -37529,6 +37567,20 @@ fn invoke_vault_questions_pause(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_questions_pause(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_questions_prepare(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_questions_prepare(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_questions_admit(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_questions_admit(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_questions_backfill(
@@ -48048,6 +48100,18 @@ pub fn vault_questions_pause(
     input: crate::receipt::QuestionPauseRequest,
 ) -> MemoryResult<crate::receipt::QuestionPaused> {
     crate::task_verb::sdk::host_only(memory, "vault.questions.pause", &input)
+}
+pub fn vault_questions_prepare(
+    memory: &Memory<'_>,
+    input: crate::receipt::QuestionPrepareRequest,
+) -> MemoryResult<crate::receipt::QuestionPrepared> {
+    crate::task_verb::sdk::host_only(memory, "vault.questions.prepare", &input)
+}
+pub fn vault_questions_admit(
+    memory: &Memory<'_>,
+    input: crate::receipt::QuestionAdmitRequest,
+) -> MemoryResult<crate::llm::decision::questions::AnswerRecord> {
+    crate::task_verb::sdk::host_only(memory, "vault.questions.admit", &input)
 }
 pub fn vault_questions_backfill(
     memory: &Memory<'_>,

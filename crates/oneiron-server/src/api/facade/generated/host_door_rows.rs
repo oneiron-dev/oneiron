@@ -105,6 +105,8 @@
 //! - `vault.questions.create`
 //! - `vault.questions.edit`
 //! - `vault.questions.pause`
+//! - `vault.questions.prepare`
+//! - `vault.questions.admit`
 //! - `vault.questions.backfill`
 //! - `vault.questions.read`
 //! - `vault.questions.outcome_windows`
@@ -1784,6 +1786,8 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.questions.create"
                 | "vault.questions.edit"
                 | "vault.questions.pause"
+                | "vault.questions.prepare"
+                | "vault.questions.admit"
                 | "vault.questions.backfill"
                 | "vault.questions.read"
                 | "vault.questions.outcome_windows"

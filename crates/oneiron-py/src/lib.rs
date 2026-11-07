@@ -9018,6 +9018,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_questions_prepare(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.questions.prepare")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.questions.prepare", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_questions_admit(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.questions.admit")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.questions.admit", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_questions_backfill(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.questions.backfill")?;
         let output = py
