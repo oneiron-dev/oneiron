@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use oneiron_docedit::design_plan::CompileError;
 use oneiron_docedit::emit::{EmitError, Names};
 use oneiron_docedit::fonts::FontError;
+use oneiron_docedit::graphic::GraphicLimits;
 use serde::{Deserialize, Serialize};
 
 use crate::write_envelope::WriteActor;
@@ -187,6 +188,8 @@ pub struct DeckCreateRequest<'a> {
     pub assets: &'a BTreeMap<String, ArtifactVersionRef>,
     /// Font files (TrueType, OpenType or collections) to measure text with.
     pub fonts: &'a [ArtifactVersionRef],
+    /// Graphic ceilings for the brief's assets; absent, the engine defaults.
+    pub graphics: Option<GraphicLimits>,
     pub names: Names<'a>,
     /// The new artifact's name.
     pub name: &'a str,
