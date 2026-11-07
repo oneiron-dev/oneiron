@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1292 facade rows, 4677 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1244.
+// UniFFI census: 1293 facade rows, 4681 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1245.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -31677,6 +31677,45 @@ pub struct RootRequestCreateRequest {
     pub machine: Option<String>,
 }
 
+/// `oneiron::verbs::root_requests::OwnerWorkView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OwnerWorkView {
+    #[serde(
+        rename = "manifest_text",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub manifest_text: Option<String>,
+    #[serde(rename = "status_text")]
+    pub status_text: String,
+    #[serde(
+        rename = "unassigned_text",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub unassigned_text: Option<String>,
+    #[serde(
+        rename = "advice_text",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub advice_text: Option<String>,
+    #[serde(
+        rename = "home_warning_text",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub home_warning_text: Option<String>,
+    #[serde(
+        rename = "cancel_text",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cancel_text: Option<String>,
+    #[serde(flatten)]
+    pub owner_work_receipt: OwnerWorkReceipt,
+}
+
 /// `oneiron::verbs::root_requests::RootChangeView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -31696,7 +31735,7 @@ pub struct PendingRootRequestView {
     #[serde(rename = "change")]
     pub change: RootChangeView,
     #[serde(rename = "receipt")]
-    pub receipt: OwnerWorkReceipt,
+    pub receipt: OwnerWorkView,
 }
 
 /// `oneiron::verbs::root_requests::OwnerWorkGetRequest`.
@@ -34117,6 +34156,23 @@ pub struct ConnectorCallApproveOnceRequest {
     pub call_ref: String,
     #[serde(rename = "approval_digest")]
     pub approval_digest: String,
+}
+
+/// `oneiron::verbs::connector_reply_retry::ConnectorReplyRetryRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorReplyRetryRequest {
+    #[serde(rename = "attempt_ref")]
+    pub attempt_ref: String,
+}
+
+/// `oneiron::verbs::connector_reply_retry::ConnectorReplyRetryView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConnectorReplyRetryView {
+    #[serde(rename = "predecessor_ref")]
+    pub predecessor_ref: String,
+    #[serde(rename = "successor_ref")]
+    pub successor_ref: String,
 }
 
 /// `oneiron::consent::lifecycle::DenyConsentRequest`.
@@ -50755,6 +50811,8 @@ pub enum SelfEffect {
     RepoSymbolsRelease,
     #[serde(rename = "RepoProposalSubmit")]
     RepoProposalSubmit,
+    #[serde(rename = "RepoProposalResolve")]
+    RepoProposalResolve,
     #[serde(rename = "RepoMergeQueueEnqueue")]
     RepoMergeQueueEnqueue,
     #[serde(rename = "RepoCheckoutBind")]
@@ -54455,6 +54513,11 @@ pub enum FatalLlmError {
         #[serde(rename = "code", default, skip_serializing_if = "Option::is_none")]
         code: Option<String>,
     },
+    #[serde(rename = "ContextWindowExceeded")]
+    ContextWindowExceeded {
+        #[serde(rename = "message")]
+        message: String,
+    },
     #[serde(rename = "Auth")]
     Auth,
     #[serde(rename = "ContentFiltered")]
@@ -55750,6 +55813,15 @@ pub struct LiveVoiceUsage {
     pub settlements: Vec<RunRungSettlement>,
 }
 
+/// `oneiron::outbound_consent::connector_call_types::ConnectorSource`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ConnectorSource {
+    #[serde(rename = "catalog")]
+    Catalog,
+    #[serde(rename = "builtin")]
+    Builtin,
+}
+
 /// `oneiron::outbound_consent::tool_call::MutationIntent`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum MutationIntent {
@@ -55765,6 +55837,8 @@ pub enum MutationIntent {
 pub struct ConnectorCallRequest {
     #[serde(rename = "name")]
     pub name: String,
+    #[serde(rename = "source", default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<ConnectorSource>,
     #[serde(rename = "tool")]
     pub tool: String,
     #[serde(rename = "arguments", default, skip_serializing_if = "Option::is_none")]
@@ -58711,6 +58785,8 @@ pub enum ActAnswerConnectorCallReply {
 pub struct ConnectorSchemaRequest {
     #[serde(rename = "name")]
     pub name: String,
+    #[serde(rename = "source", default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<ConnectorSource>,
     #[serde(rename = "tool")]
     pub tool: String,
 }
@@ -63496,6 +63572,8 @@ pub struct ChartSeries {
     pub x_labels: Option<Vec<Option<String>>>,
     #[serde(rename = "plot", default, skip_serializing_if = "Option::is_none")]
     pub plot: Option<u32>,
+    #[serde(rename = "plot_id", default, skip_serializing_if = "Option::is_none")]
+    pub plot_id: Option<u64>,
     #[serde(
         rename = "categories",
         default,
@@ -64532,6 +64610,11 @@ pub enum ChartEdit {
     },
     #[serde(rename = "reserve_categories")]
     ReserveCategories {
+        #[serde(rename = "ids")]
+        ids: Vec<u64>,
+    },
+    #[serde(rename = "reserve_plots")]
+    ReservePlots {
         #[serde(rename = "ids")]
         ids: Vec<u64>,
     },
