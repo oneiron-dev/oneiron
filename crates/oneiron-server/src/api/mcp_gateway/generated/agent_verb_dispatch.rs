@@ -11239,9 +11239,8 @@ async fn mcp_verb_row_describe(row: McpVerbRow<'_>) -> McpVerbRowResult {
     };
     oneiron::task_verb::sdk::validate_input("describe", &input).map_err(mcp_facade_error)?;
     if input.get("self").and_then(Value::as_bool) == Some(true) {
-        let auth = actor.auth.as_ref().ok_or_else(invalid)?;
-        let (value, listed) = Box::pin(crate::api::context_board::describe_self_for_auth(
-            server, auth, &input,
+        let (value, listed) = Box::pin(crate::api::context_board::describe_self_for_mcp(
+            server, actor, &input,
         ))
         .await
         .map_err(|_| invalid())?;
