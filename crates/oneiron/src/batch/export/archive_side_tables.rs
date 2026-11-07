@@ -37,6 +37,7 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::serialize::ExportBodyFile;
 use crate::side_table::{self, SideCodec, SideKey, SideTable, SideTableDecl};
+use crate::source_audience::ExportJudge;
 use crate::store::Store;
 
 /// A binary value or byte array longer than this goes in the archive's `files/`
@@ -753,11 +754,20 @@ impl ArchiveSideRow {
 /// read on this device); a row of a record the export does not carry, and an
 /// index row no record owns, stay unnamed (FIX 3681: a records archive never
 /// names what its reader could not read).
+///
+/// In an Owner's copy, `member_mail` is its pass's mailbox judge (fix list row
+/// 15416): a row that would go goes only when the judge carries every entity
+/// it names (`named_entities`). A record's row naming one the judge leaves
+/// out holds out the record's rows of its group, as a carrier the export lacks
+/// does, so a version's record, its head and its born-from row go or stay
+/// together; each family is named once under the record, never by the entity
+/// left out. Such a vault-wide row stays here, unnamed.
 pub(crate) fn archive_side_rows_in_txn(
     store: &Store,
     rtxn: &RoTxn<'_>,
     included: &BTreeSet<EntityId>,
     include_vault_wide: bool,
+    mut member_mail: Option<&mut ExportJudge<'_, '_, '_>>,
 ) -> Result<(Vec<SideRowBytes>, Vec<ArchiveSideWithheld>)> {
     let mut stored = Vec::new();
     for family in ArchiveSideFamily::ALL {
@@ -772,7 +782,14 @@ pub(crate) fn archive_side_rows_in_txn(
     );
     let mut travels = Vec::with_capacity(stored.len());
     for (family, key, value) in &stored {
-        travels.push((*family, context.travel(*family, key, value)?));
+        let mut travel = context.travel(*family, key, value)?;
+        if let Some(judge) = member_mail.as_deref_mut()
+            && travel.goes(included, include_vault_wide)
+            && !judge.carries_all(Some(named_entities(*family, key, value).as_slice()))?
+        {
+            travel = travel.left_out();
+        }
+        travels.push((*family, travel));
     }
     let groups = whole_groups(&travels, included);
     let mut held_out = BTreeSet::new();
@@ -1117,6 +1134,157 @@ enum Travel {
     Broken(EntityId),
     Vault,
     Orphan,
+}
+
+impl Travel {
+    /// Whether a row that travels so can go: with a record in `included`, or
+    /// as a vault-wide row where those go (`vault`).
+    fn goes(&self, included: &BTreeSet<EntityId>, vault: bool) -> bool {
+        match self {
+            Self::With(owner, _) => included.contains(owner),
+            Self::Vault => vault,
+            Self::Broken(_) | Self::Orphan => false,
+        }
+    }
+
+    /// Where a row goes that names an entity an Owner's copy leaves out (fix
+    /// list row 15416): nowhere, and its record's rows of its group with it.
+    fn left_out(self) -> Self {
+        match self {
+            Self::With(owner, _) | Self::Broken(owner) => Self::Broken(owner),
+            Self::Vault | Self::Orphan => Self::Orphan,
+        }
+    }
+}
+
+/// Every entity a stored row of `family` names in what the archive carries of
+/// it (fix list row 15416): each id of its key, a born-from source's and a
+/// code-memory payload's among them; each id an LFS object names; each id a
+/// MessagePack value holds ([`value_entities`]), a version's made_by inputs,
+/// trigger and actor and its ledger claim among them; each id a code-memory
+/// value's own codec holds; and each id spelled in text. A row that does not
+/// read through its table names nothing here: it does not travel.
+fn named_entities(family: ArchiveSideFamily, key: &[u8], value: &[u8]) -> Vec<EntityId> {
+    let spec = family.spec();
+    let mut named = BTreeSet::new();
+    for part in key_parts(spec.key, key).unwrap_or_default() {
+        match part {
+            ArchiveSideKeyPart::Id(hex) => named.extend(EntityId::from_hex(&hex).ok()),
+            ArchiveSideKeyPart::Source(hex) => {
+                named.extend(hex.get(2..).and_then(|id| EntityId::from_hex(id).ok()));
+            }
+            ArchiveSideKeyPart::Text(text) => text_entities(&text, &mut named),
+            ArchiveSideKeyPart::Hash(_) | ArchiveSideKeyPart::U64(_) => {}
+        }
+    }
+    match spec.value {
+        Form::LfsObject => {
+            named.extend(id_at(value, 0));
+            named.extend(id_at(value, ENTITY_ID_LEN + 16));
+        }
+        Form::MessagePack => {
+            let mut cursor = std::io::Cursor::new(value);
+            if let Ok(tree) = rmpv::decode::read_value(&mut cursor) {
+                tree_entities(&tree, &mut named);
+            }
+        }
+        Form::Opaque => named.extend(opaque_entities(family, value)),
+        Form::Empty | Form::U64Be | Form::U64Le | Form::Hash => {}
+    }
+    named.into_iter().collect()
+}
+
+/// Every entity the MessagePack value `value` names as an archive carries it
+/// (fix list row 15416): each 16-byte binary, extension or byte array in it,
+/// and each id spelled in its text, as a made_by or an actor ref spells one.
+pub(super) fn value_entities(value: &rmpv::Value) -> Vec<EntityId> {
+    let mut named = BTreeSet::new();
+    tree_entities(value, &mut named);
+    named.into_iter().collect()
+}
+
+fn tree_entities(value: &rmpv::Value, named: &mut BTreeSet<EntityId>) {
+    use rmpv::Value as Mp;
+    match value {
+        Mp::Binary(bytes) | Mp::Ext(_, bytes) => named.extend(entity_of(bytes)),
+        Mp::String(text) => {
+            if let Some(text) = text.as_str() {
+                text_entities(text, named);
+            }
+        }
+        Mp::Array(items) => match byte_values(items) {
+            Some(bytes) => named.extend(entity_of(&bytes)),
+            None => items.iter().for_each(|item| tree_entities(item, named)),
+        },
+        Mp::Map(entries) => {
+            for (key, value) in entries {
+                tree_entities(key, named);
+                tree_entities(value, named);
+            }
+        }
+        Mp::Nil | Mp::Boolean(_) | Mp::Integer(_) | Mp::F32(_) | Mp::F64(_) => {}
+    }
+}
+
+/// Each run of exactly 32 hex digits in `text` that reads as an entity id.
+fn text_entities(text: &str, named: &mut BTreeSet<EntityId>) {
+    named.extend(
+        text.split(|c: char| !c.is_ascii_hexdigit())
+            .filter(|run| run.len() == 2 * ENTITY_ID_LEN)
+            .filter_map(|run| EntityId::from_hex(run).ok()),
+    );
+}
+
+/// The entity `bytes` are, when they are exactly one id.
+fn entity_of(bytes: &[u8]) -> Option<EntityId> {
+    id_at(bytes, 0).filter(|_| bytes.len() == ENTITY_ID_LEN)
+}
+
+/// Every entity a code-memory value names, read through its table's own codec:
+/// a value's payload, actor and provenance claim, and a contract's or a
+/// transfer's symbols.
+fn opaque_entities(family: ArchiveSideFamily, value: &[u8]) -> Vec<EntityId> {
+    use crate::store::code_memory_values as memory;
+    match family {
+        ArchiveSideFamily::CodeMemorySlot => memory::decode_slot(value)
+            .map(|slot| {
+                slot.values
+                    .iter()
+                    .flat_map(|entry| {
+                        [
+                            entry.payload.entity_id(),
+                            entry.actor_id,
+                            entry.provenance_claim_id,
+                        ]
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        ArchiveSideFamily::CodeMemoryAttachment => memory::decode_attachment_row(value)
+            .map(|(_, claim)| vec![claim])
+            .unwrap_or_default(),
+        ArchiveSideFamily::CodeMemoryAlwaysOn => memory::decode_always_on(value)
+            .map(|contract| {
+                vec![
+                    contract.symbol_id,
+                    contract.payload.entity_id(),
+                    contract.actor_id,
+                    contract.provenance_claim_id,
+                ]
+            })
+            .unwrap_or_default(),
+        ArchiveSideFamily::CodeMemoryTransfer => memory::decode_transfer_record(value)
+            .map(|record| {
+                vec![
+                    record.from_symbol_id,
+                    record.to_symbol_id,
+                    record.actor_id,
+                    record.provenance_claim_id,
+                ]
+            })
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
 }
 
 /// What a row's owner is read from beyond its own key: the LFS object rows and

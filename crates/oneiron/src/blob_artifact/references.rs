@@ -50,6 +50,13 @@ pub(crate) fn archive_version_claim_tables() -> [crate::batch::export::LentSideT
 /// a release fence is ever lifted.
 const RELEASE_FENCE: &[u8] = b"blob_artifact:release";
 
+/// The value of `body` when it is a version's `blob.version` ledger claim: it
+/// carries that version's made_by, as the version's own record does (fix list
+/// row 15416: an Owner's copy judges each row it names before the claim goes).
+pub(crate) fn version_claim_value(body: &ClaimBody) -> Option<&Value> {
+    (body.predicate == BLOB_VERSION_CLAIM_PREDICATE).then_some(&body.value)
+}
+
 /// The artifact and content hash `body` names, when it is a `blob.version` claim.
 fn version_claim_reference(body: &ClaimBody) -> Option<(EntityId, ContentHash)> {
     if body.predicate != BLOB_VERSION_CLAIM_PREDICATE {

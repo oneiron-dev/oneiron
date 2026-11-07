@@ -90,7 +90,7 @@ pub(crate) use self::lifecycle::{release_response_version_in_txn, response_versi
 pub use self::provenance::BlobVersionProvenance;
 pub(crate) use self::references::archive_version_claim_tables;
 pub(crate) use self::references::{
-    artifacts_claiming, claimed_hash_rows_exist, record_version_claim,
+    artifacts_claiming, claimed_hash_rows_exist, record_version_claim, version_claim_value,
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::references::{

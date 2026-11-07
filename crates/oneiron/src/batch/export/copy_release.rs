@@ -17,7 +17,7 @@
 //! a removal's records archive and an export a code run calls are not
 //! judged by it.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 
@@ -77,13 +77,14 @@ impl MemberMailPass {
 
 /// What an Owner's copy carries beside its entity rows, judged by its pass
 /// (fix list row 15416): the rows it carries outside them (a custody record,
-/// the session of an epoch floor, the rows a saved output was made from), and
-/// each row a carried row was folded from, or a receipt it cites keeps the
-/// body of was made from, by that row.
+/// the session of an epoch floor, the rows a saved output was made from),
+/// each row a carried row was folded from, by that row, and the rows each
+/// receipt a row cites was made from, by that row and the receipt's id.
 #[derive(Default)]
 pub(super) struct MailboxLineage {
     carried: BTreeSet<EntityId>,
     folded: Vec<(EntityId, EntityId)>,
+    receipts: BTreeMap<(EntityId, String), BTreeSet<EntityId>>,
 }
 
 impl MailboxLineage {
@@ -161,7 +162,7 @@ impl MailboxLineage {
     /// it: its body, unless the pass's `judge`, when it has one, keeps home
     /// what was made from the rows its attempt read; then why, as a saved
     /// output's ([`Self::output_withheld`]). Those rows count as carried only
-    /// through a body the copy keeps, of a row it ships.
+    /// through a body the copy serializes, of a row it ships.
     ///
     /// # Errors
     ///
@@ -173,37 +174,92 @@ impl MailboxLineage {
         receipt_id: String,
         receipt: &ReceiptRecord,
     ) -> Result<ExportReceiptSource> {
+        if let Some(judge) = judge
+            && let Some(reason) =
+                self.receipt_withheld(judge, row, &receipt_id, receipt.pack_source_rows())?
+        {
+            return Ok(ExportReceiptSource::Unavailable { receipt_id, reason });
+        }
+        ExportReceiptSource::from_record(receipt_id, Some(receipt))
+    }
+
+    /// The archived receipt sources `sources` the row `row` cites, as the
+    /// copy carries them: each kept body's record judged as a native
+    /// receipt's is ([`Self::receipt_source`]), by every row its attempt
+    /// read, and one the pass's `judge`, when it has one, keeps home goes as
+    /// unavailable, and why, under its own id, so no native receipt of that
+    /// id stands in for it. A kept body whose record does not read names no
+    /// rows it was made from.
+    ///
+    /// # Errors
+    ///
+    /// Storage failures.
+    pub(super) fn archived_receipt_sources(
+        &mut self,
+        judge: Option<&mut ExportJudge<'_, '_, '_>>,
+        row: EntityId,
+        sources: &mut BTreeMap<String, ExportReceiptSource>,
+    ) -> Result<()> {
         let Some(judge) = judge else {
-            return ExportReceiptSource::from_record(receipt_id, Some(receipt));
+            return Ok(());
         };
-        let inputs = receipt.pack_source_rows();
+        for (receipt_id, source) in sources.iter_mut() {
+            if !matches!(source, ExportReceiptSource::Preserved { .. }) {
+                continue;
+            }
+            let inputs = source
+                .record()
+                .ok()
+                .flatten()
+                .and_then(|record| record.pack_source_rows());
+            if let Some(reason) = self.receipt_withheld(judge, row, receipt_id, inputs)? {
+                *source = ExportReceiptSource::Unavailable {
+                    receipt_id: receipt_id.clone(),
+                    reason,
+                };
+            }
+        }
+        Ok(())
+    }
+
+    /// Why `judge` keeps home the body of the receipt `receipt_id` the row
+    /// `row` cites, made from exactly the rows `inputs`, if it does: one row
+    /// of a member's mailbox the copy leaves out, or rows not all known.
+    /// Else those rows are kept, to count as carried once the copy
+    /// serializes that body for `row` ([`Self::outcome`]).
+    fn receipt_withheld(
+        &mut self,
+        judge: &mut ExportJudge<'_, '_, '_>,
+        row: EntityId,
+        receipt_id: &str,
+        inputs: Option<Vec<EntityId>>,
+    ) -> Result<Option<ReceiptSourceOmission>> {
         if !judge.carries_all(inputs.as_deref())? {
-            return Ok(ExportReceiptSource::Unavailable {
-                receipt_id,
-                reason: if inputs.is_some() {
-                    ReceiptSourceOmission::MemberMailbox
-                } else {
-                    ReceiptSourceOmission::SourceUnidentified
-                },
-            });
+            return Ok(Some(if inputs.is_some() {
+                ReceiptSourceOmission::MemberMailbox
+            } else {
+                ReceiptSourceOmission::SourceUnidentified
+            }));
         }
-        let source = ExportReceiptSource::from_record(receipt_id, Some(receipt))?;
-        if matches!(source, ExportReceiptSource::Preserved { .. }) {
-            self.folded
-                .extend(inputs.into_iter().flatten().map(|input| (row, input)));
-        }
-        Ok(source)
+        self.receipts.insert(
+            (row, receipt_id.to_owned()),
+            inputs.into_iter().flatten().collect(),
+        );
+        Ok(None)
     }
 
     /// What the copy left out and carries, once its rows are final: the
     /// entity rows the writer carried (`rows`) but the diaries whose read was
-    /// not logged (`unlogged`), each row one of them was folded from, and
-    /// the rows carried outside them. Nothing for a pass with no `plan`.
+    /// not logged (`unlogged`), each row one of them was folded from, the
+    /// rows each receipt body the writer serialized for one of them
+    /// (`receipts`, by row and receipt id) was made from, and the rows
+    /// carried outside them. Nothing for a pass with no `plan`.
     pub(super) fn outcome(
         self,
         plan: Option<MemberMailboxPlan>,
         verdicts: Option<ExportVerdicts>,
         rows: &BTreeSet<EntityId>,
+        receipts: &BTreeSet<(EntityId, String)>,
         unlogged: &BTreeSet<EntityId>,
     ) -> (Vec<MailboxExportNotice>, Option<CarriedMemberMailboxes>) {
         let (Some(plan), Some(mut verdicts)) = (plan, verdicts) else {
@@ -215,6 +271,13 @@ impl MailboxLineage {
         for (row, source) in &self.folded {
             if rows.contains(row) && !unlogged.contains(row) {
                 verdicts.ships(*source);
+            }
+        }
+        for (cited, inputs) in &self.receipts {
+            if receipts.contains(cited) && !unlogged.contains(&cited.0) {
+                for input in inputs {
+                    verdicts.ships(*input);
+                }
             }
         }
         for row in &self.carried {
