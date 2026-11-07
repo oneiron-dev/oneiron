@@ -675,6 +675,27 @@ impl OneironClient {
                 "vault.weave.owner.item.wrong" => remote_agent_verb_output::<
                     oneiron::claim::WeaveItemCorrectionView,
                 >(client, verb, &input),
+                "vault.weave.admin.report" => remote_agent_verb_output::<
+                    oneiron::claim::WeaveReportView,
+                >(client, verb, &input),
+                "vault.weave.admin.lens" => {
+                    remote_agent_verb_output::<oneiron::lens::LensFrameCard>(client, verb, &input)
+                }
+                "vault.weave.admin.digest" => remote_agent_verb_output::<
+                    Option<oneiron::claim::WeaveDigestView>,
+                >(client, verb, &input),
+                "vault.weave.admin.link.wrong" => remote_agent_verb_output::<
+                    oneiron::claim::WeaveLinkCorrectionView,
+                >(client, verb, &input),
+                "vault.weave.admin.item.wrong" => remote_agent_verb_output::<
+                    oneiron::claim::WeaveItemCorrectionView,
+                >(client, verb, &input),
+                "vault.step_up.passkeys.reset" => remote_agent_verb_output::<
+                    oneiron::authority::StepUpPasskeysReset,
+                >(client, verb, &input),
+                "vault.step_up.totp.reset" => remote_agent_verb_output::<
+                    oneiron::authority::StepUpTotpReset,
+                >(client, verb, &input),
                 "vault.weave.enqueue" => remote_agent_verb_output::<
                     oneiron::memory::DreamerAttemptRef,
                 >(client, verb, &input),
@@ -1506,6 +1527,9 @@ impl OneironClient {
                 "vault.coach.training_offers.sources" => remote_agent_verb_output::<
                     oneiron::edit_distance::reservoir::ReservoirSourcePreview,
                 >(client, verb, &input),
+                "vault.coach.training_runs.cancel" => remote_agent_verb_output::<
+                    oneiron::embed::PendingEmbedderBinding,
+                >(client, verb, &input),
                 "vault.drafters.list" => remote_agent_verb_output::<
                     Vec<oneiron::drafter::DrafterVersionView>,
                 >(client, verb, &input),
@@ -1977,6 +2001,9 @@ impl OneironClient {
                 "host.budget.hit" => remote_agent_verb_output::<
                     oneiron::runtime_hooks::host_doors::HostBudgetHitResult,
                 >(client, verb, &input),
+                "vault.hooks.checks" => remote_agent_verb_output::<
+                    Vec<oneiron::runtime_hooks::HookCheck>,
+                >(client, verb, &input),
                 "vault.hooks.replay" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::HooksReplayPage,
                 >(client, verb, &input),
@@ -2136,6 +2163,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.code.model_heal_count" => remote_agent_verb_output::<
                     oneiron::memory::code_run_doors::CodeRunModelHealCountView,
+                >(client, verb, &input),
+                "vault.code.corrections" => remote_agent_verb_output::<
+                    oneiron::memory::code_run_doors::CodeRunCorrectionsView,
                 >(client, verb, &input),
                 "vault.code.type_diagnostics" => remote_agent_verb_output::<
                     Option<oneiron::code_run::ProgramStepFeedbackRelease>,
@@ -2585,6 +2615,15 @@ impl OneironClient {
                 "tasks.answer" => remote_agent_verb_output::<oneiron::task_verb::TaskAskAnswer>(
                     client, verb, &input,
                 ),
+                "tasks.answer.forward.challenge" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::TaskAnswerForwardChallenge,
+                >(client, verb, &input),
+                "tasks.answer.forward" => remote_agent_verb_output::<
+                    oneiron::task_verb::AskForwardReceipt,
+                >(client, verb, &input),
+                "tasks.answer.forward.status" => remote_agent_verb_output::<
+                    oneiron::task_verb::AskForwardReceipt,
+                >(client, verb, &input),
                 "tasks.outcomes" => remote_agent_verb_output::<
                     Vec<oneiron::llm::decision::questions::CalibrationPair>,
                 >(client, verb, &input),
@@ -3809,6 +3848,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.mail.compliance.search" => remote_agent_verb_output::<
                     oneiron::mail_pack::MailComplianceSearchReply,
+                >(client, verb, &input),
+                "vault.files.sources.convert" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::FilesSourceAttachAnswer,
                 >(client, verb, &input),
                 "connector.answer" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ConnectorCallReply,
@@ -6594,6 +6636,90 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.weave.owner.item.wrong", value)
+    }
+    pub fn vault_weave_admin_report(
+        &self,
+        input: &oneiron::authority::WeaveAdminReportRequest,
+    ) -> Result<oneiron::claim::WeaveReportView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.weave.admin.report", value)
+    }
+    pub fn vault_weave_admin_lens(
+        &self,
+        input: &oneiron::authority::WeaveAdminLensRequest,
+    ) -> Result<oneiron::lens::LensFrameCard, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.weave.admin.lens", value)
+    }
+    pub fn vault_weave_admin_digest(
+        &self,
+        input: &oneiron::authority::WeaveAdminDigestRequest,
+    ) -> Result<Option<oneiron::claim::WeaveDigestView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.weave.admin.digest", value)
+    }
+    pub fn vault_weave_admin_link_wrong(
+        &self,
+        input: &oneiron::authority::WeaveAdminLinkWrongRequest,
+    ) -> Result<oneiron::claim::WeaveLinkCorrectionView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.weave.admin.link.wrong", value)
+    }
+    pub fn vault_weave_admin_item_wrong(
+        &self,
+        input: &oneiron::authority::WeaveAdminItemWrongRequest,
+    ) -> Result<oneiron::claim::WeaveItemCorrectionView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.weave.admin.item.wrong", value)
+    }
+    pub fn vault_step_up_passkeys_reset(
+        &self,
+        input: &oneiron::authority::StepUpPasskeysResetRequest,
+    ) -> Result<oneiron::authority::StepUpPasskeysReset, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.step_up.passkeys.reset", value)
+    }
+    pub fn vault_step_up_totp_reset(
+        &self,
+        input: &oneiron::authority::StepUpTotpResetRequest,
+    ) -> Result<oneiron::authority::StepUpTotpReset, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.step_up.totp.reset", value)
     }
     pub fn vault_weave_enqueue(
         &self,
@@ -9859,6 +9985,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.coach.training_offers.sources", value)
     }
+    pub fn vault_coach_training_runs_cancel(
+        &self,
+        input: &oneiron::skill_optimize::offer_doors::TrainingRunRef,
+    ) -> Result<oneiron::embed::PendingEmbedderBinding, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.coach.training_runs.cancel", value)
+    }
     pub fn vault_drafters_list(
         &self,
         input: &oneiron::drafter::DrafterListRequest,
@@ -11730,6 +11868,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("host.budget.hit", value)
     }
+    pub fn vault_hooks_checks(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<Vec<oneiron::runtime_hooks::HookCheck>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.hooks.checks", value)
+    }
     pub fn vault_hooks_replay(
         &self,
         input: &oneiron::task_verb::sdk::HooksReplayRequest,
@@ -12359,6 +12509,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.code.model_heal_count", value)
+    }
+    pub fn vault_code_corrections(
+        &self,
+        input: &oneiron::memory::code_run_doors::CodeRunCorrectionsRequest,
+    ) -> Result<oneiron::memory::code_run_doors::CodeRunCorrectionsView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.corrections", value)
     }
     pub fn vault_code_type_diagnostics(
         &self,
@@ -14167,6 +14329,42 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("tasks.answer", value)
+    }
+    pub fn tasks_answer_forward_challenge(
+        &self,
+        input: &oneiron::task_verb::sdk::TaskAnswerForwardChallengeRequest,
+    ) -> Result<oneiron::task_verb::sdk::TaskAnswerForwardChallenge, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("tasks.answer.forward.challenge", value)
+    }
+    pub fn tasks_answer_forward(
+        &self,
+        input: &oneiron::task_verb::sdk::TaskAnswerForwardRequest,
+    ) -> Result<oneiron::task_verb::AskForwardReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("tasks.answer.forward", value)
+    }
+    pub fn tasks_answer_forward_status(
+        &self,
+        input: &oneiron::task_verb::sdk::TaskAnswerForwardStatusRequest,
+    ) -> Result<oneiron::task_verb::AskForwardReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("tasks.answer.forward.status", value)
     }
     pub fn tasks_outcomes(
         &self,
@@ -17354,11 +17552,6 @@ impl OneironClient {
         &self,
         input: &oneiron::task_verb::sdk::AppendBlobVersionRequest,
     ) -> Result<oneiron::memory::BlobVersionAppendOutcome, MemoryError> {
-        if input.content_base64.len() > oneiron::memory::caps::MAX_BLOB_BASE64_LEN {
-            return Err(MemoryError::bad_request(
-                "blob base64 exceeds the content ceiling",
-            ));
-        }
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -19039,6 +19232,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.mail.compliance.search", value)
+    }
+    pub fn vault_files_sources_convert(
+        &self,
+        input: &oneiron::task_verb::sdk::FilesSourceConvertRequest,
+    ) -> Result<oneiron::task_verb::sdk::FilesSourceAttachAnswer, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.files.sources.convert", value)
     }
     pub fn connector_answer(
         &self,

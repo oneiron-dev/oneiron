@@ -173,6 +173,10 @@ impl Memory<'_> {
     /// integrity for content-addressed storage remains: a hard-deleted
     /// ASSET can be re-materialized by re-supplying identical bytes to a
     /// live artifact.
+    ///
+    /// The content's size is measured against `blob_content_bytes`
+    /// (FIX 76): past it the row asks, and the content is stored whole, as
+    /// one version, never refused for its size.
     pub fn append_blob_version(
         &self,
         artifact_ref: &str,
@@ -181,6 +185,10 @@ impl Memory<'_> {
         occurred_at: u64,
         learned_at: Option<u64>,
     ) -> MemoryResult<BlobVersionAppendOutcome> {
+        let _ = self.vault.measure_limit(
+            crate::limit_ask::EngineLimit::BlobContentBytes,
+            bytes.len() as u64,
+        );
         let artifact_id = self.resolve_ref(artifact_ref)?;
         let provenance = match run_ref {
             Some(run_ref) => crate::blob_artifact::BlobVersionProvenance::AgentRun {
@@ -193,7 +201,7 @@ impl Memory<'_> {
             end: occurred_at,
         };
         let outcome = self.with_actor_content_write_txn(|content| {
-            Ok(content.update_artifact(artifact_id, |txn| {
+            Ok(content.update_artifact(artifact_id, |txn, lane| {
                 self.vault.append_blob_artifact_version_checked_in_txn(
                     txn,
                     &artifact_id,
@@ -202,6 +210,7 @@ impl Memory<'_> {
                     self.write_actor(),
                     occurred,
                     learned_at.unwrap_or(occurred_at),
+                    lane,
                 )
             })?)
         })?;

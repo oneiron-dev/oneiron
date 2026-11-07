@@ -53,8 +53,9 @@ mod debug;
 ///   forgets its least recently requested window subscription (the window's
 ///   next change reaches the peer as `WINDOW_INVALIDATE`) and the row asks
 ///   its OF-520 question once; no socket is refused for the count.
-/// - `max_ephemeral_payload_bytes` — ENFORCED on each ephemeral frame. The
-///   hub itself is charged to `limits.retained_memory_bytes`, never capped.
+/// - Ephemeral (presence) frames carry no byte bound of their own (FIX 161):
+///   a frame is bounded by the socket's message floor, and the hub is charged
+///   to `limits.retained_memory_bytes`, never capped.
 /// - `max_ephemeral_snapshot_bytes` — the most one late-join presence frame
 ///   carries; a larger hub is sent in parts.
 /// - `max_connections_per_user` — not enforced until auth has per-user
@@ -132,8 +133,6 @@ pub struct SyncServerConfig {
     pub max_messages_per_sec: u32,
     /// Loro ephemeral-store inactivity timeout in milliseconds.
     pub ephemeral_timeout_ms: i64,
-    /// Maximum Loro-native ephemeral payload bytes accepted from one frame.
-    pub max_ephemeral_payload_bytes: usize,
     /// Maximum presence bytes in one late-join frame; a larger hub is sent in
     /// parts.
     pub max_ephemeral_snapshot_bytes: usize,
@@ -243,7 +242,6 @@ impl Default for SyncServerConfig {
             max_windows_per_connection: 65_536,
             max_messages_per_sec: 200,
             ephemeral_timeout_ms: 30_000,
-            max_ephemeral_payload_bytes: 64 * 1024,   // 64 KB
             max_ephemeral_snapshot_bytes: 256 * 1024, // 256 KB
             max_entity_blob: 64 * 1024,               // 64 KB
             max_lfs_object_bytes: oneiron::origin::lfs::LFS_DEFAULT_OBJECT_CAP,
@@ -279,13 +277,6 @@ impl SyncServerConfig {
             return Err(oneiron::Error::sync_protocol(
                 oneiron::SyncProtocolValidation::InvalidConfig {
                     field: oneiron::SyncConfigField::EphemeralTimeoutMs,
-                },
-            ));
-        }
-        if self.max_ephemeral_payload_bytes == 0 {
-            return Err(oneiron::Error::sync_protocol(
-                oneiron::SyncProtocolValidation::InvalidConfig {
-                    field: oneiron::SyncConfigField::MaxEphemeralPayloadBytes,
                 },
             ));
         }
@@ -374,7 +365,6 @@ pub struct ServeConfig {
     pub max_windows_per_connection: usize,
     pub max_messages_per_sec: u32,
     pub ephemeral_timeout_ms: i64,
-    pub max_ephemeral_payload_bytes: usize,
     pub max_ephemeral_snapshot_bytes: usize,
     pub max_entity_blob: usize,
     /// Per-object LFS upload cap in bytes, `LFS_DEFAULT_OBJECT_CAP` unless
@@ -553,7 +543,6 @@ impl Default for ServeConfig {
             max_windows_per_connection: server.max_windows_per_connection,
             max_messages_per_sec: server.max_messages_per_sec,
             ephemeral_timeout_ms: server.ephemeral_timeout_ms,
-            max_ephemeral_payload_bytes: server.max_ephemeral_payload_bytes,
             max_ephemeral_snapshot_bytes: server.max_ephemeral_snapshot_bytes,
             max_entity_blob: server.max_entity_blob,
             max_lfs_object_bytes: server.max_lfs_object_bytes,
@@ -640,7 +629,6 @@ impl ServeConfig {
             max_windows_per_connection: self.max_windows_per_connection,
             max_messages_per_sec: self.max_messages_per_sec,
             ephemeral_timeout_ms: self.ephemeral_timeout_ms,
-            max_ephemeral_payload_bytes: self.max_ephemeral_payload_bytes,
             max_ephemeral_snapshot_bytes: self.max_ephemeral_snapshot_bytes,
             max_entity_blob: self.max_entity_blob,
             max_lfs_object_bytes: self.max_lfs_object_bytes,
