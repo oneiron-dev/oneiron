@@ -90,6 +90,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SYNC_NC_E, CONTENT),
     (&t::SYNC_NOTE_INBOX, CONTENT),
     (&t::NOTE_PROPOSAL_DOC, CONTENT),
+    (&t::NOTE_FORK_AUTHORITY, CONTENT),
     (&t::NOTE_RECEIPT_BY_REQUEST, CONTENT),
     (&t::PEER_AUTHORITY_ENTRY, LIVE),
     (&t::OFF_RECORD_PROMOTE_PICKUP_MARKER, CONTENT),
@@ -102,7 +103,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SYNC_REASSERT_MARKER, CONTENT),
     // The sealed bundle's custody and cursors follow the live vault. So do
     // the late joiners' pad grants the home keeps with its generations, and
-    // the admissions queued for it (FIX 4271).
+    // the admissions queued for it (FIX 4271). Request-bound publication
+    // pairs in the same table also stay LIVE, sealed and generation-bound.
     (&t::SYNC_RESIDENCE_BUNDLE_ACCESS, LIVE),
     (&t::SYNC_RESIDENCE_BUNDLE_GENERATION, LIVE),
     (&t::SYNC_RESIDENCE_BUNDLE_PART, LIVE),
@@ -132,6 +134,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SYNC_RESIDENCE_ITEM_BLOB, CONTENT),
     (&t::SYNC_RESIDENCE_ITEM_CONTENT_WORLD, CONTENT),
     (&t::SYNC_RESIDENCE_ITEM_DOCUMENT, CONTENT),
+    (&t::SYNC_RESIDENCE_ITEM_SOURCES, CONTENT),
     (&t::SYNC_RESIDENCE_INDEX, CONTENT),
     (&t::SYNC_REMAT_MARKER, CONTENT),
     (&t::SYNC_REPLAY_REMAT_MARKER_PROVENANCE, CONTENT),
@@ -156,10 +159,12 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::USAGE_METER_ROLLUP, LIVE),
     (&t::USAGE_METER, LIVE),
     (&t::USAGE_REPAIR_RECEIPT, LIVE),
+    (&t::VAULT_IMPORT_BODY_WORK, LIVE),
     (&t::VAULT_IMPORT_CONTENT, CONTENT),
     (&t::VAULT_IMPORT_RECEIPT, CONTENT),
     (&t::VAULT_IMPORT_STAMPS, CONTENT),
     (&t::SYNC_DISCARDED_WORLD_ROW, CONTENT),
+    (&t::SYNC_BASE_WINDOW_DISCARD, CONTENT),
     (&t::DELETION_WITHDRAWN_GENERATION_FENCE, CONTENT),
     (&t::WIRE_HEALTH_CHECK, CONTENT),
     (&t::WIRE_LIMIT_QUESTION, CONTENT),
