@@ -182,6 +182,8 @@ impl SyncConnection {
         let mut promotion_rx = self.manager.subscribe_promotions();
         let mut mode_rx = self.mode.subscribe();
         self.running.send_replace(true);
+        // Every connection's upkeep, owned here across reconnects (FIX 12785).
+        let mut upkeep = super::steady::UpkeepTasks::default();
 
         loop {
             // A member who left the shared vault this env holds never
@@ -234,6 +236,7 @@ impl SyncConnection {
                             &mut debounce_buffer,
                             &mut promotion_rx,
                             &mut shutdown_rx,
+                            &mut upkeep,
                         )
                         .await;
 
@@ -299,6 +302,9 @@ impl SyncConnection {
             }
         }
 
+        // The run ends its upkeep, every connection's, before anything else
+        // (FIX 12037): none of its writes lands after the run.
+        upkeep.end().await;
         // Detach before draining: the sink serializes sends with detach, so
         // this receiver's backlog is finite and no update can arrive later.
         self.manager.outbound().detach(attachment);

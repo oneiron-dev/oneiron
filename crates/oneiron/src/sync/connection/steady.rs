@@ -21,6 +21,9 @@ use super::session::{
 };
 use super::{LocalUpdate, LoopExit, SyncConnection, flush_to_queue};
 
+mod upkeep_tasks;
+pub(super) use upkeep_tasks::UpkeepTasks;
+
 impl SyncConnection {
     /// Steady-state event loop: multiplexes WS reads, local updates, and debounce.
     pub(super) async fn steady_state(
@@ -32,7 +35,11 @@ impl SyncConnection {
         debounce_buffer: &mut Vec<LocalUpdate>,
         promotion_rx: &mut tokio::sync::broadcast::Receiver<crate::sync::WindowKey>,
         shutdown_rx: &mut tokio::sync::oneshot::Receiver<()>,
+        upkeep: &mut UpkeepTasks,
     ) -> LoopExit {
+        // This connection's upkeep slots start free. The earlier connections'
+        // tasks still running stay with the run until its end (FIX 12785).
+        upkeep.retire_slots();
         let (mut write, mut read) = ws_stream.split();
         // A staged import body pass a returned run left settles first
         // (FIX 12408); its socket closed with that run.
@@ -64,10 +71,6 @@ impl SyncConnection {
         let mut sealed_relay =
             tokio::time::interval(Duration::from_secs(SEALED_RELAY_INTERVAL_SECS));
         sealed_relay.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        let mut sealed_task: Option<tokio::task::JoinHandle<()>> = None;
-        // The committed pad tombstones no postcommit published (FIX 3849): one
-        // retry at a time on the same tick, every lane, federation's included.
-        let mut tombstone_task: Option<tokio::task::JoinHandle<()>> = None;
         // One staged import body pass at a time (FIX 12408): its producer's
         // socket runs off this loop, and its frames are handled here.
         let mut staged_pump: Option<crate::sync::client::StagedBodyPump> = None;
@@ -78,7 +81,6 @@ impl SyncConnection {
             tokio::time::interval(Duration::from_secs(MACHINE_HISTORY_RETRY_INTERVAL_SECS));
         machine_history.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let machine_history_due = std::sync::Arc::new(AtomicBool::new(false));
-        let mut machine_history_tasks = Vec::new();
         // A residence-mode switch closes this socket; the next connect sends
         // the new mode's hello. A live lane never changes mode.
         let mut mode_rx = self.mode.subscribe();
@@ -90,7 +92,9 @@ impl SyncConnection {
         let mut gate = self.batch_gate();
 
         // Every `break` is the run's shutdown; any other exit returns, and
-        // its upkeep rounds run on beside the next connection.
+        // its upkeep rounds run on beside the next connection, still owned
+        // by the run (FIX 12785). The run ends them all, this connection's
+        // included, once its loop ends ([`UpkeepTasks::end`], FIX 12037).
         let exit = loop {
             // What the home sent, then the promotions asked, go first, in
             // order, each under its own admission; a pause keeps the rest.
@@ -112,7 +116,7 @@ impl SyncConnection {
                 return exit;
             }
             self.run_machine_history(
-                &mut machine_history_tasks,
+                &mut upkeep.machine_history,
                 &machine_history_due,
                 event_tx,
                 &mut gate,
@@ -343,10 +347,10 @@ impl SyncConnection {
                     };
                     // The home handoff's delivery round (FIX 5661 C2a).
                     self.home_handoff_wake.notify_one();
-                    if tombstone_task.as_ref().is_none_or(tokio::task::JoinHandle::is_finished) {
+                    if upkeep.tombstone.as_ref().is_none_or(tokio::task::JoinHandle::is_finished) {
                         let vault = std::sync::Arc::clone(self.manager.vault());
                         let events = event_tx.clone();
-                        tombstone_task = Some(tokio::task::spawn_blocking(move || {
+                        upkeep.tombstone = Some(tokio::task::spawn_blocking(move || {
                             let _batch = tombstone_batch;
                             if let Err(error) = crate::sync::residence::retry_pending_tombstones(&vault) {
                                 let _ = events.send(SyncEvent::Error(format!(
@@ -379,14 +383,15 @@ impl SyncConnection {
                         }));
                     }
                     if self.config.client_config.federation_peer.is_none()
-                        && sealed_task.as_ref().is_none_or(tokio::task::JoinHandle::is_finished)
+                        && upkeep.sealed.as_ref().is_none_or(tokio::task::JoinHandle::is_finished)
                     {
                         let manager = std::sync::Arc::clone(&self.manager);
                         let config = self.client_config();
                         let events = event_tx.clone();
                         let directives = std::sync::Arc::clone(&self.directive_wake);
                         let machine_history_due = std::sync::Arc::clone(&machine_history_due);
-                        sealed_task = Some(tokio::spawn(async move {
+                        let jobs = upkeep.blocking_jobs();
+                        upkeep.sealed = Some(tokio::spawn(async move {
                             let _batch = sealed_batch;
                             // An opened machine's windows carry only the
                             // authority rows they hold: take the rest first
@@ -429,7 +434,7 @@ impl SyncConnection {
                             // The owner work those rows name this machine to
                             // do (a world's key work) runs once they are in.
                             let vault = std::sync::Arc::clone(manager.vault());
-                            match tokio::task::spawn_blocking(move || vault.run_pending_owner_work(|| true)).await {
+                            match jobs.run(move || vault.run_pending_owner_work(|| true)).await {
                                 Ok(Ok(_)) => {}
                                 Ok(Err(error)) => {
                                     let _ = events.send(SyncEvent::Error(format!(
@@ -445,7 +450,7 @@ impl SyncConnection {
                             // A machine those rows made mine gets each portable
                             // credential's value sealed to it again (OF-422).
                             let vault = std::sync::Arc::clone(manager.vault());
-                            match tokio::task::spawn_blocking(move || vault.reseal_custody_for_roster()).await {
+                            match jobs.run(move || vault.reseal_custody_for_roster()).await {
                                 Ok(Ok(_)) => {}
                                 Ok(Err(error)) => {
                                     let _ = events.send(SyncEvent::Error(format!(
@@ -653,23 +658,6 @@ impl SyncConnection {
             pump.stop().await;
         }
         client.end_staged_body_pull();
-        // FIX 12037: the run ends with its residence upkeep ended, so none of
-        // its writes lands after it (a reap's export waits on this): the
-        // async rounds are aborted, and each task, the blocking tombstone
-        // retry included, is waited for.
-        if let Some(task) = &sealed_task {
-            task.abort();
-        }
-        for task in &machine_history_tasks {
-            task.abort();
-        }
-        for task in sealed_task
-            .into_iter()
-            .chain(tombstone_task)
-            .chain(machine_history_tasks)
-        {
-            let _ = task.await;
-        }
         exit
     }
 
