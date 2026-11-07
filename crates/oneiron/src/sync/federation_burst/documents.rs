@@ -74,7 +74,13 @@ impl FederationPeer {
             .env
             .read_txn()
             .map_err(crate::Error::from)
-            .and_then(|txn| self.admit_document_read_in_txn(vault, &txn, document.entity))
+            .and_then(|txn| {
+                // A copy stream's frame is judged as its marked source (FIX
+                // 10872).
+                let entity =
+                    crate::sync::documents::judged_id_in_txn(vault, &txn, document.entity)?;
+                self.admit_document_read_in_txn(vault, &txn, entity)
+            })
             .is_err()
     }
 }
