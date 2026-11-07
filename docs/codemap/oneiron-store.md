@@ -526,8 +526,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/session_overlay/snapshot.rs` | src | m | 3 struct · 2 enum · 13 fn · 1 crate-vis | OverlaySnapshot, SnapshotLookup, SnapshotMergePlan, SnapshotMergeRow, StagedRows | Overlay snapshots: staged-row views merged over durable state for one read |
 | `src/session_overlay/tests.rs` | test | m | — | — | — |
 | `src/setting_seed.rs` | src | s | 1 struct · 15 const | SettingSpec | Learned numeric setting specifications and shipped seeds |
-| `src/settings.rs` | src | s | 3 mod | — | Store-layer modules of core `settings`; core re-exports each one at its old path |
+| `src/settings.rs` | src | s | 4 mod | — | Store-layer modules of core `settings`; core re-exports each one at its old path |
 | `src/settings/backup.rs` | src | s | 1 struct · 1 fn · 2 const | BackupPolicy | The owner's backup setting (FIX 5621): whether a running server takes backups on its own, how many hours… |
+| `src/settings/model_pack.rs` | src | m | 6 struct · 3 enum · 14 fn · 3 const | ModelPack, ModelPackAccess, ModelPackBenchRef, ModelPackChangelogEntry, ModelPackError, ModelPackId, ModelPackModelRetirement, ModelPackPreference +1 | Model packs (FIX 5365, MODEL PACKS = A): the hub form of a seasonal model stack |
 | `src/settings/model_versioning.rs` | src | m | 8 struct · 4 enum · 19 fn · 2 const | ModelStack, ModelStackDeprecation, ModelStackDeprecationStage, ModelStackDeprecationStatus, ModelStackDisclosure, ModelStackId, ModelStackIdError, ModelStackModel +4 | Versioned default model stack settings |
 | `src/settings/web_connector/mod.rs` | src | s | 4 struct · 5 enum · 3 fn · 3 const · 1 mod · 1 re-export | WebCallOutcome, WebConnectorSetting, WebConnectorUsage, WebConnectorUsagePage, WebConnectorUsageRead, WebCostBasis, WebKeySource, WebProviderKey +1 | Web provider selection and content-free usage vocabulary |
 | `src/settings/web_connector/provider.rs` | src | s | 1 struct · 3 enum · 3 fn · 1 const | FetchRoute, ResultRetention, WebProvider, WebProviderProfile | The provider registry: which providers may serve a web call, on whose key, at what declared price, and how… |
