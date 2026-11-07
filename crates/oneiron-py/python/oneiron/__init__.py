@@ -1028,6 +1028,9 @@ class Oneiron:
         @property
         def training_offers(self) -> "Oneiron._VaultCoachTrainingOffersVerbs":
             return Oneiron._VaultCoachTrainingOffersVerbs(self._client)
+        @property
+        def training_runs(self) -> "Oneiron._VaultCoachTrainingRunsVerbs":
+            return Oneiron._VaultCoachTrainingRunsVerbs(self._client)
     class _VaultCoachTrainingOffersVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1079,6 +1082,12 @@ class Oneiron:
         def get(self, spec):
             """Read one counted Coach pilot, its pins, measurement receipts, one-off cost and computed sufficiency card."""
             return json.loads(_translate(lambda: self._client.vault_coach_training_offers_pilots_get(json.dumps(spec))))
+    class _VaultCoachTrainingRunsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def cancel(self, spec):
+            """Cancel a staged trained embedder swap while its binding still waits or fills; an applied swap keeps the existing space-move undo door."""
+            return json.loads(_translate(lambda: self._client.vault_coach_training_runs_cancel(json.dumps(spec))))
     class _VaultPeopleVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3016,6 +3025,9 @@ class Oneiron:
         def files(self, spec):
             """The owner reads one Files source's ledger: each file's path, readiness (text or name only, and why), revision and dates."""
             return json.loads(_translate(lambda: self._client.vault_files_sources_files(json.dumps(spec))))
+        def convert(self, spec):
+            """The owner converts an attached notes folder on this host to Files, keeping its existing notes, history and links. The host rescans the folder into its Files world and returns the source and rescan report."""
+            return json.loads(_translate(lambda: self._client.vault_files_sources_convert(json.dumps(spec))))
     class _VaultResidenceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3863,6 +3875,9 @@ class Oneiron:
     class _VaultHooksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def checks(self, spec=None):
+            """The owner reads saved hook cycle and depth checks, including their causal lineage. Reads no hook arguments, body or result values and changes nothing; keeps the native list's oldest-key order and 1000-row limit."""
+            return json.loads(_translate(lambda: self._client.vault_hooks_checks(json.dumps({} if spec is None else spec))))
         def replay(self, spec):
             """The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands, 256 entries a page; next_cursor continues to the rest."""
             return json.loads(_translate(lambda: self._client.vault_hooks_replay(json.dumps(spec))))
@@ -4166,6 +4181,9 @@ class Oneiron:
         def model_heal_count(self, spec):
             """Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy."""
             return json.loads(_translate(lambda: self._client.vault_code_model_heal_count(json.dumps(spec))))
+        def corrections(self, spec):
+            """Read one code run's durable correction records as the owner, oldest first: per model response its model, repairs, outcome and committed checkpoint, with the repair policy. Canonical runs only."""
+            return json.loads(_translate(lambda: self._client.vault_code_corrections(json.dumps(spec))))
         def type_diagnostics(self, spec):
             """Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref."""
             return json.loads(_translate(lambda: self._client.vault_code_type_diagnostics(json.dumps(spec))))

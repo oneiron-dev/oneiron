@@ -62,9 +62,15 @@ pub(super) struct ConnectorSendTaskBody {
     pub(super) mention: Option<super::MentionProvenance>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) originating_session_ref: Option<String>,
-    /// Additive synced execution marker. Absence means no visible attempt.
+    /// The sticky send executor (FIX 4747): the one machine that may send
+    /// this TASK, and the generation it holds. Absent until a machine first
+    /// takes it. It is one field of this body, and the body is one value of
+    /// the window's `entities` map, so a concurrent write from two machines
+    /// resolves by whole-row LWW (higher Lamport, then peer); a raised
+    /// generation is always a read-modify-write of the lease it replaces, so
+    /// it wins over every lease it saw.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) attempt_started_node_id: Option<u64>,
+    pub(super) send_executor_lease: Option<SendExecutorLease>,
     /// Additive synced terminal projection. Absence means outcome unknown or
     /// still in flight; device-local intent rows never enter this body.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -115,6 +121,72 @@ pub enum ConnectorSendTaskOutcome {
     Ambiguous,
 }
 
+/// The sticky send executor of one connector-send TASK (FIX 4747; canon
+/// ARCH-0023b, pending outbound send): only the machine `node_id` names
+/// sends it, and only while the TASK still holds this exact lease. A
+/// handover moves it to another machine at the next `generation`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SendExecutorLease {
+    /// The holder's stable sync node id (`m:client_id`).
+    pub node_id: u64,
+    /// Raised by one on every handover; a take from no lease starts at
+    /// [`SEND_EXECUTOR_LEASE_FIRST_GENERATION`].
+    pub generation: u64,
+}
+
+/// The generation a send executor lease starts at when a machine takes a
+/// TASK no machine held. Engine call (CALLS, FIX 4747).
+pub(super) const SEND_EXECUTOR_LEASE_FIRST_GENERATION: u64 = 1;
+
+/// The receipt field a send the fence stood down carries, valued
+/// [`SEND_EXECUTOR_STOOD_DOWN`] (FIX 4747).
+pub(super) const SEND_EXECUTOR_FENCE_FIELD: &str = "send_executor_fence";
+
+/// The value of [`SEND_EXECUTOR_FENCE_FIELD`], and the execution's
+/// `retry_state`, when the fence stood a send down before its transport call.
+pub(super) const SEND_EXECUTOR_STOOD_DOWN: &str = "send_executor_stood_down";
+
+/// The lease one attempt of a connector-send TASK took, carried on its
+/// dispatch request to the fence before the transport call (FIX 4747).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SendExecutorFence {
+    pub(crate) task_ref: EntityId,
+    pub(crate) lease: SendExecutorLease,
+}
+
+/// What taking the send executor lease came to (FIX 4747).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum SendExecutorLeaseTake {
+    /// This machine holds the lease; its attempt sends under it.
+    Taken(SendExecutorLease),
+    /// Another machine holds the lease: this machine stands down and sends
+    /// nothing.
+    HeldElsewhere(SendExecutorLease),
+    /// The TASK permits no new send: delivered, possibly delivered, or
+    /// mechanically suppressed.
+    Closed,
+}
+
+/// What the fence read in the TASK right before a transport call (FIX 4747).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum SendExecutorFenceCheck {
+    /// The TASK still holds exactly the lease this attempt took.
+    Holds,
+    /// The TASK holds another lease, or none: the attempt stands down.
+    StoodDown { held: Option<SendExecutorLease> },
+}
+
+/// What a handover of a connector-send TASK came to (FIX 4747).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SendExecutorHandover {
+    /// The lease now names the new machine at the next generation.
+    Moved(SendExecutorLease),
+    /// The new machine already held the lease; it stays as it was.
+    AlreadyHeld(SendExecutorLease),
+    /// The TASK permits no new send, so no lease moves.
+    Closed,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(super) struct ConnectorActorBody {
     pub(super) schema_version: u8,
@@ -144,7 +216,8 @@ pub struct ConnectorSendTask {
     /// Explicit comm party key, distinct from the transport destination.
     pub counterparty_ref: Option<String>,
     pub originating_session_ref: Option<String>,
-    pub attempt_started_node_id: Option<u64>,
+    /// The sticky send executor (FIX 4747); `None` until a machine takes it.
+    pub send_executor_lease: Option<SendExecutorLease>,
     pub outcome: Option<ConnectorSendTaskOutcome>,
     /// Synced terminal suppression reason, when the engine collapsed a send.
     pub suppression: Option<String>,
@@ -235,7 +308,7 @@ pub(crate) fn put_connector_send_task_in_txn(
         job_ref: intent.job_ref.clone(),
         mention: intent.mention.clone(),
         originating_session_ref: originating_session_ref.map(str::to_owned),
-        attempt_started_node_id: None,
+        send_executor_lease: None,
         outcome: None,
         suppression: None,
         utc_offset_minutes: schedule_context.utc_offset_minutes,
@@ -421,7 +494,7 @@ impl Vault {
             },
             counterparty_ref: body.counterparty_ref,
             originating_session_ref: body.originating_session_ref,
-            attempt_started_node_id: body.attempt_started_node_id,
+            send_executor_lease: body.send_executor_lease,
             outcome: body.outcome,
             suppression: body.suppression,
             utc_offset_minutes: body.utc_offset_minutes,
@@ -518,30 +591,177 @@ impl Vault {
     }
 }
 
-pub(super) fn mark_connector_send_task_attempt_started(
+/// Whether the TASK's synced outcome still permits a new send. A definite
+/// failure remains retryable; delivered, ambiguous and mechanically
+/// suppressed outcomes must never become new send permits. Engine call
+/// (CALLS, FIX 4747): the lease take and the handover share this one rule,
+/// so a Failed TASK may still be taken and handed over, as it was retryable
+/// before the lease.
+fn connector_send_task_permits_send(body: &ConnectorSendTaskBody) -> bool {
+    !matches!(
+        body.outcome,
+        Some(ConnectorSendTaskOutcome::Ambiguous | ConnectorSendTaskOutcome::Delivered)
+    ) && body.suppression.is_none()
+}
+
+/// Takes the TASK's send executor lease for `node_id` (FIX 4747): no lease
+/// becomes this node's at the first generation; this node's lease stays as
+/// it is; another node's lease is not taken, and this node stands down.
+/// Checked against the CURRENT replicated TASK in one write transaction.
+pub(super) fn take_send_executor_lease(
     vault: &Vault,
     task_ref: EntityId,
     node_id: u64,
     now: u64,
-) -> Result<bool, Error> {
-    let mut may_dispatch = false;
+) -> Result<SendExecutorLeaseTake, Error> {
+    let mut take = SendExecutorLeaseTake::Closed;
     update_connector_send_task_body(vault, task_ref, now, |body| {
-        // Check the CURRENT replicated TASK in this same write transaction.
-        // A definite failure remains retryable; delivered, ambiguous and
-        // mechanically suppressed outcomes must never become new send permits.
-        if matches!(
-            body.outcome,
-            Some(ConnectorSendTaskOutcome::Ambiguous | ConnectorSendTaskOutcome::Delivered)
-        ) || body.suppression.is_some()
-        {
+        if !connector_send_task_permits_send(body) {
             return Ok(());
         }
-        body.attempt_started_node_id = Some(node_id);
-        body.suppression = None;
-        may_dispatch = true;
+        let held = body.send_executor_lease;
+        take = match held {
+            None => {
+                let lease = SendExecutorLease {
+                    node_id,
+                    generation: SEND_EXECUTOR_LEASE_FIRST_GENERATION,
+                };
+                body.send_executor_lease = Some(lease);
+                SendExecutorLeaseTake::Taken(lease)
+            }
+            Some(lease) if lease.node_id == node_id => SendExecutorLeaseTake::Taken(lease),
+            Some(lease) => SendExecutorLeaseTake::HeldElsewhere(lease),
+        };
         Ok(())
     })?;
-    Ok(may_dispatch)
+    Ok(take)
+}
+
+/// The fence before the bytes (FIX 4747; canon ARCH-0023b "a woken old
+/// machine re-checks before any send and stands down"): reads the TASK in a
+/// fresh read and holds only while it still names exactly the lease
+/// `fence` took. Every later slice that sends for a connector TASK reuses
+/// it.
+pub(super) fn check_send_executor_fence(
+    vault: &Vault,
+    fence: &SendExecutorFence,
+) -> Result<SendExecutorFenceCheck, Error> {
+    let rtxn = vault.store.env.read_txn()?;
+    let held = read_connector_send_task_body_in(vault, &rtxn, fence.task_ref)?.send_executor_lease;
+    Ok(if held == Some(fence.lease) {
+        SendExecutorFenceCheck::Holds
+    } else {
+        SendExecutorFenceCheck::StoodDown { held }
+    })
+}
+
+/// Whether the transport call `fence` guards may go. A stand-down writes
+/// its one log line here. Engine call (CALLS, FIX 4747): a TASK the fence
+/// cannot read stands down too, so an unreadable TASK sends nothing.
+pub(super) fn send_executor_fence_permits_send(vault: &Vault, fence: &SendExecutorFence) -> bool {
+    match check_send_executor_fence(vault, fence) {
+        Ok(SendExecutorFenceCheck::Holds) => true,
+        Ok(SendExecutorFenceCheck::StoodDown { held }) => {
+            log_send_executor_stand_down(
+                fence.task_ref,
+                fence.lease.node_id,
+                Some(fence.lease.generation),
+                held,
+            );
+            false
+        }
+        Err(error) => {
+            tracing::warn!(
+                reason = "send_executor_fence_unread",
+                task = %fence.task_ref.to_hex(),
+                node_id = fence.lease.node_id,
+                attempt_generation = fence.lease.generation,
+                %error,
+                "a connector send stood down: the fence could not read its TASK"
+            );
+            false
+        }
+    }
+}
+
+/// The one local log line a stand-down writes: the TASK, this machine's
+/// node, the generation its attempt took (none when it took no lease), and
+/// the lease the TASK holds now. It names no secret and no body.
+pub(super) fn log_send_executor_stand_down(
+    task_ref: EntityId,
+    node_id: u64,
+    attempt_generation: Option<u64>,
+    held: Option<SendExecutorLease>,
+) {
+    tracing::warn!(
+        reason = "send_executor_stood_down",
+        task = %task_ref.to_hex(),
+        node_id,
+        attempt_generation = ?attempt_generation,
+        held_node_id = ?held.map(|lease| lease.node_id),
+        held_generation = ?held.map(|lease| lease.generation),
+        "a connector send stood down: this machine does not hold its TASK's send executor lease"
+    );
+}
+
+/// The lease a handover to `to_node` leaves on the TASK: `to_node` at the
+/// next generation. Engine call (CALLS, FIX 4747): a handover to the
+/// machine that already holds the lease keeps it unchanged, so that
+/// machine's own attempt in flight still passes its fence.
+fn send_executor_lease_after_handover(
+    held: Option<SendExecutorLease>,
+    to_node: u64,
+) -> Result<SendExecutorLease, Error> {
+    match held {
+        Some(lease) if lease.node_id == to_node => Ok(lease),
+        Some(lease) => Ok(SendExecutorLease {
+            node_id: to_node,
+            generation: lease
+                .generation
+                .checked_add(1)
+                .ok_or(Error::IndexOverflow("send executor lease generation"))?,
+        }),
+        None => Ok(SendExecutorLease {
+            node_id: to_node,
+            generation: SEND_EXECUTOR_LEASE_FIRST_GENERATION,
+        }),
+    }
+}
+
+/// The handover seam (FIX 4747; canon ARCH-0023b "a handover moves the
+/// pending send's sticky executor to the new machine"): moves the send
+/// executor lease of a TASK that still permits a send to `to_node` at the
+/// next generation, in the caller's write. The old holder's fence then
+/// stands it down, and the approved-but-unsent send goes from `to_node`
+/// through the normal executor. It moves only the lease: the caller on the
+/// new machine enqueues that machine's local attempt. FIX 4747 slice 4's
+/// orphan reaper and the placement order call it.
+#[allow(
+    dead_code,
+    reason = "FIX 4747 slice 4: the orphan reaper and the placement order call it"
+)]
+pub(crate) fn hand_over_connector_send_task_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    task_ref: EntityId,
+    to_node: u64,
+    now: u64,
+) -> Result<SendExecutorHandover, Error> {
+    let mut handover = SendExecutorHandover::Closed;
+    update_connector_send_task_body_in_txn(vault, wtxn, task_ref, now, |body| {
+        if !connector_send_task_permits_send(body) {
+            return Ok(());
+        }
+        let lease = send_executor_lease_after_handover(body.send_executor_lease, to_node)?;
+        handover = if body.send_executor_lease == Some(lease) {
+            SendExecutorHandover::AlreadyHeld(lease)
+        } else {
+            body.send_executor_lease = Some(lease);
+            SendExecutorHandover::Moved(lease)
+        };
+        Ok(())
+    })?;
+    Ok(handover)
 }
 
 pub(super) fn project_connector_send_task_outcome(
@@ -623,16 +843,33 @@ pub(super) fn connector_send_task_outcome_in_txn(
     wtxn: &heed::RwTxn<'_>,
     task_ref: EntityId,
 ) -> Result<Option<ConnectorSendTaskOutcome>, Error> {
+    Ok(read_connector_send_task_body_in(vault, wtxn, task_ref)?.outcome)
+}
+
+/// The stored connector-send TASK body, read in `txn`.
+fn read_connector_send_task_body_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+) -> Result<ConnectorSendTaskBody, Error> {
     let raw = vault
         .store
-        .port_entity_record(wtxn, &task_ref)?
+        .port_entity_record(txn, &task_ref)?
         .ok_or(Error::EntityNotFound)?;
-    if raw.entity_type != ENTITY_TYPE_TASK {
+    decode_connector_send_task_body(raw.entity_type, &raw.body)
+}
+
+/// Decodes a stored connector-send TASK body of the current version.
+fn decode_connector_send_task_body(
+    entity_type: u8,
+    body: &[u8],
+) -> Result<ConnectorSendTaskBody, Error> {
+    if entity_type != ENTITY_TYPE_TASK {
         return Err(Error::Record(RecordError::InvalidTaskBody(
             "connector send entity is not a TASK",
         )));
     }
-    let body: ConnectorSendTaskBody = rmp_serde::from_slice(&raw.body)
+    let body: ConnectorSendTaskBody = rmp_serde::from_slice(body)
         .map_err(|_| Error::Record(RecordError::InvalidTaskBody("invalid connector send body")))?;
     if body.schema_version != CONNECTOR_SEND_TASK_SCHEMA_VERSION
         || body.subkind != CONNECTOR_SEND_TASK_SUBKIND
@@ -642,7 +879,7 @@ pub(super) fn connector_send_task_outcome_in_txn(
             "unsupported connector send body version",
         )));
     }
-    Ok(body.outcome)
+    Ok(body)
 }
 
 pub(super) fn project_connector_send_task_outcome_in_txn(
@@ -685,33 +922,19 @@ fn update_connector_send_task_body_in_txn(
         .store
         .port_entity_record(&*wtxn, &task_ref)?
         .ok_or(Error::EntityNotFound)?;
-    if raw.entity_type != ENTITY_TYPE_TASK {
-        return Err(Error::Record(RecordError::InvalidTaskBody(
-            "connector send entity is not a TASK",
-        )));
-    }
-    let mut body: ConnectorSendTaskBody = rmp_serde::from_slice(&raw.body)
-        .map_err(|_| Error::Record(RecordError::InvalidTaskBody("invalid connector send body")))?;
-    if body.schema_version != CONNECTOR_SEND_TASK_SCHEMA_VERSION
-        || body.subkind != CONNECTOR_SEND_TASK_SUBKIND
-        || body.role != TaskRole::Task.role_byte()
-    {
-        return Err(Error::Record(RecordError::InvalidTaskBody(
-            "unsupported connector send body version",
-        )));
-    }
+    let mut body = decode_connector_send_task_body(raw.entity_type, &raw.body)?;
     update(&mut body)?;
     let encoded = rmp_serde::to_vec_named(&body)
         .map_err(|_| Error::InvariantViolation("connector task body encode failed"))?;
-    // A no-op update writes NOTHING. The executor re-marks the attempt on
+    // A no-op update writes NOTHING. The executor re-takes its lease on
     // every claim, so a send that keeps parking (a gate hold waiting on a
     // person, a window edge) would otherwise rewrite an identical body and
     // bump the entity's learned time once per poll — a growing trail of
     // writes that says the TASK changed when it did not. Comparing the
     // encoded bytes against what is stored makes the retry loop leave the
     // row byte-identical, while any real projection — the terminal
-    // outcome, a timezone refresh, a different node picking the attempt up
-    // — still differs in bytes and writes exactly once.
+    // outcome, a timezone refresh, a node taking the send executor lease, a
+    // handover — still differs in bytes and writes exactly once.
     if raw.body == encoded[..] {
         return Ok(());
     }

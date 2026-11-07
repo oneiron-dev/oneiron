@@ -832,6 +832,8 @@ class Oneiron:
             """Inspects one blocked report as the Coach reads it: its fenced receipt, linked diagnostic band, working set, and the repair proposal the Coach filed, through the caller's own lane."""
         @property
         def training_offers(self) -> "Oneiron._VaultCoachTrainingOffersVerbs": ...
+        @property
+        def training_runs(self) -> "Oneiron._VaultCoachTrainingRunsVerbs": ...
     class _VaultCoachTrainingOffersVerbs:
         def __call__(self, spec: Facade.OfferListRequest) -> list[Facade.OfferView]:
             """Read Coach offer snapshots, their exact owner answers and later promise checks; optionally select a seat or only pending offers."""
@@ -863,6 +865,9 @@ class Oneiron:
             """Record immutable owner-evaluator pilot measurements bound to counted own-seat families; fixed code derives sufficiency and preserves unknown cost and score."""
         def get(self, spec: Facade.OfferPilotRef) -> Facade.OfferPilot | None:
             """Read one counted Coach pilot, its pins, measurement receipts, one-off cost and computed sufficiency card."""
+    class _VaultCoachTrainingRunsVerbs:
+        def cancel(self, spec: Facade.TrainingRunRef) -> Facade.PendingEmbedderBinding:
+            """Cancel a staged trained embedder swap while its binding still waits or fills; an applied swap keeps the existing space-move undo door."""
     class _VaultPeopleVerbs:
         def list(self, spec: Facade.PeopleListRequest) -> Facade.PeoplePage:
             """One page of the people the caller reads, in handle order."""
@@ -1996,6 +2001,8 @@ class Oneiron:
             """The owner lists this install's Files world and every Files source, with each one's exclusions and ledger counts."""
         def files(self, spec: Facade.FilesSourceFilesRequest) -> Facade.FilesSourceFiles:
             """The owner reads one Files source's ledger: each file's path, readiness (text or name only, and why), revision and dates."""
+        def convert(self, spec: Facade.FilesSourceConvertRequest) -> Facade.FilesSourceAttachAnswer:
+            """The owner converts an attached notes folder on this host to Files, keeping its existing notes, history and links. The host rescans the folder into its Files world and returns the source and rescan report."""
     class _VaultResidenceVerbs:
         def mode(self, spec: Facade.ResidenceModeRequest) -> Facade.ResidenceModeAnswer:
             """Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive."""
@@ -2498,6 +2505,8 @@ class Oneiron:
         def revoke(self, spec: Facade.ShareRevokeRequest) -> Facade.ShareRevokeReceipt: ...
         def view(self, spec: Facade.ShareViewRequest) -> Facade.ScopedReadResult[Facade.SharedBriefView | None]: ...
     class _VaultHooksVerbs:
+        def checks(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.HookCheck]:
+            """The owner reads saved hook cycle and depth checks, including their causal lineage. Reads no hook arguments, body or result values and changes nothing; keeps the native list's oldest-key order and 1000-row limit."""
         def replay(self, spec: Facade.HooksReplayRequest) -> Facade.HooksReplayPage:
             """The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands, 256 entries a page; next_cursor continues to the rest."""
         @property
@@ -2655,6 +2664,8 @@ class Oneiron:
             """Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal."""
         def model_heal_count(self, spec: Facade.CodeRunModelHealCountRequest) -> Facade.CodeRunModelHealCountView:
             """Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy."""
+        def corrections(self, spec: Facade.CodeRunCorrectionsRequest) -> Facade.CodeRunCorrectionsView:
+            """Read one code run's durable correction records as the owner, oldest first: per model response its model, repairs, outcome and committed checkpoint, with the repair policy. Canonical runs only."""
         def type_diagnostics(self, spec: Facade.CodeRunTypeDiagnosticsRequest) -> Facade.ProgramStepFeedbackRelease | None:
             """Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref."""
         @property

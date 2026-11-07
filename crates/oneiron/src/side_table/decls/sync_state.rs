@@ -446,6 +446,9 @@ side_tables! {
     SYNC_RESIDENCE_ITEM_CONTENT_WORLD: SyncState b"ri:c:" Raw;
     /// A thin-residence item's opened document state. Key: hex32 (entity id).
     SYNC_RESIDENCE_ITEM_DOCUMENT: SyncState b"ri:d:" Raw;
+    /// A thin item's source worlds and hashes of its exact cached blob and document, encoded
+    /// as CachedItemWorlds. Provenance only, never read authority. Key: hex32 (entity id).
+    SYNC_RESIDENCE_ITEM_SOURCES: SyncState b"ri:s:" Raw;
     /// The thin-residence index rows fetched for one window. Key: window key ":" item tag.
     SYNC_RESIDENCE_INDEX: SyncState b"ri:w:" Raw;
     /// Entity-scoped needs-rematerialization retry flag, set when a CRDT-tombstone purge or a
