@@ -49,7 +49,12 @@ pub(super) fn mcp_cap_setup_grammar(
 }
 
 /// `setup_oneiron`: board keyframe + verb grammar + instructions, in ONE
-/// result.
+/// result. Page one also carries the connection's turn-one self brief, which
+/// the client places before its first model turn, and its keyframe names the
+/// persons that brief's roster holds by bare handle; the brief is
+/// acknowledged once page one's result is released (FIX 17594 D4, Engine call
+/// MCP A). A continuation restates page one's retained result, its brief
+/// included, and renders and acknowledges nothing.
 pub(crate) async fn execute_mcp_setup(
     server: &Arc<SyncServer>,
     args: crate::mcp::McpSetupToolArgs,
@@ -71,6 +76,7 @@ pub(crate) async fn execute_mcp_setup(
     let mut rider = None;
     let mut hooks = None;
     let mut layout_candidate = None;
+    let mut staged_brief = None;
     let (mut structured, keyframe, health, snapshot, producer_epoch) = if let Some(continuation) =
         dispatch.continuation.as_ref()
     {
@@ -89,8 +95,17 @@ pub(crate) async fn execute_mcp_setup(
         )
     } else {
         // No cursor: this is page one, so produce and retain the exact
-        // un-capped grammar/result before resolving its window.
-        let board = mcp_current_board(server, actor).await?;
+        // un-capped grammar/result before resolving its window. The
+        // connection's brief is installed afresh and its turn one staged
+        // first, so the keyframe names its roster's persons by bare handle;
+        // a brief that does not stage leaves every name inline.
+        let brief = stage_connection_brief(server, actor).await;
+        let resident = brief
+            .as_ref()
+            .map_or_else(std::collections::BTreeSet::new, |brief| {
+                brief.resident_people().clone()
+            });
+        let board = mcp_current_board_with_roster(server, actor, &resident).await?;
         // The GRAMMAR rows this page partitions are complete, but the health
         // this result states is the BOARD's, and the board has two omission
         // axes plus its own exhaustion bit. Deriving it from scope omission
@@ -113,6 +128,9 @@ pub(crate) async fn execute_mcp_setup(
         layout_candidate = board.layout_candidate.clone();
         payload.instructions =
             crate::mcp::setup_instructions_for(server.code_execution_host().is_some());
+        payload.self_brief = brief.as_ref().map(|brief| crate::mcp::McpSetupSelfBrief {
+            prefix: brief.prefix().to_owned(),
+        });
         let keyframe = board
             .changes
             .ride(Some(oneiron::context_board::BoardStreamFrame {
@@ -128,14 +146,22 @@ pub(crate) async fn execute_mcp_setup(
         }
         let structured = payload.to_value();
         let source = crate::mcp::McpPageSource::complete(mcp_setup_grammar_rows(&structured).len());
+        // A board's rows are known (FIX 5988), and so are the rows the brief
+        // beside it is derived from: the result is released by both.
+        let mut rows = board.rows.clone();
+        rows.extend(
+            brief
+                .iter()
+                .flat_map(|brief| brief.sources().iter().copied()),
+        );
         let snapshot = McpPageSnapshot {
             output: structured.clone(),
             source,
             health,
             keyframe: Some(keyframe.clone()),
-            // A board's rows are known (FIX 5988).
-            rows: Some(board.rows.clone()),
+            rows: Some(rows),
         };
+        staged_brief = brief;
         hooks = Some(board.hooks);
         rider = Some((board.changes, board.epoch));
         (structured, keyframe, health, snapshot, Some(board.epoch))
@@ -209,6 +235,13 @@ pub(crate) async fn execute_mcp_setup(
         && let Some(hooks) = &hooks
     {
         hooks.spend(server);
+    }
+    // Page one went out: the brief it carried is the connection's delivered
+    // brief (FIX 17594 D4).
+    if result.is_ok()
+        && let Some(candidate) = staged_brief
+    {
+        acknowledge_connection_brief(server, candidate).await;
     }
     result
 }

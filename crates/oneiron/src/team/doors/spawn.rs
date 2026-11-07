@@ -35,12 +35,7 @@ const NO_PLANNER_FIX: &str = "Ask through a server with an engine-native code-mo
 
 /// One knob of the owner's ask (ARCH-0079 #seed-pin): a seed is where the
 /// planner starts, weighted in runs; a pin is never overridden.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "mode", rename_all = "snake_case")]
-pub enum SpawnAskKnob<T> {
-    Seed { value: T, weight_runs: f64 },
-    Pin { value: T },
-}
+pub use crate::code_run::SpawnKnob as SpawnAskKnob;
 
 impl<T> SpawnAskKnob<T> {
     /// The engine's override, its value read by `read`, its weight or pin

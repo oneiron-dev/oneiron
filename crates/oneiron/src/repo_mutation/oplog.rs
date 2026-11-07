@@ -129,9 +129,22 @@ impl Vault {
         self.recover_prepared_repo_mutations_locked(&canonical, &repo_root)
     }
 
-    /// Reads the durable oplog for a repo in sequence order.
+    /// Reads the durable oplog for a repo in sequence order. If a local
+    /// checkout cannot be resolved, existing rows under that exact recorded
+    /// repository identity remain readable. Aliases still need the checkout.
     pub fn repo_mutation_oplog(&self, repo_ref: &RepoRef) -> Result<Vec<RepoMutationOplogEntry>> {
-        let repo_root = resolve_mutable_repo_root(repo_ref)?;
+        let repo_root = match resolve_mutable_repo_root(repo_ref) {
+            Ok(root) => root,
+            Err(error) => {
+                if matches!(repo_ref, RepoRef::LocalFolder { .. }) {
+                    let entries = self.repo_mutation_oplog_for_canonical(repo_ref)?;
+                    if !entries.is_empty() {
+                        return Ok(entries);
+                    }
+                }
+                return Err(error);
+            }
+        };
         let canonical = canonical_repo_ref_for_root(repo_ref, &repo_root)?;
         self.repo_mutation_oplog_for_canonical(&canonical)
     }

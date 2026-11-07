@@ -16,6 +16,11 @@
 //! seed revision it hides is not listed or counted, and a plan names the
 //! stored seed's id only to a caller that reads the whole seed. A check that
 //! cannot be read leaves the projection as it was before it.
+//!
+//! No read snapshot here is held across a `visible` call or a reader that
+//! opens its own (FIX 21880): LMDB allows one read snapshot per thread, and
+//! `visible` is a caller's read lane, which opens its own. Each liveness
+//! check reads in a snapshot it closes before `visible` runs.
 use std::collections::BTreeSet;
 
 use super::apply::{ShapeApplyItem, ShapeApplyReceipt, ShapeItemState, open};
@@ -41,7 +46,6 @@ impl Vault {
     /// `withheld` hides it, or it names a live entity `visible` hides.
     pub(super) fn shape_target_withheld(
         &self,
-        txn: &heed::RoTxn<'_>,
         target: &ShapeTarget,
         withheld: &BTreeSet<ShapeTarget>,
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
@@ -60,7 +64,7 @@ impl Vault {
         let Some(id) = named_entity(target) else {
             return Ok(false);
         };
-        Ok(live_entity_row_in_txn(&self.store, txn, &id)?.is_live() && !visible(&id)?)
+        Ok(self.entity_live(&id)? && !visible(&id)?)
     }
 
     /// `seed` without the rows withheld from the caller.
@@ -70,10 +74,9 @@ impl Vault {
         withheld: &BTreeSet<ShapeTarget>,
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
     ) -> Result<ShapeSeed> {
-        let txn = self.store.env.read_txn()?;
         let mut rows = Vec::with_capacity(seed.rows.len());
         for row in &seed.rows {
-            if !self.shape_row_withheld(&txn, row, withheld, visible)? {
+            if !self.shape_row_withheld(row, withheld, visible)? {
                 rows.push(row.clone());
             }
         }
@@ -85,15 +88,13 @@ impl Vault {
     /// live entity `visible` hides, a source among them (FIX 9960).
     pub(super) fn shape_row_withheld(
         &self,
-        txn: &heed::RoTxn<'_>,
         row: &ShapeRow,
         withheld: &BTreeSet<ShapeTarget>,
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
     ) -> Result<bool> {
         Ok(
-            self.shape_target_withheld(txn, &row.target(), withheld, visible)?
-                || serde_json::to_value(row)
-                    .is_ok_and(|value| self.names_hidden(txn, &value, visible)),
+            self.shape_target_withheld(&row.target(), withheld, visible)?
+                || serde_json::to_value(row).is_ok_and(|value| self.names_hidden(&value, visible)),
         )
     }
 
@@ -105,11 +106,9 @@ impl Vault {
         withheld: &BTreeSet<ShapeTarget>,
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
     ) -> Result<Option<ShapeSeed>> {
-        let txn = self.store.env.read_txn()?;
-        if self.seed_carrier_withheld(&txn, stored, visible) {
+        if self.seed_carrier_withheld(stored, visible) {
             return Ok(None);
         }
-        drop(txn);
         self.visible_seed(&stored.seed, withheld, visible).map(Some)
     }
 
@@ -123,18 +122,16 @@ impl Vault {
     ) -> Result<(Option<StoredShapeSeed>, Vec<ShapeApplyReceipt>)> {
         let seed = match self.shape_seed()? {
             Some(mut stored) => {
-                let txn = self.store.env.read_txn()?;
-                if self.seed_carrier_withheld(&txn, &stored, visible) {
+                if self.seed_carrier_withheld(&stored, visible) {
                     None
                 } else {
                     if stored
                         .parent
                         .as_deref()
-                        .is_some_and(|parent| self.positively_hidden(&txn, parent, visible))
+                        .is_some_and(|parent| self.positively_hidden(parent, visible))
                     {
                         stored.parent = None;
                     }
-                    drop(txn);
                     stored.seed = self.visible_seed(&stored.seed, withheld, visible)?;
                     Some(stored)
                 }
@@ -142,10 +139,9 @@ impl Vault {
             None => None,
         };
         let pins = self.approval_pins_visible(withheld, visible)?;
-        let txn = self.store.env.read_txn()?;
         let mut applies = Vec::new();
         for journal in self.open_shape_applies()? {
-            applies.extend(self.visible_journal(&txn, journal, withheld, pins, visible)?);
+            applies.extend(self.visible_journal(journal, withheld, pins, visible)?);
         }
         Ok((seed, applies))
     }
@@ -160,22 +156,21 @@ impl Vault {
     /// the pins digest ([`Self::approval_pins_visible`], FIX 11151).
     fn visible_journal(
         &self,
-        txn: &heed::RoTxn<'_>,
         mut journal: ShapeApplyReceipt,
         withheld: &BTreeSet<ShapeTarget>,
         pins: bool,
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
     ) -> Result<Option<ShapeApplyReceipt>> {
-        if self.positively_hidden(txn, &journal.author, visible)
-            || self.positively_hidden(txn, &journal.seed_id, visible)
+        if self.positively_hidden(&journal.author, visible)
+            || self.positively_hidden(&journal.seed_id, visible)
         {
             return Ok(None);
         }
         let mut items = Vec::with_capacity(journal.items.len());
         let mut runs = Vec::with_capacity(journal.run.items.len());
         for (at, entry) in journal.items.into_iter().enumerate() {
-            if self.shape_target_withheld(txn, &entry.item.target, withheld, visible)?
-                || self.item_names_hidden(txn, &entry, visible)
+            if self.shape_target_withheld(&entry.item.target, withheld, visible)?
+                || self.item_names_hidden(&entry, visible)
             {
                 continue;
             }
@@ -201,7 +196,6 @@ impl Vault {
     /// the receipt (FIX 11175). A body that cannot be read names none.
     fn item_names_hidden(
         &self,
-        txn: &heed::RoTxn<'_>,
         entry: &ShapeApplyItem,
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
     ) -> bool {
@@ -213,15 +207,15 @@ impl Vault {
             _ => None,
         };
         serde_json::to_value(&entry.item.after)
-            .is_ok_and(|value| self.names_hidden(txn, &value, visible))
+            .is_ok_and(|value| self.names_hidden(&value, visible))
             || receipt.is_some_and(|text| {
-                self.names_hidden(txn, &serde_json::Value::String(text.clone()), visible)
+                self.names_hidden(&serde_json::Value::String(text.clone()), visible)
             })
             || entry
                 .receipt_refs
                 .iter()
                 .flatten()
-                .any(|id| self.positively_hidden(txn, id, visible))
+                .any(|id| self.positively_hidden(id, visible))
     }
 
     /// Whether the caller reads the approval pins: each pin is a digest
@@ -238,7 +232,6 @@ impl Vault {
             return Ok(false);
         }
         let reach = self.read_live_shape(&mut |_| Ok(true))?.reach;
-        let txn = self.store.env.read_txn()?;
         let named = reach
             .actors
             .iter()
@@ -258,21 +251,19 @@ impl Vault {
             .collect::<Vec<_>>();
         Ok(!named
             .iter()
-            .any(|id| self.positively_hidden(&txn, &id.to_hex(), visible)))
+            .any(|id| self.positively_hidden(&id.to_hex(), visible)))
     }
 
     /// Whether any entity id `value` carries in its text is a live entity
     /// `visible` hides.
     fn names_hidden(
         &self,
-        txn: &heed::RoTxn<'_>,
         value: &serde_json::Value,
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
     ) -> bool {
         let mut ids = Vec::new();
         named_ids(value, &mut ids);
-        ids.iter()
-            .any(|id| self.positively_hidden(txn, id, visible))
+        ids.iter().any(|id| self.positively_hidden(id, visible))
     }
 
     /// The open apply at `frontier` as `visible` admits it, as
@@ -292,8 +283,7 @@ impl Vault {
         };
         let withheld = self.read_live_shape(visible)?.withheld;
         let pins = self.approval_pins_visible(&withheld, visible)?;
-        let txn = self.store.env.read_txn()?;
-        self.visible_journal(&txn, journal, &withheld, pins, visible)
+        self.visible_journal(journal, &withheld, pins, visible)
     }
 
     /// The stored seed's id as a plan may name it to the caller (FIX
@@ -307,11 +297,9 @@ impl Vault {
         withheld: &BTreeSet<ShapeTarget>,
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
     ) -> Result<Option<String>> {
-        let txn = self.store.env.read_txn()?;
-        if self.seed_carrier_withheld(&txn, stored, visible) {
+        if self.seed_carrier_withheld(stored, visible) {
             return Ok(None);
         }
-        drop(txn);
         let Some(explicit) = explicit else {
             return Ok(Some(stored.id.clone()));
         };
@@ -325,27 +313,32 @@ impl Vault {
     /// caller: `visible` hides its revision row or its author.
     fn seed_carrier_withheld(
         &self,
-        txn: &heed::RoTxn<'_>,
         stored: &StoredShapeSeed,
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
     ) -> bool {
-        self.positively_hidden(txn, &stored.id, visible)
-            || self.positively_hidden(txn, &stored.author, visible)
+        self.positively_hidden(&stored.id, visible)
+            || self.positively_hidden(&stored.author, visible)
     }
 
     /// Whether the hex `id` names a live entity `visible` hides. An id that
     /// names no live entity, or a check that fails, hides nothing.
     fn positively_hidden(
         &self,
-        txn: &heed::RoTxn<'_>,
         id: &str,
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
     ) -> bool {
         let Ok(id) = EntityId::from_hex(id) else {
             return false;
         };
-        live_entity_row_in_txn(&self.store, txn, &id).is_ok_and(|row| row.is_live())
-            && matches!(visible(&id), Ok(false))
+        self.entity_live(&id).is_ok_and(|live| live) && matches!(visible(&id), Ok(false))
+    }
+
+    /// Whether `id` names a live entity, read in a snapshot of its own that
+    /// closes before this returns, so a `visible` call after it opens its
+    /// own (FIX 21880).
+    fn entity_live(&self, id: &EntityId) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        Ok(live_entity_row_in_txn(&self.store, &txn, id)?.is_live())
     }
 
     /// The seed this caller's apply stores: `seed`, then each stored row
@@ -361,14 +354,13 @@ impl Vault {
         };
         let withheld = self.read_live_shape(visible)?.withheld;
         let named: BTreeSet<ShapeTarget> = seed.rows.iter().map(ShapeRow::target).collect();
-        let txn = self.store.env.read_txn()?;
         // A seed whose carrier the caller cannot see keeps every row it
         // did not name (FIX 9960).
-        let carrier_hidden = self.seed_carrier_withheld(&txn, &stored, visible);
+        let carrier_hidden = self.seed_carrier_withheld(&stored, visible);
         let mut rows = seed.rows.clone();
         for row in stored.seed.rows {
             if !named.contains(&row.target())
-                && (carrier_hidden || self.shape_row_withheld(&txn, &row, &withheld, visible)?)
+                && (carrier_hidden || self.shape_row_withheld(&row, &withheld, visible)?)
             {
                 rows.push(row);
             }
