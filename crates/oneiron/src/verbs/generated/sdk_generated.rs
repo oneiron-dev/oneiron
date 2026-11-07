@@ -6668,6 +6668,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::note::NoteReadRequest>(),
             ),
             (
+                "vault.notes.read_indexed",
+                crate::code_run::vault_read::request_schema::<crate::note::NoteIndexedReadRequest>(
+                ),
+            ),
+            (
                 "vault.notes.history",
                 crate::code_run::vault_read::request_schema::<crate::note::NoteAccessRequest>(),
             ),
@@ -8205,6 +8210,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.notes.follow_citation",
     "vault.notes.author_take",
     "vault.notes.read",
+    "vault.notes.read_indexed",
     "vault.notes.history",
     "vault.notes.fork",
     "vault.notes.forks.read",
@@ -10743,6 +10749,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::code_run::vault_read::request_schema::<crate::memory::EntityRefReceipt>()
         }
         "vault.notes.read" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Option<crate::note::NoteReadView>>,
+        >(),
+        "vault.notes.read_indexed" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Option<crate::note::NoteReadView>>,
         >(),
         "vault.notes.history" => crate::code_run::vault_read::request_schema::<
@@ -19352,6 +19361,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.notes.read_indexed" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.notes.history" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -21624,6 +21640,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.notes.author_take" => validate_input_vault_notes_author_take(value)?,
         "vault.notes.from_entity" => validate_input_vault_notes_from_entity(value)?,
         "vault.notes.read" => validate_input_vault_notes_read(value)?,
+        "vault.notes.read_indexed" => validate_input_vault_notes_read_indexed(value)?,
         "vault.notes.history" => validate_input_vault_notes_history(value)?,
         "vault.notes.fork" => validate_input_vault_notes_fork(value)?,
         "vault.notes.forks.read" => validate_input_vault_notes_forks_read(value)?,
@@ -28234,6 +28251,11 @@ fn validate_input_vault_notes_read(value: &serde_json::Value) -> MemoryResult<()
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_notes_read_indexed(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::note::NoteIndexedReadRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_vault_notes_history(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::note::NoteAccessRequest = decode(value.clone())?;
     Ok(())
@@ -30487,6 +30509,7 @@ pub fn invoke(
         "vault.notes.author_take" => invoke_vault_notes_author_take(memory, value),
         "vault.notes.from_entity" => invoke_vault_notes_from_entity(memory, value),
         "vault.notes.read" => invoke_vault_notes_read(memory, value),
+        "vault.notes.read_indexed" => invoke_vault_notes_read_indexed(memory, value),
         "vault.notes.history" => invoke_vault_notes_history(memory, value),
         "vault.notes.fork" => invoke_vault_notes_fork(memory, value),
         "vault.notes.forks.read" => invoke_vault_notes_forks_read(memory, value),
@@ -39100,6 +39123,13 @@ fn invoke_vault_notes_read(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_notes_read(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_notes_read_indexed(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_notes_read_indexed(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_notes_history(
@@ -50127,6 +50157,12 @@ pub fn vault_notes_read(
     input: crate::note::NoteReadRequest,
 ) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::note::NoteReadView>>> {
     memory.read_note(&input)
+}
+pub fn vault_notes_read_indexed(
+    memory: &Memory<'_>,
+    input: crate::note::NoteIndexedReadRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::note::NoteReadView>>> {
+    memory.read_indexed_note(&input)
 }
 pub fn vault_notes_history(
     memory: &Memory<'_>,

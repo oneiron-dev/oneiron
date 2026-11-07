@@ -20112,6 +20112,24 @@
       "openapi": true
     },
     {
+      "name": "vault.notes.read_indexed",
+      "description": "Reads the independently indexed NOTE text and stable edit anchors in the same scoped snapshot.",
+      "input": "crate::note::NoteIndexedReadRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::note::NoteReadView>>",
+      "call": "memory.read_indexed_note(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "openapi": true
+    },
+    {
       "name": "vault.notes.history",
       "description": "Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented.",
       "input": "crate::note::NoteAccessRequest",

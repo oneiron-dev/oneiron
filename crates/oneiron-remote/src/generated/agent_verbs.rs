@@ -3686,6 +3686,9 @@ impl OneironClient {
                 "vault.notes.read" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<Option<oneiron::note::NoteReadView>>,
                 >(client, verb, &input),
+                "vault.notes.read_indexed" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<Option<oneiron::note::NoteReadView>>,
+                >(client, verb, &input),
                 "vault.notes.history" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<Option<oneiron::note::NoteHistoryView>>,
                 >(client, verb, &input),
@@ -18610,6 +18613,19 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.notes.read", value)
+    }
+    pub fn vault_notes_read_indexed(
+        &self,
+        input: &oneiron::note::NoteIndexedReadRequest,
+    ) -> Result<oneiron::claim::ScopedReadResult<Option<oneiron::note::NoteReadView>>, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.notes.read_indexed", value)
     }
     pub fn vault_notes_history(
         &self,

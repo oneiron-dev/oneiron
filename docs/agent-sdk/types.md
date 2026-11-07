@@ -4225,6 +4225,8 @@ class Oneiron:
             """Creates a NOTE of a registered kind from an existing entity."""
         def read(self, input: Facade.NoteReadRequest) -> Facade.ScopedReadResult[Facade.NoteReadView | None]:
             """Reads live NOTE text or one retained NoteVersion, acquiring stable edit anchors in the same scoped snapshot."""
+        def read_indexed(self, input: Facade.NoteIndexedReadRequest) -> Facade.ScopedReadResult[Facade.NoteReadView | None]:
+            """Reads the independently indexed NOTE text and stable edit anchors in the same scoped snapshot."""
         def history(self, input: Facade.NoteAccessRequest) -> Facade.ScopedReadResult[Facade.NoteHistoryView | None]:
             """Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented."""
         def fork(self, input: Facade.NoteForkRequest) -> Facade.NoteForkView:

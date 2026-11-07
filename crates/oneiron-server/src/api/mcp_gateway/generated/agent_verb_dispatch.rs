@@ -1448,6 +1448,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.notes.author_take" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.from_entity" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.read" => a.spec.clone().ok_or_else(invalid),
+        "vault.notes.read_indexed" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.history" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.fork" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.forks.read" => a.spec.clone().ok_or_else(invalid),
@@ -5208,6 +5209,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.notes.read" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.notes.read_indexed" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.notes.history" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -7805,6 +7809,7 @@ async fn execute_agent_verb_row_on(
         "vault.notes.author_take" => boxed_mcp_verb_row_vault_notes_author_take(row).await,
         "vault.notes.from_entity" => boxed_mcp_verb_row_vault_notes_from_entity(row).await,
         "vault.notes.read" => boxed_mcp_verb_row_vault_notes_read(row).await,
+        "vault.notes.read_indexed" => boxed_mcp_verb_row_vault_notes_read_indexed(row).await,
         "vault.notes.history" => boxed_mcp_verb_row_vault_notes_history(row).await,
         "vault.notes.fork" => boxed_mcp_verb_row_vault_notes_fork(row).await,
         "vault.notes.forks.read" => boxed_mcp_verb_row_vault_notes_forks_read(row).await,
@@ -67339,6 +67344,47 @@ async fn mcp_verb_row_vault_notes_read(row: McpVerbRow<'_>) -> McpVerbRowResult 
         serde_json::from_value(input).map_err(|_| invalid())?;
     let output =
         oneiron::task_verb::sdk::vault_notes_read(&memory, input).map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_vault_notes_read_indexed<'a>(row: McpVerbRow<'a>) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_notes_read_indexed(row))
+}
+async fn mcp_verb_row_vault_notes_read_indexed(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let input: oneiron::note::NoteIndexedReadRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let output = oneiron::task_verb::sdk::vault_notes_read_indexed(&memory, input)
+        .map_err(mcp_facade_error)?;
     let source = crate::mcp::McpPageSource::complete(1);
     mcp_agent_verb_output(output, source)
 }

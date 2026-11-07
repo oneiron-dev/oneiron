@@ -1222,6 +1222,7 @@ vaultNotesCreate(input: unknown): unknown
 vaultNotesAuthorTake(input: unknown): unknown
 vaultNotesFromEntity(input: unknown): unknown
 vaultNotesRead(input: unknown): unknown
+vaultNotesReadIndexed(input: unknown): unknown
 vaultNotesHistory(input: unknown): unknown
 vaultNotesFork(input: unknown): unknown
 vaultNotesForksRead(input: unknown): unknown

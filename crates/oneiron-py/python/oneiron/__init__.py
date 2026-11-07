@@ -5825,6 +5825,9 @@ class Oneiron:
         def read(self, input: dict[str, Any]) -> Any:
             """Reads live NOTE text or one retained NoteVersion, acquiring stable edit anchors in the same scoped snapshot."""
             return json.loads(_translate(lambda: self._client.vault_notes_read(json.dumps(input, allow_nan=False))))
+        def read_indexed(self, input: dict[str, Any]) -> Any:
+            """Reads the independently indexed NOTE text and stable edit anchors in the same scoped snapshot."""
+            return json.loads(_translate(lambda: self._client.vault_notes_read_indexed(json.dumps(input, allow_nan=False))))
         def history(self, input: dict[str, Any]) -> Any:
             """Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented."""
             return json.loads(_translate(lambda: self._client.vault_notes_history(json.dumps(input, allow_nan=False))))

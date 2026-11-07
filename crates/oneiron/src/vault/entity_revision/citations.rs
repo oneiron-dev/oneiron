@@ -1,7 +1,7 @@
 //! Revision-pinned short references and Loro cursor citations.
 
 use super::storage::{
-    RevisionNamespace, ensure_document, fork_revision_with_namespace, load_doc,
+    RevisionNamespace, citation_live_doc, ensure_document, fork_revision_with_namespace,
     read_entity_revision_from_store_in_txn, read_entity_revision_in_txn,
 };
 use super::{PinnedCitation, ReadMode, ResolvedCitation, RevisionRef};
@@ -150,7 +150,7 @@ impl Vault {
                 "citation span does not match its pinned quote".into(),
             ));
         }
-        let live = load_doc(&self.store, &txn, &citation.entity)?;
+        let live = citation_live_doc(&self.store, &txn, &citation.entity, namespace)?;
         let drifted = cursor_quote(
             &live,
             citation_text(
@@ -159,7 +159,7 @@ impl Vault {
                 &citation.entity,
                 &live,
                 &citation.field,
-                None,
+                Some(namespace),
             )?,
             &start,
             &end,
@@ -347,6 +347,9 @@ fn citation_text(
     field: &str,
     namespace: Option<RevisionNamespace>,
 ) -> Result<Option<loro::LoroText>> {
+    if matches!(namespace, Some(RevisionNamespace::Note)) {
+        return Ok((field == "markdown").then(|| doc.get_text("body")));
+    }
     if !matches!(namespace, Some(RevisionNamespace::Generic))
         && let Some(body_field) = crate::entity_doc::pointer_field_in(store, txn, id)?
     {
