@@ -1130,6 +1130,48 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.weave.admin.report",
+                crate::code_run::vault_read::request_schema::<
+                    crate::authority::WeaveAdminReportRequest,
+                >(),
+            ),
+            (
+                "vault.weave.admin.lens",
+                crate::code_run::vault_read::request_schema::<
+                    crate::authority::WeaveAdminLensRequest,
+                >(),
+            ),
+            (
+                "vault.weave.admin.digest",
+                crate::code_run::vault_read::request_schema::<
+                    crate::authority::WeaveAdminDigestRequest,
+                >(),
+            ),
+            (
+                "vault.weave.admin.link.wrong",
+                crate::code_run::vault_read::request_schema::<
+                    crate::authority::WeaveAdminLinkWrongRequest,
+                >(),
+            ),
+            (
+                "vault.weave.admin.item.wrong",
+                crate::code_run::vault_read::request_schema::<
+                    crate::authority::WeaveAdminItemWrongRequest,
+                >(),
+            ),
+            (
+                "vault.step_up.passkeys.reset",
+                crate::code_run::vault_read::request_schema::<
+                    crate::authority::StepUpPasskeysResetRequest,
+                >(),
+            ),
+            (
+                "vault.step_up.totp.reset",
+                crate::code_run::vault_read::request_schema::<
+                    crate::authority::StepUpTotpResetRequest,
+                >(),
+            ),
+            (
                 "vault.weave.enqueue",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::WeaveEnqueueRequest,
@@ -7408,6 +7450,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.saved_query.archive",
     "self.saved_query.members",
     "self.saved_query.evaluate",
+    "vault.step_up.passkeys.reset",
+    "vault.step_up.totp.reset",
     "vault.weave.enqueue",
     "vault.weave.schedules.list",
     "vault.weave.schedules.put",
@@ -8539,6 +8583,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "self.saved_query.evaluate" => crate::code_run::vault_read::request_schema::<
             crate::campaign::surface::SavedQueryEvaluationReceipt,
         >(),
+        "vault.step_up.passkeys.reset" => {
+            crate::code_run::vault_read::request_schema::<crate::authority::StepUpPasskeysReset>()
+        }
+        "vault.step_up.totp.reset" => {
+            crate::code_run::vault_read::request_schema::<crate::authority::StepUpTotpReset>()
+        }
         "vault.weave.enqueue" => {
             crate::code_run::vault_read::request_schema::<crate::memory::DreamerAttemptRef>()
         }
@@ -12365,6 +12415,55 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.weave.owner.item.wrong" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.admin.report" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.admin.lens" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.admin.digest" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.admin.link.wrong" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.admin.item.wrong" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.step_up.passkeys.reset" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.step_up.totp.reset" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19952,6 +20051,13 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.weave.owner.link.wrong" => validate_input_vault_weave_owner_link_wrong(value)?,
         "vault.weave.item.wrong" => validate_input_vault_weave_item_wrong(value)?,
         "vault.weave.owner.item.wrong" => validate_input_vault_weave_owner_item_wrong(value)?,
+        "vault.weave.admin.report" => validate_input_vault_weave_admin_report(value)?,
+        "vault.weave.admin.lens" => validate_input_vault_weave_admin_lens(value)?,
+        "vault.weave.admin.digest" => validate_input_vault_weave_admin_digest(value)?,
+        "vault.weave.admin.link.wrong" => validate_input_vault_weave_admin_link_wrong(value)?,
+        "vault.weave.admin.item.wrong" => validate_input_vault_weave_admin_item_wrong(value)?,
+        "vault.step_up.passkeys.reset" => validate_input_vault_step_up_passkeys_reset(value)?,
+        "vault.step_up.totp.reset" => validate_input_vault_step_up_totp_reset(value)?,
         "vault.weave.enqueue" => validate_input_vault_weave_enqueue(value)?,
         "vault.weave.schedules.list" => validate_input_vault_weave_schedules_list(value)?,
         "vault.weave.schedules.put" => validate_input_vault_weave_schedules_put(value)?,
@@ -22518,6 +22624,41 @@ fn validate_input_vault_weave_item_wrong(value: &serde_json::Value) -> MemoryRes
 #[inline(never)]
 fn validate_input_vault_weave_owner_item_wrong(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::claim::WeaveWrongItemRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_weave_admin_report(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::authority::WeaveAdminReportRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_weave_admin_lens(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::authority::WeaveAdminLensRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_weave_admin_digest(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::authority::WeaveAdminDigestRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_weave_admin_link_wrong(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::authority::WeaveAdminLinkWrongRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_weave_admin_item_wrong(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::authority::WeaveAdminItemWrongRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_step_up_passkeys_reset(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::authority::StepUpPasskeysResetRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_step_up_totp_reset(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::authority::StepUpTotpResetRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -28697,6 +28838,13 @@ pub fn invoke(
         "vault.weave.owner.link.wrong" => invoke_vault_weave_owner_link_wrong(memory, value),
         "vault.weave.item.wrong" => invoke_vault_weave_item_wrong(memory, value),
         "vault.weave.owner.item.wrong" => invoke_vault_weave_owner_item_wrong(memory, value),
+        "vault.weave.admin.report" => invoke_vault_weave_admin_report(memory, value),
+        "vault.weave.admin.lens" => invoke_vault_weave_admin_lens(memory, value),
+        "vault.weave.admin.digest" => invoke_vault_weave_admin_digest(memory, value),
+        "vault.weave.admin.link.wrong" => invoke_vault_weave_admin_link_wrong(memory, value),
+        "vault.weave.admin.item.wrong" => invoke_vault_weave_admin_item_wrong(memory, value),
+        "vault.step_up.passkeys.reset" => invoke_vault_step_up_passkeys_reset(memory, value),
+        "vault.step_up.totp.reset" => invoke_vault_step_up_totp_reset(memory, value),
         "vault.weave.enqueue" => invoke_vault_weave_enqueue(memory, value),
         "vault.weave.schedules.list" => invoke_vault_weave_schedules_list(memory, value),
         "vault.weave.schedules.put" => invoke_vault_weave_schedules_put(memory, value),
@@ -31579,6 +31727,55 @@ fn invoke_vault_weave_owner_item_wrong(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_weave_owner_item_wrong(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_weave_admin_report(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_weave_admin_report(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_weave_admin_lens(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_weave_admin_lens(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_weave_admin_digest(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_weave_admin_digest(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_weave_admin_link_wrong(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_weave_admin_link_wrong(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_weave_admin_item_wrong(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_weave_admin_item_wrong(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_step_up_passkeys_reset(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_step_up_passkeys_reset(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_step_up_totp_reset(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_step_up_totp_reset(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_weave_enqueue(
@@ -41180,6 +41377,56 @@ pub fn vault_weave_owner_item_wrong(
     memory.weave_owner_wrong_item(
         &memory.embedded_owner("vault.weave.owner.item.wrong")?,
         &input,
+    )
+}
+pub fn vault_weave_admin_report(
+    memory: &Memory<'_>,
+    input: crate::authority::WeaveAdminReportRequest,
+) -> MemoryResult<crate::claim::WeaveReportView> {
+    crate::task_verb::sdk::host_only(memory, "vault.weave.admin.report", &input)
+}
+pub fn vault_weave_admin_lens(
+    memory: &Memory<'_>,
+    input: crate::authority::WeaveAdminLensRequest,
+) -> MemoryResult<crate::lens::LensFrameCard> {
+    crate::task_verb::sdk::host_only(memory, "vault.weave.admin.lens", &input)
+}
+pub fn vault_weave_admin_digest(
+    memory: &Memory<'_>,
+    input: crate::authority::WeaveAdminDigestRequest,
+) -> MemoryResult<Option<crate::claim::WeaveDigestView>> {
+    crate::task_verb::sdk::host_only(memory, "vault.weave.admin.digest", &input)
+}
+pub fn vault_weave_admin_link_wrong(
+    memory: &Memory<'_>,
+    input: crate::authority::WeaveAdminLinkWrongRequest,
+) -> MemoryResult<crate::claim::WeaveLinkCorrectionView> {
+    crate::task_verb::sdk::host_only(memory, "vault.weave.admin.link.wrong", &input)
+}
+pub fn vault_weave_admin_item_wrong(
+    memory: &Memory<'_>,
+    input: crate::authority::WeaveAdminItemWrongRequest,
+) -> MemoryResult<crate::claim::WeaveItemCorrectionView> {
+    crate::task_verb::sdk::host_only(memory, "vault.weave.admin.item.wrong", &input)
+}
+pub fn vault_step_up_passkeys_reset(
+    memory: &Memory<'_>,
+    input: crate::authority::StepUpPasskeysResetRequest,
+) -> MemoryResult<crate::authority::StepUpPasskeysReset> {
+    crate::task_verb::sdk::reset_step_up_passkeys_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.step_up.passkeys.reset")?,
+        input,
+    )
+}
+pub fn vault_step_up_totp_reset(
+    memory: &Memory<'_>,
+    input: crate::authority::StepUpTotpResetRequest,
+) -> MemoryResult<crate::authority::StepUpTotpReset> {
+    crate::task_verb::sdk::reset_step_up_totp_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.step_up.totp.reset")?,
+        input,
     )
 }
 pub fn vault_weave_enqueue(
