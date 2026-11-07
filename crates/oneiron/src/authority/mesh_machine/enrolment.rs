@@ -163,6 +163,8 @@ impl Vault {
                 invitation_ref: None,
                 delegation: None,
                 comm: None,
+                trusted_contact: None,
+                seat_claim: None,
             },
         )?;
         let pairing_slip_id = pairing.claims.slip_id;
