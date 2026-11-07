@@ -388,6 +388,12 @@ pub(super) fn collect_receipt_records(
     if query.includes_kind(ReceiptKind::ArtifactSettle) {
         records.extend(crate::edit_settle::settle_receipts(vault, query)?);
     }
+    // FIX 4727: each reviewed run's settlement, in its own read txn.
+    if query.includes_kind(ReceiptKind::ProposalOutcome) {
+        records.extend(crate::memory::run_review::run_settlement_receipts(
+            vault, query,
+        )?);
+    }
 
     let rtxn = vault.store.env.read_txn()?;
     // ONE type-76 scan serves both kinds it projects; the projector-level
