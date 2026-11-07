@@ -454,6 +454,7 @@ impl<'a> HostSelfDispatcher<'a> {
     pub(super) fn dispatch_tasks_refuse(
         &self,
         call: SelfTaskRefuseCall,
+        read_as: Option<ScopedReadActorKey>,
     ) -> Result<SelfDispatchOutcome> {
         let refused = |code: &str| {
             SelfDispatchOutcome::Failed(SelfFailedResult {
@@ -494,11 +495,18 @@ impl<'a> HostSelfDispatcher<'a> {
             Err(error) => return Ok(failed(SelfEffect::TasksRefuse, error)),
         }
         Ok(match memory.land_task_refusal(task, &input) {
-            Ok(receipt) => SelfDispatchOutcome::TaskRefusal(SelfTaskRefusalResult {
-                task_ref: receipt.task_ref,
-                level: receipt.level,
-                replay: receipt.idempotent_replay,
-            }),
+            Ok(receipt) => {
+                if receipt.outcome == crate::agent_def::RefusalOutcome::Decline
+                    && !receipt.idempotent_replay
+                {
+                    self.capture_task_refusal_output(vault, read_as, input.reason_ref);
+                }
+                SelfDispatchOutcome::TaskRefusal(SelfTaskRefusalResult {
+                    task_ref: receipt.task_ref,
+                    level: receipt.level,
+                    replay: receipt.idempotent_replay,
+                })
+            }
             Err(error) => failed(SelfEffect::TasksRefuse, error),
         })
     }
