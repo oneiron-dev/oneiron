@@ -49,7 +49,11 @@ mod probe;
 #[cfg(unix)]
 mod process;
 mod replacement;
+mod reporting;
+mod routes;
 mod session;
+mod stock;
+pub(super) use stock::{StockWeights, capture as stock_weights};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -59,13 +63,13 @@ use std::time::{Duration, Instant};
 
 use oneiron::llm::run_admission::{WorkContext, record_work_parent};
 use oneiron::llm::{
-    CacheDigest, CallSchedule, InferenceCallReceipt, SchedulingCapability, VaultRef, WorkClass,
-    WorkerKind, WorkerMode, WorkerStatus,
+    CacheDigest, CallSchedule, SchedulingCapability, VaultRef, WorkClass, WorkerKind, WorkerMode,
+    WorkerStatus,
 };
 use oneiron_driver::{
     AdmissionStop, DeclaredEnvelope, DeviceAdmission, DeviceGrant, DeviceLedger,
     ExecutorRegistration, InferenceWorker, PressureDecision, UnloadOutcome, WorkEnvelope,
-    WorkRequest, WorkTicket, WorkerActivity, WorkerPolicy, WorkerProbe, WorkerSpec,
+    WorkRequest, WorkTicket, WorkerPolicy, WorkerProbe, WorkerSpec,
 };
 
 use crate::config::models::{ProviderConfig, WorkerConfig, WorkerEnvelope};
@@ -75,7 +79,6 @@ use launch_manifest::LaunchSlot;
 pub(super) use launch_manifest::NativeLaunch;
 use launcher::{ProcessLauncher, Stores};
 use probe::HouseProbe;
-use serde_json::Value as JsonValue;
 
 pub(super) use drafter_binding::{
     DraftSeat, clear_vault_drafts, draft_seat, drafter_training_work, launch_records,
@@ -91,6 +94,15 @@ pub(super) use session::open_turn;
 pub(crate) use session::{
     AuthorityVerdict, CheckpointAuthority, NextTail, NextTurnSource, ReplyCommit, RestoreClaim,
     SnapshotScope, reply_committed, reply_committed_preparing, rung_admitted, turn_admitted,
+};
+
+pub(super) use reporting::{
+    prepare_policy, prepared_tail_status, refresh, refresh_devices, register_device_executor,
+    report_device_activity, report_device_stats, report_receipt, snapshot_status,
+};
+pub(super) use routes::{
+    ManagedLaunchEvidence, external_workers, is_current, managed_http_evidence, managed_worker,
+    serves_native,
 };
 
 /// The process's one worker host, made when the first worker is configured
@@ -538,124 +550,6 @@ pub(super) fn admit_bound_work(
     }
 }
 
-/// Retains a sanitized physical receipt on the worker that made it.
-pub(super) fn report_receipt(worker_id: &str, epoch: &str, receipt: InferenceCallReceipt) {
-    if let Some(host) = HOST.get() {
-        if let Some(hosted) = host.lock().get(worker_id) {
-            hosted.worker.record_receipt(epoch, receipt);
-        }
-    }
-}
-
-/// Registers or refreshes one executor's idle row. Managed custody exists
-/// only when this process may launch that worker; other work is recorded as
-/// external and is never an unload target. Only the row's hosted instance
-/// registers (FIX 13845): a replaced row's old clone registers nothing.
-pub(super) fn register_device_executor(worker: &InferenceWorker, idle: bool) {
-    let Some(host) = HOST.get() else {
-        return;
-    };
-    let worker_id = worker.spec().worker_id.as_str();
-    let workers = host.lock();
-    let Some((device, external)) = workers
-        .get(worker_id)
-        .filter(|hosted| hosted.worker.same_instance(worker))
-        .and_then(|hosted| {
-            let device = hosted.row.launch.as_ref()?.device.clone()?;
-            let managed = hosted.row.mode == WorkerMode::Managed
-                && host.launch_permitted.load(Ordering::SeqCst);
-            Some((device, !managed))
-        })
-    else {
-        return;
-    };
-    host.admission(&device)
-        .register_executor(ExecutorRegistration {
-            worker_id: worker_id.to_owned(),
-            external,
-            idle,
-        });
-}
-
-/// Publishes one worker-reported activity snapshot to both admission and
-/// the supervisor without deriving either side from the other.
-pub(super) fn report_device_activity(worker: &InferenceWorker, activity: WorkerActivity) {
-    register_device_executor(worker, activity.is_idle());
-    worker.report(activity);
-}
-
-/// Cross-checks a worker's own device capacity report with the pre-load
-/// query. The first valid report fills an unknown; a mismatch keeps the
-/// device query and logs rather than silently rewriting capacity. Only the
-/// row's hosted instance reports (FIX 13884): a replaced row's old clone
-/// fills nothing.
-pub(super) fn report_device_stats(worker: &InferenceWorker, stats: &JsonValue) {
-    let Some(host) = HOST.get() else {
-        return;
-    };
-    let worker_id = worker.spec().worker_id.as_str();
-    let workers = host.lock();
-    let Some(device) = workers
-        .get(worker_id)
-        .filter(|hosted| hosted.worker.same_instance(worker))
-        .and_then(|hosted| hosted.row.launch.as_ref()?.device.clone())
-    else {
-        return;
-    };
-    let ledger = host.ledger(&device);
-    let rows = stats.get("devices").and_then(JsonValue::as_array);
-    let cuda_device = format!("cuda:{device}");
-    let row = rows.and_then(|rows| {
-        rows.iter()
-            .find(|row| {
-                row.get("device")
-                    .and_then(JsonValue::as_str)
-                    .is_some_and(|name| name == device.as_str() || name == cuda_device.as_str())
-            })
-            .or_else(|| (rows.len() == 1).then(|| rows.first()).flatten())
-    });
-    let Some(bytes) = row
-        .and_then(|row| row.get("capacity_bytes"))
-        .and_then(JsonValue::as_u64)
-    else {
-        return;
-    };
-    let capacity = bytes.saturating_add((1_u64 << 20) - 1) / (1_u64 << 20);
-    match ledger.capacity() {
-        None => ledger.set_capacity(Some(capacity)),
-        Some(existing) if existing != capacity => {
-            tracing::warn!(worker = worker_id, device = %device, existing, reported = capacity, "worker and host device capacities differ");
-        }
-        Some(_) => {}
-    }
-}
-
-/// Takes up the configured `[models.sessions]` policy (I1 = C).
-pub(super) fn prepare_policy(policy: crate::config::models::sessions::SessionPreparePolicy) {
-    #[cfg(unix)]
-    session::set_prepare_policy(policy);
-    #[cfg(not(unix))]
-    let _ = policy;
-}
-
-/// The next turn's prepared tails as this process stands; `None` off Unix.
-pub(super) fn prepared_tail_status() -> Option<super::status::PreparedTailStatus> {
-    #[cfg(unix)]
-    let status = Some(session::prepared_tail_status());
-    #[cfg(not(unix))]
-    let status = None;
-    status
-}
-
-/// Sealed snapshot parking as this process stands; `None` off Unix.
-pub(super) fn snapshot_status() -> Option<super::SnapshotStatus> {
-    #[cfg(unix)]
-    let status = Some(session::snapshot_status());
-    #[cfg(not(unix))]
-    let status = None;
-    status
-}
-
 /// Puts `rows` under the process's supervisors, starting what is new, and
 /// returns their status rows in config order. Nothing at all without rows.
 pub(super) fn configure(
@@ -727,38 +621,6 @@ pub(super) fn configure(
     statuses
 }
 
-/// Each row's status as its supervisor holds it now.
-pub(super) fn refresh(statuses: &mut [WorkerStatus]) {
-    let Some(host) = HOST.get() else {
-        return;
-    };
-    let workers = host.lock();
-    for status in statuses {
-        if let Some(hosted) = workers.get(&status.worker_id) {
-            *status = hosted.worker.status();
-        }
-    }
-}
-
-/// Copies every device queue and ledger into owner-facing status. No probe.
-pub(super) fn refresh_devices(statuses: &mut Vec<super::status::DeviceStatus>) {
-    let Some(host) = HOST.get() else {
-        statuses.clear();
-        return;
-    };
-    let admissions = host
-        .admissions
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .values()
-        .cloned()
-        .collect::<Vec<_>>();
-    *statuses = admissions
-        .into_iter()
-        .map(|admission| super::status::DeviceStatus::from_snapshot(admission.snapshot()))
-        .collect();
-}
-
 /// The mounted vault's session ownership facts, aggregated per device and
 /// worker (FIX10370). Reads the cached ledgers' snapshots and filters to
 /// `vault` before aggregating; takes no registry lock and names no
@@ -806,95 +668,6 @@ pub(crate) fn session_allocations_for_vault(
         }
     }
     rows.into_values().collect()
-}
-
-/// The managed worker a rung on `provider` calling `wire_model` is bound
-/// to, when this process launches it. `None` leaves the rung as it is today.
-pub(super) fn managed_worker(provider: &str, wire_model: &str) -> Option<InferenceWorker> {
-    let host = HOST.get()?;
-    if !host.launch_permitted.load(Ordering::Relaxed) {
-        return None;
-    }
-    let workers = host.lock();
-    workers
-        .values()
-        .find(|hosted| {
-            hosted.row.mode == WorkerMode::Managed
-                && hosted.row.binding.provider == provider
-                && hosted.row.binding.model == wire_model
-        })
-        .map(|hosted| hosted.worker.clone())
-}
-
-/// The external chat workers on `provider_name` bound at construction: for
-/// each provided row that still matches its hosted row and provider exactly,
-/// the actual worker and its row's manifest pin, keyed by wire model. A row
-/// whose endpoint names a different target than its provider's base URL
-/// stays out, as do media rows. The map holds bound workers and their pins
-/// only, never secrets.
-pub(super) fn external_workers(
-    provider_name: &str,
-    provider: &ProviderConfig,
-    rows: &[WorkerConfig],
-) -> BTreeMap<String, ExternalWorker> {
-    let Some(host) = HOST.get() else {
-        return BTreeMap::new();
-    };
-    let workers = host.lock();
-    let mut bound = BTreeMap::new();
-    for row in rows {
-        if row.binding.provider != provider_name
-            || row.mode != WorkerMode::External
-            || row
-                .endpoint
-                .as_deref()
-                .is_some_and(|endpoint| endpoint != provider.base_url.as_str())
-            || !matches!(row.kind, WorkerKind::LlamaCpp | WorkerKind::Exl3)
-        {
-            continue;
-        }
-        let Some(hosted) = workers.get(&row.id) else {
-            continue;
-        };
-        if hosted.row != *row || hosted.provider != *provider {
-            continue;
-        }
-        bound.insert(
-            row.binding.model.clone(),
-            ExternalWorker {
-                worker: hosted.worker.clone(),
-                launch_manifest_sha256: hosted.row.launch_manifest_sha256.clone(),
-            },
-        );
-    }
-    bound
-}
-
-/// Whether `worker` is still its row's hosted supervisor: a replaced row's
-/// old clone is not. The host lock is released before the caller probes.
-pub(super) fn is_current(worker: &InferenceWorker) -> bool {
-    HOST.get()
-        .and_then(|host| {
-            host.lock()
-                .get(&worker.spec().worker_id)
-                .map(|hosted| hosted.worker.same_instance(worker))
-        })
-        .unwrap_or(false)
-}
-
-/// Whether a managed EXL3 worker this process launches is bound to
-/// `provider`: its chat transport then reaches that worker over its native
-/// socket (`models/native_exl3`).
-pub(super) fn serves_native(provider: &str) -> bool {
-    let Some(host) = HOST.get() else {
-        return false;
-    };
-    if !host.launch_permitted.load(Ordering::Relaxed) {
-        return false;
-    }
-    host.lock()
-        .values()
-        .any(|hosted| hosted.native_slot().is_some() && hosted.row.binding.provider == provider)
 }
 
 /// The native route of the managed EXL3 worker a call on `provider` with
@@ -979,56 +752,6 @@ pub(super) fn native_local_routes(
     _rows: &[WorkerConfig],
 ) -> BTreeMap<String, NativeRoute> {
     BTreeMap::new()
-}
-
-/// What an HTTP answer from a managed EXL3 worker must echo to keep a
-/// verified-artifacts claim (FIX 9296): the manifest digest of the launch
-/// this host started and the epoch the worker qualified with, each absent
-/// when that fact has no current record. Outer `None` is only a call no
-/// managed EXL3 worker is bound to.
-#[derive(Clone, Debug)]
-pub(super) struct ManagedLaunchEvidence {
-    pub(super) manifest_sha256: Option<String>,
-    pub(super) backend_epoch: Option<String>,
-}
-
-/// The managed EXL3 worker bound to `provider` calling `wire_model`, as its
-/// slot and readiness stand now, without waiting: `None` only when no
-/// managed EXL3 worker is bound there. A bound worker with no launch record
-/// or no ready epoch still returns `Some`, with those facts `None`, so its
-/// answers downgrade verification instead of passing unfiltered. Two
-/// snapshots racing only lose verification, never a refusal.
-pub(super) fn managed_http_evidence(
-    provider: &str,
-    wire_model: &str,
-) -> Option<ManagedLaunchEvidence> {
-    let host = HOST.get()?;
-    let (worker, slot) = {
-        let workers = host.lock();
-        let hosted = workers.values().find(|hosted| {
-            hosted.native_slot().is_some()
-                && hosted.row.binding.provider == provider
-                && hosted.row.binding.model == wire_model
-        })?;
-        (hosted.worker.clone(), Arc::clone(hosted.native_slot()?))
-    };
-    let manifest_sha256 = slot
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .as_ref()
-        .map(|record| record.manifest_sha256.clone());
-    let backend_epoch = match worker.status().readiness {
-        oneiron::llm::WorkerReadiness::Ready { observed } => observed
-            .identity
-            .backend_epoch
-            .as_ref()
-            .map(|epoch| epoch.as_str().to_owned()),
-        _ => None,
-    };
-    Some(ManagedLaunchEvidence {
-        manifest_sha256,
-        backend_epoch,
-    })
 }
 
 impl WorkerHost {
