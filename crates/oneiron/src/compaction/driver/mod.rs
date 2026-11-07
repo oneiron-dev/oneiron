@@ -121,10 +121,13 @@ pub trait CompactionBackend: Send + Sync {
     /// or why it cannot be bound; `live` is the call the run sends next.
     /// `None` from every other backend. Called on the step loop before the
     /// feed can park; `summary_token_budget` sizes the room the capture
-    /// leaves.
+    /// leaves. `prefix_sources` is every row `live` was read from, `None`
+    /// when its host did not witness them all: such a request is never
+    /// captured (FIX 9463).
     fn capture_live_fork(
         &self,
         _live: &oneiron_model::llm::LlmRequest,
+        _prefix_sources: Option<Vec<EntityId>>,
         _summary_token_budget: u64,
     ) -> Option<
         std::result::Result<

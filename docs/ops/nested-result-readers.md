@@ -1,9 +1,19 @@
 # Nested result readers
 
 A native Read job can use `self.spawn` to queue another Read job over one
-of its own stored outputs, then use `tasks.wait` for those children. An
-inherited `src` is not the child's own output and cannot be forwarded by
-this path. Scoped-agent jobs and summary jobs keep their existing doors.
+of its own stored outputs or its inherited `src`, then use `tasks.wait` for
+those children. The inherited source can be named by `src`, its handle or
+its occurrence reference. An optional range can narrow, never widen, the
+range the child received. Scoped-agent jobs and summary jobs keep their
+existing doors. Child findings are not forwarded by this path.
+
+Forwarding keeps the actual source owner's replay, path and handle; the
+immediate parent of the new job remains the child that spawned it. The
+source carries the same row witnesses its read was checked against,
+including the child's own rows and the inherited rows. Unknown witnesses
+stay unknown. The original read still checks the child's live generation,
+cutoff, range, row withholding and current source taint before delegation.
+No body copy, parent credential or ancestor attempt lease is forwarded.
 
 The nested seat uses the current child's attempt scope, or the same host
 meter when no scope exists. It keeps the caller destination and inherited
