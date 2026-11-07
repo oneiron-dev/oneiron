@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1289 facade rows, 4672 declarations.
+Census: 1289 facade rows, 4674 declarations.
 Inputs: 1218 of 1289 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1118 of 1289 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -19815,6 +19815,12 @@ class SigningPage(TypedDict):
     fields: list[EsignField]
     presentations: list[FieldPresentation]
     values: dict[str, SignatureRow]
+class SealActiveContentFacts(TypedDict):
+    javascript: bool
+    launch: bool
+class SigningSealedItem(TypedDict):
+    sha256: str
+    active_content: SealActiveContentFacts
 class SigningOutcomePage(TypedDict):
     outcome: Literal["page"]
     data: SigningPage
@@ -19823,6 +19829,7 @@ class SigningOutcomeNotYourTurn(TypedDict):
 class SigningOutcomeTerminalContent(TypedDict):
     status: DocumentStatus
     item_count: int
+    sealed_items: NotRequired[list[SigningSealedItem] | None]
 class SigningOutcomeTerminal(TypedDict):
     outcome: Literal["terminal"]
     data: SigningOutcomeTerminalContent
@@ -19872,6 +19879,7 @@ class EsignSealedItemView(TypedDict):
     sealed_version: int
     sha256: str
     profile: SealProfileEvidence
+    active_content: SealActiveContentFacts
 class EsignSealedView(TypedDict):
     attempt_ref: str
     audit_chain_sha256: str
