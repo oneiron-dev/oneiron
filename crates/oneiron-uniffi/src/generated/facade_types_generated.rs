@@ -33602,6 +33602,12 @@ pub struct PolicyPassAudit {
     )]
     pub model_notes_cut: Option<bool>,
     #[serde(
+        rename = "model_notes_budget_exhausted",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub model_notes_budget_exhausted: Option<bool>,
+    #[serde(
         rename = "typed_decisions",
         default,
         skip_serializing_if = "Option::is_none"
