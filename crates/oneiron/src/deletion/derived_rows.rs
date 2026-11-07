@@ -46,6 +46,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     },
     // FIX 9929: a public model step's kept request and result.
     |write, txn, id| crate::llm::erase_submissions_in_txn(write, txn, id),
+    // FIX 5040: a conversation summary's check material, by the summary or a window source.
+    |write, txn, id| crate::compaction::erase_check_material_in_txn(write.store, txn, id),
     // FIX 10089: every verdict memo the erased row is a source of.
     |write, txn, id| {
         crate::store::query_memo_lifetime::erase_memos_for_source_in_txn(write.store, txn, id)

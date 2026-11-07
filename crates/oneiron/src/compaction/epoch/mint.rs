@@ -120,13 +120,42 @@ pub(in crate::compaction) fn mint_epoch_summary_guarded(
     landing: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
     extra: impl FnOnce(&mut heed::RwTxn<'_>, &EpochMint) -> Result<()>,
 ) -> Result<(u64, EntityId)> {
-    let (turn_start, turn_end) = check_mint(session_ref, request, product)?;
+    mint_epoch_summary_admitted_writer(
+        vault,
+        session_ref,
+        byline,
+        request,
+        product,
+        |wtxn, _| {
+            landing(wtxn)?;
+            Ok(writer.cloned())
+        },
+        |wtxn, mint, _| extra(wtxn, mint),
+    )
+}
 
-    // `DerivedFrom` targets are the sealed request's sources: every record
-    // the window was read from (a conversation window's TURNs and MESSAGEs,
-    // or what a host-numbered log names), and for a self-written summary
-    // each home part its call wore (FIX 4465 B, Engine 10-19).
-    let derived = &summary_dependencies(request, writer);
+/// [`mint_epoch_summary_guarded`] whose `landing` also gives the writer, in
+/// the mint's own transaction, with the SUMMARY's id, before the birth links
+/// the writer's receipt (FIX 5040). A conversation's check material is
+/// admitted through the side-row wall there, so the receipt binds the bytes
+/// its row keeps. `extra` takes the writer that the birth links.
+pub(in crate::compaction) fn mint_epoch_summary_admitted_writer(
+    vault: &Vault,
+    session_ref: &EntityId,
+    byline: WriteActor,
+    request: &CompactionRequest,
+    product: &CompactionProduct,
+    landing: impl FnOnce(
+        &mut heed::RwTxn<'_>,
+        EntityId,
+    ) -> Result<Option<crate::compaction::CompactionExecution>>,
+    extra: impl FnOnce(
+        &mut heed::RwTxn<'_>,
+        &EpochMint,
+        Option<&crate::compaction::CompactionExecution>,
+    ) -> Result<()>,
+) -> Result<(u64, EntityId)> {
+    let (turn_start, turn_end) = check_mint(session_ref, request, product)?;
 
     // The keyframe's temporal position IS the compaction moment: the recorded
     // watermark. Wall-clock would make an otherwise byte-stable row depend on
@@ -136,10 +165,17 @@ pub(in crate::compaction) fn mint_epoch_summary_guarded(
     let intent_id = vault.store.clock.entity_id()?;
 
     let epoch = vault.with_write_txn_grouped(|wtxn| {
-        landing(wtxn)?;
+        let writer = landing(wtxn, summary_id)?;
+        let writer = writer.as_ref();
         // FIX 4817: a self-written summary lands only while every home part
         // its call wore still reads at the revision it was read at.
         crate::compaction::home_pins::check_home_pins_in_txn(&vault.store, wtxn, writer)?;
+        // `DerivedFrom` targets are the sealed request's sources: every
+        // record the window was read from (a conversation window's TURNs and
+        // MESSAGEs, or what a host-numbered log names), and for a
+        // self-written summary each home part its call wore (FIX 4465 B,
+        // Engine 10-19).
+        let derived = &summary_dependencies(request, writer);
         refuse_overlay_derived_mint(
             &vault.store,
             request
@@ -264,6 +300,7 @@ pub(in crate::compaction) fn mint_epoch_summary_guarded(
                 turn_start,
                 turn_end,
             },
+            writer,
         )?;
         if let Some(worlds) = &born_withdrawn {
             crate::ports::record_withdrawn_in_txn(&vault.store, wtxn, &summary_id, worlds)?;

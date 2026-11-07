@@ -503,6 +503,12 @@ side_tables! {
     COMMITMENT_SERIES_INSTANCE: VaultMeta b"commitment_series_instance:v1:" Raw;
     /// Pending Project due row of a series. Key: id16.
     COMMITMENT_SERIES_PROJECT: VaultMeta b"commitment_series_project:v1:" Raw;
+    /// A conversation summary's check material (FIX 5040): the sealed gate request, the
+    /// backend's whole reply and the gate policy of the accepted try, owned by the SUMMARY and
+    /// every source of its window. The reply is a model's words: the side-row wall admits the
+    /// material before its ref binds the receipt. An erase leaves the refs and digest only.
+    /// Key: id16(summary).
+    COMPACTION_CHECK_MATERIAL: VaultMeta b"compaction:check_material:v1:" Named Authored [accepts: crate::compaction::compaction_check_material_accepts_masked];
     /// A conversation's landed self-written summary (FIX 4465 D): its epoch, the SESSION's turn
     /// range and the host's record of what wrote it, conversation evidence included; no words.
     /// Key: id16(summary).
