@@ -30,6 +30,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SECRET_CUSTODY_INPUT, LIVE),
     (&t::SECRET_CUSTODY_NAME_INDEX, SECRET_CUSTODY),
     (&t::SECRET_CUSTODY_OUTPUT, LIVE),
+    // An owed import mark stands with the custody whose relay it ends (FIX 12291).
+    (&t::SECRET_CUSTODY_PENDING_IMPORT_MARK, LIVE),
     (&t::SECRET_CUSTODY_PENDING_REVOKE, LIVE),
     (&t::SECRET_CUSTODY_REBIND, LIVE),
     // A restore's pending credentials stand with the custody they wait on (FIX-LIST 10671).

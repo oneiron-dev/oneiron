@@ -416,11 +416,9 @@ impl<'s> SessionReadContext<'s> {
             None => (reference.trim(), ReadMode::Live),
         };
         if let Some((alias, hash)) = room_short_ref(reference) {
-            // A room's alias names its row's live body: a pin of one names
-            // no revision the room can check.
-            if mode != ReadMode::Live {
-                return Ok(None);
-            }
+            // A room's alias names its row; a pin of one is checked by the
+            // lane's read of that revision on this view, as a pinned id is
+            // (FIX 5162). A revision the row does not hold reads as none.
             return Ok(self.room_alias(alias, hash)?.map(|id| (id, mode)));
         }
         let id = match mode {

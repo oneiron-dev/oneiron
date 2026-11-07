@@ -25974,6 +25974,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/deletion/legal_hold/clone/messages.rs",
+     "purpose": "Exact stored on-record MESSAGE records for an order that names them (LEGAL-HOLD-USE = B as a clone, owner…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/deletion/legal_hold/clone/mod.rs",
      "purpose": "Native source half of an order-scoped legal clone",
      "surface": {
@@ -36216,7 +36226,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "TextField"
@@ -36224,7 +36234,7 @@
      "path": "src/entity_doc/storage.rs",
      "purpose": "Transactional entity-document storage, editable fields and immutable row pointers",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "enum": 1,
       "fn": 1
      }
@@ -37180,7 +37190,7 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 38,
+      "crate-vis": 39,
       "mod": 2,
       "re-export": 20
      }
@@ -37578,7 +37588,7 @@
      "purpose": "Typed execution of the shared acts the vault preset lists, beside the ordinary membership changes that never…",
      "surface": {
       "const": 3,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 6,
       "re-export": 3,
@@ -37603,7 +37613,7 @@
      "path": "src/federation/shared_act/removal_archive.rs",
      "purpose": "An export-first removal's archive as it is kept (FIX-LIST 8224): the delivered copy, and beside it the…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -37613,7 +37623,7 @@
      "path": "src/federation/shared_act/removal_file.rs",
      "purpose": "A kept removal archive's bytes as a file (FIX 3679, 3857): one complete body in the vault's `bodies/` under…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 21
      }
     },
     {
@@ -47603,7 +47613,7 @@
      "purpose": "The boundary cap contract (ONE-1441 §Binding cap contract, I11)",
      "surface": {
       "crate-vis": 1,
-      "fn": 2,
+      "fn": 3,
       "re-export": 1
      }
     },
@@ -62477,6 +62487,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/recovery/checkpoint/removal_files.rs",
+     "purpose": "Kept removal archives across a restore over the live vault (FIX 3679)",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/recovery/checkpoint/response_rows.rs",
      "purpose": "The row-held responses a checkpoint carries (KS-2B1, FIX 5683 part B1): a turn program's STEP bodies, LLM…",
      "surface": {
@@ -62692,7 +62712,7 @@
      "path": "src/recovery/checkpoint/write_budget.rs",
      "purpose": "The room a backup's or a rehearsal's writes claim on a disk they share with a serving host's uploads (FIX…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 1
      }
     },
@@ -77030,7 +77050,7 @@
      "path": "src/sync/client/documents.rs",
      "purpose": "Document import and durable local-journal confirmation on the one socket",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -77884,6 +77904,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/documents/copy.rs",
+     "purpose": "A marked repo source's copy stream on the text plane of a device that holds the source (FIX 10872): its…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/documents/destination.rs",
      "purpose": "Destination policy for text-plane admission and release",
      "surface": {
@@ -77912,7 +77942,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "DocumentRegistry",
@@ -77921,7 +77951,7 @@
      "path": "src/sync/documents/mod.rs",
      "purpose": "Per-entity text documents",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "fn": 16,
       "re-export": 2,
       "struct": 2
@@ -80011,7 +80041,7 @@
      "path": "src/sync/selector/secret_projection.rs",
      "purpose": "The masked copy every sync peer gets of a marked repo item (FIX 7608 slice 4; ruling A3: sync always carries…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 3
      }
     },
@@ -80024,9 +80054,19 @@
      "path": "src/sync/selector/secret_projection/documents.rs",
      "purpose": "A marked repo item's entity document as a sync peer gets it, a peer's edit of it as the source text takes…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 7,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/selector/secret_projection/documents/device.rs",
+     "purpose": "A marked repo source's copy stream on a device that holds the source (FIX 10872, Engine 04:48)",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -92211,7 +92251,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 62,
+     "files": 63,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92848,7 +92888,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 128,
+     "files": 129,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -93135,7 +93175,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 375,
+     "files": 377,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93345,9 +93385,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 176,
+   "over_bar": 178,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6585,
+   "source_files": 6589,
    "test_files": 895
   },
   "oneiron-android": {
@@ -108253,7 +108293,7 @@
      "path": "src/lib/boundary.rs",
      "purpose": "Shared caps, parse/validate helpers and napi error mapping for the legacy surface",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 26
      }
     },
     {
@@ -113252,7 +113292,7 @@
      "path": "src/api/booking/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 16
      }
     },
     {
@@ -113466,7 +113506,7 @@
      "path": "src/api/booking/validate.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -133934,7 +133974,7 @@
      "path": "src/critic_lens.rs",
      "purpose": "Critic lens catalogue vocabulary, seed catalogue and pure shape checks",
      "surface": {
-      "const": 7,
+      "const": 6,
       "fn": 9,
       "struct": 2
      }
@@ -139302,15 +139342,16 @@
      "notable": [
       "StoredMessagePart",
       "WitnessMessageBodyAuthor",
-      "WitnessMessageEnvelope"
+      "WitnessMessageEnvelope",
+      "WitnessMetadataMeasure"
      ],
      "path": "src/witness_message_body.rs",
      "purpose": "Canonical MESSAGE body vocabulary, encoding, and structural validation",
      "surface": {
       "const": 5,
       "enum": 2,
-      "fn": 4,
-      "struct": 1
+      "fn": 6,
+      "struct": 2
      }
     },
     {

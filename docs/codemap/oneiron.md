@@ -2132,6 +2132,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/deletion/legal_hold/clone/auth.rs` | src | s | 2 struct · 3 fn | HostLegalChannel, HostLegalConnection | The inherited manager-created listener is the native transport authority |
 | `src/deletion/legal_hold/clone/collector.rs` | src | s | 4 crate-vis | — | Streaming ciphertext and exact completion shared by native source families |
 | `src/deletion/legal_hold/clone/live.rs` | src | m | 1 fn · 7 crate-vis | — | Exact HOST order standing for a live entry, independent of any one socket |
+| `src/deletion/legal_hold/clone/messages.rs` | src | s | 1 crate-vis | — | Exact stored on-record MESSAGE records for an order that names them (LEGAL-HOLD-USE = B as a clone, owner… |
 | `src/deletion/legal_hold/clone/mod.rs` | src | s | 1 fn · 1 re-export · 1 crate-vis | — | Native source half of an order-scoped legal clone |
 | `src/deletion/legal_hold/confirmation.rs` | src | m | 2 struct · 4 fn · 2 crate-vis | LiftAndEraseShownState, ShownCustomerHold | The owner's one "Lift the hold and erase?" confirm, bound to what it showed (OF-470, FIX 1462), and the… |
 | `src/deletion/legal_hold/held_scrubs.rs` | src | s | 2 crate-vis | — | What a legal hold kept an erase from scrubbing, settled once it lifts (FIX 6386, 7993, 7994) |
@@ -2954,7 +2955,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/entity_doc/registry.rs` | src | s | 3 struct · 8 fn · 5 crate-vis | EntityDocumentHead, EntityDocumentView, RegistryStatus | Per-vault sharing of the documents reads are using; durable bytes, not the registry, own truth |
 | `src/entity_doc/review_explainer/mod.rs` | src | s | 10 struct · 2 enum · 2 fn · 1 re-export · 1 crate-vis | ReviewBundleExplanation, ReviewBundleInput, ReviewComplexity, ReviewDiagram, ReviewDiagramEdge, ReviewDiagramNode, ReviewExplainerCallReceipt, ReviewExplainerEscalation +4 | On-demand review explainers over the exact pending fork set |
 | `src/entity_doc/review_explainer/run.rs` | src | m | 2 struct · 1 enum · 1 fn | ReviewExplainerError, ReviewExplainerExecution, ReviewExplainerRoute | Host-routed, lease-bounded generation |
-| `src/entity_doc/storage.rs` | src | m | 1 enum · 1 fn · 24 crate-vis | TextField | Transactional entity-document storage, editable fields and immutable row pointers |
+| `src/entity_doc/storage.rs` | src | L | 1 enum · 1 fn · 25 crate-vis | TextField | Transactional entity-document storage, editable fields and immutable row pointers |
 | `src/entity_doc/storage/history.rs` | src | s | 3 crate-vis | — | The retained states of an entity's document, read as record bodies |
 | `src/entity_doc/storage/repo_index.rs` | src | s | 1 crate-vis | — | A document's text index when the repo blob its row stands for is masked again (FIX 7608 slice 3): the… |
 | `src/entity_doc/summary.rs` | src | m | 2 fn · 7 crate-vis | — | Scope-summary documents: retained derivations, purpose and editor `keep` memo |
@@ -3030,7 +3031,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/federation/guest.rs` | src | s | 2 struct · 4 fn · 3 const | GuestShareEnvelope, GuestShareEnvelopeBody | Guest-share envelope body and signed envelope codec |
 | `src/federation/membership_gate.rs` | src | m | 1 enum · 1 fn · 1 re-export · 10 crate-vis | MembershipStanding | Transaction-bound shared-vault membership write authorization |
 | `src/federation/membership_gate_tests.rs` | test | s | — | — | — |
-| `src/federation/mod.rs` | src | s | 2 mod · 20 re-export · 38 crate-vis | — | Federation grant record substrate |
+| `src/federation/mod.rs` | src | s | 2 mod · 20 re-export · 39 crate-vis | — | Federation grant record substrate |
 | `src/federation/org_admin.rs` | src | s | 1 struct · 1 enum · 7 fn · 1 re-export | OrgAdminError, OrgAdminPolicy | Closed organization-administration powers |
 | `src/federation/own_device.rs` | src | s | 1 fn · 6 crate-vis | — | FIX 3134: an owner's own device holds a member FEDERATION_GRANT at its home, so the device's residence… |
 | `src/federation/peer_authority.rs` | src | s | 4 fn · 2 const · 2 crate-vis | — | Peer authority-log admission (FED-03) and roster refolding |
@@ -3061,10 +3062,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/federation/shared_act/membership/invitation.rs` | src | m | 1 struct · 1 enum · 6 fn · 1 const · 7 crate-vis | SharedInvitation, SharedInvitationState | Invitee acceptance (CROSS-ARCH-0024: "Only an accepted, vault-specific invitation" grants membership) |
 | `src/federation/shared_act/membership/owner_recovery.rs` | src | s | 1 enum · 2 fn · 1 crate-vis | OwnerRecoveryAuthorization | Who authorized a proof-of-control owner recovery (ARCH-0043, OF-163; FIX 1812) |
 | `src/federation/shared_act/membership/pending_execution.rs` | src | m | 8 crate-vis | — | A membership change no host issuer could sign (FIX 12335, Engine 13:13 call A) |
-| `src/federation/shared_act/mod.rs` | src | m | 11 struct · 2 enum · 6 fn · 3 const · 3 re-export · 3 crate-vis | DeleteVaultPlan, RemovalExportCopy, RemovalExportDelivery, RemoveOwnerPlan, SharedActExecution, SharedActExecutionReceipt, SharedActExport, SharedActKind +5 | Typed execution of the shared acts the vault preset lists, beside the ordinary membership changes that never… |
+| `src/federation/shared_act/mod.rs` | src | m | 11 struct · 2 enum · 6 fn · 3 const · 3 re-export · 4 crate-vis | DeleteVaultPlan, RemovalExportCopy, RemovalExportDelivery, RemoveOwnerPlan, SharedActExecution, SharedActExecutionReceipt, SharedActExport, SharedActKind +5 | Typed execution of the shared acts the vault preset lists, beside the ordinary membership changes that never… |
 | `src/federation/shared_act/removal.rs` | src | s | 4 fn · 6 crate-vis | — | Removal archives, the held-erase completion, and the receipt, outcome and deletion reads |
-| `src/federation/shared_act/removal_archive.rs` | src | m | 16 crate-vis | — | An export-first removal's archive as it is kept (FIX-LIST 8224): the delivered copy, and beside it the… |
-| `src/federation/shared_act/removal_file.rs` | src | m | 18 crate-vis | — | A kept removal archive's bytes as a file (FIX 3679, 3857): one complete body in the vault's `bodies/` under… |
+| `src/federation/shared_act/removal_archive.rs` | src | m | 17 crate-vis | — | An export-first removal's archive as it is kept (FIX-LIST 8224): the delivered copy, and beside it the… |
+| `src/federation/shared_act/removal_file.rs` | src | m | 21 crate-vis | — | A kept removal archive's bytes as a file (FIX 3679, 3857): one complete body in the vault's `bodies/` under… |
 | `src/federation/shared_act/removal_import.rs` | src | m | 1 struct · 1 enum · 3 fn | ReceivedRemovalArchive, ReceivedRemovalArchiveState | A removed person's device takes in the archive an export-first removal delivered to it (FIX 11197) |
 | `src/federation/shared_creation.rs` | src | s | 2 struct · 1 enum · 3 fn · 1 re-export · 3 crate-vis | InitialSharedMember, SharedVaultCreation, SharedVaultPreset | Creation-time membership defaults, materialized once as explicit grant/policy rows |
 | `src/federation/shared_creation/training_setup.rs` | src | s | 2 struct · 1 enum · 2 fn · 1 crate-vis | SharedTrainingSetup, SharedTrainingSetupAnswer, SharedTrainingSetupQuestion | A shared vault's one training question, asked once at setup (OF-420 T3) |
@@ -3855,7 +3856,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/campaign_records/records.rs` | src | s | 4 struct · 1 enum · 2 fn · 1 const | CampaignDefinition, CampaignLifecycle, CampaignRecord, CreateCampaignRequest, UpdateCampaignRequest | Versioned cohort records, lifecycle values and owner-bound request shapes |
 | `src/memory/campaign_records/stage_results.rs` | src | s | 3 struct · 4 enum | CampaignEnrollmentAttemptPayload, NoShowRecoveryPlan, NoShowRecoveryStep, ReentryPlan, StageProjectResult, StageRoute, WakeCondition | Stage projection outcomes, wake/re-entry plans and their queued reference payload |
 | `src/memory/campaign_records/verb_names.rs` | src | s | 18 const | — | Stable names and discovery tables of campaign and standing-query verbs |
-| `src/memory/caps.rs` | src | s | 2 fn · 1 re-export · 1 crate-vis | — | The boundary cap contract (ONE-1441 §Binding cap contract, I11) |
+| `src/memory/caps.rs` | src | s | 3 fn · 1 re-export · 1 crate-vis | — | The boundary cap contract (ONE-1441 §Binding cap contract, I11) |
 | `src/memory/caps/tests.rs` | test | s | — | — | — |
 | `src/memory/channel_doors/lifecycle.rs` | src | m | 5 struct · 2 enum · 7 fn | ChannelIdentityBindRequest, ChannelIdentityCustody, ChannelIdentityLifecycleReceipt, ChannelIdentityProvisionRequest, ChannelIdentityReleaseRequest, ChannelIdentityRequest, ChannelIdentityView | ChannelIdentity lifecycle doors: provision, bind, read and release a channel identity |
 | `src/memory/channel_doors/mod.rs` | src | s | 4 re-export | — | Typed ChannelIdentity, selection, passport and delivery-window doors |
@@ -5086,6 +5087,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/recovery/checkpoint/payload/structure.rs` | src | s | 6 crate-vis | — | The id links a structure row keeps (FIX 6376) |
 | `src/recovery/checkpoint/payload/sync.rs` | src | m | 5 crate-vis | — | KS7-3's port (FIX 5688 KS7-3a): each mixed sync carrier row split by the sync families' own codecs… |
 | `src/recovery/checkpoint/rebuild.rs` | src | m | 8 crate-vis | — | Rebuild mechanical projections and reset leased attempt ownership |
+| `src/recovery/checkpoint/removal_files.rs` | src | m | 5 crate-vis | — | Kept removal archives across a restore over the live vault (FIX 3679) |
 | `src/recovery/checkpoint/response_rows.rs` | src | m | 13 crate-vis | — | The row-held responses a checkpoint carries (KS-2B1, FIX 5683 part B1): a turn program's STEP bodies, LLM… |
 | `src/recovery/checkpoint/response_rows/removals.rs` | src | s | 4 crate-vis | — | What an erase since a checkpoint's cut took from rows, taken again from the rows a restore lands (FIX 10461… |
 | `src/recovery/checkpoint/response_rows/replay.rs` | src | s | 4 crate-vis | — | The census, binding and stale release of a replay row's and a step start's parts (FIX 9180, coord-b slice d… |
@@ -5106,7 +5108,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/recovery/checkpoint/watermark.rs` | src | m | 3 struct · 1 enum · 17 fn · 1 type · 1 const · 1 re-export · 7 crate-vis | BackupMarker, BackupSelection, BackupSnapshotReceipt, BackupWatermark | The backup watermark: where a vault stood when a backup was taken, and where it stands now, so a host backs… |
 | `src/recovery/checkpoint/watermark/marker.rs` | src | s | 2 crate-vis | — | The strict read of a label's backup marker (FIX 6777): what every public reader of the marker… |
 | `src/recovery/checkpoint/window_pad_refs.rs` | src | s | 3 crate-vis | — | A window's persisted snapshot in a physical image (KS-5, FIX 7107): a `sync_state` `d:w:` row goes with its… |
-| `src/recovery/checkpoint/write_budget.rs` | src | s | 1 re-export · 10 crate-vis | — | The room a backup's or a rehearsal's writes claim on a disk they share with a serving host's uploads (FIX… |
+| `src/recovery/checkpoint/write_budget.rs` | src | s | 1 re-export · 11 crate-vis | — | The room a backup's or a rehearsal's writes claim on a disk they share with a serving host's uploads (FIX… |
 | `src/recovery/checkpoint/write_estimate.rs` | src | s | 4 crate-vis | — | The bound a restore's copy claims ahead for what it writes past its bodies and rows (FIX 5613), worked out… |
 | `src/recovery/document.rs` | src | m | 3 struct · 1 fn · 16 crate-vis | CanonicalDocument, CanonicalHead, CanonicalHeadMove | Canonical entity-local documents and their bound workflows |
 | `src/recovery/document/materialize.rs` | src | m | 3 crate-vis | — | Scoped NOTE replacement and immutable-workflow preflight in one transaction |
@@ -6301,7 +6303,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/client/artifacts.rs` | src | s | 4 crate-vis | — | Pinned artifact publications on the owner lane: each owed one goes out in bounded parts once the NOTE… |
 | `src/sync/client/base.rs` | src | m | 1 struct · 16 fn · 18 crate-vis | SyncClient | SyncClient construction, window and ephemeral accessors, and root persistence |
 | `src/sync/client/connect.rs` | src | s | 3 fn · 1 re-export | — | Public Connect delivery/rejoin over the production guest admission path |
-| `src/sync/client/documents.rs` | src | m | 3 crate-vis | — | Document import and durable local-journal confirmation on the one socket |
+| `src/sync/client/documents.rs` | src | m | 4 crate-vis | — | Document import and durable local-journal confirmation on the one socket |
 | `src/sync/client/endpoint.rs` | src | s | 4 crate-vis | — | FIX 8862: where this machine's sync credentials may go |
 | `src/sync/client/federated.rs` | src | m | 7 fn · 1 re-export · 7 crate-vis | — | Federated admission and staged vault-import confirmation |
 | `src/sync/client/federation_replay.rs` | src | s | 4 fn | — | Durable inbound federation drain, entered on startup, receive and timer ticks |
@@ -6380,10 +6382,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/custody/witness.rs` | src | s | 9 crate-vis | — | A custody input's witness parts on the window plane (FIX 8088): a witness past one row rides beside its… |
 | `src/sync/document_pins.rs` | src | m | 14 crate-vis | — | FIX 853 (OF-460): document quote pins on the window plane |
 | `src/sync/document_pins/checkpoint.rs` | src | s | 3 crate-vis | — | A document pin in a checkpoint (KS7-3a, KS7-3b), read with the pin codec and filed under its own key: a… |
+| `src/sync/documents/copy.rs` | src | s | 7 crate-vis | — | A marked repo source's copy stream on the text plane of a device that holds the source (FIX 10872): its… |
 | `src/sync/documents/destination.rs` | src | s | 3 fn · 2 crate-vis | — | Destination policy for text-plane admission and release |
 | `src/sync/documents/entity.rs` | src | s | 6 crate-vis | — | A non-NOTE record's text on the sync plane (FIX 8871): the frames and the local journal around its canonical… |
 | `src/sync/documents/held_copy.rs` | src | s | 2 fn | — | Owner review and exact canonical settlement of a retained document-copy lineage (FIX12419, document-only) |
-| `src/sync/documents/mod.rs` | src | m | 2 struct · 16 fn · 2 re-export · 20 crate-vis | DocumentRegistry, EntityDocument | Per-entity text documents |
+| `src/sync/documents/mod.rs` | src | L | 2 struct · 16 fn · 2 re-export · 21 crate-vis | DocumentRegistry, EntityDocument | Per-entity text documents |
 | `src/sync/documents/note_fork_upload.rs` | src | s | 2 fn · 2 crate-vis | — | An own device's queue of replica-local NOTE forks for the NOTE's authority (FIX 12789), beside its queued… |
 | `src/sync/documents/note_requests.rs` | src | s | 2 fn · 2 crate-vis | — | Durable semantic NOTE requests for an authority-owned document subscription |
 | `src/sync/documents/note_state.rs` | src | s | 2 crate-vis | — | The authenticated NOTE state envelope (FIX 2401; OF-073): every NOTE text-plane frame names its head, its… |
@@ -6563,8 +6566,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/selector/note_admission.rs` | src | s | 1 crate-vis | — | Transaction-bound NOTE selector admission |
 | `src/sync/selector/peer_confidence.rs` | src | s | 1 struct · 3 fn · 1 const · 1 crate-vis | PeerConfidence | Per-peer confidence for federated claims (OF-149, ARCH-0043): how far this vault believes what one… |
 | `src/sync/selector/scope.rs` | src | m | 11 crate-vis | — | Export scope tables: coreference consent context, per-source facet scope mirror, and per-entity decisions |
-| `src/sync/selector/secret_projection.rs` | src | s | 3 re-export · 6 crate-vis | — | The masked copy every sync peer gets of a marked repo item (FIX 7608 slice 4; ruling A3: sync always carries… |
-| `src/sync/selector/secret_projection/documents.rs` | src | m | 1 struct · 7 fn · 13 crate-vis | RepoCopyAliases | A marked repo item's entity document as a sync peer gets it, a peer's edit of it as the source text takes… |
+| `src/sync/selector/secret_projection.rs` | src | s | 3 re-export · 7 crate-vis | — | The masked copy every sync peer gets of a marked repo item (FIX 7608 slice 4; ruling A3: sync always carries… |
+| `src/sync/selector/secret_projection/documents.rs` | src | m | 1 struct · 7 fn · 14 crate-vis | RepoCopyAliases | A marked repo item's entity document as a sync peer gets it, a peer's edit of it as the source text takes… |
+| `src/sync/selector/secret_projection/documents/device.rs` | src | m | 8 crate-vis | — | A marked repo source's copy stream on a device that holds the source (FIX 10872, Engine 04:48) |
 | `src/sync/selector/secret_projection/documents/settlement.rs` | src | m | 1 struct · 5 fn · 5 crate-vis | RepoCopyEditReview | Owner settlement of a retained document-copy lineage (FIX12419, document-only) |
 | `src/sync/selector/secret_projection/frames.rs` | src | m | 5 crate-vis | — | A window blob as a sync peer gets it, and a peer's blob as this window takes it (FIX 7608 slice 4, part 2) |
 | `src/sync/selector/secret_projection/frames/shallow_tail.rs` | src | m | 1 crate-vis | — | Rebuild held retained operations with an unchanged root or exact frontier retarget |
