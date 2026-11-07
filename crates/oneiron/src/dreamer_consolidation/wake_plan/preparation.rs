@@ -17,6 +17,7 @@ use crate::edge::EdgeKind;
 use crate::gate::PolicyManifestResolution;
 use crate::ports::EdgeDirection;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
+use crate::settings::ReadDestination;
 use crate::{EntityId, Result, Vault};
 use oneiron_model::llm::{Scope, ScopeResource};
 
@@ -39,13 +40,15 @@ pub(super) struct QueuedPreparation {
 }
 
 /// What the wake froze before it finishes its plans: each TURN's text or
-/// refusal, each attempt's lineage and round, and the completed chunks.
+/// refusal, each attempt's lineage and round, the completed chunks, and the
+/// destination every plan's neighbourhood is listed for (FIX 12735).
 pub(super) struct Frozen<'a> {
     pub(super) texts: &'a BTreeMap<EntityId, TurnText>,
     pub(super) refused_texts: &'a BTreeMap<EntityId, &'static str>,
     pub(super) lineage: &'a BTreeMap<[u8; 16], retry::Lineage>,
     pub(super) rounds: &'a BTreeMap<[u8; 16], (String, String)>,
     pub(super) completed: &'a BTreeSet<String>,
+    pub(super) destination: &'a ReadDestination,
 }
 
 /// Each queued attempt of the wake's scope, prepared or refused, and every
@@ -253,6 +256,7 @@ pub(super) fn finish_preparations(
         lineage,
         rounds,
         completed,
+        destination,
     } = frozen;
     let mut known_rows = BTreeMap::new();
     for outcome in preparations.values_mut() {
@@ -333,7 +337,8 @@ pub(super) fn finish_preparations(
             *outcome = AttemptPreparation::ResidencyDeferred;
             continue;
         }
-        let (neighbourhood, rows) = neighbourhood_in(vault, txn, read, plan, sources, texts)?;
+        let (neighbourhood, rows) =
+            neighbourhood_in(vault, txn, read, plan, sources, texts, destination)?;
         known_rows.extend(rows);
         plan.neighbourhood = neighbourhood;
         plan.source_versions = ids
