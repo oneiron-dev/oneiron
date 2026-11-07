@@ -398,7 +398,7 @@ impl Memory<'_> {
     /// ref contract"): no snapshot of another commit or another repo is
     /// served under an admitted ref. The run's lane must read the repo and
     /// the snapshot's artifact.
-    fn repo_pinned_snapshot(
+    pub(super) fn repo_pinned_snapshot(
         &self,
         binding: &RepoRunBinding,
         admitted: &RepoRunAdmitted,

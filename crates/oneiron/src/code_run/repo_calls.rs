@@ -13,8 +13,8 @@ use crate::memory::repo_doors::{
     RepoCheckoutBindInput, RepoExportInput, RepoMergeQueueEnqueueInput, RepoMergeQueueObserveInput,
     RepoProposalSubmitInput, RepoSnapshotsGetInput, RepoSnapshotsIngestInput,
     RepoSnapshotsReadInput, RepoSymbolsDeclareInput, RepoSymbolsDefinitionsInput,
-    RepoSymbolsReleaseInput, RepoSymbolsRenewInput, RepoViewsGetInput, RepoViewsReadInput,
-    RepoWorkOpenInput,
+    RepoSymbolsNeighborsInput, RepoSymbolsReleaseInput, RepoSymbolsRenewInput, RepoViewsGetInput,
+    RepoViewsReadInput, RepoWorkOpenInput,
 };
 use crate::task_verb::sdk::RunVerb;
 
@@ -29,6 +29,8 @@ pub enum RepoRunCall {
     SnapshotsRead(RepoSnapshotsReadInput),
     /// `self.code.symbols.definitions`.
     SymbolsDefinitions(RepoSymbolsDefinitionsInput),
+    /// `self.code.symbols.neighbors`.
+    SymbolsNeighbors(RepoSymbolsNeighborsInput),
     /// `self.code.views.get`.
     ViewsGet(RepoViewsGetInput),
     /// `self.code.views.read`.
@@ -63,6 +65,7 @@ impl RepoRunCall {
             Self::SnapshotsGet(_) => SelfEffect::RepoSnapshotsGet,
             Self::SnapshotsRead(_) => SelfEffect::RepoSnapshotsRead,
             Self::SymbolsDefinitions(_) => SelfEffect::RepoSymbolsDefinitions,
+            Self::SymbolsNeighbors(_) => SelfEffect::RepoSymbolsNeighbors,
             Self::ViewsGet(_) => SelfEffect::RepoViewsGet,
             Self::ViewsRead(_) => SelfEffect::RepoViewsRead,
             Self::MergeQueueObserve(_) => SelfEffect::RepoMergeQueueObserve,
@@ -100,6 +103,7 @@ impl RepoRunCall {
             Self::SnapshotsGet(_)
             | Self::SnapshotsRead(_)
             | Self::SymbolsDefinitions(_)
+            | Self::SymbolsNeighbors(_)
             | Self::SnapshotsIngest(_)
             | Self::WorkOpen(_)
             | Self::CheckoutBind(_)
@@ -114,6 +118,7 @@ impl RepoRunCall {
             RunVerb::SelfCodeSnapshotsGet => Self::SnapshotsGet(typed(input)?),
             RunVerb::SelfCodeSnapshotsRead => Self::SnapshotsRead(typed(input)?),
             RunVerb::SelfCodeSymbolsDefinitions => Self::SymbolsDefinitions(typed(input)?),
+            RunVerb::SelfCodeSymbolsNeighbors => Self::SymbolsNeighbors(typed(input)?),
             RunVerb::SelfCodeViewsGet => Self::ViewsGet(typed(input)?),
             RunVerb::SelfCodeViewsRead => Self::ViewsRead(typed(input)?),
             RunVerb::SelfCodeMergeQueueObserve => Self::MergeQueueObserve(typed(input)?),
@@ -138,6 +143,7 @@ impl RepoRunCall {
             Self::SnapshotsGet(_) => Self::SnapshotsGet(retyped(args)?),
             Self::SnapshotsRead(_) => Self::SnapshotsRead(retyped(args)?),
             Self::SymbolsDefinitions(_) => Self::SymbolsDefinitions(retyped(args)?),
+            Self::SymbolsNeighbors(_) => Self::SymbolsNeighbors(retyped(args)?),
             Self::ViewsGet(_) => Self::ViewsGet(retyped(args)?),
             Self::ViewsRead(_) => Self::ViewsRead(retyped(args)?),
             Self::MergeQueueObserve(_) => Self::MergeQueueObserve(retyped(args)?),
@@ -155,10 +161,11 @@ impl RepoRunCall {
 }
 
 /// Every run repo effect, in row order.
-const REPO_EFFECTS: [SelfEffect; 15] = [
+const REPO_EFFECTS: [SelfEffect; 16] = [
     SelfEffect::RepoSnapshotsGet,
     SelfEffect::RepoSnapshotsRead,
     SelfEffect::RepoSymbolsDefinitions,
+    SelfEffect::RepoSymbolsNeighbors,
     SelfEffect::RepoViewsGet,
     SelfEffect::RepoViewsRead,
     SelfEffect::RepoMergeQueueObserve,
@@ -182,6 +189,7 @@ impl SelfEffect {
             Self::RepoSnapshotsGet
                 | Self::RepoSnapshotsRead
                 | Self::RepoSymbolsDefinitions
+                | Self::RepoSymbolsNeighbors
                 | Self::RepoViewsGet
                 | Self::RepoViewsRead
                 | Self::RepoMergeQueueObserve

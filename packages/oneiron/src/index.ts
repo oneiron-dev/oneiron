@@ -2329,6 +2329,8 @@ export class Oneiron {
         release: (input: Facade.CodeSymbolsTaskRequest): Facade.CodeSymbolsReleased => this.#call(() => this.#client.vaultCodeSymbolsRelease(input) as Facade.CodeSymbolsReleased),
         /** Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language. */
         definitions: (input: Facade.CodeSnapshotDefinitionsRequest): Facade.CodeSnapshotDefinitionsView => this.#call(() => this.#client.vaultCodeSymbolsDefinitions(input) as Facade.CodeSnapshotDefinitionsView),
+        /** Read one-hop calls, imports and refs from one pinned symbol manifest after both endpoints pass the caller's native read checks; citations use that snapshot's full-file BLAKE3 hashes. */
+        neighbors: (input: Facade.CodeSnapshotNeighborsRequest): Facade.CodeSnapshotNeighborsView => this.#call(() => this.#client.vaultCodeSymbolsNeighbors(input) as Facade.CodeSnapshotNeighborsView),
       },
       /** Stage one file change of a repository as a Proposed proposal with its retained base, under the owner's lens catalog or, with none, the vault's review policy. Owner only. Nothing is approved, queued or landed. */
       proposal_submit: (input: Facade.CodeProposalSubmitRequest): Facade.CodeProposalSubmitted => this.#call(() => this.#client.vaultCodeProposalSubmit(input) as Facade.CodeProposalSubmitted),
@@ -2582,6 +2584,8 @@ export class Oneiron {
       symbols: {
         /** Reads a snapshot's exact-name Rust definitions on paths the attached run's Grant reads. */
         definitions: (input: Facade.LiveRunRequest<Facade.RepoSymbolsDefinitionsInput>): Facade.RepoSymbolsDefinitionsOutput => this.#call(() => this.#client.vaultRepoSymbolsDefinitions(input) as Facade.RepoSymbolsDefinitionsOutput),
+        /** Read one-hop calls, imports and refs from one pinned symbol manifest after both endpoints pass the caller's native read checks; citations use that snapshot's full-file BLAKE3 hashes. */
+        neighbors: (input: Facade.LiveRunRequest<Facade.RepoSymbolsNeighborsInput>): Facade.RepoSymbolsNeighborsOutput => this.#call(() => this.#client.vaultRepoSymbolsNeighbors(input) as Facade.RepoSymbolsNeighborsOutput),
         /** Declares current symbols of the attached run's own work on paths its Grant edits, for its TASK; an overlap waits, never refused. */
         declare: (input: Facade.LiveRunRequest<Facade.RepoSymbolsDeclareInput>): Facade.RepoSymbolsDeclareOutput => this.#call(() => this.#client.vaultRepoSymbolsDeclare(input) as Facade.RepoSymbolsDeclareOutput),
         /** Extends the attached run's own symbol declaration by its declared lifetime. */

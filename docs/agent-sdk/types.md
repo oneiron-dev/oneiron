@@ -3321,6 +3321,8 @@ class Oneiron:
             """Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies, approves and schedules nothing."""
         def definitions(self, spec: Facade.CodeSnapshotDefinitionsRequest) -> Facade.CodeSnapshotDefinitionsView:
             """Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language."""
+        def neighbors(self, spec: Facade.CodeSnapshotNeighborsRequest) -> Facade.CodeSnapshotNeighborsView:
+            """Read one-hop calls, imports and refs from one pinned symbol manifest after both endpoints pass the caller's native read checks; citations use that snapshot's full-file BLAKE3 hashes."""
     class _VaultCodeSecretsVerbs:
         def get(self, spec: Facade.CodeRepoRequest) -> Facade.CodeRepoSecretsView:
             """Read one repository's marked secrets and linked remediations, value-free: each mark's blob, path, detector kind, where the push saw it and its custody handle. Owner only."""
@@ -3558,6 +3560,8 @@ class Oneiron:
     class _VaultRepoSymbolsVerbs:
         def definitions(self, spec: Facade.LiveRunRequest[Facade.RepoSymbolsDefinitionsInput]) -> Facade.RepoSymbolsDefinitionsOutput:
             """Reads a snapshot's exact-name Rust definitions on paths the attached run's Grant reads."""
+        def neighbors(self, spec: Facade.LiveRunRequest[Facade.RepoSymbolsNeighborsInput]) -> Facade.RepoSymbolsNeighborsOutput:
+            """Read one-hop calls, imports and refs from one pinned symbol manifest after both endpoints pass the caller's native read checks; citations use that snapshot's full-file BLAKE3 hashes."""
         def declare(self, spec: Facade.LiveRunRequest[Facade.RepoSymbolsDeclareInput]) -> Facade.RepoSymbolsDeclareOutput:
             """Declares current symbols of the attached run's own work on paths its Grant edits, for its TASK; an overlap waits, never refused."""
         def renew(self, spec: Facade.LiveRunRequest[Facade.RepoSymbolsRenewInput]) -> Facade.RepoSymbolsRenewOutput:
