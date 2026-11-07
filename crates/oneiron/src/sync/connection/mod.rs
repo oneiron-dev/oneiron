@@ -43,6 +43,7 @@ mod note_reads;
 mod residence_mode;
 mod server_close;
 mod session;
+mod shared_leave;
 mod steady;
 mod topology;
 
@@ -286,6 +287,7 @@ impl SyncConnection {
             .map_err(|_| TransportError::InvalidPayload("the sync server URL does not parse"))?;
         url.set_path(LEFT_NOTICES_PATH);
         url.set_query(None);
+        shared_leave::require_credential_transport(&url)?;
         let headers = credential
             .left_notice_headers(crate::unix_seconds_now())
             .map_err(TransportError::InvalidPayload)?;
@@ -365,6 +367,18 @@ impl SyncConnection {
         member: &str,
     ) -> Result<Option<crate::sync::shared_leave::SharedLeaveReceipt>, crate::sync::TransportError>
     {
+        let Some(notice) = self.fetch_shared_leave_notice(vault_id, member).await? else {
+            return Ok(None);
+        };
+        self.confirm_shared_leave_notice(&notice).await.map(Some)
+    }
+
+    async fn fetch_shared_leave_notice(
+        &self,
+        vault_id: u64,
+        member: &str,
+    ) -> Result<Option<crate::sync::shared_leave::VerifiedLeaveNotice>, crate::sync::TransportError>
+    {
         use crate::sync::TransportError;
         use crate::sync::shared_leave::{LeaveNoticeCheck, first_verified_leave};
 
@@ -406,6 +420,15 @@ impl SyncConnection {
             }
             LeaveNoticeCheck::Refused => return Ok(None),
         };
+        Ok(Some(notice))
+    }
+
+    async fn confirm_shared_leave_notice(
+        &self,
+        notice: &crate::sync::shared_leave::VerifiedLeaveNotice,
+    ) -> Result<crate::sync::shared_leave::SharedLeaveReceipt, crate::sync::TransportError> {
+        use crate::sync::TransportError;
+
         if !self.stop_for_leave().await {
             return Err(TransportError::Storage(
                 "the sync lane did not quiesce for the leave; retry next round".to_owned(),
@@ -430,10 +453,9 @@ impl SyncConnection {
         };
         crate::sync::shared_leave::confirm_verified_shared_leave(
             self.manager.vault(),
-            &notice,
+            notice,
             unqueued,
         )
-        .map(Some)
         .map_err(|e| TransportError::Storage(e.to_string()))
     }
 
