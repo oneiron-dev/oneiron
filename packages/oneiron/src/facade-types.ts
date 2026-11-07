@@ -3693,7 +3693,7 @@ export type ExportCheck = { hash_mismatches: string[]; probe_coverage_matches: b
 /** `oneiron::skill_optimize::training_choice::SwapChoice` */
 export type SwapChoice = { kind: "evaluated" } | { kind: "explicit_override"; reason: string }
 /** `oneiron::training_pack::types::RoleSwapReceipt` */
-export type RoleSwapReceipt = { id: EntityId; run: EntityId; owner: TrainingOwner; at: number; role: ModelRole; previous?: ModelBinding | null; binding: ModelBinding; checkpoint: PinnedCheckpoint; evaluation?: HeldOutResult | null; checks: ExportCheck; exact_hash_overlaps: number; promotion_exposure?: EvalExposure | null; choice: SwapChoice }
+export type RoleSwapReceipt = { id: EntityId; run: EntityId; owner: TrainingOwner; at: number; role: ModelRole; previous?: ModelBinding | null; previous_swap?: EntityId | null; binding: ModelBinding; checkpoint: PinnedCheckpoint; evaluation?: HeldOutResult | null; checks: ExportCheck; exact_hash_overlaps: number; promotion_exposure?: EvalExposure | null; choice: SwapChoice }
 /** `oneiron::embed::binding_move::BindingSource` */
 export type BindingSource = { kind: "offer"; offer: EntityId; owner: SwitchOwner } | { kind: "training"; receipt: RoleSwapReceipt }
 /** `oneiron::embed::space_move::SpaceRef` */

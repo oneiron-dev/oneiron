@@ -346,6 +346,7 @@ impl SyncServer {
             self_brief_sessions,
             deep_retrieval: None,
             model_slots: Arc::new(Default::default()),
+            trained_embedders: Default::default(),
             model_setup: None,
             model_setup_runtime: std::sync::OnceLock::new(),
             gpu_pool: std::sync::OnceLock::new(),
