@@ -38,9 +38,9 @@ use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::{
     self, ActAnswer, EmptyRequest, HandoffAlarmRequest, SharedActExecuted, SharedActRequest,
-    SharedAddOwnerRequest, SharedMemberAddRequest, SharedMemberRequest,
-    SharedMemberRoleRequest, SharedOwnerChangeWaitSetRequest, SharedReceiptRequest,
-    SharedRemoveOwnerRequest, SharedTransferRequest, SharedVaultRequest,
+    SharedAddOwnerRequest, SharedMemberAddRequest, SharedMemberRequest, SharedMemberRoleRequest,
+    SharedOwnerChangeWaitSetRequest, SharedReceiptRequest, SharedRemoveOwnerRequest,
+    SharedTransferRequest, SharedVaultRequest,
 };
 
 use super::clock_ingress;
