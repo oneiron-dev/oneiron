@@ -73,9 +73,17 @@ at least two plain-assignment links. Without an actual wrapper `exports` assignm
 the old `exports` binding remains detached; a repeated whole store does not reconnect it.
 A chain containing only wrapper `exports` assignments keeps its ordinary handling.
 
+Stable whole-slot/wrapper chains may also return the already-current module value.
+For `module.exports = module.exports = module.exports`, the declared keys and existing
+wrapper alias are preserved. Adding an actual `exports` assignment, as in
+`exports = module.exports = module.exports`, reconnects that wrapper to the current
+module without clearing its keys. A terminal `exports` reference qualifies only when
+that wrapper already aliases the current module. These are direct native identity
+checks, not arbitrary alias inference; a current value is not a fresh replacement.
+
 Mixed chains can also contain eligible named properties of the current module value.
 Each property receiver is captured before the right-hand side, and all stores use
-the same fresh terminal value in inner-to-outer order. For
+the same terminal value in inner-to-outer order. For
 `exports.a = (exports = {})`, `a` remains on the original module value while later
 `exports.b` is detached. For `exports.a = (module.exports = {x: 1})`, the `a` write
 targets the old object, so only `x` belongs to the new module value. Repeated whole
@@ -84,6 +92,13 @@ These chains require at least one eligible static named-property reference and o
 whole-slot or wrapper-binding assignment. A property reference must resolve to the
 current module value at capture time; detached `exports` properties, `__proto__`
 property assignments and unknown computed receivers retain the ordinary fallback.
+
+Captured-property chains can also return the proven current module value. Their
+whole stores preserve the existing keys, and every captured property still targets
+that same current object. An actual wrapper `exports` assignment reconnects it;
+otherwise its existing alias is preserved. A terminal `module.exports` must still
+use the native `module` binding, and terminal `exports` must already alias the
+current module. Rebinding `module` does not prove its new value is the native module.
 
 Other whole-module or wrapper-identifier chains, unknown computed keys, `__proto__`
 property assignments, compound operators and sequence-valued terminals keep the
