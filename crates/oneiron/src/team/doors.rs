@@ -191,16 +191,7 @@ pub struct PlannedSpawnRead {
 
 /// A coordination pattern by its word, as a plan, a team start or a team
 /// receipt stored it.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum CoordinationPatternView {
-    Solo,
-    CeoDecides,
-    Committee,
-    Vote,
-    Market,
-    Rotation,
-}
+pub use crate::code_run::SpawnPattern as CoordinationPatternView;
 
 impl From<CoordinationPattern> for CoordinationPatternView {
     fn from(pattern: CoordinationPattern) -> Self {

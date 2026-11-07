@@ -92,6 +92,10 @@ pub enum UnusableResolver {
 /// allowlist, refuses no address and keeps no receipt, and each caller keeps
 /// its own query check. What a resolver the transport cannot use does to
 /// the query is `fallback`.
+///
+/// An exchange holds one transport socket at a time: the UDP socket closes
+/// before a truncated reply's TCP stream opens. So the one socket a caller
+/// charges to the host floor for the exchange covers it (FIX 6301).
 pub fn exchange_dns_query(
     query: &[u8],
     wait: Duration,
@@ -135,6 +139,7 @@ pub fn exchange_dns_query(
                 if answer[2] & 2 == 0 {
                     return Ok(answer);
                 }
+                drop(socket);
                 return tcp_answer(target, query, wait, fallback);
             }
             Err(e) => error = e,

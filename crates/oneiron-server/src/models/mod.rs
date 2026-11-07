@@ -136,6 +136,7 @@ pub use status::{
     TaggerStatus,
 };
 pub use token_ratio::TokenRatios;
+pub(crate) use worker_host::start_worker_controller;
 pub(crate) use worker_host::{
     install_snapshot_runtime, permit_worker_launch, session_allocations_for_vault,
 };
