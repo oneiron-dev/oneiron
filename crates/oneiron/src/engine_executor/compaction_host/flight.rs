@@ -59,6 +59,8 @@ impl EngineNativeExecutor<'_> {
         }
         let used = super::compaction::request_tokens(request);
         let mut refused = None;
+        // A batch of folds by kind landed here, after `request` was built.
+        let mut kind_landed: Option<FoldBoundary> = None;
         let reason = seat.feed(
             used,
             completed,
@@ -118,12 +120,12 @@ impl EngineNativeExecutor<'_> {
                 if epoch.is_none()
                     && folds.is_empty()
                     && let Some(batch) = kind_folds.take()
-                    && self
-                        .storage
-                        .land_code_run_folds(batch.run_id, batch.records, &[])
-                        .is_err()
                 {
-                    tracing::warn!("a fold batch did not land");
+                    let run = batch.run_id;
+                    match self.storage.land_code_run_folds(run, batch.records, &[]) {
+                        Ok(committed) => kind_landed = FoldBoundary::landed(run, committed),
+                        Err(_) => tracing::warn!("a fold batch did not land"),
+                    }
                 }
                 if asked.is_some() && !deferred {
                     self.storage
@@ -140,6 +142,11 @@ impl EngineNativeExecutor<'_> {
             },
         );
         self.compaction = Some(seat);
+        // FIX 17594 (Engine call B): the batch is a brief boundary; the run
+        // builds this turn's request again past it before sending it.
+        if let Some(landed) = kind_landed {
+            self.brief_fold_committed(landed);
+        }
         match refused {
             Some(refusal) => Err(refusal),
             None => Ok(reason),
