@@ -16,6 +16,14 @@ enum Target {
     Property(Option<String>),
 }
 
+// Property receivers are captured from the original module value, before
+// evaluating the chain's single fresh object-literal result.
+enum ChainReference {
+    Whole,
+    Exports,
+    Property(String),
+}
+
 pub(super) fn collect(
     program: &Program<'_>,
     semantic: &Semantic<'_>,
@@ -108,6 +116,32 @@ pub(super) fn collect(
                 alias = true;
                 module.bindings.clear();
                 object_bindings(object, module);
+                continue;
+            }
+            if let Some((references, object)) =
+                property_reference_chain(assignment, semantic, alias, native_module, &mut accounted)
+            {
+                commonjs = true;
+                let mut module_replaced = false;
+                let mut exports_rebound = false;
+                for reference in references.into_iter().rev() {
+                    match reference {
+                        ChainReference::Whole => {
+                            if !module_replaced {
+                                module.bindings.clear();
+                                object_bindings(object, module);
+                                module_replaced = true;
+                            }
+                        }
+                        ChainReference::Exports => exports_rebound = true,
+                        ChainReference::Property(name) => {
+                            if !module_replaced {
+                                module.bindings.insert(name.clone(), Binding::Local(name));
+                            }
+                        }
+                    }
+                }
+                alias = module_replaced && exports_rebound;
                 continue;
             }
             if let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &assignment.left {
@@ -316,6 +350,56 @@ fn object_bindings(object: &ObjectExpression<'_>, module: &mut Module) {
                 .insert(name.to_string(), Binding::Local(name.into_owned()));
         } else {
             module.unresolved.insert("commonjs:computed-key".to_owned());
+        }
+    }
+}
+
+fn property_reference_chain<'ast, 'src>(
+    assignment: &'ast AssignmentExpression<'src>,
+    semantic: &Semantic<'_>,
+    alias: bool,
+    native_module: bool,
+    accounted: &mut BTreeSet<(u32, u32)>,
+) -> Option<(Vec<ChainReference>, &'ast ObjectExpression<'src>)> {
+    let mut assignment = assignment;
+    let mut references = Vec::new();
+    let mut chain_accounted = BTreeSet::new();
+    let mut has_property = false;
+    let mut has_slot = false;
+    loop {
+        if !assignment.operator.is_assign() {
+            return None;
+        }
+        let reference =
+            if let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &assignment.left {
+                if identifier.name != "exports" || !wrapper_reference(identifier, semantic) {
+                    return None;
+                }
+                chain_accounted.insert((identifier.span.start, identifier.span.end));
+                has_slot = true;
+                ChainReference::Exports
+            } else {
+                let member = assignment.left.as_member_expression()?;
+                match target(member, semantic, alias, native_module, &mut chain_accounted)? {
+                    Target::Whole => {
+                        has_slot = true;
+                        ChainReference::Whole
+                    }
+                    Target::Property(Some(name)) if name != "__proto__" => {
+                        has_property = true;
+                        ChainReference::Property(name)
+                    }
+                    _ => return None,
+                }
+            };
+        references.push(reference);
+        match assignment.right.get_inner_expression() {
+            Expression::AssignmentExpression(next) => assignment = next,
+            Expression::ObjectExpression(object) if has_property && has_slot => {
+                accounted.extend(chain_accounted);
+                return Some((references, object));
+            }
+            _ => return None,
         }
     }
 }
