@@ -248,7 +248,8 @@ pub(super) struct TurnMeter {
 /// The answer's breakpoint, right before its stream: the seed its reply
 /// keeps (a chat turn's, captured from its own admitted call; a reuse's,
 /// its source's again), and, for a chat turn past its threshold, its flight
-/// queued off the answer's path. `message` is the reply's MESSAGE.
+/// queued off the answer's path. `message` is the reply's MESSAGE; `sources`
+/// every row `admitted` was read from, `None` when not all were witnessed.
 pub(super) fn enter(
     ai: &AiHandle,
     vault: &Arc<Vault>,
@@ -256,6 +257,7 @@ pub(super) fn enter(
     admitted: &RoleCall,
     message: EntityId,
     meter: TurnMeter,
+    sources: Option<Vec<EntityId>>,
 ) -> PendingSeed {
     let AnswerBreakpoint {
         mode,
@@ -291,6 +293,7 @@ pub(super) fn enter(
             funding: meter.funding,
             budget_units: meter.budget_units,
             message,
+            sources,
         };
         match crate::server::blocking(|| ai.enter_chat_breakpoint(call, admitted)) {
             Ok(()) | Err(ConversationCompactionUnavailable::Quiet) => {}

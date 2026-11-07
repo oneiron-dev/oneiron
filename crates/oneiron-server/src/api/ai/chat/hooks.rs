@@ -69,6 +69,26 @@ pub(crate) fn turn_generate_pre(
     })
 }
 
+/// [`turn_generate_pre`] for a queued turn action its host hook's ask held
+/// (FIX 1765): `invocation` is the parent its hook call derives from, as on
+/// its first run. A saved call that is gone is a skip, never a fresh call.
+pub(crate) fn turn_generate_pre_retained(
+    vault: &Vault,
+    actor: EntityId,
+    invocation: InvocationId,
+    room: &str,
+    resolved: Option<EntityId>,
+) -> oneiron::Result<Result<VerbHookPre, VerbHookStop>> {
+    let args = turn_generate_args(room);
+    crate::server::blocking(|| {
+        vault.pre_verb_hooks_retained(
+            turn_generate_call(actor, Some(invocation), None, resolved),
+            args.clone(),
+            &|rewritten: &Value| host_args_kept(&args, rewritten),
+        )
+    })
+}
+
 /// The input of a turn's `host.turn.generate` call in `room`: what its
 /// chain reads, and what its hook session is judged on (FIX 10344).
 pub(in crate::api::ai::chat) fn turn_generate_args(room: &str) -> Value {
@@ -102,7 +122,9 @@ pub(in crate::api::ai::chat) fn witness_through_row(
     hooked: &Memory<'_>,
     turn: &WitnessTurn,
     session: Option<&verb_hook_boundary::HookSession>,
+    binding: Option<&oneiron::memory::SessionWitnessBinding>,
     written: &mut Option<Vec<EntityId>>,
+    native_turn: &mut Option<EntityId>,
 ) -> Result<Result<Value, VerbHookStop>, MemoryError> {
     let args = serde_json::to_value(turn)
         .map_err(|_| MemoryError::bad_request("witness turn does not encode"))?;
@@ -115,7 +137,17 @@ pub(in crate::api::ai::chat) fn witness_through_row(
         |args| {
             let turn: WitnessTurn = serde_json::from_value(args)
                 .map_err(|_| MemoryError::bad_request("witness turn does not decode"))?;
-            let receipt = memory.witness(&turn)?;
+            let receipt = match binding {
+                Some(binding) => match binding.witness(memory, &turn)? {
+                    oneiron::memory::SessionWitnessOutcome::Retained(receipt) => receipt,
+                    oneiron::memory::SessionWitnessOutcome::Unretained => {
+                        *written = Some(Vec::new());
+                        return Ok(json!({"retained": false}));
+                    }
+                },
+                None => memory.witness(&turn)?,
+            };
+            *native_turn = Some(receipt.turn_id);
             *written = sources::witnessed(&receipt);
             serde_json::to_value(receipt)
                 .map_err(|_| MemoryError::bad_request("witness receipt does not encode"))
@@ -128,6 +160,7 @@ pub(in crate::api::ai::chat) fn witness_through_row(
         && let Ok(value) = &ended
         && let Some(receipt) = verb_hook_boundary::resumed_witness_receipt(value)
     {
+        *native_turn = Some(receipt.turn_id);
         *written = sources::witnessed(&receipt);
     }
     Ok(ended)
@@ -171,16 +204,18 @@ pub(crate) fn after_turn(
         outcome,
     } = answering;
     let (finished, forwarded) = tokio::sync::oneshot::channel();
+    let stream_id = handle.correlation_id();
     tokio::spawn(async move {
         let Ok(ended) = outcome.await else {
             return;
         };
         let result = json!({
-            "message_id": handle.message_id().to_hex(),
+            "stream_id": stream_id.to_hex(),
+            "message_id": ended.saved.as_ref().map(|receipt| receipt.message_id.to_hex()),
             "text": ended.text,
             "saved": ended.saved.is_some(),
-            "complete": ended.saved.as_ref().is_some_and(MessageStreamReceipt::complete),
-            "finish_reason": ended.saved.as_ref().and_then(|receipt| receipt.finish_reason.clone()),
+            "complete": !ended.completion().incomplete,
+            "finish_reason": ended.completion().finish_reason,
         });
         // Where its pre chain ran: a turn that keeps no record keeps its
         // post hooks' records in its session only (FIX 5380).
