@@ -103,6 +103,7 @@ async fn skills_call(
                 server: Arc::clone(server),
                 auth: auth.clone(),
                 runtime: tokio::runtime::Handle::current(),
+                observer: super::admission_observer(),
             }),
         };
     let auth = auth.clone();
@@ -161,6 +162,10 @@ struct SkillCredentialDoor {
     server: Arc<SyncServer>,
     auth: CoreAuth,
     runtime: tokio::runtime::Handle,
+    /// The skill call's admission observer, taken where the door is built:
+    /// a nested verb's wait in a line shows on the call's admission receipt
+    /// (FIX 4735).
+    observer: Option<Arc<dyn oneiron::work_line::LineObserver>>,
 }
 
 impl SkillCredentialDoor {
@@ -192,12 +197,16 @@ impl AgentVerbDoor for SkillCredentialDoor {
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         // The skill's call is its run's (FIX 10748): its handles carry the
         // run's origin and its writes are witnessed for the run's lease.
-        self.runtime.spawn(with_calling_origin(origin, async move {
-            let id = invocation.to_hex();
-            let call = FacadeCall::bound(&auth, None, Some(&id), None);
-            let answer = super::call_verb(&server, &call, verb, Ok(input)).await;
-            let _ = sender.send(answer);
-        }));
+        let observer = self.observer.clone();
+        self.runtime.spawn(with_calling_origin(
+            origin,
+            super::with_admission_observer(observer, async move {
+                let id = invocation.to_hex();
+                let call = FacadeCall::bound(&auth, None, Some(&id), None);
+                let answer = super::call_verb(&server, &call, verb, Ok(input)).await;
+                let _ = sender.send(answer);
+            }),
+        ));
         Ok(match receiver.recv() {
             Ok(Ok(answer)) => Ok(AgentVerbAnswer::new(answer.value, answer.rows)),
             Ok(Err(error)) => Err(AgentVerbRefusal {

@@ -37,7 +37,7 @@ pub(crate) use boot::VoiceBoot;
 pub use brain::{ChatBrain, ChatBrainBindings};
 pub(crate) use entry_barrier::{EntryWake, EntryWakes, entry_wake, next_entry_wake};
 pub use media_bridge::{VoiceMediaBindings, VoiceMediaIn};
-pub(crate) use public::{LiveVoiceSessions, start_public};
+pub(crate) use public::{LiveVoiceSessions, PublicSession, start_public};
 pub use serve_bindings::{VoiceServeBindings, VoiceServeConnection};
 pub use speech::{PlayoutFrame, TurnSources, VoiceBrainOut, VoicePlayout};
 pub use wire::VoiceWireBindings;
@@ -49,7 +49,7 @@ use oneiron::memory::RecallScope;
 use oneiron::policy_model::PolicyModelConfig;
 use oneiron::speculative::{SpeculativeSessionConfig, SpeculativeThreads};
 use oneiron::voice_cascade::{
-    AsrEvent, AsrEventKind, AsrUpdate, OutputStop, PreparedAsr, UtteranceHandle,
+    AsrEvent, AsrEventKind, AsrUpdate, FloorWords, OutputStop, PreparedAsr, UtteranceHandle,
     VoiceCascadeSession, VoiceSessionConfig,
 };
 
@@ -135,6 +135,9 @@ pub struct VoiceHost {
     /// The vault the host serves, kept for its body directory: inbound
     /// wire frames spill there past the inline bound (FIX 3728).
     vault: Arc<oneiron::Vault>,
+    /// The session's correlation ref, which each generation's heard record
+    /// carries (FIX 4899).
+    session_ref: String,
 }
 
 /// Optional process-local configuration. The factory supplies the backend and
@@ -198,6 +201,7 @@ impl VoiceHost {
             .as_ref()
             .map(|bound| (Arc::clone(&vault), bound.container));
         let roster = speaker_match::CallRoster::of(&vault, &bindings.session);
+        let session_ref = bindings.session.session_ref.clone();
         Ok(Self {
             call_deadline,
             speculative_auth: bindings.speculative_auth,
@@ -213,6 +217,7 @@ impl VoiceHost {
             shutdown: bindings.shutdown,
             owner_policy: Arc::new(bindings.owner_policy),
             vault: host_vault,
+            session_ref,
         })
     }
 
@@ -349,18 +354,7 @@ impl VoiceHost {
         }
         let mut state = self.lock()?;
         let handle = state.handle(token)?;
-        let event = AsrEvent {
-            kind: if final_text {
-                AsrEventKind::Final
-            } else {
-                AsrEventKind::Partial
-            },
-            text,
-            tokens: Vec::new(),
-            provider_latency_ms: None,
-            endpoint_delay_ms: None,
-            error: None,
-        };
+        let event = asr_observation(text, final_text);
         // The admitted owner supplies speech, not a context-taint assertion.
         // The brain marks retrieved/external context at its own boundary.
         let prepared = state
@@ -373,6 +367,45 @@ impl VoiceHost {
         })
     }
 
+    /// Heard words, through the agent's floor before they are prepared (FIX
+    /// 4899). Their revision and input are validated first, as
+    /// [`Self::prepare`] validates them: a stale or mismatched event is
+    /// refused the same way and changes nothing. Words that took the floor
+    /// leave the stop in `stops`, for the caller to dispatch before another
+    /// playback dequeue, and go on to be prepared. A backchannel final while
+    /// the agent holds the floor closes the utterance and prepares nothing:
+    /// `Ok(None)`.
+    pub(super) fn prepare_words(
+        &self,
+        token: &str,
+        revision: u64,
+        text: String,
+        final_text: bool,
+        stops: &mut Vec<OutputStop>,
+    ) -> Result<Option<EnrichmentWork<'_>>, HostError> {
+        self.require_running()?;
+        if text.trim().is_empty() {
+            return Err(HostError::InvalidRequest);
+        }
+        let (words, text) = {
+            let mut state = self.lock()?;
+            let handle = state.handle(token)?;
+            let event = asr_observation(text, final_text);
+            state.core.validate_asr(&handle, revision, &event, false)?;
+            let words = state.core.observe_words(&handle, event.kind, &event.text);
+            if matches!(words, FloorWords::Backchannel) {
+                state.open = None;
+            }
+            (words, event.text)
+        };
+        match words {
+            FloorWords::Backchannel => return Ok(None),
+            FloorWords::Interrupt(stop) => stops.push(stop),
+            FloorWords::Prepare => {}
+        }
+        self.prepare(token, revision, text, final_text).map(Some)
+    }
+
     fn end(&self) -> Result<OutputStop, HostError> {
         let mut state = self.lock()?;
         state.open = None;
@@ -382,6 +415,23 @@ impl VoiceHost {
     /// Whether no speculative pass of the call still runs past its deadline.
     fn speculative_at_rest(&self) -> bool {
         self.speculative.at_rest()
+    }
+}
+
+/// The owner's words as an ASR observation: a final or a partial,
+/// with no tokens, timing or error.
+fn asr_observation(text: String, final_text: bool) -> AsrEvent {
+    AsrEvent {
+        kind: if final_text {
+            AsrEventKind::Final
+        } else {
+            AsrEventKind::Partial
+        },
+        text,
+        tokens: Vec::new(),
+        provider_latency_ms: None,
+        endpoint_delay_ms: None,
+        error: None,
     }
 }
 

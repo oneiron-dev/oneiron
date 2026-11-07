@@ -33,7 +33,7 @@ pub(super) const FORMAT_PPTX: &str = "pptx";
 
 pub(super) const FORMAT_HTML: &str = "html";
 
-pub(super) const FORMAT_FILE: &str = "file";
+pub(super) const FORMAT_TEXT: &str = "text";
 
 pub(super) const STATE_OPEN: &str = "open";
 
@@ -141,14 +141,11 @@ pub enum Locator {
         /// Exclusive character-span end.
         char_end: u64,
     },
-    /// File `{char_span}` in the whole decoded `text/plain` version text
-    /// (FIX 4252). Coordinates always name the raw immutable text, counted
-    /// in Unicode characters; serving projects the quote to the caller's
-    /// sight, never raw bytes to a masked reader.
-    File {
-        /// Inclusive character-span start in the whole text.
+    /// Plain text `{char_span}` over the whole decoded file (FIX 7905).
+    Text {
+        /// Inclusive character-span start.
         char_start: u64,
-        /// Exclusive character-span end in the whole text.
+        /// Exclusive character-span end.
         char_end: u64,
     },
 }
@@ -213,17 +210,14 @@ impl Locator {
         })
     }
 
-    /// Builds a file locator: a char span in the whole decoded `text/plain`
-    /// text, counted in Unicode characters. Coordinates always name the raw
-    /// immutable text (bounds read against the version's bytes); only the
-    /// span order is validated here.
-    pub fn file(char_start: u64, char_end: u64) -> Result<Self> {
+    /// Builds a plain-text locator, validating its character-span bounds.
+    pub fn text(char_start: u64, char_end: u64) -> Result<Self> {
         if char_start > char_end {
             return Err(Error::Artifact(ArtifactError::InvalidAnchor(
-                "file locator char span is inverted",
+                "text locator char span is inverted",
             )));
         }
-        Ok(Self::File {
+        Ok(Self::Text {
             char_start,
             char_end,
         })
@@ -237,7 +231,7 @@ impl Locator {
             Self::Docx { .. } => FORMAT_DOCX,
             Self::Pptx { .. } => FORMAT_PPTX,
             Self::Html { .. } => FORMAT_HTML,
-            Self::File { .. } => FORMAT_FILE,
+            Self::Text { .. } => FORMAT_TEXT,
         }
     }
 }

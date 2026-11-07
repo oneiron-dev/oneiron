@@ -1,6 +1,6 @@
 //! The inputs and answers of the Files world's source rows (FIX 6942):
-//! `vault.files.sources.attach`, `.convert`, `.rescan`, `.detach`, `.list` and
-//! `.files` host doors. A server runs each under the vault owner's proof.
+//! `vault.files.sources.attach`, `.convert`, `.rescan`, `.detach`, `.list`, `.files`
+//! and `.exclude` host doors. A server runs each under the vault owner's proof.
 //! Attach, conversion and rescan read folders on the server's host, so an embedded handle,
 //! which has no host walk, answers them with a typed refusal; its owner may
 //! list, read a source's ledger and detach.
@@ -209,6 +209,31 @@ pub struct FilesSourceDetachAnswer {
     pub detached: bool,
 }
 
+/// `vault.files.sources.exclude`'s input: the source's new filters.
+/// Absent leaves today's list; a list, even an empty one, replaces it.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FilesSourceExcludeRequest {
+    pub source: EntityId,
+    /// Only files whose path under the folder matches one. None is every
+    /// file the source reads today.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include: Option<Vec<String>>,
+    /// What the host never opens. Absent keeps today's list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exclude: Option<Vec<String>>,
+}
+
+/// `vault.files.sources.exclude`'s answer: the source's filters as they
+/// stand now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FilesSourceExcludeAnswer {
+    pub source: EntityId,
+    pub include: Vec<String>,
+    pub exclude: Vec<String>,
+}
+
 /// `vault.files.sources.list`'s input.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -229,7 +254,23 @@ pub struct FilesSourceList {
 #[serde(deny_unknown_fields)]
 pub struct FilesSourceFilesRequest {
     pub source: EntityId,
+    /// The path to continue after: the `next_cursor` of the previous page.
+    /// Absent starts at the first file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    /// How many files to answer, at most [`MAX_FILES_PAGE_LIMIT`];
+    /// [`DEFAULT_FILES_PAGE_LIMIT`] when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u64>,
 }
+
+/// How many files `vault.files.sources.files` answers when its input names
+/// no limit (FIX 10247).
+pub const DEFAULT_FILES_PAGE_LIMIT: u64 = 200;
+
+/// How many files one `vault.files.sources.files` answer holds at most
+/// (FIX 10247).
+pub const MAX_FILES_PAGE_LIMIT: u64 = 1000;
 
 /// Where one file of a Files source stands in its ledger.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -274,13 +315,17 @@ pub struct FilesFileView {
     pub indexed_at: Option<u64>,
 }
 
-/// `vault.files.sources.files`'s answer: every file the source's ledger
-/// holds, in path order.
+/// `vault.files.sources.files`'s answer: one page of the files the
+/// source's ledger holds, in path order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FilesSourceFiles {
     pub source: EntityId,
     pub files: Vec<FilesFileView>,
+    /// The last path on this page: pass it back as `cursor` for the next
+    /// page. Absent when the ledger is exhausted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
 }
 
 /// The refusal an embedded handle answers a row that reads the host's
@@ -398,7 +443,8 @@ pub fn list_files_sources_as(
     Ok(FilesSourceList { world, sources })
 }
 
-/// `vault.files.sources.files` under the owner's proof.
+/// `vault.files.sources.files` under the owner's proof: one page of the
+/// ledger in path order (FIX 10247).
 ///
 /// # Errors
 /// A proof that no longer holds, no Files source of that id, or a storage
@@ -410,14 +456,57 @@ pub fn files_source_files_as(
 ) -> MemoryResult<FilesSourceFiles> {
     owner.revalidate(vault)?;
     let source = files_source_named(vault, input.source)?;
-    let files = vault
-        .folder_source_files(&source.folder)?
+    let take = usize::try_from(input.limit.unwrap_or(DEFAULT_FILES_PAGE_LIMIT))
+        .unwrap_or(usize::MAX)
+        .clamp(
+            1,
+            usize::try_from(MAX_FILES_PAGE_LIMIT).unwrap_or(usize::MAX),
+        );
+    let mut ledger = vault.folder_source_files(&source.folder)?;
+    // Ledger keys hash overlong paths, so path order is sorted here, not
+    // read off the keys.
+    ledger.sort_by(|left, right| left.path.cmp(&right.path));
+    let start = input.cursor.as_ref().map_or(0, |cursor| {
+        ledger.partition_point(|file| file.path <= *cursor)
+    });
+    let mut page: Vec<FilesFileView> = ledger
         .into_iter()
+        .skip(start)
+        .take(take.saturating_add(1))
         .map(|file| files_file_view(input.source, file))
         .collect();
+    let next_cursor = if page.len() > take {
+        page.pop();
+        page.last().map(|file| file.handle.path.clone())
+    } else {
+        None
+    };
     Ok(FilesSourceFiles {
         source: input.source,
-        files,
+        files: page,
+        next_cursor,
+    })
+}
+
+/// `vault.files.sources.exclude` under the owner's proof: the source reads
+/// with its new filters from its next rescan (FIX 10248).
+///
+/// # Errors
+/// A proof that no longer holds, no Files source of that id, a folder
+/// attached as notes, or a storage error.
+pub fn exclude_files_source_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: FilesSourceExcludeRequest,
+) -> MemoryResult<FilesSourceExcludeAnswer> {
+    owner.revalidate(vault)?;
+    let source =
+        vault.set_folder_source_filters(owner, input.source, input.include, input.exclude)?;
+    let exclude = source.files.map(|files| files.exclude).unwrap_or_default();
+    Ok(FilesSourceExcludeAnswer {
+        source: input.source,
+        include: source.include,
+        exclude,
     })
 }
 
@@ -499,4 +588,14 @@ pub fn files_source_files_embedded(
 ) -> MemoryResult<FilesSourceFiles> {
     let owner = memory.embedded_owner("vault.files.sources.files")?;
     files_source_files_as(memory.vault(), &owner, input)
+}
+
+/// `vault.files.sources.exclude` on an embedded handle: the embedded owner's
+/// own act.
+pub fn exclude_files_source_embedded(
+    memory: &Memory<'_>,
+    input: FilesSourceExcludeRequest,
+) -> MemoryResult<FilesSourceExcludeAnswer> {
+    let owner = memory.embedded_owner("vault.files.sources.exclude")?;
+    exclude_files_source_as(memory.vault(), &owner, input)
 }

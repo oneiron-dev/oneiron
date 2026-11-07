@@ -86,8 +86,9 @@ impl CancelRejectionPathology {
 pub struct ConsultWidening {
     /// The asking child run's attempt, as 32 hex.
     pub child: String,
-    /// The reach an earlier approval already gave the child; the comm widen
-    /// record keeps no other, so a child asking from its spawn dial has none.
+    /// The reach the child addressed with when it asked: its spawn dial or
+    /// an earlier approval (FIX 10413). `None` only on an ask reserved before
+    /// that reach was kept, with no earlier approval.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<crate::authority::CommReach>,
     /// The reach it asks to widen to.
@@ -95,8 +96,8 @@ pub struct ConsultWidening {
 }
 
 impl ConsultWidening {
-    /// The board token: `widening=<from>-><to>`, or `widening=<to>` with no
-    /// earlier approval to widen from.
+    /// The board token: `widening=<from>-><to>`, or `widening=<to>` when the
+    /// reach it asked from is not known.
     #[must_use]
     pub fn token(&self) -> String {
         match self.from {

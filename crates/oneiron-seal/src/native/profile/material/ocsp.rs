@@ -166,26 +166,6 @@ impl OcspContext {
             anchors: admitted_all(anchors_der, memory)?,
         })
     }
-
-    /// The same context when the DSS certificates span existing and new chains.
-    pub(super) fn admitted_chains(
-        cert_chains: &[&[Vec<u8>]],
-        anchors_der: &[Vec<u8>],
-        memory: &MemoryLedger,
-    ) -> Result<Self, SealMemoryRefusal> {
-        let certs_len = cert_chains
-            .iter()
-            .fold(0usize, |count, chain| count.saturating_add(chain.len()));
-        memory.admit_len::<verify::EmbeddedCert>(certs_len)?;
-        let mut context = Self::admitted(&[], anchors_der, memory)?;
-        context.certs.reserve_exact(certs_len);
-        for der in cert_chains.iter().flat_map(|chain| chain.iter()) {
-            if let Some(cert) = verify::EmbeddedCert::admitted(der, memory)? {
-                context.certs.push(cert);
-            }
-        }
-        Ok(context)
-    }
 }
 
 fn admitted_all(

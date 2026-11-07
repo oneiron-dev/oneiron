@@ -13,7 +13,7 @@
 //! thread shows without it. An offer is still only an offer.
 
 use super::super::anchor_text::{
-    UnitFormat, anchor_text, file_find_text_for_sight, file_quote_for_sight, find_text,
+    UnitFormat, anchor_text, find_text, text_find_text_for_sight, text_quote_for_sight,
 };
 use super::super::model::{AnnotationThread, Locator};
 use super::super::threads::{newest_thread_brief, threads_from_active_claims};
@@ -54,9 +54,9 @@ impl Vault {
         self.unattached_scoped_in_txn(&rtxn, &admits, artifact_id, sight)
     }
 
-    /// The unrestricted Unattached list with File snapshots projected to
-    /// `sight`. Row membership, held tasks and non-File snapshots keep the
-    /// raw listing's behavior; a missing File version loses only its quote.
+    /// The unrestricted Unattached list with plain-text snapshots projected
+    /// to `sight`. Row membership, held tasks and other formats keep the raw
+    /// listing's behavior; a missing text version loses only its quote.
     pub fn unattached_annotation_threads_file_sighted(
         &self,
         artifact_id: &EntityId,
@@ -65,7 +65,7 @@ impl Vault {
         let mut threads = self.unattached_annotation_threads(artifact_id)?;
         let rtxn = self.store.env.read_txn()?;
         for detached in &mut threads {
-            let Locator::File {
+            let Locator::Text {
                 char_start,
                 char_end,
             } = &detached.thread.anchor.locator
@@ -84,7 +84,7 @@ impl Vault {
             )? {
                 Some(sighted) => {
                     match self.read_blob_artifact_version_in_txn(&rtxn, artifact_id, pinned)? {
-                        Some(raw) => file_quote_for_sight(&raw, &sighted, *char_start, *char_end),
+                        Some(raw) => text_quote_for_sight(&raw, &sighted, *char_start, *char_end),
                         None => None,
                     }
                 }
@@ -94,7 +94,7 @@ impl Vault {
         Ok(threads)
     }
 
-    /// Unrestricted File offers use the projected File snapshots and head,
+    /// Unrestricted plain-text offers use the projected snapshots and head,
     /// without adding record admission. Other formats keep the raw offers.
     pub fn annotation_reattach_offers_file_sighted(
         &self,
@@ -102,15 +102,15 @@ impl Vault {
         sight: SecretSight,
     ) -> Result<Vec<ReattachOffer>> {
         let rtxn = self.store.env.read_txn()?;
-        let file_text = self
+        let plain_text = self
             .get_blob_artifact_in_txn(&rtxn, artifact_id)?
             .is_some_and(|body| {
                 matches!(
                     UnitFormat::from_media_type(&body.media_type),
-                    Some(UnitFormat::FileText)
+                    Some(UnitFormat::Text)
                 )
             });
-        if !file_text {
+        if !plain_text {
             drop(rtxn);
             return self.annotation_reattach_offers(artifact_id);
         }
@@ -124,7 +124,7 @@ impl Vault {
         let bytes = self
             .read_blob_artifact_version_sighted_in_txn(&rtxn, artifact_id, head.version, sight)?
             .ok_or(Error::EntityNotFound)?;
-        self.file_text_offers_scoped(&rtxn, artifact_id, head.version, &bytes, &unattached)
+        self.text_offers_scoped(&rtxn, artifact_id, head.version, &bytes, &unattached)
     }
 
     /// [`Vault::annotation_reattach_offers`] for `lane` (FIX 8063): offers
@@ -168,14 +168,8 @@ impl Vault {
         let bytes = self
             .read_blob_artifact_version_sighted_in_txn(&rtxn, artifact_id, head.version, sight)?
             .ok_or(Error::EntityNotFound)?;
-        if matches!(format, UnitFormat::FileText) {
-            return self.file_text_offers_scoped(
-                &rtxn,
-                artifact_id,
-                head.version,
-                &bytes,
-                &unattached,
-            );
+        if matches!(format, UnitFormat::Text) {
+            return self.text_offers_scoped(&rtxn, artifact_id, head.version, &bytes, &unattached);
         }
         let limits = self.text_limits_in_txn(&rtxn)?;
         // A resource refusal is the engine's error (FIX 10587), never empty offers.
@@ -195,13 +189,13 @@ impl Vault {
         Ok(offers)
     }
 
-    /// [`Vault::annotation_reattach_offers_scoped`] for `text/plain`: offers
+    /// [`Vault::annotation_reattach_offers_scoped`] for plain text: offers
     /// name raw whole-text coordinates, sought from the admitted projected
     /// snapshots on the Unattached list in the projected sighted head. The
     /// head's sighted read already ran before this branch, so a sealed or
     /// withheld head serves no offers; positions never come from a raw
     /// snapshot comparison. The final reattach still checks the raw words.
-    fn file_text_offers_scoped(
+    fn text_offers_scoped(
         &self,
         rtxn: &heed::RoTxn<'_>,
         artifact_id: &EntityId,
@@ -219,7 +213,7 @@ impl Vault {
             let Some(words) = thread.snapshot.as_deref() else {
                 continue;
             };
-            for locator in file_find_text_for_sight(&head_raw, head_sighted, words) {
+            for locator in text_find_text_for_sight(&head_raw, head_sighted, words) {
                 offers.push(ReattachOffer {
                     thread_id: thread.thread.thread_id,
                     version: head_version,
@@ -272,7 +266,7 @@ impl Vault {
                     sight,
                 )? {
                     Some(sighted) => {
-                        if let Locator::File {
+                        if let Locator::Text {
                             char_start,
                             char_end,
                         } = &thread.anchor.locator
@@ -285,7 +279,7 @@ impl Vault {
                                 pinned,
                             )? {
                                 Some(raw) => {
-                                    file_quote_for_sight(&raw, &sighted, *char_start, *char_end)
+                                    text_quote_for_sight(&raw, &sighted, *char_start, *char_end)
                                 }
                                 None => None,
                             }
