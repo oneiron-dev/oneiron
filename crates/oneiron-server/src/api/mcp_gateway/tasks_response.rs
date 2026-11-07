@@ -203,7 +203,19 @@ pub(crate) async fn execute_mcp_generated_verb(
                     }) => {
                         let stop = *stop;
                         let rows = stop_release_rows(server, actor, &stop, &mut served);
-                        if super::served_rows::drained_rows_lapsed(server, actor, &stop, rows) {
+                        let owner_whole_vault_export =
+                            super::device_release::owner_whole_vault_export_call(
+                                server,
+                                actor,
+                                args.tool.name,
+                            );
+                        if super::served_rows::drained_rows_lapsed(
+                            server,
+                            actor,
+                            &stop,
+                            rows,
+                            owner_whole_vault_export,
+                        ) {
                             return Ok(super::claimed_release::details_on_device_result());
                         }
                         return mcp_hook_stop_result(server, &args, actor, stop, rows, hook_notice);
