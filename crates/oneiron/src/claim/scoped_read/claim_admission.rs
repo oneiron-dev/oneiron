@@ -221,9 +221,10 @@ impl ScopedRead<'_> {
         Ok(allowed && self.provenance_cited_readable_in(rtxn, policy, body, authority)?)
     }
 
-    /// Whether this lane reads every record the claim `body` names beside its
-    /// edge when it is an `edge.provenance` Claim (FIX 3959): its actor, and
-    /// the record its `source_revision_ref` cites, at that revision. The last
+    /// Whether this lane reads every record the claim `body` names when it is
+    /// an `edge.provenance` Claim (FIX 3959): its edge, under the endpoint and
+    /// exact-pair admission the typed audit gives it, its actor, and the
+    /// record its `source_revision_ref` cites, at that revision. The last
     /// conjunct of every CLAIM's admission, on the row path and the class
     /// path alike, and never a class's: what it reads is the row's own. One
     /// named record this lane may not read withholds the Claim whole, as any
@@ -253,6 +254,32 @@ impl ScopedRead<'_> {
             return Ok(false);
         };
         let floor = self.actor_retrieval_floor(policy)?;
+        // The Claim names its edge, so the edge passes first, as the typed
+        // audit admits it (`edge_claims_projected`): it is stored, whatever
+        // its stamp, and its endpoints and exact pair pass the admission a
+        // neighbourhood row does. A missing or withheld edge withholds the
+        // Claim, so its subject never names a record this lane may not read.
+        let crate::claim::ClaimSubject::Edge {
+            source,
+            kind,
+            target,
+        } = body.subject
+        else {
+            return Ok(false);
+        };
+        let stored = match self.session_view {
+            Some(view) => view.port_edge_get(rtxn, &source, kind, &target)?,
+            None => self.vault.port_edge_get(rtxn, &source, kind, &target)?,
+        };
+        let Some(stored) = stored else {
+            return Ok(false);
+        };
+        if !self
+            .admit_stored_edge_in(rtxn, policy, &floor, source, stored)?
+            .visible()
+        {
+            return Ok(false);
+        }
         let readable = authority.judge_cited(|cited| {
             if !self.is_entity_readable_held_in(
                 rtxn,
