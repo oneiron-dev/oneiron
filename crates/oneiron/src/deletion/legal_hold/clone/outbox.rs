@@ -108,20 +108,21 @@ impl super::HostLegalConnection {
             };
             for (_, entry) in &batch {
                 match entry {
-                    OutboxEntry::Sealed {
-                        frames,
-                        descriptor_digest,
-                        plaintext_len,
-                        ..
-                    } => {
+                    OutboxEntry::SealedRow { sealed, .. } => {
                         collector.stored_component(
-                            frames,
-                            descriptor_digest,
-                            *plaintext_len,
+                            &sealed.frames,
+                            &sealed.descriptor_digest,
+                            sealed.plaintext_len,
                             check,
                         )?;
                         counts.messages += 1;
                     }
+                    OutboxEntry::SealedEdge { sealed, .. } => collector.stored_component(
+                        &sealed.frames,
+                        &sealed.descriptor_digest,
+                        sealed.plaintext_len,
+                        check,
+                    )?,
                     OutboxEntry::Missed { message } => counts.missed_messages.push(*message),
                 }
             }
