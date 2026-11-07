@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1263 facade rows, 4596 declarations.
-Inputs: 1193 of 1263 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1095 of 1263 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1265 facade rows, 4601 declarations.
+Inputs: 1195 of 1265 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1097 of 1265 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -7341,19 +7341,20 @@ class SharedMemberAddRequest(TypedDict):
     vault_id: str
     member: str
     role: NotRequired[FederationGrantRole | None]
-    holder_key: NotRequired[str | None]
+class InvitationSlipRequest(TypedDict):
+    vault_id: str
+    invitation: str
 class InvitationSlip(TypedDict):
     slip_id: str
     slip: str
     expires_at: int
-class SharedMemberInvited(TypedDict):
-    receipt: SharedActExecutionReceipt
-    credential: NotRequired[InvitationSlip | None]
-class InvitationSlipRequest(TypedDict):
+class InvitationCodeRequest(TypedDict):
     vault_id: str
     member: str
     invitation: str
-    holder_key: str
+class InvitationCode(TypedDict):
+    code: str
+    expires_at: int
 class SharedMemberRoleRequest(TypedDict):
     vault_id: str
     member: str
@@ -9208,6 +9209,7 @@ class OfferEvidence(TypedDict):
     exposures: list[EntityId]
     rubric_revision: NotRequired[str | None]
     card: NotRequired[SufficiencyCard | None]
+    paired_measurement: NotRequired[list[int] | None]
     losses: list[str]
     risk: NotRequired[str | None]
 class ComputeDestinationSelfHostedBody(TypedDict):
@@ -10009,6 +10011,10 @@ class ResearchExplorationWire(TypedDict):
 class RsiOverdraftReceipt(TypedDict):
     share: str
     units: int
+    reservation: str
+    vault: str
+    public_key: str
+    signature: str
 class ResearchReservationWire(TypedDict):
     id: EntityId
     line: ResearchReservationLine
@@ -10336,14 +10342,6 @@ class LegalHoldLiftAndEraseRequest(TypedDict):
     claim_free_partition: NotRequired[bool]
     shown_state: LiftAndEraseShownState
 ErasePendingReason = Literal["historical_sweep", "custody_retirement", "veto_window"]
-LegalHoldBoundKind = Literal["law"]
-class LegalHoldBound(TypedDict):
-    kind: LegalHoldBoundKind
-    order_ref: NotRequired[str | None]
-    legal_basis_ref: NotRequired[str | None]
-    jurisdiction: NotRequired[str | None]
-    issuing_authority_ref: NotRequired[str | None]
-    ends_at: NotRequired[int | None]
 class LegalHoldEraseStateErased(TypedDict):
     state: Literal["erased"]
     receipt_ref: NotRequired[str | None]
@@ -10351,15 +10349,10 @@ class LegalHoldEraseStateCompletionPending(TypedDict):
     state: Literal["completion_pending"]
     receipt_ref: NotRequired[str | None]
     reason: NotRequired[ErasePendingReason | None]
-class LegalHoldEraseStateRetainedForLaw(TypedDict):
-    state: Literal["retained_for_law"]
-    bound: LegalHoldBound
-    works_self_hosted: bool
-    self_hosted_note: str
 class LegalHoldEraseStateFailed(TypedDict):
     state: Literal["failed"]
     message: str
-LegalHoldEraseState = LegalHoldEraseStateErased | LegalHoldEraseStateCompletionPending | LegalHoldEraseStateRetainedForLaw | LegalHoldEraseStateFailed
+LegalHoldEraseState = LegalHoldEraseStateErased | LegalHoldEraseStateCompletionPending | LegalHoldEraseStateFailed
 class LegalHoldErasedRecord(TypedDict):
     record: EntityId
     status: LegalHoldEraseState
@@ -10999,7 +10992,7 @@ class GraduationDemoteRequest(TypedDict):
 class PolicyManifestRead(TypedDict):
     manifest_ref: NotRequired[str | None]
 PolicyCriticality = Literal["normal", "critical"]
-PolicySensitivity = Literal["normal", "sensitive"]
+PolicySensitivity = Literal["public", "private", "sensitive", "restricted", "normal"]
 class PolicyAxes(TypedDict):
     criticality: NotRequired[PolicyCriticality | None]
     sensitivity: NotRequired[PolicySensitivity | None]
@@ -11464,6 +11457,9 @@ class CodeRunSecretLiftDismissal(TypedDict):
 class CodeRunSecretLiftStatus(TypedDict):
     proposals: list[CodeRunSecretLiftProposalView]
     dismissed: NotRequired[CodeRunSecretLiftDismissal | None]
+class CodeRunRoomSecretLiftRequest(TypedDict):
+    room_ref: str
+    session_ref: str
 LiftCloseReason = Literal["not_a_secret", "rotated", "accepted", "read_clean", "answered", "deleted"]
 class SecretLiftClose(TypedDict):
     proposal: str
@@ -13483,6 +13479,7 @@ class OriginPublishRefusal(TypedDict):
     observed: NotRequired[OriginPublishRemote | None]
     changed_fields: list[str]
     detail: NotRequired[str | None]
+BrokerIsolation = Literal["separate_user", "same_user"]
 class OriginPublishRequestView(TypedDict):
     request_id: EntityId
     repo: str
@@ -13503,6 +13500,7 @@ class OriginPublishRequestView(TypedDict):
     refusal: NotRequired[OriginPublishRefusal | None]
     created_at: int
     finished_at: NotRequired[int | None]
+    broker_isolation: NotRequired[BrokerIsolation | None]
 class OriginPublishReviewRequest(TypedDict):
     repo: str
     request_id: EntityId
@@ -18342,6 +18340,14 @@ class ScopedCommitRequest(TypedDict):
     claims: list[ScopedClaimInput]
 RefusalReason = Literal["INVENTED_REFERENCE", "GATE_REFUSED"]
 LegalHoldState = Literal["retained_for_law", "use_restricted"]
+LegalHoldBoundKind = Literal["law"]
+class LegalHoldBound(TypedDict):
+    kind: LegalHoldBoundKind
+    order_ref: NotRequired[str | None]
+    legal_basis_ref: NotRequired[str | None]
+    jurisdiction: NotRequired[str | None]
+    issuing_authority_ref: NotRequired[str | None]
+    ends_at: NotRequired[int | None]
 class LegalHoldNotice(TypedDict):
     state: LegalHoldState
     bound: LegalHoldBound
@@ -18688,9 +18694,11 @@ class CalendarIcsImportReceipt(TypedDict):
     source_version: int
     events: list[CalendarImportedEvent]
     screen_verdict: str
-class CalendarOccurrencesRequest(TypedDict):
+class CalendarOccurrencesPageRequest(TypedDict):
     master_ref: str
     range: CalendarRangeDto
+    deadline_ms: NotRequired[int | None]
+    resume_from: NotRequired[int | None]
 class CalendarOccurrenceView(TypedDict):
     event_ref: str
     master_ref: str
@@ -18698,6 +18706,10 @@ class CalendarOccurrenceView(TypedDict):
     original_start_utc: int
     start_utc: int
     end_utc: int
+class CalendarOccurrencesPage(TypedDict):
+    occurrences: list[CalendarOccurrenceView]
+    complete: bool
+    resume_from: NotRequired[int | None]
 class CalendarInstanceMoveRequest(TypedDict):
     system: str
     source_blob_ref: str
@@ -18718,18 +18730,29 @@ class CalendarEventView(TypedDict):
     blocks_time: bool
 class CalendarSel(TypedDict):
     system: NotRequired[str | None]
-class CalendarSearchRequest(TypedDict):
+class CalendarSearchPageRequest(TypedDict):
     calendars: list[CalendarSel]
     range: NotRequired[CalendarRangeDto | None]
     text: NotRequired[str | None]
     limit: int
-class CalendarFreebusyRequest(TypedDict):
+    deadline_ms: NotRequired[int | None]
+    resume_from: NotRequired[int | None]
+class CalendarSearchPage(TypedDict):
+    events: list[CalendarEventView]
+    complete: bool
+    resume_from: NotRequired[int | None]
+class CalendarFreebusyPageRequest(TypedDict):
     calendars: list[CalendarSel]
     range: CalendarRangeDto
+    deadline_ms: NotRequired[int | None]
+    resume_from: NotRequired[int | None]
 class CalendarFreebusyIntervalDto(TypedDict):
     start_utc: int
     end_utc: int
-CalendarFreebusyDto = list[CalendarFreebusyIntervalDto]
+class CalendarFreebusyPage(TypedDict):
+    intervals: list[CalendarFreebusyIntervalDto]
+    complete: bool
+    resume_from: NotRequired[int | None]
 class CalendarMeetingRequest(TypedDict):
     event_ref: str
 PrepSectionKind = Literal["prior_commitment", "attendee_thread", "dossier_delta"]
@@ -22644,6 +22667,8 @@ IdentityReassignmentTarget = IdentityReassignmentTargetHead | IdentityReassignme
 class IdentityReassignment(TypedDict):
     item: IdentityReassignmentItem
     target: IdentityReassignmentTarget
+class IdentityFacetSpec(TypedDict):
+    label: str
 IdentityProposalOutcome = Literal["approved_untouched", "approved_amended", "rejected"]
 class IdentityAmendmentMerge(TypedDict):
     op: Literal["merge"]
@@ -22655,7 +22680,12 @@ class IdentityAmendmentSplit(TypedDict):
     entity: EntityId
     heads: list[EntityId]
     reassignment_map: list[IdentityReassignment]
-IdentityAmendment = IdentityAmendmentMerge | IdentityAmendmentSplit
+class IdentityAmendmentFacet(TypedDict):
+    op: Literal["facet"]
+    entity: EntityId
+    facets: list[IdentityFacetSpec]
+    reassignment_map: list[IdentityReassignment]
+IdentityAmendment = IdentityAmendmentMerge | IdentityAmendmentSplit | IdentityAmendmentFacet
 class IdentityEventActionMerge(TypedDict):
     op: Literal["merge"]
     sources: list[EntityId]
@@ -22675,6 +22705,11 @@ class IdentityEventActionFacet(TypedDict):
     applied_assigned: int
     applied_residue: int
     forked: list[EntityId]
+class IdentityEventActionParkedFacet(TypedDict):
+    op: Literal["parked_facet"]
+    entity: EntityId
+    specs: list[IdentityFacetSpec]
+    reassignment_map: list[IdentityReassignment]
 class IdentityEventActionAssertDistinct(TypedDict):
     op: Literal["assert_distinct"]
     a: EntityId
@@ -22695,7 +22730,7 @@ class IdentityEventActionProposalCancellation(TypedDict):
     op: Literal["proposal_cancellation"]
     proposal: EntityId
     participant: EntityId
-IdentityEventAction = IdentityEventActionMerge | IdentityEventActionSplit | IdentityEventActionFacet | IdentityEventActionAssertDistinct | IdentityEventActionUndo | IdentityEventActionProposalResolution | IdentityEventActionProposalCancellation
+IdentityEventAction = IdentityEventActionMerge | IdentityEventActionSplit | IdentityEventActionFacet | IdentityEventActionParkedFacet | IdentityEventActionAssertDistinct | IdentityEventActionUndo | IdentityEventActionProposalResolution | IdentityEventActionProposalCancellation
 class IdentityTopologyReceipt(TypedDict):
     event: EntityId
     seq: int
@@ -22726,8 +22761,6 @@ class IdentitySplitRequest(TypedDict):
     heads: list[EntityId]
     reassignment_map: list[IdentityReassignment]
     evidence: IdentityEvidence
-class IdentityFacetSpec(TypedDict):
-    label: str
 class IdentityFacetRequest(TypedDict):
     entity: EntityId
     facets: list[IdentityFacetSpec]
@@ -22743,7 +22776,10 @@ class IdentityProposedOpMerge(TypedDict):
 class IdentityProposedOpSplit(TypedDict):
     op: Literal["split"]
     spec: IdentitySplitRequest
-IdentityProposedOp = IdentityProposedOpMerge | IdentityProposedOpSplit
+class IdentityProposedOpFacet(TypedDict):
+    op: Literal["facet"]
+    spec: IdentityFacetRequest
+IdentityProposedOp = IdentityProposedOpMerge | IdentityProposedOpSplit | IdentityProposedOpFacet
 class IdentityProposeRequest(TypedDict):
     operation: IdentityProposedOp
 class IdentityUndoRequest(TypedDict):
