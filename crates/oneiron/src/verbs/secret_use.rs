@@ -398,12 +398,12 @@ fn use_refusal(error: Error, operation: &str, t1: &[(String, String)]) -> Memory
         }) => MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             format!(
-                "{operation} needs {}, capped at {} by the binding's ceiling ({}) and the live \
-                 floor ({})",
-                requested.as_str(),
-                binding_ceiling.min(floor_max).as_str(),
-                binding_ceiling.as_str(),
-                floor_max.as_str()
+                "{operation} needs T{}, capped at T{} by the binding's ceiling (T{}) and the live \
+                 floor (T{})",
+                requested.as_u8(),
+                binding_ceiling.min(floor_max).as_u8(),
+                binding_ceiling.as_u8(),
+                floor_max.as_u8()
             ),
             &["The owner raises the binding's tier ceiling, or the floor, to reach the rung."],
         ),
@@ -422,7 +422,11 @@ fn use_refusal(error: Error, operation: &str, t1: &[(String, String)]) -> Memory
                  (one connector call with the secret as its credential).",
                 names.join("; ")
             );
-            MemoryError::new(MEMORY_CODE_BAD_REQUEST, reason, &[list.as_str()])
+            MemoryError::new(
+                MEMORY_CODE_BAD_REQUEST,
+                format!("{operation}: {reason}"),
+                &[list.as_str()],
+            )
         }
         other => other.into(),
     }

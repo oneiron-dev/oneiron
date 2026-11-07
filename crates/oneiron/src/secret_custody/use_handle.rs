@@ -482,7 +482,7 @@ impl Vault {
             .cloned();
         let Some(t1) = t1 else {
             return Err(Error::Gate(GateError::InvalidConsentBound(
-                self.unknown_use_operation(operation),
+                "the operation is not in the self.use table",
             )));
         };
         if !arguments.is_object() {
@@ -492,26 +492,6 @@ impl Vault {
         }
         let (used, _, admitted) = self.begin_use(user, handle, operation, &t1.effector)?;
         self.use_admitted_t1(&used, admitted, &t1.callback, arguments)
-    }
-
-    /// What an unknown `operation` refuses with: the T0 table and the
-    /// registered T1 operations, so the agent can act on the refusal.
-    fn unknown_use_operation(&self, operation: &str) -> String {
-        let mut names: Vec<String> = SECRET_USE_OPERATIONS
-            .iter()
-            .map(|op| format!("{} ({})", op.name, op.what))
-            .collect();
-        names.extend(
-            self.secret_use_t1_operations
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .iter()
-                .map(|(name, op)| format!("{name} ({})", op.what)),
-        );
-        format!(
-            "{operation} is no self.use operation; the operations are: {}",
-            names.join("; ")
-        )
     }
 
     /// The use every operation shares: the handle resolved, the record's
@@ -538,13 +518,13 @@ impl Vault {
     /// the handle resolved, and the record's binding for `effector` checked
     /// for liveness, status and read grant — everything before the T0 door
     /// check or the T1 lease stamp. The rung's own admission still decides.
-    fn begin_use(
+    fn begin_use<'operation>(
         &self,
         user: &SecretUser,
         handle: &str,
-        operation: &str,
-        effector: &str,
-    ) -> Result<(Used<'_>, String, Result<()>)> {
+        operation: &'operation str,
+        effector: &'operation str,
+    ) -> Result<(Used<'operation>, String, Result<()>)> {
         let txn = self.store.env.read_txn()?;
         let (short, id) = handle_record_in_txn(&self.store, &txn, handle)?;
         let rec = read_secret_custody_admission_in_txn(&self.store, &txn, &id)?
