@@ -203,6 +203,7 @@ pub(super) fn write_born_actor_claim_in_txn(
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
     )?;
+    body.scope_facet = actor_claim_facet_in_txn(vault, wtxn, actor)?;
     body.evidence = Some(evidence.to_value());
     body.scope = Some(scope_with_lineage(pair_scope, meet));
     body.valid_from = Some(at);
@@ -227,6 +228,27 @@ pub(super) fn write_born_actor_claim_in_txn(
         vault.supersede_reserved_claim_in_txn(wtxn, &claim_id, head_id, at.max(*head_start))?;
     }
     Ok(claim_id)
+}
+/// The `actor.*` constructor facet: PERSON derives its own substrate FACET,
+/// every other actor reuses its stored birth FACET when one names a FACET,
+/// else the vault default — the same rule as provenance.
+pub(super) fn actor_claim_facet_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+) -> Result<EntityId> {
+    if vault.get_entity_type_in_txn(txn, &actor)? == Some(ENTITY_TYPE_PERSON) {
+        return crate::claim::substrate_facet_id(actor);
+    }
+    match crate::federation::record_scope::birth_facet(&vault.store, txn, actor)? {
+        Some(facet)
+            if vault.get_entity_type_in_txn(txn, &facet)?
+                == Some(crate::registry::ENTITY_TYPE_FACET) =>
+        {
+            Ok(facet)
+        }
+        _ => crate::claim::default_facet_in(&vault.store, txn),
+    }
 }
 /// What makes two active heads of one predicate collide.
 ///

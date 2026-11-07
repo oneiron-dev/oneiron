@@ -151,6 +151,7 @@ impl AuditScorer<'_> {
                 response_format: ResponseFormat::Text,
                 locality: *locality,
                 host_keyless: false,
+                host_paid: false,
             },
             messages,
             tools: Vec::new(),
