@@ -157,6 +157,10 @@ side_tables! {
     /// actor, signal and task. Key: id16 actor, signal code byte, id16 task (zeros for none).
     COACH_AGENT_HEALTH_CARD: VaultMeta b"coach:agent_health_card:v1:" Named
         => crate::dreamer_runner::maintenance::agent_health::erase_actor_sources_in_txn;
+    /// Each agent-health card under every reviewer receipt it holds (FIX 10880): the
+    /// `health_review:` digest of each `review_outcomes` receipt. Key: digest32 + id16(actor) +
+    /// u8(signal) + id16(task).
+    COACH_AGENT_HEALTH_CARD_BY_RECEIPT: VaultMeta b"coach:agent_health_card_by_receipt:v1:" Raw;
     /// Each live agent-health card under every reviewer revision it names
     /// (FIX 10434): `reviewer_revisions`. Key: id16(revision) + id16(actor) + u8(signal) +
     /// id16(task).
@@ -168,6 +172,20 @@ side_tables! {
     /// The latest wake waiting for a free live health-review slot (FIX 9224).
     /// Key: target attempt id16 + big-endian lease generation4.
     COACH_AGENT_HEALTH_LIVE_PENDING: VaultMeta b"coach:agent_health_live_pending:v1:" Named Engine;
+    /// Where the Coach's unclear-note clustering resumes (FIX 7824): the unclear-ledger key of the
+    /// last outcome a pass finished, cleared at the ledger's end. Key: ().
+    COACH_ATTRIBUTION_LABEL_CURSOR: VaultMeta b"coach:attribution_label_cursor:v1" Named Engine;
+    /// One unclear note the Coach's same-pattern choice judged (FIX 7824): its scope's group hash,
+    /// the pattern it joined (none when it names no pattern) and the fingerprint it was judged
+    /// at. No note text. Key: u32be length + unclear-ledger key + u32be note index.
+    COACH_ATTRIBUTION_LABEL_MEMBER: VaultMeta b"coach:attribution_label_member:v1:" Named Engine;
+    /// One recurring unclear-note pattern within one scope (FIX 7824): the note it is shown by
+    /// and the proposal filed for it, which suppresses a second filing. No note text. Key: group
+    /// hash32 + pattern id16.
+    COACH_ATTRIBUTION_LABEL_PATTERN: VaultMeta b"coach:attribution_label_pattern:v1:" Named Engine;
+    /// One note's support for a pattern (FIX 7824), with the outcome identity it counts as. Key:
+    /// group hash32 + pattern id16 + the member key.
+    COACH_ATTRIBUTION_LABEL_SUPPORT: VaultMeta b"coach:attribution_label_support:v1:" Named Engine;
     /// An agent's `self.report_blocked` receipt waiting for the Coach's Issues job. Key: id16 of
     /// the receipt.
     COACH_BLOCKED_ISSUE: VaultMeta b"coach:blocked_issue:v1:" Named;
@@ -501,6 +519,11 @@ side_tables! {
     /// Lookup index from a normalized connector name to a key id, empty marker value. Key:
     /// string(connector) "\x00" id16.
     CONNECTOR_KEY_CONNECTOR_INDEX: VaultMeta b"connector_key/connector/v1\0" Raw;
+    /// One dispatch batch's normalized input and committed progress (FIX 11058): its effect
+    /// channel and size, the dispatches admitted and refused so far, when the windows that paced
+    /// the rest open again, and its first and latest accounting samples. Key: id16 +
+    /// string(batch_ref).
+    CONNECTOR_KEY_DISPATCH_BATCH: VaultMeta b"connector_key/dispatch_batch/v1\0" Named Engine;
     /// Rotation-generation log entry naming the custody ref a connector key pointed at. Key: id16 +
     /// u32be.
     CONNECTOR_KEY_GENERATION_LOG: VaultMeta b"connector_key/generation/v1\0" Raw;

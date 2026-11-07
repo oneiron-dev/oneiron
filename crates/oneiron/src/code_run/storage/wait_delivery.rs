@@ -69,6 +69,15 @@ const WAITERS: SideTable<([u8; 1], EntityId, EntityId), u64, Raw> =
 const TRAPS: SideTable<(EntityId, EntityId, u64), TrapRef, Raw> =
     SideTable::new(&side_table::CODE_RUN_WAIT_TRAP);
 
+fn retire_wait_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>, key: &WaitKey) -> Result<()> {
+    if WAITERS.get(&vault.store, txn, &key.waiter())? == Some(key.generation) {
+        WAITERS.delete(&vault.store, txn, &key.waiter())?;
+    }
+    DELIVERIES.delete(&vault.store, txn, &key.row())?;
+    TRAPS.delete(&vault.store, txn, &key.row())?;
+    Ok(())
+}
+
 fn reply_text(reply: &serde_json::Value) -> Result<String> {
     serde_json::to_string(reply)
         .map_err(|_| Error::InvalidConfig("a code-run wait reply is not JSON".to_owned()))
@@ -467,14 +476,9 @@ impl ExecutorStorage<'_> {
     /// captured route. The resumed record already names the next generation.
     pub(crate) fn clear_wait(&self, key: &WaitKey) -> Result<()> {
         match self {
-            Self::Canonical(vault) => vault.with_write_txn_grouped(|txn| {
-                if WAITERS.get(&vault.store, txn, &key.waiter())? == Some(key.generation) {
-                    WAITERS.delete(&vault.store, txn, &key.waiter())?;
-                }
-                DELIVERIES.delete(&vault.store, txn, &key.row())?;
-                TRAPS.delete(&vault.store, txn, &key.row())?;
-                Ok(())
-            }),
+            Self::Canonical(vault) => {
+                vault.with_write_txn_grouped(|txn| retire_wait_in_txn(vault, txn, key))
+            }
             Self::Session(binding) => binding.answered(|| {
                 binding
                     .session

@@ -682,33 +682,21 @@ pub(crate) fn invalidate_source_in_txn(
     crate::claim::invalidate_weave_digest_source_in_txn(store, txn, document)?;
     super::dependent_walk::begin_in_txn(write, txn, document, door)
 }
-/// Withdraws one dependent of `document` for `worlds` and queues its
-/// regeneration; an EVENT that outlives its source stays.
+/// Withdraws one dependent for `worlds`; an EVENT that
+/// outlives its source stays. The withdrawn row stays withdrawn: its family
+/// re-derives it under a new id of its own (the Dreamer's owed TURN read, a
+/// scope summary's re-derive), so no regeneration is queued (FIX 12327).
 pub(super) fn withdraw_dependent_in_txn(
     write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut RwTxn<'_>,
-    document: &EntityId,
     dependent: &EntityId,
     worlds: &CarriedWorlds,
 ) -> Result<()> {
     let store = write.store;
-    use super::JobQueue;
     if outlives_withdrawal_in(store, txn, dependent)? {
         return Ok(());
     }
-    withdraw_words_in_txn(write, txn, dependent, worlds)?;
-    let payload = [document.as_bytes().as_slice(), dependent.as_bytes()].concat();
-    crate::attempt_queue::AttemptQueue::from_store(store).port_job_enqueue(
-        txn,
-        crate::store::attempt_inputs::EnqueueAttempt {
-            kind: "derived.regenerate".into(),
-            payload,
-            dedupe_key: Some(format!("{}:{}", document.to_hex(), dependent.to_hex())),
-            run_id: None,
-            now: 0,
-        },
-    )?;
-    Ok(())
+    withdraw_words_in_txn(write, txn, dependent, worlds)
 }
 /// DerivedFrom is dependent→source. This hook also serves session overlays.
 pub(crate) fn record_derived_edge_in_txn(
