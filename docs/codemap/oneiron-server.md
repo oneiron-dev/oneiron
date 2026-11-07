@@ -273,7 +273,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/conversation_transcript/tests.rs` | test | s | — | — | A loopback page reads an imported coding session from the vault alone, with the dev-mode credential a local… |
 | `src/api/conversations.rs` | src | m | 12 crate-vis | — | The `/v1/core/conversations` and `/v1/core/turns` routes: conversations and their turns |
 | `src/api/conversations/tests.rs` | test | s | — | — | The conversation list reads as a named reader, on the read lane recall and the transcript use (ARCH-0006a… |
-| `src/api/conversations/turn_reads.rs` | src | s | 2 crate-vis | — | The TURN read and list doors' rows (FIX 5652, 5938), each one judged and its words read in one snapshot (FIX… |
+| `src/api/conversations/turn_reads.rs` | src | s | 3 crate-vis | — | The TURN read and list doors' rows (FIX 5652, 5938), each one judged and its words read in one snapshot (FIX… |
 | `src/api/core/batch.rs` | src | s | 9 crate-vis | — | Batch-write DTOs, route handler, and entity-put staging |
 | `src/api/core/hydrate.rs` | src | L | 23 crate-vis | — | Hydrate and short-id hydrate DTOs, routes, and mappers |
 | `src/api/core/hydrate/frames.rs` | src | s | 1 crate-vis | — | A batch hydrate's named reads, frame by frame (FIX 11125): a batch past one frame is read in order, every… |
@@ -528,7 +528,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/git_http/mirror_relay.rs` | src | m | 1 crate-vis | — | An exact publish's mirror git through the credential broker on a served host (ARCH-0069 OSH-3, ARCH-0068… |
 | `src/api/git_http/mod.rs` | src | s | 4 crate-vis | — | Git smart-HTTP routes (ARCH-0068 Phase A, ONE-1908) |
 | `src/api/git_http/projection.rs` | src | s | 4 crate-vis | — | The Git read recipient a host binds, apart from its push caller (FIX 7608 slice 2b-ii-A, ASK 1) |
-| `src/api/git_http/routes.rs` | src | s | 9 crate-vis | — | Git smart-HTTP routes and per-service RPC handlers |
+| `src/api/git_http/routes.rs` | src | m | 9 crate-vis | — | Git smart-HTTP routes and per-service RPC handlers |
 | `src/api/git_http/serve.rs` | src | m | 6 crate-vis | — | Streaming bridge between axum and the blocking smart-HTTP serve plane |
 | `src/api/git_http/status_codec.rs` | src | m | 5 crate-vis | — | Receive-pack status pkt-line codec |
 | `src/api/git_http/tests_auth.rs` | src | m | — | — | Authentication-gate tests for Git smart-HTTP |
@@ -1235,7 +1235,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/handler/selector_scope.rs` | src | s | 1 crate-vis | — | Single-vault selector grant scope shared by handler and livequery (FIX 9251) |
 | `src/handler/socket_stop.rs` | src | s | 5 crate-vis | — | An upgraded socket's transport under its server's stop (OF-237) |
 | `src/handler/tests.rs` | test | XL | — | — | — |
-| `src/handler/transport.rs` | src | m | 16 crate-vis | — | Guarded socket chokepoint with revocation consults on queue and flush |
+| `src/handler/transport.rs` | src | m | 18 crate-vis | — | Guarded socket chokepoint with revocation consults on queue and flush |
+| `src/handler/transport/live_person.rs` | src | s | 4 crate-vis | — | The roster lifetime of a managed person socket, not an admission gate |
 | `src/handler/window_copy.rs` | src | s | 2 crate-vis | — | The masked repo copy generation each socket was last sent of a window (FIX 7608 slice 4, C3 of the s4… |
 | `src/handler/window_pads.rs` | src | s | 6 crate-vis | — | The home's side of the window pad envelope (KS-5, FIX 7107) |
 | `src/handler/window_row_tests.rs` | test | L | 1 crate-vis | — | `max_windows_per_connection` is a row, never a refusal (rule 5, OF-520): a socket past it is served, keeps a… |

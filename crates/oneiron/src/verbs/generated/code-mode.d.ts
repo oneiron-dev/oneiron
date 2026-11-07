@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1349 code-mode rows (1307 host rows, 42 run rows), 4757 declarations.
-// Replies: 1157 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1350 code-mode rows (1308 host rows, 42 run rows), 4759 declarations.
+// Replies: 1158 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -1048,7 +1048,7 @@ declare namespace Sdk {
   type InboxLensConcern = { agent: string; signal: string; tone: string };
   type InboxLensDiaryReview = { request: string; reader: string; reader_class: string; reason: string };
   type AgentInboxReadState = "new" | "open" | "later" | "done";
-  type InboxLensRow = { item_id: string; kind: InboxLensKind; pile: InboxLensPile; thread_ref?: string | null; identity?: string | null; actor: string; facet?: string | null; participants: InboxLensParticipant[]; impact: number; occurred_at: number; receipt_ref?: string | null; payload_ref?: string | null; concern?: InboxLensConcern | null; diary_review?: InboxLensDiaryReview | null; sender?: string | null; widening?: ConsultWidening | null; read_state?: AgentInboxReadState | null };
+  type InboxLensRow = { item_id: string; kind: InboxLensKind; pile: InboxLensPile; thread_ref?: string | null; identity?: string | null; actor: string; facet?: string | null; participants: InboxLensParticipant[]; impact: number; occurred_at: number; receipt_ref?: string | null; payload_ref?: string | null; approval_digest?: string | null; concern?: InboxLensConcern | null; diary_review?: InboxLensDiaryReview | null; sender?: string | null; widening?: ConsultWidening | null; read_state?: AgentInboxReadState | null };
   type InboxConcernGroup = { agent: string; items: string[] };
   type InboxLensPage = { items: InboxLensRow[]; concern_groups: InboxConcernGroup[] };
   type InboxRunGroupsRequest = { limit?: number | null; after?: string | null };
@@ -2525,7 +2525,7 @@ declare namespace Sdk {
   type ArtifactVersionView = { version: number; content_hash: string; parent_version?: number | null; fork_of_version?: number | null; provenance: string; run_ref?: string | null; created_at: number; export_name: string; export_media_type: string; made_by: MadeBy; born_from: BornFromSource[]; claim: RecordRef };
   type ArtifactView = { artifact_id: EntityId; artifact: RecordRef; kind: ArtifactKind; name: string; media_type: string; head?: number | null; versions: ArtifactVersionView[] };
   type ArtifactUnitsRequest = { artifact_ref: string; version?: number | null };
-  type AnnotationLocator = { format: "xlsx"; sheet: string; range: string } | { format: "docx"; para_path: string; char_start: number; char_end: number } | { format: "pptx"; slide: number; shape_id: string } | { format: "html"; part_id: string; char_start: number; char_end: number };
+  type AnnotationLocator = { format: "xlsx"; sheet: string; range: string } | { format: "docx"; para_path: string; char_start: number; char_end: number } | { format: "pptx"; slide: number; shape_id: string } | { format: "html"; part_id: string; char_start: number; char_end: number } | { format: "text"; char_start: number; char_end: number };
   type ArtifactUnitView = { locator: AnnotationLocator; quote?: string | null };
   type ArtifactUnitsView = { status: "supported"; artifact_id: EntityId; version: number; content_hash: string; kind: ArtifactKind; units: ArtifactUnitView[] } | { status: "unsupported"; artifact_id: EntityId; kind: ArtifactKind; reason: string };
   type AnnotationPinRequest = { artifact_ref: string; version?: number | null; locator: AnnotationLocator };
@@ -2905,12 +2905,13 @@ declare namespace Sdk {
   type ConnectorWitnessReadGrantRevoked = { grant_ref: EntityId; changed: boolean; agent: EntityId; conversation: EntityId; reason: string; revoked_at: number };
   type RepoAnchorBindInput = { repo: string; project: EntityId };
   type RepoAnchorBindOutput = { repo: string; anchor: GitPushRepo; changed: boolean };
-  type RepoSnapshotsGetInput = { repo: EntityId; ref: string; snapshot: string };
+  type RepoPortableId = string;
+  type RepoSnapshotsGetInput = { repo: EntityId; portable_repo?: RepoPortableId | null; ref: string; snapshot: string };
   type RepoSnapshotView = { repo: EntityId; ref: string; commit: string; snapshot: string; artifact: EntityId; files: CodeSnapshotFile[] };
   type RepoSnapshotsGetOutput = RepoSnapshotView;
-  type RepoSnapshotsReadInput = { repo: EntityId; ref: string; snapshot: string; path: string; why?: string | null };
+  type RepoSnapshotsReadInput = { repo: EntityId; portable_repo?: RepoPortableId | null; ref: string; snapshot: string; path: string; why?: string | null };
   type RepoSnapshotsReadOutput = { repo: EntityId; ref: string; snapshot: string; file: CodeSnapshotFile; content: string; text_sha256: string };
-  type RepoSymbolsDefinitionsInput = { repo: EntityId; ref: string; snapshot: string; name: string };
+  type RepoSymbolsDefinitionsInput = { repo: EntityId; portable_repo?: RepoPortableId | null; ref: string; snapshot: string; name: string };
   type RepoSymbolsDefinitionsOutput = { repo: EntityId; ref: string; snapshot: string; definitions: CodeSnapshotDefinition[] };
   type RepoViewsGetInput = { work: EntityId };
   type RepoWorkFile = { path: string; content_hash_blake3: string; projection?: RepoFileProjectionView | null };
@@ -2921,9 +2922,9 @@ declare namespace Sdk {
   type RepoMergeQueueObserveInput = { work: EntityId };
   type RepoQueueEntryView = { batch: string; work: EntityId; proposals: EntityId[]; declaration?: EntityId | null; state: BatchState; base_green: string; expected_head: string; landed_head?: string | null; blockers: EntityId[] };
   type RepoMergeQueueObserveOutput = { work: EntityId; repo: EntityId; ref: string; base_green: string; head_commit: string; green_commit: string; green_moved: boolean; entries: RepoQueueEntryView[] };
-  type RepoSnapshotsIngestInput = { repo: EntityId; ref: string };
+  type RepoSnapshotsIngestInput = { repo: EntityId; portable_repo?: RepoPortableId | null; ref: string };
   type RepoSnapshotsIngestOutput = RepoSnapshotView;
-  type RepoWorkOpenInput = { repo: EntityId; ref: string };
+  type RepoWorkOpenInput = { repo: EntityId; portable_repo?: RepoPortableId | null; ref: string };
   type RepoWorkOpenOutput = RepoWorkView;
   type RepoSymbolsDeclareInput = { work: EntityId; symbols: EntityId[]; ttl_seconds: number };
   type RepoSymbolDeclarationView = { work: EntityId; declaration: EntityId; task: EntityId; symbols: EntityId[]; expires_at: number; held: boolean; blockers: EntityId[] };
@@ -3294,6 +3295,8 @@ declare namespace Sdk {
   type ProjectGoalInterviewContext = { goal_claim?: EntityId | null; generation: number; card_seed?: ProjectGoalDraft | null; revision_proposals: ProjectGoalRevisionProposal[] };
   type JoinRequest = { room: EntityId; branch?: EntityId | null; subject: JoinSubject; paid: boolean; spend_scope?: SpendScopeId | null; intent_key: string };
   type ConsentAnswer = { join_ref: string; part: ConsentPart; grant: boolean; spend_scope?: SpendScopeId | null };
+  type RoomLeaveRequest = { room: EntityId; person: EntityId };
+  type RoomLeaveOutcome = { member_ids: EntityId[] };
   type OfferDraft = { room: EntityId; branch?: EntityId | null; agent: EntityId; what: string; artifact_ref?: string | null; spend_scope?: SpendScopeId | null; until?: number | null; intent_key: string };
   type DeclaredMaximum = { units: number; unit: LeaseUnit };
   type OfferState = { kind: "open"; needs: ConsentNeed[] } | { kind: "joined"; turn: EntityId; receipt_ref: string } | { kind: "not_now"; diary_ref?: EntityId | null } | { kind: "superseded"; by: string } | { kind: "aged_out" };
@@ -4611,7 +4614,6 @@ declare namespace Sdk {
   type MailComplianceSearchReply = { log_sequence: number; hits: MailComplianceHit[] };
   type FilesSourceConvertRequest = { path: string; exclude?: string[] | null };
   type RepoManifestConflictReviewRequest = { window: string; portable_repo: string };
-  type RepoPortableId = string;
   type RepoManifestWriter = { machine: EntityId; signature: number[] };
   type RepoManifest = { portable: RepoPortableId; version: number; code: EntityId; minted_at: number; origin_name?: string | null; visible_refs: [string, string][]; lfs_pointers: string[]; epoch: number; updated_at: number; writer?: RepoManifestWriter | null };
   type RepoManifestConflictReviewView = { window: string; portable_repo: string; held: RepoManifest; carried: RepoManifest; binding: string };
@@ -4914,7 +4916,7 @@ declare function crawl(input: Sdk.WebCrawlRequest): Promise<Sdk.CrawlResult | St
 /** Describes one TASK as its card, a board card by key, the vault as its shape card (`vault: true`, ARCH-0070), a task highway handle as its status (`after` polls it; `workflow`: its bound try), or the whole TASKS section when nothing is named. */
 declare function describe(input: Sdk.DescribeRequest & { fold: NonNullable<Sdk.DescribeRequest["fold"]> }): Promise<Sdk.FoldReply<Sdk.FoldDescription> | StoredResult>;
 declare function describe(input: Sdk.DescribeRequest): Promise<Sdk.TaskDescription | StoredResult>;
-/** Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal. */
+/** Run foreign JavaScript or TypeScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal. */
 declare function execute_code(input: Sdk.ForeignCodeRunRequest): Promise<Sdk.ForeignCodeRunResult | StoredResult>;
 declare const feedback: {
   /** The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval. */
@@ -7469,6 +7471,8 @@ declare const vault: Sdk.VaultHost & {
     invite(input: Sdk.JoinRequest): Promise<Sdk.JoinOutcome | StoredResult>;
     /** Files and decides a request to take part in a room or one of its threads. */
     join(input: Sdk.JoinRequest): Promise<Sdk.JoinOutcome | StoredResult>;
+    /** Ends a person's current room membership: their own leave or their principal's, or the vault owner's removal; saving that rode on it stops, and a later vault.rooms.join opens a new membership. */
+    leave(input: Sdk.RoomLeaveRequest): Promise<Sdk.RoomLeaveOutcome | StoredResult>;
     /** The caller's rooms its own grants admit; inside a room turn, only that room. */
     list(input: Sdk.EmptyRequest): Promise<Sdk.RoomEntry[] | StoredResult>;
     /** One page of the turns in a room this reader may read; with thread_ref, of that one thread alone. */
@@ -8134,7 +8138,7 @@ declare const vault: Sdk.VaultHost & {
     /** Admits a generated candidate weave recipe under the owner's proof and queues its pinned execution; poll vault.consolidation.status for completion. */
     enqueue(input: Sdk.WeaveEnqueueRequest): Promise<Sdk.DreamerAttemptRef | StoredResult>;
     item: {
-      /** A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays. */
+      /** A person labels a claim, project, budget or sieve audit item in their own lens as wrong; the label teaches the loops and the record stays. */
       wrong(input: Sdk.WeaveWrongItemRequest): Promise<Sdk.WeaveItemCorrectionView | StoredResult>;
     };
     /** Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions, lowered for the surface the call names; the server holds its frame for the card's events. */
@@ -8151,7 +8155,7 @@ declare const vault: Sdk.VaultHost & {
         render(input: Sdk.EmptyRequest): Promise<Sdk.WeaveDigestRendered | null | StoredResult>;
       };
       item: {
-        /** The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays. */
+        /** The owner labels a claim, project, budget or sieve audit item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays. */
         wrong(input: Sdk.WeaveWrongItemRequest): Promise<Sdk.WeaveItemCorrectionView | StoredResult>;
       };
       link: {
