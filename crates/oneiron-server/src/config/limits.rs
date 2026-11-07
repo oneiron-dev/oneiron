@@ -309,6 +309,11 @@ impl LimitsConfig {
             claim_input_json_bytes,
             core_batch_entities,
             legacy_batch_entities,
+            blob_content_bytes,
+            booking_availability_calls_per_minute,
+            booking_hold_calls_per_minute,
+            booking_write_calls_per_minute,
+            booking_quarantine_calls_per_minute,
             code_result_inline_bytes,
             code_result_disk_floor_bytes,
             code_result_scan_bytes,
@@ -521,6 +526,23 @@ impl LimitsConfig {
             (EngineLimit::ClaimInputJsonBytes, claim_input_json_bytes),
             (EngineLimit::CoreBatchEntities, core_batch_entities),
             (EngineLimit::LegacyBatchEntities, legacy_batch_entities),
+            (EngineLimit::BlobContentBytes, blob_content_bytes),
+            (
+                EngineLimit::BookingAvailabilityCallsPerMinute,
+                booking_availability_calls_per_minute,
+            ),
+            (
+                EngineLimit::BookingHoldCallsPerMinute,
+                booking_hold_calls_per_minute,
+            ),
+            (
+                EngineLimit::BookingWriteCallsPerMinute,
+                booking_write_calls_per_minute,
+            ),
+            (
+                EngineLimit::BookingQuarantineCallsPerMinute,
+                booking_quarantine_calls_per_minute,
+            ),
             (EngineLimit::CodeResultInlineBytes, code_result_inline_bytes),
             (
                 EngineLimit::CodeResultDiskFloorBytes,
