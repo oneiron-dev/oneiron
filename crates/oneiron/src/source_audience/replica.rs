@@ -8,7 +8,10 @@
 //! source-authority signature is asked for in this slice: the lane is the
 //! authority (a signed slice is a FIX row).
 
-use super::{POLICIES, RECORDS, SourceAudienceKind, SourceAudiencePolicy};
+use super::{
+    EVENTS, POLICIES, RECORDS, SourceAudienceEvent, SourceAudienceKind, SourceAudiencePolicy,
+    THREADS,
+};
 use crate::error::{Error, Result};
 use crate::{EntityId, Vault};
 
@@ -42,10 +45,15 @@ pub(crate) fn merge_policy_in_txn(
 ) -> Result<ReplicaMerge> {
     let held = normalized_head_in_txn(vault, txn, id)?;
     let mut accepted = without_erased_actors(vault, txn, incoming)?;
+    if let Some(held) = &held
+        && !same_identity(held, &accepted)
+    {
+        return Ok(ReplicaMerge::Conflict);
+    }
+    // A thread merged here is filed where its source's threads are found
+    // (fix list row 17204), whichever revision stands.
+    index_thread_in_txn(vault, txn, id, &accepted)?;
     if let Some(held) = &held {
-        if !same_identity(held, &accepted) {
-            return Ok(ReplicaMerge::Conflict);
-        }
         if accepted.revision < held.revision {
             return Ok(ReplicaMerge::Held);
         }
@@ -63,6 +71,173 @@ pub(crate) fn merge_policy_in_txn(
     }
     POLICIES.put(&vault.store, txn, id, &accepted)?;
     Ok(ReplicaMerge::Written)
+}
+
+/// Files the thread policy `id` in its source's thread index, in `txn`:
+/// how a replica finds the threads of a source, and how a later landing of
+/// the thread here finds the policy its rows were born under. The thread's
+/// own key takes the first policy filed for it. Another install's policy
+/// for the same thread, minted before the two met, keeps its own bindings
+/// and shares, so it is filed beside the first under a key of its own, and
+/// a scan of the source finds it too. A source policy files nothing.
+fn index_thread_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    policy: &SourceAudiencePolicy,
+) -> Result<()> {
+    let SourceAudienceKind::Thread { source, thread, .. } = &policy.kind else {
+        return Ok(());
+    };
+    let key = match THREADS.get(&vault.store, txn, &(*source, *thread))? {
+        None => (*source, *thread),
+        Some(first) if first == *id => return Ok(()),
+        Some(_) => {
+            let mut beside = blake3::Hasher::new();
+            beside.update(thread);
+            beside.update(id.as_bytes());
+            (*source, *beside.finalize().as_bytes())
+        }
+    };
+    if THREADS.get(&vault.store, txn, &key)?.is_none() {
+        THREADS.put(&vault.store, txn, &key, id)?;
+    }
+    Ok(())
+}
+
+/// Merges one incoming receipt of the change that made revision `revision`
+/// of `policy`, in `txn` (fix list row 17205): one this vault does not hold
+/// is kept, without any actor this vault erased. A receipt changes only by
+/// losing an actor, when a vault erases one: two copies that differ
+/// otherwise conflict, the held one standing, and two that agree leave
+/// their meet, each actor either copy lost taken out ([`event_meet`]).
+///
+/// # Errors
+///
+/// Storage and codec failures.
+pub(crate) fn merge_event_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    policy: &EntityId,
+    revision: u64,
+    incoming: &SourceAudienceEvent,
+) -> Result<ReplicaMerge> {
+    let accepted = event_without_erased_actors(vault, txn, incoming)?;
+    let key = (*policy, revision);
+    let merged = match EVENTS.get(&vault.store, txn, &key)? {
+        None => accepted,
+        Some(held) => match event_meet(&held, &accepted) {
+            None => return Ok(ReplicaMerge::Conflict),
+            Some(meet) if meet == held => return Ok(ReplicaMerge::Held),
+            Some(meet) => meet,
+        },
+    };
+    EVENTS.put(&vault.store, txn, &key, &merged)?;
+    Ok(ReplicaMerge::Written)
+}
+
+/// Whether the receipt `incoming` of the change that made revision
+/// `revision` of `policy` contradicts the one this vault holds: it tells
+/// another change, not the same one with an actor taken out.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn event_conflicts_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    policy: &EntityId,
+    revision: u64,
+    incoming: &SourceAudienceEvent,
+) -> Result<bool> {
+    Ok(EVENTS
+        .get(&vault.store, txn, &(*policy, revision))?
+        .is_some_and(|held| event_meet(&held, incoming).is_none()))
+}
+
+/// Two receipts of one change as all they tell: each actor either names.
+/// `None` when they tell different changes. Admission folds a range's
+/// copies of one receipt this way: a redacted copy between two that name
+/// two people never hides the contradiction.
+pub(crate) fn event_join(
+    one: &SourceAudienceEvent,
+    other: &SourceAudienceEvent,
+) -> Option<SourceAudienceEvent> {
+    let actor = |left: Option<EntityId>, right: Option<EntityId>| match (left, right) {
+        (Some(left), Some(right)) if left != right => None,
+        (Some(named), _) | (None, Some(named)) => Some(Some(named)),
+        (None, None) => Some(None),
+    };
+    if one.op != other.op || one.at != other.at {
+        return None;
+    }
+    Some(SourceAudienceEvent {
+        op: one.op,
+        person: actor(one.person, other.person)?,
+        by: actor(one.by, other.by)?,
+        at: one.at,
+    })
+}
+
+/// Two receipts of one change as one: the change both tell, without each
+/// actor either lost to an erase. `None` when they tell different changes.
+fn event_meet(
+    one: &SourceAudienceEvent,
+    other: &SourceAudienceEvent,
+) -> Option<SourceAudienceEvent> {
+    // Each actor field: kept where both tell it, out where either lost it,
+    // and no meet where they tell two people.
+    let actor = |left: Option<EntityId>, right: Option<EntityId>| match (left, right) {
+        (Some(left), Some(right)) if left != right => None,
+        (Some(left), Some(_)) => Some(Some(left)),
+        _ => Some(None),
+    };
+    if one.op != other.op || one.at != other.at {
+        return None;
+    }
+    Some(SourceAudienceEvent {
+        op: one.op,
+        person: actor(one.person, other.person)?,
+        by: actor(one.by, other.by)?,
+        at: one.at,
+    })
+}
+
+/// Whether the change receipt `event` names an actor this vault erased.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn event_names_erased_actor_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    event: &SourceAudienceEvent,
+) -> Result<bool> {
+    Ok(event_without_erased_actors(vault, txn, event)? != *event)
+}
+
+/// `event` with every actor this vault erased taken out of it.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn event_without_erased_actors(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    event: &SourceAudienceEvent,
+) -> Result<SourceAudienceEvent> {
+    let mut normal = event.clone();
+    if let Some(person) = normal.person
+        && vault.carrier_actor_erased_in_txn(txn, &person)?
+    {
+        normal.person = None;
+    }
+    if let Some(by) = normal.by
+        && vault.carrier_actor_erased_in_txn(txn, &by)?
+    {
+        normal.by = None;
+    }
+    Ok(normal)
 }
 
 /// Binds the replicated row `record` to `policy`, in `txn`, once the
@@ -321,11 +496,17 @@ fn same_identity(held: &SourceAudiencePolicy, incoming: &SourceAudiencePolicy) -
     let kind = match (&held.kind, &incoming.kind) {
         (SourceAudienceKind::Source { .. }, SourceAudienceKind::Source { .. }) => true,
         (
-            SourceAudienceKind::Thread { source: held, .. },
             SourceAudienceKind::Thread {
-                source: incoming, ..
+                source: held,
+                thread: held_thread,
+                ..
             },
-        ) => held == incoming,
+            SourceAudienceKind::Thread {
+                source: incoming,
+                thread: incoming_thread,
+                ..
+            },
+        ) => held == incoming && held_thread == incoming_thread,
         _ => false,
     };
     kind && held.created_at == incoming.created_at
