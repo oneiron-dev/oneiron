@@ -55,6 +55,7 @@ mod code_doors;
 mod code_import_doors;
 mod code_run_doors;
 mod code_run_secret_lift_doors;
+mod code_secret_doors;
 mod code_view_doors;
 mod code_wait_doors;
 mod codebase_doors;
@@ -107,6 +108,7 @@ mod grants_doors;
 mod graph_ask_doors;
 mod guest_document_doors;
 mod guest_doors;
+mod hook_check_doors;
 mod hook_regen_doors;
 mod hook_session;
 mod hooks;
@@ -129,6 +131,7 @@ mod lens_selection_doors;
 mod linear_doors;
 mod live_run_doors;
 mod live_voice_doors;
+mod live_voice_settlement;
 mod merge_queue_checker_doors;
 mod merge_queue_doors;
 mod mesh_doors;
@@ -158,6 +161,7 @@ mod receipts;
 mod release;
 mod reply_doors;
 mod repo_doors;
+mod repo_manifest_conflict_doors;
 mod research_doors;
 mod reservoir_source_doors;
 mod residence_doors;
@@ -216,7 +220,10 @@ mod web_fetch_doors;
 mod widen_proposal_doors;
 mod wire_health_doors;
 
-pub(crate) use admission_doors::{admission_observer, call_verb};
+pub(crate) use admission_doors::{
+    admission_observer, call_verb, carrying_admission_observer, tracker_observer, tracks_admission,
+    with_admission_observer, with_admission_observer_sync,
+};
 pub(crate) use asr_doors::AsrSessions;
 pub(crate) use call_context::{FacadeCall, FacadeCallOutput};
 use call_context::{VerbContext, context_required, facade_invocation_id};
@@ -467,6 +474,9 @@ struct FacadeErrorBody {
     /// The typed legal-hold notice, when the engine supplied one.
     #[serde(rename = "legal_hold", skip_serializing_if = "Option::is_none")]
     legal_hold: Option<Box<oneiron::error::LegalHoldNotice>>,
+    /// The engine's held room join, with its intent and missing consents.
+    #[serde(rename = "room_join_hold", skip_serializing_if = "Option::is_none")]
+    room_join_hold: Option<Box<oneiron::workspace_roster::RoomJoinHold>>,
     /// A failed run's program type feedback (FIX 10389), beside the refusal
     /// and never among its words: each item released whole, or withheld
     /// with none of its text when its own release check holds it.
@@ -507,6 +517,9 @@ pub(crate) struct MemoryErrorBodySchema {
     #[schema(value_type = Option<crate::api::legal_hold_schema::LegalHoldNoticeSchema>)]
     #[serde(rename = "legal_hold")]
     legal_hold: Option<crate::api::legal_hold_schema::LegalHoldNoticeSchema>,
+    #[schema(value_type = Option<crate::error::room_join_hold_schema::RoomJoinHoldSchema>)]
+    #[serde(rename = "room_join_hold")]
+    room_join_hold: Option<crate::error::room_join_hold_schema::RoomJoinHoldSchema>,
     #[schema(value_type = Option<Vec<Object>>)]
     program_steps: Option<Vec<serde_json::Value>>,
 }

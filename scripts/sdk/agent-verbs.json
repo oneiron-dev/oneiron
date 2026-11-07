@@ -31,6 +31,22 @@
       "openapi": true
     },
     {
+      "name": "vault.commitments.ledger",
+      "description": "Reads due-sorted open obligations owed by and to one counterparty contact, with their current commitment views.",
+      "input": "crate::memory::commitment_doors::CommitmentLedgerRequest",
+      "output": "crate::memory::commitment_doors::CommitmentLedgerView",
+      "call": "memory.commitments_ledger_as(&memory.embedded_owner(\"vault.commitments.ledger\")?, input)?",
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.commitments.instances",
       "description": "Lists the materialized occurrences of a commitment series, including closed obligations.",
       "input": "crate::memory::commitment_doors::CommitmentRefRequest",
@@ -4049,6 +4065,22 @@
       "openapi": true
     },
     {
+      "name": "vault.skills.proposal.settle",
+      "description": "The owner accepts the exact package in a pending hub update, or rejects only its proposal without changing the working skill.",
+      "input": "HubSkillProposalSettleRequest",
+      "output": "crate::task_verb::sdk::HubSkillProposalSettled",
+      "call": "crate::task_verb::sdk::hub_skill_proposal_settle_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.proposal.settle\")?, &input)?",
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.skills.receipts",
       "description": "Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner.",
       "input": "HubSkillRequest",
@@ -4083,7 +4115,7 @@
       "description": "Reads skill lifecycle, exact source, provenance, source availability, scan and admission receipts, and retained fork ancestry.",
       "input": "HubSkillRequest",
       "output": "crate::task_verb::sdk::SkillLibraryView",
-      "call": "crate::task_verb::sdk::skill_library_get_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.get\")?, &input)?",
+      "call": "memory.witness_skill_bodies(crate::task_verb::sdk::skill_library_get_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.get\")?, &input))?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
@@ -4098,7 +4130,7 @@
       "description": "Lists a page of the owner skill library, including inactive skills and their retained evidence.",
       "input": "SkillLibraryListRequest",
       "output": "crate::task_verb::sdk::SkillLibraryPage",
-      "call": "crate::task_verb::sdk::skill_library_list_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.list\")?, &input)?",
+      "call": "memory.witness_skill_bodies(crate::task_verb::sdk::skill_library_list_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.list\")?, &input))?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
@@ -4113,7 +4145,7 @@
       "description": "The owner soft-retires an active skill without deleting its body, source or receipts; running callable invocations are cancelled.",
       "input": "HubSkillRequest",
       "output": "crate::task_verb::sdk::SkillLibraryView",
-      "call": "crate::task_verb::sdk::skill_archive_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.archive\")?, &input)?",
+      "call": "memory.witness_skill_bodies(crate::task_verb::sdk::skill_archive_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.archive\")?, &input))?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
@@ -4128,7 +4160,7 @@
       "description": "The owner restores an archived skill through the same admission gates; a hub restore prepares exact consent and reruns held-out scoring.",
       "input": "SkillLibraryRestoreRequest",
       "output": "crate::task_verb::sdk::SkillLibraryRestoreReceipt",
-      "call": "crate::task_verb::sdk::skill_restore_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.restore\")?, &input, None)?",
+      "call": "memory.witness_skill_bodies(crate::task_verb::sdk::skill_restore_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.restore\")?, &input, None))?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
@@ -7603,6 +7635,22 @@
       "openapi": true
     },
     {
+      "name": "vault.coach.training_runs.cancel",
+      "description": "Cancel a staged trained embedder swap while its binding still waits or fills; an applied swap keeps the existing space-move undo door.",
+      "input": "crate::skill_optimize::offer_doors::TrainingRunRef",
+      "output": "crate::embed::PendingEmbedderBinding",
+      "call": "crate::skill_optimize::offer_doors::cancel_training_run(memory.vault(), &memory.embedded_owner(\"vault.coach.training_runs.cancel\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_precheck": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.drafters.list",
       "description": "The owner lists the vault's own drafter versions, all or one target's: state, parent, recipe, source count, and whether each is retained, serving and revertible.",
       "input": "crate::drafter::DrafterListRequest",
@@ -9883,6 +9931,22 @@
       "openapi": true
     },
     {
+      "name": "vault.hooks.checks",
+      "description": "The owner reads saved hook cycle and depth checks, including their causal lineage. Reads no hook arguments, body or result values and changes nothing; keeps the native list's oldest-key order and 1000-row limit.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::runtime_hooks::HookCheck>",
+      "call": "memory.vault().hook_checks_as_owner(&memory.embedded_owner(\"vault.hooks.checks\")?).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.hooks.replay",
       "description": "The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands, 256 entries a page; next_cursor continues to the rest.",
       "input": "crate::task_verb::sdk::HooksReplayRequest",
@@ -10713,6 +10777,36 @@
       "host_door_lists": true
     },
     {
+      "name": "vault.code.secrets.get",
+      "description": "Read one repository's marked secrets and linked remediations, value-free: each mark's blob, path, detector kind, where the push saw it and its custody handle. Owner only.",
+      "input": "crate::memory::code_doors::CodeRepoRequest",
+      "output": "crate::memory::code_doors::CodeRepoSecretsView",
+      "call": "memory.code_repo_secrets_get_as(&memory.embedded_owner(\"vault.code.secrets.get\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.secrets.propose",
+      "description": "Stage one remediation of a repository's current code: marked keys become secret references, committed .env files go, .gitignore and .env.example follow. Owner only. It only proposes.",
+      "input": "crate::memory::code_doors::CodeRepoSecretProposeRequest",
+      "output": "crate::memory::code_doors::CodeRepoSecretRemediation",
+      "call": "memory.code_repo_secrets_propose_as(&memory.embedded_owner(\"vault.code.secrets.propose\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "execute_code",
       "description": "Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal.",
       "input": "crate::memory::foreign_code::ForeignCodeRunRequest",
@@ -10745,6 +10839,21 @@
       "openapi": true
     },
     {
+      "name": "vault.code.corrections",
+      "description": "Read one code run's durable correction records as the owner, oldest first: per model response its model, repairs, outcome and committed checkpoint, with the repair policy. Canonical runs only.",
+      "input": "crate::memory::code_run_doors::CodeRunCorrectionsRequest",
+      "output": "crate::memory::code_run_doors::CodeRunCorrectionsView",
+      "call": "memory.code_run_corrections_as(&memory.embedded_owner(\"vault.code.corrections\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.code.type_diagnostics",
       "description": "Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref.",
       "input": "crate::memory::code_run_doors::CodeRunTypeDiagnosticsRequest",
@@ -10761,7 +10870,7 @@
     },
     {
       "name": "vault.code.waits.resolve",
-      "description": "Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken.",
+      "description": "Answer a sealed code consent wait as its authenticated owner or current policy-admitted power holder, on their own word. First answer wins; the effect meets its current gate once. No raw reply, grant or consumption.",
       "input": "crate::memory::code_wait_doors::CodeWaitResolveRequest",
       "output": "crate::memory::code_wait_doors::CodeWaitReceiptView",
       "call": "memory.code_wait_resolve_as(&memory.embedded_owner(\"vault.code.waits.resolve\")?, input)?",
@@ -10776,7 +10885,7 @@
     },
     {
       "name": "vault.code.waits.receipt",
-      "description": "Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait.",
+      "description": "Read a code consent wait as its authenticated owner or current policy-admitted power holder: effect, answer, settlement and replay-consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait.",
       "input": "crate::memory::code_wait_doors::CodeWaitReceiptRequest",
       "output": "Option<crate::memory::code_wait_doors::CodeWaitReceiptView>",
       "call": "memory.code_wait_receipt_as(&memory.embedded_owner(\"vault.code.waits.receipt\")?, input)?",
@@ -11247,6 +11356,24 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.checkout.holder.bind",
+      "description": "Materialize the caller's own live checkout without a run. One current repo read Grant must cover the full ref at the lease's pinned commit and every path of that tree. Returns the lease-bound remote URL, not a host path; no lease is minted.",
+      "input": "crate::memory::repo_doors::RepoCheckoutBindInput",
+      "output": "crate::memory::repo_doors::RepoCheckoutBindOutput",
+      "call": "memory.repo_checkout_bind_for_holder(input)?",
+      "scope": "Write",
+      "admission": {
+        "lane_record_scope": true,
+        "require_granted_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
       "openapi": true
     },
     {
@@ -13228,6 +13355,101 @@
       }
     },
     {
+      "name": "tasks.answer.forward.challenge",
+      "description": "The challenge one person signs, through their slip's binding transcript, to relay their own word or seat void on an ask to the node that admitted it.",
+      "input": "crate::task_verb::sdk::TaskAnswerForwardChallengeRequest",
+      "output": "crate::task_verb::sdk::TaskAnswerForwardChallenge",
+      "mcp_served": "[input.handle.group_ref]",
+      "call": "crate::task_verb::sdk::TaskAnswerForwardChallenge::from_bytes(&memory.tasks_answer_forward_challenge(&input.handle, &input.intent_key, &input.act)?)",
+      "scope": "Read",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false,
+      "binding": {
+        "generic": true,
+        "args": [
+          {
+            "name": "handle",
+            "type": "crate::task_verb::TaskAskHandle"
+          },
+          {
+            "name": "intent_key",
+            "type": "String"
+          },
+          {
+            "name": "act",
+            "type": "crate::task_verb::AskForwardAct"
+          }
+        ]
+      }
+    },
+    {
+      "name": "tasks.answer.forward",
+      "description": "Relays one person's own word, or the void of their own seat, on an ask to the node that admitted it; it stays pending until that node's result reads here.",
+      "refs": [
+        "/act/word/provenance_refs/*/claim",
+        "/act/word/provenance_refs/*/turn"
+      ],
+      "refs_check": "crate::task_verb::admit_ask_references",
+      "input": "crate::task_verb::sdk::TaskAnswerForwardRequest",
+      "output": "crate::task_verb::AskForwardReceipt",
+      "mcp_served": "[input.handle.group_ref]",
+      "call": "memory.tasks_answer_forward(&input.handle, &input.intent_key, &input.act, &input.proof)?",
+      "scope": "Write",
+      "task_work": true,
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false,
+      "binding": {
+        "generic": true,
+        "args": [
+          {
+            "name": "handle",
+            "type": "crate::task_verb::TaskAskHandle"
+          },
+          {
+            "name": "intent_key",
+            "type": "String"
+          },
+          {
+            "name": "act",
+            "type": "crate::task_verb::AskForwardAct"
+          },
+          {
+            "name": "proof",
+            "type": "crate::task_verb::AskForwardHolderProof"
+          }
+        ]
+      }
+    },
+    {
+      "name": "tasks.answer.forward.status",
+      "description": "Where one relayed ask word stands, for its own holder: pending until the admitting node's result reads here, then that result.",
+      "input": "crate::task_verb::sdk::TaskAnswerForwardStatusRequest",
+      "output": "crate::task_verb::AskForwardReceipt",
+      "mcp_served": "[input.intent_ref]",
+      "call": "memory.tasks_answer_forward_status(input.intent_ref)?",
+      "scope": "Read",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false,
+      "binding": {
+        "generic": true,
+        "args": [
+          {
+            "name": "intent_ref",
+            "type": "crate::EntityId"
+          }
+        ]
+      }
+    },
+    {
       "name": "tasks.outcomes",
       "description": "Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to.",
       "input": "crate::task_verb::TaskAskHandle",
@@ -14212,7 +14434,7 @@
     },
     {
       "name": "vault.models.manifest.replace",
-      "description": "Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically clearing resident route overrides.",
+      "description": "Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically retaining resident route overrides that remain admitted.",
       "input": "crate::llm::manifest::doors::ModelManifestReplace",
       "output": "crate::llm::manifest::ModelManifest",
       "call": "crate::task_verb::sdk::replace_model_manifest(memory, input)?",
@@ -14323,7 +14545,7 @@
     },
     {
       "name": "vault.models.oneironer.bind",
-      "description": "Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and clearing resident route overrides.",
+      "description": "Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and retaining resident route overrides that remain admitted.",
       "input": "crate::llm::manifest::doors::OneironerBind",
       "output": "crate::llm::manifest::ModelManifest",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.models.oneironer.bind\", &input)?",
@@ -14609,6 +14831,21 @@
       "section": false
     },
     {
+      "name": "ai.streams.release",
+      "description": "Explicitly discard this credential's model-stream replay and revoke its handles; the producer and durable terminal stay. Later subscribers get only future events; never-released replay stays unchanged.",
+      "input": "crate::llm::model_stream::ModelStreamRelease",
+      "output": "crate::llm::model_stream::ModelStreamReleased",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.streams.release\", &input)?",
+      "host_door": true,
+      "host_door_precheck": false,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "ai.reply",
       "description": "Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs.",
       "input": "crate::task_verb::sdk::AiReplyRequest",
@@ -14730,7 +14967,7 @@
     },
     {
       "name": "ai.voice.audio",
-      "description": "Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech retires old output through the shared cancellation path.",
+      "description": "Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech, or words that are not a backchannel, retire old output through the shared cancellation path, and a backchannel starts no reply.",
       "input": "crate::task_verb::sdk::LiveVoiceAudioRequest",
       "output": "crate::task_verb::sdk::LiveVoiceProcessed",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.audio\", &input)?",
@@ -14745,7 +14982,7 @@
     },
     {
       "name": "ai.voice.events",
-      "description": "Reads ordered utterance and epoch events, PCM, flushes, playout stops, safeguard receipts and notices; advancing the cursor releases consumed events.",
+      "description": "Reads ordered utterance and epoch events, PCM, flushes, playout stops, safeguard receipts, notices and heard-playback records; advancing the cursor releases consumed events.",
       "input": "crate::task_verb::sdk::LiveVoiceEventsRequest",
       "output": "crate::task_verb::sdk::LiveVoiceEvents",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.events\", &input)?",
@@ -14759,7 +14996,7 @@
     },
     {
       "name": "ai.voice.ack",
-      "description": "Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed.",
+      "description": "Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed, with the samples it played, which the epoch's heard-playback record rests on.",
       "input": "crate::task_verb::sdk::LiveVoiceAckRequest",
       "output": "crate::task_verb::sdk::LiveVoiceProcessed",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.ack\", &input)?",
@@ -15371,6 +15608,35 @@
       "section": false
     },
     {
+      "name": "vault.questions.prepare",
+      "input": "crate::receipt::QuestionPrepareRequest",
+      "output": "crate::receipt::QuestionPrepared",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.prepare\", &input)?",
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.questions.admit",
+      "input": "crate::receipt::QuestionAdmitRequest",
+      "output": "crate::llm::decision::questions::AnswerRecord",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.admit\", &input)?",
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "lane_record_scope": true,
+        "require_granted_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.questions.backfill",
       "input": "crate::receipt::QuestionBackfillRequest",
       "output": "crate::llm::decision::questions::ScheduledBackfill",
@@ -15596,7 +15862,7 @@
     },
     {
       "name": "connector.list",
-      "description": "Every live catalogued connector whose name or summary matches the query.",
+      "description": "Every matching live catalogued connector and first-party web interface, distinguished by source.",
       "input": "ConnectorListRequest",
       "output": "Vec<crate::task_verb::sdk::ConnectorEntry>",
       "call": "crate::task_verb::sdk::connector_catalog(memory, input)?",
@@ -21273,6 +21539,56 @@
       },
       "mcp_scope": "unrestricted",
       "section": false
+    },
+    {
+      "name": "vault.files.sources.convert",
+      "description": "The owner converts an attached notes folder on this host to Files, keeping its existing notes, history and links. The host rescans the folder into its Files world and returns the source and rescan report.",
+      "input": "crate::task_verb::sdk::FilesSourceConvertRequest",
+      "output": "crate::task_verb::sdk::FilesSourceAttachAnswer",
+      "call": "crate::task_verb::sdk::convert_files_source_embedded(memory, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "host_door_precheck": true
+    },
+    {
+      "name": "vault.sync.repo_manifests.conflict.review",
+      "description": "The owner reviews one durable repo-manifest conflict and its exact held/carried manifests; return the opaque binding to discard that reviewed carrier.",
+      "input": "crate::task_verb::sdk::RepoManifestConflictReviewRequest",
+      "output": "Option<crate::task_verb::sdk::RepoManifestConflictReviewView>",
+      "call": "crate::task_verb::sdk::repo_manifest_conflict_review_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sync.repo_manifests.conflict.review\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_precheck": false,
+      "rust_feature": "sync",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.sync.repo_manifests.conflict.discard",
+      "description": "The owner discards exactly the reviewed carrier, keeping the held manifest; report Stale or WindowLive, or the actual delta and queue acceptance, never delivery.",
+      "input": "crate::task_verb::sdk::RepoManifestConflictDiscardRequest",
+      "output": "crate::task_verb::sdk::RepoManifestConflictDiscardView",
+      "call": "crate::task_verb::sdk::repo_manifest_conflict_discard_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sync.repo_manifests.conflict.discard\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_precheck": false,
+      "rust_feature": "sync",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
     }
   ]
 }

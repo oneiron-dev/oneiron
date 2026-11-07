@@ -74,6 +74,25 @@ pub(in crate::sync) fn queued_update<'v>(
     Some((seq, window, update))
 }
 
+/// A valid update's native window and whether its sequence has any sidecar.
+/// Unknown sidecar values still count: a capture must not orphan them or
+/// lose an unconfirmed delete by interpreting only the update's payload.
+pub(crate) fn checkpoint_update_window<'v>(
+    dbs: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    key: &[u8],
+    value: &'v [u8],
+) -> Result<Option<(&'v str, bool)>> {
+    let Some((seq, window, _)) = queued_update(key, value) else {
+        return Ok(None);
+    };
+    let sidecar = super::codec::encode_delete_bearing_key(seq);
+    Ok(Some((
+        window,
+        dbs.sync_queue().get(txn, &sidecar)?.is_some(),
+    )))
+}
+
 /// The queue row's value that carries `update` for `window` again.
 pub(in crate::sync) fn queued_row(window: &str, update: &[u8]) -> Result<Vec<u8>> {
     encode_update_value(window, update)
