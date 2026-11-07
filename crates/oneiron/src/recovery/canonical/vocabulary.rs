@@ -104,7 +104,8 @@ pub struct CanonicalSchemaManifest {
     pub analyzer_manifest_blake3: [u8; 32],
 }
 
-/// Ordered source state. No op IDs, Loro exports, or Layer-2 indexes are encoded.
+/// Ordered source state. No op IDs, Loro exports, or Layer-2 indexes are
+/// encoded, but for the version an entity document's origin names (FIX 3553).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CanonicalSnapshot {
