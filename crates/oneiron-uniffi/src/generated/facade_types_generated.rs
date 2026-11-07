@@ -4248,6 +4248,8 @@ pub enum WireTurnProgramWakeOutcome {
 /// `oneiron::memory::witness::types::WitnessReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct WireWitnessReceipt {
+    #[serde(rename = "turn_id")]
+    pub turn_id: String,
     #[serde(rename = "turn_short_id")]
     pub turn_short_id: String,
     #[serde(rename = "message_short_ids")]

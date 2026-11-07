@@ -505,7 +505,7 @@ export type UnpersistedWakeReason = "no_authority" | "storage_failure"
 /** `oneiron::memory::witness::wake_outcome::TurnProgramWakeOutcome` */
 export type TurnProgramWakeOutcome = { outcome: "not_armed" } | { outcome: "evaluated"; newly_recorded: number } | { outcome: "unpersisted"; reason: UnpersistedWakeReason }
 /** `oneiron::memory::witness::types::WitnessReceipt` */
-export type WitnessReceipt = { turn_short_id: string; message_short_ids: string[]; receipt_ref: string; turn?: RecordRef | null; messages?: RecordRef[]; wake_outcome?: TurnProgramWakeOutcome | null }
+export type WitnessReceipt = { turn_id: EntityId; turn_short_id: string; message_short_ids: string[]; receipt_ref: string; turn?: RecordRef | null; messages?: RecordRef[]; wake_outcome?: TurnProgramWakeOutcome | null }
 /** `oneiron::memory::people_verbs::MessagePersonReceipt` */
 export type MessagePersonReceipt = { room: string; receipt: WitnessReceipt }
 /** `oneiron::memory::people_verbs::GrantAskScope` */
