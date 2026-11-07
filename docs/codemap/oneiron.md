@@ -7274,9 +7274,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/verbs/wire_health.rs` | src | s | 2 struct · 2 fn · 1 const | WireThresholds, WireThresholdsReceipt | Typed detection policy for the owner's wire-health doors (OF-520) |
 | `src/verbs/workflows.rs` | src | s | 1 re-export · 1 crate-vis | — | Typed saved workflows, implemented by the core workflow operations |
 | `src/verbs/workspace.rs` | src | s | 4 struct · 1 enum · 3 fn | WorkspaceCompanionInput, WorkspaceMemberOnboardRequest, WorkspacePresetReceipt, WorkspacePresetRequest, WorkspaceRosterRequest | Workspace roster and companion onboarding through the existing runner |
-| `src/voice_cascade.rs` | src | s | 7 mod · 7 re-export | — | ONE-1807: the engine half of a transport-neutral text-brain voice cascade |
+| `src/voice_cascade.rs` | src | s | 7 mod · 9 re-export | — | ONE-1807: the engine half of a transport-neutral text-brain voice cascade |
+| `src/voice_cascade/backchannel.rs` | src | s | 1 fn · 1 const · 2 crate-vis | — | The person's backchannel while the agent holds the floor (FIX 4899, ARCH-0061 #backchannel): "mm-hmm"… |
 | `src/voice_cascade/budget.rs` | src | s | 1 crate-vis | — | Generation-owned budget reservation |
 | `src/voice_cascade/cancellation.rs` | src | s | 1 struct · 1 enum · 1 fn · 1 crate-vis | OutputStop, StopReason | One stop fan-out for interruption, policy enforcement and explicit teardown |
+| `src/voice_cascade/heard.rs` | src | s | 4 struct · 2 enum · 5 fn | HeardBasis, HeardCoverage, HeardLedger, HeardPlayback, HeardUtterance, SpeechAlignment | Heard-playback accounting (FIX 4899, ARCH-0061 #heard-playback): what the person actually heard of a reply… |
 | `src/voice_cascade/hosted_tts.rs` | src | m | 4 struct · 2 enum · 1 trait · 8 fn · 1 const | HostedBinding, HostedMediaQueue, HostedProvider, HostedRender, HostedTransport, HostedTtsAdapter, HostedWork | Hosted TTS request adapters |
 | `src/voice_cascade/hosted_tts/tests.rs` | test | m | — | — | — |
 | `src/voice_cascade/media/asr.rs` | src | s | 2 fn | — | Voice media ASR adapter |
@@ -7285,11 +7287,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/voice_cascade/media/stream.rs` | src | s | 5 fn | — | Voice media leased live ASR stream |
 | `src/voice_cascade/media/tts.rs` | src | s | 2 fn | — | Voice media TTS adapter |
 | `src/voice_cascade/media/worker.rs` | src | s | 2 fn | — | Voice media queue and its worker |
-| `src/voice_cascade/preparation.rs` | src | s | 1 struct · 5 fn · 1 crate-vis | PreparedAsr | Exact, single-use handoff across host async enrichment |
-| `src/voice_cascade/protocol.rs` | src | s | 8 struct · 5 enum · 6 trait · 1 fn · 1 crate-vis | AsrEvent, AsrEventKind, AsrStream, AsrToken, Brain, BrainEvent, BrainRequest, CascadeControl +11 | Small local contracts for provider adapters; no transport or provider selection |
+| `src/voice_cascade/preparation.rs` | src | s | 1 struct · 6 fn · 1 crate-vis | PreparedAsr | Exact, single-use handoff across host async enrichment |
+| `src/voice_cascade/protocol.rs` | src | m | 8 struct · 5 enum · 6 trait · 1 fn · 1 crate-vis | AsrEvent, AsrEventKind, AsrStream, AsrToken, Brain, BrainEvent, BrainRequest, CascadeControl +11 | Small local contracts for provider adapters; no transport or provider selection |
 | `src/voice_cascade/retrieval.rs` | src | s | 3 struct · 10 fn · 2 crate-vis | PartialRetrieval, SpeculativeRetrievalBridge, UtteranceHandle | One live utterance per connection; actual retrieval semantics stay in OF-108 |
-| `src/voice_cascade/safeguard.rs` | src | s | 3 struct · 8 fn | SafeguardRequest, SentenceEnforcement, SentenceWork | Correlated sentence work |
-| `src/voice_cascade/session.rs` | src | L | 5 struct · 1 enum · 24 fn · 1 const · 1 re-export | AsrUpdate, AudienceRefresh, SafeguardUpdate, VoiceCascadeSession, VoiceContainerBinding, VoiceSessionConfig | Session transitions only |
+| `src/voice_cascade/safeguard.rs` | src | s | 3 struct · 9 fn | SafeguardRequest, SentenceEnforcement, SentenceWork | Correlated sentence work |
+| `src/voice_cascade/session.rs` | src | L | 5 struct · 2 enum · 25 fn · 2 const · 1 re-export | AsrUpdate, AudienceRefresh, FloorWords, SafeguardUpdate, VoiceCascadeSession, VoiceContainerBinding, VoiceSessionConfig | Session transitions only |
 | `src/voice_cascade/soniox.rs` | src | s | 1 struct · 1 enum · 1 trait · 7 fn | SonioxAsrClient, SonioxTransport, SonioxUpdate | Soniox streaming ASR wire client |
 | `src/voice_cascade/speakable.rs` | src | s | 1 fn · 1 crate-vis | — | Text past one call's bound is spoken as several calls, in order, never refused (Rule 5) |
 | `src/voice_cascade/spilled_audio.rs` | src | m | 3 struct · 15 fn | AudioSpool, SpilledAudio, SpilledFrame | Voice bytes that outgrow memory, spilled (FIX 3728): a live hearing's queued, held and replayed audio, and… |
