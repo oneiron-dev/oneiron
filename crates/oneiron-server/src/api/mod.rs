@@ -304,6 +304,7 @@ pub(crate) fn artifact_app(server: Arc<SyncServer>) -> Router {
 /// listener.
 pub(crate) fn vault_artifact_app(server: Arc<SyncServer>) -> Router {
     artifact_routes()
+        .merge(self::artifacts::backend_routes())
         .layer(axum::Extension(self::artifacts::ArtifactOnlyListener))
         .layer(middleware::from_fn_with_state(
             server.clone(),
