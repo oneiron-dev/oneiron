@@ -258,7 +258,7 @@ pub(crate) fn active_content_facts(
                 _ => continue,
             };
             if let Ok(subtype) = dict.get(b"S")
-                && let Some(subtype) = resolved(doc, subtype)
+                && let Some(subtype) = walk::resolve_security_name(doc, subtype, limits)?
             {
                 facts.javascript |= name_is(subtype, b"JavaScript");
                 facts.launch |= name_is(subtype, b"Launch");

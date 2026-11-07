@@ -336,6 +336,20 @@ impl RepoMarkFacts {
         self.select(|mark| mark.store_id == address.store && mark.blob_oid == address.blob)
     }
 
+    /// Every mark of one receive operation on one served store, for an
+    /// exact forward's readdress step (FIX 10270).
+    pub(crate) fn for_operation(
+        &self,
+        operation: EntityId,
+        store: EntityId,
+    ) -> Vec<RepoSecretMark> {
+        self.marks
+            .iter()
+            .filter(|mark| mark.operation_id == operation && mark.store_id == store)
+            .cloned()
+            .collect()
+    }
+
     fn select<F: Fn(&RepoSecretMark) -> bool>(&self, matches: F) -> RepoBlobMarks {
         let mut out = RepoBlobMarks::default();
         for mark in self.marks.iter().filter(|mark| matches(mark)) {
