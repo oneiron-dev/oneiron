@@ -127,10 +127,11 @@ pub fn run_shadow_step(
 }
 
 /// Runs `program`, the step's own program as its run recorded it, in a
-/// callable branch's arm (FIX 3608) whose bodies are in `store`, on a fresh
-/// `runtime` under `cancel`: each callable call it makes answered as
-/// `callables` treats the step's recorded callables, every other call
-/// matched as in any arm. Its program is checked on `feedback`.
+/// callable or delivery branch's arm (FIX 3608) whose bodies are in `store`,
+/// on a fresh `runtime` under `cancel`: each callable call it makes, and the
+/// call whose answer delivered a skill's body, answered as `callables`
+/// treats them, every other call matched as in any arm. Its program is
+/// checked on `feedback`.
 ///
 /// # Errors
 ///

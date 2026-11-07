@@ -11,7 +11,9 @@
 //! unavailable too, as is a revealed secret's answer, which no capture keeps.
 //! A callable branch's arm (FIX 3608, [`callable`]) answers a callable call
 //! from the callable the step's replay context froze for it instead: run
-//! again against its own recorded calls, or left absent.
+//! again against its own recorded calls, or left absent. A delivery branch's
+//! arm answers the call whose answer delivered a skill's body as recorded,
+//! or as the skill were not found.
 //!
 //! A matched call is answered as the live guest read it (FIX 6351): the
 //! recorded outcome with the response the step's replay context kept for its
@@ -61,7 +63,9 @@ mod callable;
 mod results;
 mod streams;
 mod taint;
-pub(crate) use self::callable::{ArmCallableLoad, ArmCallables};
+pub(crate) use self::callable::{
+    ArmCallableLoad, ArmCallables, ArmTreatedCall, absent_delivery_outcome,
+};
 use self::streams::ArmStreams;
 
 /// Where the arm's program reads its run's bodies back by path, as the
@@ -383,6 +387,9 @@ impl ShadowBridgeHost<'_> {
         if at as u64 >= self.bridge_end {
             let missing = ShadowUnavailable::new(Reason::CapturedOutcomeMissing, "bridge_call");
             return Err(self.stop(missing));
+        }
+        if self.leaves_out_delivery() {
+            return self.dispatch_absent_delivery(call);
         }
         let outcome = match self.cursor.dispatch(call) {
             Ok(outcome) => outcome,
