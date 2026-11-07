@@ -348,6 +348,7 @@ impl SyncServer {
             browser_guest: None,
             browser_readiness: Default::default(),
             desktop_guest: None,
+            artifact_backend: None,
             desktop_seats: Arc::default(),
             browser_seats: Arc::default(),
             web_fetcher: std::sync::OnceLock::new(),

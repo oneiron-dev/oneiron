@@ -500,6 +500,7 @@ impl Lower<oneiron::conversation_dag::QuoteSpan> for QuoteSpan {
 impl Lift<engine::WitnessReceipt> for WitnessReceipt {
     fn lift(value: engine::WitnessReceipt) -> Result<Self, OneironError> {
         Ok(Self {
+            turn_id: value.turn_id.to_hex(),
             turn_short_id: value.turn_short_id,
             message_short_ids: value.message_short_ids,
             receipt_ref: value.receipt_ref,
