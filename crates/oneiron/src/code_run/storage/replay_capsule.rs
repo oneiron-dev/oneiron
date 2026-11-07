@@ -69,8 +69,8 @@ pub(crate) use self::fork_erase::{
     contribution_pair_erase_candidates_in_txn, erase_contribution_forks_in_txn,
 };
 pub(crate) use self::owner_pair::{
-    bind_owner_pair_ask_in_txn, close_owner_pair_in_txn, judge_owner_pair_in_txn,
-    owner_pair_in_txn, put_owner_pair,
+    accept_owner_pair_in_txn, bind_owner_pair_ask_in_txn, close_owner_pair_in_txn,
+    judge_owner_pair_in_txn, owner_pair_in_txn, put_owner_pair,
 };
 pub(crate) use self::restore::retire_replay_bodies_in_rows;
 pub(crate) use self::route_prompt::{capsule_route_prompt, finalize_capsule, route_prompt_at};
