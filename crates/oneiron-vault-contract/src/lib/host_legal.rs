@@ -442,7 +442,7 @@ pub enum CaptureExtent {
     GateDecisions,
     WrittenLiveSessionSpill,
     /// The selected stored MESSAGE rows with their document and outgoing edge
-    /// rows, in one source snapshot.
+    /// rows and the result body each still holds, in one source snapshot.
     Messages,
     /// One batch of a prospective order: the exact MESSAGE rows sealed when
     /// they landed, in ordinal order. Rows only: no document or edge rows.
@@ -474,6 +474,12 @@ pub struct CaptureSummary {
     /// New messages of a prospective batch that landed but could not be
     /// sealed: a truthful coverage gap, never claimed as captured.
     pub missed_messages: Vec<[u8; 16]>,
+    /// Selected messages whose result attachment names a body the message
+    /// no longer holds, or that no row holds: their rows are captured, the
+    /// body is not and is never claimed. A held body is component 11
+    /// (`MessageResultBody`), revision the BLAKE3 of that message's full
+    /// stored entity row. Empty for every other capture.
+    pub absent_result_bodies: Vec<[u8; 16]>,
     pub extent: CaptureExtent,
     pub components: u64,
     pub plaintext_bytes: u64,
