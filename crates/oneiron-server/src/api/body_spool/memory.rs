@@ -20,9 +20,8 @@ impl BodySpool {
     /// Admits a spool reader on the transfer worker, before returning a spool
     /// to any native writer or allocating its reader buffer.
     pub(in crate::api) fn admit_reader(&self) -> Result<MemoryLease, MemoryRefusal> {
-        MachineMemory::process().lease_untimed(SPOOL_PIECE as u64, &|| {
-            self.stopped.load(Ordering::Relaxed)
-        })
+        MachineMemory::process()
+            .lease_untimed(SPOOL_PIECE as u64, &|| self.stopped.load(Ordering::Relaxed))
     }
 
     /// Admits the sealed object's source reader, head writer, base64 text
@@ -31,9 +30,8 @@ impl BodySpool {
         let bytes = 2 * SPOOL_PIECE
             + super::json::BASE64_TEXT_BUFFER_BYTES
             + super::json::BASE64_DECODE_BUFFER_BYTES;
-        MachineMemory::process().lease_untimed(bytes as u64, &|| {
-            self.stopped.load(Ordering::Relaxed)
-        })
+        MachineMemory::process()
+            .lease_untimed(bytes as u64, &|| self.stopped.load(Ordering::Relaxed))
     }
 
     /// Admits one text sink and one JSON reader before either allocates.
@@ -69,7 +67,9 @@ pub(in crate::api) fn reader_memory_refused(refusal: MemoryRefusal) -> crate::er
 }
 
 /// The combined sealed-reader working buffers keep memory's own response.
-pub(in crate::api) fn sealed_decode_memory_refused(refusal: MemoryRefusal) -> crate::error::ApiError {
+pub(in crate::api) fn sealed_decode_memory_refused(
+    refusal: MemoryRefusal,
+) -> crate::error::ApiError {
     match refusal {
         MemoryRefusal::Floor { .. } => crate::error::ApiError::internal_server_error(
             "this machine cannot allocate the custody request's decode buffers",
@@ -83,9 +83,12 @@ pub(in crate::api) fn sealed_decode_memory_refused(refusal: MemoryRefusal) -> cr
 pub(in crate::api) struct RawSpoolMemory(std::sync::Mutex<MemoryLease>);
 
 impl RawSpoolMemory {
-    pub(in crate::api) fn admit(bytes: u64, stopped: &AtomicBool) -> Result<Arc<Self>, MemoryRefusal> {
-        let memory = MachineMemory::process()
-            .lease_untimed(bytes, &|| stopped.load(Ordering::Relaxed))?;
+    pub(in crate::api) fn admit(
+        bytes: u64,
+        stopped: &AtomicBool,
+    ) -> Result<Arc<Self>, MemoryRefusal> {
+        let memory =
+            MachineMemory::process().lease_untimed(bytes, &|| stopped.load(Ordering::Relaxed))?;
         Ok(Arc::new(Self(std::sync::Mutex::new(memory))))
     }
 
@@ -112,10 +115,7 @@ pub(super) struct FeedCompletion<F: std::future::Future<Output = ()>> {
 }
 
 impl<F: std::future::Future<Output = ()>> FeedCompletion<F> {
-    pub(super) fn new(
-        feed: F,
-        completed: tokio::sync::oneshot::Sender<()>,
-    ) -> Self {
+    pub(super) fn new(feed: F, completed: tokio::sync::oneshot::Sender<()>) -> Self {
         Self {
             feed: Some(Box::pin(feed)),
             completed: Some(completed),
@@ -123,7 +123,10 @@ impl<F: std::future::Future<Output = ()>> FeedCompletion<F> {
     }
 
     pub(super) fn future(&mut self) -> std::pin::Pin<&mut F> {
-        self.feed.as_mut().expect("feed remains until completion").as_mut()
+        self.feed
+            .as_mut()
+            .expect("feed remains until completion")
+            .as_mut()
     }
 
     pub(super) fn finish(mut self) {

@@ -57,7 +57,7 @@ pub use receipt::{
     RunReceiptSink, RunStreamUsage, RunTokenUsage, RunUsageOverage, TeacherReport,
 };
 pub use resident::{ResidentLedger, ResidentShare, ResidentStanding};
-pub use settle::CallOutcome;
+pub use settle::{CallCharge, CallOutcome};
 pub use wire::{WireCallError, WireSeat};
 pub use work_context::{
     WorkCancel, WorkContext, WorkId, WorkPhysical, forget_work_parent, lookup_work_parent,

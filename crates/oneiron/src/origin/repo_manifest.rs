@@ -123,10 +123,11 @@ impl<'de> Deserialize<'de> for RepoPortableId {
 
 /// One repo's manifest, as every vault that holds it names the repo. Phases
 /// 2 and 3 add their fields under a version bump.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RepoManifest {
     /// The repo's portable id.
+    #[schemars(with = "String")]
     pub portable: RepoPortableId,
     /// [`REPO_MANIFEST_VERSION`].
     pub version: u16,
@@ -141,6 +142,7 @@ pub struct RepoManifest {
     pub visible_refs: Vec<(String, String)>,
     /// The LFS objects those refs carry, ascending: pointers, never bytes.
     #[serde(with = "lfs_oids")]
+    #[schemars(with = "Vec<String>")]
     pub lfs_pointers: Vec<LfsOid>,
     /// The epoch of the owner's origin cut in force that names the refs
     /// writer (FIX 15740), else 0.
@@ -158,7 +160,7 @@ pub struct RepoManifest {
 /// The refs writer's signature on a manifest (FIX 12765): the machine that
 /// wrote it, and its Ed25519 signature over
 /// [`RepoManifest::writer_signing_bytes`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RepoManifestWriter {
     /// The machine whose key signed.
