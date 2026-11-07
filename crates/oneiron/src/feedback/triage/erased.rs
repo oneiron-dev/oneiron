@@ -45,7 +45,7 @@ pub(super) fn settle_erased_in_txn(
         return Ok(false);
     }
     handoff.erase_source(now);
-    HANDOFFS.put(&vault.store, txn, key, handoff)?;
+    super::handoff_index::put_handoff_in_txn(&vault.store, txn, key, handoff)?;
     Ok(true)
 }
 
@@ -86,7 +86,7 @@ pub(crate) fn erase_handoff_in_txn(
     let now = store.clock.now_recorded_at();
     for (key, mut handoff) in settled {
         handoff.erase_source(now);
-        HANDOFFS.put(store, txn, &key, &handoff)?;
+        super::handoff_index::put_handoff_in_txn(store, txn, &key, &handoff)?;
     }
     Ok(())
 }

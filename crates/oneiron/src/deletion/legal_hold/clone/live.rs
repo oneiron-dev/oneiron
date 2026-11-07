@@ -440,9 +440,9 @@ impl HostLegalCaptures {
         Ok(())
     }
 
-    fn stop(&self) -> Result<()> {
+    /// Stops live-session captures; prospective connections keep draining.
+    fn stop_live(&self) -> Result<()> {
         self.stopped.store(true, Ordering::Release);
-        self.prospective.cancel(None);
         let orders: Vec<_> = self
             .registry
             .lock()
@@ -545,11 +545,35 @@ impl Vault {
     }
 
     /// Managed teardown calls this before shutting down ALL accepted sockets
-    /// and joining ALL workers. Stop is not legal release or key destruction.
+    /// and joining ALL workers: it stops live-session captures and cancels
+    /// every prospective connection. Stop is not legal release or key
+    /// destruction.
     pub fn stop_pending_host_legal_captures(&self) -> Result<()> {
+        self.host_legal_captures.prospective.cancel(None);
         // A prospective worker waiting for new messages wakes to see stop.
         self.store.host_legal_prospective.bump();
-        self.host_legal_captures.stop()
+        self.host_legal_captures.stop_live()
+    }
+
+    /// Managed teardown calls this at its stop trigger: it stops
+    /// live-session captures and leaves each prospective connection draining
+    /// for [`Self::finish_host_legal_prospective`].
+    pub fn stop_live_host_legal_captures(&self) -> Result<()> {
+        self.host_legal_captures.stop_live()
+    }
+
+    /// Managed teardown calls this once every writer of this process stopped,
+    /// before the Vault closes: each attached prospective connection drains
+    /// its outbox to empty, sends its final batch (`final_next_ordinal`) and
+    /// ends, and this waits for them. It does not wait for a HOST that is
+    /// not connected: that order's outbox stays for the next start. Not
+    /// release, expiry or key destruction.
+    pub fn finish_host_legal_prospective(&self) {
+        let attempts = self.host_legal_captures.prospective.finish();
+        self.store.host_legal_prospective.bump();
+        for attempt in attempts {
+            attempt.wait_ended();
+        }
     }
 }
 

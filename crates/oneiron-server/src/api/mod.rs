@@ -343,7 +343,6 @@ pub(crate) fn vault_artifact_app(server: Arc<SyncServer>) -> Router {
                     "max_windows_per_connection": 8,
                     "max_frame_size_bytes": 1048576,
                     "max_update_payload_bytes": 1048576,
-                    "max_ephemeral_payload_bytes": 65536,
                     "max_ephemeral_snapshot_bytes": 262144
                 },
                 "runtime": {

@@ -191,29 +191,50 @@ MESSAGE row of the vault. Off-record overlay writes never reach it.
 The request's connection stands the order durably under `legal_hold:host:`
 (its capture binding, term, public recipient key and next ordinal), so it is
 carried with the host-order family and host-sealed in checkpoints, never in an
-owner image or export. A released generation is recorded and never stands
-again. While the order stands and before its `ends_at`, the shared base put
+owner image or export. Once the standing commits and the connection is
+attached, the engine answers with one `Standing` frame (kind 8) carrying the
+exact request digest, before any batch; from then on managed stop's trigger
+leaves the connection open for the final drain. A released generation is
+recorded and never stands again. While the order stands and before its `ends_at`, the shared base put
 seam seals each new MESSAGE row, exactly as staged, to the order's public key
 inside the same writer, and keeps the ciphertext in the order's outbox. The
-message and its sealed copy commit or roll back together. The engine cannot
-open the outbox. A seal that fails keeps the user's write and records the
-message as missed; it is never reported as captured.
+message and its sealed copy commit or roll back together. At the end of that
+same base batch, still in its writer, each outgoing edge row the batch wrote for
+the message (its turn, conversation, author, parent and reply links) is sealed
+the same way as its own entry (component 10), under the revision the row
+carried. The engine cannot open the outbox. A seal that fails keeps the user's
+write and records the message as missed; it is never reported as captured.
 
 The connection drains the outbox in batches of at most
 `PROSPECTIVE_BATCH_ENTRIES` entries. Each batch is its own stream: Accepted,
 the stored Descriptor and Content frames, then a summary with extent
 `prospective_messages`, the batch's first ordinal and entry count, the sealed
-message count and the missed message ids, then Ready and the exact
+message row count and the missed message ids, then Ready and the exact
 acknowledgement. Its `descriptors_hash` is BLAKE3 over each component's
 descriptor digest in stream order. Only that acknowledgement deletes that
 batch's ordinals; one acknowledgement never covers another batch or the order.
 The worker takes the LMDB writer briefly as a barrier before each read, so a
 wake from a writer that has not yet committed is never read early.
 
+Managed stop does not end a prospective connection at its trigger: every
+other legal capture ends and joins at the start of teardown, while prospective
+connections keep draining. After every writer of the process has stopped and
+before the vault closes, the final drain runs: each attached prospective
+connection drains its outbox to empty under the writer barrier and sends one
+last batch, possibly empty, whose summary carries `final_next_ordinal`, the
+order's next ordinal. No entry at or after it exists and this process writes
+none; the batch's range ends there. It is a per-process statement, not the
+order's release or end: the standing stays for a later start. A HOST that is
+not connected is not waited for, and its order's outbox stays in the vault. A
+connected HOST that does not answer holds the drain only to the connection's
+existing term deadline or the supervisor's kill; its entries stay unacknowledged
+and durable.
+
 The user's own erase, scrub, compaction or prune of a captured message is
 never gated: the outbox entry is clone custody, not vault data. Release of the
 order generation, or its term end, destroys the standing and its whole outbox
 in one write; the maintenance pass ends lapsed orders that have no live
-connection. A batch carries the MESSAGE row only, not its document or edge
-rows; the HOST may follow with an exact `Messages` capture while the message
-exists. Later edits are not prospective captures.
+connection. A message has no document rows at birth, so a batch carries none;
+edges a later batch adds, and edges a sync landing brings after the message,
+are later edits, not prospective captures. The HOST may follow with an exact
+`Messages` capture while the message exists.
