@@ -185,10 +185,13 @@ impl ReenterKeptValue {
     }
 }
 
-/// A name the custody index can key: 1 to 255 bytes.
+/// A name the custody index can key: 1 to [`SECRET_NAME_MAX_BYTES`] bytes,
+/// derived from the LMDB key width (ABC row 27).
 fn secret_name(name: String) -> OwnerResult<String> {
     if name.is_empty() || name.len() > SECRET_NAME_MAX_BYTES {
-        return Err(OwnerError::Invalid("name must be 1 to 255 bytes".into()));
+        return Err(OwnerError::Invalid(format!(
+            "name must be 1 to {SECRET_NAME_MAX_BYTES} bytes"
+        )));
     }
     Ok(name)
 }

@@ -51,7 +51,7 @@ use super::evidence::KEY_AT;
 use super::invalid;
 use super::rows::{ACTOR_NOTE_MAX_BYTES, PREDICATE_ACTOR_FAILURE_MODE, PREDICATE_ACTOR_LESSON};
 use super::validate::{actor_claim_lineage, native_actor_source};
-use super::write::{require_actor_entity, scope_with_lineage};
+use super::write::{actor_claim_facet_in_txn, require_actor_entity, scope_with_lineage};
 
 const KEY_LANE: &str = "lane";
 const KEY_ATTEMPT: &str = "attempt";
@@ -238,6 +238,7 @@ pub(crate) fn write_resident_craft_candidates_in_txn(
                 ClaimApprovalStatus::Proposed,
                 ClaimLifecycleStatus::Active,
             )?;
+            body.scope_facet = actor_claim_facet_in_txn(vault, wtxn, resident)?;
             body.evidence = Some(evidence.clone());
             body.scope = Some(scope.clone());
             body.valid_from = Some(at);
@@ -473,6 +474,7 @@ fn answer_in_txn(
         verdict.approval(),
         ClaimLifecycleStatus::Active,
     )?;
+    verdict_body.scope_facet = body.scope_facet;
     verdict_body.evidence = Some(Value::Map(evidence));
     verdict_body.scope = Some(scope_with_lineage(None, ClaimSource::Generated));
     verdict_body.valid_from = Some(at);

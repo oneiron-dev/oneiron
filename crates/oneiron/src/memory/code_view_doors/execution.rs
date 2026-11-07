@@ -139,8 +139,8 @@ impl Memory<'_> {
                     at,
                     &body,
                 ))?;
-                let version = content.update_artifact(id, |txn| {
-                    self.vault.append_blob_artifact_version_in_txn(
+                let version = content.update_artifact(id, |txn, lane| {
+                    self.vault.append_blob_artifact_version_in_lane(
                         txn,
                         &id,
                         bytes,
@@ -148,6 +148,7 @@ impl Memory<'_> {
                         writer,
                         occurred,
                         at,
+                        lane,
                     )
                 })?;
                 ArtifactVersionRef::new(id, version.version).map_err(cache_error)

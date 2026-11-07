@@ -5,7 +5,9 @@
 //! connection upgraded into. The permits are the descriptor floor, the one
 //! bound that is the machine's: past it the socket in hand waits for a
 //! connection to close and the loop stops accepting, so the sockets after it
-//! wait in the kernel's backlog. They are queued, never refused.
+//! wait in the kernel's backlog. They are queued, never refused. A vault
+//! server's floor is the process's descriptor line, whose other permits its
+//! guests' network work holds (FIX 6299, [`host_floor`]).
 //!
 //! A connection from off this device that has not yet presented a credential
 //! the server accepts is a stranger, and one peer address may hold only so
@@ -23,8 +25,10 @@
 //! route does, so it holds for a caller with no credential at all.
 //!
 //! A socket that finds the floor full raises the pool's live pressure check
-//! (FIX 7656): the owner reads which credentials' open request bodies hold
-//! the most connections. It only observes; nothing is cut or refused.
+//! (FIX 7656), as a guest's bundle that finds too little room does (FIX
+//! 6304): the floor's crossing raises it, once, and its end clears it. The
+//! owner reads which credentials' open request bodies hold the most
+//! connections. It only observes; nothing is cut or refused.
 //!
 //! Past the floor, the API listener's socket in hand may take the pool's one
 //! owner reserve instead of waiting (FIX 8274, [`owner_admission`]): the
@@ -49,29 +53,26 @@ use axum::{BoxError, Router};
 use hyper::body::{Frame, Incoming, SizeHint};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use hyper_util::service::TowerToHyperService;
-use oneiron_container::{
-    HOST_NET_BYTE_FLOOR, HOST_NET_FD_FLOOR, HOST_NET_WORKER_FLOOR, HostNetFloor, HostNetPermit,
-    floor_saturated,
-};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
 use tokio::task::JoinSet;
 
-use crate::admission::{Admission, Permit, WaitTimedOut};
-use crate::byte_line::ByteLine;
+use crate::admission::Admission;
 use crate::server::SyncServer;
 use crate::wire_telemetry::{
     LimitQuestions, LimitRow, ObservedBody, PoolPressure, with_body_credential,
 };
 
 mod body_revocation;
+mod host_floor;
 mod owner_admission;
 pub(crate) use body_revocation::{
     BodyRevocation, attach_body_account_key, attach_body_slip, body_read_timeout,
     current_body_revocation,
 };
 use body_revocation::{CredentialRevoked, revoked_response, with_body_revocation};
+pub(crate) use host_floor::attach_host_floor;
 use owner_admission::{Custody, OwnerGate, OwnerReserve, ProbeShed};
 
 /// The listener's bounds.
@@ -95,6 +96,11 @@ pub(crate) struct ConnectionLimits {
     pub(crate) body_idle_timeout: Duration,
     /// How long the loop waits for a free permit before it looks again.
     pub(crate) queue_wait: Duration,
+    /// The most one connection's HTTP/1 read buffer holds, and so the
+    /// largest piece of a request body one read hands a route; `None` keeps
+    /// hyper's own. A listener whose routes reserve room for a body's next
+    /// piece before they read it sets it to that room (FIX 149).
+    pub(crate) max_read_buffer_bytes: Option<usize>,
 }
 
 /// What a stranger past its address's share reads before it is closed.
@@ -133,7 +139,7 @@ pub(crate) async fn serve(
     questions: Arc<LimitQuestions>,
     shutdown: impl Future<Output = ()>,
 ) {
-    let pool = ConnectionPool::new(&limits, questions, None);
+    let pool = ConnectionPool::new(&limits, questions);
     let mut connections = JoinSet::new();
     serve_with_pool(listener, app, &pool, limits, &mut connections, shutdown).await;
 }
@@ -145,89 +151,44 @@ pub(crate) async fn serve(
 pub(crate) struct ConnectionPool {
     floor: Admission<()>,
     strangers: Strangers,
-    /// The live pressure check the floor's waiters raise, where `questions`
-    /// is a vault server's (FIX 7656).
+    /// The live pressure check the floor's crossing raises, where
+    /// `questions` is a vault server's (FIX 7656).
     pressure: Option<Arc<PoolPressure>>,
     /// The owner's reserve beside the floor, which only the API listener's
     /// sockets take (FIX 8274).
     reserve: Arc<OwnerReserve>,
-    /// The questions a crossed floor raises; the lent floor asks its byte
-    /// crossings on them.
-    questions: Arc<LimitQuestions>,
-    /// The retained-memory line a guest's paused bytes are charged to
-    /// (FIX 10327); none where the listener serves embedded, which keeps
-    /// no byte reserve.
-    retained: Option<Arc<ByteLine>>,
 }
 
 impl ConnectionPool {
-    pub(crate) fn new(
-        limits: &ConnectionLimits,
-        questions: Arc<LimitQuestions>,
-        retained: Option<Arc<ByteLine>>,
-    ) -> Self {
+    /// A pool with a floor of its own, crossing in `questions`: for a
+    /// process that serves no vault (the embedder endpoint), which runs no
+    /// guest to share it with.
+    pub(crate) fn new(limits: &ConnectionLimits, questions: Arc<LimitQuestions>) -> Self {
+        let floor = Admission::new(
+            LimitRow::Connections,
+            Arc::clone(&questions),
+            limits.max_connections,
+            limits.queue_wait,
+        );
+        Self::over(floor, limits, &questions)
+    }
+
+    /// A vault server's pool (FIX 6299): its floor is the process's
+    /// descriptor line, which the server's construction sized to these
+    /// limits and set to ask in `questions` ([`attach_host_floor`]), and
+    /// whose other permits guests' network work holds.
+    pub(crate) fn served(limits: &ConnectionLimits, questions: &LimitQuestions) -> Self {
+        let line = oneiron::host_descriptors::descriptor_line().clone();
+        Self::over(Admission::on_line(line), limits, questions)
+    }
+
+    fn over(floor: Admission<()>, limits: &ConnectionLimits, questions: &LimitQuestions) -> Self {
         Self {
             pressure: questions.pool_pressure().cloned(),
-            floor: Admission::<()>::new(
-                LimitRow::Connections,
-                Arc::clone(&questions),
-                limits.max_connections,
-                limits.queue_wait,
-            ),
+            floor,
             strangers: Strangers::new(stranger_share(limits)),
             reserve: OwnerReserve::new(limits.max_connections),
-            questions,
-            retained,
         }
-    }
-
-    /// The descriptor floor, lent to guests' network work (FIX 5978,
-    /// FIX 5979): a guest's socket entries and relayed datagrams hold its
-    /// permits beside the connections until their work ends. They take only
-    /// free permits and never wait in the floor's line, so a socket waiting
-    /// for the floor gets the next permit that comes free. Its paused
-    /// bytes hold the retained-memory line (FIX 10327).
-    pub(crate) fn host_net_floor(&self) -> Arc<dyn HostNetFloor> {
-        Arc::new(DescriptorFloor {
-            floor: self.floor.clone(),
-            retained: self.retained.clone(),
-            questions: Arc::clone(&self.questions),
-        })
-    }
-}
-
-/// [`ConnectionPool`]'s descriptor floor, as guests' network work takes it:
-/// a permit for each descriptor and each worker thread, and paused bytes
-/// on the retained-memory line.
-struct DescriptorFloor {
-    floor: Admission<()>,
-    retained: Option<Arc<ByteLine>>,
-    questions: Arc<LimitQuestions>,
-}
-
-impl HostNetFloor for DescriptorFloor {
-    fn acquire(&self, fds: usize, workers: usize) -> io::Result<HostNetPermit> {
-        let mut held: Vec<Permit> = Vec::with_capacity(fds + workers);
-        for (count, floor) in [(fds, HOST_NET_FD_FLOOR), (workers, HOST_NET_WORKER_FLOOR)] {
-            for _ in 0..count {
-                let permit = self.floor.try_admit_background();
-                held.push(permit.ok_or_else(|| floor_saturated(floor))?);
-            }
-        }
-        Ok(HostNetPermit::new(held))
-    }
-
-    fn acquire_bytes(&self, bytes: u64) -> io::Result<HostNetPermit> {
-        let Some(line) = &self.retained else {
-            return Ok(HostNetPermit::new(()));
-        };
-        let held = line
-            .try_reserve_alone(
-                usize::try_from(bytes).unwrap_or(usize::MAX),
-                &self.questions,
-            )
-            .ok_or_else(|| floor_saturated(HOST_NET_BYTE_FLOOR))?;
-        Ok(HostNetPermit::new(held))
     }
 }
 
@@ -284,16 +245,8 @@ async fn serve_from_pool(
         strangers,
         pressure,
         reserve,
-        ..
     } = pool;
-    let gate = server.map(|server| {
-        OwnerGate::new(
-            server,
-            floor.clone(),
-            pressure.clone(),
-            limits.max_connections,
-        )
-    });
+    let gate = server.map(|server| OwnerGate::new(server, floor.clone()));
     let (stopping, stop) = watch::channel(false);
     let mut shutdown = pin!(shutdown);
     'serving: loop {
@@ -339,7 +292,7 @@ async fn serve_from_pool(
                 break custody;
             }
             tokio::select! {
-                permit = admit_observed(floor, pressure.as_deref(), limits.max_connections) => {
+                permit = floor.admit(()) => {
                     if let Ok(permit) = permit {
                         break Custody::floor(permit, pressure.as_ref());
                     }
@@ -413,6 +366,9 @@ async fn serve_from_pool(
             builder
                 .timer(TokioTimer::new())
                 .header_read_timeout(limits.header_read_timeout);
+            if let Some(bytes) = limits.max_read_buffer_bytes {
+                builder.max_buf_size(bytes);
+            }
             let mut connection = pin!(builder.serve_connection(io, service).with_upgrades());
             // A closed or reset connection is the peer's business, not an
             // error of this server's.
@@ -434,32 +390,6 @@ async fn serve_from_pool(
     let _ = stopping.send(true);
     drop(listener);
     while connections.join_next().await.is_some() {}
-}
-
-/// A permit from `floor` for one socket. The first time the socket finds it
-/// has to wait, the floor's crossing in progress raises the pool's pressure
-/// check, which clears when nobody waits. It only observes: the wait is the
-/// floor's own.
-async fn admit_observed(
-    floor: &Admission<()>,
-    pressure: Option<&PoolPressure>,
-    bound: usize,
-) -> Result<Permit, WaitTimedOut> {
-    let mut admitting = pin!(floor.admit(()));
-    let mut waited = false;
-    std::future::poll_fn(|cx| {
-        let polled = admitting.as_mut().poll(cx);
-        if polled.is_pending() && !waited {
-            waited = true;
-            if let Some(pressure) = pressure
-                && let Some(epoch) = floor.crossing_epoch()
-            {
-                pressure.raise(epoch, bound.max(1) as u64);
-            }
-        }
-        polled
-    })
-    .await
 }
 
 /// One accepted connection, as its requests see it.
