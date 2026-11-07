@@ -224,15 +224,24 @@ mod tests;
 pub(crate) mod checkpoint;
 mod citation_erase;
 mod delete;
+#[cfg(feature = "sync")]
+mod local_discard;
 mod pin_index;
 mod side_keys;
 mod sync_rows;
 pub(crate) use citation_erase::{
     any_citation_erase_pending, ensure_citations_ready, erase_citations_in_txn,
+    erase_restored_citations_in_txn,
 };
 pub(crate) use pin_index::citation_delete_scope_exists;
 #[cfg(feature = "sync")]
 pub(crate) use pin_index::{remove_citation_request, track_citation_request};
+#[cfg(feature = "sync")]
+mod citation_residence;
+#[cfg(feature = "sync")]
+pub(crate) use citation_residence::{
+    erase_residence_copies_of_in_txn, refuse_erased_residence_copy_in_txn,
+};
 #[cfg(feature = "sync")]
 mod citation_scrub;
 mod free_text;
@@ -244,6 +253,19 @@ pub(crate) use citation_erase::validate_pins as validate_citation_dependencies;
 pub(crate) use citation_scrub::scrub_pending_citations;
 #[cfg(feature = "sync")]
 pub(crate) use pending_request::{PendingNoteRequest, admit_note_operation_in_txn};
+#[cfg(feature = "sync")]
+mod fork_downlink;
+#[cfg(feature = "sync")]
+pub(crate) use fork_downlink::{
+    authority_fork_frames_in_txn, fork_state_cites_withheld, install_authority_fork,
+    settle_authority_forks,
+};
+#[cfg(feature = "sync")]
+mod fork_upload;
+#[cfg(feature = "sync")]
+pub use fork_upload::{NoteForkUpload, NoteForkUploadOutcome, NoteForkUploadReceipt};
+#[cfg(feature = "sync")]
+pub(crate) use fork_upload::{fork_upload_frame_in_txn, uploadable_fork_in_txn};
 #[cfg(test)]
 mod erasure_tests;
 mod live_body;
@@ -254,6 +276,8 @@ mod kind_contract;
 #[cfg(all(test, feature = "sync"))]
 mod live_body_tests;
 pub(crate) use delete::delete_document_in_txn;
+#[cfg(feature = "sync")]
+pub(crate) use local_discard::{discard_bundle_explainers_in_txn, discard_workflow_in_txn};
 mod id_codec;
 pub use kind_contract::{
     BriefKindContract, NoteContextDefault, NoteExtractionDefault, NoteRetentionDefault,

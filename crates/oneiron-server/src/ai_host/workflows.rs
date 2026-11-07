@@ -107,28 +107,26 @@ impl WorkflowPump {
         // Waiting from the moment the pump exists, so a status read right
         // after start never sees the pre-start state.
         status.update(|status| status.workflows = WorkStatus::waiting());
-        let thread = std::thread::Builder::new()
-            .name("oneiron-workflows".into())
-            .spawn(move || {
-                let runtime = match tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                {
-                    Ok(runtime) => runtime,
-                    Err(error) => {
-                        tracing::error!(%error, "workflow pump runtime failed to start");
-                        status.update(|status| {
-                            status.workflows = WorkStatus::idle(IdleReason::StartFailed);
-                        });
-                        return;
-                    }
-                };
-                let recoveries = runner.models.recoveries();
-                pump(
-                    &runtime, &vault, &runner, &status, &questions, &decisions, &installed,
-                    stopped, recoveries,
-                );
-            })?;
+        let thread = crate::engine_thread("oneiron-workflows".into()).spawn(move || {
+            let runtime = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => runtime,
+                Err(error) => {
+                    tracing::error!(%error, "workflow pump runtime failed to start");
+                    status.update(|status| {
+                        status.workflows = WorkStatus::idle(IdleReason::StartFailed);
+                    });
+                    return;
+                }
+            };
+            let recoveries = runner.models.recoveries();
+            pump(
+                &runtime, &vault, &runner, &status, &questions, &decisions, &installed, stopped,
+                recoveries,
+            );
+        })?;
         Ok(Self {
             stop,
             thread,
@@ -338,7 +336,17 @@ fn pump_once(
                             )));
                         }
                     }
-                    let ran = runner.run(runtime, vault, step, context, continuation);
+                    // FIX 15648: the workflow's wrapper carries the TASK it
+                    // realizes (its leaves carry no backlink), so a leaf of a
+                    // TASK-bound workflow opens as a task wake.
+                    let woken = AttemptQueue::new(vault)
+                        .get(*root)
+                        .ok()
+                        .flatten()
+                        .and_then(|wrapper| wrapper.task_ref)
+                        .or_else(|| step.attempt.task_ref.clone())
+                        .map(|_| oneiron::context_board::TurnWake::Task);
+                    let ran = runner.run(runtime, vault, step, context, continuation, woken);
                     // OF-540: bound before the engine completes the leaf or
                     // its failure is settled, while the lease still holds.
                     if !matches!(&ran, Err(fault) if fault.hook_wait) {

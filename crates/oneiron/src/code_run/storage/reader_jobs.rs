@@ -5,9 +5,11 @@
 //! scopes are base rows, as the parent's own scope is: units and ids, no
 //! content.
 
+mod read;
 mod scoped;
 
 use std::collections::BTreeMap;
+use std::ops::Bound;
 
 use heed::{RoTxn, RwTxn};
 
@@ -19,8 +21,9 @@ use crate::attempt_queue::{AttemptId, BorrowedAttemptLease};
 use crate::code_run::CodeRunRawOutput;
 use crate::code_run::{
     ClaimOutcome, DelegatedSource, ExecutorStorage, ReaderActor, ReaderFindingRef, ReaderJob,
-    ReaderJobKind, ReaderJobState, ReaderParent, ReaderRoute, ReaderRunEnd, SpawnHostSeat,
-    SpawnParentBinding, TaskWaitSet, TaskWaitSetResult, reader_job_cutoff, reduce_task_wait_set,
+    ReaderJobKind, ReaderJobState, ReaderParent, ReaderQueueCursor, ReaderQueuePage, ReaderRoute,
+    ReaderRunEnd, SpawnHostSeat, SpawnParentBinding, TaskWaitSet, TaskWaitSetResult,
+    reader_job_cutoff, reduce_task_wait_set,
 };
 use crate::side_table::{
     self, CodecError, Raw, RawValue, RoutedDbs, SideCodec, SideKey, SideTable,
@@ -648,10 +651,6 @@ impl ExecutorStorage<'_> {
         }
     }
 
-    pub(crate) fn reader_job(&self, task: EntityId) -> Result<Option<ReaderJob>> {
-        self.reader_read(|txn, dbs| JOBS.get(&dbs, txn, &task))
-    }
-
     /// The card of the summary `owner` committed at `path` under `handle`,
     /// made by job `task`: read as a child's finding is, with the task that
     /// made it. `None` once that record no longer holds it.
@@ -697,64 +696,6 @@ impl ExecutorStorage<'_> {
         Ok(self
             .summary_output_card(found.owner, &found.path, &found.handle, task)?
             .unwrap_or(reply))
-    }
-
-    pub(crate) fn reader_parent(&self, run: EntityId) -> Result<Option<ReaderParent>> {
-        self.reader_read(|txn, dbs| PARENTS.get(&dbs, txn, &run))
-    }
-
-    /// The jobs among `tasks` that `parent_run` spawned itself, in one read
-    /// of the run's route: a task with no row, or another parent's, is left
-    /// out.
-    pub(crate) fn own_reader_jobs(
-        &self,
-        parent_run: EntityId,
-        tasks: &[EntityId],
-    ) -> Result<Vec<ReaderJob>> {
-        self.reader_read(|txn, dbs| {
-            let mut own = Vec::with_capacity(tasks.len());
-            for task in tasks {
-                if let Some(job) = JOBS
-                    .get(&dbs, txn, task)?
-                    .filter(|job| job.binding.parent_run == parent_run)
-                {
-                    own.push(job);
-                }
-            }
-            Ok(own)
-        })
-    }
-
-    /// The settled child finding named by its exact occurrence ref, or the
-    /// first reporter of an unqualified content handle. The index selects a
-    /// job; its persisted finding must still match the reference.
-    pub(crate) fn reader_finding(
-        &self,
-        parent_run: EntityId,
-        reference: &str,
-    ) -> Result<Option<ReaderJob>> {
-        self.reader_read(|txn, dbs| {
-            let Some(task) = INDEX.get(&dbs, txn, &finding_key(parent_run, reference))? else {
-                return Ok(None);
-            };
-            let task = id_at(&task, 0)?;
-            let Some(job) = JOBS.get(&dbs, txn, &task)?.filter(|job| {
-                job.binding.parent_run == parent_run
-                    && matches!(
-                        job.state,
-                        ReaderJobState::Done | ReaderJobState::Partial { .. }
-                    )
-            }) else {
-                return Ok(None);
-            };
-            let Some(finding) = &job.finding else {
-                return Ok(None);
-            };
-            if finding.handle != reference && finding.reference()? != reference {
-                return Ok(None);
-            }
-            Ok(Some(job))
-        })
     }
 
     /// Queues one child of `new.parent_run`, its parent row made from `seat`
@@ -1041,18 +982,47 @@ impl ExecutorStorage<'_> {
 
     /// Up to `limit` queued children, oldest first.
     pub(crate) fn queued_reader_jobs(&self, limit: usize) -> Result<Vec<ReaderJob>> {
+        Ok(self.queued_reader_jobs_after(None, limit)?.jobs)
+    }
+
+    /// Up to `limit` queue rows' children, oldest first, from just after
+    /// `after` (the queue's front for none), and where the next page starts
+    /// while rows follow (FIX 9708). A walk that pages on reaches every child
+    /// queued behind ones it cannot run yet.
+    pub(crate) fn queued_reader_jobs_after(
+        &self,
+        after: Option<ReaderQueueCursor>,
+        limit: usize,
+    ) -> Result<ReaderQueuePage> {
         self.reader_read(|txn, dbs| {
-            let mut jobs = Vec::new();
-            for row in INDEX.iter_from(&dbs, txn, b"q")? {
-                if jobs.len() >= limit {
+            let front = vec![b'q'];
+            let end = vec![b'q' + 1];
+            let start = after.map(|at| queued_key(at.enqueued_at_ms, at.task));
+            let lower = start
+                .as_ref()
+                .map_or(Bound::Included(&front), Bound::Excluded);
+            let mut page = ReaderQueuePage {
+                jobs: Vec::new(),
+                next: None,
+            };
+            let (mut read, mut last) = (0, None);
+            for row in INDEX.iter_range(&dbs, txn, lower, Bound::Excluded(&end))? {
+                if read >= limit {
+                    page.next = last;
                     break;
                 }
                 let (key, _) = row?;
-                if let Some(job) = JOBS.get(&dbs, txn, &id_at(&key, 9)?)? {
-                    jobs.push(job);
+                let task = id_at(&key, 9)?;
+                last = Some(ReaderQueueCursor {
+                    enqueued_at_ms: time_at(&key, 1)?,
+                    task,
+                });
+                read += 1;
+                if let Some(job) = JOBS.get(&dbs, txn, &task)? {
+                    page.jobs.push(job);
                 }
             }
-            Ok(jobs)
+            Ok(page)
         })
     }
 
@@ -1410,6 +1380,17 @@ impl<'a> ReaderJobs<'a> {
     /// Up to `limit` queued children, oldest first.
     pub fn queued(&self, limit: usize) -> Result<Vec<ReaderJob>> {
         self.storage.queued_reader_jobs(limit)
+    }
+
+    /// Up to `limit` queued children, oldest first, from just after `after`
+    /// (the queue's front for none), and where the next page starts while
+    /// more follow (FIX 9708).
+    pub fn queued_after(
+        &self,
+        after: Option<ReaderQueueCursor>,
+        limit: usize,
+    ) -> Result<ReaderQueuePage> {
+        self.storage.queued_reader_jobs_after(after, limit)
     }
 
     pub fn job(&self, task: EntityId) -> Result<Option<ReaderJob>> {

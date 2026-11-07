@@ -3,9 +3,14 @@
 //! item on the attempt queue, due when the window opens. The connector
 //! settle pass claims due items and admits each wake again in one writer:
 //! the charge, the Dreamer wake (or a new deferral, if the window is still
-//! full) and the subscription's decision, which it overwrites. The item has
-//! no deadline of its own; it lasts until it is admitted or its subscription
-//! is gone.
+//! full) and the subscription's decision, which it overwrites.
+//!
+//! The item keeps the deadline of its first deferral, a held connector
+//! call's [`CONNECTOR_CALL_PENDING_TTL_MS`] later (FIX 8753): a re-deferral
+//! carries it unchanged, and the item is due no later than it. A claim at or
+//! past it records the wake `Expired`, with no charge and no Dreamer wake.
+//! An item lasts until it is admitted, it expires, or its subscription is
+//! gone.
 
 use serde::{Deserialize, Serialize};
 
@@ -13,6 +18,7 @@ use super::{ConnectorEvent, ConnectorWakeDecision, subscriptions};
 use crate::attempt_queue::{
     AttemptQueue, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueOutcome,
 };
+use crate::outbound_consent::CONNECTOR_CALL_PENDING_TTL_MS;
 use crate::store::attempt_inputs::ClaimAttempt;
 use crate::store::attempt_inputs::EnqueueAttempt;
 use crate::{EntityId, Error, Result, Vault};
@@ -21,29 +27,42 @@ use crate::{EntityId, Error, Result, Vault};
 pub(crate) const CONNECTOR_WAKE_ADMISSION_KIND: &str = "connector_key.wake_admission";
 const CONNECTOR_WAKE_ADMISSION_LEASE_OWNER: &str = "connector-wake-admission";
 
-/// One paced wake: the subscription it matched and the event, frozen.
+/// One paced wake: the subscription it matched, the event, frozen, and the
+/// deadline its first deferral fixed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PacedConnectorWake {
     #[serde(with = "crate::serialize::entity_ref")]
     subscription: EntityId,
     event: ConnectorEvent,
+    /// Unix seconds. An item kept before deadlines existed has none, and
+    /// its next deferral fixes one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    deadline: Option<u64>,
+}
+
+/// The deadline a wake first deferred at `now`, Unix seconds, keeps.
+pub(super) const fn paced_connector_wake_deadline(now: u64) -> u64 {
+    now.saturating_add(CONNECTOR_CALL_PENDING_TTL_MS / 1000)
 }
 
 impl Vault {
     /// Keeps `event`'s wake of `subscription` as an admission item due at
-    /// `due`, Unix seconds, in the ingress writer.
+    /// `due` or its `deadline`, whichever comes first, Unix seconds, in the
+    /// ingress writer.
     pub(super) fn defer_connector_wake_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         subscription: EntityId,
         event: &ConnectorEvent,
         due: u64,
+        deadline: u64,
         now: u64,
     ) -> Result<()> {
         let payload = serde_json::to_vec(&PacedConnectorWake {
             subscription,
             event: event.clone(),
+            deadline: Some(deadline),
         })
         .map_err(|_| Error::InvariantViolation("paced connector wake did not encode"))?;
         let queue = AttemptQueue::new(self);
@@ -60,14 +79,14 @@ impl Vault {
                 None,
                 None,
             )?;
-        queue.defer_enqueued_in_txn(txn, record, due)?;
+        queue.defer_enqueued_in_txn(txn, record, due.min(deadline))?;
         Ok(())
     }
 
-    /// Admits again every paced connector wake whose window has opened, and
-    /// returns how many it admitted (deferred again or not). Each claimed
-    /// item completes in the writer that admits its wake, so a crash leaves
-    /// it for the next pass.
+    /// Admits again every paced connector wake whose window has opened or
+    /// whose deadline has come, and returns how many it decided (admitted,
+    /// deferred again, or expired). Each claimed item completes in the
+    /// writer that decides its wake, so a crash leaves it for the next pass.
     ///
     /// # Errors
     /// Storage faults.
@@ -127,6 +146,7 @@ impl Vault {
                     &paced.event,
                     &frozen,
                     &event_hash,
+                    paced.deadline,
                     now,
                 )
                 .map(Some)
