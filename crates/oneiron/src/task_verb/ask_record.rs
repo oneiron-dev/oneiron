@@ -33,8 +33,8 @@ pub(crate) use attendee_entry::{
 };
 pub(super) use consult_answer::record_answer;
 pub(super) use link_proof::{
-    mint_key as mint_link_key, sign_settlement as sign_link_settlement,
-    verify_settlement as verify_link_settlement,
+    mint_key as mint_link_key, sign_forward_result, sign_settlement as sign_link_settlement,
+    verify_forward_result, verify_settlement as verify_link_settlement,
 };
 pub(super) use word_admission::{admit_link_word, admit_word};
 
@@ -374,6 +374,14 @@ pub(super) enum AskGroupRead {
 }
 
 impl crate::memory::Memory<'_> {
+    /// The existing effective deadline of an ask this author can read.
+    pub(crate) fn hook_ask_effective_deadline(&self, id: EntityId) -> Result<Option<u64>> {
+        let txn = self.vault().store.env.read_txn()?;
+        Ok(self
+            .ask_group_in(&txn, id)?
+            .and_then(|group| group.effective.until))
+    }
+
     /// The ask group `id`, read as its handle's verbs read it (DEC-0005):
     /// each member TASK, the TASK its class came from and its question and
     /// context rows are listed as producers of what the call answers from the

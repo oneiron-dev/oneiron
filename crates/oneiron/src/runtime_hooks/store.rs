@@ -528,7 +528,7 @@ pub(super) enum HookRunRef {
 }
 
 impl HookRunRef {
-    const fn key(self) -> RunKey {
+    pub(super) const fn key(self) -> RunKey {
         match self {
             Self::Fact(key) | Self::Verb(key) => key,
         }

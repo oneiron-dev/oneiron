@@ -375,6 +375,9 @@ side_tables! {
     /// bundle's world section carries whole (FIX 922). Purged with an erased world. Key: hex32
     /// (world) ":" string (window label).
     WORLD_KEY_SEALED_MIRROR: VaultMeta b"world_keys:mirror:v1:" Raw;
+    /// How many actor erases rewrote the sealed mirrors here (FIX 17210): a seal or a take that
+    /// read a mirror before one writes nothing after it. Key: the string `count`.
+    WORLD_KEY_SEALED_MIRROR_ERASES: VaultMeta b"world_keys:mirror_erases:v1:" Named;
     /// Which version of one sealed window's mirror last landed here in full, and under which
     /// forward pass (FIX 6509), or that the window's rows here were removed since (FIX 5506): a
     /// take of that version under that pass skips its forward pass. Purged with an erased world.

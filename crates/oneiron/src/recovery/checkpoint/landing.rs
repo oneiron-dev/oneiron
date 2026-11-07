@@ -61,6 +61,9 @@ impl Vault {
         // A bare restore has no live source to name what was erased since
         // the cut (FIX 4753).
         let bare = matches!(custody, Custody::Keep | Custody::Landed | Custody::NewHost);
+        // Only restore_with_current_authority produces these routes, after its
+        // LIVE-row merge. A beside copy's Fork(Some(..)) did not merge them.
+        let live_rows_merged = matches!(custody, Custody::Fork(None) | Custody::Replace(..));
         // Authenticate every ORCB row against LIVE exterior custody before
         // creating a destination. A checkpoint never carries a key copy, and
         // a row whose key an erase destroyed since is dropped, not restored.
@@ -87,7 +90,8 @@ impl Vault {
         // holds is refused as the image's are, and the image's rows naming
         // an owner that did not open go (KS7-5, FIX 6376).
         let plan = gate_custody.plan_mut();
-        let mut opened = super::payload::open_image_payload(sealed_payload, plan, &mut image)?;
+        let mut opened =
+            super::payload::open_image_payload(sealed_payload, plan, &mut image, live_rows_merged)?;
         let opened_entities = opened
             .as_ref()
             .map(super::payload::OpenedPayload::entity_rows)
@@ -449,9 +453,11 @@ impl Vault {
 const BARE_ERASURE_NOTE: &str = "erasures after the cut not applied";
 
 /// Refuses a row with no header, which the index rebuild refuses anyway; a
-/// body the local identity refusal turns away; or an AUTHORITY_LOG row whose
+/// body the local identity refusal turns away; an AUTHORITY_LOG row whose
 /// body the shared authority validator refuses, an empty one included: no
-/// authority row is a bodiless shell.
+/// authority row is a bodiless shell; or a row whose source-audience
+/// obligation is malformed or stands on a kind no source landing stamps
+/// (fix list row 16256). A valid stamp restores as its exact bytes.
 fn validate_checkpoint_entity_row(blob: &[u8]) -> Result<()> {
     let header = crate::batch::EntityMetadataHeader::parse(blob).ok_or_else(codec_error)?;
     let body = &blob[crate::batch::ENTITY_METADATA_HEADER_LEN..];
@@ -459,6 +465,9 @@ fn validate_checkpoint_entity_row(blob: &[u8]) -> Result<()> {
     if header.entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG
         && crate::authority::validate_authority_log_entry_body_bytes(body).is_err()
     {
+        return Err(codec_error());
+    }
+    if !crate::source_audience::restorable_obligation(blob) {
         return Err(codec_error());
     }
     Ok(())
