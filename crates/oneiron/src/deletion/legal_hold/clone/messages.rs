@@ -1,10 +1,11 @@
 //! Exact stored on-record MESSAGE records for an order that names them
 //! (LEGAL-HOLD-USE = B as a clone, owner 2026-11-05). Each selected id must
-//! be a stored MESSAGE row. Its document rows (head, slot rows, updates) and
-//! its outgoing edge rows follow it, copied as stored, then the result body
-//! its result attachment names, when the message still holds it. Nothing
-//! here writes live-vault state or follows another reference: an asset or a
-//! model-call record is not part of this extent.
+//! be a stored MESSAGE row. Its document rows (head, slot rows, updates), its
+//! outgoing edge rows and its revision ledger rows (the retained history of
+//! its earlier stored rows) follow it, copied as stored, then the result body
+//! its result attachment names, when the message still holds it.
+//! Nothing here writes live-vault state or follows another reference: an
+//! asset or a model-call record is not part of this extent.
 
 use std::io::{self, Read};
 use std::ops::Bound;
@@ -23,7 +24,7 @@ use crate::error::Result;
 use crate::memory::MessageResultAttachment;
 use crate::ports::{DocumentSlot, DocumentUpdateKey};
 use crate::registry::ENTITY_TYPE_MESSAGE;
-use crate::side_table::{self, Raw, SideTable};
+use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::ManifestDbs;
 use crate::store::result_body_reader::{CodeRunResultBodyReader, Source};
 use crate::store::result_body_rows::RAW_OUTPUTS;
@@ -51,6 +52,19 @@ const SLOT_ROWS: [(&str, SideTable<DocumentSlot, Vec<u8>, Raw>); 4] = [
 ];
 const UPDATES: SideTable<DocumentUpdateKey, Vec<u8>, Raw> =
     SideTable::new(&side_table::DOCUMENT_UPDATE);
+
+/// A message's revision ledger, read as stored bytes: the retained history
+/// document of its earlier stored rows, its revision state, its retained
+/// frontiers (keyed by message and revision) and each frontier's reverse
+/// identity (keyed by revision, valued by its owner).
+const REVISION_DOC: SideTable<EntityId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::ENTITY_REVISION_DOC);
+const REVISION_STATE: SideTable<EntityId, Vec<u8>, Named> =
+    SideTable::new(&side_table::ENTITY_REVISION_STATE);
+const REVISION_FRONTIERS: SideTable<(EntityId, [u8; 16]), Vec<u8>, Raw> =
+    SideTable::new(&side_table::ENTITY_REVISION_FRONTIER);
+const REVISION_IDENTITIES: SideTable<[u8; 16], Vec<u8>, Raw> =
+    SideTable::new(&side_table::ENTITY_REVISION_IDENTITY);
 
 /// The family label a held result body's stored key is digested under.
 const RESULT_BODY_FAMILY: &str = "code_run:raw_output";
@@ -163,7 +177,8 @@ pub(super) fn capture(
 }
 
 /// The exact stored rows of message `id`: its entity row first, then its
-/// document head and that slot's rows and updates, then its outgoing edges.
+/// document head and that slot's rows and updates, then its outgoing edges,
+/// then its revision ledger.
 fn message_rows(vault: &Vault, txn: &RoTxn<'_>, id: &[u8; 16]) -> Result<Vec<MessageRow>> {
     let store = &vault.store;
     let Some(value) = store.entities().get(txn, &id[..])? else {
@@ -238,7 +253,77 @@ fn message_rows(vault: &Vault, txn: &RoTxn<'_>, id: &[u8; 16]) -> Result<Vec<Mes
             value: value.to_vec(),
         });
     }
+    revision_rows(store, txn, id, &entity, &mut rows)?;
     Ok(rows)
+}
+
+/// Message `id`'s revision ledger rows, as stored: the history document that
+/// keeps its earlier full stored rows, its revision state, each retained
+/// frontier under it, and each of those frontiers' reverse identity rows
+/// that names this message. A message replaced while it had a record head
+/// keeps its text history in that head's document instead, which its
+/// document rows already carry.
+fn revision_rows(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    id: &[u8; 16],
+    entity: &EntityId,
+    rows: &mut Vec<MessageRow>,
+) -> Result<()> {
+    if let Some(value) = REVISION_DOC.get_bytes(store, txn, entity)? {
+        rows.push(MessageRow {
+            component: SourceComponent::MessageRevision,
+            family: "entity_revision:doc",
+            key: REVISION_DOC.key_bytes(entity),
+            value,
+        });
+    }
+    if let Some(value) = REVISION_STATE.get_bytes(store, txn, entity)? {
+        rows.push(MessageRow {
+            component: SourceComponent::MessageRevision,
+            family: "entity_revision:state",
+            key: REVISION_STATE.key_bytes(entity),
+            value,
+        });
+    }
+    let mut revisions = Vec::new();
+    for row in REVISION_FRONTIERS.iter_raw_from(store, txn, &id[..])? {
+        let (suffix, value) = row?;
+        let revision: [u8; 16] = suffix
+            .get(16..)
+            .and_then(|revision| revision.try_into().ok())
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "legal capture revision frontier key is malformed",
+                )
+            })?;
+        let mut key = REVISION_FRONTIERS.decl().prefix.to_vec();
+        key.extend_from_slice(&suffix);
+        rows.push(MessageRow {
+            component: SourceComponent::MessageRevision,
+            family: "entity_revision:frontier",
+            key,
+            value,
+        });
+        revisions.push(revision);
+    }
+    for revision in revisions {
+        // Only the reverse identity that names this message is its own.
+        let Some(value) = REVISION_IDENTITIES.get_bytes(store, txn, &revision)? else {
+            continue;
+        };
+        if value.as_slice() != id.as_slice() {
+            continue;
+        }
+        rows.push(MessageRow {
+            component: SourceComponent::MessageRevision,
+            family: "entity_revision:identity",
+            key: REVISION_IDENTITIES.key_bytes(&revision),
+            value,
+        });
+    }
+    Ok(())
 }
 
 /// What a selected message's result attachment names.
