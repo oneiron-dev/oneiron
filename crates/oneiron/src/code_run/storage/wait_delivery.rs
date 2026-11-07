@@ -28,7 +28,6 @@ mod settle_report;
 use std::cell::Cell;
 
 use self::erased_read::{delivery_in_txn, settled_in_txn};
-use super::records::REPLAY_RECORDS;
 use super::replay_bodies::response_erased_error;
 use super::routing::SessionBinding;
 use super::wait_holders::{
