@@ -193,7 +193,7 @@ pub(crate) fn retire_actor_responses_in_txn(
     for (record_id, run) in actor_records_in_txn(store, wtxn, actor, &runs)? {
         if let Some(record) = REPLAY_RECORDS.get_lenient(store, wtxn, &record_id)? {
             held.extend(reply_occurrences(run, &record));
-            release_unpublished_outputs_in_txn(store, wtxn, record.run_id)?;
+            release_unpublished_outputs_in_txn(store, wtxn, run)?;
         } else if unreadable_record_in_txn(store, wtxn, &record_id)? {
             // Its bodies are held by its owner row's run (a decoded
             // record's `run_id`), which need not be the replay key.
@@ -300,7 +300,7 @@ fn release_reply_outputs_in_txn(
     owner: EntityId,
     record: &CodeRunReplayRecord,
 ) -> Result<()> {
-    release_unpublished_outputs_in_txn(store, wtxn, record.run_id)?;
+    release_unpublished_outputs_in_txn(store, wtxn, owner)?;
     for (owner, path, handle) in reply_occurrences(owner, record) {
         release_occurrence_in_txn(store, wtxn, owner, path, handle)?;
     }
