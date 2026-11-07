@@ -33,6 +33,11 @@ pub(super) const SYNC_QD_E: SideTable<Vec<u8>, Vec<u8>, Raw> =
 pub(super) const SYNC_QN_E: SideTable<HexPair, Vec<u8>, Raw> =
     SideTable::new(&side_table::SYNC_QN_E);
 
+/// A replica's mark on each NOTE fork its authority sent (FIX 12789), keyed
+/// by NOTE then fork; the value is the BLAKE3 of the fork document as sent.
+pub(super) const NOTE_FORK_AUTHORITY: SideTable<HexPair, Vec<u8>, Raw> =
+    SideTable::new(&side_table::NOTE_FORK_AUTHORITY);
+
 /// Per-admission disclosure floor (`ad:e:`); swept wholesale here, never
 /// decoded (its key carries an optional middle segment this module never
 /// parses).
