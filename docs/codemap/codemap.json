@@ -84388,6 +84388,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/typed_body/mask.rs",
+     "purpose": "A typed-body call that would write a new secret (FIX 2372; OF-067)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/typed_body/receipts.rs",
      "purpose": "Who made each typed-body commit, kept beside the body (FIX 4513)",
      "surface": {
@@ -93557,7 +93567,7 @@
      "purpose": "OF-382: a consented corpus, pinned training job, checked checkpoint and owner-approved role swap"
     },
     "typed_body": {
-     "files": 8,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -93664,7 +93674,7 @@
    },
    "over_bar": 181,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6612,
+   "source_files": 6613,
    "test_files": 895
   },
   "oneiron-android": {
