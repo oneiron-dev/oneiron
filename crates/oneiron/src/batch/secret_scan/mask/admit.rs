@@ -12,7 +12,9 @@
 //!
 //! A document whose stored history is its receipt ledger cannot take a
 //! handle in place of what an operation wrote; [`scan_document_in_txn`]
-//! refuses a hit there instead.
+//! refuses a hit there instead. A typed body then lands its call again from
+//! the body as the call found it, each string the call writes admitted here,
+//! so no operation holds the value (FIX 2372, `typed_body::mask`).
 
 use std::sync::Arc;
 

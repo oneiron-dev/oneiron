@@ -126,5 +126,6 @@ pub(in crate::ai_host) fn attach_measured_card(
     draft.evidence.exposures = exposures;
     draft.evidence.rubric_revision = Some(request.rubric_revision);
     draft.evidence.card = Some(card);
+    draft.evidence.paired_measurement = Some(digest);
     Ok(())
 }

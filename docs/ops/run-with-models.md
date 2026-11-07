@@ -233,8 +233,10 @@ keeps the provider offer's payer, key custody and rates. A free provider
 so a vault routed `on_device` can use it: each call is charged to that payer,
 reserves on its run's budget line (and on the vault's allocation for payer
 `host`), and is refused when they refuse it, exactly as its own-server call
-is. A declared run still refuses a `key_env` (T1) offer unless the owner
-allowed that offer. The native channel sends no key; a key the provider holds
+is. A paid on-device call also reserves on the budget lines of its durable
+model step or Dreamer pass, and its purpose's policy rows cap it, as an
+own-server paid call does. A declared run still refuses a `key_env` (T1)
+offer unless the owner allowed that offer. The native channel sends no key; a key the provider holds
 still makes its calls paid. The receipt names the place `on_device`
 (`<model>@on_device`) and the route `exl3-native@worker:<id>`. One kind of
 provider gets no on-device offer: payer `local`, no key, and locality
@@ -529,6 +531,14 @@ before the file is settled, at the level it settles to (`--log-level` over the
 file's `log_level`). A file with `[models.voice]` and no `--voice-socket` runs
 no voice loop, logged once with the reason `voice_socket_missing`; live voice
 sessions still run.
+
+An own-device sync connection can also copy settled default CLAIM vectors from
+its reachable home during scheduled housekeeping, even when this server has no
+ready embedder. This uses the existing pass budget and write admission. The
+current source, embedding model, transform, provenance and world route must
+match; another worker's active matching lease is left alone. A miss keeps the
+pending job for a later pass or the normal model worker. This is scheduled
+catch-up, not an offline vector carrier or an immediate fill at import.
 
 A managed vault reports how it came up on every ctl `Ping`, as `readiness`
 (contract v3): `{"state":"ready"}`, or `{"state":"degraded","missing":[...]}`
@@ -1179,7 +1189,9 @@ agent's own harness (`sticky` with `why: "harness_compacts"`). Its
 `compaction_backend` names `code-mode-compaction` (the seat above) or a
 reasoning seat by its role's key (`checker`, `local_reasoner`,
 `generative_reasoner`); a key this host does not serve compacts on the seat
-above. Any other run uses the table above. A long run never outgrows one
+above. A saved agent definition with no `memory_profile` compacts as
+itself (`compaction_backend = "self"`, below) on this host's window (FIX
+7744). Any other run uses the table above. A long run never outgrows one
 summary's sources: each summary stands for the records the calls before it
 were served, so the next one names only the records served since.
 

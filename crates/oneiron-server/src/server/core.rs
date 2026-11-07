@@ -1,5 +1,5 @@
 //! Core server state: the `SyncServer` struct, construction, and shared helpers.
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -30,6 +30,7 @@ use super::{
 };
 
 mod construction;
+mod mcp;
 pub(super) mod pattern_workflow;
 mod usage;
 
@@ -42,15 +43,6 @@ pub(crate) enum BroadcastPayload {
     LocalDocs(Vec<oneiron::EntityId>),
     /// A producer lost notifications before they reached this channel.
     Resync { missed: u64 },
-}
-
-/// One host-resolved agent run and the prefix this session actually emitted.
-/// The host advances the epoch only after a real fold; an HTTP request cannot.
-pub(crate) struct HostSelfBriefSession {
-    pub(crate) state: oneiron::context_board::SelfBriefState,
-    pub(crate) render: oneiron::context_board::SelfBriefSession,
-    pub(crate) epoch: u64,
-    pub(crate) emitted_epoch: Option<u64>,
 }
 
 /// One piece of task work's turn on a vault ([`SyncServer::admit_task_work`]).
@@ -107,6 +99,8 @@ pub struct SyncServer {
     /// deck and slide render takes its turn here, round robin across the
     /// callers it is for, the host's own wakes behind them.
     pub(crate) renderer_turns: crate::admission::Admission<oneiron::EntityId>,
+    /// The operator's renderer scratch source, resolved once with shared disk claims.
+    pub(crate) renderer_scratch: crate::slide_render::RendererScratch,
     /// OF-520 questions retrieval queries past `config.limits` raised.
     pub(crate) query_checks: super::read_shape::QueryChecks,
     /// Set only by managed boot after inherited-credential and DEK checks.
@@ -139,6 +133,9 @@ pub struct SyncServer {
     pub(crate) retained: Arc<crate::byte_line::ByteLine>,
     /// The presence hub's charge on `retained`.
     pub(crate) presence: Arc<super::presence::PresenceCharge>,
+    /// Authenticated booking calls per actor this minute (FIX 128-131),
+    /// measured against their `[limits]` rows; never a window.
+    pub(crate) booking_calls: super::booking_calls::AuthenticatedBookingCalls,
     /// The wakes of removed holders' archive delivery sessions (FIX 3396).
     pub(crate) removal_deliveries: super::removal_delivery::RemovalDeliveries,
     /// Dedicated shared environments retained for leave checks and their own
@@ -164,6 +161,9 @@ pub struct SyncServer {
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
     /// Vault-owned production code host. No request can replace it.
     pub(crate) mcp_code_host: Option<Arc<dyn crate::mcp::McpCodeExecutionHost>>,
+    /// The `execute_code` runs parked on a durable wait, each entered again
+    /// once its reply is delivered (FIX 4606).
+    pub(crate) mcp_code_run_continuations: crate::api::McpCodeRunContinuations,
     /// Runs the reader children code runs spawn, on the code host once one
     /// is bound, and keeps their clock (ARCH-0079 #reader-forks).
     pub(crate) reader_runner: Arc<super::ReaderRunner>,
@@ -206,9 +206,11 @@ pub struct SyncServer {
     pub(crate) web_fetcher: std::sync::OnceLock<Arc<oneiron::web_fetch::WebFetcher>>,
     /// Actor/session read observations share the server lifetime, never a process global.
     pub(crate) memories_cursors: Arc<Mutex<crate::api::MemoriesCursorStore>>,
-    /// Host-resolved run briefs, keyed by authenticated actor and session.
-    pub(crate) self_brief_sessions:
-        Mutex<BTreeMap<(oneiron::EntityId, String), HostSelfBriefSession>>,
+    /// Host-resolved run briefs, keyed by authenticated actor and session,
+    /// and their prefix custody: the one owner every host stages, delivers,
+    /// reads and closes them through. The host's live runs share it, to
+    /// close a pumped run's brief as the run retires (FIX 17594 D3).
+    pub(crate) self_brief_sessions: Arc<super::self_brief_custody::SelfBriefCustody>,
     /// ONE-207: the optional deep-retrieval host.
     ///
     /// `None` on every server [`SyncServer::new`] builds, and that is the
@@ -339,11 +341,20 @@ fn live_rows(
 }
 
 impl SyncServer {
+    /// The most bytes one WebSocket message this server reads may reassemble
+    /// to (ABC transport row T25): its request floor,
+    /// `limits.request_body_bytes`, set at every upgrade in place of
+    /// tungstenite's implicit 64 MiB. A frame keeps its own bound.
+    pub(crate) fn socket_message_bytes(&self) -> usize {
+        usize::try_from(self.config.limits.request_body_bytes).unwrap_or(usize::MAX)
+    }
+
     // ─── Device-lease registry (ONE-1140, OD-3) ──────────────────────────
 
     /// Install an already resolved run snapshot from the trusted host. The
     /// HTTP request never supplies scope, class verdicts, or budget. Advancing
-    /// `epoch` happens only when the host has completed a real fold.
+    /// `epoch` happens only when the host has completed a real fold. The
+    /// installation goes through the server's one self-brief custody owner.
     pub async fn install_self_brief_session(
         &self,
         actor: oneiron::EntityId,
@@ -351,52 +362,11 @@ impl SyncServer {
         epoch: u64,
         state: oneiron::context_board::SelfBriefState,
     ) -> oneiron::Result<()> {
-        if state.self_ref != actor || session_id.is_empty() {
-            return Err(oneiron::Error::InvariantViolation(
-                "self brief actor or session mismatch",
-            ));
-        }
-        let mut runs = self.self_brief_sessions.lock().await;
-        let entry = runs
-            .entry((actor, session_id))
-            .or_insert_with(|| HostSelfBriefSession {
-                state: state.clone(),
-                render: oneiron::context_board::SelfBriefSession::default(),
-                epoch,
-                emitted_epoch: None,
-            });
-        if epoch < entry.epoch {
-            return Err(oneiron::Error::InvariantViolation("stale self brief epoch"));
-        }
-        entry.state = state;
-        entry.epoch = epoch;
+        self.self_brief_sessions
+            .lock()
+            .await
+            .install(actor, session_id, epoch, state)?;
         Ok(())
-    }
-
-    /// Bind a readiness-verified QuickJS provider before exposing this vault's
-    /// routes, running at most `runs` at once. Missing components or providers
-    /// keep execute_code unadvertised.
-    #[cfg(feature = "code-sandbox-wasmtime")]
-    #[must_use]
-    pub fn with_mcp_quickjs_provider(
-        mut self,
-        provider: crate::mcp::McpQuickJsProvider,
-        runs: crate::mcp::CodeRunLimits,
-    ) -> Self {
-        let provider = provider.with_run_receipts(self.run_receipts());
-        let host: Arc<dyn crate::mcp::McpCodeExecutionHost> = Arc::new(
-            crate::mcp::McpEngineNativeCodeHost::new(
-                Arc::new(provider),
-                runs,
-                Arc::clone(self.wire_telemetry.limit_questions()),
-            )
-            .with_reader_seats(self.reader_runner.seats())
-            .with_git_door_base(self.config.git_door_base.clone()),
-        );
-        // Reader children run on the same provider and pool.
-        self.reader_runner.bind_host(Arc::clone(&host));
-        self.mcp_code_host = Some(host);
-        self
     }
 
     /// Installs the node-side account API key verifier a host built
@@ -437,24 +407,6 @@ impl SyncServer {
 
     pub(crate) fn desktop_guest(&self) -> Option<&oneiron_browser::DesktopGuest> {
         self.desktop_guest.as_ref()
-    }
-
-    pub(crate) fn code_execution_host(&self) -> Option<&Arc<dyn crate::mcp::McpCodeExecutionHost>> {
-        self.mcp_code_host
-            .as_ref()
-            .filter(|host| host.production_runtime_available())
-    }
-
-    /// The surface `mode` registers on this server, or the verb row that
-    /// keeps it from registering: callers answer that as a typed error.
-    pub(crate) fn mcp_surface(
-        &self,
-        mode: crate::mcp::McpSurfaceMode,
-    ) -> Result<crate::mcp::McpRegisteredSurface, crate::mcp::McpSurfaceConstructionError> {
-        crate::mcp::McpRegisteredSurface::register_with_execution(
-            mode,
-            self.code_execution_host().is_some(),
-        )
     }
 
     /// Attaches the ONE-207 deep-retrieval host.

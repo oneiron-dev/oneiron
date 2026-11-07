@@ -693,6 +693,7 @@ impl RuntimeMediaEmbedder {
                 response_format: ResponseFormat::Text,
                 locality: self.locality,
                 host_keyless: false,
+                host_paid: false,
                 seat_effort: None,
             },
             operation: AiOperation::Embed,

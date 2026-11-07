@@ -445,6 +445,7 @@ impl Memory<'_> {
                         template: input.template,
                         assets: &input.assets,
                         fonts: &input.fonts,
+                        graphics: input.graphics,
                         names: Names {
                             text: &names.text,
                             table: &names.table,

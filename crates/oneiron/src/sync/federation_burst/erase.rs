@@ -1,7 +1,8 @@
 //! Retained copies an entity's erase owns (FIX 7998).
 //!
-//! Every retained federation batch and every retained maintenance operation
-//! names the rows whose bytes it carries in [`CARRIER`]. Both delete doors
+//! Every retained federation batch, every retained maintenance operation and
+//! every confirmed staged import still owed its bodies (FIX 12408) names the
+//! rows whose bytes it carries in [`CARRIER`]. Both delete doors
 //! scrub those items in the erase transaction
 //! ([`erase_retained_copies_in_txn`] is one of the derived-row erasers). The
 //! hard-erase sweep scrubs them again before it compacts carriers, and its
@@ -26,6 +27,8 @@ pub(crate) enum CarriedBy {
     Burst(Vec<u8>),
     /// A maintenance operation, by its key in its own table.
     Maintenance(String),
+    /// A confirmed staged import's kept content, by its receipt id.
+    StagedImport([u8; 32]),
 }
 
 impl CarriedBy {
@@ -33,6 +36,7 @@ impl CarriedBy {
         match self {
             Self::Burst(key) => format!("b{}", bytes_to_hex_lower(key)),
             Self::Maintenance(key) => format!("m{key}"),
+            Self::StagedImport(receipt) => format!("s{}", bytes_to_hex_lower(receipt)),
         }
     }
 
@@ -40,6 +44,9 @@ impl CarriedBy {
         match reference.split_at_checked(1)? {
             ("b", key) => hex_bytes(key).map(Self::Burst),
             ("m", key) => Some(Self::Maintenance(key.to_owned())),
+            ("s", key) => hex_bytes(key)
+                .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+                .map(Self::StagedImport),
             _ => None,
         }
     }
@@ -120,6 +127,9 @@ pub(crate) fn erase_retained_copies_in_txn(
             Some(CarriedBy::Burst(key)) => super::queue::erase_in_txn(store, txn, &key)?,
             Some(CarriedBy::Maintenance(key)) => {
                 crate::sync::quota::erase_retained_in_txn(store, txn, &key)?;
+            }
+            Some(CarriedBy::StagedImport(receipt)) => {
+                crate::batch::export::drop_staged_import_body_work_in_txn(store, txn, &receipt)?;
             }
             None => {}
         }
