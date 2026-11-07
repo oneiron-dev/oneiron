@@ -139,6 +139,12 @@ twice: into the key and into the AAD. Any failure to open is the single
 with the same `X`. An empty `X` gives `aad = H`: the same inputs and randomness seal
 the same bytes as `seal`, and `open` is `open_with_aad` with empty `X`.
 
+`seal_with_aad_into` consumes an output buffer of plaintext length plus `TAG_LEN`,
+seals directly into it, and moves that buffer into the envelope. This lets the
+caller reserve ciphertext storage fallibly without a separate plaintext copy.
+The supplied buffer is wiped on error. Header, AAD and key derivation may still
+allocate; `seal` and `seal_with_aad` keep their existing allocation path.
+
 `Envelope::open_with_aad_into` checks the same policy and AAD while decrypting
 straight into a caller-owned slice of exactly the plaintext length. It wipes that
 slice on any error. It avoids a separate plaintext Vec; parsing, AAD construction
