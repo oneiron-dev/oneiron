@@ -276,10 +276,15 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             .scoped_read
             .search_candidate_limit(limit)
             .map_err(|error| engine_failure(METHOD, &error))?;
-        let mut builder = self
+        // Every channel and neighbor takes this read's row gate, its bound
+        // caller filter included, before its cut (FIX 3977); the pack is
+        // still filtered under the read once it runs.
+        let plan = self
             .scoped_read
-            .vault()
-            .context_pack()
+            .context_pack_plan()
+            .map_err(|error| engine_failure(METHOD, &error))?;
+        let mut builder = plan
+            .admit(self.scoped_read.vault().context_pack())
             .limit(candidate_limit)
             .hydrate(true)
             .include_edges(false)
@@ -736,7 +741,20 @@ impl sealed::Backend for InProcessVaultReadAdapter<'_> {
         reader.media = self.media;
         reader.media_memory = self.media_memory;
         reader.image_pick = self.image_pick.clone();
-        match request.into_inner() {
+        let request = request.into_inner();
+        // The caller's own filter binds this request's fresh reader alone,
+        // never the backend's (FIX 3977).
+        let filter = match &request {
+            VaultReadRequest::Query(request) => request.filter.as_ref(),
+            VaultReadRequest::ContextPack(request) => request.filter.as_ref(),
+            VaultReadRequest::Hydrate(request) => request.filter.as_ref(),
+            VaultReadRequest::HydrateMany(request) => request.filter.as_ref(),
+            VaultReadRequest::MemoryTimeline(request) => request.filter.as_ref(),
+            _ => None,
+        }
+        .map(crate::memory::ReadFilterInput::to_filter);
+        reader.scoped_read = reader.scoped_read.with_read_filter(filter.as_ref());
+        match request {
             VaultReadRequest::Query(request) => {
                 reader.query_op(&request).map(VaultReadResponse::Query)
             }

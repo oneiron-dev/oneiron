@@ -17,6 +17,8 @@
  * call boundary.
  */
 
+import type { ReadFilterInput } from "./facade-types.js"
+
 /** Options for an embedded {@link Oneiron.open}. */
 export type OpenOptions = {
   /** Embedding vector dimensions; omitted takes the engine default. */
@@ -362,6 +364,8 @@ export type RecallOptions = {
   tokenBudget?: number
   /** An agent definition whose memory profile sizes the rendering when `tokenBudget` is omitted; it grants no read. */
   readerAgentRef?: string
+  /** The caller's retrieval filter: it only narrows the vault's floor; an unset field leaves the floor in force. */
+  filter?: ReadFilterInput
 }
 
 /** Where one recalled item came from. */
@@ -1156,7 +1160,7 @@ class Oneiron:
         def witness(self, turn: WitnessTurn) -> WitnessReceipt: ...
         @property
         def claims(self) -> "Oneiron._VaultClaimsVerbs": ...
-        def recall(self, query: str, *, effort: Effort = 'medium', scope: RecallScope | None = None, limit: int = 10, format: PackFormat | None = None, as_of: int | None = None, deadline_ms: int | None = None, media: RecallMedia | None = None, query_affect: QueryAffect | None = None, token_budget: int | None = None, reader_agent_ref: str | None = None) -> MemoryPack: ...
+        def recall(self, query: str, *, effort: Effort = 'medium', scope: RecallScope | None = None, limit: int = 10, format: PackFormat | None = None, as_of: int | None = None, deadline_ms: int | None = None, media: RecallMedia | None = None, query_affect: QueryAffect | None = None, token_budget: int | None = None, reader_agent_ref: str | None = None, filter: Facade.ReadFilterInput | None = None) -> MemoryPack: ...
         @property
         def retrieval(self) -> "Oneiron._VaultRetrievalVerbs": ...
         @property
@@ -1634,7 +1638,7 @@ class Oneiron:
             """Lists surfaceable claims by subject, predicate and lifecycle under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt."""
         def read_filtered(self, input: Facade.ClaimFilteredReadRequest) -> Facade.ScopedReadResult[Facade.ClaimView | None]:
             """Reads one claim as retrieval would surface it under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt."""
-        def history(self, input: Facade.ClaimRefRequest) -> Facade.ScopedReadResult[list[Facade.ClaimView]]:
+        def history(self, input: Facade.ClaimHistoryRequest) -> Facade.ScopedReadResult[list[Facade.ClaimView]]:
             """The supersession timeline of one claim, oldest first, with the read's narrowing receipt."""
         def admit(self, input: Facade.AdmitImportedClaimInput) -> Facade.CommitReceipt:
             """Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides."""

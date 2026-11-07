@@ -225,8 +225,16 @@ impl ActorScopedVault {
         let hits = typed_row(
             &memory,
             "vault.search.bm25",
-            QueryBm25Request { query, limit },
-            |input| memory.query_bm25(&input.query, input.limit),
+            QueryBm25Request {
+                query,
+                limit,
+                filter: None,
+            },
+            |input| {
+                memory
+                    .with_read_filter(input.filter.as_ref())
+                    .query_bm25(&input.query, input.limit)
+            },
         )
         .map_err(facade_error)?;
         Ok(NapiLexicalHits {
@@ -263,10 +271,13 @@ impl ActorScopedVault {
                     .map_err(caller_input_error)?,
                 limit: opts.limit as usize,
             },
+            filter: None,
         };
         let memory = self.facade()?;
         let hits = typed_row(&memory, "vault.neighbors", request, |input| {
-            memory.neighbors(&input.entity_ref, &input.opts)
+            memory
+                .with_read_filter(input.filter.as_ref())
+                .neighbors(&input.entity_ref, &input.opts)
         })
         .map_err(facade_error)?;
         Ok(NapiNeighborHits {
@@ -337,6 +348,7 @@ impl ActorScopedVault {
             media: None,
             query_affect: None,
             telemetry: None,
+            filter: None,
         };
         let memory = self.facade()?;
         let pack = typed_row(&memory, "vault.recall", request, |request| {
@@ -484,7 +496,10 @@ impl ActorScopedVault {
         let read = typed_row(
             &memory,
             "vault.calendar.read",
-            CalendarReadRequest { event_ref },
+            CalendarReadRequest {
+                event_ref,
+                filter: None,
+            },
             |input| memory.calendar_read(&input),
         )
         .map_err(facade_error)?;
@@ -514,6 +529,7 @@ impl ActorScopedVault {
                 }),
             text: request.text,
             limit: request.limit,
+            filter: None,
         };
         let memory = self.facade()?;
         let events = typed_row(&memory, "vault.calendar.search", engine_request, |input| {

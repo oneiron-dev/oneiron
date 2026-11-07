@@ -146,6 +146,10 @@ pub struct Memory<'v> {
     /// credential rides it, with the actual recipient when the host proved
     /// one (FIX 7608 2b-ii). Off on every other handle.
     pub(super) repo_tool_recipient: crate::origin::secret_projection::RepoToolRecipient,
+    /// The caller's own retrieval filter this handle's reads are bound to
+    /// (FIX 3977, [`Memory::with_read_filter`]): a request, never
+    /// authority. Every read lane the handle opens meets it.
+    pub(super) read_filter: Option<crate::gate::RetrievalFilter>,
 }
 
 /// Actual transport metadata from a host's request or socket upgrade.

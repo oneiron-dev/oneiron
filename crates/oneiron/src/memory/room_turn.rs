@@ -265,6 +265,7 @@ impl<'v> Memory<'v> {
                 task_work_turn: self.task_work_turn.clone(),
                 external_git_source_host: None,
                 repo_tool_recipient: self.repo_tool_recipient.clone(),
+                read_filter: self.read_filter.clone(),
             },
         })
     }

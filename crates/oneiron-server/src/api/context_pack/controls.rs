@@ -385,6 +385,11 @@ pub(crate) struct CoreContextPackRequest {
     /// Optional reader whose profile narrows this pack's optional recall.
     #[serde(default)]
     pub(super) reader: Option<ContextPackReaderControls>,
+    /// The caller's retrieval filter (FIX 3977, `#t-filter`): it only
+    /// narrows the vault's floor for this read.
+    #[serde(default)]
+    #[schema(value_type = Option<Object>)]
+    pub(super) filter: Option<oneiron::memory::ReadFilterInput>,
     /// Whether `limit` was lowered to serve it; always false, since the
     /// whole requested limit is served.
     #[serde(skip)]

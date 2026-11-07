@@ -860,6 +860,7 @@ impl NativeClient {
         query_affect: Option<NapiQueryAffect>,
         token_budget: Option<f64>,
         reader_agent_ref: Option<String>,
+        filter: Option<serde_json::Value>,
     ) -> napi::Result<NapiMemoryPack> {
         let effort = oneiron_remote::parse_effort(effort.as_deref().unwrap_or("medium"))
             .map_err(facade_error)?;
@@ -887,6 +888,11 @@ impl NativeClient {
             .map(oneiron_remote::check_token_budget_number)
             .transpose()
             .map_err(facade_error)?;
+
+        let filter = filter
+            .map(|value| read_filter_to_engine(js_json(value)))
+            .transpose()
+            .map_err(facade_error)?;
         let output = self
             .inner
             .vault_recall(
@@ -901,6 +907,7 @@ impl NativeClient {
                 query_affect,
                 token_budget,
                 reader_agent_ref.as_deref(),
+                filter,
             )
             .map_err(facade_error)?;
         memory_pack_from_engine(output).map_err(boundary_error)

@@ -169,15 +169,37 @@ impl HostSelfDispatcher<'_> {
         site: Option<ExecutorCallSite<'_>>,
     ) -> Result<SelfDispatchOutcome> {
         let limit = call.limit.min(SELF_MEMORY_SEARCH_MAX_RESULTS);
+        let filter = call
+            .filter
+            .as_ref()
+            .map(crate::memory::ReadFilterInput::to_filter);
+        // A caller filter narrows a reader key's lane; with no key there is
+        // no lane to narrow, and an unfiltered answer is never served for a
+        // filtered ask (FIX 3977).
+        if filter.is_some() && read_as.is_none() {
+            return Err(Error::InvalidConfig(
+                "a filtered vault.search needs the run's reader key".to_owned(),
+            ));
+        }
         let results = match (&self.storage, site) {
-            (ExecutorStorage::Canonical(vault), Some(site)) => {
-                self.search_noting_worlds(vault, site, &call.query, limit, read_as)?
-            }
+            (ExecutorStorage::Canonical(vault), Some(site)) => self.search_noting_worlds(
+                vault,
+                site,
+                &call.query,
+                limit,
+                read_as,
+                filter.as_ref(),
+            )?,
             _ => match read_as {
                 Some(reader) => {
                     let claims = self.keyed_claims();
-                    self.storage
-                        .search_text_as(&call.query, limit, reader, claims)?
+                    self.storage.search_text_as(
+                        &call.query,
+                        limit,
+                        reader,
+                        claims,
+                        filter.as_ref(),
+                    )?
                 }
                 None => self.own_entry_hits(self.storage.search_text(&call.query, limit)?)?,
             },
@@ -209,20 +231,34 @@ impl HostSelfDispatcher<'_> {
         query: &str,
         limit: usize,
         read_as: Option<ScopedReadActorKey>,
+        filter: Option<&crate::gate::RetrievalFilter>,
     ) -> Result<Vec<ScoredEntity>> {
         let mut scored = ServedRows::new();
-        let hits = vault.search_text_observed(query, limit, |txn, hits| {
+        let observe = |txn: &heed::RoTxn<'_>, hits: &[ScoredEntity]| {
             scored = hits
                 .iter()
                 .map(|hit| (hit.id, served_row_in(vault, txn, hit.id)))
                 .collect();
-        })?;
-        let (hits, admitted) = match read_as {
-            Some(reader) => {
+        };
+        let lane = read_as.map(|reader| {
+            vault
+                .scoped_read(reader)
+                .with_claim_status(self.keyed_claims())
+                .with_read_filter(filter)
+        });
+        // A caller filter is met inside the scan, before the rank and the
+        // cut, so a row it excludes takes no place an admitted row could
+        // fill (FIX 3977).
+        let hits = match (&lane, filter) {
+            (Some(lane), Some(_)) => {
+                vault.search_text_scoped_observed(lane, query, limit, observe)?
+            }
+            _ => vault.search_text_observed(query, limit, observe)?,
+        };
+        let (hits, admitted) = match lane {
+            Some(lane) => {
                 let mut admitted = ServedRows::new();
-                let hits = vault
-                    .scoped_read(reader)
-                    .with_claim_status(self.keyed_claims())
+                let hits = lane
                     .filter_scored_entities_observed(hits, None, |txn, id| {
                         admitted.insert(id, served_row_in(vault, txn, id));
                     })?

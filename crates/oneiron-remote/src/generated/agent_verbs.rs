@@ -5358,6 +5358,8 @@ impl OneironClient {
     /// terminal reason and pact epoch. This selection grants no read authority.
     /// `token_budget` (0: uncut) sizes the rendered `format`; omitted, the
     /// window budget of `reader_agent_ref`'s memory profile, else 4,000.
+    /// `filter` (FIX 3977) only narrows the vault's floor for every stage of
+    /// the recall; an unset field leaves the floor in force.
     #[expect(
         clippy::too_many_arguments,
         reason = "one parameter per SDK argument of the verb"
@@ -5375,6 +5377,7 @@ impl OneironClient {
         query_affect: Option<oneiron::task_verb::sdk::QueryAffect>,
         token_budget: Option<u64>,
         reader_agent_ref: Option<&str>,
+        filter: Option<oneiron::memory::ReadFilterInput>,
     ) -> Result<oneiron::memory::MemoryPack, MemoryError> {
         let input = oneiron::task_verb::sdk::RecallRequest {
             query: query.to_owned(),
@@ -5388,6 +5391,7 @@ impl OneironClient {
             query_affect,
             token_budget,
             reader_agent_ref: reader_agent_ref.map(str::to_owned),
+            filter,
             ..Default::default()
         };
         oneiron::memory::caps::check_query(&input.query)?;
@@ -16567,7 +16571,7 @@ impl OneironClient {
     }
     pub fn vault_claims_history(
         &self,
-        input: &oneiron::task_verb::sdk::ClaimRefRequest,
+        input: &oneiron::task_verb::sdk::ClaimHistoryRequest,
     ) -> Result<oneiron::claim::ScopedReadResult<Vec<oneiron::memory::ClaimView>>, MemoryError>
     {
         let value = serde_json::to_value(input).map_err(|_| {

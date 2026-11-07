@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1265 facade rows, 4600 declarations.
+Census: 1265 facade rows, 4601 declarations.
 Inputs: 1195 of 1265 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1097 of 1265 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -2959,6 +2959,12 @@ class RetrievalTurn(TypedDict):
 class RecallTelemetry(TypedDict):
     capture_trace: NotRequired[bool]
     turn: NotRequired[RetrievalTurn | None]
+class ReadFilterInput(TypedDict):
+    entity_types: NotRequired[list[int] | None]
+    max_sensitivity_band: NotRequired[int | None]
+    include_stale: NotRequired[bool | None]
+    min_confidence: NotRequired[float | None]
+    min_salience: NotRequired[float | None]
 class RecallRequest(TypedDict):
     query: str
     effort: NotRequired[RecallEffort | None]
@@ -2972,6 +2978,7 @@ class RecallRequest(TypedDict):
     media: NotRequired[ContextPackMediaQuery | None]
     query_affect: NotRequired[QueryAffect | None]
     telemetry: NotRequired[RecallTelemetry | None]
+    filter: NotRequired[ReadFilterInput | None]
 InputKind = Literal["text", "image", "audio"]
 class EmbeddingMatchEvidence(TypedDict):
     space: str
@@ -3993,6 +4000,7 @@ class VectorSearchRequest(TypedDict):
     kinds: NotRequired[list[InputKind]]
     limit: int
     lane: NotRequired[VectorSearchLane]
+    filter: NotRequired[ReadFilterInput | None]
 class VectorSearchHit(TypedDict):
     entity_ref: str
     source_revision_ref: NotRequired[str | None]
@@ -8222,6 +8230,7 @@ class OffRecordRecallRequest(TypedDict):
     session_ref: str
     query: str
     limit: int
+    filter: NotRequired[ReadFilterInput | None]
 class CreateNoteRequest(TypedDict):
     kind: str
     markdown: str
@@ -18725,6 +18734,7 @@ class CalendarInstanceMoveRequest(TypedDict):
     end_utc: int
 class CalendarReadRequest(TypedDict):
     event_ref: str
+    filter: NotRequired[ReadFilterInput | None]
 class CalendarEventView(TypedDict):
     origin: str
     event_ref: str
@@ -18831,6 +18841,7 @@ class ClaimListFilter(TypedDict):
     predicate: NotRequired[str | None]
     lifecycle: NotRequired[str | None]
     limit: int
+    filter: NotRequired[ReadFilterInput | None]
 class ClaimDemoteActionInputDecay(TypedDict):
     kind: Literal["decay"]
     new_claim_of_weight: float
@@ -18849,12 +18860,6 @@ class ClaimDemoteView(TypedDict):
     rung: str
     stale: bool
     receipt_ref: str
-class ReadFilterInput(TypedDict):
-    entity_types: NotRequired[list[str] | None]
-    max_sensitivity_band: NotRequired[int | None]
-    include_stale: NotRequired[bool | None]
-    min_confidence: NotRequired[float | None]
-    min_salience: NotRequired[float | None]
 class ClaimFilteredListRequest(TypedDict):
     subject_ref: NotRequired[str | None]
     predicate: NotRequired[str | None]
@@ -18862,6 +18867,9 @@ class ClaimFilteredListRequest(TypedDict):
     limit: int
     filter: NotRequired[ReadFilterInput | None]
 class ClaimFilteredReadRequest(TypedDict):
+    claim_ref: str
+    filter: NotRequired[ReadFilterInput | None]
+class ClaimHistoryRequest(TypedDict):
     claim_ref: str
     filter: NotRequired[ReadFilterInput | None]
 SafeDeleteReason = Literal["user_delete", "user_hard_delete", "gdpr_delete", "policy_delete"]
@@ -18910,10 +18918,13 @@ class PendingWrite(TypedDict):
     dreamer_run_id: NotRequired[str | None]
 class HydrateRequest(TypedDict):
     refs: list[str]
+    filter: NotRequired[ReadFilterInput | None]
 class EntityRequest(TypedDict):
     entity_ref: str
+    filter: NotRequired[ReadFilterInput | None]
 class ResolveRecordRefRequest(TypedDict):
     reference: str
+    filter: NotRequired[ReadFilterInput | None]
 class RecordRefPreview(TypedDict):
     record: RecordRef
     revision: NotRequired[str | None]
@@ -18924,6 +18935,7 @@ class RecordLinksRequest(TypedDict):
     turn_ref: NotRequired[str | None]
     after: NotRequired[str | None]
     limit: NotRequired[int | None]
+    filter: NotRequired[ReadFilterInput | None]
 class ProseSpanPlain(TypedDict):
     kind: Literal["plain"]
     start: int
@@ -18974,6 +18986,7 @@ class HybridSearchRequest(TypedDict):
     temporal: NotRequired[HybridTemporalQuery | None]
     replay: NotRequired[HybridRankReplay | None]
     limit: int
+    filter: NotRequired[ReadFilterInput | None]
 class HybridSearchHit(TypedDict):
     entity_ref: str
     source_revision_ref: NotRequired[str | None]
@@ -18995,6 +19008,7 @@ class TemporalSearchRequest(TypedDict):
     occurred_range: NotRequired[TemporalSearchRange | None]
     learned_range: NotRequired[TemporalSearchRange | None]
     limit: int
+    filter: NotRequired[ReadFilterInput | None]
 class TemporalSearchHit(TypedDict):
     entity_ref: str
     source_revision_ref: NotRequired[str | None]
@@ -19011,6 +19025,7 @@ class TemporalSearchResult(TypedDict):
 class QueryBm25Request(TypedDict):
     query: str
     limit: int
+    filter: NotRequired[ReadFilterInput | None]
 class LexicalHit(TypedDict):
     short_id: str
     kind: str
@@ -19028,6 +19043,7 @@ class NeighborOpts(TypedDict):
 class NeighborsRequest(TypedDict):
     entity_ref: str
     opts: NeighborOpts
+    filter: NotRequired[ReadFilterInput | None]
 class NeighborHit(TypedDict):
     short_id: str
     kind: str

@@ -26,6 +26,10 @@ pub struct HybridSearchRequest {
     #[serde(default)]
     pub replay: Option<HybridRankReplay>,
     pub limit: usize,
+    /// The caller's retrieval filter (FIX 3977): bound before candidate
+    /// generation, so it narrows every channel, seed and terminal read.
+    #[serde(default)]
+    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -116,6 +120,15 @@ impl Memory<'_> {
         &self,
         input: &HybridSearchRequest,
     ) -> MemoryResult<ScopedReadResult<Vec<HybridSearchHit>>> {
+        if let Some(filter) = &input.filter {
+            // Bind the caller's filter on this call's handle once, so every
+            // lane the search opens meets it (FIX 3977).
+            let bound = HybridSearchRequest {
+                filter: None,
+                ..input.clone()
+            };
+            return self.with_read_filter(Some(filter)).query_hybrid(&bound);
+        }
         input.validate()?;
         let limit = input.limit;
         let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;

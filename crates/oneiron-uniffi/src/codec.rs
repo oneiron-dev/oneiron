@@ -595,6 +595,15 @@ impl Lower<sdk::ClaimRefRequest> for String {
     }
 }
 
+impl Lower<sdk::ClaimHistoryRequest> for String {
+    fn lower(self) -> Result<sdk::ClaimHistoryRequest, OneironError> {
+        Ok(sdk::ClaimHistoryRequest {
+            claim_ref: self,
+            filter: None,
+        })
+    }
+}
+
 impl Lower<sdk::ForgetRequest> for ForgetSelector {
     fn lower(self) -> Result<sdk::ForgetRequest, OneironError> {
         match (self.short_ref, self.subject_ref, self.predicate) {
@@ -622,6 +631,7 @@ impl Lower<engine::ClaimListFilter> for ClaimListFilter {
             predicate: self.predicate,
             lifecycle: self.lifecycle,
             limit: self.limit.lower()?,
+            filter: None,
         })
     }
 }
@@ -787,13 +797,19 @@ impl Lift<engine::MemoryReceipt> for FacadeReceipt {
 
 impl Lower<sdk::HydrateRequest> for Vec<String> {
     fn lower(self) -> Result<sdk::HydrateRequest, OneironError> {
-        Ok(sdk::HydrateRequest { refs: self })
+        Ok(sdk::HydrateRequest {
+            refs: self,
+            filter: None,
+        })
     }
 }
 
 impl Lower<sdk::EntityRequest> for String {
     fn lower(self) -> Result<sdk::EntityRequest, OneironError> {
-        Ok(sdk::EntityRequest { entity_ref: self })
+        Ok(sdk::EntityRequest {
+            entity_ref: self,
+            filter: None,
+        })
     }
 }
 
@@ -803,6 +819,7 @@ impl Lower<sdk::QueryBm25Request> for (String, u32) {
         Ok(sdk::QueryBm25Request {
             query,
             limit: limit.lower()?,
+            filter: None,
         })
     }
 }
@@ -823,6 +840,7 @@ impl Lower<sdk::NeighborsRequest> for (String, NeighborOpts) {
         Ok(sdk::NeighborsRequest {
             entity_ref,
             opts: opts.lower()?,
+            filter: None,
         })
     }
 }
@@ -1225,6 +1243,14 @@ impl Lower<oneiron::code_run::vault_read::ContextPackMediaQuery> for RecallMedia
 
 /// A recall's query affect crosses as the engine's; the recall door refuses
 /// it out of range.
+/// A recall's caller retrieval filter, the generated record of the engine's
+/// `ReadFilterInput` (FIX 3977), lowered through its wire shape.
+impl Lower<engine::ReadFilterInput> for crate::facade_types_generated::ReadFilterInput {
+    fn lower(self) -> Result<engine::ReadFilterInput, OneironError> {
+        lower_record("vault.recall", self)
+    }
+}
+
 impl Lower<sdk::QueryAffect> for QueryAffect {
     fn lower(self) -> Result<sdk::QueryAffect, OneironError> {
         Ok(sdk::QueryAffect {

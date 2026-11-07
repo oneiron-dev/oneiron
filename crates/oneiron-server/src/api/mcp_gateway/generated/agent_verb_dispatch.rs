@@ -59480,7 +59480,7 @@ async fn mcp_verb_row_vault_claims_history(row: McpVerbRow<'_>) -> McpVerbRowRes
             "invalid typed agent-verb argument",
         )
     };
-    let input: oneiron::task_verb::sdk::ClaimRefRequest =
+    let input: oneiron::task_verb::sdk::ClaimHistoryRequest =
         serde_json::from_value(input).map_err(|_| invalid())?;
     let output =
         oneiron::task_verb::sdk::vault_claims_history(&memory, input).map_err(mcp_facade_error)?;
@@ -60195,7 +60195,7 @@ async fn mcp_verb_row_vault_search_bm25(row: McpVerbRow<'_>) -> McpVerbRowResult
     };
     let input: oneiron::task_verb::sdk::QueryBm25Request =
         serde_json::from_value(input).map_err(|_| invalid())?;
-    let asked = (input.query.clone(), input.limit);
+    let asked = (input.query.clone(), input.limit, input.filter.clone());
     let output =
         oneiron::task_verb::sdk::vault_search_bm25(&memory, input).map_err(mcp_facade_error)?;
     let (output, listed) = Box::pin(crate::api::search::complete_bm25_with_home(
@@ -60203,6 +60203,7 @@ async fn mcp_verb_row_vault_search_bm25(row: McpVerbRow<'_>) -> McpVerbRowResult
         output,
         &asked.0,
         asked.1,
+        asked.2.as_ref(),
         &actor.home_caller(),
     ))
     .await;

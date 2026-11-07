@@ -558,13 +558,14 @@ export_facade! {
     let output = client.vault_claims_upsert(&input)?;
     Lift::lift(output)
 };
-"vault.recall" => fn vault_recall(&self, query: String, effort: Effort, scope: Option<RecallScope>, limit: u32, format: Option<String>, as_of: Option<u64>, deadline_ms: Option<u64>, media: Option<RecallMedia>, query_affect: Option<QueryAffect>, token_budget: Option<u64>, reader_agent_ref: Option<String>) -> MemoryPack = |client| {
+"vault.recall" => fn vault_recall(&self, query: String, effort: Effort, scope: Option<RecallScope>, limit: u32, format: Option<String>, as_of: Option<u64>, deadline_ms: Option<u64>, media: Option<RecallMedia>, query_affect: Option<QueryAffect>, token_budget: Option<u64>, reader_agent_ref: Option<String>, filter: Option<ReadFilterInput>) -> MemoryPack = |client| {
     let effort: oneiron::memory::RecallEffort = effort.lower()?;
     let scope: oneiron::memory::RecallScope = scope.lower()?;
     let limit: usize = limit.lower()?;
     let media: Option<oneiron::code_run::vault_read::ContextPackMediaQuery> = media.lower()?;
     let query_affect: Option<oneiron::task_verb::sdk::QueryAffect> = query_affect.lower()?;
-    let output = client.vault_recall(&query, effort, &scope, limit, format.as_deref(), as_of, deadline_ms, media, query_affect, token_budget, reader_agent_ref.as_deref())?;
+    let filter: Option<oneiron::memory::ReadFilterInput> = filter.lower()?;
+    let output = client.vault_recall(&query, effort, &scope, limit, format.as_deref(), as_of, deadline_ms, media, query_affect, token_budget, reader_agent_ref.as_deref(), filter)?;
     Lift::lift(output)
 };
 "vault.retrieval.aging.get" => fn vault_retrieval_aging_get(&self) -> ClaimAgingProfilesView = |client| {
@@ -5137,7 +5138,7 @@ export_facade! {
     crate::codec::lift_record("vault.claims.read_filtered", &output)
 };
 "vault.claims.history" => fn vault_claims_history(&self, claim_ref: String) -> ClaimViews = |client| {
-    let input: oneiron::task_verb::sdk::ClaimRefRequest = claim_ref.lower()?;
+    let input: oneiron::task_verb::sdk::ClaimHistoryRequest = claim_ref.lower()?;
     let output = client.vault_claims_history(&input)?;
     Lift::lift(output)
 };

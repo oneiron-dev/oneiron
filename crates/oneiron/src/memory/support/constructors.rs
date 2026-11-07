@@ -51,6 +51,7 @@ impl Vault {
             task_work_turn: None,
             external_git_source_host: None,
             repo_tool_recipient: crate::origin::secret_projection::RepoToolRecipient::OFF,
+            read_filter: None,
         }
     }
 
@@ -106,6 +107,7 @@ impl Vault {
             task_work_turn: None,
             external_git_source_host: None,
             repo_tool_recipient: crate::origin::secret_projection::RepoToolRecipient::OFF,
+            read_filter: None,
         }
     }
 }
@@ -171,6 +173,8 @@ impl<'v> Memory<'v> {
                 // A call's import transport never crosses into a turn.
                 external_git_source_host: None,
                 repo_tool_recipient: self.repo_tool_recipient.clone(),
+                // The caller's own filter narrows the turn's reads too.
+                read_filter: self.read_filter.clone(),
             },
         })
     }

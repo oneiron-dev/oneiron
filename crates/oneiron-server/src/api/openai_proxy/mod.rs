@@ -383,6 +383,7 @@ async fn recall(
         media: None,
         query_affect: None,
         telemetry: None,
+        filter: None,
     };
     // Home references carry no local row to judge for an onward model or
     // caller. Keep that path local-only until it carries destination proof.

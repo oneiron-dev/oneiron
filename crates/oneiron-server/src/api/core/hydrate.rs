@@ -63,6 +63,11 @@ pub(crate) struct CoreHydrateRequest {
     /// Session receiving this body. Defaults to the caller's current board session.
     #[serde(default)]
     session_id: Option<String>,
+    /// The caller's retrieval filter (FIX 3977, `#t-filter`): it only
+    /// narrows the vault's floor for this read.
+    #[serde(default)]
+    #[schema(value_type = Option<Object>)]
+    filter: Option<oneiron::memory::ReadFilterInput>,
 }
 
 /// Short-id hydrate status.
@@ -190,6 +195,11 @@ pub(crate) struct CoreBatchShortIdHydrateRequest {
     /// Session receiving this body. Defaults to the caller's current board session.
     #[serde(default)]
     session_id: Option<String>,
+    /// The caller's retrieval filter (FIX 3977, `#t-filter`): it only
+    /// narrows the vault's floor for this read.
+    #[serde(default)]
+    #[schema(value_type = Option<Object>)]
+    filter: Option<oneiron::memory::ReadFilterInput>,
 }
 
 /// Batch short-id hydrate response.
@@ -279,7 +289,12 @@ pub(crate) async fn core_hydrate(
     let (short_id, content_hash, mode) = parse_short_ref_request(&req)?;
     let content_hash_hex = format!("{content_hash:02x}");
     let view = req.view.unwrap_or(View::Full);
-    let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
+    let request = req
+        .filter
+        .as_ref()
+        .map(oneiron::memory::ReadFilterInput::to_filter);
+    let scoped_read =
+        scoped_read_for_core_auth(&server.vault, &auth)?.with_read_filter(request.as_ref());
     let scope = auth.principal_ref().unwrap_or(auth.principal()).trim();
     let pick = hydrate_pick(
         &server,
@@ -364,7 +379,12 @@ pub(crate) async fn core_batch_short_id_hydrate(
 
     let view = req.view.unwrap_or(View::Full);
     let reader = hydrate_reader(req.image_input, view);
-    let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
+    let request = req
+        .filter
+        .as_ref()
+        .map(oneiron::memory::ReadFilterInput::to_filter);
+    let scoped_read =
+        scoped_read_for_core_auth(&server.vault, &auth)?.with_read_filter(request.as_ref());
     let scope = auth.principal_ref().unwrap_or(auth.principal()).trim();
     let pick = hydrate_pick(
         &server,

@@ -725,7 +725,7 @@ export class Oneiron {
       /** Reads one claim as retrieval would surface it under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt. */
       read_filtered: (input: Facade.ClaimFilteredReadRequest): Facade.ScopedReadResult<Facade.ClaimView | null> => this.#call(() => this.#client.vaultClaimsReadFiltered(input) as Facade.ScopedReadResult<Facade.ClaimView | null>),
       /** The supersession timeline of one claim, oldest first, with the read's narrowing receipt. */
-      history: (input: Facade.ClaimRefRequest): Facade.ScopedReadResult<Facade.ClaimView[]> => this.#call(() => this.#client.vaultClaimsHistory(input) as Facade.ScopedReadResult<Facade.ClaimView[]>),
+      history: (input: Facade.ClaimHistoryRequest): Facade.ScopedReadResult<Facade.ClaimView[]> => this.#call(() => this.#client.vaultClaimsHistory(input) as Facade.ScopedReadResult<Facade.ClaimView[]>),
       /** Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides. */
       admit: (input: Facade.AdmitImportedClaimInput): Facade.CommitReceipt => this.#call(() => this.#client.vaultClaimsAdmit(input) as Facade.CommitReceipt),
       /** Vets a reviewed generated-origin Auto claim or proposal through the owner Gate and signed settlement; it still contributes zero corroboration. */
@@ -756,8 +756,10 @@ export class Oneiron {
    * `pactEpoch`. This selection grants no read authority.
    * `tokenBudget` (0: uncut) sizes the rendered `format`; omitted, the
    * window budget of `readerAgentRef`'s memory profile, else 4,000.
+   * `filter` only narrows the vault's floor for every stage of the recall;
+   * an unset field leaves the floor in force.
    */
-    recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs, opts.media, opts.queryAffect, opts.tokenBudget, opts.readerAgentRef)),
+    recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs, opts.media, opts.queryAffect, opts.tokenBudget, opts.readerAgentRef, opts.filter)),
     retrieval: {
       aging: {
         /** The owner reads class-level exponential aging profiles and the trusted manifest hash; confidence never ages. */
