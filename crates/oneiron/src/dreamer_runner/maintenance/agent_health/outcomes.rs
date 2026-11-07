@@ -341,7 +341,7 @@ pub(super) fn reproject_pending(vault: &Vault, now: u64) -> Result<u64> {
                 }
             }
             if changed {
-                CARDS.put(&vault.store, txn, key, &card)?;
+                super::receipt_index::put_card_in_txn(&vault.store, txn, key, &card)?;
             }
         }
         Ok(applied)
@@ -351,8 +351,9 @@ pub(super) fn reproject_pending(vault: &Vault, now: u64) -> Result<u64> {
 impl Vault {
     /// The card that holds reviewer receipt `receipt` (`health_review:` and
     /// 64 hex), and its newest copy of that receipt: what the replay judge
-    /// replays a reviewer revision on. Every card is read. `None` when no card
-    /// holds it, or the id has another prefix.
+    /// replays a reviewer revision on. Only the cards the receipt index names
+    /// are read (FIX 10880). `None` when no card holds it, or the id has
+    /// another shape.
     ///
     /// # Errors
     ///
@@ -361,11 +362,14 @@ impl Vault {
         &self,
         receipt: &str,
     ) -> Result<Option<(AgentHealthCard, HealthReviewReceipt)>> {
-        if !receipt.starts_with(HEALTH_REVIEW_RECEIPT_PREFIX) {
+        let Some(digest) = super::receipt_index::receipt_digest(receipt) else {
             return Ok(None);
-        }
+        };
         let rtxn = self.store.env.read_txn()?;
-        for (_, card) in CARDS.scan(&self.store, &rtxn)? {
+        for key in super::receipt_index::cards_holding(&self.store, &rtxn, &digest)? {
+            let Some(card) = CARDS.get(&self.store, &rtxn, &key)? else {
+                continue;
+            };
             let held = card
                 .review_outcomes
                 .iter()

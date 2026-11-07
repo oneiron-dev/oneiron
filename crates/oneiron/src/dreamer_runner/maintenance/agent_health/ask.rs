@@ -238,7 +238,7 @@ pub(super) fn ask_coach_in_txn(
     card.updated_at = at;
     let new_sources = card.draft_source_rows();
     sync_card_membership(&vault.store, txn, key, &old_sources, &new_sources)?;
-    CARDS.put(&vault.store, txn, key, &card)?;
+    super::receipt_index::put_card_in_txn(&vault.store, txn, key, &card)?;
     // A touched card can arm the digest on its own (FIX 1979).
     crate::batch::queue_proactivity_change(vault, txn);
     Ok(ConcernMoveOutcome::AskCoach { card: handle, ask })
@@ -420,7 +420,7 @@ impl Vault {
             // yields an empty set, so nothing is added (FIX 10434).
             let new_sources = card.draft_source_rows();
             sync_card_membership(&self.store, txn, &key, &old_sources, &new_sources)?;
-            CARDS.put(&self.store, txn, &key, &card)?;
+            super::receipt_index::put_card_in_txn(&self.store, txn, &key, &card)?;
             // A touched card can arm the digest on its own (FIX 1979).
             crate::batch::queue_proactivity_change(self, txn);
             Ok(())
