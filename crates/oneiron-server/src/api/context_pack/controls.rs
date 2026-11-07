@@ -8,11 +8,6 @@ use serde::Deserialize;
 use serde::Serialize;
 use utoipa::ToSchema;
 
-/// Maximum `interlocutors.third_parties` entries per context-pack request.
-/// Each party can trigger vault reads during resolution, so the block is
-/// capped like the crate's other request-controlled collections.
-pub(crate) const MAX_INTERLOCUTOR_THIRD_PARTIES: usize = 32;
-
 /// Edge expansion depth controls for context-pack assembly.
 #[derive(Debug, Default, Deserialize, ToSchema)]
 pub(crate) struct ContextPackDepthControls {
