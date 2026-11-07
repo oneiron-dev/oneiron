@@ -39,8 +39,13 @@ pub(super) async fn facade_call_receipt(
     // The handler reads these same bytes. A body past the facade's limit
     // reaches it empty and is refused there as malformed, as it was before.
     // A custody value's body is wiped and redacted here (FIX 11442).
-    let (bytes, request) =
-        super::secret_body::read_middleware_body(body, &verb, &mut parts.extensions).await;
+    let (bytes, request) = super::secret_body::read_middleware_body(
+        body,
+        &verb,
+        &mut parts.extensions,
+        crate::api::request_floor::request_floor(&server),
+    )
+    .await;
     // FIX 4280: a call serving a room NOTE to a caller verified in its room
     // keeps none either, judged on arrival, before a close drops its hold.
     let anonymous = anonymous

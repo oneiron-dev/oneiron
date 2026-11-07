@@ -43,8 +43,13 @@ pub(super) async fn facade_invocation_claim(
     let (body, digest) = if let Some(digest) = cached_digest {
         (body, digest)
     } else {
-        let (bytes, redacted) =
-            super::secret_body::read_middleware_body(body, &verb, &mut parts.extensions).await;
+        let (bytes, redacted) = super::secret_body::read_middleware_body(
+            body,
+            &verb,
+            &mut parts.extensions,
+            crate::api::request_floor::request_floor(&server),
+        )
+        .await;
         let digest = match parts
             .extensions
             .get::<super::secret_body::FacadeOriginalDigest>()
