@@ -3,7 +3,8 @@
 use std::io::Read;
 
 use super::{
-    AuthenticatedOwner, ConsentReceipt, VerifiedSlip, WIDEN_PROPOSALS, validate_reference_shape,
+    AuthenticatedOwner, ConsentReceipt, StoredProposal, VerifiedSlip, WIDEN_PROPOSALS,
+    validate_reference_shape,
 };
 use crate::host_memory::{MachineMemory, MemoryLease, MemoryRefusal};
 use crate::{Result, Vault};
@@ -11,12 +12,12 @@ use crate::{Result, Vault};
 const COMPARE_CHUNK_BYTES: usize = 64 * 1024;
 
 struct CanonicalRead {
-    bytes: Vec<u8>,
+    row: StoredProposal,
     _memory: MemoryLease,
 }
 
 enum CanonicalPlan {
-    Read(Vec<u8>),
+    Read(StoredProposal),
     Grew(u64),
 }
 
@@ -50,6 +51,28 @@ fn read_widen_reference(
         return Err(super::invalid_row());
     }
     std::str::from_utf8(bytes).map_err(|_| super::invalid_row())
+}
+
+fn widen_reader_matches(
+    canonical: &[u8],
+    mut expected: impl Read,
+    expected_len: u64,
+) -> Result<bool> {
+    let mut equal = expected_len == canonical.len() as u64;
+    if equal {
+        let mut buffer = [0; COMPARE_CHUNK_BYTES];
+        for part in canonical.chunks(COMPARE_CHUNK_BYTES) {
+            expected.read_exact(&mut buffer[..part.len()])?;
+            if &buffer[..part.len()] != part {
+                equal = false;
+                break;
+            }
+        }
+        if equal {
+            equal = expected.read(&mut buffer[..1])? == 0;
+        }
+    }
+    Ok(equal)
 }
 
 impl Vault {
@@ -102,8 +125,9 @@ impl Vault {
     /// byte vector's payload and growth. Blocks on the shared process line;
     /// call from a dedicated worker, without transactions or memory leases.
     /// `stopped` ends a queued wait. Other native errors remain the inner
-    /// result. Row metadata, validation trees and the writer's second decode
-    /// are not covered by this allowance.
+    /// result. An unchanged stored row reuses this decoded payload in the
+    /// writer. Changed-row fallback payloads, row metadata and validation
+    /// trees are not covered by this allowance.
     pub fn accept_widen_readers_admitted(
         &self,
         owner: &AuthenticatedOwner,
@@ -132,14 +156,37 @@ impl Vault {
                 Ok(canonical) => canonical,
                 Err(error) => return Ok(Err(error)),
             };
-        Ok(self.accept_widen_canonical_reader(
+        Ok(self.accept_widen_admitted_canonical_reader(
             owner,
             credential,
             reference,
-            &canonical.bytes,
+            canonical,
             expected,
             expected_len,
         ))
+    }
+
+    fn accept_widen_admitted_canonical_reader(
+        &self,
+        owner: &AuthenticatedOwner,
+        credential: Option<&VerifiedSlip>,
+        reference: &str,
+        mut canonical: CanonicalRead,
+        expected: impl Read,
+        expected_len: u64,
+    ) -> Result<ConsentReceipt> {
+        let equal = widen_reader_matches(
+            &canonical.row.proposal.canonical_delta,
+            expected,
+            expected_len,
+        )?;
+        self.accept_widen_matching_reusing(
+            owner,
+            credential,
+            reference,
+            Some(&mut canonical.row),
+            |_| equal,
+        )
     }
 
     fn widen_canonical_peak_in_txn(
@@ -184,11 +231,8 @@ impl Vault {
                 if needed > budget {
                     return Ok(CanonicalPlan::Grew(needed));
                 }
-                let bytes = self
-                    .owned_widen_row_in_txn(&txn, owner, credential, reference)?
-                    .proposal
-                    .canonical_delta;
-                Ok(CanonicalPlan::Read(bytes))
+                let row = self.owned_widen_row_in_txn(&txn, owner, credential, reference)?;
+                Ok(CanonicalPlan::Read(row))
             })();
             match decoded {
                 Err(error) => return Ok(Err(error)),
@@ -199,10 +243,10 @@ impl Vault {
                     drop(memory);
                     budget = needed;
                 }
-                Ok(CanonicalPlan::Read(bytes)) => {
-                    memory.materialized(budget, bytes.capacity() as u64);
+                Ok(CanonicalPlan::Read(row)) => {
+                    memory.materialized(budget, row.proposal.canonical_delta.capacity() as u64);
                     return Ok(Ok(CanonicalRead {
-                        bytes,
+                        row,
                         _memory: memory,
                     }));
                 }
@@ -247,23 +291,10 @@ impl Vault {
         credential: Option<&VerifiedSlip>,
         reference: &str,
         canonical: &[u8],
-        mut expected: impl Read,
+        expected: impl Read,
         expected_len: u64,
     ) -> Result<ConsentReceipt> {
-        let mut equal = expected_len == canonical.len() as u64;
-        if equal {
-            let mut buffer = [0; COMPARE_CHUNK_BYTES];
-            for part in canonical.chunks(COMPARE_CHUNK_BYTES) {
-                expected.read_exact(&mut buffer[..part.len()])?;
-                if &buffer[..part.len()] != part {
-                    equal = false;
-                    break;
-                }
-            }
-            if equal {
-                equal = expected.read(&mut buffer[..1])? == 0;
-            }
-        }
+        let equal = widen_reader_matches(canonical, expected, expected_len)?;
         self.accept_widen_matching(owner, credential, reference, |current| {
             equal && current == canonical
         })

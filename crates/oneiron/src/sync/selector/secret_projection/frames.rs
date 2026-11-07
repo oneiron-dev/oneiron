@@ -101,6 +101,8 @@ impl SyncSecretProjection {
     /// `None` when nothing marked is in it: the caller sends it as it is.
     /// `home` is set for a device's send to its home: an update that goes as
     /// it is then also carries each marked copy re-authored (FIX 10729).
+    /// `observe`, when set, sees the post-projection `released` doc in the
+    /// Updates Some path just before its final export (FIX2999).
     ///
     /// # Errors
     /// A store failure, or a blob carrying a marked item that cannot be
@@ -111,6 +113,7 @@ impl SyncSecretProjection {
         encoded: &[u8],
         context: Option<&LoroDoc>,
         home: bool,
+        observe: Option<&mut dyn FnMut(&LoroDoc)>,
     ) -> Result<Option<Vec<u8>>> {
         if self.is_empty() {
             return Ok(None);
@@ -182,6 +185,9 @@ impl SyncSecretProjection {
                     .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportUpdates, e))?;
                 let released = LoroDoc::from_snapshot(&joined(&parts)?)
                     .map_err(decode("window copy rebuild"))?;
+                if let Some(observe) = observe {
+                    observe(&released);
+                }
                 let bytes = released
                     .export(ExportMode::updates_in_range(spans))
                     .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportUpdates, e))?;

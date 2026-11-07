@@ -192,8 +192,21 @@ stays charged through comparison and the acting writer, and drops before its lea
 A physical floor keeps the existing internal-server-error shape and says the
 canonical byte allowance could not be reserved, not that an allocation was observed
 to fail. A stopped wait keeps body-not-whole; native refusals keep their old mapping.
-This covers only the first vector's payload and growth, not row metadata, validation
-trees, typed values, re-encoding or the acting writer's second decode.
+The admitted read keeps its decoded proposal row with that vector. In the acting
+writer, owner and holder liveness are checked first. A streaming JSON writer then
+compares the entire retained row's serialized bytes with the actual stored bytes,
+without making another encoded row vector. Only exact whole-row equality reuses the
+retained row and its already charged canonical payload. Validation, current-owner,
+expiry, unresolved-state and full canonical-byte checks still precede grant minting.
+The row, including its payload, drops before the same lease on every return path.
+
+Any stored-byte difference, including a metadata-only change or a different JSON
+spelling, takes the original native row decode, validation and owner checks. An
+encoding failure also takes that path. No new refusal, memory wait, file replay or
+request-size bound is added. This fallback's second canonical vector remains
+unaccounted, as do row metadata, validation trees, typed values, re-encoding,
+overlay-owned raw row copies and allocator RSS. The unchanged-row reuse is not a
+claim of complete native-answer heap admission.
 
 For an accept, file comparison runs outside every LMDB transaction. It compares
 exact bytes to the proposal's stored canonical delta, not just a digest.

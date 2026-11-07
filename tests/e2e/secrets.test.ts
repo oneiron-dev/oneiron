@@ -285,7 +285,10 @@ suite.test(test, "SECRETS-01", "Mask-on-write and reveal should work", async () 
     // The full owner archive now defaults to including custody for recovery.
     // This case explicitly requests the value-stripped ordinary export, not
     // an encrypted backup or the owner's complete custody-transfer archive.
-    const exported = await engine.client.call("vault.export", { format: "archive", include_secrets: false });
+    const exported = await engine.client.call("vault.export", {
+      format: "archive", include_secrets: false, delivery: "inline",
+    });
+    if (!("archive" in exported)) throw new Error("Unexpected export transfer for inline request");
     const archive = Buffer.from(exported.archive, "base64");
     expect(Buffer.from(blake3(archive)).toString("hex")).toBe(exported.digest);
     const files = publicZip(exported.archive);
