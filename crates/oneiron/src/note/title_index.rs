@@ -106,7 +106,8 @@ impl ValidatedTitleReplacement {
                 continue; // Unlanded proposals do not own reservations.
             }
             let note = EntityId::from_bytes(row.entity_id)?;
-            let key = title_key(vault, txn, note, row.title.as_deref())?;
+            let title = super::document::stored_title(&row.metadata)?;
+            let key = title_key(vault, txn, note, title.as_deref())?;
             if members
                 .insert(row.entity_id, FinalTitle { note, key })
                 .is_some()
