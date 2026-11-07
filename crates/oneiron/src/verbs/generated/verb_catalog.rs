@@ -12170,10 +12170,10 @@ impl AgentVerb {
                 "The owner labels a link in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the link stays."
             }
             Self::VaultWeaveItemWrong => {
-                "A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays."
+                "A person labels a claim, project, budget or sieve audit item in their own lens as wrong; the label teaches the loops and the record stays."
             }
             Self::VaultWeaveOwnerItemWrong => {
-                "The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays."
+                "The owner labels a claim, project, budget or sieve audit item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays."
             }
             Self::VaultWeaveAdminReport => {
                 "A weave Admin's live report of the shared vault, inside the Admin membership grant's Scope, after the person stepped up with a passkey on this credential (MFA-1 A); never an Owner read."
@@ -13619,7 +13619,7 @@ impl AgentVerb {
                 "Stage one remediation of a repository's current code: marked keys become secret references, committed .env files go, .gitignore and .env.example follow. Owner only. It only proposes."
             }
             Self::ExecuteCode => {
-                "Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal."
+                "Run foreign JavaScript or TypeScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal."
             }
             Self::VaultCodeModelHealCount => {
                 "Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy."
