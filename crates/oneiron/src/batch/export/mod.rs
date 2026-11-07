@@ -14,6 +14,7 @@ mod archive_project;
 mod archive_read;
 mod archive_side_tables;
 mod archive_spool;
+mod bundle_lineage;
 pub(crate) use archive_project::project_stored_archive;
 pub(crate) use archive_read::{ArchiveFileSource, ArchiveFiles, read_vault_archive_indexed};
 pub use archive_side_tables::{
@@ -69,6 +70,9 @@ mod document_types;
 mod document_validation;
 mod embedding_setup;
 mod evidence_import;
+mod owner_records;
+mod side_names;
+mod side_provenance;
 pub use embedding_setup::*;
 mod expression_import;
 #[cfg(test)]

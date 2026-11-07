@@ -57,6 +57,7 @@ mod export_value;
 mod okf_bundle;
 mod vault_archive;
 mod vault_document;
+mod written_receipts;
 pub use export_value::{ExportBody, ExportBodyFile, ExportValue};
 pub(crate) use export_value::{attaches_as_file, attaches_as_file_read};
 pub(crate) use vault_document::{DocumentTail, DocumentWriter};

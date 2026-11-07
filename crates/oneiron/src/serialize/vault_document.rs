@@ -18,6 +18,7 @@ use serde_json::Value;
 
 use super::credential_nulling::{null_document_credentials, null_document_member};
 use super::export_value::{ExportBody, ExportBodyFile, ExportValue, attaches_as_file};
+use super::written_receipts::written_receipt_bodies;
 use crate::Vault;
 use crate::batch::export::{
     ArchiveRecordKind, ArchiveSecretCustody, ArchiveSideWithheld, ArchiveSideWithheldReason,
@@ -764,30 +765,6 @@ fn file_members_kept(typed: &Value, kept: &Value, files: &str) -> bool {
             != Some("file")
             || kept.pointer(&format!("{files}/{index}/content")) == content
     })
-}
-
-/// The id of each receipt of `envelope` whose body its row `written`, as the
-/// nulling pass left it, still holds: a preserved receipt the pass kept with
-/// its body, in the place the envelope lists it (fix list row 15416).
-fn written_receipt_bodies<'a>(
-    envelope: &'a ExportDerivationEnvelope,
-    written: &'a Value,
-) -> impl Iterator<Item = String> + 'a {
-    let rows = written.get("receipts").and_then(Value::as_array);
-    envelope
-        .receipts
-        .iter()
-        .enumerate()
-        .filter(move |(at, source)| {
-            matches!(
-                source,
-                crate::batch::export::ExportReceiptSource::Preserved { .. }
-            ) && rows
-                .and_then(|rows| rows.get(*at))
-                .and_then(|row| row.get("body"))
-                .is_some_and(|body| !body.is_null())
-        })
-        .map(|(_, source)| source.receipt_id().to_owned())
 }
 
 /// `row` as the document's pass leaves it at `depth` under `key`.
