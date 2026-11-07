@@ -3,6 +3,7 @@
 pub enum AgentVerb {
     VaultCommitmentsCreate,
     VaultCommitmentsGet,
+    VaultCommitmentsLedger,
     VaultCommitmentsInstances,
     VaultCommitmentsProposals,
     VaultCommitmentsFulfill,
@@ -253,6 +254,7 @@ pub enum AgentVerb {
     VaultPacksGet,
     VaultSkillsImport,
     VaultSkillsSync,
+    VaultSkillsProposalSettle,
     VaultSkillsReceipts,
     VaultSkillsConvert,
     VaultSkillsGet,
@@ -934,6 +936,7 @@ pub enum AgentVerb {
     AiStreamsDetach,
     AiStreamsAbort,
     AiStreamsTerminal,
+    AiStreamsRelease,
     AiReply,
     VaultReceiptsContext,
     VaultReceiptsCraftReplyManifest,
@@ -985,6 +988,8 @@ pub enum AgentVerb {
     VaultQuestionsCreate,
     VaultQuestionsEdit,
     VaultQuestionsPause,
+    VaultQuestionsPrepare,
+    VaultQuestionsAdmit,
     VaultQuestionsBackfill,
     VaultQuestionsRead,
     VaultQuestionsOutcomeWindows,
@@ -1269,6 +1274,8 @@ pub enum AgentVerb {
     VaultMailThreadsRead,
     VaultMailComplianceSearch,
     VaultFilesSourcesConvert,
+    VaultSyncRepoManifestsConflictReview,
+    VaultSyncRepoManifestsConflictDiscard,
     ConnectorAnswer,
     SelfBrowserOpen,
     SelfBrowserObserve,
@@ -1309,6 +1316,7 @@ impl AgentVerb {
     pub const ALL: &[Self] = &[
         Self::VaultCommitmentsCreate,
         Self::VaultCommitmentsGet,
+        Self::VaultCommitmentsLedger,
         Self::VaultCommitmentsInstances,
         Self::VaultCommitmentsProposals,
         Self::VaultCommitmentsFulfill,
@@ -1559,6 +1567,7 @@ impl AgentVerb {
         Self::VaultPacksGet,
         Self::VaultSkillsImport,
         Self::VaultSkillsSync,
+        Self::VaultSkillsProposalSettle,
         Self::VaultSkillsReceipts,
         Self::VaultSkillsConvert,
         Self::VaultSkillsGet,
@@ -2240,6 +2249,7 @@ impl AgentVerb {
         Self::AiStreamsDetach,
         Self::AiStreamsAbort,
         Self::AiStreamsTerminal,
+        Self::AiStreamsRelease,
         Self::AiReply,
         Self::VaultReceiptsContext,
         Self::VaultReceiptsCraftReplyManifest,
@@ -2291,6 +2301,8 @@ impl AgentVerb {
         Self::VaultQuestionsCreate,
         Self::VaultQuestionsEdit,
         Self::VaultQuestionsPause,
+        Self::VaultQuestionsPrepare,
+        Self::VaultQuestionsAdmit,
         Self::VaultQuestionsBackfill,
         Self::VaultQuestionsRead,
         Self::VaultQuestionsOutcomeWindows,
@@ -2575,6 +2587,8 @@ impl AgentVerb {
         Self::VaultMailThreadsRead,
         Self::VaultMailComplianceSearch,
         Self::VaultFilesSourcesConvert,
+        Self::VaultSyncRepoManifestsConflictReview,
+        Self::VaultSyncRepoManifestsConflictDiscard,
         Self::ConnectorAnswer,
         Self::SelfBrowserOpen,
         Self::SelfBrowserObserve,
@@ -2618,6 +2632,7 @@ impl AgentVerb {
         match self {
             Self::VaultCommitmentsCreate => "vault.commitments.create",
             Self::VaultCommitmentsGet => "vault.commitments.get",
+            Self::VaultCommitmentsLedger => "vault.commitments.ledger",
             Self::VaultCommitmentsInstances => "vault.commitments.instances",
             Self::VaultCommitmentsProposals => "vault.commitments.proposals",
             Self::VaultCommitmentsFulfill => "vault.commitments.fulfill",
@@ -2868,6 +2883,7 @@ impl AgentVerb {
             Self::VaultPacksGet => "vault.packs.get",
             Self::VaultSkillsImport => "vault.skills.import",
             Self::VaultSkillsSync => "vault.skills.sync",
+            Self::VaultSkillsProposalSettle => "vault.skills.proposal.settle",
             Self::VaultSkillsReceipts => "vault.skills.receipts",
             Self::VaultSkillsConvert => "vault.skills.convert",
             Self::VaultSkillsGet => "vault.skills.get",
@@ -3579,6 +3595,7 @@ impl AgentVerb {
             Self::AiStreamsDetach => "ai.streams.detach",
             Self::AiStreamsAbort => "ai.streams.abort",
             Self::AiStreamsTerminal => "ai.streams.terminal",
+            Self::AiStreamsRelease => "ai.streams.release",
             Self::AiReply => "ai.reply",
             Self::VaultReceiptsContext => "vault.receipts.context",
             Self::VaultReceiptsCraftReplyManifest => "vault.receipts.craft_reply_manifest",
@@ -3630,6 +3647,8 @@ impl AgentVerb {
             Self::VaultQuestionsCreate => "vault.questions.create",
             Self::VaultQuestionsEdit => "vault.questions.edit",
             Self::VaultQuestionsPause => "vault.questions.pause",
+            Self::VaultQuestionsPrepare => "vault.questions.prepare",
+            Self::VaultQuestionsAdmit => "vault.questions.admit",
             Self::VaultQuestionsBackfill => "vault.questions.backfill",
             Self::VaultQuestionsRead => "vault.questions.read",
             Self::VaultQuestionsOutcomeWindows => "vault.questions.outcome_windows",
@@ -3918,6 +3937,12 @@ impl AgentVerb {
             Self::VaultMailThreadsRead => "vault.mail.threads.read",
             Self::VaultMailComplianceSearch => "vault.mail.compliance.search",
             Self::VaultFilesSourcesConvert => "vault.files.sources.convert",
+            Self::VaultSyncRepoManifestsConflictReview => {
+                "vault.sync.repo_manifests.conflict.review"
+            }
+            Self::VaultSyncRepoManifestsConflictDiscard => {
+                "vault.sync.repo_manifests.conflict.discard"
+            }
             Self::ConnectorAnswer => "connector.answer",
             Self::SelfBrowserOpen => "self.browser.open",
             Self::SelfBrowserObserve => "self.browser.observe",
@@ -3960,6 +3985,7 @@ impl AgentVerb {
             self,
             Self::VaultCommitmentsCreate
                 | Self::VaultCommitmentsGet
+                | Self::VaultCommitmentsLedger
                 | Self::VaultCommitmentsInstances
                 | Self::VaultCommitmentsProposals
                 | Self::VaultCommitmentsFulfill
@@ -4210,6 +4236,7 @@ impl AgentVerb {
                 | Self::VaultPacksGet
                 | Self::VaultSkillsImport
                 | Self::VaultSkillsSync
+                | Self::VaultSkillsProposalSettle
                 | Self::VaultSkillsReceipts
                 | Self::VaultSkillsConvert
                 | Self::VaultSkillsGet
@@ -4891,6 +4918,7 @@ impl AgentVerb {
                 | Self::AiStreamsDetach
                 | Self::AiStreamsAbort
                 | Self::AiStreamsTerminal
+                | Self::AiStreamsRelease
                 | Self::AiReply
                 | Self::VaultReceiptsContext
                 | Self::VaultReceiptsCraftReplyManifest
@@ -4942,6 +4970,8 @@ impl AgentVerb {
                 | Self::VaultQuestionsCreate
                 | Self::VaultQuestionsEdit
                 | Self::VaultQuestionsPause
+                | Self::VaultQuestionsPrepare
+                | Self::VaultQuestionsAdmit
                 | Self::VaultQuestionsBackfill
                 | Self::VaultQuestionsRead
                 | Self::VaultQuestionsOutcomeWindows
@@ -5204,6 +5234,8 @@ impl AgentVerb {
                 | Self::VaultMailThreadsRead
                 | Self::VaultMailComplianceSearch
                 | Self::VaultFilesSourcesConvert
+                | Self::VaultSyncRepoManifestsConflictReview
+                | Self::VaultSyncRepoManifestsConflictDiscard
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -5295,6 +5327,7 @@ impl AgentVerb {
             self,
             Self::VaultCommitmentsCreate
                 | Self::VaultCommitmentsGet
+                | Self::VaultCommitmentsLedger
                 | Self::VaultCommitmentsInstances
                 | Self::VaultCommitmentsProposals
                 | Self::VaultCommitmentsFulfill
@@ -5545,6 +5578,7 @@ impl AgentVerb {
                 | Self::VaultPacksGet
                 | Self::VaultSkillsImport
                 | Self::VaultSkillsSync
+                | Self::VaultSkillsProposalSettle
                 | Self::VaultSkillsReceipts
                 | Self::VaultSkillsConvert
                 | Self::VaultSkillsGet
@@ -6226,6 +6260,7 @@ impl AgentVerb {
                 | Self::AiStreamsDetach
                 | Self::AiStreamsAbort
                 | Self::AiStreamsTerminal
+                | Self::AiStreamsRelease
                 | Self::AiReply
                 | Self::VaultReceiptsContext
                 | Self::VaultReceiptsCraftReplyManifest
@@ -6277,6 +6312,8 @@ impl AgentVerb {
                 | Self::VaultQuestionsCreate
                 | Self::VaultQuestionsEdit
                 | Self::VaultQuestionsPause
+                | Self::VaultQuestionsPrepare
+                | Self::VaultQuestionsAdmit
                 | Self::VaultQuestionsBackfill
                 | Self::VaultQuestionsRead
                 | Self::VaultQuestionsOutcomeWindows
@@ -6539,6 +6576,8 @@ impl AgentVerb {
                 | Self::VaultMailThreadsRead
                 | Self::VaultMailComplianceSearch
                 | Self::VaultFilesSourcesConvert
+                | Self::VaultSyncRepoManifestsConflictReview
+                | Self::VaultSyncRepoManifestsConflictDiscard
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -6809,6 +6848,7 @@ impl AgentVerb {
             self,
             Self::VaultCommitmentsCreate
                 | Self::VaultCommitmentsGet
+                | Self::VaultCommitmentsLedger
                 | Self::VaultCommitmentsInstances
                 | Self::VaultCommitmentsProposals
                 | Self::VaultCommitmentsFulfill
@@ -7033,6 +7073,7 @@ impl AgentVerb {
                 | Self::VaultPacksGet
                 | Self::VaultSkillsImport
                 | Self::VaultSkillsSync
+                | Self::VaultSkillsProposalSettle
                 | Self::VaultSkillsReceipts
                 | Self::VaultSkillsConvert
                 | Self::VaultSkillsGet
@@ -7681,6 +7722,7 @@ impl AgentVerb {
                 | Self::AiStreamsDetach
                 | Self::AiStreamsAbort
                 | Self::AiStreamsTerminal
+                | Self::AiStreamsRelease
                 | Self::AiReply
                 | Self::VaultReceiptsContext
                 | Self::VaultReceiptsCraftReplyManifest
@@ -7731,6 +7773,8 @@ impl AgentVerb {
                 | Self::VaultQuestionsCreate
                 | Self::VaultQuestionsEdit
                 | Self::VaultQuestionsPause
+                | Self::VaultQuestionsPrepare
+                | Self::VaultQuestionsAdmit
                 | Self::VaultQuestionsBackfill
                 | Self::VaultQuestionsRead
                 | Self::VaultQuestionsOutcomeWindows
@@ -7970,6 +8014,8 @@ impl AgentVerb {
                 | Self::VaultMailThreadsRead
                 | Self::VaultMailComplianceSearch
                 | Self::VaultFilesSourcesConvert
+                | Self::VaultSyncRepoManifestsConflictReview
+                | Self::VaultSyncRepoManifestsConflictDiscard
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -8149,6 +8195,7 @@ impl AgentVerb {
                 | Self::VaultPacksSync
                 | Self::VaultSkillsImport
                 | Self::VaultSkillsSync
+                | Self::VaultSkillsProposalSettle
                 | Self::VaultSkillsConvert
                 | Self::VaultSkillsArchive
                 | Self::VaultSkillsRestore
@@ -8565,6 +8612,7 @@ impl AgentVerb {
                 | Self::AiStepsSubmit
                 | Self::AiStreamsOpen
                 | Self::AiStreamsAbort
+                | Self::AiStreamsRelease
                 | Self::AiReply
                 | Self::AiVoiceStart
                 | Self::AiVoiceAudio
@@ -8596,6 +8644,7 @@ impl AgentVerb {
                 | Self::VaultQuestionsCreate
                 | Self::VaultQuestionsEdit
                 | Self::VaultQuestionsPause
+                | Self::VaultQuestionsAdmit
                 | Self::VaultQuestionsBackfill
                 | Self::VaultQuestionsRefresh
                 | Self::VaultQuestionsOutcomesProject
@@ -8746,6 +8795,7 @@ impl AgentVerb {
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailComplianceSearch
                 | Self::VaultFilesSourcesConvert
+                | Self::VaultSyncRepoManifestsConflictDiscard
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserClick
@@ -8812,6 +8862,7 @@ impl AgentVerb {
         match self {
             Self::VaultCommitmentsCreate => &["spec"],
             Self::VaultCommitmentsGet => &["spec"],
+            Self::VaultCommitmentsLedger => &["spec"],
             Self::VaultCommitmentsInstances => &["spec"],
             Self::VaultCommitmentsProposals => &["spec"],
             Self::VaultCommitmentsFulfill => &["spec"],
@@ -9079,6 +9130,7 @@ impl AgentVerb {
             Self::VaultPacksGet => &["spec"],
             Self::VaultSkillsImport => &["spec"],
             Self::VaultSkillsSync => &["spec"],
+            Self::VaultSkillsProposalSettle => &["spec"],
             Self::VaultSkillsReceipts => &["spec"],
             Self::VaultSkillsConvert => &["spec"],
             Self::VaultSkillsGet => &["spec"],
@@ -9760,6 +9812,7 @@ impl AgentVerb {
             Self::AiStreamsDetach => &["spec"],
             Self::AiStreamsAbort => &["spec"],
             Self::AiStreamsTerminal => &["spec"],
+            Self::AiStreamsRelease => &["spec"],
             Self::AiReply => &["spec"],
             Self::VaultReceiptsContext => &["spec"],
             Self::VaultReceiptsCraftReplyManifest => &["spec"],
@@ -9811,6 +9864,8 @@ impl AgentVerb {
             Self::VaultQuestionsCreate => &["spec"],
             Self::VaultQuestionsEdit => &["spec"],
             Self::VaultQuestionsPause => &["spec"],
+            Self::VaultQuestionsPrepare => &["spec"],
+            Self::VaultQuestionsAdmit => &["spec"],
             Self::VaultQuestionsBackfill => &["spec"],
             Self::VaultQuestionsRead => &["spec"],
             Self::VaultQuestionsOutcomeWindows => &["spec"],
@@ -10095,6 +10150,8 @@ impl AgentVerb {
             Self::VaultMailThreadsRead => &["spec"],
             Self::VaultMailComplianceSearch => &["spec"],
             Self::VaultFilesSourcesConvert => &["spec"],
+            Self::VaultSyncRepoManifestsConflictReview => &["spec"],
+            Self::VaultSyncRepoManifestsConflictDiscard => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
@@ -10136,6 +10193,7 @@ impl AgentVerb {
         match self {
             Self::VaultCommitmentsCreate => &["spec"],
             Self::VaultCommitmentsGet => &["spec"],
+            Self::VaultCommitmentsLedger => &["spec"],
             Self::VaultCommitmentsInstances => &["spec"],
             Self::VaultCommitmentsProposals => &["spec"],
             Self::VaultCommitmentsFulfill => &["spec"],
@@ -10386,6 +10444,7 @@ impl AgentVerb {
             Self::VaultPacksGet => &["spec"],
             Self::VaultSkillsImport => &["spec"],
             Self::VaultSkillsSync => &["spec"],
+            Self::VaultSkillsProposalSettle => &["spec"],
             Self::VaultSkillsReceipts => &["spec"],
             Self::VaultSkillsConvert => &["spec"],
             Self::VaultSkillsGet => &["spec"],
@@ -11067,6 +11126,7 @@ impl AgentVerb {
             Self::AiStreamsDetach => &["spec"],
             Self::AiStreamsAbort => &["spec"],
             Self::AiStreamsTerminal => &["spec"],
+            Self::AiStreamsRelease => &["spec"],
             Self::AiReply => &["spec"],
             Self::VaultReceiptsContext => &["spec"],
             Self::VaultReceiptsCraftReplyManifest => &["spec"],
@@ -11118,6 +11178,8 @@ impl AgentVerb {
             Self::VaultQuestionsCreate => &["spec"],
             Self::VaultQuestionsEdit => &["spec"],
             Self::VaultQuestionsPause => &["spec"],
+            Self::VaultQuestionsPrepare => &["spec"],
+            Self::VaultQuestionsAdmit => &["spec"],
             Self::VaultQuestionsBackfill => &["spec"],
             Self::VaultQuestionsRead => &["spec"],
             Self::VaultQuestionsOutcomeWindows => &["spec"],
@@ -11402,6 +11464,8 @@ impl AgentVerb {
             Self::VaultMailThreadsRead => &["spec"],
             Self::VaultMailComplianceSearch => &["spec"],
             Self::VaultFilesSourcesConvert => &["spec"],
+            Self::VaultSyncRepoManifestsConflictReview => &["spec"],
+            Self::VaultSyncRepoManifestsConflictDiscard => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
@@ -11447,6 +11511,9 @@ impl AgentVerb {
             }
             Self::VaultCommitmentsGet => {
                 "Reads a commitment with its schedule, birth provenance, separate occurrence and learning times, and lifecycle receipt."
+            }
+            Self::VaultCommitmentsLedger => {
+                "Reads due-sorted open obligations owed by and to one counterparty contact, with their current commitment views."
             }
             Self::VaultCommitmentsInstances => {
                 "Lists the materialized occurrences of a commitment series, including closed obligations."
@@ -12183,6 +12250,9 @@ impl AgentVerb {
             }
             Self::VaultSkillsSync => {
                 "The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities."
+            }
+            Self::VaultSkillsProposalSettle => {
+                "The owner accepts the exact package in a pending hub update, or rejects only its proposal without changing the working skill."
             }
             Self::VaultSkillsReceipts => {
                 "Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner."
@@ -14187,6 +14257,9 @@ impl AgentVerb {
             Self::AiStreamsTerminal => {
                 "Read the one durable terminal of the caller's model stream by key (its ordered ContentParts, usage and finish reason, or its recorded failure) after any restart, without calling a model."
             }
+            Self::AiStreamsRelease => {
+                "Explicitly discard this credential's model-stream replay and revoke its handles; the producer and durable terminal stay. Later subscribers get only future events; never-released replay stays unchanged."
+            }
             Self::AiReply => {
                 "Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs."
             }
@@ -14212,13 +14285,13 @@ impl AgentVerb {
                 "Opens an owner-bound live media session on the configured voice routes, using the caller credential, room audience and existing budget gates."
             }
             Self::AiVoiceAudio => {
-                "Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech retires old output through the shared cancellation path."
+                "Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech, or words that are not a backchannel, retire old output through the shared cancellation path, and a backchannel starts no reply."
             }
             Self::AiVoiceEvents => {
-                "Reads ordered utterance and epoch events, PCM, flushes, playout stops, safeguard receipts and notices; advancing the cursor releases consumed events."
+                "Reads ordered utterance and epoch events, PCM, flushes, playout stops, safeguard receipts, notices and heard-playback records; advancing the cursor releases consumed events."
             }
             Self::AiVoiceAck => {
-                "Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed."
+                "Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed, with the samples it played, which the epoch's heard-playback record rests on."
             }
             Self::AiVoiceUsage => {
                 "Observes actual voice-brain run settlements and a terminal boundary after producer teardown, epoch retirement, TTS cancel and client playout acknowledgment."
@@ -14332,6 +14405,8 @@ impl AgentVerb {
             Self::VaultQuestionsCreate => "",
             Self::VaultQuestionsEdit => "",
             Self::VaultQuestionsPause => "",
+            Self::VaultQuestionsPrepare => "",
+            Self::VaultQuestionsAdmit => "",
             Self::VaultQuestionsBackfill => "",
             Self::VaultQuestionsRead => "",
             Self::VaultQuestionsOutcomeWindows => {
@@ -15155,6 +15230,12 @@ impl AgentVerb {
             }
             Self::VaultFilesSourcesConvert => {
                 "The owner converts an attached notes folder on this host to Files, keeping its existing notes, history and links. The host rescans the folder into its Files world and returns the source and rescan report."
+            }
+            Self::VaultSyncRepoManifestsConflictReview => {
+                "The owner reviews one durable repo-manifest conflict and its exact held/carried manifests; return the opaque binding to discard that reviewed carrier."
+            }
+            Self::VaultSyncRepoManifestsConflictDiscard => {
+                "The owner discards exactly the reviewed carrier, keeping the held manifest; report Stale or WindowLive, or the actual delta and queue acceptance, never delivery."
             }
             Self::ConnectorAnswer => {
                 "Answers the questions one of the caller's own connector calls waits on, by the handle its awaiting_input reply named, under that call's grant and principal; the connector's next questions or its result come back as foreign data."

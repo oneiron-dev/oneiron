@@ -4,9 +4,11 @@
 //! authority stays with the content hash, its scan verdicts and the install door.
 use serde::{Deserialize, Serialize};
 
+use super::local_dir::LOCAL_DIR_COMMIT_ONLY;
 use super::{
-    GitEndpointSkillHubAdapter, HttpEndpointSkillHubAdapter, HubPin, HubRef, HubSyncPolicy,
-    SkillHubKind, TrackedHubRef,
+    GitEndpointSkillHubAdapter, HttpEndpointSkillHubAdapter, HubIndexEntry, HubPackage, HubPin,
+    HubRef, HubSyncPolicy, LocalDirEndpointSkillHubAdapter, SkillHubAdapter, SkillHubKind,
+    SkillHubRecord, TrackedHubRef,
 };
 use crate::{
     Vault,
@@ -95,6 +97,88 @@ pub(crate) fn git_ref_adapter(
 pub(crate) enum RefFetch {
     Git(GitEndpointSkillHubAdapter, HubRef),
     Http(HttpEndpointSkillHubAdapter, HubRef),
+    /// A local folder hub (FIX 21922), at its pinned commit only.
+    Local(LocalDirEndpointSkillHubAdapter, HubRef),
+}
+
+impl RefFetch {
+    fn adapter(&self) -> &dyn SkillHubAdapter {
+        match self {
+            Self::Git(adapter, _) => adapter,
+            Self::Http(adapter, _) => adapter,
+            Self::Local(adapter, _) => adapter,
+        }
+    }
+
+    /// The commit a Git or local folder transport reads. An index hub names
+    /// its bytes by content hash, so it has no commit.
+    pub(crate) fn resolved_commit(&self) -> Result<&str> {
+        match self {
+            Self::Git(adapter, _) => Ok(adapter.resolved_commit()),
+            Self::Local(adapter, _) => Ok(adapter.resolved_commit()),
+            Self::Http(..) => Err(invalid("an index hub names no commit")),
+        }
+    }
+}
+
+/// The configured transport itself, so a door takes it as its adapter
+/// whatever the hub's kind.
+impl SkillHubAdapter for RefFetch {
+    fn hub_id(&self) -> EntityId {
+        self.adapter().hub_id()
+    }
+
+    fn kind(&self) -> SkillHubKind {
+        self.adapter().kind()
+    }
+
+    fn endpoint(&self) -> Option<&str> {
+        self.adapter().endpoint()
+    }
+
+    fn fetch_package(&self, hub_ref: &HubRef) -> Result<HubPackage> {
+        self.adapter().fetch_package(hub_ref)
+    }
+
+    fn discover(&self) -> Result<Vec<HubIndexEntry>> {
+        self.adapter().discover()
+    }
+}
+
+/// The transport `row` configures for `tracked`, at its policy. A local
+/// folder hub reads only a pinned commit: a tag, a version or a frozen hash
+/// refuses there, and nothing falls back to a network transport.
+pub(crate) fn configured_ref_fetch(
+    hub: EntityId,
+    row: &SkillHubRecord,
+    tracked: &TrackedHubRef,
+    fallback_commit: Option<&str>,
+) -> Result<RefFetch> {
+    match row.kind {
+        SkillHubKind::Git => {
+            let (adapter, reference) =
+                git_ref_adapter(hub, &row.endpoint, tracked, fallback_commit)?;
+            Ok(RefFetch::Git(adapter, reference))
+        }
+        SkillHubKind::HttpIndex => Ok(RefFetch::Http(
+            HttpEndpointSkillHubAdapter::new(hub, &row.endpoint)?,
+            tracked.hub_ref.clone(),
+        )),
+        SkillHubKind::LocalDir => {
+            let HubPin::Commit(commit) = &tracked.hub_ref.pin else {
+                return Err(invalid(LOCAL_DIR_COMMIT_ONLY));
+            };
+            if row.sync_policy != HubSyncPolicy::PinnedCommit
+                || tracked.sync_policy != HubSyncPolicy::PinnedCommit
+            {
+                return Err(invalid(LOCAL_DIR_COMMIT_ONLY));
+            }
+            Ok(RefFetch::Local(
+                LocalDirEndpointSkillHubAdapter::new(hub, &row.endpoint, commit)?,
+                tracked.hub_ref.clone(),
+            ))
+        }
+    }
 }
 
 impl RefSyncRow {
@@ -157,7 +241,7 @@ impl Vault {
 
     /// Owner door: set one ref's policy and pin. Revisions already seen and
     /// trusted stay; a moved pin trusts nothing new until its bytes pass the
-    /// scan and install doors.
+    /// scan and install doors. A local folder hub's ref is a pinned commit.
     pub fn set_hub_ref_sync(
         &self,
         owner: &AuthenticatedOwner,
@@ -167,7 +251,10 @@ impl Vault {
         check_policy_pin(sync_policy, &hub_ref.pin)?;
         self.with_write_txn_grouped(|txn| {
             self.check_restore_owner_in_txn(txn, owner)?;
-            self.hub_record_in_txn(txn, &hub_ref.hub_id)?;
+            let row = self.hub_record_in_txn(txn, &hub_ref.hub_id)?;
+            if row.kind == SkillHubKind::LocalDir && sync_policy != HubSyncPolicy::PinnedCommit {
+                return Err(invalid(LOCAL_DIR_COMMIT_ONLY));
+            }
             let prior = self.hub_ref_sync_in_txn(txn, &hub_ref.hub_id, &hub_ref.ref_string)?;
             let key = (hub_ref.hub_id, hub_ref.ref_string.clone());
             let mut tracked = TrackedHubRef::new(hub_ref, sync_policy);
@@ -188,18 +275,7 @@ impl Vault {
     ) -> Result<RefFetch> {
         let hub = tracked.hub_ref.hub_id;
         let row = self.skill_hub_record(&hub)?;
-        match row.kind {
-            SkillHubKind::Git => {
-                let (adapter, reference) =
-                    git_ref_adapter(hub, &row.endpoint, tracked, fallback_commit)?;
-                Ok(RefFetch::Git(adapter, reference))
-            }
-            SkillHubKind::HttpIndex => Ok(RefFetch::Http(
-                HttpEndpointSkillHubAdapter::new(hub, &row.endpoint)?,
-                tracked.hub_ref.clone(),
-            )),
-            SkillHubKind::LocalDir => Err(invalid("a local folder hub has no ref to fetch")),
-        }
+        configured_ref_fetch(hub, &row, tracked, fallback_commit)
     }
 
     /// Marks a revision a fetch resolved (seen) or an install accepted
