@@ -21952,6 +21952,11 @@ pub enum SharedVaultChange {
         #[serde(rename = "backup_retain_until")]
         backup_retain_until: u64,
     },
+    #[serde(rename = "owner_added")]
+    OwnerAdded {
+        #[serde(rename = "owner")]
+        owner: String,
+    },
     #[serde(rename = "ownership_transferred")]
     OwnershipTransferred {
         #[serde(rename = "from")]
