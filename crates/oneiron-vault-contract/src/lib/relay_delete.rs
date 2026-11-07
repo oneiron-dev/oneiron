@@ -130,9 +130,6 @@ impl RelayDeleteGeneration {
 pub enum RelayHoldVisibility {
     /// A hold the owner may see stands.
     Visible,
-    /// Only host orders whose silence still runs stand: the relay answers a
-    /// neutral completion pending, naming no hold.
-    SilentOnly,
 }
 
 /// What became of one `relay_delete_execute`.
