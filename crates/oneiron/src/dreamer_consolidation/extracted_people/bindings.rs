@@ -139,6 +139,17 @@ pub(crate) fn pin_lineage_origin_in_txn(
     LINEAGE_ORIGIN.put(&vault.store, txn, &successor, &origin)
 }
 
+/// Drops only the removed attempt's own lineage pin. A retained successor's
+/// independently pinned origin stays intact, even when it names this id.
+pub(crate) fn delete_lineage_origin_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+) -> Result<()> {
+    LINEAGE_ORIGIN.delete(store, txn, &attempt)?;
+    Ok(())
+}
+
 /// One declaration's binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum PersonBinding {
