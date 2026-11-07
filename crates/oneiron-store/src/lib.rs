@@ -204,6 +204,7 @@ pub mod skill_hub_predicates;
 pub mod snapshot_key;
 pub mod snapshot_lifecycle;
 pub mod snapshot_lock_result;
+pub mod source_audience_obligation;
 pub mod store_clock;
 pub mod structural_kind_registry;
 pub mod task_body_checks;

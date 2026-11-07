@@ -107,6 +107,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "retry_source_policy"
                 | "compilation_policy"
                 | POLICY_TEACHER_PROBE_KEY
+            | crate::gate::code_consent_settlement::KEY
                 | "experiment_selection"
                 | crate::gate::entity_resolution_bands::KEY
                 | crate::gate::carry_forward_policy::KEY
@@ -622,6 +623,14 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Duplicate => return None,
         MapValue::Present(value) => Some(parse_teacher_probe_row(value)?),
     };
+    let code_consent_settlement =
+        match single_map_value(&entries, crate::gate::code_consent_settlement::KEY) {
+            MapValue::Missing => None,
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => {
+                Some(crate::gate::code_consent_settlement::CodeConsentSettlementRow::parse(value)?)
+            }
+        };
 
     let entity_resolution_bands =
         match single_map_value(&entries, crate::gate::entity_resolution_bands::KEY) {
@@ -800,6 +809,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         retry_source_policy,
         compilation_policy,
         teacher_probe,
+        code_consent_settlement,
         experiment_selection,
         entity_resolution_bands,
         carry_forward_confidence,
