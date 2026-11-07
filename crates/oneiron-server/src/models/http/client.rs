@@ -136,12 +136,25 @@ impl ProviderHttp {
         path: &str,
         headers: &BTreeMap<String, String>,
     ) -> reqwest::RequestBuilder {
-        let mut request = self.client.post(self.url(path));
-        if !headers
-            .keys()
-            .any(|name| name.eq_ignore_ascii_case("content-type"))
-        {
-            request = request.header(reqwest::header::CONTENT_TYPE, "application/json");
+        Self::with_headers(
+            self.client.post(self.url(path)),
+            headers,
+            Some("application/json"),
+        )
+    }
+
+    fn with_headers(
+        mut request: reqwest::RequestBuilder,
+        headers: &BTreeMap<String, String>,
+        content_type: Option<&'static str>,
+    ) -> reqwest::RequestBuilder {
+        if let Some(content_type) = content_type {
+            if !headers
+                .keys()
+                .any(|name| name.eq_ignore_ascii_case("content-type"))
+            {
+                request = request.header(reqwest::header::CONTENT_TYPE, content_type);
+            }
         }
         for (name, value) in headers {
             request = request.header(name, value);
@@ -293,7 +306,19 @@ impl ProviderHttp {
         path: &str,
         send: MediaSend,
     ) -> Result<BytesReply, HttpFailure> {
-        let response = self.media_response(path, send).await?;
+        self.send_media_with_headers(path, send, &BTreeMap::new())
+            .await
+    }
+
+    pub(in crate::models) async fn send_media_with_headers(
+        &self,
+        path: &str,
+        send: MediaSend,
+        headers: &BTreeMap<String, String>,
+    ) -> Result<BytesReply, HttpFailure> {
+        let response = self
+            .media_response_with_headers(path, send, headers)
+            .await?;
         let status = response.status().as_u16();
         let headers = reply_headers(&response);
         let (body, held) = read_booked(response).await?;
@@ -314,15 +339,23 @@ impl ProviderHttp {
         release: DispatchRelease<'_>,
         lease: &BudgetLease,
     ) -> Result<BytesReply, HttpReleaseError> {
+        self.send_json_released_with_headers(path, json, &BTreeMap::new(), release, lease)
+            .await
+    }
+
+    pub(in crate::models) async fn send_json_released_with_headers(
+        &self,
+        path: &str,
+        json: JsonValue,
+        headers: &BTreeMap<String, String>,
+        release: DispatchRelease<'_>,
+        lease: &BudgetLease,
+    ) -> Result<BytesReply, HttpReleaseError> {
         let plain = serde_json::to_vec(&json).unwrap_or_default();
         let url = self.url(path);
         let request = {
             let url = url.as_str();
-            move || {
-                self.client
-                    .post(url)
-                    .header(reqwest::header::CONTENT_TYPE, "application/json")
-            }
+            move || Self::with_headers(self.client.post(url), headers, Some("application/json"))
         };
         let response = self
             .send_body_released(path, request, plain, release, lease)
@@ -370,26 +403,39 @@ impl ProviderHttp {
         path: &str,
         send: MediaSend,
     ) -> Result<reqwest::Response, HttpFailure> {
+        self.media_response_with_headers(path, send, &BTreeMap::new())
+            .await
+    }
+
+    async fn media_response_with_headers(
+        &self,
+        path: &str,
+        send: MediaSend,
+        headers: &BTreeMap<String, String>,
+    ) -> Result<reqwest::Response, HttpFailure> {
         let url = self.url(path);
         let body = |content_type: &'static str| {
             let url = url.as_str();
-            move || {
-                self.client
-                    .post(url)
-                    .header(reqwest::header::CONTENT_TYPE, content_type)
-            }
+            move || Self::with_headers(self.client.post(url), headers, Some(content_type))
         };
         Ok(match send {
-            MediaSend::Get => self.client.get(url.as_str()).send().await?,
-            MediaSend::Delete => self.client.delete(url.as_str()).send().await?,
+            MediaSend::Get => {
+                Self::with_headers(self.client.get(url.as_str()), headers, None)
+                    .send()
+                    .await?
+            }
+            MediaSend::Delete => {
+                Self::with_headers(self.client.delete(url.as_str()), headers, None)
+                    .send()
+                    .await?
+            }
             MediaSend::Json(json) => {
                 let plain = serde_json::to_vec(&json).unwrap_or_default();
                 self.send_body(path, body("application/json"), plain, None)
                     .await?
             }
             MediaSend::Multipart(form) => {
-                self.client
-                    .post(url.as_str())
+                Self::with_headers(self.client.post(url.as_str()), headers, None)
                     .multipart(form)
                     .send()
                     .await?
