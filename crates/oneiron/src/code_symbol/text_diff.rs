@@ -2,7 +2,7 @@
 
 use std::ops::Range;
 
-use crate::codebase::RepoRef;
+use crate::codebase::RepoIdentity;
 use crate::error::{Error, Result};
 
 use super::rust_source::{is_tree_sitter_rust_source, rust_code_embedding_inputs};
@@ -25,8 +25,10 @@ pub fn derive_code_chunks_from_text_diff(
         .collect()
 }
 
+/// The embedding inputs of the definitions an edit of `path` changed, their
+/// symbol ids derived under the repository identity `repo` (FIX 12761).
 pub fn derive_code_embedding_inputs_from_text_diff(
-    repo_ref: &RepoRef,
+    repo: &RepoIdentity,
     path: &str,
     old_text: &str,
     new_text: &str,
@@ -52,7 +54,7 @@ pub fn derive_code_embedding_inputs_from_text_diff(
             .flat_map(|version| version.byte_spans)
             .map(|(start, end)| line(start)..line(end) + 1)
             .collect();
-    rust_code_embedding_inputs(repo_ref, path, None, new_text, &changed_ranges)
+    rust_code_embedding_inputs(repo, path, None, new_text, &changed_ranges)
 }
 
 pub fn embed_code_chunks(
