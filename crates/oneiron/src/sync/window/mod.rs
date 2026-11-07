@@ -27,6 +27,7 @@ mod device_only;
 mod discard_ingress;
 mod discard_projection;
 mod egress;
+mod erased_origin;
 mod forward;
 mod history_free;
 mod pad_custody;
@@ -43,6 +44,7 @@ pub mod test_hooks;
 mod tombstones;
 mod withdrawn;
 
+pub(in crate::sync) use self::admission::encoded_root_state;
 #[cfg(test)]
 pub(in crate::sync) use self::admission::validate_window_update_residence;
 pub(in crate::sync) use self::admission::{
@@ -79,6 +81,7 @@ pub use self::egress::{
 pub(crate) use self::forward::forward_recovery;
 pub use self::forward::forward_rematerialize;
 pub(crate) use self::forward::{FORWARD_PASS_VERSION, ForwardRun, forward_rematerialize_mirror};
+pub(crate) use self::history_free::export_sealed_mirror_snapshot;
 pub use self::history_free::{
     WindowExport, export_promotion_snapshot, export_window_replacement,
     export_window_replacement_for, export_window_since, export_window_since_for,
@@ -91,6 +94,7 @@ pub use self::pad_custody::{
     prepare_window_pads, promotion_window_pads,
 };
 pub(crate) use self::rebootstrap::{prepare_rebootstrap, reject_held_rebootstrap};
+pub(crate) use self::replacement::replace_detached_mirror;
 pub use self::replacement::{PreparedReplacement, ReplacementConflict, prepare_replacement};
 pub(in crate::sync) use self::replacement::{
     ReplacementByteBound, check_bounded_replacement, prepare_bounded_replacement,
@@ -490,10 +494,19 @@ pub(crate) fn merge_persisted_state_into_doc(
 /// Loads a window Doc from persisted state in sync_state.
 pub fn load_window_from_state(vault: &Vault, _user_id: &str, key: &WindowKey) -> Result<LoroDoc> {
     let rtxn = vault.store.env.read_txn()?;
+    load_window_from_state_in_txn(vault, &rtxn, key)
+}
 
+/// Read the snapshot and its surviving updates from one transaction. A
+/// fold cannot prune an update between these two parts of the same image.
+pub(in crate::sync) fn load_window_from_state_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    key: &WindowKey,
+) -> Result<LoroDoc> {
     let state = vault
         .store
-        .port_window_doc_with_raw(&rtxn, WindowAddress::new(key.as_str()), |raw| {
+        .port_window_doc_with_raw(rtxn, WindowAddress::new(key.as_str()), |raw| {
             Ok(raw.to_vec())
         })?
         .ok_or_else(|| {
@@ -502,13 +515,8 @@ pub fn load_window_from_state(vault: &Vault, _user_id: &str, key: &WindowKey) ->
             })
         })?;
 
-    // Load from snapshot
     let doc = doc_from_snapshot(&state)?;
-    drop(rtxn);
-
-    // Apply pending updates on top of the snapshot (startup step 2).
-    apply_pending_window_updates(vault, &doc, key)?;
-
+    apply_pending_window_updates_in_txn(vault, rtxn, &doc, key)?;
     Ok(doc)
 }
 
@@ -531,12 +539,21 @@ pub fn load_window_from_state(vault: &Vault, _user_id: &str, key: &WindowKey) ->
 /// helpers are invisible to integration-test crates.
 pub fn apply_pending_window_updates(vault: &Vault, doc: &LoroDoc, key: &WindowKey) -> Result<u32> {
     let rtxn = vault.store.env.read_txn()?;
+    apply_pending_window_updates_in_txn(vault, &rtxn, doc, key)
+}
+
+pub(in crate::sync) fn apply_pending_window_updates_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    doc: &LoroDoc,
+    key: &WindowKey,
+) -> Result<u32> {
     let address = WindowAddress::new(key.as_str());
     // Lazy prefix iterator (B-tree range seek); `{seq:016x}` keys sort in order.
     let mut applied = 0u32;
     for entry in vault
         .store
-        .port_window_updates(&rtxn, address, |_, v| import_doc(doc, v))?
+        .port_window_updates(rtxn, address, |_, v| import_doc(doc, v))?
     {
         entry??;
         applied += 1;
