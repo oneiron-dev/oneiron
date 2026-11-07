@@ -388,6 +388,12 @@ pub(super) fn collect_receipt_records(
     if query.includes_kind(ReceiptKind::ArtifactSettle) {
         records.extend(crate::edit_settle::settle_receipts(vault, query)?);
     }
+    // FIX 4727: each reviewed run's settlement, in its own read txn.
+    if query.includes_kind(ReceiptKind::ProposalOutcome) {
+        records.extend(crate::memory::run_review::run_settlement_receipts(
+            vault, query,
+        )?);
+    }
 
     // The outbound grant projection reads each grant's consent receipts on
     // snapshots of its own, so it too runs before the shared `rtxn`.

@@ -85,9 +85,9 @@ mod stream_pump;
 use json_wire::{KeptWire, post_json};
 use live_exchange::{Continuation, LiveSession, hand_over};
 use presenting::{Intake, KeptRound, KeyAliases, clear_event, clear_questions};
+pub(crate) use remote_task_poll::poll_remote_tasks;
 use reply_read::{Reply, StreamEvent, open_reply, read_reply, tool_result};
 use resume::RoundResume;
-pub(crate) use remote_task_poll::poll_remote_tasks;
 pub(crate) use resume::resume_exchanges;
 use sent::Sent;
 pub(crate) use served_calls::ServerConnectorCalls;
@@ -246,7 +246,8 @@ impl ServedConnectorCallHost {
         };
         // The setting is read before the exchange starts.
         let elicitation = self.declared(call, &view);
-        let Some(mut exchange) = Exchange::new(&self.client, &view, &self.vault, elicitation) else {
+        let Some(mut exchange) = Exchange::new(&self.client, &view, &self.vault, elicitation)
+        else {
             return Sent::not_sent(OutboundFailureKind::InvalidRequest, None);
         };
         // FIX 11023: a grant's redemption or a run's record cannot be
