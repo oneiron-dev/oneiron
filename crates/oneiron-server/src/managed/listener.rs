@@ -1,4 +1,6 @@
 //! Managed sockets: listener resolution and binding, the ctl plane, and readiness.
+//! The API and artifact sockets are served admitted on the process's
+//! descriptor line (FIX 6299, [`admitted`]).
 
 use std::future::Future;
 use std::io::ErrorKind;
@@ -9,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::Router;
+use axum::serve::ListenerExt;
 use oneiron_vault_contract::{
     CtlRequest, CtlResponse, MAX_CTL_LINE, READY_BYTE, REAP_PAUSE_REFUSAL,
 };
@@ -18,6 +21,9 @@ use tracing_subscriber::EnvFilter;
 
 use super::args::{ManagedArgs, ManagedError};
 use super::state_serve::{ManagedState, WRITES_FROZEN_TAG};
+
+mod admitted;
+pub(super) use admitted::AdmittedListener;
 
 /// The one environment value managed mode uses. When set, it names an
 /// already-bound listening unix socket the supervisor passed across spawn.
@@ -123,26 +129,12 @@ impl BoundServeListener {
 
     /// Serves until the process ends — the unmanaged shape.
     pub async fn serve(self, app: Router) -> std::io::Result<()> {
-        match self {
-            Self::Tcp(listener) => {
-                axum::serve(
-                    listener,
-                    app.into_make_service_with_connect_info::<SocketAddr>(),
-                )
-                .await
-            }
-            Self::Unix { listener, .. } => {
-                axum::serve(
-                    listener,
-                    app.into_make_service_with_connect_info::<super::UnixPeer>(),
-                )
-                .await
-            }
-        }
+        self.serve_until(app, std::future::pending()).await
     }
 
     /// Serves until `shutdown` resolves, then stops accepting and drains
-    /// in-flight requests.
+    /// in-flight requests. Each socket holds a descriptor permit of the
+    /// process's one line until it closes (FIX 6299).
     pub async fn serve_until(
         self,
         app: Router,
@@ -150,6 +142,9 @@ impl BoundServeListener {
     ) -> std::io::Result<()> {
         match self {
             Self::Tcp(listener) => {
+                // A tap that changes nothing: a tapped listener's own address
+                // is each request's `ConnectInfo<SocketAddr>`.
+                let listener = AdmittedListener::new(listener).tap_io(|_| {});
                 axum::serve(
                     listener,
                     app.into_make_service_with_connect_info::<SocketAddr>(),
@@ -159,7 +154,7 @@ impl BoundServeListener {
             }
             Self::Unix { listener, .. } => {
                 axum::serve(
-                    listener,
+                    AdmittedListener::new(listener),
                     app.into_make_service_with_connect_info::<super::UnixPeer>(),
                 )
                 .with_graceful_shutdown(shutdown)
