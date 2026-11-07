@@ -307,6 +307,10 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // Config-only CIMD documents remain public before OAuth bootstrap.
         .route("/oauth/client/native.json", get(client_metadata::native))
         .route("/oauth/client/web.json", get(client_metadata::web))
+        // FIX 4902 slice B: the vault as its own `/mcp`'s OAuth 2.1 authorization server
+        // (PRM, AS metadata, DCR, authorize, token, revoke). Keyless: a stock client signs in
+        // here before it holds anything.
+        .merge(self::oauth_server::routes())
         // The public ceremony bypasses the hosted device lease but retains
         // matched-route wire receipts and threshold questions.
         .merge(self::esign::public_routes())

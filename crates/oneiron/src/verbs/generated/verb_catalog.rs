@@ -773,6 +773,7 @@ pub enum AgentVerb {
     VaultAgentsDreamingSet,
     VaultAgentsGrantsMint,
     VaultAgentsGrantsRevoke,
+    VaultOauthAuthorizationAnswer,
     VaultRepoGitPushMint,
     VaultRepoGitPushRevoke,
     VaultConnectorsReadGrantsGrant,
@@ -2070,6 +2071,7 @@ impl AgentVerb {
         Self::VaultAgentsDreamingSet,
         Self::VaultAgentsGrantsMint,
         Self::VaultAgentsGrantsRevoke,
+        Self::VaultOauthAuthorizationAnswer,
         Self::VaultRepoGitPushMint,
         Self::VaultRepoGitPushRevoke,
         Self::VaultConnectorsReadGrantsGrant,
@@ -3394,6 +3396,7 @@ impl AgentVerb {
             Self::VaultAgentsDreamingSet => "vault.agents.dreaming.set",
             Self::VaultAgentsGrantsMint => "vault.agents.grants.mint",
             Self::VaultAgentsGrantsRevoke => "vault.agents.grants.revoke",
+            Self::VaultOauthAuthorizationAnswer => "vault.oauth.authorization.answer",
             Self::VaultRepoGitPushMint => "vault.repo.git_push.mint",
             Self::VaultRepoGitPushRevoke => "vault.repo.git_push.revoke",
             Self::VaultConnectorsReadGrantsGrant => "vault.connectors.read_grants.grant",
@@ -4703,6 +4706,7 @@ impl AgentVerb {
                 | Self::VaultAgentsDreamingSet
                 | Self::VaultAgentsGrantsMint
                 | Self::VaultAgentsGrantsRevoke
+                | Self::VaultOauthAuthorizationAnswer
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
                 | Self::VaultConnectorsReadGrantsGrant
@@ -6029,6 +6033,7 @@ impl AgentVerb {
                 | Self::VaultAgentsDreamingSet
                 | Self::VaultAgentsGrantsMint
                 | Self::VaultAgentsGrantsRevoke
+                | Self::VaultOauthAuthorizationAnswer
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
                 | Self::VaultConnectorsReadGrantsGrant
@@ -7490,6 +7495,7 @@ impl AgentVerb {
                 | Self::VaultAgentsDreamingSet
                 | Self::VaultAgentsGrantsMint
                 | Self::VaultAgentsGrantsRevoke
+                | Self::VaultOauthAuthorizationAnswer
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
                 | Self::VaultConnectorsReadGrantsGrant
@@ -8416,6 +8422,7 @@ impl AgentVerb {
                 | Self::VaultAgentsDreamingSet
                 | Self::VaultAgentsGrantsMint
                 | Self::VaultAgentsGrantsRevoke
+                | Self::VaultOauthAuthorizationAnswer
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
                 | Self::VaultConnectorsReadGrantsGrant
@@ -9538,6 +9545,7 @@ impl AgentVerb {
             Self::VaultAgentsDreamingSet => &["spec"],
             Self::VaultAgentsGrantsMint => &["spec"],
             Self::VaultAgentsGrantsRevoke => &["spec"],
+            Self::VaultOauthAuthorizationAnswer => &["spec"],
             Self::VaultRepoGitPushMint => &["spec"],
             Self::VaultRepoGitPushRevoke => &["spec"],
             Self::VaultConnectorsReadGrantsGrant => &["spec"],
@@ -10836,6 +10844,7 @@ impl AgentVerb {
             Self::VaultAgentsDreamingSet => &["spec"],
             Self::VaultAgentsGrantsMint => &["spec"],
             Self::VaultAgentsGrantsRevoke => &["spec"],
+            Self::VaultOauthAuthorizationAnswer => &["spec"],
             Self::VaultRepoGitPushMint => &["spec"],
             Self::VaultRepoGitPushRevoke => &["spec"],
             Self::VaultConnectorsReadGrantsGrant => &["spec"],
@@ -13642,6 +13651,9 @@ impl AgentVerb {
             }
             Self::VaultAgentsGrantsRevoke => {
                 "The owner revokes one agent grant by its id; the agent stops counting it at once, and a repeat changes nothing."
+            }
+            Self::VaultOauthAuthorizationAnswer => {
+                "The owner allows, at a tier and optional world, or denies one outside app's pending OAuth sign-in request for this vault's MCP endpoint."
             }
             Self::VaultRepoGitPushMint => {
                 "The owner grants one live person or agent raw git_push on explicitly named repos, each whole, until he revokes it or until the expiry he sets; a write grant never implies it."

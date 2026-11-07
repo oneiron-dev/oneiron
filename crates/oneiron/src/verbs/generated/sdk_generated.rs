@@ -4259,6 +4259,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.oauth.authorization.answer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OAuthAuthorizationAnswer,
+                >(),
+            ),
+            (
                 "vault.repo.git_push.mint",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::GitPushGrantMintInput,
@@ -7876,6 +7882,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.agents.dreaming.set",
     "vault.agents.grants.mint",
     "vault.agents.grants.revoke",
+    "vault.oauth.authorization.answer",
     "vault.repo.git_push.mint",
     "vault.repo.git_push.revoke",
     "vault.connectors.read_grants.grant",
@@ -9896,6 +9903,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.agents.grants.revoke" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::AgentGrantRevoked,
+        >(),
+        "vault.oauth.authorization.answer" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::OAuthAuthorizationAnswered,
         >(),
         "vault.repo.git_push.mint" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::GitPushGrantMintOutput,
@@ -16280,6 +16290,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.oauth.authorization.answer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.repo.git_push.mint" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -20860,6 +20877,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.agents.dreaming.set" => validate_input_vault_agents_dreaming_set(value)?,
         "vault.agents.grants.mint" => validate_input_vault_agents_grants_mint(value)?,
         "vault.agents.grants.revoke" => validate_input_vault_agents_grants_revoke(value)?,
+        "vault.oauth.authorization.answer" => {
+            validate_input_vault_oauth_authorization_answer(value)?
+        }
         "vault.repo.git_push.mint" => validate_input_vault_repo_git_push_mint(value)?,
         "vault.repo.git_push.revoke" => validate_input_vault_repo_git_push_revoke(value)?,
         "vault.connectors.read_grants.grant" => {
@@ -25657,6 +25677,11 @@ fn validate_input_vault_agents_grants_revoke(value: &serde_json::Value) -> Memor
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_oauth_authorization_answer(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::OAuthAuthorizationAnswer = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_vault_repo_git_push_mint(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::task_verb::sdk::GitPushGrantMintInput = decode(value.clone())?;
     Ok(())
@@ -29647,6 +29672,9 @@ pub fn invoke(
         "vault.agents.dreaming.set" => invoke_vault_agents_dreaming_set(memory, value),
         "vault.agents.grants.mint" => invoke_vault_agents_grants_mint(memory, value),
         "vault.agents.grants.revoke" => invoke_vault_agents_grants_revoke(memory, value),
+        "vault.oauth.authorization.answer" => {
+            invoke_vault_oauth_authorization_answer(memory, value)
+        }
         "vault.repo.git_push.mint" => invoke_vault_repo_git_push_mint(memory, value),
         "vault.repo.git_push.revoke" => invoke_vault_repo_git_push_revoke(memory, value),
         "vault.connectors.read_grants.grant" => {
@@ -35796,6 +35824,13 @@ fn invoke_vault_agents_grants_revoke(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_agents_grants_revoke(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_oauth_authorization_answer(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_oauth_authorization_answer(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_repo_git_push_mint(
@@ -46018,6 +46053,17 @@ pub fn vault_agents_grants_revoke(
     crate::task_verb::sdk::revoke_agent_grant_as(
         memory.vault(),
         &memory.embedded_owner("vault.agents.grants.revoke")?,
+        crate::authority::ActSurface::ThisInstall,
+        input,
+    )
+}
+pub fn vault_oauth_authorization_answer(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OAuthAuthorizationAnswer,
+) -> MemoryResult<crate::task_verb::sdk::OAuthAuthorizationAnswered> {
+    crate::task_verb::sdk::answer_oauth_authorization_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.oauth.authorization.answer")?,
         crate::authority::ActSurface::ThisInstall,
         input,
     )

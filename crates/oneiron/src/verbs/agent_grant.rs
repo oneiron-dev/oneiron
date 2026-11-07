@@ -36,8 +36,9 @@ use crate::memory::MemoryResult;
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentGrantMintRequest {
-    /// The agent principal granted (32 hex): a live agent definition, or a
-    /// base agent such as the Coach. Never a person or a device.
+    /// The agent principal granted (32 hex): a live agent definition, a base
+    /// agent such as the Coach, or a named agent's principal. Never another
+    /// person or a device.
     pub agent: EntityId,
     /// The owner's complete six-axis scope, stored exactly as given. Its
     /// verbs axis is the explicit verb list, a nonempty `some` set; the

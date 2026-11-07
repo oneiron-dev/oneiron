@@ -38,6 +38,7 @@ mod adopted_build;
 mod adopted_evidence;
 mod adopted_fold;
 mod agent_grant_act;
+mod agent_tier;
 mod agent_world_undo;
 mod ai_grant;
 mod ancestor_index;
@@ -117,6 +118,7 @@ mod machine_write;
 mod managed_owner_check;
 mod membership_execution;
 mod mesh_machine;
+mod oauth_server;
 mod observation_policy;
 mod op_apply;
 mod origin_cut;
@@ -337,6 +339,21 @@ pub(crate) use managed_owner_check::{OWNER_NOT_LIVE, require_live_managed_owner_
 pub use mesh_machine::{
     MeshAlpnGrant, MeshBindingIdentity, MeshMachineAddress, MeshMachineAddressEnvelope,
     MeshMachineBinding,
+};
+// The vault as its own `/mcp`'s OAuth 2.1 authorization server (FIX 4902 slice B), and the
+// agent tiers it and `oneiron token agent` share.
+pub use agent_tier::AgentTier;
+pub use oauth_server::{
+    OAUTH_ACCESS_TOKEN_PREFIX, OAUTH_ACCESS_TTL_SECS, OAUTH_AUTHORIZATION_NOTIFICATION_PRODUCER,
+    OAUTH_CIMD_TTL_SECS, OAUTH_CLIENT_NAME_MAX_CHARS, OAUTH_CLIENTS_MAX, OAUTH_CODE_PREFIX,
+    OAUTH_CODE_TTL_SECS, OAUTH_DEFAULT_TIER, OAUTH_MATCH_CODE_LEN, OAUTH_PENDING_REQUESTS_MAX,
+    OAUTH_REDIRECT_URIS_MAX, OAUTH_REFRESH_TOKEN_PREFIX, OAUTH_REFRESH_TTL_SECS,
+    OAUTH_REQUEST_TTL_SECS, OAUTH_STATE_MAX_BYTES, OAUTH_URI_MAX_BYTES, OAuthAccess,
+    OAuthAuthorizationAllowed, OAuthAuthorizationPending, OAuthAuthorizationStart,
+    OAuthAuthorizationStatus, OAuthClientRecord, OAuthClientRegistration, OAuthClientSource,
+    OAuthCodeExchange, OAuthRefresh, OAuthRegistrationRefusal, OAuthTokenRefusal, OAuthTokens,
+    oauth_client_id_is_metadata_url, oauth_code_challenge_admitted, oauth_redirect_uri_admitted,
+    oauth_requested_tier, oauth_scopes_supported,
 };
 pub use observation_policy::*;
 // The origin cut a repo manifest is written and judged by (FIX 15740).
