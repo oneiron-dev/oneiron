@@ -162,13 +162,17 @@ impl Vault {
 
     /// The claim source NOTE `note`'s words carry as evidence when an import
     /// wrote it: the trust its folder's import MACHINE records, `Imported`
-    /// (G2). `None` for a note its author wrote here.
+    /// (G2), or `Imported` for a NOTE an archive import kept with its source
+    /// author (FIX 7777). `None` for a note its author wrote here.
     ///
     /// # Errors
     /// A storage error, or a `note` that is no live NOTE.
     pub fn imported_note_source(&self, note: EntityId) -> Result<Option<ClaimSource>> {
         let txn = self.store.env.read_txn()?;
         let (_, body) = super::verbs::note_core(self, &txn, note)?;
+        if body.author_ref.imported().is_some() {
+            return Ok(Some(ClaimSource::Imported));
+        }
         let Some(author) = body.author_ref.id() else {
             return Ok(None);
         };
@@ -430,7 +434,12 @@ impl Vault {
             .iter()
             .map(|link| Ok((end(&link.from)?, end(&link.to)?)))
             .collect::<Result<Vec<_>>>()?;
-        let mut content = crate::federation::ActorContentTxn::new(self, txn, actor)?;
+        let mut content = crate::federation::ActorContentTxn::new(
+            self,
+            txn,
+            actor,
+            crate::core_write::CoreWriteLaneRef::Unbound,
+        )?;
         for ((note, kind), id) in notes.iter().zip(kinds).zip(ids) {
             let body = encode_note_body(&NoteBody {
                 kind,
@@ -458,7 +467,7 @@ impl Vault {
                 id,
                 RowBirth::written(actor, MadeByClass::Stated, IMPORT_DOOR, &[], &[], at),
             ))?;
-            content.update_note(*id, |txn| {
+            content.update_note(*id, |txn, _lane| {
                 let doc = super::document_store::load(self, txn, *id)?;
                 if let Some(title) = &note.title {
                     // Admitted as an edit's title is (FIX 1098); the record
