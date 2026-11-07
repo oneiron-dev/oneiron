@@ -3498,6 +3498,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.hooks.checks",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
                 "vault.hooks.replay",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::HooksReplayRequest,
@@ -7776,6 +7780,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "host.compact",
     "host.wake",
     "host.budget.hit",
+    "vault.hooks.checks",
     "vault.hooks.regen.due",
     "vault.hooks.regen.get",
     "vault.hooks.regen.adopt",
@@ -9587,6 +9592,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "host.budget.hit" => crate::code_run::vault_read::request_schema::<
             crate::runtime_hooks::host_doors::HostBudgetHitResult,
         >(),
+        "vault.hooks.checks" => {
+            crate::code_run::vault_read::request_schema::<Vec<crate::runtime_hooks::HookCheck>>()
+        }
         "vault.hooks.regen.due" => {
             crate::code_run::vault_read::request_schema::<Vec<crate::EntityId>>()
         }
@@ -15390,6 +15398,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.hooks.checks" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.hooks.replay" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -20690,6 +20705,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "host.compact" => validate_input_host_compact(value)?,
         "host.wake" => validate_input_host_wake(value)?,
         "host.budget.hit" => validate_input_host_budget_hit(value)?,
+        "vault.hooks.checks" => validate_input_vault_hooks_checks(value)?,
         "vault.hooks.replay" => validate_input_vault_hooks_replay(value)?,
         "vault.hooks.regen.due" => validate_input_vault_hooks_regen_due(value)?,
         "vault.hooks.regen.get" => validate_input_vault_hooks_regen_get(value)?,
@@ -24967,6 +24983,11 @@ fn validate_input_host_wake(value: &serde_json::Value) -> MemoryResult<()> {
 #[inline(never)]
 fn validate_input_host_budget_hit(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::runtime_hooks::host_doors::HostBudgetHitRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_hooks_checks(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: EmptyRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -29477,6 +29498,7 @@ pub fn invoke(
         "host.compact" => invoke_host_compact(memory, value),
         "host.wake" => invoke_host_wake(memory, value),
         "host.budget.hit" => invoke_host_budget_hit(memory, value),
+        "vault.hooks.checks" => invoke_vault_hooks_checks(memory, value),
         "vault.hooks.replay" => invoke_vault_hooks_replay(memory, value),
         "vault.hooks.regen.due" => invoke_vault_hooks_regen_due(memory, value),
         "vault.hooks.regen.get" => invoke_vault_hooks_regen_get(memory, value),
@@ -34882,6 +34904,13 @@ fn invoke_host_budget_hit(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(host_budget_hit(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_hooks_checks(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_hooks_checks(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_hooks_replay(
@@ -45037,6 +45066,15 @@ pub fn host_budget_hit(
     input: crate::runtime_hooks::host_doors::HostBudgetHitRequest,
 ) -> MemoryResult<crate::runtime_hooks::host_doors::HostBudgetHitResult> {
     crate::task_verb::sdk::host_only(memory, "host.budget.hit", &input)
+}
+pub fn vault_hooks_checks(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::runtime_hooks::HookCheck>> {
+    memory
+        .vault()
+        .hook_checks_as_owner(&memory.embedded_owner("vault.hooks.checks")?)
+        .map_err(crate::memory::MemoryError::from)
 }
 pub fn vault_hooks_replay(
     memory: &Memory<'_>,

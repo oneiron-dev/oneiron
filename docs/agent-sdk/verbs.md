@@ -647,6 +647,7 @@ both bindings and their export-census tests in one change.
 - `host.compact`
 - `host.wake`
 - `host.budget.hit`
+- `vault.hooks.checks`
 - `vault.hooks.replay`
 - `vault.hooks.regen.due`
 - `vault.hooks.regen.get`
