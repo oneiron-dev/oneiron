@@ -179,6 +179,9 @@ pub(super) fn resolved_successor(
     successor.files = vec![RepoProposedFile::ordinary(path.clone(), resolved)];
     successor.status = RepoProposalStatus::Approved;
     successor.resolves = Some(row.id);
+    // A resolved successor is no repair: a repair link names the original,
+    // and the successor's own submission receipt is written below (FIX 4364).
+    successor.repair_of = None;
     successor.settlement = None;
     successor.queue_review = None;
     successor.operation_seq = None;
