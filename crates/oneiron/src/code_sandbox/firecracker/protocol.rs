@@ -564,9 +564,8 @@ fn receive_proposals_cancellable(
             GuestFrame::StepResult {
                 result_json: result,
             } => {
-                if result_json.is_some() || result.len() > oneiron_sandbox_contract::MAX_FILE_BYTES
-                {
-                    return Err(refused("duplicate or oversized guest step result"));
+                if result_json.is_some() {
+                    return Err(refused("duplicate guest step result"));
                 }
                 serde_json::from_str::<serde_json::Value>(&result)
                     .map_err(|_| refused("invalid guest result JSON"))?;

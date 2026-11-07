@@ -296,9 +296,6 @@ fn proposals(
     base: &Snapshot,
     proposed: &mut Proposed,
 ) -> Result<Vec<GuestProposal>> {
-    if output.result_json.len() > MAX_FILE {
-        return Err(Error::Runtime("step result bounds"));
-    }
     serde_json::from_str::<serde_json::Value>(&output.result_json)
         .map_err(|_| Error::Runtime("result-json is invalid JSON"))?;
     let mut proposals = Vec::new();
