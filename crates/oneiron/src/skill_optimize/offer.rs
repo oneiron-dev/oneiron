@@ -34,6 +34,7 @@ use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};
 
+mod measurement;
 mod snapshot;
 
 pub use self::snapshot::{
@@ -112,7 +113,6 @@ pub fn record_training_offer(
         source_rows: draft.source_rows,
         digest: String::new(),
     };
-    offer.digest = digest(&offer)?;
     vault.with_write_txn_grouped(|txn| {
         offer.source_rows = live_source_rows_in(vault, txn, offer.source_rows.take())?;
         if let Some(previous) = &offer.previous {
@@ -124,6 +124,8 @@ pub fn record_training_offer(
             }
         }
         super::offer_pilot::validate_snapshot_in_txn(vault, txn, &offer)?;
+        measurement::keep_source_in_txn(vault, txn, &mut offer);
+        offer.digest = digest(&offer)?;
         measure_offer(vault, &offer);
         OFFER.put(&vault.store, txn, &offer.id, &offer)?;
         if let Some(previous) = &offer.previous {
