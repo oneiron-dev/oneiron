@@ -99,6 +99,12 @@ pub(crate) fn ack_option_void_generation(
 pub struct TaskAskOptionLink {
     pub token: String,
     pub intended_recipient: EntityId,
+    /// The MACHINE id of the install that issued the link, which is the
+    /// ask's admitting node, read when the link was issued (FIX 20468).
+    /// It only locates the node that holds the link's rows. It grants
+    /// nothing, and the URL does not carry it. `None` on an install that
+    /// has not joined a vault.
+    pub admitting_machine: Option<EntityId>,
 }
 
 /// Generic, recipient-bound page data. IDs are the AskSpec's stable option IDs.
@@ -247,6 +253,10 @@ impl Memory<'_> {
             Ok(TaskAskOptionLink {
                 token,
                 intended_recipient: friend,
+                admitting_machine: crate::store::install_identity::read_machine_id_in_txn(
+                    self.vault(),
+                    txn,
+                )?,
             })
         })
     }
@@ -423,16 +433,8 @@ impl Vault {
         let digest = token_digest(token)?;
         let mut txn = self.store.env.write_txn()?;
         let mut row = read_row(self, &txn, &digest)?;
-        if !matches!(row.state, LinkState::Voided) {
-            row.state = LinkState::Voided;
-            put_row(self, &mut txn, &digest, &row)?;
-            let next = counter_in(self, &txn, VOID_GENERATIONS, row.group)?
-                .checked_add(1)
-                .ok_or_else(|| MemoryError::bad_request("ask void generation exhausted"))?;
-            VOID_GENERATIONS.put(&self.store, &mut txn, &row.group, &next)?;
-        }
+        revoke_link_in_txn(self, &mut txn, &digest, &mut row)?;
         let group = row.group;
-        VOIDS.put(&self.store, &mut txn, &(group, row.friend), b"1")?;
         deliver_ask_change_in_txn(self, &mut txn, group)?;
         super::ask_facade::signal_waiters(
             self,
@@ -446,6 +448,79 @@ impl Vault {
         crate::llm::send_peer_result_signal(self, group, self.store.clock.now_recorded_at())?;
         Ok(())
     }
+}
+
+/// "Not you?"'s revoke step ([`Vault::void_ask_option_link`]), in `txn`. A
+/// bearer `row`, stored under `digest`, that is not voided yet becomes
+/// voided and raises its group's void generation. Its seat is marked
+/// voided. A relayed seat void takes this step for the seat's current
+/// bearer (FIX 7494).
+fn revoke_link_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    digest: &[u8; 32],
+    row: &mut LinkRow,
+) -> crate::Result<()> {
+    if !matches!(row.state, LinkState::Voided) {
+        row.state = LinkState::Voided;
+        LINKS.put(&vault.store, txn, digest, row)?;
+        let next = counter_in(vault, txn, VOID_GENERATIONS, row.group)?
+            .checked_add(1)
+            .ok_or(crate::Error::ArithmeticOverflow(
+                "ask void generation exhausted",
+            ))?;
+        VOID_GENERATIONS.put(&vault.store, txn, &row.group, &next)?;
+    }
+    VOIDS.put(&vault.store, txn, &(row.group, row.friend), b"1")?;
+    Ok(())
+}
+
+/// Voids `person`'s own seat on the ask `group_ref` at its admitting node, in
+/// `txn` (FIX 7494): the authenticated twin of an option link's "Not you?"
+/// ([`Vault::void_ask_option_link`]), relayed from a replica. The seat's
+/// current bearer is revoked by the same step, so its token then fails the
+/// answer path as a voided link does. A seat with no bearer is marked voided
+/// and raises the group's void generation the first time. It wakes the
+/// asking agent the same way. A person the ask does not ask is refused.
+/// Answers the group's void generation after it.
+pub(super) fn void_seat_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    group_ref: EntityId,
+    group: &ask_record::AskGroup,
+    person: EntityId,
+    now: u64,
+) -> crate::Result<u64> {
+    if !group
+        .members
+        .iter()
+        .any(|member| member.actor == person.to_hex())
+    {
+        return Err(ask_record::invalid());
+    }
+    let seat = (group_ref, person);
+    let bearer = match SEATS.get(&vault.store, txn, &seat)? {
+        Some(SeatedLink(digest)) => LINKS
+            .get(&vault.store, txn, &digest)?
+            .filter(|row| row.group == group_ref && row.friend == person)
+            .map(|row| (digest, row)),
+        None => None,
+    };
+    match bearer {
+        Some((digest, mut row)) => revoke_link_in_txn(vault, txn, &digest, &mut row)?,
+        None if !VOIDS.contains(&vault.store, txn, &seat)? => {
+            let next = counter_in(vault, txn, VOID_GENERATIONS, group_ref)?
+                .checked_add(1)
+                .ok_or_else(ask_record::invalid)?;
+            VOID_GENERATIONS.put(&vault.store, txn, &group_ref, &next)?;
+            VOIDS.put(&vault.store, txn, &seat, b"1")?;
+        }
+        None => {}
+    }
+    deliver_ask_change_in_txn(vault, txn, group_ref)?;
+    super::ask_facade::signal_waiters(vault, txn, group_ref, now.saturating_mul(1000))
+        .map_err(|_| ask_record::invalid())?;
+    counter_in(vault, txn, VOID_GENERATIONS, group_ref)
 }
 
 /// The ask's Changed status for the code runs parked on its wait, in the
