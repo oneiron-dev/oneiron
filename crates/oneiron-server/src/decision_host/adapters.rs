@@ -309,6 +309,7 @@ impl DecisionProvider for SystemOneRung {
             paired: None,
             person: None,
             served: None,
+            cost_per_thousand: None,
         };
         let mut decisions = (0..pack.questions.len())
             .map(|_| abstain())
@@ -434,6 +435,7 @@ impl DecisionProvider for SystemOneRung {
                         paired: None,
                         person: None,
                         served: None,
+                        cost_per_thousand: None,
                     }
                 }
                 Err(_) => abstain(),
