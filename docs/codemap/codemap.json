@@ -122680,7 +122680,7 @@
      "purpose": "`[models.dreamer.wording]`: the host's wording of what the engine asks a model in its own words today (FIX…",
      "surface": {
       "crate-vis": 2,
-      "fn": 13,
+      "fn": 14,
       "struct": 1
      }
     },
