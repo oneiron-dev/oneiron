@@ -9434,13 +9434,13 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::code_run::vault_read::request_schema::<crate::world_keys::OwnerWorkReceipt>()
         }
         "vault.roots.requests.create" => {
-            crate::code_run::vault_read::request_schema::<crate::world_keys::OwnerWorkReceipt>()
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::OwnerWorkView>()
         }
         "vault.roots.requests.list" => crate::code_run::vault_read::request_schema::<
             Vec<crate::task_verb::sdk::PendingRootRequestView>,
         >(),
         "vault.owner_work.get" => {
-            crate::code_run::vault_read::request_schema::<crate::world_keys::OwnerWorkReceipt>()
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::OwnerWorkView>()
         }
         "vault.cleanup.run" => crate::code_run::vault_read::request_schema::<
             crate::vault_cleanup::surface::CleanupRunView,
@@ -44469,7 +44469,7 @@ pub fn vault_roots_requests_cancel(
 pub fn vault_roots_requests_create(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::RootRequestCreateRequest,
-) -> MemoryResult<crate::world_keys::OwnerWorkReceipt> {
+) -> MemoryResult<crate::task_verb::sdk::OwnerWorkView> {
     crate::task_verb::sdk::create_root_request_as(
         memory.vault(),
         &memory.embedded_owner("vault.roots.requests.create")?,
@@ -44489,7 +44489,7 @@ pub fn vault_roots_requests_list(
 pub fn vault_owner_work_get(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::OwnerWorkGetRequest,
-) -> MemoryResult<crate::world_keys::OwnerWorkReceipt> {
+) -> MemoryResult<crate::task_verb::sdk::OwnerWorkView> {
     crate::task_verb::sdk::owner_work_receipt_as(
         memory.vault(),
         &memory.embedded_owner("vault.owner_work.get")?,
