@@ -204,7 +204,7 @@ pub(crate) fn conflict_marker(
             Value::Binary(old.as_bytes().to_vec()),
         ]),
     )]))
-    .with_scope(body.scope.clone().unwrap_or(Value::Map(Vec::new())))
+    .with_scope(super::without_initial_weight(body.scope.clone()).unwrap_or(Value::Map(Vec::new())))
     .with_scope_stamps(body.scope_facet, body.scope_project);
     if let Some(world) = body.world {
         candidate = candidate.with_world(world);

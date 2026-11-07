@@ -130,6 +130,37 @@ impl BatchBuilder<'_> {
         )
     }
 
+    /// [`Self::put`] of a TURN or CONVERSATION row a source landing stamps
+    /// with the source-audience obligation (fix list row 16256), through
+    /// the one raw door whose early check lets that key through. It takes
+    /// the landing's [`SourceAudienceBirth`]; every other public check runs
+    /// as for [`Self::put`], and the write transaction admits the stamp only
+    /// on a row the landing marked born in it.
+    ///
+    /// [`SourceAudienceBirth`]: crate::source_audience::SourceAudienceBirth
+    pub(crate) fn put_source_bound(
+        mut self,
+        id: &EntityId,
+        entity_type: u8,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+        _birth: &crate::source_audience::SourceAudienceBirth,
+    ) -> Self {
+        if self.validation_error.is_none() {
+            self.commit_checks
+                .push(CommitCheck::PublicType(self.ops.len()));
+        }
+        self.put_through(
+            id,
+            entity_type,
+            occurred,
+            learned_at,
+            data,
+            RawPutDoor::SourceBound,
+        )
+    }
+
     /// FIX 9034: [`Self::put`] of ASSET `id` holding `data`, the
     /// content of a carrier its writer already scanned whole and holds marked
     /// (a marked LFS object's chunk, `install_lfs_manifest_with_mark`): a

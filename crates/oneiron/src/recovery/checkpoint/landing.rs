@@ -449,9 +449,11 @@ impl Vault {
 const BARE_ERASURE_NOTE: &str = "erasures after the cut not applied";
 
 /// Refuses a row with no header, which the index rebuild refuses anyway; a
-/// body the local identity refusal turns away; or an AUTHORITY_LOG row whose
+/// body the local identity refusal turns away; an AUTHORITY_LOG row whose
 /// body the shared authority validator refuses, an empty one included: no
-/// authority row is a bodiless shell.
+/// authority row is a bodiless shell; or a row whose source-audience
+/// obligation is malformed or stands on a kind no source landing stamps
+/// (fix list row 16256). A valid stamp restores as its exact bytes.
 fn validate_checkpoint_entity_row(blob: &[u8]) -> Result<()> {
     let header = crate::batch::EntityMetadataHeader::parse(blob).ok_or_else(codec_error)?;
     let body = &blob[crate::batch::ENTITY_METADATA_HEADER_LEN..];
@@ -459,6 +461,9 @@ fn validate_checkpoint_entity_row(blob: &[u8]) -> Result<()> {
     if header.entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG
         && crate::authority::validate_authority_log_entry_body_bytes(body).is_err()
     {
+        return Err(codec_error());
+    }
+    if !crate::source_audience::restorable_obligation(blob) {
         return Err(codec_error());
     }
     Ok(())
