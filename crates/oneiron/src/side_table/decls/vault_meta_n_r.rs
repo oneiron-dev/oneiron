@@ -276,20 +276,10 @@ side_tables! {
     /// digest of its server and tool, then its admission times. Key: id16(attempt) + u64be(call
     /// seq).
     OUTBOUND_INTENT_UNAVAILABLE: VaultMeta b"outbound:intent_unavailable:v1:" Raw;
-    /// A Deferred send's remote task form question, parked for the owner (FIX 16029): its round's
-    /// generation, phase, question digest, owner Ask, field names, connector and tool, and the
-    /// request and answer sealed under the intent's own ConnectorResume subject; no plaintext.
-    /// The ledger's erase of the call, its actor or its recipient forgets it. Key: hash32 (intent
-    /// id).
-    OUTBOUND_REMOTE_TASK_INPUT: VaultMeta b"outbound:remote_task_input:v1:" Named;
     /// A Deferred send's remote task poll (FIX 11023): its next poll time, poll count and last
     /// status word; the session and credential choice stay in the settlement's handle. Key:
     /// hash32 (intent id).
     OUTBOUND_REMOTE_TASK_POLL: VaultMeta b"outbound:remote_task_poll:v1:" Named;
-    /// An MCP session a remote task's polls kept open, owed its end once its handle went before
-    /// the session ended (an erase; FIX 16028): where it is and the credential that opens it.
-    /// Key: hash32 (intent id).
-    OUTBOUND_REMOTE_TASK_SESSION_END: VaultMeta b"outbound:remote_task_session_end:v1:" Named;
     /// Deterministic receipt id -> intent id. Key: id16.
     OUTBOUND_SUPPRESSION_INDEX: VaultMeta b"outbound:suppression_index:v1:" Raw;
     /// Device-local receipt body, `rmp_serde::to_vec_named`. Key: hash32 (intent id).

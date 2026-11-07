@@ -64,8 +64,7 @@ pub struct Memory<'v> {
     pub(super) destination: crate::settings::ReadDestination,
     /// Where a host collects the rows its reads pick (`listing_producers`).
     pub(super) producers: Option<&'v super::ProducerRows>,
-    /// Where a host bound its writer's TASKs, and its blob version claims, to
-    /// be born (`with_birth_position`, FIX 3171).
+    /// Where a host bound its writer's TASKs to be born (`with_birth_position`).
     pub(super) birth_position: crate::federation::record_scope::BirthPosition,
     /// The vault owner's authentication, when a host bound the owner's own
     /// direct request (`with_owner_authorship`).

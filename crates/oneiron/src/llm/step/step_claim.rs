@@ -27,7 +27,6 @@ use crate::dreamer_wake::{StepClaimed, StepTerminal, record_call_terminal_in_txn
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
-use crate::store::ManifestDbs;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
 use rmpv::Value;
@@ -217,26 +216,13 @@ pub(super) fn load_step_response_in_txn(
     txn: &heed::RoTxn<'_>,
     decoded: &DecodedStepClaim,
 ) -> DurableStepResult<LlmResponse> {
-    load_step_response_in(vault, &vault.store, txn, decoded)
-}
-
-/// A step claim's response, its pinned version read as `dbs` reads it: base,
-/// or a room's view over base for a step a room's run staged there, by its
-/// claim's reference (FIX 4818).
-pub(super) fn load_step_response_in(
-    vault: &Vault,
-    dbs: &impl ManifestDbs,
-    txn: &heed::RoTxn<'_>,
-    decoded: &DecodedStepClaim,
-) -> DurableStepResult<LlmResponse> {
     match (&decoded.response, &decoded.response_ref) {
         (Some(inline), None) => Ok(serde_json::from_slice(inline.as_bytes())?),
         (None, Some(response_ref)) => {
             // The version the step appended, never the artifact's head: a
             // later append to the same artifact is not this step's response.
             let bytes = vault
-                .read_blob_artifact_version_in(
-                    dbs,
+                .read_blob_artifact_version_in_txn(
                     txn,
                     &response_ref.artifact_id,
                     response_ref.version,

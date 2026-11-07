@@ -229,17 +229,7 @@ impl Vault {
         name: &str,
     ) -> Result<(Option<ConnectorCallRoute>, Option<EntityId>)> {
         let rtxn = self.store.env.read_txn()?;
-        self.route_connector_call_listing_in_txn(&rtxn, name)
-    }
-
-    /// [`Self::route_connector_call_listing`] read in `rtxn`, a writer's
-    /// included, so a check inside one opens no read of its own (FIX 16029).
-    pub(crate) fn route_connector_call_listing_in_txn(
-        &self,
-        rtxn: &heed::RoTxn<'_>,
-        name: &str,
-    ) -> Result<(Option<ConnectorCallRoute>, Option<EntityId>)> {
-        let Some((key_ref, record)) = self.catalog_record_in_txn(rtxn, name)? else {
+        let Some((key_ref, record)) = self.catalog_record_in_txn(&rtxn, name)? else {
             return Ok((None, None));
         };
         if record.status != ConnectorKeyStatus::Active || record.connector == PROXY_CONNECTOR {
@@ -248,7 +238,7 @@ impl Vault {
         let Some(mut entry) = record.catalog.clone() else {
             return Ok((None, Some(key_ref)));
         };
-        entry.verbs = callable_verbs_in_txn(&self.store, rtxn, &record, entry.verbs)?;
+        entry.verbs = callable_verbs_in_txn(&self.store, &rtxn, &record, entry.verbs)?;
         let route = ConnectorCallRoute {
             key_ref,
             name: entry.name,

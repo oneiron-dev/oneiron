@@ -91,9 +91,7 @@ pub(crate) fn append_queue_check_output_in_txn(
 
     // The completion token, not the recorded author, authorizes these
     // supporting effects. Ordinary appends keep their actor gates in the
-    // same version algorithm. No producing host binds a position here, and
-    // the token's input scope is not one: the claim keeps the birth default
-    // (FIX 3171).
+    // same version algorithm.
     let version = vault.append_blob_artifact_version_body_with_authority_in_txn(
         txn,
         &token.artifact_id(),
@@ -107,7 +105,6 @@ pub(crate) fn append_queue_check_output_in_txn(
         Some(&made_by),
         false,
         true,
-        crate::federation::record_scope::BirthPosition::default(),
         crate::core_write::CoreWriteLaneRef::Unbound,
     )?;
 
