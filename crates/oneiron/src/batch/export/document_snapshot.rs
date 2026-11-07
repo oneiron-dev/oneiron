@@ -68,8 +68,9 @@ pub(crate) struct ExportSnapshotEntity<'t> {
     pub(crate) skill_package: Option<crate::store::skill_package::HubPackage>,
     /// The pack source an ASSET body is.
     pub(crate) pack_source: Option<crate::skill_hub::pack_catalog::PackSource>,
-    /// The task receipts a CLAIM cites, by id.
-    pub(crate) task_receipts: BTreeMap<String, crate::store::receipt_row::ReceiptRecord>,
+    /// The native task receipts a CLAIM cites, by id, each as the copy
+    /// carries it: its body, or why not (fix list row 15416).
+    pub(crate) task_receipts: BTreeMap<String, super::ExportReceiptSource>,
     /// A CLAIM's archived receipt sources.
     pub(crate) archived_receipts: Option<BTreeMap<String, super::ExportReceiptSource>>,
     /// The row's birth envelope, read in this snapshot (FIX 1178); `None`
@@ -572,18 +573,30 @@ impl Vault {
                     },
                 )?;
                 sources.extend(carriers);
-                archived_receipts = Some(receipts);
+                // A native receipt goes only where no archived source of its
+                // id stands, and keeps its body only beside every row its
+                // attempt read, judged before the body is kept: one made from
+                // a member's mailbox the copy leaves out, or from rows not
+                // all known, goes as unavailable (fix list row 15416).
                 for receipt_id in super::receipt_sources::task_receipt_refs(&claim) {
-                    if !task_receipts.contains_key(&receipt_id)
+                    if !receipts.contains_key(&receipt_id)
+                        && !task_receipts.contains_key(&receipt_id)
                         && let Some(receipt) = crate::receipt::attempt_pack_receipt_in_txn(
                             &self.store,
                             &rtxn,
                             &receipt_id,
                         )?
                     {
-                        task_receipts.insert(receipt_id, receipt);
+                        let source = lineage.receipt_source(
+                            judge.as_mut(),
+                            id,
+                            receipt_id.clone(),
+                            &receipt,
+                        )?;
+                        task_receipts.insert(receipt_id, source);
                     }
                 }
+                archived_receipts = Some(receipts);
             }
             barred_carried.extend(row_barred);
             included.insert(id);
@@ -649,7 +662,9 @@ impl Vault {
         };
         // OF-013: the floors travel so an import never numbers an epoch under
         // one a purge removed. A floor whose session the archive leaves here
-        // stays here, as the session's own row does.
+        // stays here, as the session's own row does: one of a world kept
+        // here, and one of a member's mailbox the copy leaves out (fix list
+        // row 15416).
         if scope == ExportScope::WholeVault {
             for (session, epoch, turn_end) in
                 crate::compaction::epoch_floors_in_txn(&self.store, &rtxn)?
@@ -663,6 +678,7 @@ impl Vault {
                     owner_export,
                 )?
                 .is_none()
+                    || !lineage.carries(judge.as_mut(), session, None)?
                 {
                     continue;
                 }

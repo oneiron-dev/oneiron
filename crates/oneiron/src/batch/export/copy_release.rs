@@ -21,7 +21,7 @@ use std::collections::BTreeSet;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 
-use super::{ExportCut, WholeVaultExportReceipt};
+use super::{ExportCut, ExportReceiptSource, ReceiptSourceOmission, WholeVaultExportReceipt};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -29,6 +29,7 @@ use crate::mail_pack::{CarriedMemberMailboxes, MailboxExportNotice, MemberMailbo
 use crate::memory::{ExportCopy, record_export, record_member_mail_export};
 use crate::settings::ReadDestination;
 use crate::source_audience::{ExportJudge, ExportVerdicts};
+use crate::store::receipt_row::ReceiptRecord;
 use crate::write_envelope::WriteActor;
 
 /// Why a saved run's output stays home from an Owner's copy: it was made
@@ -76,8 +77,9 @@ impl MemberMailPass {
 
 /// What an Owner's copy carries beside its entity rows, judged by its pass
 /// (fix list row 15416): the rows it carries outside them (a custody record,
-/// the rows a saved output was made from), and each row a carried row was
-/// folded from, by that row.
+/// the session of an epoch floor, the rows a saved output was made from), and
+/// each row a carried row was folded from, or a receipt it cites keeps the
+/// body of was made from, by that row.
 #[derive(Default)]
 pub(super) struct MailboxLineage {
     carried: BTreeSet<EntityId>,
@@ -153,6 +155,44 @@ impl MailboxLineage {
         } else {
             RESULT_SOURCE_UNIDENTIFIED
         }))
+    }
+
+    /// The native receipt `receipt` the row `row` cites, as the copy carries
+    /// it: its body, unless the pass's `judge`, when it has one, keeps home
+    /// what was made from the rows its attempt read; then why, as a saved
+    /// output's ([`Self::output_withheld`]). Those rows count as carried only
+    /// through a body the copy keeps, of a row it ships.
+    ///
+    /// # Errors
+    ///
+    /// Storage failures, and a receipt whose record names another id.
+    pub(super) fn receipt_source(
+        &mut self,
+        judge: Option<&mut ExportJudge<'_, '_, '_>>,
+        row: EntityId,
+        receipt_id: String,
+        receipt: &ReceiptRecord,
+    ) -> Result<ExportReceiptSource> {
+        let Some(judge) = judge else {
+            return ExportReceiptSource::from_record(receipt_id, Some(receipt));
+        };
+        let inputs = receipt.pack_source_rows();
+        if !judge.carries_all(inputs.as_deref())? {
+            return Ok(ExportReceiptSource::Unavailable {
+                receipt_id,
+                reason: if inputs.is_some() {
+                    ReceiptSourceOmission::MemberMailbox
+                } else {
+                    ReceiptSourceOmission::SourceUnidentified
+                },
+            });
+        }
+        let source = ExportReceiptSource::from_record(receipt_id, Some(receipt))?;
+        if matches!(source, ExportReceiptSource::Preserved { .. }) {
+            self.folded
+                .extend(inputs.into_iter().flatten().map(|input| (row, input)));
+        }
+        Ok(source)
     }
 
     /// What the copy left out and carries, once its rows are final: the

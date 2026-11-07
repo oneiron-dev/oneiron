@@ -28,6 +28,13 @@ pub enum ExportReceiptSource {
 pub enum ReceiptSourceOmission {
     NotStored,
     CredentialRedaction,
+    /// An Owner's copy leaves the receipt home: its attempt read a row of
+    /// another member's personal mailbox the copy leaves out (fix list row
+    /// 15416).
+    MemberMailbox,
+    /// An Owner's copy leaves the receipt home: the rows its attempt read
+    /// are not all known (fix list row 15416).
+    SourceUnidentified,
 }
 /// Origin remains data on an untrusted archive, never a replay capability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -167,9 +174,12 @@ fn invalid() -> Error {
     Error::InvalidConfig("invalid archived pack receipt source".into())
 }
 
+/// The receipt sources `body` cites, each as the export reads it: an
+/// archived source first, then the native receipt as the snapshot judged it
+/// (`receipts`), else not stored.
 pub(crate) fn receipt_sources_for_body(
     body: &ExportBody,
-    receipts: &std::collections::BTreeMap<String, ReceiptRecord>,
+    receipts: &std::collections::BTreeMap<String, ExportReceiptSource>,
     archived: Option<&std::collections::BTreeMap<String, ExportReceiptSource>>,
 ) -> Result<Vec<ExportReceiptSource>> {
     task_receipt_refs_from_body(body)
@@ -177,11 +187,13 @@ pub(crate) fn receipt_sources_for_body(
         .map(|id| {
             // Imported history keeps its exact bound source. A coincident local
             // receipt ID cannot silently rewrite the archived claim's trace.
-            if let Some(source) = archived.and_then(|rows| rows.get(&id)) {
+            if let Some(source) = archived
+                .and_then(|rows| rows.get(&id))
+                .or_else(|| receipts.get(&id))
+            {
                 return Ok(source.clone());
             }
-            let record = receipts.get(&id);
-            ExportReceiptSource::from_record(id, record)
+            ExportReceiptSource::from_record(id, None)
         })
         .collect()
 }
