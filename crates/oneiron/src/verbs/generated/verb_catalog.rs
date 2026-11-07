@@ -245,6 +245,8 @@ pub enum AgentVerb {
     VaultSkillsRestoredefaults,
     VaultSkillHubsPut,
     VaultSkillHubsGet,
+    VaultSkillHubsClawhubSearch,
+    VaultSkillHubsClawhubImport,
     VaultSkillHubsPublishersAdmit,
     VaultSkillHubsPublishersRevoke,
     VaultSkillHubsRefsGet,
@@ -427,6 +429,7 @@ pub enum AgentVerb {
     VaultFilesSourcesDetach,
     VaultFilesSourcesList,
     VaultFilesSourcesFiles,
+    VaultFilesSourcesExclude,
     VaultResidenceMode,
     VaultResidenceOpen,
     VaultResidenceIndex,
@@ -562,6 +565,7 @@ pub enum AgentVerb {
     VaultPolicyRelayDecide,
     VaultConsentApproveOnce,
     VaultConnectorsCallsApproveOnce,
+    VaultConnectorsRepliesRetryFailed,
     VaultConsentDeny,
     VaultConsentCreateStandingGrant,
     VaultConsentCreateAutoWeaveGrant,
@@ -1562,6 +1566,8 @@ impl AgentVerb {
         Self::VaultSkillsRestoredefaults,
         Self::VaultSkillHubsPut,
         Self::VaultSkillHubsGet,
+        Self::VaultSkillHubsClawhubSearch,
+        Self::VaultSkillHubsClawhubImport,
         Self::VaultSkillHubsPublishersAdmit,
         Self::VaultSkillHubsPublishersRevoke,
         Self::VaultSkillHubsRefsGet,
@@ -1744,6 +1750,7 @@ impl AgentVerb {
         Self::VaultFilesSourcesDetach,
         Self::VaultFilesSourcesList,
         Self::VaultFilesSourcesFiles,
+        Self::VaultFilesSourcesExclude,
         Self::VaultResidenceMode,
         Self::VaultResidenceOpen,
         Self::VaultResidenceIndex,
@@ -1879,6 +1886,7 @@ impl AgentVerb {
         Self::VaultPolicyRelayDecide,
         Self::VaultConsentApproveOnce,
         Self::VaultConnectorsCallsApproveOnce,
+        Self::VaultConnectorsRepliesRetryFailed,
         Self::VaultConsentDeny,
         Self::VaultConsentCreateStandingGrant,
         Self::VaultConsentCreateAutoWeaveGrant,
@@ -2882,6 +2890,8 @@ impl AgentVerb {
             Self::VaultSkillsRestoredefaults => "vault.skills.restoreDefaults",
             Self::VaultSkillHubsPut => "vault.skill_hubs.put",
             Self::VaultSkillHubsGet => "vault.skill_hubs.get",
+            Self::VaultSkillHubsClawhubSearch => "vault.skill_hubs.clawhub.search",
+            Self::VaultSkillHubsClawhubImport => "vault.skill_hubs.clawhub.import",
             Self::VaultSkillHubsPublishersAdmit => "vault.skill_hubs.publishers.admit",
             Self::VaultSkillHubsPublishersRevoke => "vault.skill_hubs.publishers.revoke",
             Self::VaultSkillHubsRefsGet => "vault.skill_hubs.refs.get",
@@ -3074,6 +3084,7 @@ impl AgentVerb {
             Self::VaultFilesSourcesDetach => "vault.files.sources.detach",
             Self::VaultFilesSourcesList => "vault.files.sources.list",
             Self::VaultFilesSourcesFiles => "vault.files.sources.files",
+            Self::VaultFilesSourcesExclude => "vault.files.sources.exclude",
             Self::VaultResidenceMode => "vault.residence.mode",
             Self::VaultResidenceOpen => "vault.residence.open",
             Self::VaultResidenceIndex => "vault.residence.index",
@@ -3217,6 +3228,7 @@ impl AgentVerb {
             Self::VaultPolicyRelayDecide => "vault.policy.relay.decide",
             Self::VaultConsentApproveOnce => "vault.consent.approve_once",
             Self::VaultConnectorsCallsApproveOnce => "vault.connectors.calls.approve_once",
+            Self::VaultConnectorsRepliesRetryFailed => "vault.connectors.replies.retry_failed",
             Self::VaultConsentDeny => "vault.consent.deny",
             Self::VaultConsentCreateStandingGrant => "vault.consent.create_standing_grant",
             Self::VaultConsentCreateAutoWeaveGrant => "vault.consent.create_auto_weave_grant",
@@ -4239,6 +4251,8 @@ impl AgentVerb {
                 | Self::VaultSkillsRestoredefaults
                 | Self::VaultSkillHubsPut
                 | Self::VaultSkillHubsGet
+                | Self::VaultSkillHubsClawhubSearch
+                | Self::VaultSkillHubsClawhubImport
                 | Self::VaultSkillHubsPublishersAdmit
                 | Self::VaultSkillHubsPublishersRevoke
                 | Self::VaultSkillHubsRefsGet
@@ -4421,6 +4435,7 @@ impl AgentVerb {
                 | Self::VaultFilesSourcesDetach
                 | Self::VaultFilesSourcesList
                 | Self::VaultFilesSourcesFiles
+                | Self::VaultFilesSourcesExclude
                 | Self::VaultResidenceMode
                 | Self::VaultResidenceOpen
                 | Self::VaultResidenceIndex
@@ -4556,6 +4571,7 @@ impl AgentVerb {
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
                 | Self::VaultConnectorsCallsApproveOnce
+                | Self::VaultConnectorsRepliesRetryFailed
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentCreateAutoWeaveGrant
@@ -5585,6 +5601,8 @@ impl AgentVerb {
                 | Self::VaultSkillsRestoredefaults
                 | Self::VaultSkillHubsPut
                 | Self::VaultSkillHubsGet
+                | Self::VaultSkillHubsClawhubSearch
+                | Self::VaultSkillHubsClawhubImport
                 | Self::VaultSkillHubsPublishersAdmit
                 | Self::VaultSkillHubsPublishersRevoke
                 | Self::VaultSkillHubsRefsGet
@@ -5767,6 +5785,7 @@ impl AgentVerb {
                 | Self::VaultFilesSourcesDetach
                 | Self::VaultFilesSourcesList
                 | Self::VaultFilesSourcesFiles
+                | Self::VaultFilesSourcesExclude
                 | Self::VaultResidenceMode
                 | Self::VaultResidenceOpen
                 | Self::VaultResidenceIndex
@@ -5902,6 +5921,7 @@ impl AgentVerb {
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
                 | Self::VaultConnectorsCallsApproveOnce
+                | Self::VaultConnectorsRepliesRetryFailed
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentCreateAutoWeaveGrant
@@ -7085,6 +7105,8 @@ impl AgentVerb {
                 | Self::VaultSkillsRestoredefaults
                 | Self::VaultSkillHubsPut
                 | Self::VaultSkillHubsGet
+                | Self::VaultSkillHubsClawhubSearch
+                | Self::VaultSkillHubsClawhubImport
                 | Self::VaultSkillHubsPublishersAdmit
                 | Self::VaultSkillHubsPublishersRevoke
                 | Self::VaultSkillHubsRefsGet
@@ -7266,6 +7288,7 @@ impl AgentVerb {
                 | Self::VaultFilesSourcesDetach
                 | Self::VaultFilesSourcesList
                 | Self::VaultFilesSourcesFiles
+                | Self::VaultFilesSourcesExclude
                 | Self::VaultResidenceMode
                 | Self::VaultResidenceOpen
                 | Self::VaultResidenceIndex
@@ -7400,6 +7423,7 @@ impl AgentVerb {
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
                 | Self::VaultConnectorsCallsApproveOnce
+                | Self::VaultConnectorsRepliesRetryFailed
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentCreateAutoWeaveGrant
@@ -8212,6 +8236,7 @@ impl AgentVerb {
                 | Self::SelfInboxLater
                 | Self::VaultSkillsRestoredefaults
                 | Self::VaultSkillHubsPut
+                | Self::VaultSkillHubsClawhubImport
                 | Self::VaultSkillHubsPublishersAdmit
                 | Self::VaultSkillHubsPublishersRevoke
                 | Self::VaultSkillHubsRefsSet
@@ -8335,6 +8360,7 @@ impl AgentVerb {
                 | Self::VaultFilesSourcesAttach
                 | Self::VaultFilesSourcesRescan
                 | Self::VaultFilesSourcesDetach
+                | Self::VaultFilesSourcesExclude
                 | Self::VaultResidenceMode
                 | Self::VaultResidenceOpen
                 | Self::VaultResidencePrune
@@ -8424,6 +8450,7 @@ impl AgentVerb {
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
                 | Self::VaultConnectorsCallsApproveOnce
+                | Self::VaultConnectorsRepliesRetryFailed
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentCreateAutoWeaveGrant
@@ -9149,6 +9176,8 @@ impl AgentVerb {
             Self::VaultSkillsRestoredefaults => &["spec"],
             Self::VaultSkillHubsPut => &["spec"],
             Self::VaultSkillHubsGet => &["spec"],
+            Self::VaultSkillHubsClawhubSearch => &["spec"],
+            Self::VaultSkillHubsClawhubImport => &["spec"],
             Self::VaultSkillHubsPublishersAdmit => &["spec"],
             Self::VaultSkillHubsPublishersRevoke => &["spec"],
             Self::VaultSkillHubsRefsGet => &["spec"],
@@ -9331,6 +9360,7 @@ impl AgentVerb {
             Self::VaultFilesSourcesDetach => &["spec"],
             Self::VaultFilesSourcesList => &["spec"],
             Self::VaultFilesSourcesFiles => &["spec"],
+            Self::VaultFilesSourcesExclude => &["spec"],
             Self::VaultResidenceMode => &["spec"],
             Self::VaultResidenceOpen => &["spec"],
             Self::VaultResidenceIndex => &["spec"],
@@ -9466,6 +9496,7 @@ impl AgentVerb {
             Self::VaultPolicyRelayDecide => &["spec"],
             Self::VaultConsentApproveOnce => &["spec"],
             Self::VaultConnectorsCallsApproveOnce => &["spec"],
+            Self::VaultConnectorsRepliesRetryFailed => &["spec"],
             Self::VaultConsentDeny => &["spec"],
             Self::VaultConsentCreateStandingGrant => &["spec"],
             Self::VaultConsentCreateAutoWeaveGrant => &["spec"],
@@ -10467,6 +10498,8 @@ impl AgentVerb {
             Self::VaultSkillsRestoredefaults => &["spec"],
             Self::VaultSkillHubsPut => &["spec"],
             Self::VaultSkillHubsGet => &["spec"],
+            Self::VaultSkillHubsClawhubSearch => &["spec"],
+            Self::VaultSkillHubsClawhubImport => &["spec"],
             Self::VaultSkillHubsPublishersAdmit => &["spec"],
             Self::VaultSkillHubsPublishersRevoke => &["spec"],
             Self::VaultSkillHubsRefsGet => &["spec"],
@@ -10649,6 +10682,7 @@ impl AgentVerb {
             Self::VaultFilesSourcesDetach => &["spec"],
             Self::VaultFilesSourcesList => &["spec"],
             Self::VaultFilesSourcesFiles => &["spec"],
+            Self::VaultFilesSourcesExclude => &["spec"],
             Self::VaultResidenceMode => &["spec"],
             Self::VaultResidenceOpen => &["spec"],
             Self::VaultResidenceIndex => &["spec"],
@@ -10784,6 +10818,7 @@ impl AgentVerb {
             Self::VaultPolicyRelayDecide => &["spec"],
             Self::VaultConsentApproveOnce => &["spec"],
             Self::VaultConnectorsCallsApproveOnce => &["spec"],
+            Self::VaultConnectorsRepliesRetryFailed => &["spec"],
             Self::VaultConsentDeny => &["spec"],
             Self::VaultConsentCreateStandingGrant => &["spec"],
             Self::VaultConsentCreateAutoWeaveGrant => &["spec"],
@@ -12260,6 +12295,12 @@ impl AgentVerb {
                 "The owner registers or revises a hub source; hub trust never grants activation authority."
             }
             Self::VaultSkillHubsGet => "Reads one configured hub as the owner.",
+            Self::VaultSkillHubsClawhubSearch => {
+                "Queries a configured HTTP hub origin as a public ClawHub-compatible API; returned provider locators are not pinned, imported or admitted packages."
+            }
+            Self::VaultSkillHubsClawhubImport => {
+                "Downloads an owner-selected ClawHub ZIP or pinned public-GitHub subtree and imports the same checked bytes through native publisher, scan and fit doors; provider contentHash is not a native pin."
+            }
             Self::VaultSkillHubsPublishersAdmit => {
                 "The owner admits a foreign publisher to offer candidates from one configured hub, and nothing else."
             }
@@ -12798,6 +12839,9 @@ impl AgentVerb {
             Self::VaultFilesSourcesFiles => {
                 "The owner reads one Files source's ledger: each file's path, readiness (text or name only, and why), revision and dates."
             }
+            Self::VaultFilesSourcesExclude => {
+                "The owner replaces a Files source's filters: the include patterns it reads, and the paths the host never opens. Absent keeps today's list; a list, even an empty one, replaces it."
+            }
             Self::VaultResidenceMode => {
                 "Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive."
             }
@@ -13192,6 +13236,9 @@ impl AgentVerb {
             }
             Self::VaultConnectorsCallsApproveOnce => {
                 "The owner approves once exactly one held connector call, by its call ref and the approve-once digest its current ask names; no standing grant is created and nothing is sent."
+            }
+            Self::VaultConnectorsRepliesRetryFailed => {
+                "The owner returns one Failed connector reply job (Ambiguous, owner-act Fault) to the queue now as its queued successor; the Failed predecessor row and its kept result stay as history."
             }
             Self::VaultConsentDeny => {
                 "The owner denies exactly one engine-emitted effect digest and records the refusal without granting authority."
@@ -14493,10 +14540,10 @@ impl AgentVerb {
             }
             Self::ConnectorStatus => "One catalogued connector by name, removed ones included.",
             Self::ConnectorCall => {
-                "Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data."
+                "Calls a connector tool from the selected catalog or builtin source; omitted source keeps implicit name selection. Catalog calls retain the caller's own grant and gate. Replies are foreign data."
             }
             Self::ConnectorSchema => {
-                "One catalogued connector tool's approved input schema, as the caller's own grant resolves it."
+                "One connector tool's input schema for the selected catalog or builtin source; omitted source keeps implicit name selection. Catalog schemas use the caller's own governing grant and approved manifest."
             }
             Self::ConnectorCallStatus => {
                 "Where one connector.call stands, by the call_ref its held, pending_delivery or awaiting_input reply named: pending, the questions it waits on, or its settled reply. Only its caller and the vault's owner read it."

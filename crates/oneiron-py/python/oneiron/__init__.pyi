@@ -1544,12 +1544,19 @@ class Oneiron:
         def get(self, spec: Facade.SkillHubRequest) -> Facade.SkillHubRecord:
             """Reads one configured hub as the owner."""
         @property
+        def clawhub(self) -> "Oneiron._VaultSkillHubsClawhubVerbs": ...
+        @property
         def publishers(self) -> "Oneiron._VaultSkillHubsPublishersVerbs": ...
         @property
         def refs(self) -> "Oneiron._VaultSkillHubsRefsVerbs": ...
     class _VaultSkillHubsDefaultVerbs:
         def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.DefaultSkillHub:
             """Reads the first hub identity, configured mirror endpoint and pinned skill-root ref; owner hub and ref setters configure that source."""
+    class _VaultSkillHubsClawhubVerbs:
+        def search(self, spec: Facade.ClawHubSearchRequest) -> Facade.ClawHubSearchReply:
+            """Queries a configured HTTP hub origin as a public ClawHub-compatible API; returned provider locators are not pinned, imported or admitted packages."""
+        def import_(self, spec: Facade.ClawHubImportRequest) -> Facade.ClawHubImportReply:
+            """Downloads an owner-selected ClawHub ZIP or pinned public-GitHub subtree and imports the same checked bytes through native publisher, scan and fit doors; provider contentHash is not a native pin."""
     class _VaultSkillHubsPublishersVerbs:
         def admit(self, spec: Facade.SkillPublisherRequest) -> Facade.SkillPublisherAdmission:
             """The owner admits a foreign publisher to offer candidates from one configured hub, and nothing else."""
@@ -1682,6 +1689,8 @@ class Oneiron:
         @property
         def calls(self) -> "Oneiron._VaultConnectorsCallsVerbs": ...
         @property
+        def replies(self) -> "Oneiron._VaultConnectorsRepliesVerbs": ...
+        @property
         def read_grants(self) -> "Oneiron._VaultConnectorsReadGrantsVerbs": ...
         @property
         def web(self) -> "Oneiron._VaultConnectorsWebVerbs": ...
@@ -1715,6 +1724,9 @@ class Oneiron:
     class _VaultConnectorsCallsVerbs:
         def approve_once(self, spec: Facade.ConnectorCallApproveOnceRequest) -> Facade.ConsentActReceipt:
             """The owner approves once exactly one held connector call, by its call ref and the approve-once digest its current ask names; no standing grant is created and nothing is sent."""
+    class _VaultConnectorsRepliesVerbs:
+        def retry_failed(self, spec: Facade.ConnectorReplyRetryRequest) -> Facade.ConnectorReplyRetryView:
+            """The owner returns one Failed connector reply job (Ambiguous, owner-act Fault) to the queue now as its queued successor; the Failed predecessor row and its kept result stay as history."""
     class _VaultConnectorsReadGrantsVerbs:
         def grant(self, spec: Facade.ConnectorWitnessReadGrantRequest) -> Facade.ConnectorWitnessReadGranted:
             """The owner grants one agent its witness-read grant over a connector conversation again, by agent and conversation; a revoked grant is issued anew at its same id, a missing one is issued, and a repeat on an active grant changes nothing."""
@@ -2022,6 +2034,8 @@ class Oneiron:
             """The owner lists this install's Files world and every Files source, with each one's exclusions and ledger counts."""
         def files(self, spec: Facade.FilesSourceFilesRequest) -> Facade.FilesSourceFiles:
             """The owner reads one Files source's ledger: each file's path, readiness (text or name only, and why), revision and dates."""
+        def exclude(self, spec: Facade.FilesSourceExcludeRequest) -> Facade.FilesSourceExcludeAnswer:
+            """The owner replaces a Files source's filters: the include patterns it reads, and the paths the host never opens. Absent keeps today's list; a list, even an empty one, replaces it."""
         def convert(self, spec: Facade.FilesSourceConvertRequest) -> Facade.FilesSourceAttachAnswer:
             """The owner converts an attached notes folder on this host to Files, keeping its existing notes, history and links. The host rescans the folder into its Files world and returns the source and rescan report."""
     class _VaultResidenceVerbs:
@@ -2217,12 +2231,12 @@ class Oneiron:
     class _VaultRootsRequestsVerbs:
         def cancel(self, spec: Facade.RootRequestCancelRequest) -> Facade.OwnerWorkReceipt:
             """The owner cancels one root request from any surface he is signed in on, ids only; the target applies it whenever it syncs. The receipt says cancelled, or that the target answered it first, which stands."""
-        def create(self, spec: Facade.RootRequestCreateRequest) -> Facade.OwnerWorkReceipt:
+        def create(self, spec: Facade.RootRequestCreateRequest) -> Facade.OwnerWorkView:
             """The owner decides one root change (pin, activate, restore or anchor) for one linked install, ids only; that install makes it when it syncs. The receipt says recorded, awaiting a holder, or why nothing was."""
         def list(self, spec: Facade.EmptyRequest) -> list[Facade.PendingRootRequestView]:
             """The owner reads the root requests naming this install that have no result yet, each with its change and receipt, but those he cancelled or a newer request superseded. Ids only."""
     class _VaultOwnerWorkVerbs:
-        def get(self, spec: Facade.OwnerWorkGetRequest) -> Facade.OwnerWorkReceipt:
+        def get(self, spec: Facade.OwnerWorkGetRequest) -> Facade.OwnerWorkView:
             """The owner reads where one owner work request stands, by its signed entry: recorded and awaiting its holder, enacted, refused, cancelled or superseded, as this install's fold derives it."""
     class _VaultCleanupVerbs:
         def run(self, spec: Facade.CleanupRunRequest) -> Facade.CleanupRunView:
@@ -4218,9 +4232,9 @@ class Oneiron:
         def status(self, spec: Facade.ConnectorNameRequest) -> Facade.ConnectorView | None:
             """One catalogued connector by name, removed ones included."""
         def call(self, spec: Facade.ConnectorCallRequest) -> Facade.ActAnswer[Facade.ConnectorCallReply]:
-            """Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data."""
+            """Calls a connector tool from the selected catalog or builtin source; omitted source keeps implicit name selection. Catalog calls retain the caller's own grant and gate. Replies are foreign data."""
         def schema(self, spec: Facade.ConnectorSchemaRequest) -> Facade.ConnectorSchemaReply:
-            """One catalogued connector tool's approved input schema, as the caller's own grant resolves it."""
+            """One connector tool's input schema for the selected catalog or builtin source; omitted source keeps implicit name selection. Catalog schemas use the caller's own governing grant and approved manifest."""
         def call_status(self, spec: Facade.ConnectorCallStatusRequest) -> Facade.ConnectorCallStatus:
             """Where one connector.call stands, by the call_ref its held, pending_delivery or awaiting_input reply named: pending, the questions it waits on, or its settled reply. Only its caller and the vault's owner read it."""
         @property
