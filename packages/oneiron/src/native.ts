@@ -243,6 +243,13 @@ vaultWeaveLinkWrong(input: unknown): unknown
 vaultWeaveOwnerLinkWrong(input: unknown): unknown
 vaultWeaveItemWrong(input: unknown): unknown
 vaultWeaveOwnerItemWrong(input: unknown): unknown
+vaultWeaveAdminReport(input: unknown): unknown
+vaultWeaveAdminLens(input: unknown): unknown
+vaultWeaveAdminDigest(input: unknown): unknown
+vaultWeaveAdminLinkWrong(input: unknown): unknown
+vaultWeaveAdminItemWrong(input: unknown): unknown
+vaultStepUpPasskeysReset(input: unknown): unknown
+vaultStepUpTotpReset(input: unknown): unknown
 vaultWeaveEnqueue(input: unknown): unknown
 vaultWeaveSchedulesList(input: unknown): unknown
 vaultWeaveSchedulesPut(input: unknown): unknown
@@ -379,6 +386,7 @@ vaultMembersDelegate(input: unknown): unknown
 vaultMembersProjection(input: unknown): unknown
 vaultMembersAdd(input: unknown): unknown
 vaultMembersInvitationSlip(input: unknown): unknown
+vaultMembersInvitationCode(input: unknown): unknown
 vaultMembersChange(input: unknown): unknown
 vaultMembersRemove(input: unknown): unknown
 vaultMembersLeave(input: unknown): unknown
@@ -668,6 +676,7 @@ vaultSharesView(input: unknown): unknown
 hostCompact(input: unknown): unknown
 hostWake(input: unknown): unknown
 hostBudgetHit(input: unknown): unknown
+vaultHooksChecks(input: unknown): unknown
 vaultHooksReplay(input: unknown): unknown
 vaultHooksRegenDue(input: unknown): unknown
 vaultHooksRegenGet(input: unknown): unknown
@@ -1261,6 +1270,7 @@ vaultMailSourcesSyncStatus(input: unknown): unknown
 vaultMailInbox(input: unknown): unknown
 vaultMailThreadsRead(input: unknown): unknown
 vaultMailComplianceSearch(input: unknown): unknown
+vaultFilesSourcesConvert(input: unknown): unknown
 connectorAnswer(input: unknown): unknown
 selfBrowserOpen(input: unknown): unknown
 selfBrowserObserve(input: unknown): unknown

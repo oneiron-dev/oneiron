@@ -130,6 +130,20 @@ struct PairingPending {
     /// holder's OpenAI proxy is admitted under that owner (ARCH-0028).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     owner: Option<crate::EntityId>,
+    /// The pending invitation an owner's invitation pairing code binds
+    /// (FIX 8745): redeeming it binds that invitation to the redeeming key
+    /// and mints the invitee's slip for it, never an ordinary credential.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    invitation: Option<PendingInvitationLink>,
+}
+/// The invitation an invitation pairing code binds (FIX 8745): the shared
+/// vault, the invitee PERSON the code redeems for, and the invitation id.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PendingInvitationLink {
+    pub(crate) vault_id: u64,
+    pub(crate) invitee: crate::EntityId,
+    pub(crate) invitation: String,
 }
 /// The owner's approval a single-use machine link keeps (mesh PR1b C2): his
 /// act's owner, by, surface and kind, and his answer. Redemption fills the
