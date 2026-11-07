@@ -10,7 +10,7 @@ use crate::ports::{
 use crate::side_table::{self, HexId, Named, SideTable};
 use crate::store::Store;
 use crate::store::row_birth::RowBirth;
-use crate::vault::{LiveEntityRow, entity_revision, live_entity_row_in_txn};
+use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::provenance::made_by::MadeByClass;
 use crate::{EntityId, Vault};
@@ -44,6 +44,10 @@ pub(super) struct Head {
     /// (FIX 8942); `None` for a document carried from another machine,
     /// rebuilt or born of anything else.
     pub birth_frontier: Option<Vec<u8>>,
+    /// What a canonical restore left here (FIX 3553); `None` for a document
+    /// no restore rebuilt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restored: Option<super::succession::Restored>,
 }
 
 /// Pointer from an entity to its owning document, plus generation/pending
@@ -221,13 +225,7 @@ pub(super) fn persist_scanned(
     ENTITY_DOC_HEAD.put(store, txn, &HexId(*entity), h)?;
     // The stamp tokens its new changes name, for the hold check (FIX 11965).
     super::token_uses::record_token_uses_in_txn(store, txn, entity, doc, before)?;
-    // A commit that moves the live revision advances the vault's document-mutation
-    // head; a birth that restates its record's text moves no content (FIX 2860).
-    let restated = birth && h.birth_frontier == Some(doc.frontier());
-    let moved = entity_revision::capture_entity_document(store, txn, entity, &doc.doc, birth)?;
-    if let Some(revision) = moved.filter(|_| !restated) {
-        entity_revision::advance_document_mutation_head_in_txn(store, txn, entity, revision)?;
-    }
+    history::capture_document_revision_in_txn(store, txn, entity, h, doc, birth)?;
     if let Some(entity_type) = retag {
         crate::tagging::mark_on_publication_in_txn(vault, txn, entity, entity_type)?;
         crate::embed::mark_on_publication_in_txn(vault, txn, entity, entity_type)?;
@@ -445,6 +443,7 @@ impl Vault {
                 generation: 0,
                 pending: 0,
                 birth_frontier: Some(doc.frontier()),
+                restored: None,
             };
             persist(self, txn, entity, &mut h, &doc, None)?;
             // A MESSAGE's quotes taken of its atomic text are pinned at the
@@ -692,6 +691,43 @@ pub(crate) fn record_head_bytes(
     entity: &EntityId,
 ) -> Result<Option<Vec<u8>>> {
     ENTITY_DOC_HEAD.get_bytes(store, txn, &HexId(*entity))
+}
+
+/// A record's exact stored document head row (full key and bytes) and the
+/// document slot it names, read in `txn`; `None` without a head. For a
+/// legal-clone copy of the stored rows (LEGAL-HOLD-USE = B as a clone): the
+/// bytes are copied as stored, never re-encoded.
+pub(crate) fn record_head_row_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    entity: &EntityId,
+) -> Result<Option<(Vec<u8>, Vec<u8>, DocumentSlot)>> {
+    let key = HexId(*entity);
+    let Some(bytes) = ENTITY_DOC_HEAD.get_bytes(store, txn, &key)? else {
+        return Ok(None);
+    };
+    let Some(h) = ENTITY_DOC_HEAD.get(store, txn, &key)? else {
+        return Err(Error::CorruptedIndex("entity document head"));
+    };
+    let slot = DocumentSlot::from_hex(&h.document)?;
+    Ok(Some((ENTITY_DOC_HEAD.key_bytes(&key), bytes, slot)))
+}
+
+/// The full key of `entity`'s document head row.
+pub(crate) fn record_head_key(entity: &EntityId) -> Vec<u8> {
+    ENTITY_DOC_HEAD.key_bytes(&HexId(*entity))
+}
+
+/// The document slot an exact stored head row of `entity` names, decoded
+/// from its bytes as [`record_head_row_in_txn`] decodes them; for a
+/// legal-clone read of a head a checkpoint carries. A head that names
+/// another entity, or does not decode, is corrupt.
+pub(crate) fn record_head_slot(entity: &EntityId, bytes: &[u8]) -> Result<DocumentSlot> {
+    let head = ENTITY_DOC_HEAD.decode_value(bytes)?;
+    if head.entity != entity.to_hex() {
+        return Err(Error::CorruptedIndex("entity document head"));
+    }
+    DocumentSlot::from_hex(&head.document)
 }
 
 /// Read-only view for existing typed record readers; the durable row retains

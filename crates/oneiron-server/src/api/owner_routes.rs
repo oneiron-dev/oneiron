@@ -78,6 +78,7 @@ mod guest_routes;
 mod handoff_alarm_routes;
 mod harness_evaluation_routes;
 pub(super) mod history_routes;
+mod hook_check_routes;
 pub(super) mod house_routes;
 mod hub_table;
 mod inbox_routes;
@@ -190,6 +191,7 @@ fn owner_tables() -> OwnerTable {
         skill_judge_routes::owner_table(),
         wire_health_routes::owner_table(),
         handoff_alarm_routes::owner_table(),
+        hook_check_routes::owner_table(),
         space_posting_routes::owner_table(),
         vault_key_routes::owner_table(),
         recovery_kit_routes::owner_table(),
