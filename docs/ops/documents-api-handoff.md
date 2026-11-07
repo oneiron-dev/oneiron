@@ -252,3 +252,19 @@ tracked-change transaction (`crates/oneiron-docedit/vendor/stemma-engine`).
 Source: `crates/oneiron-docedit/src/contract/mod.rs` (the types and the op table) and
 `contract/run.rs` (the handlers and the refusal mapping). The recalculation port is
 `crates/oneiron-xlsx-formula/src/contract_port.rs`.
+
+
+### Native live deck export graphic settings (FIX 10653)
+
+`vault.artifacts.body.deck.export` accepts optional `graphics`, with the existing
+`svg_bytes`, `raster_bytes` and `raster_pixels` fields. The request passes the same
+`GraphicLimits` to the native export profile. The projector resolves the existing
+default once when the field is absent, then uses that value for both newly compiled
+live pictures and replaced picture payloads. This does not re-admit held media or
+unchanged retained pictures. The default-only internal export caller passes `None`.
+
+Explicit settings are part of the export key; even an explicit default is distinct
+from an omitted setting. With no setting, the old serialized profile/key fields,
+order and hash remain unchanged. Numeric defaults, profile-name gates, asset and
+package admission, actor/rights/secret checks, and land/propose/rebind ordering are
+unchanged. The generated SDK carries the optional request field.
