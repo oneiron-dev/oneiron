@@ -1052,6 +1052,10 @@ export class Oneiron {
         resolve: (input: Facade.InboxGroupResolveRequest): Facade.InboxGroupResolution => this.#call(() => this.#client.vaultInboxGroupsResolve(input) as Facade.InboxGroupResolution),
       }),
     },
+    proactivity: {
+      /** Reads a saved proactivity digest by its inbox source.result locator, or the latest, under the live owner's proof and native viewer screening. Any live owner may name any saved locator. */
+      digest: (input: Facade.ProactivityDigestRequest): Facade.ProactivityDigestView | null => this.#call(() => this.#client.vaultProactivityDigest(input) as Facade.ProactivityDigestView | null),
+    },
     skills: {
       /** Reads the bootstrap four and their actual resident source, lifecycle and receipts without seeding or restoring missing skills. */
       bootstrap: (input: Facade.EmptyRequest = {}): Facade.BootstrapSkillView[] => this.#call(() => this.#client.vaultSkillsBootstrap(input) as Facade.BootstrapSkillView[]),
@@ -1458,10 +1462,12 @@ export class Oneiron {
       delegate: (input: Facade.FederationDelegateRequest): Facade.FederationMemberGrant => this.#call(() => this.#client.vaultMembersDelegate(input) as Facade.FederationMemberGrant),
       /** Read a member's visible role grants, scopes, expiry and person/relationship through the caller's own scoped read; relationship labels confer no additional authority. */
       projection: (input: Facade.SharedMemberRequest): Facade.MemberProjection => this.#call(() => this.#client.vaultMembersProjection(input) as Facade.MemberProjection),
-      /** An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending. */
-      add: (input: Facade.SharedMemberAddRequest): Facade.SharedMemberInvited => this.#call(() => this.#client.vaultMembersAdd(input) as Facade.SharedMemberInvited),
-      /** An Admin mints a pending invitation's slip for the public key the invitee generated on their own device: a founding invitation's, or one whose slip was lost. */
+      /** An Admin invites a live person into a shared vault at a non-root role; they join when they accept. It names no key: the invitee binds a key of their own to the invitation. */
+      add: (input: Facade.SharedMemberAddRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersAdd(input) as Facade.SharedActExecutionReceipt),
+      /** The invitee binds their own pending invitation to the key of the independent human credential the request came on, and gets the invitation's slip: good only at that invitation's doors while it is pending and that key stays bound. */
       invitation_slip: (input: Facade.InvitationSlipRequest): Facade.InvitationSlip => this.#call(() => this.#client.vaultMembersInvitationSlip(input) as Facade.InvitationSlip),
+      /** The owner mints a single-use pairing code for a pending invitation, passed to the invitee by any channel; redeemed at the pairing door with the invitee's own key, it binds the invitation to that key. */
+      invitation_code: (input: Facade.InvitationCodeRequest): Facade.InvitationCode => this.#call(() => this.#client.vaultMembersInvitationCode(input) as Facade.InvitationCode),
       /** An Admin assigns another non-root role to a member who is not an Owner. */
       change: (input: Facade.SharedMemberRoleRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersChange(input) as Facade.SharedActExecutionReceipt),
       /** An Admin removes one member from a shared vault. */
@@ -2021,6 +2027,8 @@ export class Oneiron {
     secrets: {
       /** The owner lists value-free code-result secret lift proposals. With dismiss, one exact handle and occurrence is dismissed with a receipt first; secret and taint marks, body redaction and exports remain unchanged. */
       code_run_lifts: (input: Facade.CodeRunSecretLiftRequest): Facade.CodeRunSecretLiftStatus => this.#call(() => this.#client.vaultSecretsCodeRunLifts(input) as Facade.CodeRunSecretLiftStatus),
+      /** The owner lists value-free positive MESSAGE-linked secret lift proposals in one room overlay, under participant, historical sight and private-thread visibility. Absence is not clearance; no body, preview or dismissal is returned. */
+      code_run_room_lifts: (input: Facade.CodeRunRoomSecretLiftRequest): Facade.CodeRunSecretLiftProposalView[] => this.#call(() => this.#client.vaultSecretsCodeRunRoomLifts(input) as Facade.CodeRunSecretLiftProposalView[]),
       /** The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued. */
       lift_history: (input: Facade.SecretLiftRequest): Facade.SecretLiftStatus => this.#call(() => this.#client.vaultSecretsLiftHistory(input) as Facade.SecretLiftStatus),
       /** The owner registers a secret, its value as base64 by his explicit choice; a portable one becomes a custody register request its holder enacts for the installs he permits. No call receipt keeps the call. */
