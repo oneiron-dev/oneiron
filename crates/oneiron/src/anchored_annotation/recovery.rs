@@ -59,6 +59,31 @@ struct UnattachedRow {
     detached_at: u64,
 }
 
+/// Clears, in the owner's discard of a world copy, the words each comment on
+/// `artifact`'s Unattached list keeps of the spot it was anchored on (FIX
+/// 14534, Engine 11-06 08:34 call 4 = A): that quote is the artifact's own
+/// text, and the artifact left this machine with the discarded world. Each
+/// row stays, with its versions and times, so the list still names the
+/// comment; only its snapshot goes.
+pub(crate) fn discard_snapshot_payload_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    artifact: &EntityId,
+) -> Result<()> {
+    let mut cleared = Vec::new();
+    for (key, mut row) in UNATTACHED.scan_from(store, txn, artifact.as_bytes())? {
+        if key.0 != *artifact || row.snapshot.is_none() {
+            continue;
+        }
+        row.snapshot = None;
+        cleared.push((key, row));
+    }
+    for (key, row) in cleared {
+        UNATTACHED.put(store, txn, &key, &row)?;
+    }
+    Ok(())
+}
+
 /// One comment on the Unattached list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]

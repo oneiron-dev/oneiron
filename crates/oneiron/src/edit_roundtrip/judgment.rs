@@ -23,7 +23,12 @@ use oneiron_docedit::xlsx_body::{XlsxChange, XlsxValue, project_xlsx, read_xlsx_
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
+use std::num::NonZeroUsize;
 use std::time::Instant;
+
+use oneiron_docedit::resource::Resources;
+
+mod batches;
 
 /// One answer's target and its decision. `value` is the cell the decision's
 /// answer writes; `None` is an abstention, which writes nothing and is not
@@ -69,7 +74,7 @@ pub struct SheetAnswerBundle {
     pub sheet: String,
     pub range: RangeRef,
     pub answers: Vec<SheetCellAnswer>,
-    /// Holder-selected run cap; the manifest vault and scoped rows can only narrow it.
+    /// Maximum edits per write batch; vault and scoped rows can only narrow it.
     #[serde(default)]
     pub max_count_override: Option<u64>,
     /// A sheet-row ask's read columns; a folder column reads its files.
@@ -166,11 +171,28 @@ impl Vault {
         bundle: SheetAnswerBundle,
         run_ref: &str,
     ) -> Result<EditOutcome> {
+        self.propose_sheet_answers_with_resources(
+            artifact_id,
+            session,
+            bundle,
+            run_ref,
+            &crate::office_body::document_resources(),
+        )
+    }
+
+    fn propose_sheet_answers_with_resources<S: EditSession>(
+        &self,
+        artifact_id: &EntityId,
+        session: &S,
+        bundle: SheetAnswerBundle,
+        run_ref: &str,
+        resources: &Resources,
+    ) -> Result<EditOutcome> {
         let ops = bundle.ops()?;
         let rtxn = self.store.env.read_txn()?;
         let policy = crate::gate::resolve_policy_manifest(&self.store, &rtxn)?;
-        let cap = policy
-            .sheet_answer_limit(
+        let batch_size = policy
+            .sheet_answer_batch_size(
                 &artifact_id.to_hex(),
                 &bundle.sheet,
                 bundle.max_count_override,
@@ -178,12 +200,16 @@ impl Vault {
             .ok_or(Error::Artifact(ArtifactError::InvalidEditManifest(
                 "typed answer count policy unavailable",
             )))?;
-        if u64::try_from(bundle.answers.len()).unwrap_or(u64::MAX) > cap {
-            return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
-                "typed answer count exceeds policy",
-            )));
-        }
+        let batch_size = NonZeroUsize::new(usize::try_from(batch_size).unwrap_or(usize::MAX))
+            .ok_or(Error::Artifact(ArtifactError::InvalidEditManifest(
+                "typed answer count policy unavailable",
+            )))?;
         drop(rtxn);
+        let session = batches::BatchedSheetSession {
+            session,
+            batch_size,
+            resources,
+        };
         let head = self
             .blob_artifact_head(artifact_id)?
             .ok_or(Error::EntityNotFound)?;
@@ -195,7 +221,7 @@ impl Vault {
         verify_sheet_answer_bytes(&bundle, Some(&source), None)?;
         let outcome = self.propose_blob_artifact_edit(
             artifact_id,
-            session,
+            &session,
             &EditPlan::new(ops.clone()),
             run_ref,
         )?;
@@ -471,7 +497,7 @@ impl Vault {
         // Keep completed decisions even if traversal used its share. Staging
         // retains its existing resource checks, not an already-expired clock.
         run.proposal =
-            self.stage_sheet_answers(artifact, bundle, ask.run_ref, version, frontier)?;
+            self.stage_sheet_answers(artifact, bundle, ask.run_ref, version, frontier, None)?;
         Ok(run)
     }
 
@@ -486,14 +512,19 @@ impl Vault {
         run_ref: &str,
         version: u64,
         frontier: [u8; 32],
+        deadline: Option<Instant>,
     ) -> Result<Option<EditProposal>> {
         if bundle.answers.iter().all(|answer| answer.value.is_none()) {
             return Ok(None);
         }
+        let resources = crate::office_body::document_resources_until(deadline);
         let session = NativeCellSession {
             limits: self.docedit_package_limits()?,
+            resources: resources.clone(),
         };
-        match self.propose_sheet_answers(artifact, &session, bundle, run_ref)? {
+        match self
+            .propose_sheet_answers_with_resources(artifact, &session, bundle, run_ref, &resources)?
+        {
             EditOutcome::Proposed(proposal) => {
                 if proposal.base_version != Some(version) || proposal.base_content_hash != frontier
                 {
@@ -521,6 +552,7 @@ impl EditProposal {
 /// recalculate in process. No host recalc stands behind it.
 struct NativeCellSession {
     limits: Limits,
+    resources: Resources,
 }
 
 impl EditSession for NativeCellSession {
@@ -530,12 +562,7 @@ impl EditSession for NativeCellSession {
                 "typed answers could not be written to the workbook copy",
             ))
         };
-        let book = read_xlsx_cells(
-            &doc.bytes,
-            self.limits,
-            &crate::office_body::document_resources(),
-        )
-        .map_err(|error| {
+        let book = read_xlsx_cells(&doc.bytes, self.limits, &self.resources).map_err(|error| {
             // A resource refusal is the engine's error (FIX 10587), never a failed write.
             if let Some(refusal) = error.resource() {
                 crate::office_body::document_refused(refusal)
@@ -582,22 +609,16 @@ impl EditSession for NativeCellSession {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
-        let bytes = project_xlsx(
-            &doc.bytes,
-            &changes,
-            self.limits,
-            &crate::office_body::document_resources(),
-            None,
-        )
-        .map_err(|error| {
-            // A resource refusal is the engine's error (FIX 10587), never a failed write.
-            if let Some(refusal) = error.resource() {
-                crate::office_body::document_refused(refusal)
-            } else {
-                failed()
-            }
-        })?
-        .bytes;
+        let bytes = project_xlsx(&doc.bytes, &changes, self.limits, &self.resources, None)
+            .map_err(|error| {
+                // A resource refusal is the engine's error (FIX 10587), never a failed write.
+                if let Some(refusal) = error.resource() {
+                    crate::office_body::document_refused(refusal)
+                } else {
+                    failed()
+                }
+            })?
+            .bytes;
         Ok(AppliedEdit {
             bytes,
             applied_ops: plan.ops.clone(),
