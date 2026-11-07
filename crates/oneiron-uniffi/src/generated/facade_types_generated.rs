@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1272 facade rows, 4609 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1224.
+// UniFFI census: 1274 facade rows, 4615 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1226.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -17224,6 +17224,8 @@ pub enum PackKind {
     Connector,
     #[serde(rename = "agent")]
     Agent,
+    #[serde(rename = "model")]
+    Model,
 }
 
 /// `oneiron::skill_hub::pack_catalog::manifest::PackAdapter`.
@@ -52357,6 +52359,113 @@ pub struct WebConnectorSetting {
     pub provider: WebProvider,
     #[serde(rename = "key")]
     pub key: WebProviderKey,
+}
+
+/// `oneiron_store::settings::model_versioning::ModelStackPreference`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "mode")]
+pub enum ModelStackPreference {
+    #[serde(rename = "auto_upgrade")]
+    AutoUpgrade,
+    #[serde(rename = "pinned")]
+    Pinned {
+        #[serde(rename = "stack")]
+        stack: String,
+    },
+}
+
+/// `oneiron::llm::model_pack::ModelPackReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ModelPackReceipt {
+    #[serde(rename = "pack")]
+    pub pack: String,
+    #[serde(rename = "version")]
+    pub version: String,
+    #[serde(rename = "season")]
+    pub season: String,
+    #[serde(rename = "source_id")]
+    pub source_id: String,
+    #[serde(rename = "content_hash")]
+    pub content_hash: String,
+    #[serde(rename = "hub_id")]
+    pub hub_id: String,
+    #[serde(rename = "hub_ref")]
+    pub hub_ref: String,
+    #[serde(rename = "pin_type")]
+    pub pin_type: String,
+    #[serde(rename = "pin_value")]
+    pub pin_value: String,
+    #[serde(rename = "publisher")]
+    pub publisher: String,
+}
+
+/// `oneiron_store::settings::model_versioning::ModelStackDeprecationStage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ModelStackDeprecationStage {
+    #[serde(rename = "scheduled")]
+    Scheduled,
+    #[serde(rename = "countdown")]
+    Countdown,
+    #[serde(rename = "retired")]
+    Retired,
+}
+
+/// `oneiron_store::settings::model_versioning::ModelStackDeprecationStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ModelStackDeprecationStatus {
+    #[serde(rename = "stage")]
+    pub stage: ModelStackDeprecationStage,
+    #[serde(rename = "notice_starts_epoch_day")]
+    pub notice_starts_epoch_day: u32,
+    #[serde(rename = "retires_epoch_day")]
+    pub retires_epoch_day: u32,
+    #[serde(
+        rename = "days_until_notice",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub days_until_notice: Option<u32>,
+    #[serde(
+        rename = "days_until_retirement",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub days_until_retirement: Option<u32>,
+}
+
+/// `oneiron::llm::model_pack::ModelPackView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ModelPackView {
+    #[serde(rename = "receipt")]
+    pub receipt: ModelPackReceipt,
+    #[serde(rename = "released_epoch_day")]
+    pub released_epoch_day: u32,
+    #[serde(rename = "roles")]
+    pub roles: Vec<String>,
+    #[serde(rename = "successor", default, skip_serializing_if = "Option::is_none")]
+    pub successor: Option<String>,
+    #[serde(
+        rename = "retirement",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub retirement: Option<ModelStackDeprecationStatus>,
+}
+
+/// `oneiron::llm::model_pack::ModelPackSetting`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ModelPackSetting {
+    #[serde(rename = "preference")]
+    pub preference: ModelStackPreference,
+    #[serde(rename = "active", default, skip_serializing_if = "Option::is_none")]
+    pub active: Option<ModelPackView>,
+    #[serde(rename = "previous", default, skip_serializing_if = "Option::is_none")]
+    pub previous: Option<ModelPackReceipt>,
+    #[serde(rename = "installed")]
+    pub installed: Vec<ModelPackView>,
 }
 
 /// `oneiron_store::settings::web_connector::WebConnectorUsageRead`.

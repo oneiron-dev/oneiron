@@ -526,6 +526,13 @@ side_tables! {
     /// Revision-pinned description of one registered model, read by seat routing. Key:
     /// string(model id).
     LLM_MODEL_DESCRIPTION: VaultMeta b"llm:model_description:v1:" LegacyJson Authored [accepts: crate::store::seat_model_description::llm_model_description_accepts_masked];
+    /// The model pack the vault followed at its last pack change and the one it followed
+    /// before, each as its install receipt named it: what a way back returns to (FIX 5367,
+    /// FIX 5369). Key: ().
+    LLM_MODEL_PACK_ACTIVE: VaultMeta b"llm:model_pack_active:v1" Named;
+    /// The owner's model pack preference: follow the latest pack, or pin a season (FIX 5367).
+    /// Key: ().
+    LLM_MODEL_PACK_PREFERENCE: VaultMeta b"llm:model_pack_preference:v1" Named;
     /// Held-out model trial, billed evidence and switch offer. Key: question id16 + trial id16.
     LLM_MODEL_TRIAL: VaultMeta b"llm:model_trial:v1:" Named;
     /// The loaded native Oneironer bundle's receipt at its bind: stack and

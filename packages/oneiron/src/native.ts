@@ -936,6 +936,8 @@ vaultModelsManifestRead(input: unknown): unknown
 vaultModelsManifestReplace(input: unknown): unknown
 vaultSettingsWebConnector(input: unknown): unknown
 vaultSettingsWebConnectorReplace(input: unknown): unknown
+vaultSettingsModelPack(input: unknown): unknown
+vaultSettingsModelPackReplace(input: unknown): unknown
 vaultConnectorsWebUsage(input: unknown): unknown
 vaultModelsOneironerBind(input: unknown): unknown
 vaultModelsRoutesRead(input: unknown): unknown

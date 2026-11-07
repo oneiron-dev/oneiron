@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1272 facade rows, 4609 declarations.
-Inputs: 1201 of 1272 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1101 of 1272 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1274 facade rows, 4616 declarations.
+Inputs: 1203 of 1274 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1103 of 1274 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -5577,7 +5577,7 @@ class HubImportRequest(TypedDict):
     hub_ref: HubRef
     publisher: str
 PackPutOutcome = Literal["installed", "candidate", "blocked"]
-PackKind = Literal["capability", "connector", "agent"]
+PackKind = Literal["capability", "connector", "agent", "model"]
 class PackAdapterBuiltin(TypedDict):
     builtin: str
 class PackAdapterScript(TypedDict):
@@ -16656,6 +16656,42 @@ WebProviderKey = WebProviderKeyBackend | WebProviderKeySecret | WebProviderKeyHu
 class WebConnectorSetting(TypedDict):
     provider: WebProvider
     key: WebProviderKey
+ModelStackId = str
+class ModelStackPreferenceAutoUpgrade(TypedDict):
+    mode: Literal["auto_upgrade"]
+class ModelStackPreferencePinned(TypedDict):
+    mode: Literal["pinned"]
+    stack: ModelStackId
+ModelStackPreference = ModelStackPreferenceAutoUpgrade | ModelStackPreferencePinned
+class ModelPackReceipt(TypedDict):
+    pack: str
+    version: str
+    season: ModelStackId
+    source_id: str
+    content_hash: str
+    hub_id: str
+    hub_ref: str
+    pin_type: str
+    pin_value: str
+    publisher: str
+ModelStackDeprecationStage = Literal["scheduled", "countdown", "retired"]
+class ModelStackDeprecationStatus(TypedDict):
+    stage: ModelStackDeprecationStage
+    notice_starts_epoch_day: int
+    retires_epoch_day: int
+    days_until_notice: NotRequired[int | None]
+    days_until_retirement: NotRequired[int | None]
+class ModelPackView(TypedDict):
+    receipt: ModelPackReceipt
+    released_epoch_day: int
+    roles: list[str]
+    successor: NotRequired[str | None]
+    retirement: NotRequired[ModelStackDeprecationStatus | None]
+class ModelPackSetting(TypedDict):
+    preference: ModelStackPreference
+    active: NotRequired[ModelPackView | None]
+    previous: NotRequired[ModelPackReceipt | None]
+    installed: list[ModelPackView]
 class WebConnectorUsageRead(TypedDict):
     since_ms: NotRequired[int | None]
     limit: NotRequired[int | None]

@@ -2395,6 +2395,8 @@ class Oneiron:
         def inference_defaults(self) -> "Oneiron._VaultSettingsInferenceDefaultsVerbs": ...
         @property
         def web_connector(self) -> "Oneiron._VaultSettingsWebConnectorVerbs": ...
+        @property
+        def model_pack(self) -> "Oneiron._VaultSettingsModelPackVerbs": ...
     class _VaultSettingsLearningVerbs:
         def __call__(self, spec: Facade.LearningSettingsRequest) -> Facade.LearningSettingsView:
             """The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type."""
@@ -2415,6 +2417,11 @@ class Oneiron:
             """Reads the owner's web connector switch: which provider serves connector.web.search and fetch, on the backend key, the owner's own secret or a hub connector. Unset reads as Tavily on the backend key."""
         def replace(self, spec: Facade.WebConnectorSetting) -> Facade.WebConnectorSetting:
             """Replaces the owner's web connector switch under the owner proof. Only Tavily runs on the backend key; other providers run on the owner's own secret (effector connector:web) or a hub connector."""
+    class _VaultSettingsModelPackVerbs:
+        def __call__(self, spec: Facade.EmptyRequest) -> Facade.ModelPackSetting:
+            """Reads the owner's model pack setting: follow the latest pack (the default) or a pinned season, the pack it selects now, the one followed before the last change, and every installed model pack."""
+        def replace(self, spec: Facade.ModelStackPreference) -> Facade.ModelPackSetting:
+            """Replaces the owner's model pack preference under the owner proof: auto_upgrade follows the latest installed pack; pinned names a season an installed, still-served pack carries."""
     class _VaultSecretsVerbs:
         def code_run_lifts(self, spec: Facade.CodeRunSecretLiftRequest) -> Facade.CodeRunSecretLiftStatus:
             """The owner lists value-free code-result secret lift proposals. With dismiss, one exact handle and occurrence is dismissed with a receipt first; secret and taint marks, body redaction and exports remain unchanged."""

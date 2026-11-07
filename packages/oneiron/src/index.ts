@@ -2049,6 +2049,11 @@ export class Oneiron {
         /** Replaces the owner's web connector switch under the owner proof. Only Tavily runs on the backend key; other providers run on the owner's own secret (effector connector:web) or a hub connector. */
         replace: (input: Facade.WebConnectorSetting): Facade.WebConnectorSetting => this.#call(() => this.#client.vaultSettingsWebConnectorReplace(input) as Facade.WebConnectorSetting),
       }),
+      /** Reads the owner's model pack setting: follow the latest pack (the default) or a pinned season, the pack it selects now, the one followed before the last change, and every installed model pack. */
+      model_pack: Object.assign((input: Facade.EmptyRequest): Facade.ModelPackSetting => this.#call(() => this.#client.vaultSettingsModelPack(input) as Facade.ModelPackSetting), {
+        /** Replaces the owner's model pack preference under the owner proof: auto_upgrade follows the latest installed pack; pinned names a season an installed, still-served pack carries. */
+        replace: (input: Facade.ModelStackPreference): Facade.ModelPackSetting => this.#call(() => this.#client.vaultSettingsModelPackReplace(input) as Facade.ModelPackSetting),
+      }),
     },
     secrets: {
       /** The owner lists value-free code-result secret lift proposals. With dismiss, one exact handle and occurrence is dismissed with a receipt first; secret and taint marks, body redaction and exports remain unchanged. */

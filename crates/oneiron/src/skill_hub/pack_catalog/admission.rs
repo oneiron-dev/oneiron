@@ -417,6 +417,11 @@ impl Vault {
             PACK_PREDICATE.put(&self.store, txn, predicate, &source.manifest.name)?;
         }
         PACK_CANDIDATE.delete(&self.store, txn, &candidate_key(&source))?;
+        let model_pack_before = if receipt.kind == PackKind::Model {
+            self.model_pack_in_effect_in_txn(txn)?
+        } else {
+            None
+        };
         PACK_INSTALL.put(&self.store, txn, &source.manifest.name, &receipt)?;
         if model_catalog {
             self.activate_installed_model_catalog_in_txn(
@@ -424,6 +429,11 @@ impl Vault {
                 prior_catalog.as_ref(),
                 prior_source,
             )?;
+        }
+        // A model pack's install may change the pack the vault follows; the
+        // change keeps the receipt it replaced (FIX 5367).
+        if receipt.kind == PackKind::Model {
+            self.note_active_model_pack_in_txn(txn, model_pack_before)?;
         }
         if let Some(old) = prior
             && old.content_hash != receipt.content_hash

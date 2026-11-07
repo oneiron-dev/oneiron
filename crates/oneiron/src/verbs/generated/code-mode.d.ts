@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1324 code-mode rows (1283 host rows, 41 run rows), 4667 declarations.
-// Replies: 1132 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1326 code-mode rows (1285 host rows, 41 run rows), 4674 declarations.
+// Replies: 1134 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -1104,7 +1104,7 @@ declare namespace Sdk {
   type HubRefSetRequest = { hub_ref: HubRef; sync_policy: HubSyncPolicy };
   type HubImportRequest = { hub_ref: HubRef; publisher: string };
   type PackPutOutcome = "installed" | "candidate" | "blocked";
-  type PackKind = "capability" | "connector" | "agent";
+  type PackKind = "capability" | "connector" | "agent" | "model";
   type PackAdapter = { builtin: string } | { script: string };
   type PackInstallStatus = "active" | "candidate";
   type PackCandidateReason = "rules_hit" | "code_auto_install_off" | "qualification_required" | "advisories" | "needs_world";
@@ -3305,6 +3305,13 @@ declare namespace Sdk {
   type WebProvider = "tavily" | "exa" | "brave" | "tinyfish" | "context_dev" | "octen";
   type WebProviderKey = { kind: "backend" } | { kind: "secret"; name: string } | { kind: "hub"; connector: string };
   type WebConnectorSetting = { provider: WebProvider; key: WebProviderKey };
+  type ModelStackId = string;
+  type ModelStackPreference = { mode: "auto_upgrade" } | { mode: "pinned"; stack: ModelStackId };
+  type ModelPackReceipt = { pack: string; version: string; season: ModelStackId; source_id: string; content_hash: string; hub_id: string; hub_ref: string; pin_type: string; pin_value: string; publisher: string };
+  type ModelStackDeprecationStage = "scheduled" | "countdown" | "retired";
+  type ModelStackDeprecationStatus = { stage: ModelStackDeprecationStage; notice_starts_epoch_day: number; retires_epoch_day: number; days_until_notice?: number | null; days_until_retirement?: number | null };
+  type ModelPackView = { receipt: ModelPackReceipt; released_epoch_day: number; roles: string[]; successor?: string | null; retirement?: ModelStackDeprecationStatus | null };
+  type ModelPackSetting = { preference: ModelStackPreference; active?: ModelPackView | null; previous?: ModelPackReceipt | null; installed: ModelPackView[] };
   type WebConnectorUsageRead = { since_ms?: number | null; limit?: number | null };
   type WebTool = "search" | "fetch";
   type WebKeySource = "backend" | "user" | "hub";
@@ -7507,6 +7514,11 @@ declare const vault: Sdk.VaultHost & {
       clear(input: Sdk.LearningSettingClear): Promise<Sdk.LearningSettingsView | StoredResult>;
       /** The owner lays one seed or pin on a learned setting at the vault, a project or a task type, replacing the row of the same key, mode and scope. */
       put(input: Sdk.LearningSettingPut): Promise<Sdk.LearningSettingsView | StoredResult>;
+    };
+    /** Reads the owner's model pack setting: follow the latest pack (the default) or a pinned season, the pack it selects now, the one followed before the last change, and every installed model pack. */
+    model_pack: ((input: Sdk.EmptyRequest) => Promise<Sdk.ModelPackSetting | StoredResult>) & {
+      /** Replaces the owner's model pack preference under the owner proof: auto_upgrade follows the latest installed pack; pinned names a season an installed, still-served pack carries. */
+      replace(input: Sdk.ModelStackPreference): Promise<Sdk.ModelPackSetting | StoredResult>;
     };
     wake_policy: {
       /** The owner sets the dreamer's wake policy: the app's dreamer.wake_policy.set action, run as the caller under the owner's proof. */
