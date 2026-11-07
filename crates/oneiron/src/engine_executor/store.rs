@@ -1,7 +1,9 @@
 //! Output envelope and path helpers for the routed raw-output store.
 
+mod agent_verb;
 mod reply_evidence;
 mod script_context;
+pub(crate) use agent_verb::{store_agent_verb_write_answer, write_receipt_result_output_path};
 pub(super) use script_context::load_script_context;
 pub(crate) use script_context::mask_known_text;
 

@@ -13,7 +13,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ingest::{ImportAudience, ImportAudienceState};
 use crate::llm::decision::AskTo;
-use crate::model_decision::{DecisionAnswer, DecisionQuestion, HolderKind};
+use crate::model_decision::{DecisionAnswer, DecisionQuestion};
 use crate::store::decision_ask_role::AskRole;
 
 use super::tier_classification::{PREDICATE_DISCLOSURE_IMPORT_AUDIENCE, read_stored_claim_body};
@@ -83,8 +83,9 @@ impl Vault {
     /// Settles one asked topic once the owner answered its ask, once: the answer lands
     /// as the topic's `disclosure.import_audience` CLAIM and the cluster is marked
     /// settled, in one transaction. The ask must still be the frozen one (question,
-    /// contract, owner target and the topic as its correlation), answered by a person as
-    /// the owner, with one of the frozen options. An answer whose answerer was erased
+    /// contract, owner target and the topic as its correlation), answered in the Owner role
+    /// the decision-ask door authenticated, by a person or an agent holding it, with one
+    /// of the frozen options. An answer whose answerer was erased
     /// since settles nothing: that authority ended with the erase. The answer stays on
     /// its ask, and the owner is asked again ([`Self::reask_import_audience`]). `None`
     /// while the topic is clear or its ask is unanswered; a settled topic returns its
@@ -117,7 +118,9 @@ impl Vault {
             let Some(answer) = ask.answer else {
                 return Ok(None);
             };
-            if answer.role != AskRole::Owner || answer.kind != HolderKind::Person {
+            // The decision-ask door authenticated the Owner role: a person or
+            // an agent holding it answers as the owner (FIX 9788).
+            if answer.role != AskRole::Owner {
                 return Err(invalid());
             }
             // An erased answerer's authority ended with its erase: its answer
