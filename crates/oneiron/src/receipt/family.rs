@@ -403,6 +403,16 @@ pub(super) fn collect_receipt_records(
     {
         records.extend(identity_topology_receipts(vault, &rtxn, query)?);
     }
+    // FIX 7817: the SIXTH Gate projector: each topology-audit candidate's
+    // post-hoc review, the rung that replaces the pre-check for reversible
+    // automatic classes. Same kind, own store, own field class, as the
+    // skill-edit verdicts; local review evidence from its own three tables,
+    // read in the shared txn.
+    if query.includes_kind(ReceiptKind::Gate) {
+        records.extend(crate::identity_topology::topology_audit_receipts(
+            vault, &rtxn, query,
+        )?);
+    }
     if query.includes_kind(ReceiptKind::ScopedRead) {
         records.extend(access_grant_receipts(vault, &rtxn, query)?);
         records.extend(access_grant_owner_act_receipts(vault, &rtxn, query)?);
