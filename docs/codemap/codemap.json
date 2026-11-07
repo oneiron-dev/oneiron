@@ -17118,6 +17118,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/dispatcher/agent_verb/stored_answer.rs",
+     "purpose": "The write receipt owns the durable descriptor; the answer only lends it",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -18741,7 +18751,7 @@
      "path": "src/code_run/storage/routing/bodies.rs",
      "purpose": "A session-bound run's result bodies: the sinks they stream through, the routed rows that publish one and the…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 16
      }
     },
     {
@@ -18771,7 +18781,7 @@
      "path": "src/code_run/storage/routing/replay.rs",
      "purpose": "A bound session's replay append, on the run's one route, in one routed transaction: the record compared…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -18898,9 +18908,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/code_run/storage/wait_delivery/resume.rs",
-     "purpose": "Resumed wait checkpoints and their generation-bound row retirement",
+     "purpose": "Resumed wait checkpoints and their generation-bound row retirement: the commit of a run resumed from a…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -36461,7 +36471,17 @@
      "path": "src/engine_executor/store.rs",
      "purpose": "Output envelope and path helpers for the routed raw-output store",
      "surface": {
-      "crate-vis": 64
+      "crate-vis": 65
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/store/agent_verb.rs",
+     "purpose": "A write receipt's large verb answer, streamed before its replay row",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -93427,7 +93447,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 222,
+     "files": 223,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93749,7 +93769,7 @@
      "purpose": "Embedding pipeline root: attach, decide, and reconcile under one budget dial"
     },
     "engine_executor": {
-     "files": 57,
+     "files": 58,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94766,7 +94786,7 @@
    },
    "over_bar": 187,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6704,
+   "source_files": 6706,
    "test_files": 895
   },
   "oneiron-android": {
