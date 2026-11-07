@@ -3476,6 +3476,11 @@ export_facade! {
     let output = client.vault_code_model_heal_count(&input)?;
     crate::codec::lift_record("vault.code.model_heal_count", &output)
 };
+"vault.code.corrections" => fn vault_code_corrections(&self, input: CodeRunCorrectionsRequest) -> CodeRunCorrectionsView = |client| {
+    let input: oneiron::memory::code_run_doors::CodeRunCorrectionsRequest = crate::codec::lower_record("vault.code.corrections", input)?;
+    let output = client.vault_code_corrections(&input)?;
+    crate::codec::lift_record("vault.code.corrections", &output)
+};
 "vault.code.type_diagnostics" => fn vault_code_type_diagnostics(&self, input: CodeRunTypeDiagnosticsRequest) -> Option<ProgramStepFeedbackRelease> = |client| {
     let input: oneiron::memory::code_run_doors::CodeRunTypeDiagnosticsRequest = crate::codec::lower_record("vault.code.type_diagnostics", input)?;
     let output = client.vault_code_type_diagnostics(&input)?;
@@ -4205,6 +4210,21 @@ export_facade! {
     let input: oneiron::task_verb::sdk::TaskAnswerRequest = crate::codec::lower_record("tasks.answer", input)?;
     let output = client.tasks_answer(&input)?;
     crate::codec::lift_record("tasks.answer", &output)
+};
+"tasks.answer.forward.challenge" => fn tasks_answer_forward_challenge(&self, input: TaskAnswerForwardChallengeRequest) -> TaskAnswerForwardChallenge = |client| {
+    let input: oneiron::task_verb::sdk::TaskAnswerForwardChallengeRequest = crate::codec::lower_record("tasks.answer.forward.challenge", input)?;
+    let output = client.tasks_answer_forward_challenge(&input)?;
+    crate::codec::lift_record("tasks.answer.forward.challenge", &output)
+};
+"tasks.answer.forward" => fn tasks_answer_forward(&self, input: TaskAnswerForwardRequest) -> AskForwardReceipt = |client| {
+    let input: oneiron::task_verb::sdk::TaskAnswerForwardRequest = crate::codec::lower_record("tasks.answer.forward", input)?;
+    let output = client.tasks_answer_forward(&input)?;
+    crate::codec::lift_record("tasks.answer.forward", &output)
+};
+"tasks.answer.forward.status" => fn tasks_answer_forward_status(&self, input: TaskAnswerForwardStatusRequest) -> AskForwardReceipt = |client| {
+    let input: oneiron::task_verb::sdk::TaskAnswerForwardStatusRequest = crate::codec::lower_record("tasks.answer.forward.status", input)?;
+    let output = client.tasks_answer_forward_status(&input)?;
+    crate::codec::lift_record("tasks.answer.forward.status", &output)
 };
 "tasks.outcomes" => fn tasks_outcomes(&self, input: TaskAskHandle) -> Vec<CalibrationPair> = |client| {
     let input: oneiron::task_verb::TaskAskHandle = crate::codec::lower_record("tasks.outcomes", input)?;
