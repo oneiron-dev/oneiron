@@ -7376,6 +7376,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/batch/export/epoch_floors.rs",
+     "purpose": "The epoch floors a whole-vault archive carries (OF-013), one row per lineage (FIX 5029): a SESSION's own…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/batch/export/evidence_import.rs",
      "purpose": "FIX 7777: the whole-vault import's MESSAGE orchestration",
      "surface": {
@@ -18919,7 +18929,7 @@
      "purpose": "Answers and durable waits recorded for first-party calls",
      "surface": {
       "enum": 4,
-      "fn": 3,
+      "fn": 4,
       "struct": 14
      }
     },
@@ -20878,7 +20888,7 @@
      "path": "src/compaction/conversation.rs",
      "purpose": "A conversation's self-written compaction (FIX 4465 D): a self agent's chat turn compacts as the agent",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 4,
       "re-export": 1,
@@ -20905,11 +20915,41 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/compaction/conversation/order.rs",
+     "purpose": "A conversation's turn order within one SESSION (FIX 5029): the numbers a chat window gives its turns, and…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/compaction/conversation/standing.rs",
+     "purpose": "Whether a landed conversation summary stands for a reader now: the one reader a chat log…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/compaction/conversation/storage.rs",
      "purpose": "A conversation's landed self-written summaries (FIX 4465 D): one durable receipt per SUMMARY, written in its…",
      "surface": {
       "crate-vis": 5,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/compaction/conversation/window.rs",
+     "purpose": "The window a chat flight may compact, and each turn's pin",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -20955,7 +20995,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CompactionBackend",
@@ -20963,7 +21003,6 @@
       "CompactionDirective",
       "CompactionDriver",
       "CompactionProduct",
-      "CompactionRequest",
       "CompactionSignal",
       "CompactionTierClass",
       "CompactionWatermark",
@@ -20975,26 +21014,72 @@
      "purpose": "RT-05 in-engine compaction backend, margin law, and single-flight driver",
      "surface": {
       "const": 2,
-      "crate-vis": 6,
+      "crate-vis": 2,
       "enum": 3,
-      "fn": 24,
-      "struct": 8,
+      "fn": 23,
+      "re-export": 1,
+      "struct": 7,
       "trait": 1
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CompactionRequest"
+     ],
+     "path": "src/compaction/driver/request.rs",
+     "purpose": "Sealing the one compaction request of an in-flight crossing",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/compaction/epoch.rs",
+     "purpose": "Epoch summaries: the body codec ([`codec`]), each epoch's lineage ([`lineage`]), the transactional mint…",
+     "surface": {
+      "crate-vis": 10,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "EpochSummaryBody"
      ],
-     "path": "src/compaction/epoch.rs",
-     "purpose": "Epoch-summary codec and transactional lineage mint",
+     "path": "src/compaction/epoch/codec.rs",
+     "purpose": "The epoch-summary body codec: pinned keys, strict encode and decode",
      "surface": {
       "const": 3,
-      "crate-vis": 20,
+      "crate-vis": 12,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/compaction/epoch/lineage.rs",
+     "purpose": "An epoch's lineage: its scope, its durable prior and its boundary",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/compaction/epoch/mint.rs",
+     "purpose": "The transactional epoch mint: one SUMMARY, its lineage and its dependencies in one write (FIX 5029: a chat…",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -21248,7 +21333,7 @@
      "path": "src/compaction/withdrawn.rs",
      "purpose": "What a withdrawn epoch summary keeps: its keyframe, without its words",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -23152,6 +23237,21 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BoardTurnEpoch",
+      "BoardTurnHistory"
+     ],
+     "path": "src/context_board/history/epoch.rs",
+     "purpose": "A past turn's board history with its compaction epoch (FIX 5038)",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -23167,10 +23267,10 @@
      "kind": "src",
      "notable": [],
      "path": "src/context_board/history/mod.rs",
-     "purpose": "Delta-only board claims and exact Loro-frontier reconstruction",
+     "purpose": "Delta-only board claims and exact Loro-frontier reconstruction, and the epoch a folded chat turn reads as…",
      "surface": {
       "crate-vis": 2,
-      "re-export": 1
+      "re-export": 2
      }
     },
     {
@@ -25024,7 +25124,7 @@
      "path": "src/conversation_dag/graph.rs",
      "purpose": "Strict transactional graph reads and shared guards",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 24
      }
     },
     {
@@ -29267,7 +29367,7 @@
      "path": "src/dreamer_consolidation/turn_text/compaction_span.rs",
      "purpose": "`conversation_check_evidence` (FIX 4465 D): the Dreamer's read of the span a conversation's self-written…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -62337,7 +62437,7 @@
       "CanonicalCutoff"
      ],
      "path": "src/recovery/canonical/withdrawn_cutoffs.rs",
-     "purpose": "The withdrawal fences and session epoch floors a window carries (OF-013, FIX 2867), through canonical…",
+     "purpose": "The withdrawal fences and epoch floors a window carries (OF-013, FIX 2867), through canonical capture and…",
      "surface": {
       "crate-vis": 7,
       "enum": 1
@@ -81640,7 +81740,7 @@
      "path": "src/sync/withdrawn_cutoffs.rs",
      "purpose": "OF-013: withdrawn-generation cutoffs on the window plane",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 16
      }
     },
     {
@@ -92746,7 +92846,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 183,
+     "files": 184,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -92998,9 +93098,9 @@
      "purpose": "Commitment timer-wake bridge (CMT-3, ONE-1540): due phase → Dreamer attempt → inbox proposal → OF-327 delivery"
     },
     "compaction": {
-     "files": 28,
+     "files": 35,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must…"
     },
@@ -93047,7 +93147,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 85,
+     "files": 86,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94258,9 +94358,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 187,
+   "over_bar": 185,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6662,
+   "source_files": 6671,
    "test_files": 895
   },
   "oneiron-android": {
@@ -112779,6 +112879,16 @@
      "purpose": "A self agent's chat compaction (FIX 4465 D, Engine D4): the conversation constructor of the shared writer…",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/compaction/chat_flights.rs",
+     "purpose": "One chat compaction flight per conversation at a time (FIX 5030)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -132230,7 +132340,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 125,
+     "files": 126,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -132771,7 +132881,7 @@
    },
    "over_bar": 57,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1695,
+   "source_files": 1696,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
