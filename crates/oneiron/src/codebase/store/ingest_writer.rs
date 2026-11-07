@@ -15,9 +15,10 @@ use std::path::Path;
 use heed::RoTxn;
 
 use super::super::ingest::{
-    HostedMediaHashMatchProvider, NoopHostedMediaHashMatchProvider, RepoIngestBlob,
-    RepoIngestConfig, RepoIngestResult, check_hosted_media_hash_matches, collect_repo_blobs,
-    scan_codebase_snapshot_metadata, validate_project_id,
+    CODE_SNAPSHOT_CAPTURE_CONTENT_KIND, HostedMediaHashMatchProvider,
+    NoopHostedMediaHashMatchProvider, RepoIngestBlob, RepoIngestConfig, RepoIngestResult,
+    check_hosted_media_hash_matches, collect_repo_blobs, scan_codebase_snapshot_metadata,
+    validate_project_id,
 };
 use super::super::repo_ref::RepoRef;
 use super::super::residue::reclaimable_asset_hashes;
@@ -30,10 +31,12 @@ use crate::code_symbol::{
     prepare_code_symbol_graph,
 };
 use crate::codebase::CaptureRepository;
+use crate::consent::AuthenticatedOwner;
 use crate::error::{CodeError, Error, Result};
 use crate::origin::secret_projection::index::RepoIndexMarks;
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_CODE_ARTIFACT};
+use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
 use crate::temporal::TimeRange;
 
 /// A run's import claims no editable policy, as the owner door's does not:
@@ -41,6 +44,36 @@ use crate::temporal::TimeRange;
 const NO_EDITABLE_WHITELIST: [&str; 0] = [];
 
 impl Vault {
+    /// Imports an owner's committed tree and retains its capture receipt in
+    /// the same transaction as the filtered snapshot and symbols.
+    pub fn ingest_local_repo_at_commit_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        project_id: impl Into<String>,
+        config: &RepoIngestConfig,
+        commit_ref: &str,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<RepoIngestResult> {
+        owner.revalidate(self)?;
+        let imported = self.ingest_local_repo_checked(
+            project_id,
+            config,
+            commit_ref,
+            (occurred, learned_at),
+            &NoopHostedMediaHashMatchProvider,
+            || Ok(()),
+            None,
+            None,
+            Some(owner),
+            |_| Ok(Ok::<(), Infallible>(())),
+        )?;
+        match imported {
+            Ok(imported) => Ok(imported),
+            Err(never) => match never {},
+        }
+    }
+
     /// The owner's and trusted callers' import, as it was: every path, no
     /// admission beyond the importer's own custody writer.
     pub(in crate::codebase) fn ingest_local_repo_with_after_first_pass(
@@ -59,6 +92,7 @@ impl Vault {
             timing,
             hash_match_provider,
             after_first_pass,
+            None,
             None,
             None,
             |_| Ok(Ok::<(), Infallible>(())),
@@ -99,6 +133,7 @@ impl Vault {
             || Ok(()),
             Some(select),
             Some(repository),
+            None,
             admit,
         )
     }
@@ -128,6 +163,7 @@ impl Vault {
             || Ok(()),
             None,
             Some(repository),
+            None,
             admit,
         )
     }
@@ -138,7 +174,7 @@ impl Vault {
     /// writer.
     #[allow(
         clippy::too_many_arguments,
-        reason = "the moved import body keeps its own arguments beside the selection, the anchor and the admission"
+        reason = "the shared import carries the selection, the anchor, caller admission and optional owner capture"
     )]
     fn ingest_local_repo_checked<R>(
         &self,
@@ -150,6 +186,7 @@ impl Vault {
         after_first_pass: impl FnOnce() -> Result<()>,
         select: Option<&dyn Fn(&str) -> bool>,
         repository: Option<CaptureRepository>,
+        owner: Option<&AuthenticatedOwner>,
         admit: impl FnOnce(&RoTxn<'_>) -> Result<std::result::Result<(), R>>,
     ) -> Result<std::result::Result<RepoIngestResult, R>> {
         let (occurred, learned_at) = timing;
@@ -254,6 +291,7 @@ impl Vault {
             (occurred, learned_at),
             repository.as_ref(),
             &contents,
+            owner,
             admit,
         )
     }
@@ -298,6 +336,7 @@ impl Vault {
         (occurred, learned_at): (TimeRange, u64),
         repository: Option<&CaptureRepository>,
         contents: &dyn Fn(&str) -> Option<Vec<u8>>,
+        owner: Option<&AuthenticatedOwner>,
         admit: impl FnOnce(&RoTxn<'_>) -> Result<std::result::Result<(), R>>,
     ) -> Result<std::result::Result<RepoIngestResult, R>> {
         let written = self.with_write_txn_grouped(|wtxn| {
@@ -311,6 +350,9 @@ impl Vault {
             if let Some(capture) = repository {
                 self.require_capture_repository_in_txn(wtxn, capture, repo_ref)?;
             }
+            let capture_actor = owner
+                .map(|owner| owner.revalidate_in_txn(self, wtxn))
+                .transpose()?;
             // Repo-marked files stay in the snapshot; their index copies
             // are masked (FIX 7608 slice 3).
             let repo_marks = RepoIndexMarks::read_in_txn(self, wtxn)?;
@@ -428,9 +470,20 @@ impl Vault {
                 occurred,
                 learned_at,
             )?;
+            let capture_receipt_ref = capture_actor
+                .map(|actor| {
+                    self.record_code_snapshot_capture_in_txn(
+                        wtxn,
+                        actor,
+                        code_artifact_id,
+                        &filtered_snapshot,
+                    )
+                })
+                .transpose()?;
             Ok(Ok(RepoIngestResult {
                 code_artifact_id,
                 snapshot: filtered_snapshot,
+                capture_receipt_ref,
             }))
         })?;
         // A file custody now withholds leaves the queue's source copies at
@@ -439,5 +492,36 @@ impl Vault {
             tracing::warn!(%error, "withheld queue sources were not erased after an ingest");
         }
         Ok(written)
+    }
+
+    fn record_code_snapshot_capture_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        actor: crate::EntityId,
+        artifact: crate::EntityId,
+        snapshot: &CodebaseSnapshot,
+    ) -> Result<String> {
+        let mut record = GateDecisionRecord {
+            version: GATE_DECISION_LEDGER_VERSION,
+            decision_id: GateDecisionId::now(),
+            created_at: self.store.clock.now_recorded_at(),
+            outcome: "imported".to_owned(),
+            reason_codes: vec!["gate.code.capture.imported".to_owned()],
+            receipt_reasons: Vec::new(),
+            system_notices: Vec::new(),
+            actor_class: crate::EdgeActorClass::Human.gate_actor_class().to_owned(),
+            actor_ref: Some(actor.to_hex()),
+            content_kind: CODE_SNAPSHOT_CAPTURE_CONTENT_KIND.to_owned(),
+            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
+            claim_id: Some(*artifact.as_bytes()),
+            grant_ref: None,
+            diff_handle: snapshot.fork_hash.to_vec(),
+            read_frontier_hash: [0; 32],
+            context: Default::default(),
+            redacted_at: None,
+        };
+        self.store
+            .append_fresh_gate_decision_in_txn(txn, &mut record)?;
+        Ok(format!("gate:{}", record.decision_id.to_hex()))
     }
 }

@@ -1631,7 +1631,7 @@
      "purpose": "Dispatch domain types, outcome enums, and pinned key/sentinel constants",
      "surface": {
       "const": 4,
-      "crate-vis": 27,
+      "crate-vis": 28,
       "enum": 3,
       "fn": 13,
       "re-export": 7,
@@ -4905,7 +4905,7 @@
      "path": "src/authority/owner_work.rs",
      "purpose": "Folds the owner's work requests and their results: which install is to do the key, custody or root work an…",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -4969,13 +4969,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/authority/owner_work/root_basis.rs",
      "purpose": "A root request's basis witness, checked on its target (FIX 5551): whether the target's heads are the ones…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -16937,13 +16937,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/consent_wait/settle.rs",
      "purpose": "The answer and the settlement (DOOR-079 1a)",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 3
      }
     },
@@ -16959,7 +16959,7 @@
      "path": "src/code_run/consent_wait/types.rs",
      "purpose": "The shapes of one bound code consent wait: the host-only call site the dispatcher carries, the control row…",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "re-export": 1,
       "struct": 4
      }
@@ -20407,7 +20407,7 @@
      "path": "src/codebase/ingest.rs",
      "purpose": "Local-git ingest helpers: blob walk, hosted-media gate, custody scan, and validators",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 13,
       "enum": 1,
       "fn": 1,
       "struct": 4,
@@ -20520,7 +20520,8 @@
      "path": "src/codebase/store/ingest_writer.rs",
      "purpose": "The local-repo import's one checked writer (moved from `store/mod.rs`, FIX 6867 G1 PR2a): the owner's and…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 3,
+      "fn": 1
      }
     },
     {
@@ -22633,6 +22634,7 @@
      "path": "src/consent/browser.rs",
      "purpose": "A run's browser sends under the owner's consent (FIX 10422)",
      "surface": {
+      "crate-vis": 2,
       "fn": 4,
       "struct": 2
      }
@@ -22693,6 +22695,16 @@
      "surface": {
       "fn": 4,
       "struct": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/consent/code_settlement.rs",
+     "purpose": "Hold-time code-consent policy and action evidence; neither is a grant",
+     "surface": {
+      "crate-vis": 12
      }
     },
     {
@@ -22798,7 +22810,7 @@
      "path": "src/consent/doors/grants.rs",
      "purpose": "The owner's consent acts: approve once, standing grants, denials, revokes and reuse receipts",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 5
      }
     },
@@ -22957,7 +22969,7 @@
      "path": "src/consent/mod.rs",
      "purpose": "DEC-0006 unified consent-mode — bounded standing grants",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "mod": 8,
       "re-export": 15
      }
@@ -30648,7 +30660,7 @@
      "path": "src/dreamer_runner/maintenance/agent_health/detectors.rs",
      "purpose": "The closed-form detectors over one review's working set, one per signal",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -35906,9 +35918,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/embed/space/checkpoint.rs",
-     "purpose": "Media vectors and device provenance, under each source document's entity tree",
+     "purpose": "Media vectors, device provenance and refusals, under each source document's entity tree",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -39619,6 +39631,21 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeConsentSettlementEligibility",
+      "CodeConsentSettlementRow"
+     ],
+     "path": "src/gate/code_consent_settlement.rs",
+     "purpose": "The POLICY_MANIFEST row that names who may settle a held code effect",
+     "surface": {
+      "crate-vis": 12,
+      "enum": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -40474,7 +40501,7 @@
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
       "crate-vis": 84,
-      "mod": 1,
+      "mod": 2,
       "re-export": 8
      }
     },
@@ -45229,7 +45256,7 @@
      "surface": {
       "crate-vis": 29,
       "mod": 208,
-      "re-export": 104
+      "re-export": 105
      }
     },
     {
@@ -49258,7 +49285,7 @@
      "path": "src/memory/code_doors/mod.rs",
      "purpose": "Typed code leases, proposals, conflicts and settlement doors (DOOR-137/057)",
      "surface": {
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -49280,6 +49307,28 @@
      "purpose": "Code proposal resolution: resolve, review, settle and read a proposal's settlement",
      "surface": {
       "fn": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CodeRepoSecretMark",
+      "CodeRepoSecretProposeRequest",
+      "CodeRepoSecretRemediation",
+      "CodeRepoSecretRemediationAction",
+      "CodeRepoSecretRemediationLink",
+      "CodeRepoSecretRemediationStatus",
+      "CodeRepoSecretSeen",
+      "CodeRepoSecretUnresolved",
+      "CodeRepoSecretsView"
+     ],
+     "path": "src/memory/code_doors/secrets.rs",
+     "purpose": "The repo secret doors (FIX 7608 slice 8, owner ruling SECRETS-IN-REPOS = A: \"on the current code, the vault…",
+     "surface": {
+      "enum": 3,
+      "fn": 2,
+      "struct": 6
      }
     },
     {
@@ -49592,6 +49641,7 @@
      "kind": "src",
      "notable": [
       "ConsolidationDeliveryOrigin",
+      "ConsolidationDocumentImage",
       "ConsolidationEvidenceHop",
       "ConsolidationEvidenceLocator",
       "ConsolidationEvidenceRequest",
@@ -49600,13 +49650,14 @@
       "ConsolidationPromoteRequest",
       "ConsolidationPromotion",
       "ConsolidationRejection",
+      "ConsolidationSourceImage",
       "GeneratedClaimInput"
      ],
      "path": "src/memory/consolidation.rs",
      "purpose": "Typed promotion and evidence observation over the existing Dreamer writer",
      "surface": {
       "fn": 2,
-      "struct": 10
+      "struct": 12
      }
     },
     {
@@ -51075,7 +51126,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ClaimListFilter",
@@ -51316,8 +51367,19 @@
      "purpose": "`self.code.checkout.bind` and `self.code.export` (FIX 6867, G1 PR3b): a leased run binds its own checkout…",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "fn": 3,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/repo_doors/holder.rs",
+     "purpose": "Non-run checkout materialization under the holder's own repo read Grant",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -56667,7 +56729,7 @@
      "path": "src/origin/secret_marks.rs",
      "purpose": "A pushed key's mark (FIX 7608, owner ruling SECRETS-IN-REPOS = A): the immutable `repo.secret_mark` facts an…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -56687,7 +56749,7 @@
      "path": "src/origin/secret_marks/read.rs",
      "purpose": "The reader's half of a pushed key's mark (FIX 7608 slice 2a, CALL 8033 option d): the readable…",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -56747,7 +56809,7 @@
      "path": "src/origin/secret_projection/claims/lookup.rs",
      "purpose": "Strict readers of a masked copy's records (FIX 7608 slice 2b-ii-B2): a checkout binding found from its…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -57130,7 +57192,7 @@
      "path": "src/origin/smart_http/intent/projection.rs",
      "purpose": "The receive seams of a projection-bound push (FIX 7608 slice 2b-ii-B2)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -57297,23 +57359,23 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/origin/smart_http/push_projection.rs",
      "purpose": "A push from a masked copy, received into its own private ingress (FIX 7608 slice 2b-ii-A, ASK S)",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/origin/smart_http/push_projection/forward.rs",
      "purpose": "A projection-bound update proved not copy-derived, forwarded exactly (FIX 7608 slice 2b-ii-A)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -62513,7 +62575,7 @@
      "purpose": "—",
      "surface": {
       "const": 6,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 23,
       "struct": 1
      }
@@ -64898,8 +64960,8 @@
      "surface": {
       "crate-vis": 2,
       "enum": 3,
-      "fn": 2,
-      "re-export": 1,
+      "fn": 3,
+      "re-export": 2,
       "struct": 3
      }
     },
@@ -64954,6 +65016,23 @@
      "purpose": "The text a remediation reads and writes around a marked literal (FIX 7608 slice 6): the literal's quoted…",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RepoSecretMarkEntry",
+      "RepoSecretMarkSeen",
+      "RepoSecretMarks",
+      "RepoSecretRemediationLinkEntry"
+     ],
+     "path": "src/repo_mutation/secret_remediation/view.rs",
+     "purpose": "What one repository's secret marks and remediation links say (FIX 7608 slice 8): the read behind the repo…",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 3
      }
     },
     {
@@ -71745,7 +71824,7 @@
       "enum": 4,
       "fn": 8,
       "mod": 1,
-      "re-export": 6,
+      "re-export": 7,
       "struct": 4
      }
     },
@@ -71961,6 +72040,27 @@
       "enum": 1,
       "fn": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EvalRepairAction",
+      "EvalRepairGrader",
+      "EvalRepairPrecondition",
+      "EvalRepairTask",
+      "EvalRepairTaskRead",
+      "EvalRepairTaskSource",
+      "EvalRepairTaskSpec",
+      "EvalRepairWorld"
+     ],
+     "path": "src/skill_optimize/eval_set/repair_task.rs",
+     "purpose": "Explicit, response-only tasks from an exact linked AG-UI capture",
+     "surface": {
+      "enum": 3,
+      "fn": 4,
+      "struct": 5
      }
     },
     {
@@ -72462,7 +72562,7 @@
      "surface": {
       "crate-vis": 19,
       "mod": 3,
-      "re-export": 19
+      "re-export": 20
      }
     },
     {
@@ -73986,7 +74086,7 @@
      "path": "src/store/checkpoint_payload/loro.rs",
      "purpose": "Core half of `store::checkpoint_payload::loro`: its store-layer items live in…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -74007,6 +74107,16 @@
      "purpose": "Core half of `store::checkpoint_payload::loro::proof`: its store-layer items live in…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/checkpoint_payload/loro/shallow.rs",
+     "purpose": "The state reading of a shallow or state-only Loro snapshot (FIX 6442)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -83764,7 +83874,7 @@
      "path": "src/task_verb/fanout_launch.rs",
      "purpose": "Durable fan-out launches: a wave cut held for the owner's launch approval under the vault's approval mode…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "enum": 1,
       "struct": 1
      }
@@ -84854,7 +84964,7 @@
      "path": "src/task_verb/wire_decode.rs",
      "purpose": "Read side of the hand-rolled rmpv wire format for typed TASK bodies",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -87804,7 +87914,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1318
+      "fn": 1321
      }
     },
     {
@@ -94003,7 +94113,7 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
     "consent": {
-     "files": 45,
+     "files": 46,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -94290,7 +94400,7 @@
      "purpose": "Value-free file-mask paths, read visibility, and byte-span transformations"
     },
     "gate": {
-     "files": 199,
+     "files": 200,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94521,7 +94631,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 375,
+     "files": 377,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94752,7 +94862,7 @@
      "purpose": "—"
     },
     "repo_mutation": {
-     "files": 54,
+     "files": 55,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94955,7 +95065,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 71,
+     "files": 72,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94997,7 +95107,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 390,
+     "files": 391,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -95235,9 +95345,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 192,
+   "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6742,
+   "source_files": 6749,
    "test_files": 895
   },
   "oneiron-android": {
@@ -96888,7 +96998,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…",
      "surface": {
       "const": 2,
-      "fn": 23,
+      "fn": 24,
       "struct": 5,
       "trait": 2
      }
@@ -104292,7 +104402,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/live/deck_export/chart.rs",
@@ -110110,7 +110220,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1286
+      "fn": 1289
      }
     },
     {
@@ -111903,7 +112013,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1287
+      "fn": 1290
      }
     },
     {
@@ -113662,7 +113772,7 @@
      "path": "src/admission.rs",
      "purpose": "Admission for work a remote caller can start",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -116106,7 +116216,7 @@
      "path": "src/api/context_pack/controls.rs",
      "purpose": "Request DTOs, control structs, and shared limit constants for context-pack assembly",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 21
      }
     },
     {
@@ -116929,6 +117039,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/code_secret_doors.rs",
+     "purpose": "Host doors for a repository's marked secrets (FIX 7608 slice 8): the owner reads the marks and remediations…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/code_view_doors.rs",
      "purpose": "Typed owner projections of linked working views and account-local cache use",
      "surface": {
@@ -117552,7 +117672,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 173
+      "crate-vis": 174
      }
     },
     {
@@ -117952,7 +118072,7 @@
      "path": "src/api/facade/origin_doors.rs",
      "purpose": "Credential-bound host projections of the typed origin and checkout doors (DOOR-139)",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 21
      }
     },
     {
@@ -133417,7 +133537,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "LimitRow"
@@ -133758,7 +133878,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 719,
+     "files": 720,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -134292,7 +134412,7 @@
    },
    "over_bar": 61,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1733,
+   "source_files": 1734,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -135845,7 +135965,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "Atom",
@@ -135878,7 +135998,7 @@
      "path": "src/checkpoint_payload/loro/frame.rs",
      "purpose": "A Loro row's content as the shared projection frames it: the framing version, the family, the slice, each…",
      "surface": {
-      "const": 3,
+      "const": 4,
       "struct": 1
      }
     },
@@ -143485,7 +143605,7 @@
     "checkpoint_payload": {
      "files": 5,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Checkpoint payload custody (KS-7, FIX 5688): the ordinary payload a checkpoint copies is sealed one owner at…"
     },
@@ -145803,6 +145923,8 @@
       "CodeConflictResolutionView",
       "CodeConflictView",
       "CodeConflictViewRequest",
+      "CodeConsentSettlementEligibility",
+      "CodeConsentSettlementRow",
       "CodeDiffRequest",
       "CodeDiffView",
       "CodeDocumentFrontier",
@@ -145863,6 +145985,15 @@
       "CodeRepoImportView",
       "CodeRepoPointer",
       "CodeRepoRequest",
+      "CodeRepoSecretMark",
+      "CodeRepoSecretProposeRequest",
+      "CodeRepoSecretRemediation",
+      "CodeRepoSecretRemediationAction",
+      "CodeRepoSecretRemediationLink",
+      "CodeRepoSecretRemediationStatus",
+      "CodeRepoSecretSeen",
+      "CodeRepoSecretUnresolved",
+      "CodeRepoSecretsView",
       "CodeRepoView",
       "CodeRunCorrection",
       "CodeRunCorrectionCheckpoint",
@@ -146115,6 +146246,7 @@
       "ConsolidationChildFrontier",
       "ConsolidationChildReceipt",
       "ConsolidationDeliveryOrigin",
+      "ConsolidationDocumentImage",
       "ConsolidationEvidenceHop",
       "ConsolidationEvidenceLocator",
       "ConsolidationEvidenceRequest",
@@ -146139,6 +146271,7 @@
       "ConsolidationRootBucket",
       "ConsolidationRootEvidence",
       "ConsolidationRootInput",
+      "ConsolidationSourceImage",
       "ConsolidationStepRef",
       "ConsolidationTryView",
       "ConsolidationWakeStatusRequest",
@@ -149759,8 +149892,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1145,
-      "struct": 3510
+      "enum": 1149,
+      "struct": 3519
      }
     },
     {
