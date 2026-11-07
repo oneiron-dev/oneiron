@@ -4171,9 +4171,9 @@ class Oneiron:
         def status(self, spec: Facade.ConnectorNameRequest) -> Facade.ConnectorView | None:
             """One catalogued connector by name, removed ones included."""
         def call(self, spec: Facade.ConnectorCallRequest) -> Facade.ActAnswer[Facade.ConnectorCallReply]:
-            """Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data."""
+            """Calls a connector tool from the selected catalog or builtin source; omitted source keeps implicit name selection. Catalog calls retain the caller's own grant and gate. Replies are foreign data."""
         def schema(self, spec: Facade.ConnectorSchemaRequest) -> Facade.ConnectorSchemaReply:
-            """One catalogued connector tool's approved input schema, as the caller's own grant resolves it."""
+            """One connector tool's input schema for the selected catalog or builtin source; omitted source keeps implicit name selection. Catalog schemas use the caller's own governing grant and approved manifest."""
         def call_status(self, spec: Facade.ConnectorCallStatusRequest) -> Facade.ConnectorCallStatus:
             """Where one connector.call stands, by the call_ref its held, pending_delivery or awaiting_input reply named: pending, the questions it waits on, or its settled reply. Only its caller and the vault's owner read it."""
         @property
