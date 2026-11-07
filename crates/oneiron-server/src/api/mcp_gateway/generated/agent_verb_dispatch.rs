@@ -510,6 +510,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.members.leave" => a.spec.clone().ok_or_else(invalid),
         "vault.members.invitations" => a.spec.clone().ok_or_else(invalid),
         "vault.members.accept" => a.spec.clone().ok_or_else(invalid),
+        "vault.members.accept_with_credential" => a.spec.clone().ok_or_else(invalid),
         "vault.members.decline" => a.spec.clone().ok_or_else(invalid),
         "vault.members.withdraw_invitation" => a.spec.clone().ok_or_else(invalid),
         "vault.shared.object" => a.spec.clone().ok_or_else(invalid),
@@ -2729,6 +2730,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.members.accept" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.members.accept_with_credential" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.members.decline" => {
@@ -6428,6 +6432,9 @@ async fn execute_agent_verb_row_on(
         "vault.members.leave" => boxed_mcp_verb_row_vault_members_leave(row).await,
         "vault.members.invitations" => boxed_mcp_verb_row_vault_members_invitations(row).await,
         "vault.members.accept" => boxed_mcp_verb_row_vault_members_accept(row).await,
+        "vault.members.accept_with_credential" => {
+            boxed_mcp_verb_row_vault_members_accept_with_credential(row).await
+        }
         "vault.members.decline" => boxed_mcp_verb_row_vault_members_decline(row).await,
         "vault.members.withdraw_invitation" => {
             boxed_mcp_verb_row_vault_members_withdraw_invitation(row).await
@@ -26294,6 +26301,61 @@ async fn mcp_verb_row_vault_members_accept(row: McpVerbRow<'_>) -> McpVerbRowRes
     let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_members_accept(
         server, auth, input,
     ))
+    .await;
+    // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+    served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+        listed,
+    ));
+    let output = output.map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_vault_members_accept_with_credential<'a>(
+    row: McpVerbRow<'a>,
+) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_members_accept_with_credential(row))
+}
+async fn mcp_verb_row_vault_members_accept_with_credential(
+    row: McpVerbRow<'_>,
+) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("vault.members.accept_with_credential", &input)
+        .map_err(mcp_facade_error)?;
+    let input: oneiron::task_verb::sdk::SharedInvitationAcceptWithCredentialRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let (output, listed) = Box::pin(
+        crate::api::facade::host_doors::vault_members_accept_with_credential(server, auth, input),
+    )
     .await;
     // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
     served.listed(crate::api::facade::host_doors::support::ListedRows::rows(

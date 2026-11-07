@@ -1870,6 +1870,8 @@ class Oneiron:
             """The caller's own pending invitations into a shared vault."""
         def accept(self, spec: Facade.SharedInvitationRequest) -> Facade.SharedActExecutionReceipt:
             """The invitee accepts their own invitation and joins the shared vault at its role."""
+        def accept_with_credential(self, spec: Facade.SharedInvitationAcceptWithCredentialRequest) -> Facade.SharedInvitationAcceptedWithCredential:
+            """The invitee accepts their own invitation and receives a regular member credential from the same writer, with required caller-chosen expiry and the same verified device key; plain acceptance stays unchanged."""
         def decline(self, spec: Facade.SharedInvitationRequest) -> Facade.SharedActExecutionReceipt:
             """The invitee declines their own invitation; nothing is granted."""
         def withdraw_invitation(self, spec: Facade.SharedInvitationWithdrawRequest) -> Facade.SharedActExecutionReceipt:
