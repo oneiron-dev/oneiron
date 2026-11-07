@@ -82,6 +82,53 @@ impl Vault {
         validate_artifact_id(artifact)?;
         validate_artifact_path(path)?;
         let txn = self.store.env.read_txn()?;
+        let Some(read) =
+            self.authorize_artifact_read_in_txn(&txn, artifact, selector, token, principal)?
+        else {
+            return Ok(None);
+        };
+        self.read_authorized_artifact_in_txn(&txn, artifact, path, &read)
+    }
+
+    /// Visit the hosted projection of one admitted code snapshot in one read view.
+    /// Withheld paths stay absent; callers never receive the owner's raw files.
+    pub fn visit_authorized_artifact_codebase(
+        &self,
+        artifact: &str,
+        selector: ArtifactSnapshotSelector,
+        token: Option<&str>,
+        principal: Option<EntityId>,
+        mut file: impl FnMut(ArtifactServedFile, u32) -> Result<()>,
+    ) -> Result<Option<ArtifactPointer>> {
+        validate_artifact_id(artifact)?;
+        let txn = self.store.env.read_txn()?;
+        let Some(read) =
+            self.authorize_artifact_read_in_txn(&txn, artifact, selector, token, principal)?
+        else {
+            return Ok(None);
+        };
+        let Some(snapshot) = read.target.snapshot.as_ref() else {
+            return Ok(None);
+        };
+        for entry in &snapshot.files {
+            validate_artifact_path(&entry.path)?;
+            if let Some(projected) =
+                self.read_authorized_artifact_in_txn(&txn, artifact, &entry.path, &read)?
+            {
+                file(projected, entry.mode)?;
+            }
+        }
+        Ok(Some(read.target.pointer))
+    }
+
+    fn authorize_artifact_read_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        artifact: &str,
+        selector: ArtifactSnapshotSelector,
+        token: Option<&str>,
+        principal: Option<EntityId>,
+    ) -> Result<Option<AuthorizedArtifactRead>> {
         let channels: &[ArtifactPointerChannel] = match selector {
             ArtifactSnapshotSelector::Channel(ArtifactPointerChannel::Published) => {
                 &[ArtifactPointerChannel::Published]
@@ -95,8 +142,7 @@ impl Vault {
             ],
         };
         for channel in channels {
-            let Some(target) = self.resolve_artifact_target_in_txn(&txn, artifact, *channel)?
-            else {
+            let Some(target) = self.resolve_artifact_target_in_txn(txn, artifact, *channel)? else {
                 continue;
             };
             let pinned = match target.pointer.export {
@@ -113,15 +159,14 @@ impl Vault {
                 ArtifactServeTier::Public => true,
                 ArtifactServeTier::LinkToken(capability) => matches_token(capability, token),
                 ArtifactServeTier::WorldMembers(world_id) => principal.is_some_and(|member| {
-                    self.artifact_world_member_in_txn(&txn, world_id, member, &target.scope)
+                    self.artifact_world_member_in_txn(txn, world_id, member, &target.scope)
                         .unwrap_or(false)
                 }),
             };
             if !allowed {
                 continue;
             }
-            let read = AuthorizedArtifactRead { target, selector };
-            return self.read_authorized_artifact_in_txn(&txn, artifact, path, read);
+            return Ok(Some(AuthorizedArtifactRead { target, selector }));
         }
         Ok(None)
     }
@@ -253,9 +298,9 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         artifact: &str,
         path: &str,
-        read: AuthorizedArtifactRead,
+        read: &AuthorizedArtifactRead,
     ) -> Result<Option<ArtifactServedFile>> {
-        let target = read.target;
+        let target = &read.target;
         // The export's taint is read again in this view before any byte is
         // read (FIX 9574): a stale one serves only under its pointer's stamp
         // while the stale-publish policy still permits it.
@@ -276,10 +321,10 @@ impl Vault {
         let sight = crate::file_secret_marks::SecretSight::Masked;
         let (bytes, media_type, _stored_hash) = match target.pointer.export {
             ArtifactExportRef::ForkHash(hash) => {
-                let Some(snapshot) = target.snapshot else {
+                let Some(snapshot) = target.snapshot.as_ref() else {
                     return Ok(None);
                 };
-                let Some(entry) = snapshot_file_entry(&snapshot, path) else {
+                let Some(entry) = snapshot_file_entry(snapshot, path) else {
                     return Ok(None);
                 };
                 if snapshot.project_id != artifact || snapshot.fork_hash != hash {

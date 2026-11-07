@@ -64,7 +64,7 @@ pub const WORKER_LIVENESS_POLL: Duration = Duration::from_secs(1);
 pub const WORKER_ACTIVITY_POLL: Duration = Duration::from_secs(15);
 
 /// Idle stop is off unless a worker's own config turns it on: a call that
-/// does not come through a lease (a native decision read) would otherwise
+/// does not come through a lease would otherwise
 /// find its worker stopped.
 pub const DEFAULT_WORKER_IDLE_STOP: Option<Duration> = None;
 

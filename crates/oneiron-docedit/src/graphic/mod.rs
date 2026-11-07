@@ -107,7 +107,10 @@ pub struct GenerationReceipt {
 /// Counts are observations: the compiler reserves their memory through the
 /// operation's port and checkpoints the quadratic fill-rule proof
 /// (FIX 10590).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(deny_unknown_fields)]
 pub struct GraphicLimits {
     pub svg_bytes: usize,
     pub raster_bytes: usize,

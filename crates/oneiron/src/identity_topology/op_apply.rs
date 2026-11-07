@@ -375,17 +375,27 @@ impl Vault {
                 )
             }
             IdentityTopologyOp::Facet(facet) => {
-                // The propose lane is not armed for this kind: a parked facet
-                // event would have to name masks it never minted, and the
-                // resolution door has no scope target for it
-                // ([`proposal_scope_target`]) — so the park could never be
-                // ruled on. Refusing to record it is the honest answer;
-                // recording an unresolvable one is the ledger corruption this
-                // door exists to prevent.
+                // FIX 7814: a park records the specs and the map its ruling
+                // would apply, and mints nothing. No FACET id exists and no
+                // claim forks until the resolution door approves it, which
+                // applies the op through this arm under `Approved`.
                 if !write.is_effective() {
-                    return Err(Error::Sync(SyncError::IdentityTopologyUnarmed(
-                        "facet proposal",
-                    )));
+                    let action = StoredIdentityOpAction::ParkedFacet {
+                        entity: facet.entity,
+                        specs: facet.facets.clone(),
+                        reassignment: facet.reassignment.canonicalized(),
+                    };
+                    return self.write_identity_event_in_txn(
+                        wtxn,
+                        event_id,
+                        write,
+                        seal,
+                        now,
+                        action,
+                        Some(facet.evidence.clone()),
+                        Vec::new(),
+                        transitions,
+                    );
                 }
                 let (minted, effects) = self.mint_facets_in_txn(facet, now)?;
                 let mut forks = Vec::new();
@@ -586,12 +596,14 @@ impl Vault {
         // Its one signature covers the carrier and who decided: the owner act
         // of a decision, or the engine's cause (mesh PR2-topology).
         let disposition_id = self.store.clock.entity_id()?;
-        // FIX 9870: a merge or split proposal's seal signs its proposer's
-        // opaque handle, the ramp scope its resolution stamps.
+        // FIX 9870: a merge, split or facet proposal's seal signs its
+        // proposer's opaque handle, the ramp scope its resolution stamps.
         let proposer_scope = match (&write.approval, &record.action) {
             (
                 crate::claim::ClaimApprovalStatus::Proposed,
-                StoredIdentityOpAction::Merge { .. } | StoredIdentityOpAction::Split { .. },
+                StoredIdentityOpAction::Merge { .. }
+                | StoredIdentityOpAction::Split { .. }
+                | StoredIdentityOpAction::ParkedFacet { .. },
             ) => Some(super::proposer_scope::proposal_seal_scope_actor_in_txn(
                 &self.store,
                 wtxn,
@@ -701,6 +713,26 @@ impl Vault {
                 &touched,
                 &zero_head_shells,
             )?;
+            // FIX 7817 (Engine 19:59 T-B): a local `Auto` merge, split or
+            // facet keeps its post-hoc review candidate and queues the
+            // Coach's deduplicated job in this writer, after its effects and
+            // seal: the decision lands with its candidate or not at all. No
+            // model or sampler runs here.
+            if super::post_hoc_review::eligible(write.approval, &record.action) {
+                super::post_hoc_review::declare_topology_audit_in_txn(
+                    self,
+                    wtxn,
+                    &super::post_hoc_review::AuditDeclaration {
+                        event: event_id,
+                        disposition: disposition_id,
+                        stored: &stored.root,
+                        record: &record,
+                        actor: write.actor,
+                        decided_by: seal.decider(),
+                    },
+                    now,
+                )?;
+            }
             Ok(IdentityOpOutcome::Applied {
                 event: event_id,
                 transitions,

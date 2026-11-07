@@ -638,8 +638,14 @@ impl Pass<'_> {
         if let Some(row) = self.reservation(id)?
             && row.settlement.is_none()
         {
-            let actual = run_spend_units(self.vault, run, row.units)?;
-            settle_research_work(self.vault, self.root(), id, actual)?;
+            match run_spend_units(self.vault, run)? {
+                Some(actual) => {
+                    settle_research_work(self.vault, self.root(), id, actual)?;
+                }
+                None => {
+                    settle_research_work_unknown(self.vault, self.root(), id)?;
+                }
+            }
         }
         Ok(())
     }
