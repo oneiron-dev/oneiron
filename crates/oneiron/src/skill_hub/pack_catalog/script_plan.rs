@@ -49,12 +49,9 @@ impl ScriptExecutionPlan {
         }
         let script_index =
             script_index.ok_or_else(|| invalid("declared adapter script is absent"))?;
-        // The output may take what the workspace has left, up to the
-        // sandbox's own file bound. The `[limits]` row a run asks past is
-        // measured at launch, never here (Rule 5).
-        let output = ScriptOutputContract::new(oneiron_sandbox_contract::MAX_FILE_BYTES.min(
-            oneiron_sandbox_contract::MAX_WORKSPACE_BYTES.saturating_sub(snapshot.total_bytes()),
-        ))?;
+        // Keep the output-file bound independent of source bytes. The run
+        // measures `[limits]`; it does not shrink this reservation.
+        let output = ScriptOutputContract::new(oneiron_sandbox_contract::MAX_FILE_BYTES)?;
         let reserved_shape = shape(snapshot.with_output(&output.reservation))?;
         let program = shape(ProgramBudget::new(MAX_GRANT_PRELUDE_BYTES))?;
         shape(program.qualify_source(source.files()[script_index].content.len()))?;

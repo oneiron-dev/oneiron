@@ -16650,13 +16650,14 @@
     },
     {
       "name": "vault.calendar.occurrences",
-      "description": "Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions.",
-      "input": "crate::calendar::query::CalendarOccurrencesRequest",
-      "output": "crate::claim::ScopedReadResult<Vec<crate::calendar::query::CalendarOccurrenceView>>",
-      "call": "memory.calendar_occurrences(&input)?",
+      "description": "Expands an admitted stored master in an inclusive UTC window under the caller's read scope, masking detached exceptions, as one page: an optional deadline_ms, and resume_from to continue.",
+      "input": "crate::calendar::query::CalendarOccurrencesPageRequest",
+      "output": "crate::claim::ScopedReadResult<crate::calendar::query::CalendarOccurrencesPage>",
+      "call": "memory.calendar_occurrences_page(&input)?",
       "scope": "Read",
       "admission": {
-        "lane_record_scope": true
+        "lane_record_scope": true,
+        "validate": "crate::memory::caps::check_deadline_ms(input.deadline_ms)?;"
       },
       "mcp_scope": "filtered",
       "section": false,
@@ -16693,13 +16694,14 @@
     },
     {
       "name": "vault.calendar.search",
-      "description": "Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt.",
-      "input": "crate::calendar::CalendarSearchRequest",
-      "output": "crate::claim::ScopedReadResult<Vec<crate::calendar::CalendarEventView>>",
-      "call": "memory.calendar_search(&input)?",
+      "description": "Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, as one page in time order: an optional deadline_ms, and resume_from to continue.",
+      "input": "crate::calendar::query::CalendarSearchPageRequest",
+      "output": "crate::claim::ScopedReadResult<crate::calendar::query::CalendarSearchPage>",
+      "call": "memory.calendar_search_page(&input)?",
       "scope": "Read",
       "admission": {
-        "lane_record_scope": true
+        "lane_record_scope": true,
+        "validate": "crate::memory::caps::check_deadline_ms(input.deadline_ms)?;"
       },
       "mcp_scope": "filtered",
       "section": false,
@@ -16707,13 +16709,14 @@
     },
     {
       "name": "vault.calendar.freebusy",
-      "description": "Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt.",
-      "input": "crate::task_verb::sdk::CalendarFreebusyRequest",
-      "output": "crate::claim::ScopedReadResult<crate::memory::CalendarFreebusyDto>",
-      "call": "memory.calendar_freebusy(&input.calendars, input.range.to_time_range())?",
+      "description": "Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals, one page of the covered prefix: an optional deadline_ms, and resume_from to continue.",
+      "input": "crate::calendar::query::CalendarFreebusyPageRequest",
+      "output": "crate::claim::ScopedReadResult<crate::calendar::query::CalendarFreebusyPage>",
+      "call": "memory.calendar_freebusy_page(&input)?",
       "scope": "Read",
       "admission": {
-        "lane_record_scope": true
+        "lane_record_scope": true,
+        "validate": "crate::memory::caps::check_deadline_ms(input.deadline_ms)?;"
       },
       "mcp_scope": "filtered",
       "section": false,
@@ -18384,8 +18387,7 @@
         "unrestricted_record_scope": true,
         "readable": [
           "artifact_ref"
-        ],
-        "validate": "if input.content_base64.len() > crate::memory::caps::MAX_BLOB_BASE64_LEN { return Err(MemoryError::bad_request(\"blob base64 exceeds the content ceiling\")); }"
+        ]
       },
       "section": false,
       "binding": {
@@ -19127,6 +19129,7 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
+      "host_door_paced": true,
       "openapi": true
     },
     {
@@ -19142,6 +19145,7 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
+      "host_door_paced": true,
       "openapi": true
     },
     {
@@ -19172,6 +19176,7 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
+      "host_door_paced": true,
       "openapi": true
     },
     {
@@ -19187,6 +19192,7 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
+      "host_door_paced": true,
       "openapi": true
     },
     {
@@ -19202,6 +19208,7 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
+      "host_door_paced": true,
       "openapi": true
     },
     {
@@ -20598,6 +20605,14 @@
       "effect": "Team"
     },
     {
+      "name": "self.team.vote",
+      "input": "crate::team::TeamVoteInput",
+      "output": "crate::team::TeamRunAnswer",
+      "scope": "Write",
+      "context": "run",
+      "effect": "Team"
+    },
+    {
       "name": "self.team.submit",
       "input": "crate::code_run::TeamSubmitInput",
       "output": "crate::code_run::TeamSubmitAnswer",
@@ -20811,7 +20826,7 @@
     },
     {
       "name": "vault.identity.propose",
-      "description": "The owner parks a nominated merge or split candidate with no topology effects; distinct pairs suppress merge proposals.",
+      "description": "The owner parks a nominated merge, split or facet candidate with no topology effects; distinct pairs suppress merge proposals.",
       "input": "crate::task_verb::sdk::IdentityProposeRequest",
       "output": "crate::task_verb::sdk::IdentityTopologyResult",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.identity.propose\", &input)?",
