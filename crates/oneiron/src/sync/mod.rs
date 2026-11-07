@@ -29,6 +29,8 @@
 //! - `federation_burst` — authenticated peer observations and durable defer/replay
 //! - `server_state` — server-side sync_state persistence (Observer-A-equivalent)
 
+pub mod ask_forward;
+pub mod ask_option_link;
 pub(crate) mod asset_body;
 pub mod bridge;
 pub mod carrier;
@@ -58,6 +60,7 @@ pub(crate) mod note;
 pub(crate) mod office_proposals;
 pub(crate) mod origin_claims;
 pub(crate) mod pack_sync;
+pub mod peer_route;
 pub mod quarantine;
 pub mod queue;
 pub mod quota;
@@ -89,7 +92,7 @@ pub(crate) mod withdrawn_cutoffs;
 pub use asset_body::session::{
     ASSET_BODY_FRAMES_PER_POLL, AssetBodyLane, AssetBodyPeer, AssetBodySession,
 };
-pub use carrier::{SyncDial, SyncDialer, SyncIo, SyncStream};
+pub use carrier::{SyncDial, SyncDialer, SyncIo, SyncPeerDialer, SyncStream};
 pub use client::{
     ConnectDelivery, ConnectExportRequest, ConnectRejoinStatus, ConnectRejoined,
     EphemeralChangeOrigin, OpenedItem, ResidenceHit, ResidenceHomeRoute, ResidenceIndexWindow,

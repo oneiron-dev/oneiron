@@ -30,6 +30,33 @@ pub trait SyncDialer: Send + Sync + std::fmt::Debug {
     fn dial(&self) -> SyncDial<'_>;
 }
 
+/// FIX 4748: the carriers to this device's other machines while its home is
+/// down. A peer has no URL: each dial rides the paired mesh to the machine it
+/// names, private to it as a [`SyncDialer`]'s stream is, and the upgrade, its
+/// slip and machine proofs are the bytes a home dial carries.
+pub trait SyncPeerDialer: Send + Sync + std::fmt::Debug {
+    /// The machines this device may sync with while its home is down, the
+    /// standby home first ([`crate::sync::peer_route::choose_sync_peer`]);
+    /// empty when none may.
+    fn peers(&self) -> Vec<crate::EntityId>;
+    /// Opens the stream one sync socket to `peer` rides.
+    fn dial_peer(&self, peer: crate::EntityId) -> SyncDial<'_>;
+}
+
+/// One peer's dial as the [`SyncDialer`] a peer session's socket rides
+/// (FIX 4748).
+#[derive(Debug)]
+pub(crate) struct PeerDial<'a> {
+    pub(crate) dialer: &'a dyn SyncPeerDialer,
+    pub(crate) peer: crate::EntityId,
+}
+
+impl SyncDialer for PeerDial<'_> {
+    fn dial(&self) -> SyncDial<'_> {
+        self.dialer.dial_peer(self.peer)
+    }
+}
+
 /// The carrier under one sync socket.
 pub enum SyncIo {
     Tcp(TcpStream),
@@ -113,26 +140,7 @@ pub(crate) async fn connect_sync_socket(
     dialer: Option<&dyn SyncDialer>,
 ) -> Result<(SyncSocket, tokio_tungstenite::tungstenite::http::HeaderMap), WsError> {
     let request = request.into_client_request()?;
-    let io = match dialer {
-        Some(dialer) => match dialer.dial().await {
-            Ok(stream) => SyncIo::Dialed(stream),
-            Err(error)
-                if crate::sync::client::endpoint::admits_credentials(
-                    &request.uri().to_string(),
-                    false,
-                ) =>
-            {
-                tracing::debug!(%error, "sync carrier dial failed; dialing the URL");
-                // A URL that does not open either leaves the carrier's own
-                // failure standing.
-                tcp(request.uri())
-                    .await
-                    .map_err(|_| WsError::Io(error))?
-            }
-            Err(error) => return Err(WsError::Io(error)),
-        },
-        None => tcp(request.uri()).await?,
-    };
+    let io = open_carrier(request.uri(), dialer).await?;
     let config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
         .max_message_size(Some(sync_socket_message_bytes()));
     let (socket, response) =
@@ -141,6 +149,32 @@ pub(crate) async fn connect_sync_socket(
         WireSocket::to_our_server(socket, MAX_CODEC_INNER_BYTES),
         response.into_parts().0.headers,
     ))
+}
+
+/// The carrier one sync socket to `uri` rides: `dialer`'s stream when there
+/// is one, else TCP to the URI's host, `ws` only. A carrier that fails to
+/// dial falls back to TCP when the URL carries credentials by itself (FIX
+/// 3374). A home probe opens it alone (FIX 4748), so it judges the carrier
+/// the socket rides.
+pub(crate) async fn open_carrier(
+    uri: &tokio_tungstenite::tungstenite::http::Uri,
+    dialer: Option<&dyn SyncDialer>,
+) -> Result<SyncIo, WsError> {
+    match dialer {
+        Some(dialer) => match dialer.dial().await {
+            Ok(stream) => Ok(SyncIo::Dialed(stream)),
+            Err(error)
+                if crate::sync::client::endpoint::admits_credentials(&uri.to_string(), false) =>
+            {
+                tracing::debug!(%error, "sync carrier dial failed; dialing the URL");
+                // A URL that does not open either leaves the carrier's own
+                // failure standing.
+                tcp(uri).await.map_err(|_| WsError::Io(error))
+            }
+            Err(error) => Err(WsError::Io(error)),
+        },
+        None => tcp(uri).await,
+    }
 }
 
 /// TCP to `uri`'s host, for `ws`; `wss` is refused.

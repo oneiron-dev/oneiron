@@ -81,6 +81,10 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::AUTHORITY_CHECKPOINT_TOTALS,
     &side_table::AUTHORITY_CHECKPOINT_UNHELD,
     &side_table::AUTHORITY_HANDOFF_ALARM,
+    // The leave-notice delegations the roots signed at their handoffs (FIX
+    // 7932): authority evidence, kept as the log is.
+    &side_table::AUTHORITY_LEAVE_NOTICE_DELEGATION_BY_HANDOFF,
+    &side_table::AUTHORITY_LEAVE_NOTICE_DELEGATION,
     &side_table::AUTHORITY_CHECKPOINT_ADOPTED_PIN,
     &side_table::AUTHORITY_CHECKPOINT_ATTESTATION,
     &side_table::AUTHORITY_CHECKPOINT_ATTESTED_HEAD,

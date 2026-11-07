@@ -191,6 +191,10 @@ pub use self::eval_set::{
     JUDGE_SCORE_UNITS, MeasurementMethodPin, MeasurementState, MeasurementUnavailable,
     ScoreDirection, eval_seat_canary,
 };
+pub use self::eval_set::{
+    EvalRepairAction, EvalRepairGrader, EvalRepairPrecondition, EvalRepairTask, EvalRepairTaskRead,
+    EvalRepairTaskSource, EvalRepairTaskSpec, EvalRepairWorld,
+};
 pub(crate) use self::eval_set::{
     erase_eval_source_in_txn, forget_eval_case_source_rows, forget_source_row,
 };
@@ -289,9 +293,11 @@ pub(crate) use gate::{
     project_goal_revision_proposals_in_txn, settle_skill_tradeoff_ask_as_in_txn,
     settle_skill_tradeoff_ask_in_txn, skill_edit_preflight_passed_in_txn,
     skill_edit_trial_basis_in_txn, skill_edit_verdict_in_txn, skill_edit_verdict_receipts,
-    validate_judge_revision, with_optimized_skill_admission,
+    skill_edit_verdict_sourced, skill_tradeoff_ask_sourced, validate_judge_revision,
+    with_optimized_skill_admission,
 };
 pub(crate) use gate::{project_axes, project_rules_for_record};
+pub(crate) use gate::{skill_edit_goal_sourced, skill_edit_goal_sourced_in_txn};
 
 pub(crate) use self::goal_binding::validate_goal_birth_in_txn;
 use self::goal_binding::{GOAL_ID_KEY, SkillGoalId};
@@ -304,7 +310,6 @@ pub(crate) use self::job::{
 
 use self::dials::invalid;
 pub(crate) use self::tier::tier_verdict_in_txn;
-
 #[cfg(test)]
 mod tests;
 

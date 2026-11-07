@@ -1,4 +1,6 @@
 //! Host-local history-free recovery of uncited NOTE values.
+use std::collections::BTreeMap;
+
 use super::document::{NoteDocument, invalid};
 #[cfg(feature = "sync")]
 use super::sync_rows::{NOTE_RECEIPT_BY_REQUEST, SYNC_AD_E, SYNC_NC_E, SYNC_QD_E};
@@ -8,14 +10,16 @@ use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot};
 use crate::side_table::HexId;
 use crate::{EntityId, Result, Vault};
 
+/// `metadata`: every editable field the value carries, each one value in
+/// the common encoding (FIX 7784).
 pub(crate) fn rebuild(
     note: EntityId,
     text: &str,
-    title: Option<&str>,
+    metadata: &BTreeMap<String, Vec<u8>>,
     authorship: &[super::NoteAuthorship],
 ) -> Result<loro::LoroDoc> {
     super::validate_markdown(text)?;
-    let doc = super::documents::proposal_value(note, text, title)?;
+    let doc = super::documents::proposal_value(note, text, metadata)?;
     let mut previous = None;
     for record in authorship {
         if previous.is_some_and(|id| id >= record.operation) {
@@ -83,17 +87,23 @@ pub(crate) fn capture(
     Ok(super::document_store::load(vault, txn, note)?.doc)
 }
 
+/// A value's text, every editable field and its authorship (FIX 7784).
 pub(crate) fn values(
     note: EntityId,
     doc: loro::LoroDoc,
-) -> Result<(String, Option<String>, Vec<super::NoteAuthorship>)> {
-    let view = NoteDocument::from_loro(note, doc)?.view()?;
+) -> Result<(
+    String,
+    BTreeMap<String, Vec<u8>>,
+    Vec<super::NoteAuthorship>,
+)> {
+    let doc = NoteDocument::from_loro(note, doc)?;
+    let view = doc.view()?;
     if !view.pins.is_empty() {
         return Err(invalid(
             "history-free NOTE recovery requires citation rebasing",
         ));
     }
-    Ok((view.markdown, view.title, view.authorship))
+    Ok((view.markdown, doc.metadata()?, view.authorship))
 }
 
 /// Rebuilds a switched head's document where this vault has none: the head
@@ -105,12 +115,12 @@ pub(crate) fn restore_head(
     note: EntityId,
     head_and_seq: (EntityId, u64),
     text: &str,
-    title: Option<&str>,
+    metadata: &BTreeMap<String, Vec<u8>>,
     authorship: &[super::NoteAuthorship],
 ) -> Result<()> {
     guard(vault, txn, note)?;
     super::documents::set_head(&vault.store, txn, note, head_and_seq.0, head_and_seq.1)?;
-    let doc = NoteDocument::from_loro(note, rebuild(note, text, title, authorship)?)?;
+    let doc = NoteDocument::from_loro(note, rebuild(note, text, metadata, authorship)?)?;
     super::document_store::persist_recovered_document(vault, txn, &doc)
 }
 
@@ -120,7 +130,7 @@ pub(crate) fn restore(
     txn: &mut heed::RwTxn<'_>,
     note: EntityId,
     text: &str,
-    title: Option<&str>,
+    metadata: &BTreeMap<String, Vec<u8>>,
     authorship: &[super::NoteAuthorship],
 ) -> Result<()> {
     guard(vault, txn, note)?;
@@ -128,8 +138,9 @@ pub(crate) fn restore(
         .iter()
         .map(|record| record.stored_for_note(note))
         .collect();
-    let old = super::document_store::load(vault, txn, note)?.view()?;
-    if old.markdown == text && old.title.as_deref() == title && old.authorship == authorship {
+    let held = super::document_store::load(vault, txn, note)?;
+    let old = held.view()?;
+    if old.markdown == text && held.metadata()? == *metadata && old.authorship == authorship {
         return Ok(());
     }
     // An erased twin keeps its record (ErasedWins); a live actor never
@@ -141,7 +152,7 @@ pub(crate) fn restore(
     {
         return Err(invalid("NOTE recovery would discard admitted provenance"));
     }
-    let doc = NoteDocument::from_loro(note, rebuild(note, text, title, &authorship)?)?;
+    let doc = NoteDocument::from_loro(note, rebuild(note, text, metadata, &authorship)?)?;
     let key_prefix = format!("{}:", note.to_hex()).into_bytes();
     SYNC_QD_E.delete_from(&vault.store, txn, &key_prefix)?;
     SYNC_AD_E.delete_from(&vault.store, txn, &key_prefix)?;
