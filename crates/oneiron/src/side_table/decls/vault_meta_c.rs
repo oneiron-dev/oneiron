@@ -263,6 +263,19 @@ side_tables! {
     /// When the Coach's think-threshold run read a source's record, so a replay never counts
     /// twice. Key: id16.
     COACH_THINK_MISSED_READ: VaultMeta b"coach:think_missed_read:v1:" Raw;
+    /// One local `Auto` merge, split or facet's post-hoc review candidate, kept in its decision's
+    /// own writer (FIX 7817): ids, digests and its ramp-shaped scope, never claim or evidence
+    /// text. Local review state, never replicated authority. Key: hash32 (audit id).
+    COACH_TOPOLOGY_AUDIT_INTENT: VaultMeta b"coach:topology_audit_intent:v1:" Named
+        => crate::identity_topology::erase_topology_audit_actor_in_txn;
+    /// The one result of a reviewed topology-audit candidate, append-only, with the Coach's
+    /// correction of a concern (FIX 7817). Key: hash32 (audit id).
+    COACH_TOPOLOGY_AUDIT_RESULT: VaultMeta b"coach:topology_audit_result:v1:" Named
+        => crate::identity_topology::erase_topology_audit_actor_in_txn;
+    /// The first selection of a topology-audit candidate, kept before any review: the pinned
+    /// recipe and revision that selected it (FIX 7817). Key: hash32 (audit id).
+    COACH_TOPOLOGY_AUDIT_SELECTION: VaultMeta b"coach:topology_audit_selection:v1:" Named
+        => crate::identity_topology::erase_topology_audit_actor_in_txn;
     /// When the Coach last climbed (or first saw) a pending skill tradeoff ask, so it climbs one
     /// rung per reminder window. Key: id16 of the ask's proposal.
     COACH_TRADEOFF_CLIMB: VaultMeta b"coach:tradeoff_climb:v1:" Raw;
@@ -339,6 +352,12 @@ side_tables! {
     /// `owner_pair` or `unavailable`).
     CODE_RUN_CONTRIBUTION_FORK: VaultMeta b"code_run:contribution_fork:v1:" Named Engine
         => crate::code_run::erase_contribution_forks_in_txn;
+    /// One model response a live code-mode REPL normalized at one step (FIX 4411, 4412): the
+    /// configured model id, the four packaging repairs, the outcome (clean, normalized, or
+    /// rejected with the executor's stable reason), the repair policy and, for a committed step,
+    /// its checkpoint. Ids, counts, flags and engine text only, never response text. Key:
+    /// id16(run) + be64(step) + be64(attempt).
+    CODE_RUN_CORRECTION: VaultMeta b"code_run:correction:v1:" Named Engine;
     /// Which executor run's fold a fold-words dependent stands for: the dependency walk reaches
     /// it when a record the fold's summary came from is withdrawn (fixed 24-byte frame: id16(run)
     /// + fold u64 BE). Key: id16(dependent).

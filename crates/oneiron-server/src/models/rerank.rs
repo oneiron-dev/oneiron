@@ -62,6 +62,7 @@ pub(crate) fn rerank_request(
             response_format: ResponseFormat::Text,
             locality,
             host_keyless: false,
+            host_paid: false,
         },
         messages: vec![
             LlmMessage {
