@@ -558,6 +558,8 @@ fn merge(
         window_to: finding.window.1,
         measured: 0,
         dial: 0,
+        exact_dial: None,
+        exact_measured: None,
         counter_evidence: Vec::new(),
         agent_blocked: false,
         confession: None,
@@ -588,6 +590,8 @@ fn merge(
     card.window_to = card.window_to.max(finding.window.1);
     card.measured = finding.measured;
     card.dial = finding.dial;
+    card.exact_dial = finding.exact_dial;
+    card.exact_measured = finding.exact_measured;
     card.counter_evidence = finding.counter.clone();
     card.confidence = if finding.counter.is_empty() {
         AgentHealthConfidence::High

@@ -355,6 +355,9 @@ pub enum LabelReadFailure {
     /// The read did not stop at the forced end of generation.
     #[error("not an end-of-generation stop")]
     NotEosStop,
+    /// The read exhausted its requested generation-token budget.
+    #[error("generation token limit")]
+    TokenCap,
     /// A label's probability is absent from the read.
     #[error("missing labels")]
     MissingLabels,

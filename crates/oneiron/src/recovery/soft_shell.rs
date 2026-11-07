@@ -59,12 +59,23 @@ pub(crate) fn materialize_retained_shells(
     for (id, blob, tombstone) in shells {
         // Never resurrect after a local hard delete, even if a peer removed its
         // hard marker from the CRDT. The ordinary tombstone pass stays in charge.
-        vault.with_write_txn_grouped(|txn| {
-            if vault.local_hard_delete_marker_exists_in_txn(txn, &id)? {
-                return Ok(());
-            }
-            crate::batch::restore_recovery_shell_in_txn(vault, txn, &id, &blob, &tombstone)
-        })?;
+        let is_claim = crate::batch::EntityMetadataHeader::parse(&blob)
+            .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM);
+        vault.with_write_txn_grouped_after_commit(
+            |txn| {
+                if vault.local_hard_delete_marker_exists_in_txn(txn, &id)? {
+                    return Ok(false);
+                }
+                crate::batch::restore_recovery_shell_in_txn(vault, txn, &id, &blob, &tombstone)?;
+                Ok(is_claim)
+            },
+            |claims_restored| {
+                if claims_restored {
+                    vault.verb_hook_bindings_changed();
+                }
+                Ok(())
+            },
+        )?;
     }
     Ok(())
 }

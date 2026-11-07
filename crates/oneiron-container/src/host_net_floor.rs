@@ -1,10 +1,12 @@
-//! The host's floor for a guest's network work (FIX 5978, FIX 5979).
+//! The host's floor for a guest's network work (FIX 5978, FIX 5979,
+//! FIX 6301).
 //!
 //! Every host descriptor and thread a guest's sockets hold on the host is
 //! charged to one floor the host lends through its relay
 //! ([`crate::EgressRelay::host_net_floor`]): a socket's entry and its writer
-//! for as long as the socket lives, and each relayed datagram's own socket
-//! and worker until its blocking receive ends. The floor is the host's, never
+//! for as long as the socket lives, each relayed datagram's own socket and
+//! worker until its blocking receive ends, and a connected stream's relay
+//! sockets and threads until its threads end. The floor is the host's, never
 //! a second count of this crate's: the engine's is its process's one
 //! descriptor line, the line a served engine's listener admits connections
 //! by, so guest relays and connections share one bound, served or not (FIX

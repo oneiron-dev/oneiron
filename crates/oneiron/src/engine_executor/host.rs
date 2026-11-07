@@ -124,6 +124,7 @@ pub(super) struct RecordingJsHost<'a, 's> {
     /// The run's executor, `provider/name@revision`, as the callable skills
     /// its program calls are credited to (OF-353).
     skill_executor: Option<String>,
+    summary_prompt_package: Option<std::path::PathBuf>,
     /// Callable skills this host is running now, each nested in the one
     /// before: a callable that calls another runs its step inside its own.
     callable_depth: u32,
@@ -210,6 +211,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             left_a_gap: false,
             declined: None,
             skill_executor: None,
+            summary_prompt_package: None,
             callable_depth: 0,
             admitted_skill_seq: None,
             callable_rows: (Vec::new(), Some(Vec::new())),
@@ -228,6 +230,11 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
     /// are credited to (OF-353).
     pub(super) fn with_skill_executor(mut self, executor: &crate::ModelId) -> Self {
         self.skill_executor = Some(executor.as_str().to_owned());
+        self
+    }
+
+    pub(super) fn with_summary_prompt_package(mut self, root: &std::path::Path) -> Self {
+        self.summary_prompt_package = Some(root.to_owned());
         self
     }
 

@@ -504,6 +504,23 @@ recorded. The receipt is best effort: if it cannot be written the export still s
 is logged, and `last_export` stays as it was. An export is your exit path, not a backup: restore
 from a backup file, the vault's encrypted snapshot.
 
+## Export secret supplement import marks
+
+`GET /v1/core/export-secret-supplements/{request}` and `oneiron secrets show-supplement`
+return `marked_imported`. It is true only when the authority fold admits the request's
+signed import mark. It does not report whether this install restored the custody secret.
+The holder's work `status` and the import's `restored`, `unchanged` or `skipped` outcome
+remain separate facts.
+
+A successful import keeps its secret even if this install has no live machine profile or
+loaded signing key to carry the mark. When a mark cannot be carried, a warning is logged;
+if no mark was already admitted, `marked_imported` stays false and the request's relayed
+copies remain until their window retires. Once the real profile and key are available,
+repeat the existing import with the same supplement and a current owner credential.
+An `unchanged` import retries the mark too; a `skipped` import does not.
+This is an explicit retry, not an automatic background job. An admitted mark ends relay
+retention; copies the owner kept remain readable.
+
 ## Secret scan switch
 
 ```sh
@@ -576,6 +593,19 @@ oneiron api raw POST /v1/owner/secrets/found/not-a-secret --data '{"handle": "sc
 
 Each answer writes its receipt. Not a secret works only for a key found in a record's body or in a
 file. A key in a claim or a text field keeps its handle.
+
+To re-enter a kept value after marking a key **Not a secret** or **Kept as text**, use the
+`re_enter` action on its card. Include settled keys in the listing with `pending=false`:
+
+```sh
+oneiron api raw GET '/v1/owner/secrets/found?pending=false'
+oneiron api raw POST /v1/owner/secrets/found/re-enter \
+  --data '{"handle": "sc12", "value_base64": "..."}'
+```
+
+This seals the supplied value in its existing custody record and returns the standing ruling
+and receipt unchanged. It does not rotate the key or undo the owner's choice. Use the rotate
+door to re-enter or reissue a key that is still active.
 
 ## Bind a secret so an agent can use it
 
@@ -2813,6 +2843,21 @@ oneiron api raw POST /v1/owner/secret-scan --data '{"mode":"off"}'
 Set `shared_merge_evidence_rows` under `[limits]` to change the existing shared-merge
 evidence question's bound. The value must be a positive integer. The default remains
 4,096 rows; the override does not change the question policy.
+
+## Membership withdrawal receipt links
+
+A signed `slip_grant_revoke` made by a shared-vault membership change names
+that change's execution receipt in `membership_receipt`. The writer uses the
+same receipt ID for the grant withdrawals, any Owner handover, and its committed
+membership receipt. The authority audit exposes this signed link as `receipt_ref`
+next to `grant_ref`. Owner handover audit rows also retain their signed
+`affected_grants` list.
+
+An ordinary guest revoke has no membership receipt link. A membership change
+without a live host issuer still lands through the existing pending carrier
+record, which names its own original execution receipt. A receipt link is a
+record of what the signer named, not an authority grant or proof that another
+replica has received the change.
 
 ## Limits today
 

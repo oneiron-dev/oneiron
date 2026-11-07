@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1279 facade rows, 4632 declarations.
-Inputs: 1208 of 1279 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1108 of 1279 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1282 facade rows, 4641 declarations.
+Inputs: 1211 of 1282 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1111 of 1282 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -579,6 +579,8 @@ class HealthReviewReceipt(TypedDict):
     reviewer_revision: NotRequired[EntityId | None]
     dial: int
     measured: int
+    exact_dial: NotRequired[float | None]
+    exact_measured: NotRequired[float | None]
     diagnostics: list[EntityId]
     evidence: list[EntityId]
     observed_brief: NotRequired[HealthBriefPin | None]
@@ -648,6 +650,8 @@ class AgentHealthCard(TypedDict):
     window_to: int
     measured: int
     dial: int
+    exact_dial: NotRequired[float | None]
+    exact_measured: NotRequired[float | None]
     counter_evidence: list[AgentHealthCounter]
     agent_blocked: bool
     confession: NotRequired[EntityId | None]
@@ -1324,6 +1328,7 @@ class TurnProgramWakeOutcomeUnpersisted(TypedDict):
     reason: UnpersistedWakeReason
 TurnProgramWakeOutcome = TurnProgramWakeOutcomeNotArmed | TurnProgramWakeOutcomeEvaluated | TurnProgramWakeOutcomeUnpersisted
 class WitnessReceipt(TypedDict):
+    turn_id: EntityId
     turn_short_id: str
     message_short_ids: list[str]
     receipt_ref: str
@@ -2249,6 +2254,7 @@ class SpendScope(TypedDict):
     parent: NotRequired[SpendScopeId | None]
     unit: LeaseUnit
     cap_units: int
+    ceiling_units: NotRequired[int | None]
     hard: bool
     spent_units: int
     held_units: int
@@ -5681,6 +5687,14 @@ class HubSkillSyncReceipt(TypedDict):
     outcome: HubSkillSyncOutcome
     proposal: NotRequired[EntityId | None]
     approval: NotRequired[ClaimApprovalStatus | None]
+class HubSkillProposalSettleRequest(TypedDict):
+    entity: EntityId
+    proposal: EntityId
+    accept: bool
+class HubSkillProposalSettled(TypedDict):
+    entity: EntityId
+    proposal: EntityId
+    approval: ClaimApprovalStatus
 class SkillConvertRequest(TypedDict):
     message_refs: list[EntityId]
     hint: NotRequired[str | None]
@@ -7625,10 +7639,11 @@ class FederationBurstReceipt(TypedDict):
 class FederationBurstReplayRequest(TypedDict):
     peer: FederationBurstPeerRequest
     batch_ref: str
+FederationPayloadBytes = list[int]
 class FederationIsolatedUpdate(TypedDict):
     request_ref: str
     window: str
-    admitted_update: list[int]
+    admitted_update: FederationPayloadBytes
     rate_ratio: float
     streak_ratio: float
 class FederationBurstReviewBundle(TypedDict):
@@ -10033,7 +10048,7 @@ class RsiSettlementSpent(TypedDict):
     Spent: int
 class RsiSettlementExposure(TypedDict):
     Exposure: int
-RsiSettlement = Literal["Refunded"] | RsiSettlementSpent | RsiSettlementExposure
+RsiSettlement = Literal["Unknown", "Refunded"] | RsiSettlementSpent | RsiSettlementExposure
 class ResearchReservation(TypedDict):
     id: EntityId
     line: ResearchReservationLine
@@ -10275,7 +10290,7 @@ class ArchiveDeleteBatchResult(TypedDict):
     entries: list[ArchiveDeleteConfirmEntry]
 class UsageRepairListRequest(TypedDict):
     ...
-UndecodableUsageReason = Literal["stored_event_decode_failed"]
+UndecodableUsageReason = Literal["stored_event_decode_failed", "stored_pending_decode_failed"]
 class UndecodableUsageRow(TypedDict):
     rowRef: str
     byteLength: int
@@ -10286,7 +10301,7 @@ class UndecodableUsageList(TypedDict):
 class UsageRepairRemoveRequest(TypedDict):
     rowRef: str
     expectedHash: str
-UsageRepairReason = Literal["undecodable_event_removed"]
+UsageRepairReason = Literal["undecodable_event_removed", "undecodable_pending_removed"]
 class UsageRepairAuthorityOwner(TypedDict):
     kind: Literal["owner"]
     ref: str
@@ -14488,7 +14503,7 @@ class PlannedSpawnRead(TypedDict):
     spawn_ref: EntityId
 SpawnPhase = Literal["planned", "launched", "refused", "erased"]
 SpawnErasure = Literal["asker_erased", "target_erased"]
-CoordinationPatternView = Literal["solo", "ceo_decides", "committee", "vote", "market", "rotation"]
+SpawnPattern = Literal["solo", "ceo_decides", "committee", "vote", "market", "rotation"]
 class SkillRevisionView(TypedDict):
     skill_ref: EntityId
     version: str
@@ -14500,7 +14515,7 @@ class PlanObservation(TypedDict):
     type_ref: TypeStamp
     model: str
     width: int
-    pattern: CoordinationPatternView
+    pattern: SpawnPattern
     hard_cap_units: NotRequired[int | None]
     expected_spend_units: int
     available_units: NotRequired[int | None]
@@ -14519,7 +14534,7 @@ class LaunchedMember(TypedDict):
 TeamAxis = Literal["converge", "diverge"]
 class ResolvedTeam(TypedDict):
     type_ref: TypeStamp
-    pattern: CoordinationPatternView
+    pattern: SpawnPattern
     width: int
     model: str
     axis: NotRequired[TeamAxis | None]
@@ -14529,7 +14544,7 @@ class ResolvedTeam(TypedDict):
     team_ref: NotRequired[str | None]
 class TeamBindingView(TypedDict):
     team_ref: str
-    pattern: CoordinationPatternView
+    pattern: SpawnPattern
     leader: EntityId
     member_attempt_refs: list[EntityId]
     proposal_refs: list[str]
@@ -14538,7 +14553,7 @@ class TeamBindingView(TypedDict):
 class TeamReceiptView(TypedDict):
     team_ref: str
     type_ref: TypeStamp
-    pattern: CoordinationPatternView
+    pattern: SpawnPattern
     pattern_skill: NotRequired[SkillRevisionView | None]
     axis: TeamAxis
     width: int
@@ -14637,14 +14652,14 @@ class PlannedSpawnObservation(TypedDict):
     critics: list[CriticObservation]
     learning: list[LearningObservation]
     issues: list[ObservationIssue]
-class SpawnAskKnobSeed(TypedDict, Generic[T]):
+class SpawnKnobSeed(TypedDict, Generic[T]):
     mode: Literal["seed"]
     value: T
     weight_runs: float
-class SpawnAskKnobPin(TypedDict, Generic[T]):
+class SpawnKnobPin(TypedDict, Generic[T]):
     mode: Literal["pin"]
     value: T
-SpawnAskKnob = SpawnAskKnobSeed[T] | SpawnAskKnobPin[T]
+SpawnKnob = SpawnKnobSeed[T] | SpawnKnobPin[T]
 class SpawnIntentRequest(TypedDict):
     intent_key: str
     prompt: str
@@ -14652,10 +14667,10 @@ class SpawnIntentRequest(TypedDict):
     need: str
     care: NotRequired[str | None]
     notes: NotRequired[str | None]
-    model: NotRequired[SpawnAskKnob[str] | None]
-    width: NotRequired[SpawnAskKnob[int] | None]
-    pattern: NotRequired[SpawnAskKnob[str] | None]
-    budget_cap_units: NotRequired[SpawnAskKnob[int] | None]
+    model: NotRequired[SpawnKnob[str] | None]
+    width: NotRequired[SpawnKnob[int] | None]
+    pattern: NotRequired[SpawnKnob[str] | None]
+    budget_cap_units: NotRequired[SpawnKnob[int] | None]
     balance_free_prompt: NotRequired[bool]
 class SpawnIntentReply(TypedDict):
     intent_key: str
@@ -17127,7 +17142,7 @@ class UnsupportedCapability(TypedDict):
     capability: LlmCapability
     model: NotRequired[ModelId | None]
     reason: NotRequired[str | None]
-LabelReadFailure = Literal["EmittedText", "NotEosStop", "MissingLabels", "Malformed"]
+LabelReadFailure = Literal["EmittedText", "NotEosStop", "TokenCap", "MissingLabels", "Malformed"]
 class FatalLlmErrorInvalidRequestDetailBody(TypedDict):
     message: str
     code: NotRequired[str | None]
@@ -18418,13 +18433,21 @@ class DecisionAskConfirmGrantRequest(TypedDict):
     notice: str
 class ConnectorListRequest(TypedDict):
     query: NotRequired[str | None]
-class ConnectorEntry(TypedDict):
+class ConnectorEntryCatalog(TypedDict):
+    source: Literal["catalog"]
     name: str
     connector: str
     summary: str
     verbs: list[str]
     call_class: str
     registered_at: int
+class ConnectorEntryBuiltin(TypedDict):
+    source: Literal["builtin"]
+    name: str
+    connector: str
+    summary: str
+    verbs: list[str]
+ConnectorEntry = ConnectorEntryCatalog | ConnectorEntryBuiltin
 class ConnectorNameRequest(TypedDict):
     name: str
 class ConnectorView(TypedDict):
@@ -23125,6 +23148,48 @@ class MailComplianceSearchReply(TypedDict):
 class FilesSourceConvertRequest(TypedDict):
     path: str
     exclude: NotRequired[list[str] | None]
+class RepoManifestConflictReviewRequest(TypedDict):
+    window: str
+    portable_repo: str
+RepoPortableId = str
+class RepoManifestWriter(TypedDict):
+    machine: EntityId
+    signature: list[int]
+class RepoManifest(TypedDict):
+    portable: RepoPortableId
+    version: int
+    code: EntityId
+    minted_at: int
+    origin_name: NotRequired[str | None]
+    visible_refs: list[tuple[str, str]]
+    lfs_pointers: list[str]
+    epoch: int
+    updated_at: int
+    writer: NotRequired[RepoManifestWriter | None]
+class RepoManifestConflictReviewView(TypedDict):
+    window: str
+    portable_repo: str
+    held: RepoManifest
+    carried: RepoManifest
+    binding: str
+class RepoManifestConflictDiscardRequest(TypedDict):
+    binding: str
+class RepoManifestConflictQueueViewQueued(TypedDict):
+    state: Literal["queued"]
+    sequence: int
+class RepoManifestConflictQueueViewFailed(TypedDict):
+    state: Literal["failed"]
+    error: str
+RepoManifestConflictQueueView = RepoManifestConflictQueueViewQueued | RepoManifestConflictQueueViewFailed
+class RepoManifestConflictDiscardViewDiscarded(TypedDict):
+    state: Literal["discarded"]
+    update_base64: str
+    queue: RepoManifestConflictQueueView
+class RepoManifestConflictDiscardViewStale(TypedDict):
+    state: Literal["stale"]
+class RepoManifestConflictDiscardViewWindowLive(TypedDict):
+    state: Literal["window_live"]
+RepoManifestConflictDiscardView = RepoManifestConflictDiscardViewDiscarded | RepoManifestConflictDiscardViewStale | RepoManifestConflictDiscardViewWindowLive
 ConnectorAnswerAction = Literal["accept", "decline", "cancel"]
 class ConnectorQuestionAnswer(TypedDict):
     key: str
@@ -23909,15 +23974,6 @@ class ReportBlockedInput(TypedDict):
 class ReportBlockedOutput(TypedDict):
     receipt: str
 SpawnCare = Literal["light", "medium", "high", "xhigh", "max"]
-class SpawnKnobSeed(TypedDict, Generic[T]):
-    mode: Literal["seed"]
-    value: T
-    weight_runs: float
-class SpawnKnobPin(TypedDict, Generic[T]):
-    mode: Literal["pin"]
-    value: T
-SpawnKnob = SpawnKnobSeed[T] | SpawnKnobPin[T]
-SpawnPattern = Literal["solo", "ceo_decides", "committee", "vote", "market", "rotation"]
 class AgentSpawnInput(TypedDict):
     need: str
     prompt: str
