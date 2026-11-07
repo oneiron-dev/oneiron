@@ -56,6 +56,7 @@ pub(in crate::runtime_hooks) fn scrub_memo_payload(memo: &mut HookRunRecord) {
 /// The verb-record half of [`scrub_memo_payload`].
 pub(in crate::runtime_hooks) fn scrub_verb_payload(record: &mut HookVerbRunRecord) {
     record.input_json = None;
+    record.landing_original = None;
     record.history_erased = true;
     record.reads.clear();
     record.outcome_json = None;
