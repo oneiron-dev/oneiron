@@ -8829,6 +8829,7 @@ dependencies = [
  "oneiron-organ-protocol",
  "oneiron-remote",
  "oneiron-spawn",
+ "oneiron-store",
  "oneiron-vault-contract",
  "quick-xml 0.42.0",
  "rand_core 0.6.4",
