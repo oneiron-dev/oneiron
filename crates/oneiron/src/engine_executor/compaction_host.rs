@@ -275,29 +275,15 @@ impl EngineNativeExecutor<'_> {
         for read in reads {
             handles.push(super::compaction::result_read_affordance(&read)?);
         }
-        let mut pins = super::compaction::window_pins(&window);
+        // The span's failure lines and the agent's own profile pins it holds
+        // are mandatory alike (FIX 9837): a span whose pins do not fit one
+        // summary, or the backend's input, is refused, never kept without them.
+        let pins = super::compaction::window_pins(&window, &driver.memory_profile().verbatim_pins);
         if count_context_pack_tokens(&pins.join("\n")) as u64 > budget {
             return Ok(Err(
-                "its failure lines do not fit one summary; fold a shorter span".to_owned(),
+                "its pinned lines do not fit one summary; fold a shorter span".to_owned(),
             ));
         }
-        super::compaction::add_profile_pins(
-            &mut pins,
-            &window,
-            &driver.memory_profile().verbatim_pins,
-            |pins| {
-                count_context_pack_tokens(&pins.join("\n")) as u64 <= budget
-                    && room.is_none_or(|room| {
-                        crate::compaction::compaction_input_tokens(
-                            mark.from,
-                            &window,
-                            pins,
-                            note.as_deref(),
-                            budget,
-                        ) <= room
-                    })
-            },
-        );
         if let Some(room) = room
             && crate::compaction::compaction_input_tokens(
                 mark.from,

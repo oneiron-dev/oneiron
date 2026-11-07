@@ -78,6 +78,9 @@ impl EngineNativeExecutor<'_> {
                 let held = super::compaction::live_fork::held_steps(live.as_ref(), request);
                 let watermark =
                     watermark.and_then(|at| super::compaction::live_fork::within_prefix(at, held));
+                let deferred = marks
+                    .iter()
+                    .any(|mark| held.is_some_and(|steps| mark.through >= steps));
                 let marks: Vec<FoldMark> = marks
                     .iter()
                     .filter(|mark| held.is_none_or(|steps| mark.through < steps))
@@ -122,7 +125,7 @@ impl EngineNativeExecutor<'_> {
                 {
                     tracing::warn!("a fold batch did not land");
                 }
-                if asked.is_some() {
+                if asked.is_some() && !deferred {
                     self.storage
                         .update_code_run_folds(run_id, |ledger| ledger.compact = None)?;
                 }

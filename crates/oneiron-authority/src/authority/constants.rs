@@ -111,6 +111,8 @@ pub const FEDERATION_SCOPE_COMMIT_DOMAIN: &[u8] = b"oneiron/federation/pact-scop
 /// Upper bound for encoded federation pact scope bytes in a lifecycle op.
 pub const MAX_PACT_SCOPE_BYTES: usize = 4096;
 
+/// The parents one entry names, except a frontier join, which names every
+/// head of the frontier it joins (FIX 8527).
 pub const MAX_PARENTS: usize = 32;
 pub const MAX_COSIGNS: usize = 8;
 pub const MAX_ATTESTATION_EVIDENCE_BYTES: usize = 4096;
@@ -119,6 +121,12 @@ pub const OP_KIND_SLIP_MINT: &str = "slip_mint";
 pub const OP_KIND_SLIP_REVOKE: &str = "slip_revoke";
 pub const OP_KIND_SLIP_CONSUME: &str = "slip_consume";
 pub const OP_KIND_SLIP_GRANT_REVOKE: &str = "slip_grant_revoke";
+/// The removal-archive door's spend of a one-shot transferred slip (FIX
+/// 11862).
+pub const OP_KIND_REMOVAL_ARCHIVE_CONSUME: &str = "removal_archive_consume";
+/// The removed person whose archives a `removal_archive_consume` served, in
+/// 32-hex as a slip's `holder_ref` names them (FIX 11862).
+pub const REMOVAL_ARCHIVE_CONSUME_KEY_MEMBER: &str = "member";
 pub const SLIP_KEY_SLIP_ID: &str = "slip_id";
 pub const SLIP_KEY_VAULT_ID: &str = "vault_id";
 pub const SLIP_KEY_PARENT_ID: &str = "parent_id";
