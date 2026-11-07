@@ -284,6 +284,7 @@ vaultPacksSync(input: unknown): unknown
 vaultPacksGet(input: unknown): unknown
 vaultSkillsImport(input: unknown): unknown
 vaultSkillsSync(input: unknown): unknown
+vaultSkillsProposalSettle(input: unknown): unknown
 vaultSkillsReceipts(input: unknown): unknown
 vaultSkillsConvert(input: unknown): unknown
 vaultSkillsGet(input: unknown): unknown

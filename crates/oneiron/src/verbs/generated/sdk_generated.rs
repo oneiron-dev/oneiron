@@ -1328,6 +1328,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<HubSkillRequest>(),
             ),
             (
+                "vault.skills.proposal.settle",
+                crate::code_run::vault_read::request_schema::<HubSkillProposalSettleRequest>(),
+            ),
+            (
                 "vault.skills.receipts",
                 crate::code_run::vault_read::request_schema::<HubSkillRequest>(),
             ),
@@ -7537,6 +7541,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.packs.get",
     "vault.skills.import",
     "vault.skills.sync",
+    "vault.skills.proposal.settle",
     "vault.skills.receipts",
     "vault.skills.convert",
     "vault.skills.get",
@@ -8741,6 +8746,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.skills.sync" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::HubSkillSyncReceipt,
+        >(),
+        "vault.skills.proposal.settle" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::HubSkillProposalSettled,
         >(),
         "vault.skills.receipts" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::HubSkillReceipts>()
@@ -12782,6 +12790,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.skills.sync" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.proposal.settle" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -20247,6 +20262,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.packs.get" => validate_input_vault_packs_get(value)?,
         "vault.skills.import" => validate_input_vault_skills_import(value)?,
         "vault.skills.sync" => validate_input_vault_skills_sync(value)?,
+        "vault.skills.proposal.settle" => validate_input_vault_skills_proposal_settle(value)?,
         "vault.skills.receipts" => validate_input_vault_skills_receipts(value)?,
         "vault.skills.convert" => validate_input_vault_skills_convert(value)?,
         "vault.skills.get" => validate_input_vault_skills_get(value)?,
@@ -22995,6 +23011,11 @@ fn validate_input_vault_skills_import(value: &serde_json::Value) -> MemoryResult
 #[inline(never)]
 fn validate_input_vault_skills_sync(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: HubSkillRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_skills_proposal_settle(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: HubSkillProposalSettleRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -29102,6 +29123,7 @@ pub fn invoke(
         "vault.packs.get" => invoke_vault_packs_get(memory, value),
         "vault.skills.import" => invoke_vault_skills_import(memory, value),
         "vault.skills.sync" => invoke_vault_skills_sync(memory, value),
+        "vault.skills.proposal.settle" => invoke_vault_skills_proposal_settle(memory, value),
         "vault.skills.receipts" => invoke_vault_skills_receipts(memory, value),
         "vault.skills.convert" => invoke_vault_skills_convert(memory, value),
         "vault.skills.get" => invoke_vault_skills_get(memory, value),
@@ -32244,6 +32266,13 @@ fn invoke_vault_skills_sync(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_skills_sync(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_skills_proposal_settle(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_skills_proposal_settle(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_skills_receipts(
@@ -42026,6 +42055,16 @@ pub fn vault_skills_sync(
     crate::task_verb::sdk::hub_skill_sync_as_owner(
         memory.vault(),
         &memory.embedded_owner("vault.skills.sync")?,
+        &input,
+    )
+}
+pub fn vault_skills_proposal_settle(
+    memory: &Memory<'_>,
+    input: HubSkillProposalSettleRequest,
+) -> MemoryResult<crate::task_verb::sdk::HubSkillProposalSettled> {
+    crate::task_verb::sdk::hub_skill_proposal_settle_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.proposal.settle")?,
         &input,
     )
 }

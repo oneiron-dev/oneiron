@@ -1998,6 +1998,8 @@ class Oneiron:
             """The owner imports a pinned hub skill through scanning and publisher admission, pending its permission ask."""
         def sync(self, spec: Facade.HubSkillRequest) -> Facade.HubSkillSyncReceipt:
             """The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities."""
+        @property
+        def proposal(self) -> "Oneiron._VaultSkillsProposalVerbs": ...
         def receipts(self, spec: Facade.HubSkillRequest) -> Facade.HubSkillReceipts:
             """Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner."""
         def convert(self, spec: Facade.SkillConvertRequest) -> Facade.SkillConvertReceipt:
@@ -2034,6 +2036,9 @@ class Oneiron:
         def outcomes(self) -> "Oneiron._VaultSkillsOutcomesVerbs": ...
         @property
         def attribution(self) -> "Oneiron._VaultSkillsAttributionVerbs": ...
+    class _VaultSkillsProposalVerbs:
+        def settle(self, spec: Facade.HubSkillProposalSettleRequest) -> Facade.HubSkillProposalSettled:
+            """The owner accepts the exact package in a pending hub update, or rejects only its proposal without changing the working skill."""
     class _VaultSkillsRulesVerbs:
         def set(self, spec: Facade.SkillHashRuleRequest) -> Facade.HubConsentReceipt:
             """The owner sets or clears a known-bad canonical skill hash rule, independently of advisory scanner prose."""

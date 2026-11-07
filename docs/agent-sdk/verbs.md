@@ -255,6 +255,7 @@ both bindings and their export-census tests in one change.
 - `vault.packs.get`
 - `vault.skills.import`
 - `vault.skills.sync`
+- `vault.skills.proposal.settle`
 - `vault.skills.receipts`
 - `vault.skills.convert`
 - `vault.skills.get`

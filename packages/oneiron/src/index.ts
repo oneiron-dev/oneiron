@@ -1095,6 +1095,10 @@ export class Oneiron {
       import: (input: Facade.HubImportRequest): Facade.HubSkillImported => this.#call(() => this.#client.vaultSkillsImport(input) as Facade.HubSkillImported),
       /** The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities. */
       sync: (input: Facade.HubSkillRequest): Facade.HubSkillSyncReceipt => this.#call(() => this.#client.vaultSkillsSync(input) as Facade.HubSkillSyncReceipt),
+      proposal: {
+        /** The owner accepts the exact package in a pending hub update, or rejects only its proposal without changing the working skill. */
+        settle: (input: Facade.HubSkillProposalSettleRequest): Facade.HubSkillProposalSettled => this.#call(() => this.#client.vaultSkillsProposalSettle(input) as Facade.HubSkillProposalSettled),
+      },
       /** Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner. */
       receipts: (input: Facade.HubSkillRequest): Facade.HubSkillReceipts => this.#call(() => this.#client.vaultSkillsReceipts(input) as Facade.HubSkillReceipts),
       /** Converts selected messages through the configured refiner; user initiation approves conversion, never admission. */
