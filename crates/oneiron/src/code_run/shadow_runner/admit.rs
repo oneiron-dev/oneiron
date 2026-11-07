@@ -16,13 +16,15 @@
 //! same wall, in one writer ([`admit_published_inline`]), as does the type
 //! feedback of the program it ran (FIX 10389), which quotes that program.
 
-use std::sync::Weak;
+use std::sync::{Arc, Weak};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use super::types::{ShadowRunResult, ShadowStatus};
-use crate::batch::secret_scan::{BodySpool, SpoolAdmission, admit_spool_in_txn, admit_typed};
+use crate::batch::secret_scan::{
+    AdmissionCustody, BodySpool, SpoolAdmission, admit_spool_in_txn, admit_typed,
+};
 use crate::error::GateError;
 use crate::secret_custody::KnownValues;
 use crate::{EntityId, Error, Result, Vault};
@@ -47,6 +49,12 @@ impl ShadowAdmission {
         Self { vault, run }
     }
 
+    /// The source vault, while it is open: the vault the release of the
+    /// arm's reads reads the source's taint in again (FIX 9468).
+    pub(super) fn vault(&self) -> Option<Arc<Vault>> {
+        self.vault.upgrade()
+    }
+
     /// `spool`, one write of the arm, through the spool adapter, in a writer
     /// of the source vault that commits the custody records it mints.
     ///
@@ -60,7 +68,8 @@ impl ShadowAdmission {
         let at = (ARM_PLACE, self.run.as_bytes().as_slice());
         let mut wtxn = vault.store.env.write_txn()?;
         let known = KnownValues::shared_in_writer(&vault.store, &wtxn)?;
-        let admitted = admit_spool_in_txn(&vault, &mut wtxn, at, spool, (known.as_ref(), false))?;
+        let custody = AdmissionCustody::vault(&vault);
+        let admitted = admit_spool_in_txn(custody, &mut wtxn, at, spool, (known.as_ref(), false))?;
         if matches!(admitted, SpoolAdmission::Copy(_)) {
             wtxn.commit()?;
         }

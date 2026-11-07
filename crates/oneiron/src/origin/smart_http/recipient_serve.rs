@@ -100,17 +100,21 @@ impl RepoGitReadContext {
     }
 }
 
-/// Whether the store `store` holds a readable mark, found in one walk with
-/// nothing written: a store with none serves every recipient today's
-/// history, with no copy made.
+/// Whether a masked reader of the store `store` may read a copy of it: the
+/// store holds a readable mark, or custody knows a value any of its blobs
+/// may hold (FIX 8966), found with nothing written. A store with neither
+/// serves every recipient today's history, with no copy made.
 ///
 /// # Errors
 /// A store failure, or a mark that does not decode.
-pub(crate) fn store_holds_readable_marks_in_txn(
+pub(crate) fn store_may_need_masked_copy_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
     store: &EntityId,
 ) -> Result<bool> {
+    if vault.store.known_history_witness_in_txn(txn)?.is_some() {
+        return Ok(true);
+    }
     let mut found = false;
     for_each_repo_secret_mark_in_txn(
         vault,

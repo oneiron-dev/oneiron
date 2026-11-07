@@ -201,6 +201,23 @@ pub(super) fn scan(
     Ok(())
 }
 
+/// Whether the attempt `entity` is still a completed attempt past retention
+/// in `txn`: a scan's candidate read again under the writer (FIX 7425).
+pub(super) fn still_eligible_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    entity: EntityId,
+) -> Result<bool> {
+    let id = AttemptId::from_bytes(entity.as_bytes())?;
+    if crate::store::attempt_retention::owner_retained_id(&id) {
+        return Ok(false);
+    }
+    let Some(raw) = JobQueueRead::port_job_row(&vault.store, txn, &id)? else {
+        return Ok(false);
+    };
+    Ok(eligible(vault, txn, id, &raw)?.is_some())
+}
+
 /// Archives one completed attempt for cleanup run `run` and answers its
 /// snapshot entry, read before the mark is written. None when the attempt is
 /// gone or no longer eligible; nothing is written then.
