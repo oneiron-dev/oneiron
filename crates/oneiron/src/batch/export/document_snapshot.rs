@@ -413,7 +413,9 @@ impl Vault {
                 if only.is_none()
                     && cut == ExportCut::Archive
                     && row_live_in_txn(&self.store, &rtxn, &id)?
-                    && lineage.carries(judge.as_mut(), id, Some(&raw))?
+                    && judge
+                        .as_mut()
+                        .map_or(Ok(true), |judge| judge.carries(id, Some(&raw)))?
                 {
                     let handle = crate::ports::ShortIdStoreRead::port_short_id_reference(
                         &self.store,
@@ -431,6 +433,7 @@ impl Vault {
                     )? {
                         sources.insert(id);
                         writer.secret(&secret)?;
+                        lineage.ships([id]);
                         holder_requests.extend(need.map(HolderExportRequest::unrecorded));
                     }
                 }
@@ -452,18 +455,18 @@ impl Vault {
                 continue;
             }
             // A blob version's ledger claim names each row the version's
-            // made_by names, as the version's side rows do, and goes only
-            // when the copy carries every one of them (fix list row 15416).
-            if let Some(judge) = judge.as_mut()
+            // made_by names, as the version's record does, read through the
+            // made_by codec: it goes only when the copy carries every one of
+            // them, and they count as carried once the claim ships; one whose
+            // made_by does not read stays home (fix list row 15416).
+            if judge.is_some()
                 && header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
                 && let Ok(claim) = crate::write_envelope::claim_body::decode_claim_body(
                     &raw[ENTITY_METADATA_HEADER_LEN..],
                     true,
                 )
-                && let Some(value) = crate::blob_artifact::version_claim_value(&claim)
-                && !judge.carries_all(Some(
-                    super::archive_side_tables::value_entities(value).as_slice(),
-                ))?
+                && let Some(names) = crate::blob_artifact::version_claim_rows(&claim)
+                && !lineage.supplements(judge.as_mut(), id, names.as_deref())?
             {
                 continue;
             }
@@ -700,7 +703,9 @@ impl Vault {
                     owner_export,
                 )?
                 .is_none()
-                    || !lineage.carries(judge.as_mut(), session, None)?
+                    || !judge
+                        .as_mut()
+                        .map_or(Ok(true), |judge| judge.carries(session, None))?
                 {
                     continue;
                 }
@@ -710,6 +715,7 @@ impl Vault {
                     epoch,
                     turn_end,
                 })?;
+                lineage.ships([session]);
             }
         }
         // FIX 2768, 3681: each carried record's side rows go with it, in a
@@ -720,8 +726,10 @@ impl Vault {
         // ruling 1-EXPORT = B), never with a records archive. A carried
         // record whose family names a carrier left out is named in the
         // manifest instead, and in an Owner's copy so is one whose family
-        // names a row of a member's mailbox the copy leaves out, or a row
-        // whose words came from one (fix list row 15416).
+        // names, in any typed record it keeps, a row of a member's mailbox
+        // the copy leaves out or a row whose words came from one, and so is a
+        // code document whose history does (fix list row 15416). The rows a
+        // side row names count as carried once the writer serializes it.
         if cut == ExportCut::Archive {
             let (rows, withheld) = super::archive_side_rows_in_txn(
                 &self.store,
@@ -730,8 +738,11 @@ impl Vault {
                 only.is_none() && (owner_export || locality == CallerLocality::OnDevice),
                 judge.as_mut(),
             )?;
-            for row in rows {
-                writer.side_row(row)?;
+            for mut row in rows {
+                let names = std::mem::take(&mut row.names);
+                if writer.side_row(row)? {
+                    lineage.ships(names);
+                }
             }
             writer.side_rows_withheld(withheld);
         }

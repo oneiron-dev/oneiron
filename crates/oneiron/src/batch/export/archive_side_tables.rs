@@ -561,6 +561,10 @@ pub struct ArchiveSideRow {
 #[serde(deny_unknown_fields)]
 pub struct ArchiveSideWithheld {
     pub family: ArchiveSideFamily,
+    /// The entity the family's rows travel with; for a code document's
+    /// history, which travels vault-wide and names no record, the document
+    /// (its 32-byte id) an Owner's copy holds it out under (fix list row
+    /// 15416); `None` for a vault-wide row.
     pub owner: Option<String>,
     pub reason: ArchiveSideWithheldReason,
     /// The records a row held out alone names beside its owner, each one
@@ -594,6 +598,11 @@ pub(crate) struct SideRowBytes {
     pub(crate) value: Vec<u8>,
     pub(crate) owner: Option<EntityId>,
     pub(crate) carriers: Vec<EntityId>,
+    /// In an Owner's copy, each entity row the row names, read through its
+    /// family's own codec and carried by the copy's mailbox judge (fix list
+    /// row 15416): their lineage counts as carried once the writer
+    /// serializes the row. Empty elsewhere, and as read back.
+    pub(crate) names: Vec<EntityId>,
 }
 
 impl SideRowBytes {
@@ -718,6 +727,7 @@ impl ArchiveSideRow {
             value,
             owner: self.owner.as_deref().map(parse_id).transpose()?,
             carriers: Vec::new(),
+            names: Vec::new(),
         })
     }
 
@@ -756,12 +766,18 @@ impl ArchiveSideRow {
 /// names what its reader could not read).
 ///
 /// In an Owner's copy, `member_mail` is its pass's mailbox judge (fix list row
-/// 15416): a row that would go goes only when the judge carries every entity
-/// it names (`named_entities`). A record's row naming one the judge leaves
-/// out holds out the record's rows of its group, as a carrier the export lacks
-/// does, so a version's record, its head and its born-from row go or stay
-/// together; each family is named once under the record, never by the entity
-/// left out. Such a vault-wide row stays here, unnamed.
+/// 15416): a row that would go is read through its family's own codec, every
+/// typed record inside it too ([`side_names`]), and goes only when the judge
+/// carries every entity row it names. A record's row that names one the judge
+/// leaves out, or that does not read, holds out the record's rows of its
+/// group, as a carrier the export lacks does, so a version's record, its head
+/// and its born-from row go or stay together; each family is named once under
+/// the record, never by the entity left out. A code document's history goes
+/// whole or not at all: one of its rows naming a session, actor or other row
+/// the judge leaves out, or a snapshot or stamp that does not read, holds out
+/// every row of that document and the generation rows of each repo path it
+/// stood at, each family named once under the document. Each row that goes
+/// keeps the rows it names, to count as carried once the writer serializes it.
 pub(crate) fn archive_side_rows_in_txn(
     store: &Store,
     rtxn: &RoTxn<'_>,
@@ -781,22 +797,47 @@ pub(crate) fn archive_side_rows_in_txn(
             .map(|(family, key, value)| (*family, key.as_slice(), value.as_slice())),
     );
     let mut travels = Vec::with_capacity(stored.len());
+    // In an Owner's copy, what each row that would go names, and whether the
+    // judge carries all of it.
+    let mut judged = Vec::with_capacity(stored.len());
     for (family, key, value) in &stored {
         let mut travel = context.travel(*family, key, value)?;
+        let mut verdict = None;
         if let Some(judge) = member_mail.as_deref_mut()
             && travel.goes(included, include_vault_wide)
-            && !judge.carries_all(Some(named_entities(*family, key, value).as_slice()))?
         {
-            travel = travel.left_out();
+            let names = side_names(*family, key, value)?;
+            let carried = match &names.rows {
+                Some(rows) => judge.carries_all(Some(rows.as_slice()))?,
+                None => false,
+            };
+            if !carried {
+                travel = travel.left_out();
+            }
+            verdict = Some((names, carried));
         }
         travels.push((*family, travel));
+        judged.push(verdict);
+    }
+    let histories = DocumentHistories::of(&judged);
+    let mut held_documents = BTreeSet::new();
+    for ((family, travel), verdict) in travels.iter_mut().zip(&judged) {
+        let Some((names, _)) = verdict else {
+            continue;
+        };
+        let held = histories.held(names);
+        if !held.is_empty() {
+            *travel = Travel::Orphan;
+            held_documents.extend(held.into_iter().map(|document| (*family, document)));
+        }
     }
     let groups = whole_groups(&travels, included);
     let mut held_out = BTreeSet::new();
     let rows: Vec<SideRowBytes> = stored
         .into_iter()
         .zip(&travels)
-        .filter_map(|((family, key, value), (_, travel))| {
+        .zip(judged)
+        .filter_map(|(((family, key, value), (_, travel)), verdict)| {
             let owner = carried(
                 family,
                 travel,
@@ -809,16 +850,32 @@ pub(crate) fn archive_side_rows_in_txn(
                 Travel::With(_, carriers) => carriers.clone(),
                 Travel::Broken(_) | Travel::Vault | Travel::Orphan => Vec::new(),
             };
+            let names = verdict
+                .and_then(|(names, admitted)| admitted.then_some(names.rows))
+                .flatten()
+                .unwrap_or_default();
             Some(SideRowBytes {
                 family,
                 key,
                 value,
                 owner,
                 carriers,
+                names,
             })
         })
         .collect();
-    Ok((rows, incomplete(held_out).collect()))
+    let mut withheld: Vec<ArchiveSideWithheld> = incomplete(held_out).collect();
+    withheld.extend(
+        held_documents
+            .into_iter()
+            .map(|(family, document)| ArchiveSideWithheld {
+                family,
+                owner: Some(bytes_to_hex_lower(&document)),
+                reason: ArchiveSideWithheldReason::Incomplete,
+                carriers: Vec::new(),
+            }),
+    );
+    Ok((rows, withheld))
 }
 
 /// FIX-LIST 11110: which of a stored records archive's side `rows` stay when
@@ -1157,114 +1214,175 @@ impl Travel {
     }
 }
 
-/// Every entity a stored row of `family` names in what the archive carries of
-/// it (fix list row 15416): each id of its key, a born-from source's and a
-/// code-memory payload's among them; each id an LFS object names; each id a
-/// MessagePack value holds ([`value_entities`]), a version's made_by inputs,
-/// trigger and actor and its ledger claim among them; each id a code-memory
-/// value's own codec holds; and each id spelled in text. A row that does not
-/// read through its table names nothing here: it does not travel.
-fn named_entities(family: ArchiveSideFamily, key: &[u8], value: &[u8]) -> Vec<EntityId> {
-    let spec = family.spec();
-    let mut named = BTreeSet::new();
-    for part in key_parts(spec.key, key).unwrap_or_default() {
-        match part {
-            ArchiveSideKeyPart::Id(hex) => named.extend(EntityId::from_hex(&hex).ok()),
-            ArchiveSideKeyPart::Source(hex) => {
-                named.extend(hex.get(2..).and_then(|id| EntityId::from_hex(id).ok()));
-            }
-            ArchiveSideKeyPart::Text(text) => text_entities(&text, &mut named),
-            ArchiveSideKeyPart::Hash(_) | ArchiveSideKeyPart::U64(_) => {}
-        }
-    }
-    match spec.value {
-        Form::LfsObject => {
-            named.extend(id_at(value, 0));
-            named.extend(id_at(value, ENTITY_ID_LEN + 16));
-        }
-        Form::MessagePack => {
-            let mut cursor = std::io::Cursor::new(value);
-            if let Ok(tree) = rmpv::decode::read_value(&mut cursor) {
-                tree_entities(&tree, &mut named);
-            }
-        }
-        Form::Opaque => named.extend(opaque_entities(family, value)),
-        Form::Empty | Form::U64Be | Form::U64Le | Form::Hash => {}
-    }
-    named.into_iter().collect()
+/// What a stored row of one family names as an Owner's copy reads it (fix list
+/// row 15416), through its table's own key type and codec and the codec of
+/// every typed record inside it: never a value guessed to be an id.
+struct SideNames {
+    /// The code document a code-document history row is of, as its key or
+    /// value names it; `None` for every other row and for a generation row.
+    document: Option<[u8; 32]>,
+    /// The generation key of each repo path a code-document row's states
+    /// stand at, or the one a generation row counts.
+    paths: Vec<[u8; 32]>,
+    /// Each entity row it names; `None` when the row, or a record inside it,
+    /// does not read.
+    rows: Option<Vec<EntityId>>,
 }
 
-/// Every entity the MessagePack value `value` names as an archive carries it
-/// (fix list row 15416): each 16-byte binary, extension or byte array in it,
-/// and each id spelled in its text, as a made_by or an actor ref spells one.
-pub(super) fn value_entities(value: &rmpv::Value) -> Vec<EntityId> {
-    let mut named = BTreeSet::new();
-    tree_entities(value, &mut named);
-    named.into_iter().collect()
+impl SideNames {
+    fn of(rows: Option<Vec<EntityId>>) -> Self {
+        Self {
+            document: None,
+            paths: Vec::new(),
+            rows,
+        }
+    }
 }
 
-fn tree_entities(value: &rmpv::Value, named: &mut BTreeSet<EntityId>) {
-    use rmpv::Value as Mp;
-    match value {
-        Mp::Binary(bytes) | Mp::Ext(_, bytes) => named.extend(entity_of(bytes)),
-        Mp::String(text) => {
-            if let Some(text) = text.as_str() {
-                text_entities(text, named);
-            }
-        }
-        Mp::Array(items) => match byte_values(items) {
-            Some(bytes) => named.extend(entity_of(&bytes)),
-            None => items.iter().for_each(|item| tree_entities(item, named)),
+/// What the stored row `key` and `value` of `family` names (fix list row
+/// 15416), read through its table's own key type and codec, then through the
+/// codec of each typed record inside it:
+///
+/// - a blob version and head: the artifact, the version's ledger claim, each
+///   made_by input, its process's actor and a task, ask or skill trigger; a
+///   born-from row: the artifact and a task, ask or skill source; a
+///   settlement: the artifact and the rows its record names
+///   ([`crate::edit_settle::archive_settlement_rows`]); every other blob row:
+///   its artifact;
+/// - an LFS chunk mark, manifest row and object: their ASSET; an upload
+///   owner, a repo key, an object id and a ref name are no rows;
+/// - a codebase snapshot and its indexes: the snapshot's CODE_ARTIFACT; its
+///   custody report names paths only;
+/// - a code revision's record, integrity fold, stranded proposal (the
+///   revision encoded inside it read through the revision's own codec),
+///   promotion, fork and frontier: the rows
+///   [`crate::code_revision::archive_revision_rows`] reads; its session,
+///   parent and fork indexes: both ids of their key;
+/// - a code document's ingress receipt, tested snapshot, path, generation and
+///   head: the document, the repo paths it stands at, and the sessions,
+///   actors, turns, activities, intents and models its receipts and the
+///   operation stamps of its Loro snapshots name
+///   ([`crate::code_document::archive_document_row`]);
+/// - a code symbol's memory: the symbol, a binding's NOTE or CLAIM payload,
+///   and each payload, actor, provenance claim and symbol its value's codec
+///   holds.
+fn side_names(family: ArchiveSideFamily, key: &[u8], value: &[u8]) -> Result<SideNames> {
+    use crate::code_document::ArchivedDocumentTable as D;
+    use crate::code_revision::ArchivedRevisionTable as R;
+    use ArchiveSideFamily as F;
+    let canonical = lent(family)?.canonical(key, value);
+    let ids =
+        |at: &[usize]| -> Option<Vec<EntityId>> { at.iter().map(|at| id_at(key, *at)).collect() };
+    let with = |at: &[usize], rows: Option<Vec<EntityId>>| -> Option<Vec<EntityId>> {
+        let mut named = ids(at)?;
+        named.extend(rows?);
+        Some(named)
+    };
+    let tail = key.len().saturating_sub(ENTITY_ID_LEN);
+    let document = |table: D| match crate::code_document::archive_document_row(table, key, value) {
+        Some(row) if canonical => SideNames {
+            document: row.document,
+            paths: row.paths,
+            rows: Some(row.rows),
         },
-        Mp::Map(entries) => {
-            for (key, value) in entries {
-                tree_entities(key, named);
-                tree_entities(value, named);
-            }
-        }
-        Mp::Nil | Mp::Boolean(_) | Mp::Integer(_) | Mp::F32(_) | Mp::F64(_) => {}
+        // A history row that does not read is still of the document its key
+        // names, where its key names one.
+        Some(_) | None => SideNames {
+            document: matches!(table, D::Frontier | D::Head)
+                .then(|| array_at::<32>(key, 0))
+                .flatten(),
+            paths: Vec::new(),
+            rows: None,
+        },
+    };
+    if !canonical && !matches!(family.spec().group, Group::CodeDocument) {
+        return Ok(SideNames::of(None));
     }
-}
-
-/// Each run of exactly 32 hex digits in `text` that reads as an entity id.
-fn text_entities(text: &str, named: &mut BTreeSet<EntityId>) {
-    named.extend(
-        text.split(|c: char| !c.is_ascii_hexdigit())
-            .filter(|run| run.len() == 2 * ENTITY_ID_LEN)
-            .filter_map(|run| EntityId::from_hex(run).ok()),
-    );
-}
-
-/// The entity `bytes` are, when they are exactly one id.
-fn entity_of(bytes: &[u8]) -> Option<EntityId> {
-    id_at(bytes, 0).filter(|_| bytes.len() == ENTITY_ID_LEN)
+    Ok(match family {
+        F::BlobVersion | F::BlobHead => SideNames::of(with(
+            &[0],
+            crate::blob_artifact::archive_version_rows(value),
+        )),
+        F::BlobBornFrom => SideNames::of(crate::blob_artifact::archive_born_from_rows(key, value)),
+        F::BlobSettlement => SideNames::of(with(
+            &[0],
+            crate::edit_settle::archive_settlement_rows(value),
+        )),
+        F::BlobDeckMarks | F::BlobHighwater | F::BlobClaimedHash => SideNames::of(ids(&[0])),
+        F::BlobAssetRef | F::BlobVersionClaim => SideNames::of(ids(&[32])),
+        F::LfsChunkMark | F::LfsManifest | F::CodebaseSnapshot => SideNames::of(ids(&[0])),
+        F::LfsObject => SideNames::of(id_at(value, 0).map(|asset| vec![asset])),
+        F::LfsOwnerRef | F::LfsChunkRef | F::LfsRef | F::LfsDeleted | F::LfsCdc => {
+            SideNames::of(Some(Vec::new()))
+        }
+        F::CodebaseCustody => SideNames::of(Some(Vec::new())),
+        F::CodebaseRepo | F::CodebaseProject | F::CodebaseFork | F::CodebaseScope => {
+            SideNames::of(ids(&[tail]))
+        }
+        F::CodeRevisionRecord => SideNames::of(crate::code_revision::archive_revision_rows(
+            R::Record,
+            value,
+        )),
+        F::CodeRevisionIntegrity => SideNames::of(crate::code_revision::archive_revision_rows(
+            R::Integrity,
+            value,
+        )),
+        F::CodeRevisionProposal => SideNames::of(with(
+            &[0],
+            crate::code_revision::archive_revision_rows(R::Proposal, value),
+        )),
+        F::CodeRevisionPromotion => SideNames::of(with(
+            &[0],
+            crate::code_revision::archive_revision_rows(R::Promotion, value),
+        )),
+        F::CodeRevisionFork => {
+            SideNames::of(crate::code_revision::archive_revision_rows(R::Fork, value))
+        }
+        F::CodeRevisionFrontier => SideNames::of(crate::code_revision::archive_revision_rows(
+            R::Frontier,
+            value,
+        )),
+        F::CodeRevisionSession | F::CodeRevisionParent | F::CodeRevisionForkParent => {
+            SideNames::of(ids(&[0, ENTITY_ID_LEN]))
+        }
+        F::CodeDocumentIngress => document(D::Ingress),
+        F::CodeDocumentFrontier => document(D::Frontier),
+        F::CodeDocumentPath => document(D::Path),
+        F::CodeDocumentGeneration => document(D::Generation),
+        F::CodeDocumentHead => document(D::Head),
+        F::CodeMemorySlot => SideNames::of(with(&[0], code_memory_rows(family, value))),
+        F::CodeMemoryAttachment | F::CodeMemoryAlwaysOn => {
+            SideNames::of(with(&[0, tail], code_memory_rows(family, value)))
+        }
+        F::CodeMemoryTransfer => {
+            SideNames::of(with(&[0, ENTITY_ID_LEN], code_memory_rows(family, value)))
+        }
+    })
 }
 
 /// Every entity a code-memory value names, read through its table's own codec:
 /// a value's payload, actor and provenance claim, and a contract's or a
-/// transfer's symbols.
-fn opaque_entities(family: ArchiveSideFamily, value: &[u8]) -> Vec<EntityId> {
+/// transfer's symbols. `None` when the value does not read.
+fn code_memory_rows(family: ArchiveSideFamily, value: &[u8]) -> Option<Vec<EntityId>> {
     use crate::store::code_memory_values as memory;
     match family {
-        ArchiveSideFamily::CodeMemorySlot => memory::decode_slot(value)
-            .map(|slot| {
-                slot.values
-                    .iter()
-                    .flat_map(|entry| {
-                        [
-                            entry.payload.entity_id(),
-                            entry.actor_id,
-                            entry.provenance_claim_id,
-                        ]
-                    })
-                    .collect()
-            })
-            .unwrap_or_default(),
+        ArchiveSideFamily::CodeMemorySlot => memory::decode_slot(value).ok().map(|slot| {
+            slot.values
+                .iter()
+                .flat_map(|entry| {
+                    [
+                        entry.payload.entity_id(),
+                        entry.actor_id,
+                        entry.provenance_claim_id,
+                    ]
+                })
+                .collect()
+        }),
         ArchiveSideFamily::CodeMemoryAttachment => memory::decode_attachment_row(value)
-            .map(|(_, claim)| vec![claim])
-            .unwrap_or_default(),
-        ArchiveSideFamily::CodeMemoryAlwaysOn => memory::decode_always_on(value)
-            .map(|contract| {
+            .ok()
+            .map(|(_, claim)| vec![claim]),
+        ArchiveSideFamily::CodeMemoryAlwaysOn => {
+            memory::decode_always_on(value).ok().map(|contract| {
                 vec![
                     contract.symbol_id,
                     contract.payload.entity_id(),
@@ -1272,9 +1390,9 @@ fn opaque_entities(family: ArchiveSideFamily, value: &[u8]) -> Vec<EntityId> {
                     contract.provenance_claim_id,
                 ]
             })
-            .unwrap_or_default(),
-        ArchiveSideFamily::CodeMemoryTransfer => memory::decode_transfer_record(value)
-            .map(|record| {
+        }
+        ArchiveSideFamily::CodeMemoryTransfer => {
+            memory::decode_transfer_record(value).ok().map(|record| {
                 vec![
                     record.from_symbol_id,
                     record.to_symbol_id,
@@ -1282,8 +1400,58 @@ fn opaque_entities(family: ArchiveSideFamily, value: &[u8]) -> Vec<EntityId> {
                     record.provenance_claim_id,
                 ]
             })
-            .unwrap_or_default(),
-        _ => Vec::new(),
+        }
+        _ => None,
+    }
+}
+
+/// The code documents an Owner's copy holds out whole (fix list row 15416),
+/// from what each of their rows names as its pass judged it.
+#[derive(Default)]
+struct DocumentHistories {
+    /// Each document one of whose rows names a row the copy leaves out, or
+    /// does not read.
+    broken: BTreeSet<[u8; 32]>,
+    /// The documents that stood at each repo path, by its generation key.
+    at_path: BTreeMap<[u8; 32], BTreeSet<[u8; 32]>>,
+}
+
+impl DocumentHistories {
+    fn of(judged: &[Option<(SideNames, bool)>]) -> Self {
+        let mut histories = Self::default();
+        for (names, carried) in judged.iter().flatten() {
+            let Some(document) = names.document else {
+                continue;
+            };
+            if !*carried {
+                histories.broken.insert(document);
+            }
+            for path in &names.paths {
+                histories.at_path.entry(*path).or_default().insert(document);
+            }
+        }
+        histories
+    }
+
+    /// The documents held out whole that a row naming `names` belongs to:
+    /// its own, or for a generation row each one that stood at its path.
+    fn held(&self, names: &SideNames) -> Vec<[u8; 32]> {
+        match names.document {
+            Some(document) => self
+                .broken
+                .contains(&document)
+                .then_some(document)
+                .into_iter()
+                .collect(),
+            None => names
+                .paths
+                .iter()
+                .filter_map(|path| self.at_path.get(path))
+                .flatten()
+                .filter(|document| self.broken.contains(*document))
+                .copied()
+                .collect(),
+        }
     }
 }
 
