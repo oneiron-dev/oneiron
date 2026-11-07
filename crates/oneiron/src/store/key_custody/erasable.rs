@@ -65,6 +65,8 @@ pub(crate) enum ErasablePurpose {
     /// One sealed artifact of a vault's own drafter (FIX 12569): parent =
     /// the drafter version, incarnation = derived from the artifact's id.
     DrafterArtifact,
+    /// A person's authenticator-app enrollment; incarnation = enrollment id.
+    TotpEnrollment,
 }
 
 impl ErasablePurpose {
@@ -73,6 +75,7 @@ impl ErasablePurpose {
             Self::HomeHandoff => 1,
             Self::GrantScope => 2,
             Self::DrafterArtifact => 3,
+            Self::TotpEnrollment => 4,
         }
     }
 
@@ -81,6 +84,7 @@ impl ErasablePurpose {
             1 => Some(Self::HomeHandoff),
             2 => Some(Self::GrantScope),
             3 => Some(Self::DrafterArtifact),
+            4 => Some(Self::TotpEnrollment),
             _ => None,
         }
     }
