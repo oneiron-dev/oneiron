@@ -866,6 +866,22 @@ every one as rejected. Either way one receipt represents the run. Routes: `GET
 
 The SDK verbs `vault.fanout.resume` (approve a held fan-out once, approve and remember it under a cap, or deny it) and `vault.fanout.ack` (acknowledge the width check of one that already went out) take the plan digest you saw from `vault.fanout.launch` and run under the owner's credential, over the facade and MCP.
 
+### Coach case escalations
+
+When the Coach routes a stored failed-attempt case to a person, its `coach.heal`
+proposal can carry `repair.route` with `route: "escalate_with_diagnosis"`, the
+original failing agent's `agent_ref`, and the case's evidence as `diagnosis_ref`.
+This uses the same evidence reference as a Coach skill-repair diagnosis. The
+proposal still carries the case, failed attempt, evidence, checkpoint and Q&A
+thread references; it does not claim a new diagnosis artifact or a Q&A exchange.
+
+The intent is attached only while the durable case and its failed attempt still
+match in the proposal's write transaction. Otherwise the ordinary route-only
+proposal remains, with `repair: null`. This changes no consent or repair execution:
+review and approve or decline it through the ordinary run review. It does not
+apply a fix, resume the failed attempt or change a grant. Person proposals for bare
+blocked reports remain route-only.
+
 ## Settle an open contradiction
 
 When two claims disagree and nothing settled them, the vault keeps a `conflict.open` marker
@@ -1511,6 +1527,25 @@ recall is `memory_miss`, a consolidation error `task_failure`, a consent storm o
 `other` with its detector named. Your own refusal of a single consent ask is never counted. A
 diagnostic does not say which agent failed, so these counts carry the agent `unattributed`.
 Counts wait in the vault, across restarts, until the publisher takes them.
+
+## Coach prompt repair drafts
+
+When a case is routed to `prompt_inject`, the served Coach author can now draft prompt text
+using its configured Coach model and the pass's existing draft budget. It receives the recorded
+case, agent, pre-failure checkpoint, diagnosis and cause context as data. The existing engine
+writer binds those references again and files a `coach.prompt_repair` Proposed artifact with
+the heal. This draft does not inject text, resume a run, grant authority or prove a replay passed.
+
+The shipped instruction lives in `prompts/coach-prompt-repair.md`. Override it through
+`[models.dreamer.wording]` with `coach_prompt_repair_prompt` or
+`coach_prompt_repair_prompt_file`, using the same inline/file resolution as the other Coach
+wording. A relative file path resolves from the config directory.
+
+The answer is `{"prompt":"<exact text>","rationale":"<why>"}`. A null `prompt` declines.
+The engine still handles an empty draft, unavailable model, author error, stale case or missing
+binding as a route-only heal. Custom `CoachHealAuthor` implementations keep the default `None`
+unless they implement this method. Skill edits, producer fixes and environment repairs keep
+their existing behavior.
 
 ## Model-graded self-heal detectors
 
