@@ -504,6 +504,23 @@ recorded. The receipt is best effort: if it cannot be written the export still s
 is logged, and `last_export` stays as it was. An export is your exit path, not a backup: restore
 from a backup file, the vault's encrypted snapshot.
 
+## Export secret supplement import marks
+
+`GET /v1/core/export-secret-supplements/{request}` and `oneiron secrets show-supplement`
+return `marked_imported`. It is true only when the authority fold admits the request's
+signed import mark. It does not report whether this install restored the custody secret.
+The holder's work `status` and the import's `restored`, `unchanged` or `skipped` outcome
+remain separate facts.
+
+A successful import keeps its secret even if this install has no live machine profile or
+loaded signing key to carry the mark. When a mark cannot be carried, a warning is logged;
+if no mark was already admitted, `marked_imported` stays false and the request's relayed
+copies remain until their window retires. Once the real profile and key are available,
+repeat the existing import with the same supplement and a current owner credential.
+An `unchanged` import retries the mark too; a `skipped` import does not.
+This is an explicit retry, not an automatic background job. An admitted mark ends relay
+retention; copies the owner kept remain readable.
+
 ## Secret scan switch
 
 ```sh
