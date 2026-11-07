@@ -236,16 +236,20 @@ impl SyncConnection {
             .is_ok()
     }
 
-    /// This member's own leave notices and the signed handoff beside them,
-    /// asked of the sync server with the lane's slip, revoked or not (`POST
+    /// This member's own leave notices and their continuity, asked of the
+    /// sync server with the lane's slip, revoked or not (`POST
     /// /v1/shared/left-notices`), naming `heads` as where this env's
-    /// authority chain stands; naming none asks for the whole handoff. A
-    /// refused request, or an answer that does not decode, is an error.
+    /// authority chain stands; naming none asks for the whole delegation
+    /// chain. A refused request, or an answer that does not decode, one
+    /// without a continuity included, is an error.
     async fn left_notices(
         &self,
         heads: &[String],
     ) -> Result<
-        (Vec<crate::federation::SignedSharedActOutcome>, Vec<Vec<u8>>),
+        (
+            Vec<crate::federation::SignedSharedActOutcome>,
+            crate::authority::LeaveNoticeContinuity,
+        ),
         crate::sync::TransportError,
     > {
         use crate::sync::TransportError;
@@ -253,10 +257,16 @@ impl SyncConnection {
         #[derive(serde::Deserialize)]
         struct LeftNotices {
             notices: Vec<crate::federation::SignedSharedActOutcome>,
-            /// The signed rows, hex, that hand the root on from where this
-            /// env's chain stands to the key that signed the notices, and
-            /// the rows they stand on, parents first.
-            handoff: Vec<String>,
+            continuity: Continuity,
+        }
+
+        /// The authority vault, 64 hex, and the leave-notice delegations,
+        /// hex, on the home's root chain to the key that signed the notices
+        /// (FIX 7932).
+        #[derive(serde::Deserialize)]
+        struct Continuity {
+            authority_vault_id: String,
+            delegations: Vec<String>,
         }
 
         let Some(credential) = self.config.client_config.transport_credential.as_ref() else {
@@ -312,15 +322,25 @@ impl SyncConnection {
                 .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok())
                 .collect()
         };
-        let handoff = answer
-            .handoff
+        let undecoded =
+            || TransportError::InvalidPayload("the leave notice continuity does not decode");
+        let authority_vault_id = unhex(&answer.continuity.authority_vault_id)
+            .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+            .ok_or_else(undecoded)?;
+        let delegations = answer
+            .continuity
+            .delegations
             .iter()
-            .map(|row| unhex(row))
+            .map(|delegation| unhex(delegation))
             .collect::<Option<Vec<_>>>()
-            .ok_or(TransportError::InvalidPayload(
-                "the leave notice handoff does not decode",
-            ))?;
-        Ok((answer.notices, handoff))
+            .ok_or_else(undecoded)?;
+        Ok((
+            answer.notices,
+            crate::authority::LeaveNoticeContinuity {
+                authority_vault_id,
+                delegations,
+            },
+        ))
     }
 
     /// Asks the sync server for this member's own leave notices with the
@@ -329,12 +349,13 @@ impl SyncConnection {
     /// membership in `vault_id`, the vault's deletion included
     /// ([`crate::sync::shared_leave::VerifiedLeaveNotice`]). The request
     /// names the heads this env's authority fold stands at, so the home
-    /// sends beside its notices only the signed handoff past them (FIX 2053).
-    /// Where that handoff and this env's rows do not close, so a leave
-    /// notice is pending ([`crate::sync::shared_leave::LeaveNoticeCheck`]),
-    /// it asks once more naming no head, and the home sends every row its
-    /// root edges stand on (FIX 7919). A notice still pending confirms and
-    /// purges nothing: the home keeps it, and the next round asks again.
+    /// sends beside its notices only the leave-notice delegations past them
+    /// (FIX 7932). Where those do not reach the notices' signer from a root
+    /// this env trusts, so a leave notice is pending
+    /// ([`crate::sync::shared_leave::LeaveNoticeCheck`]), it asks once more
+    /// naming no head, and the home sends its whole delegation chain, never
+    /// an authority row. A notice still pending confirms and purges nothing:
+    /// the home keeps it, and the next round asks again.
     /// The lane ends for good before the leave discards its queue. `None`
     /// while no verified notice says so. A refused or failed request is an
     /// error, never a leave.
@@ -357,28 +378,29 @@ impl SyncConnection {
             .map(|head| crate::entity_id::bytes_to_hex_lower(head))
             .collect();
         // The home signs every notice (FIX 2053). One this env does not
-        // verify against the home root it already trusts, or that root's
-        // successor the handoff names, changes nothing.
-        let judge = |notices: &[crate::federation::SignedSharedActOutcome], handoff: &[Vec<u8>]| {
-            first_verified_leave(self.manager.vault(), vault_id, member, notices, handoff)
+        // verify against the home root it already trusts, or a successor
+        // that root delegated leave-notice verification on to, changes
+        // nothing.
+        let judge = |notices: &[crate::federation::SignedSharedActOutcome],
+                     continuity: &crate::authority::LeaveNoticeContinuity| {
+            first_verified_leave(self.manager.vault(), vault_id, member, notices, continuity)
                 .map_err(|e| TransportError::Storage(e.to_string()))
         };
-        let (notices, handoff) = self.left_notices(&heads).await?;
-        let mut check = judge(&notices, &handoff)?;
-        if matches!(check, LeaveNoticeCheck::Pending(_)) && !heads.is_empty() {
-            // The handoff past this env's heads does not close its evidence:
-            // the whole handoff, every row the root edges stand on (FIX 7919).
-            let (notices, handoff) = self.left_notices(&[]).await?;
-            check = judge(&notices, &handoff)?;
+        let (notices, continuity) = self.left_notices(&heads).await?;
+        let mut check = judge(&notices, &continuity)?;
+        if matches!(check, LeaveNoticeCheck::Pending) && !heads.is_empty() {
+            // The delegations past this env's heads do not reach the signer:
+            // the whole delegation chain (FIX 7932).
+            let (notices, continuity) = self.left_notices(&[]).await?;
+            check = judge(&notices, &continuity)?;
         }
         let notice = match check {
             LeaveNoticeCheck::Verified(notice) => notice,
-            LeaveNoticeCheck::Pending(missing) => {
+            LeaveNoticeCheck::Pending => {
                 tracing::warn!(
                     vault_id = vault_id,
-                    missing = missing.len(),
-                    "a leave notice waits on authority rows that prove its signer; \
-                     nothing is confirmed or purged, and the next round asks again"
+                    "a leave notice waits on a delegation from a root this env trusts \
+                     to its signer; nothing is confirmed or purged, and the next round asks again"
                 );
                 return Ok(None);
             }

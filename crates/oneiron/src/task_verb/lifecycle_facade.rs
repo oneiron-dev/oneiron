@@ -599,6 +599,8 @@ pub(crate) fn deliver_task_result_in_txn(
     task: EntityId,
 ) -> crate::Result<()> {
     super::consult_assignee_wait::wake_assignee_wait_in_txn(vault, txn, task)?;
+    // FIX 7494: a relayed ask intent, or its result, landing here.
+    super::ask_forward::note_put_in_txn(vault, txn, task)?;
     if !crate::code_run::has_parked_run_in_txn(vault, txn, task)? {
         return Ok(());
     }

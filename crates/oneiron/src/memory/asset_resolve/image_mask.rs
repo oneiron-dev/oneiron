@@ -14,7 +14,7 @@ pub(super) enum Projection {
     /// Sanitized bytes to serve: fresh PNG after a decode, or the same
     /// format with its metadata removed after a walker pass.
     Sanitized(ImageBytes),
-    /// Bytes in no recognized format; the caller decides the posture.
+    /// Bytes with no available sanitizer; the caller decides the posture.
     Unsupported,
     /// Bytes in a recognized format that failed to sanitize.
     Invalid,
@@ -44,12 +44,13 @@ pub(super) fn raster(image: &ImageBytes) -> Projection {
             bytes,
             media_type: media_type.to_owned(),
         }),
+        None if format == image::ImageFormat::Pnm => Projection::Unsupported,
         None => Projection::Invalid,
     }
 }
 
 /// The format `bytes` actually hold, from magic bytes rather than any MIME
-/// label. Only the seven masked-read formats count; anything else is `None`.
+/// label. Only the enabled masked-read formats count; anything else is `None`.
 fn sniff(bytes: &[u8]) -> Option<image::ImageFormat> {
     if let Ok(format) = image::guess_format(bytes) {
         return recognized(format);
@@ -78,7 +79,7 @@ fn sniff(bytes: &[u8]) -> Option<image::ImageFormat> {
     None
 }
 
-/// `Some` when `format` is one of the seven masked-read formats.
+/// `Some` when `format` has a masked-read sanitizer.
 fn recognized(format: image::ImageFormat) -> Option<image::ImageFormat> {
     match format {
         image::ImageFormat::Png
@@ -87,7 +88,8 @@ fn recognized(format: image::ImageFormat) -> Option<image::ImageFormat> {
         | image::ImageFormat::Gif
         | image::ImageFormat::Tiff
         | image::ImageFormat::Bmp
-        | image::ImageFormat::Ico => Some(format),
+        | image::ImageFormat::Ico
+        | image::ImageFormat::Pnm => Some(format),
         _ => None,
     }
 }

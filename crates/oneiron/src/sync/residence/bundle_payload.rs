@@ -173,11 +173,48 @@ impl WindowManager {
         request: Option<AuthorityEntryHash>,
         materialize: bool,
     ) -> Result<SealedVaultUpload> {
+        self.assemble_sealed_bundle_using(slot, holder, latest, request, materialize, None)
+    }
+
+    /// Asked publication with a separately offered native pair. The ordinary
+    /// capsule/in-object paths still run first, independently for each object.
+    pub(crate) fn assemble_sealed_bundle_with_publication_grant(
+        &self,
+        slot: u64,
+        holder: Destination,
+        latest: Option<(&SealedVaultBundle, &SealedKeyPads)>,
+        request: AuthorityEntryHash,
+        materialize: bool,
+        grant: &crate::world_keys::SealedPublicationGrant,
+    ) -> Result<SealedVaultUpload> {
+        self.assemble_sealed_bundle_using(
+            slot,
+            holder,
+            latest,
+            Some(request),
+            materialize,
+            Some(grant),
+        )
+    }
+
+    fn assemble_sealed_bundle_using(
+        &self,
+        slot: u64,
+        holder: Destination,
+        latest: Option<(&SealedVaultBundle, &SealedKeyPads)>,
+        request: Option<AuthorityEntryHash>,
+        materialize: bool,
+        grant: Option<&crate::world_keys::SealedPublicationGrant>,
+    ) -> Result<SealedVaultUpload> {
         let vault = self.vault();
         let windows = discover_local_window_keys(vault)?;
         let (base, eligible, sides) = self.sealed_bundle_base(&windows, holder)?;
         let latest = latest
-            .map(|(bundle, pads)| vault.open_latest_for_publication(bundle, pads, holder, request))
+            .map(|(bundle, pads)| match (request, grant) {
+                (Some(request), Some(grant)) => vault
+                    .open_latest_for_publication_with_grant(bundle, pads, holder, request, grant),
+                _ => vault.open_latest_for_publication(bundle, pads, holder, request),
+            })
             .transpose()?;
         let keys = match &latest {
             Some((_, pads)) => vault.bundle_reader_keys(Some(pads), true)?,

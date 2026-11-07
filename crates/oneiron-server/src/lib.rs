@@ -67,6 +67,7 @@ mod import_audience;
 mod invocation_claims;
 mod ladder_poll;
 mod lens_frames;
+mod libreoffice;
 mod linear_host;
 mod livequery;
 pub mod logging;
@@ -99,6 +100,7 @@ pub mod web_client;
 mod web_connector;
 pub mod wire_health;
 pub mod wire_telemetry;
+mod xlsx_recalc;
 // Process-local driver attachment only; this adds no HTTP/MCP route.
 // The stream/output owner still has to supply production serve prerequisites.
 #[cfg(unix)]

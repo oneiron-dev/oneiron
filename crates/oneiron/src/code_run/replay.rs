@@ -107,7 +107,7 @@ impl CodeRunBridgeCall {
             hook_view_served: false,
             rewritten_request: None,
         };
-        row.scrub_target_erased_ask()?;
+        row.scrub_erased_ask()?;
         row.validate_speech_coherence()?;
         row.validate_spawn_coherence()?;
         row.validate_rewritten_coherence()?;
