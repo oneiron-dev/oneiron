@@ -1,6 +1,6 @@
 //! Full-window UPDATE locality admission without live document side effects.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use loro::json::{JsonOpContent, MapOp};
 use loro::{ContainerID, ContainerType, LoroDoc, LoroValue};
@@ -133,6 +133,11 @@ fn validate_window_update(
     {
         crate::sync::window::require_history_free_window(vault, key)?;
     }
+    // Every policy set a derived row's carriers name in any part of the
+    // update binds the row before the update lands (fix list row 17207).
+    if let Some(vault) = vault {
+        crate::sync::source_audiences::stage_derived_floors(vault, &admitted.derived_floors)?;
+    }
     Ok(())
 }
 
@@ -143,6 +148,9 @@ struct AdmittedWrites {
     /// A source-audience carrier in the update names an actor erased here
     /// (fix list row 17238), so its window is pinned history-free.
     history_free: bool,
+    /// The policies a derived row's carriers name, by row (fix list row
+    /// 17207).
+    derived_floors: BTreeMap<EntityId, BTreeSet<EntityId>>,
 }
 
 /// Every refusal of [`validate_window_update`]; returns what the caller
@@ -597,6 +605,7 @@ fn check_window_update(
     Ok(AdmittedWrites {
         cutoffs,
         history_free: audiences.names_erased(),
+        derived_floors: audiences.into_derived_floors(),
     })
 }
 
@@ -743,7 +752,7 @@ fn snapshot_sections(snapshot: &[u8]) -> Option<[&[u8]; 3]> {
 /// (FIX 10165). A full snapshot can keep a root as well as a shallow one.
 /// `None` when the bytes are no fast snapshot whose state sections read one
 /// way, or the root does not load; `Some(None)` when it encodes no root.
-pub(super) fn encoded_root_state(snapshot: &[u8]) -> Option<Option<LoroDoc>> {
+pub(in crate::sync) fn encoded_root_state(snapshot: &[u8]) -> Option<Option<LoroDoc>> {
     let sections = snapshot_sections(snapshot)?;
     let [_, latest, root] = sections;
     if !(latest == EMPTY_STATE || state_section_is_canonical(latest))

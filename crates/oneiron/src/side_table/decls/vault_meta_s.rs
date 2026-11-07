@@ -709,6 +709,10 @@ side_tables! {
     /// The same outcome row for a named executor's arm. Key: id16 + u16be length + executor string +
     /// receipt string.
     SKILL_RELIABILITY_PAIRED_OUTCOME: VaultMeta b"skill_reliability:outcome:v2:" Raw;
+    /// The policies a row written from source-bound rows reads under beside its own lineage, the
+    /// union of every set a full-window carrier brought (fix list row 17207). It only grows.
+    /// Key: id16(row).
+    SOURCE_AUDIENCE_DERIVED: VaultMeta b"source_audience:derived:v1:" Named;
     /// One change to a source audience's readers, its receipt (FIX 12559); the policy entry's
     /// scrub forgets an erased actor here too. Key: id16(policy) + u64be revision.
     SOURCE_AUDIENCE_EVENT: VaultMeta b"source_audience:event:v1:" Named;

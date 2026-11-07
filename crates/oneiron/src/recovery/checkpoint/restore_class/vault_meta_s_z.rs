@@ -2,7 +2,7 @@
 
 use super::{
     CONTENT, Class, LIVE, SECRET_CUSTODY, SHARE_ADMISSIONS, SHARED_VAULT_MEMBERSHIP,
-    STANDING_BLOCKS,
+    SOURCE_AUDIENCE_FLOORS, STANDING_BLOCKS,
 };
 use crate::side_table::{self as t, SideTableDecl};
 
@@ -250,6 +250,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // A change to a source's readers is history, restored with the rows it
     // admitted; the policy itself is live authority: a restore never gives
     // back a reader removed since, or takes away one added (FIX 12559).
+    // A derived row's carried policies never shrink: a changed set for a row
+    // the image holds refuses the restore (FIX 17207).
+    (&t::SOURCE_AUDIENCE_DERIVED, SOURCE_AUDIENCE_FLOORS),
     (&t::SOURCE_AUDIENCE_EVENT, CONTENT),
     // A held-back row stays denied in the image as it was.
     (&t::SOURCE_AUDIENCE_HELD, CONTENT),
