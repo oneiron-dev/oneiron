@@ -29,7 +29,7 @@
 
 use std::collections::BTreeSet;
 
-use super::removal_answer::RemovalExportFile;
+use super::removal_answer::{RemovalExportFile, spool_digest};
 use super::removal_file::ArchiveFile;
 use super::{
     ArchiveRow, REMOVAL_EXPORT, RemovalExportCopy, RemovalExportDelivery, removal_export_key,
@@ -273,17 +273,6 @@ fn keep_stored_copy(copy: RemovalExportFile, input: &'static str) -> RemovalExpo
             copy
         }
     }
-}
-
-/// BLAKE3 of what the spool file `file` holds, lowercase hex, read a piece
-/// at a time from its start; the file is left rewound.
-fn spool_digest(file: &mut std::fs::File) -> Result<String> {
-    use std::io::{Seek, SeekFrom};
-    file.seek(SeekFrom::Start(0))?;
-    let mut hasher = blake3::Hasher::new();
-    std::io::copy(file, &mut hasher)?;
-    file.seek(SeekFrom::Start(0))?;
-    Ok(hasher.finalize().to_hex().to_string())
 }
 
 /// Each of `ids`'s position as `txn`, the archive's own snapshot, holds it
