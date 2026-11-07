@@ -72,6 +72,11 @@ enum GuestFrame {
     StepResult {
         result_json: String,
     },
+    /// The program's own error, header included, in place of a step result
+    /// (FIX 9209). Only a nonzero `finish` may follow it.
+    StepError {
+        message: String,
+    },
     Finish {
         status: i32,
     },
@@ -298,7 +303,9 @@ fn receive_proposals(
 /// measured disk floor, when one was lent: each chunk is admitted on the
 /// shared floor before it is written, and one that would cross it ends the
 /// exchange with [`crate::error::CodeError::SandboxProposalDiskFloor`]
-/// (FIX 7650). Without one it spools as before.
+/// (FIX 7650). Without one it spools as before. A step error drops every
+/// pending proposal and ends in a failed exit that carries the program's
+/// error; output its sink already admitted stays with the caller (FIX 9209).
 #[expect(
     clippy::too_many_arguments,
     reason = "the receiver takes the guest's stream, snapshot, policies, spool and token"
@@ -316,6 +323,7 @@ fn receive_proposals_cancellable(
 ) -> Result<(MicroVmExit, Vec<SandboxProposalWrite>)> {
     let mut writes = BTreeMap::new();
     let mut result_json = None;
+    let mut guest_error = None;
     // One effect per path: a deleted file or a rename endpoint is not
     // written again in the same run.
     let mut occupied = BTreeSet::new();
@@ -329,6 +337,10 @@ fn receive_proposals_cancellable(
     loop {
         cancel.check()?;
         let frame = read_frame(&mut stream, deadline)?;
+        // A step error is terminal: only the guest's nonzero finish follows.
+        if guest_error.is_some() && !matches!(frame, GuestFrame::Finish { status } if status != 0) {
+            return Err(refused("guest frame after its step error"));
+        }
         if open.is_some()
             && !matches!(
                 frame,
@@ -338,6 +350,7 @@ fn receive_proposals_cancellable(
                     | GuestFrame::OutputText { .. }
                     | GuestFrame::OutputBytes { .. }
                     | GuestFrame::StoreBytes { .. }
+                    | GuestFrame::StepError { .. }
             )
         {
             return Err(refused("guest frame inside an open file proposal"));
@@ -559,15 +572,35 @@ fn receive_proposals_cancellable(
                     .map_err(|_| refused("invalid guest result JSON"))?;
                 result_json = Some(result);
             }
+            GuestFrame::StepError { message } => {
+                if result_json.is_some() {
+                    return Err(refused("guest step error after its step result"));
+                }
+                // The open spool and every pending proposal go before the
+                // error is kept: a failed step proposes nothing.
+                drop(open.take());
+                writes.clear();
+                guest_error = Some(message);
+            }
             GuestFrame::Finish { status } => {
                 if status != 0 {
-                    return Err(refused("guest run failed; proposals discarded"));
+                    let Some(message) = guest_error else {
+                        return Err(refused("guest run failed; proposals discarded"));
+                    };
+                    let exit = MicroVmExit {
+                        status,
+                        overlay_dirty: false,
+                        result_json: None,
+                        guest_error: Some(message),
+                    };
+                    return Ok((exit, Vec::new()));
                 }
                 return Ok((
                     MicroVmExit {
                         status,
                         overlay_dirty: !writes.is_empty(),
                         result_json,
+                        guest_error: None,
                     },
                     writes.into_values().collect(),
                 ));

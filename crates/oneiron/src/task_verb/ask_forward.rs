@@ -12,10 +12,15 @@
 //! with the group's issuer key, which the transport carries back. A pending
 //! intent is not an answer: the replica reports it pending until that result
 //! reads there. A hard erase of the holder retires their intents and those
-//! intents' results (`erase`).
+//! intents' results, or owes a pair a legal hold keeps its retirement until
+//! the hold lifts (`erase`, FIX 20468). An intent or result that lands after
+//! that erase retires, or is owed its retirement, at its put (FIX 7494).
 //!
 //! Entry: [`Memory::tasks_answer_forward`] on the replica;
 //! [`drain_ask_forward_intents`] at the admitting node.
+//!
+//! FIX 20468 serves the three doors as `tasks.answer.forward.challenge`,
+//! `tasks.answer.forward` and `tasks.answer.forward.status`.
 
 use std::collections::BTreeSet;
 
@@ -36,7 +41,9 @@ use crate::{EntityId, Vault};
 mod consume;
 mod erase;
 
-pub(crate) use erase::retire_holder_ask_forward_rows_in_txn;
+pub(crate) use erase::{
+    retire_holder_ask_forward_rows_in_txn, settle_held_ask_forward_rows_in_txn,
+};
 
 /// Subkind of a relayed intent's TASK companion record.
 pub(super) const INTENT: &str = "tasks.ask_forward_intent";
@@ -49,7 +56,8 @@ const CHALLENGE_DOMAIN: &[u8] = b"oneiron/tasks.ask-forward/v1\0";
 const TOKEN_PREFIX: &str = "v2.slip.";
 
 /// What a relayed intent asks the ask's admitting node to do (FIX 7494).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// The SDK rows take it as their input (FIX 20468).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AskForwardAct {
     /// The holder's own word, admitted there as `tasks_answer` admits it.
@@ -77,8 +85,9 @@ impl AskForwardAct {
 
 /// The holder's proof for one intent: their slip, and their signature over
 /// the slip's binding transcript (`CapabilitySlip::binding_transcript`) of
-/// [`ask_forward_challenge`].
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// [`ask_forward_challenge`]. It proves this one intent; the request that
+/// carries it authenticates apart, as every request does (FIX 20468).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AskForwardHolderProof {
     /// The holder's `v2.slip.` token.
@@ -417,8 +426,10 @@ fn with_arrivals<T>(vault: &Vault, act: impl FnOnce(&mut AskForwardArrivals) -> 
 /// with no result yet, is noted for [`drain_ask_forward_intents`]. An intent
 /// with a result delivers it to the code runs parked on the intent, whether
 /// the result or the park came last. A result is accepted only once its
-/// intent is here: without it, the result waits as a pending dependency.
-/// Every other TASK row passes untouched.
+/// intent is here: without it, the result waits as a pending dependency. An
+/// intent or result whose holder this node hard-erased, which the erase never
+/// met, retires in this writer instead (`erase`). Every other TASK row passes
+/// untouched.
 pub(super) fn note_put_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -441,6 +452,10 @@ pub(super) fn note_put_in_txn(
         }
         return Err(Error::Record(RecordError::AskDependencyPending));
     };
+    // FIX 7494: the holder's `dt:` marker, as sync ingest reads it.
+    if vault.local_hard_delete_marker_exists_in_txn(txn, &stored.holder)? {
+        return erase::retire_erased_holder_pair_in_txn(vault, txn, stored.holder, intent);
+    }
     if let Some(result) = read_result(vault, txn, intent, &stored)? {
         return deliver_result_in_txn(vault, txn, intent, &result);
     }
