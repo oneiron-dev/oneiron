@@ -552,16 +552,17 @@ pub(crate) fn stand_in_txn(
     }
 }
 
-/// The next outbox entries of `key` in ordinal order, at most one batch;
-/// `None` once the order generation no longer stands (released or ended).
+/// The standing's next ordinal and the next outbox entries of `key` in
+/// ordinal order, at most one batch; `None` once the order generation no
+/// longer stands (released or ended).
 pub(crate) fn outbox_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
     key: OrderKey,
-) -> Result<Option<Vec<(u64, OutboxEntry)>>> {
-    if STANDINGS.get(store, txn, &key)?.is_none() {
+) -> Result<Option<(u64, Vec<(u64, OutboxEntry)>)>> {
+    let Some(standing) = STANDINGS.get(store, txn, &key)? else {
         return Ok(None);
-    }
+    };
     let mut entries = Vec::new();
     for row in OUTBOX.iter_from(store, txn, &order_prefix(key))? {
         let ((order, generation, ordinal), entry) = row?;
@@ -573,7 +574,7 @@ pub(crate) fn outbox_in_txn(
             break;
         }
     }
-    Ok(Some(entries))
+    Ok(Some((standing.next_ordinal, entries)))
 }
 
 /// Deletes the acknowledged entries `first..first + count` of `key`, only if

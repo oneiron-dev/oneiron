@@ -300,6 +300,11 @@ pub enum FrameKind {
     Pending = 6,
     /// Exact native order standing ended; not HOST key destruction.
     Released = 7,
+    /// A prospective order stands and is attached to this connection, sent
+    /// once before its first batch; the payload is the exact request digest.
+    /// From here managed stop's trigger leaves the connection open for the
+    /// final drain.
+    Standing = 8,
 }
 
 /// Opaque member/part ordinals only. No source keys or content fingerprints
@@ -332,6 +337,7 @@ impl FrameHeader {
             5 => FrameKind::Ready,
             6 => FrameKind::Pending,
             7 => FrameKind::Released,
+            8 => FrameKind::Standing,
             _ => return Err(invalid("legal capture frame kind")),
         };
         Ok(Self {
@@ -489,6 +495,14 @@ pub struct CaptureSummary {
     /// (`MessageResultBody`), revision the BLAKE3 of that message's full
     /// stored entity row. Empty for every other capture.
     pub absent_result_bodies: Vec<[u8; 16]>,
+    /// Only on a prospective order's last batch of one source process, sent
+    /// after every writer of that process stopped: `Some(n)`, the order's
+    /// next ordinal. No entry at or after `n` exists, and this process writes
+    /// none; the batch's range ends at `n` (an empty final batch has
+    /// `batch_first_ordinal` `n` and no entries). It is not the order's
+    /// release or end: the standing stays for a later start. `None` on every
+    /// other summary.
+    pub final_next_ordinal: Option<u64>,
     pub extent: CaptureExtent,
     pub components: u64,
     pub plaintext_bytes: u64,
