@@ -234,10 +234,11 @@ It holds the custody read guard from the live custody read to the exact
 acknowledgement. The custody plan is the live vault's, as a restore preflight
 builds it. Beside that, every payload-compartment retirement the live vault
 committed counts as carried out, so an owner erased or purged since the cut
-never opens. Only the selected messages' entity trees and every actor group
-open. The image's rows that link to an owner that did not open are taken out
-first, as a restore takes them out. Nothing is restored, forked or written,
-and no other owner's rows are streamed.
+never opens. Only the selected messages' entity trees, the attachment
+occurrences they hold and every actor group open. The image's rows that link
+to an owner that did not open are taken out first, as a restore takes them
+out. Nothing is restored, forked or written, and no other owner's rows are
+streamed.
 
 For each selected message, in id order, the stream carries what the artifact
 holds in the Messages extent's order and families: its entity row (8), its
@@ -258,9 +259,27 @@ readable MESSAGE row is in `missed_messages`: its compartment did not open,
 the payload holds none for it, or its row is absent or not a MESSAGE.
 `messages` counts the captured messages, so captured and missed are exactly
 the selection, and a capture with misses is partial, never a whole
-fulfilment. This extent streams no result body yet. Each captured message
-whose row names a result attachment is in `absent_result_bodies`, which here
-means uncaptured, not gone.
+fulfilment.
+
+After its ledger, a message's result body follows as component 11 (family
+`code_run:raw_output`, key the stored raw-output key of its handle), as the
+live capture sends it. It follows only when:
+- the artifact's row names a result attachment;
+- the message's own attachment occurrence there (its compartment, opened)
+  holds exactly that output, from the producer run, occurrence and path the
+  attachment names;
+- the artifact carries that body, inline in its raw-output row or as a file
+  of that digest and length;
+- current custody still opens its instance.
+
+The body is read back through its sealed chunks, each frame checked. A
+captured message whose row names a result attachment is in
+`absent_result_bodies` when its occurrence there did not open or does not
+hold that output, the artifact does not carry the body, or current custody
+no longer opens its instance. That body stays uncaptured, never filled from
+the live vault or another source. A message whose row names no attachment is
+not listed. A descriptor that does not decode, or a carried stream that fails
+its checks, aborts the capture before its summary.
 
 ## Prospective message capture
 

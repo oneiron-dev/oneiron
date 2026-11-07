@@ -543,7 +543,10 @@ pub enum CaptureExtent {
     ProspectiveMessages,
     /// The selected MESSAGE records as ONE backup artifact holds them, in
     /// id order and the Messages extent's per-message order: row 8,
-    /// document 9, edges 10, ledger 12. A message is read only when the
+    /// document 9, edges 10, ledger 12, then the result body 11 its row
+    /// names, when the message's own attachment occurrence in the artifact
+    /// holds exactly that output and the artifact carries it under an
+    /// instance current custody still opens. A message is read only when the
     /// artifact's payload holds its entity tree's compartment and the vault's
     /// live custody opens it, so what an erase or purge retired since is never
     /// read; an artifact with no compartments yields every id missed. The
@@ -554,9 +557,8 @@ pub enum CaptureExtent {
     /// artifact holds them. `messages` counts the captured messages and
     /// `missed_messages` the rest of the selected ids, so together they are
     /// exactly the selection: a capture with misses is partial, never a
-    /// whole fulfilment. This extent streams no result body: each captured
-    /// message whose row names one is in `absent_result_bodies`, which here
-    /// means uncaptured, not gone.
+    /// whole fulfilment. A captured message whose named body did not stream
+    /// is in `absent_result_bodies`.
     ArtifactMessages,
 }
 
@@ -593,9 +595,11 @@ pub struct CaptureSummary {
     /// rows are captured, the body is not and is never claimed. A held body
     /// is component 11 (`MessageResultBody`), revision the BLAKE3 of that
     /// message's full stored entity row. In an artifact capture, every
-    /// captured message whose row names a result attachment, since that
-    /// extent streams no body: uncaptured, which says nothing about whether
-    /// the body is gone. Empty for every other capture.
+    /// captured message whose row names a result attachment whose body did
+    /// not stream: its occurrence there does not hold it, the artifact
+    /// carries none, or current custody no longer opens its instance (an
+    /// erase or release retired it). Uncaptured, never another source's
+    /// bytes. Empty for every other capture.
     pub absent_result_bodies: Vec<[u8; 16]>,
     /// Only on a prospective order's last batch of one source process, sent
     /// after every writer of that process stopped: `Some(n)`, the order's
