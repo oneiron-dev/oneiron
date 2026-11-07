@@ -135516,7 +135516,7 @@
      "path": "src/config/context_spec.rs",
      "purpose": "The `ContextSpec` descriptor, its bounds, normalization, and structural validation",
      "surface": {
-      "const": 9,
+      "const": 5,
       "enum": 2,
       "fn": 8,
       "struct": 1
