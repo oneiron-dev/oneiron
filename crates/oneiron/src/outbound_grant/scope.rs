@@ -10,6 +10,7 @@ use crate::error::Result;
 use crate::genui::GrantMintIntentScope;
 use crate::outbound_consent::tool_call::ToolGrantDataClass;
 use crate::outbound_consent::{DataClass, ScopedMcpGrantRef};
+pub(super) use crate::store::consent_bound::SEND_VERB_CLASS;
 
 // The optional vocabulary is kind-specific: scoped MCP requires an explicit
 // tool-data-class set. Blind and booking scopes cannot carry that authority.
@@ -48,8 +49,6 @@ pub(super) const BOOKING_PAGE_INVITE_ORIGIN_COMPONENT_ID: &str = "booking.page_p
 
 /// OF-336 origin action recorded on a booking-page invite grant.
 pub(super) const BOOKING_PAGE_INVITE_ORIGIN_ACTION_ID: &str = "publish_booking_page";
-
-pub(super) const SEND_VERB_CLASS: &str = "send";
 
 /// Scope dial selected by the owner when minting a standing outbound grant.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
