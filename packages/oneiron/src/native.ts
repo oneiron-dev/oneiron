@@ -37,6 +37,7 @@ export interface NativeClient {
 // BEGIN GENERATED AGENT VERBS
 vaultCommitmentsCreate(input: unknown): unknown
 vaultCommitmentsGet(input: unknown): unknown
+vaultCommitmentsLedger(input: unknown): unknown
 vaultCommitmentsInstances(input: unknown): unknown
 vaultCommitmentsProposals(input: unknown): unknown
 vaultCommitmentsFulfill(input: unknown): unknown
@@ -243,6 +244,13 @@ vaultWeaveLinkWrong(input: unknown): unknown
 vaultWeaveOwnerLinkWrong(input: unknown): unknown
 vaultWeaveItemWrong(input: unknown): unknown
 vaultWeaveOwnerItemWrong(input: unknown): unknown
+vaultWeaveAdminReport(input: unknown): unknown
+vaultWeaveAdminLens(input: unknown): unknown
+vaultWeaveAdminDigest(input: unknown): unknown
+vaultWeaveAdminLinkWrong(input: unknown): unknown
+vaultWeaveAdminItemWrong(input: unknown): unknown
+vaultStepUpPasskeysReset(input: unknown): unknown
+vaultStepUpTotpReset(input: unknown): unknown
 vaultWeaveEnqueue(input: unknown): unknown
 vaultWeaveSchedulesList(input: unknown): unknown
 vaultWeaveSchedulesPut(input: unknown): unknown
@@ -277,6 +285,7 @@ vaultPacksSync(input: unknown): unknown
 vaultPacksGet(input: unknown): unknown
 vaultSkillsImport(input: unknown): unknown
 vaultSkillsSync(input: unknown): unknown
+vaultSkillsProposalSettle(input: unknown): unknown
 vaultSkillsReceipts(input: unknown): unknown
 vaultSkillsConvert(input: unknown): unknown
 vaultSkillsGet(input: unknown): unknown
@@ -379,6 +388,7 @@ vaultMembersDelegate(input: unknown): unknown
 vaultMembersProjection(input: unknown): unknown
 vaultMembersAdd(input: unknown): unknown
 vaultMembersInvitationSlip(input: unknown): unknown
+vaultMembersInvitationCode(input: unknown): unknown
 vaultMembersChange(input: unknown): unknown
 vaultMembersRemove(input: unknown): unknown
 vaultMembersLeave(input: unknown): unknown
@@ -513,6 +523,7 @@ vaultCoachTrainingOffersPilotsPrepare(input: unknown): unknown
 vaultCoachTrainingOffersPilotsComplete(input: unknown): unknown
 vaultCoachTrainingOffersPilotsGet(input: unknown): unknown
 vaultCoachTrainingOffersSources(input: unknown): unknown
+vaultCoachTrainingRunsCancel(input: unknown): unknown
 vaultDraftersList(input: unknown): unknown
 vaultDraftersListAs(input: unknown): unknown
 vaultDraftersStatus(input: unknown): unknown
@@ -620,6 +631,7 @@ vaultSettingsLearning(input: unknown): unknown
 vaultSettingsLearningPut(input: unknown): unknown
 vaultSettingsLearningClear(input: unknown): unknown
 vaultSecretsCodeRunLifts(input: unknown): unknown
+vaultSecretsCodeRunRoomLifts(input: unknown): unknown
 vaultSecretsLiftHistory(input: unknown): unknown
 vaultSecretsRegister(input: unknown): unknown
 vaultSecretsRotate(input: unknown): unknown
@@ -667,6 +679,7 @@ vaultSharesView(input: unknown): unknown
 hostCompact(input: unknown): unknown
 hostWake(input: unknown): unknown
 hostBudgetHit(input: unknown): unknown
+vaultHooksChecks(input: unknown): unknown
 vaultHooksReplay(input: unknown): unknown
 vaultHooksRegenDue(input: unknown): unknown
 vaultHooksRegenGet(input: unknown): unknown
@@ -719,6 +732,7 @@ vaultCodeProposalSettlement(input: unknown): unknown
 vaultCodeOplog(input: unknown): unknown
 executeCode(input: unknown): unknown
 vaultCodeModelHealCount(input: unknown): unknown
+vaultCodeCorrections(input: unknown): unknown
 vaultCodeTypeDiagnostics(input: unknown): unknown
 vaultCodeWaitsResolve(input: unknown): unknown
 vaultCodeWaitsReceipt(input: unknown): unknown
@@ -865,6 +879,9 @@ peek(requestJson: string): string
 ask(input: unknown): unknown
 wait(input: unknown): unknown
 tasksAnswer(input: unknown): unknown
+tasksAnswerForwardChallenge(input: unknown): unknown
+tasksAnswerForward(input: unknown): unknown
+tasksAnswerForwardStatus(input: unknown): unknown
 tasksOutcomes(input: unknown): unknown
 vaultRoomsList(input: unknown): unknown
 vaultRoomsMessages(input: unknown): unknown
@@ -1000,6 +1017,8 @@ vaultGraphAdmit(input: unknown): unknown
 vaultQuestionsCreate(input: unknown): unknown
 vaultQuestionsEdit(input: unknown): unknown
 vaultQuestionsPause(input: unknown): unknown
+vaultQuestionsPrepare(input: unknown): unknown
+vaultQuestionsAdmit(input: unknown): unknown
 vaultQuestionsBackfill(input: unknown): unknown
 vaultQuestionsRead(input: unknown): unknown
 vaultQuestionsOutcomeWindows(input: unknown): unknown
@@ -1261,6 +1280,9 @@ vaultMailSourcesSyncStatus(input: unknown): unknown
 vaultMailInbox(input: unknown): unknown
 vaultMailThreadsRead(input: unknown): unknown
 vaultMailComplianceSearch(input: unknown): unknown
+vaultFilesSourcesConvert(input: unknown): unknown
+vaultSyncRepoManifestsConflictReview(input: unknown): unknown
+vaultSyncRepoManifestsConflictDiscard(input: unknown): unknown
 connectorAnswer(input: unknown): unknown
 selfBrowserOpen(input: unknown): unknown
 selfBrowserObserve(input: unknown): unknown

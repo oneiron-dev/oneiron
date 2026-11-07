@@ -193,6 +193,16 @@ impl ReaderParentClock {
         }
     }
 
+    /// A native reader's already-bounded monotonic cutoff, never a new
+    /// default window. The caller samples it before the wall-clock budget.
+    pub(crate) fn until(cutoff: Instant) -> Self {
+        let origin = Instant::now();
+        Self {
+            origin,
+            budget_ms: millis(cutoff.saturating_duration_since(origin)),
+        }
+    }
+
     /// A wake pass's clock: what is left before its hard ceiling.
     #[must_use]
     pub fn of_wake(deadline: &WakePassDeadline) -> Self {

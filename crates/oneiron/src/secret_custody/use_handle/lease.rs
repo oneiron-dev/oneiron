@@ -135,6 +135,7 @@ impl Vault {
             operation,
             effector: &held.effector,
             grant: Some(held.grant_id),
+            lease: None,
             first_intent: None,
         };
         let admitted = if let Some(holder) = user.run_holder(&rec.name) {

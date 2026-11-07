@@ -13,6 +13,10 @@ use oneiron::{commitment_schedule, commitment_wake};
 
 use super::{CommitmentDeadline, DeadlineSource, IdleSample, NowMillis, system_now_ms};
 
+/// The host's gate over a deadline read's writes (FIX 7441): what it returns
+/// is held to the read's end, before the tick waits; `None` refuses them.
+type DeadlineWriteGate = Arc<dyn Fn() -> Option<Box<dyn Send>> + Send + Sync>;
+
 /// [`DeadlineSource`] over the vault's advisory attempt table: the earliest due
 /// pending Dreamer consolidation attempt THIS NODE could admit. A queued attempt
 /// with no retry backoff is due at its enqueue stamp; a backoff-delayed attempt
@@ -44,6 +48,8 @@ pub struct AttemptQueueDeadlines<'v> {
     /// The scope of the last deadline this source returned already due, so
     /// due work of several scopes is served in turn (FIX 12042).
     last_served: Option<DreamerConsolidationScope>,
+    /// The host's gate over this read's writes; `None` admits them all.
+    write_gate: Option<DeadlineWriteGate>,
 }
 
 impl<'v> AttemptQueueDeadlines<'v> {
@@ -58,6 +64,7 @@ impl<'v> AttemptQueueDeadlines<'v> {
             commitment_now: None,
             idle: None,
             last_served: None,
+            write_gate: None,
         }
     }
 
@@ -83,6 +90,7 @@ impl<'v> AttemptQueueDeadlines<'v> {
             commitment_now: Some(now),
             idle: None,
             last_served: None,
+            write_gate: None,
         }
     }
 
@@ -93,6 +101,17 @@ impl<'v> AttemptQueueDeadlines<'v> {
     #[must_use]
     pub fn with_idle(mut self, idle: IdleSample) -> Self {
         self.idle = Some(idle);
+        self
+    }
+
+    /// The host's gate over each read's writes (FIX 7441): the home
+    /// handoff's adoption and the commitment lane's reconcile and fired
+    /// wakes run only while it admits, held to the read's end. A refused
+    /// read (a reap freeze) reads the due index and the queue alone; the
+    /// next admitted read does the writes. `None` admits every write.
+    #[must_use]
+    pub fn with_write_gate(mut self, gate: Option<DeadlineWriteGate>) -> Self {
+        self.write_gate = gate;
         self
     }
 
@@ -150,11 +169,19 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
     }
 
     fn next_deadline(&mut self) -> oneiron::Result<Option<CommitmentDeadline>> {
+        // FIX 7441: this read's writes run under the host's gate, held to
+        // the read's end; a refused gate leaves them to the next read.
+        let held = match &self.write_gate {
+            Some(gate) => gate(),
+            None => Some(Box::new(()) as Box<dyn Send>),
+        };
         // FIX 5661 C2b (FIX 6211): a new home adopts the handoff its move
         // carried, or records that none came, before this read arms any
         // free-time cadence. Best effort: a failure is logged and the read
         // goes on with today's opening.
-        if let Err(error) = oneiron::sync::residence::prepare_home_handoff(self.vault) {
+        if held.is_some()
+            && let Err(error) = oneiron::sync::residence::prepare_home_handoff(self.vault)
+        {
             tracing::warn!(
                 kind = ?error.kind(),
                 "home handoff not prepared before the deadline read"
@@ -164,11 +191,15 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
         // phase COMMITS a Dreamer attempt, so reading the attempt queue after
         // it is what makes that brand-new attempt visible in the same caller
         // read — without relocating this merge into the commitment source.
-        let commitment = match &self.commitment_now {
+        let mut commitment = match &self.commitment_now {
             Some(clock) => CommitmentDueDeadlines::with_clock(self.vault, Arc::clone(clock)),
             None => CommitmentDueDeadlines::new(self.vault),
-        }
-        .next_deadline()?;
+        };
+        let commitment = if held.is_some() {
+            commitment.next_deadline()?
+        } else {
+            commitment.read_next_deadline()?
+        };
         let queue = AttemptQueue::new(self.vault);
         let macro_ready = DreamerRunnerStore::new(self.vault).macro_schedulable_attempts()?;
         let free_time = free_time_arming(self.vault);
@@ -664,12 +695,10 @@ impl<'v> CommitmentDueDeadlines<'v> {
     }
 }
 
-impl DeadlineSource for CommitmentDueDeadlines<'_> {
-    fn next_deadline(&mut self) -> oneiron::Result<Option<CommitmentDeadline>> {
-        // The index stores seconds; the tick lane speaks milliseconds.
-        let now_secs = (self.now)() / 1_000;
-        self.reconcile_due_projects(now_secs)?;
-        self.fire_due_wake_phases(now_secs)?;
+impl CommitmentDueDeadlines<'_> {
+    /// The lane's next timer from the due index alone, with no reconcile
+    /// and no fired wake: a read the host's gate refused (FIX 7441).
+    fn read_next_deadline(&self) -> oneiron::Result<Option<CommitmentDeadline>> {
         Ok(self
             .vault
             .commitment_due_index_snapshot()?
@@ -678,6 +707,16 @@ impl DeadlineSource for CommitmentDueDeadlines<'_> {
                 due_at_ms: due_secs.saturating_mul(1_000),
                 scope: DreamerConsolidationScope::Micro,
             }))
+    }
+}
+
+impl DeadlineSource for CommitmentDueDeadlines<'_> {
+    fn next_deadline(&mut self) -> oneiron::Result<Option<CommitmentDeadline>> {
+        // The index stores seconds; the tick lane speaks milliseconds.
+        let now_secs = (self.now)() / 1_000;
+        self.reconcile_due_projects(now_secs)?;
+        self.fire_due_wake_phases(now_secs)?;
+        self.read_next_deadline()
     }
 }
 

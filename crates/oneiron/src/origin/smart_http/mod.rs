@@ -132,7 +132,7 @@ pub use self::paths::{
     validate_repo_name,
 };
 pub use self::push_admission::{admit_receive_pack, serve_bounded_as};
-pub(crate) use self::recipient_serve::store_holds_readable_marks_in_txn;
+pub(crate) use self::recipient_serve::store_may_need_masked_copy_in_txn;
 pub use self::recipient_serve::{RepoGitReadContext, serve_bounded_for_recipient};
 pub use self::secret_marks::ReceiveSecretMarks;
 pub use self::serve::{

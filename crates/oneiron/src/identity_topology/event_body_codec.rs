@@ -16,7 +16,7 @@ use crate::write_envelope::WriteActor;
 
 use super::ledger_fold::IdentityTopologyAction;
 use super::op_apply::is_effective_approval;
-use super::op_vocabulary::{IdentityOpEvidence, IdentityTopologyOp};
+use super::op_vocabulary::{FacetSpec, IdentityOpEvidence, IdentityTopologyOp};
 use super::proposal_resolution::{decode_amendable_kind, validate_resolution_scope_stateless};
 use super::reassignment_map::{
     ReassignmentTarget, decode_reassignment_map, encode_reassignment_map,
@@ -27,15 +27,15 @@ use super::wire_keys::IDENTITY_TOPOLOGY_OPERATION_PART_BYTES;
 use super::wire_keys::{
     BODY_KEY_ACTOR, BODY_KEY_ACTOR_CLASS, BODY_KEY_AMENDED, BODY_KEY_APPLIED_ASSIGNED,
     BODY_KEY_APPLIED_EVENT, BODY_KEY_APPLIED_RESIDUE, BODY_KEY_CLAIM, BODY_KEY_ENTITY,
-    BODY_KEY_FACETS, BODY_KEY_FORKED, BODY_KEY_HEADS, BODY_KEY_MAP, BODY_KEY_OPERATION_DIGEST,
-    BODY_KEY_OPERATION_INDEX, BODY_KEY_OPERATION_KIND, BODY_KEY_OPERATION_LENGTH,
-    BODY_KEY_OPERATION_PARTS, BODY_KEY_OPERATION_PAYLOAD, BODY_KEY_OPERATION_ROOT,
-    BODY_KEY_OUTCOME, BODY_KEY_PAIR_A, BODY_KEY_PAIR_B, BODY_KEY_PLAN, BODY_KEY_PROPOSAL,
-    BODY_KEY_SCOPE_ACTOR, BODY_KEY_SCOPE_OP_KIND, BODY_KEY_SCOPE_TARGET_CLASS, BODY_KEY_SOURCES,
-    BODY_KEY_SURVIVOR, BODY_KEY_TARGET, EVENT_KIND_ASSERT_DISTINCT, EVENT_KIND_FACET,
-    EVENT_KIND_MERGE, EVENT_KIND_OPERATION_MANIFEST, EVENT_KIND_OPERATION_PART,
+    BODY_KEY_FACET_SPECS, BODY_KEY_FACETS, BODY_KEY_FORKED, BODY_KEY_HEADS, BODY_KEY_MAP,
+    BODY_KEY_OPERATION_DIGEST, BODY_KEY_OPERATION_INDEX, BODY_KEY_OPERATION_KIND,
+    BODY_KEY_OPERATION_LENGTH, BODY_KEY_OPERATION_PARTS, BODY_KEY_OPERATION_PAYLOAD,
+    BODY_KEY_OPERATION_ROOT, BODY_KEY_OUTCOME, BODY_KEY_PAIR_A, BODY_KEY_PAIR_B, BODY_KEY_PLAN,
+    BODY_KEY_PROPOSAL, BODY_KEY_SCOPE_ACTOR, BODY_KEY_SCOPE_OP_KIND, BODY_KEY_SCOPE_TARGET_CLASS,
+    BODY_KEY_SOURCES, BODY_KEY_SURVIVOR, BODY_KEY_TARGET, EVENT_KIND_ASSERT_DISTINCT,
+    EVENT_KIND_FACET, EVENT_KIND_MERGE, EVENT_KIND_OPERATION_MANIFEST, EVENT_KIND_OPERATION_PART,
     EVENT_KIND_PROPOSAL_CANCELLATION, EVENT_KIND_PROPOSAL_RESOLUTION, EVENT_KIND_SPLIT,
-    EVENT_KIND_UNDO, EVIDENCE_KEY_RATIONALE, EVIDENCE_KEY_REFS,
+    EVENT_KIND_UNDO, EVIDENCE_KEY_RATIONALE, EVIDENCE_KEY_REFS, FACET_SPEC_KEY_LABEL,
     IDENTITY_TOPOLOGY_REPLICATED_SEQ_LIMIT, PLAN_READ_THROUGH,
 };
 use super::{
@@ -90,6 +90,18 @@ pub(super) fn encode_action_entries(
             if !forked.is_empty() {
                 entries.push((Value::from(BODY_KEY_FORKED), ids_value(forked)));
             }
+        }
+        StoredIdentityOpAction::ParkedFacet {
+            entity,
+            specs,
+            reassignment,
+        } => {
+            entries.push((Value::from(BODY_KEY_ENTITY), id_value(entity)));
+            entries.push((Value::from(BODY_KEY_FACET_SPECS), facet_specs_value(specs)));
+            entries.push((
+                Value::from(BODY_KEY_MAP),
+                encode_reassignment_map(reassignment),
+            ));
         }
         StoredIdentityOpAction::AssertDistinct { a, b, claim } => {
             entries.push((Value::from(BODY_KEY_PAIR_A), id_value(a)));
@@ -315,11 +327,25 @@ pub(super) fn decode_action(kind: &str, map: &[(Value, Value)]) -> Result<Stored
         }
         EVENT_KIND_FACET => {
             const FORKED_CONTEXT: &str = "identity topology facet forks";
-            let (applied_assigned, applied_residue) = decode_applied_counts(map)?;
             let reassignment =
                 decode_reassignment_map(map_field(map, BODY_KEY_MAP).ok_or(Error::Sync(
                     SyncError::InvalidIdentityTopologyEventBody("identity topology event map"),
                 ))?)?;
+            // FIX 7814: a parked facet names the specs its ruling would mint,
+            // an applied one the masks it minted. The specs field tells them
+            // apart; the canonical re-encode refuses a body carrying both.
+            if let Some(specs) = map_field(map, BODY_KEY_FACET_SPECS) {
+                return Ok(StoredIdentityOpAction::ParkedFacet {
+                    entity: decode_id_field(
+                        map,
+                        BODY_KEY_ENTITY,
+                        "identity topology event entity",
+                    )?,
+                    specs: decode_facet_specs(specs)?,
+                    reassignment,
+                });
+            }
+            let (applied_assigned, applied_residue) = decode_applied_counts(map)?;
             let forked = if map_field(map, BODY_KEY_FORKED).is_some() {
                 decode_ids_field(map, BODY_KEY_FORKED, FORKED_CONTEXT)?
             } else {
@@ -538,6 +564,7 @@ pub(super) fn decode_identity_topology_operation_payload(
         StoredIdentityOpAction::Merge { .. }
             | StoredIdentityOpAction::Split { .. }
             | StoredIdentityOpAction::Facet { .. }
+            | StoredIdentityOpAction::ParkedFacet { .. }
     ) {
         return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
             "identity topology operation payload is no merge, split or facet",
@@ -633,12 +660,7 @@ fn validate_identity_topology_event_stateless(
             }
             return Ok(());
         }
-        StoredIdentityOpAction::OperationManifest {
-            kind,
-            parts,
-            length,
-            ..
-        } => {
+        StoredIdentityOpAction::OperationManifest { parts, length, .. } => {
             // The decision's evidence and actor ride its payload and its
             // attribution carrier, never the manifest.
             if record.actor.is_some() || record.evidence.is_some() {
@@ -656,11 +678,8 @@ fn validate_identity_topology_event_stateless(
                     "identity topology operation manifest length",
                 )));
             }
-            if *kind == EVENT_KIND_FACET && !is_effective_approval(record.approval) {
-                return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
-                    "facet identity topology decisions have no propose lane",
-                )));
-            }
+            // A parked facet may be stored in parts too (FIX 7814): its
+            // assembled payload carries the consent shape check below.
             return Ok(());
         }
         _ => {}
@@ -735,17 +754,19 @@ fn validate_identity_topology_event_stateless(
                 "identity topology event mints too many facets",
             )));
         }
-        // A facet op has NO propose lane, and the SAME rule has to hold at
-        // both doors. The local door refuses to record a park
-        // ([`Vault::apply_identity_topology_op_in_txn`]) because a parked
-        // facet mints nothing yet must name its masks, and
-        // [`proposal_scope_target`] has no scope target for a facet — so a
-        // park that DID get written could never be ruled on. Admitting one
-        // from a peer would persist exactly the unresolvable orphan the
-        // local path calls corruption.
-        if !effective {
+        // A facet decision's shape follows its consent axis, at both doors
+        // (FIX 7814): an applied one names the masks its door minted, a
+        // parked one names only the specs its ruling would mint. A parked
+        // record naming minted masks, or an applied one naming none, is a
+        // decision no door writes.
+        let parked = matches!(record.action, StoredIdentityOpAction::ParkedFacet { .. });
+        if parked == effective {
             return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
-                "facet identity topology decisions have no propose lane",
+                if effective {
+                    "an applied facet decision names no minted masks"
+                } else {
+                    "a parked facet decision names minted masks"
+                },
             )));
         }
     }
@@ -787,6 +808,46 @@ pub(crate) fn decode_replicated_identity_topology_event_body(
 
 pub(super) fn ids_value(ids: &[EntityId]) -> Value {
     Value::Array(ids.iter().map(id_value).collect())
+}
+
+/// A parked facet's specs (FIX 7814): one `{label}` map per spec, in spec
+/// order.
+fn facet_specs_value(specs: &[FacetSpec]) -> Value {
+    Value::Array(
+        specs
+            .iter()
+            .map(|spec| {
+                Value::Map(vec![(
+                    Value::from(FACET_SPEC_KEY_LABEL),
+                    Value::from(spec.label.as_str()),
+                )])
+            })
+            .collect(),
+    )
+}
+
+/// The [`facet_specs_value`] inverse, fail-closed on any malformed spec. The
+/// canonical re-encode every caller runs refuses a spec map with extra keys.
+fn decode_facet_specs(value: &Value) -> Result<Vec<FacetSpec>> {
+    const SPECS_CONTEXT: &str = "identity topology facet specs";
+    let Value::Array(items) = value else {
+        return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+            SPECS_CONTEXT,
+        )));
+    };
+    items
+        .iter()
+        .map(|item| {
+            let map =
+                item.as_map()
+                    .ok_or(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                        SPECS_CONTEXT,
+                    )))?;
+            Ok(FacetSpec {
+                label: decode_str_field(map, FACET_SPEC_KEY_LABEL, SPECS_CONTEXT)?.to_owned(),
+            })
+        })
+        .collect()
 }
 
 pub(super) fn decode_evidence(value: &Value) -> Result<IdentityOpEvidence> {
