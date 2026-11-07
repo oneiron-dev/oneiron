@@ -154,6 +154,15 @@ fn mcp_hooks_admitted(
             "a host trigger requires the owner's verified credential",
         ));
     }
+    // FIX 4794: a row whose handler takes the caller's credential refuses a
+    // call with none here, before its pre hooks run, with that handler's error.
+    if actor.auth.is_none() && crate::api::facade::needs_caller_credential(tool) {
+        return Err(McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        ));
+    }
     let reader = VerbCall::reader_of(memory, tool).map_err(mcp_facade_error)?;
     Ok((reader, Some(mcp_rewrite_admit(server, tool, actor))))
 }
