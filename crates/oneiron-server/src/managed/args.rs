@@ -223,6 +223,10 @@ pub struct ManagedArgs {
     /// start the supervisor hands one. In a vault VM only the bootstrap's,
     /// beside its anchor handoff (`vm_anchor`).
     pub custody_anchor_credentials_fd: Option<RawFd>,
+    /// The supervisor-pinned public recipient for checkpoint host-order
+    /// members, on a separate pipe; no recipient never vetoes a start.
+    pub checkpoint_host_holds_recipient_fd: Option<RawFd>,
+
     /// The optional native HOST listener descriptor and kernel UID. Startup
     /// takes and clears this pair before any managed watcher clones argv.
     pub(crate) host_legal: Option<(RawFd, u32)>,
