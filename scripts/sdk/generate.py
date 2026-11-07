@@ -142,6 +142,13 @@ for row in ROWS:
     # catch-all, so a new host door names its check or fails to compile.
     if row.get('host_door_precheck', True) is not True and (row['host_door_precheck'] is not False or not row.get('host_door')):
         raise ValueError(f'{row["name"]}: host_door_precheck is only a host door\'s, and only false')
+    # `host_door_paced` hands a host door the facade call's paced context
+    # (FIX 8753): its invocation, the door it came in by and, on the drain's
+    # run of a held call, the drain's permit, so a full budget window holds
+    # the call in its caller's paced line and the drain runs it there again.
+    # An MCP call hands `None` and answers its paced receipt as before.
+    if row.get('host_door_paced') and not row.get('host_door'):
+        raise ValueError(f'{row["name"]}: only a host door takes a paced context')
     # `host_door_lens_owner` hands a live lens door the owner its card is held
     # for (OF-181, FIX 2612), never a field of its input: the facade call's
     # host-bound creating run and subscription (`FacadeCall::lens_owner`), or
@@ -879,7 +886,8 @@ def mcp_input_dispatch(row):
         # a call that keeps no record hands its hidden id (FIX 5381).
         caller_arg = f'(actor.actor_ref, actor.actor_class), oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, {json.dumps(name)}), '
         fold_hooks_arg = ', pre_hooked_fold' if name == 'self.fold' else ''
-        door = f'Box::pin(crate::api::facade::host_doors::{method}(server, auth, {session_arg}{caller_arg if row.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}input{fold_hooks_arg})).await'
+        paced_arg = 'None, ' if row.get('host_door_paced') else ''
+        door = f'Box::pin(crate::api::facade::host_doors::{method}(server, auth, {session_arg}{caller_arg if row.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}{paced_arg}input{fold_hooks_arg})).await'
         # The card's owner names the request as the row runs it, before it decodes.
         lens_owner = f'let owner = surface.lens_owner({json.dumps(name)}, &input);\n' if row.get('host_door_lens_owner') else ''
         # A source door's failure keeps its program's feedback beside its
@@ -1547,7 +1555,8 @@ def facade_dispatch(facade_rows):
             caller_arg = 'caller, Some(oneiron::task_verb::verb_hook_boundary::door_invocation(&server.vault, &hooks)), '
             # Only the public fold's Mark action repeats this same hook name.
             fold_hooks_arg = ', oneiron::code_run::actions::PreHookedFold::from_pre(&hooks)' if name == 'self.fold' else ''
-            door = f'super::host_doors::{method}(server, auth, {session_arg}{caller_arg if r.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}facade_door_input(&mut hooks)?{fold_hooks_arg}).await'
+            paced_arg = 'Some(super::FacadePacedCall::of(call)?), ' if r.get('host_door_paced') else ''
+            door = f'super::host_doors::{method}(server, auth, {session_arg}{caller_arg if r.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}{paced_arg}facade_door_input(&mut hooks)?{fold_hooks_arg}).await'
             # A door that fails after the pre chain ran (the door itself, its
             # input's decode or its answer's encoding) keeps a session-only
             # call's pre hook records and runs no post chain (FIX 5527).
