@@ -233,9 +233,13 @@ impl CodeRunBridgeCall {
             SelfDispatchOutcome::ReaderReport(_) if self.effect != SelfEffect::ReaderReport => Err(
                 invalid_code_run_replay("reader report receipt belongs to another effect"),
             ),
-            SelfDispatchOutcome::TaskWaitSet(_) if self.effect != SelfEffect::TasksWaitSet => Err(
-                invalid_code_run_replay("task wait set answer belongs to another effect"),
-            ),
+            SelfDispatchOutcome::TaskWaitSet(_)
+            | SelfDispatchOutcome::StoredReply(super::types::SelfStoredReply {
+                kind: super::types::SelfStoredReplyKind::TaskWaitSet,
+                ..
+            }) if self.effect != SelfEffect::TasksWaitSet => Err(invalid_code_run_replay(
+                "task wait set answer belongs to another effect",
+            )),
             SelfDispatchOutcome::Summarize(_) if self.effect != SelfEffect::Summarize => Err(
                 invalid_code_run_replay("summary answer belongs to another effect"),
             ),
