@@ -229,7 +229,27 @@ pub fn admit_quarantine_submission(
     per_minute: NonZeroU32,
     created_at: u64,
 ) -> Result<BookingQuarantineAdmission, BookingError> {
-    admit_quarantine(vault, facts, reason, per_minute, created_at, None)
+    admit_quarantine(vault, facts, reason, Some(per_minute), created_at, None)
+}
+
+/// [`admit_restorable_quarantine_submission`] for an authenticated caller
+/// (FIX 131), or [`admit_quarantine_submission`] when `restore` is `None`:
+/// the same transactional duplicate lookup and first write, with no
+/// page-wide quota. It spends no token, so it never takes an anonymous
+/// visitor's place in the page's quarantine window, and it is never rate
+/// limited.
+///
+/// # Errors
+///
+/// As [`admit_quarantine_submission`].
+pub fn admit_quarantine_submission_without_quota(
+    vault: &Vault,
+    facts: &BookingRequestFacts,
+    reason: &str,
+    created_at: u64,
+    restore: Option<&BookingQuarantineRestoreInput<'_>>,
+) -> Result<BookingQuarantineAdmission, BookingError> {
+    admit_quarantine(vault, facts, reason, None, created_at, restore)
 }
 
 /// [`admit_quarantine_submission`], keeping the confirm restorable (FIX
@@ -248,14 +268,23 @@ pub fn admit_restorable_quarantine_submission(
     created_at: u64,
     restore: &BookingQuarantineRestoreInput<'_>,
 ) -> Result<BookingQuarantineAdmission, BookingError> {
-    admit_quarantine(vault, facts, reason, per_minute, created_at, Some(restore))
+    admit_quarantine(
+        vault,
+        facts,
+        reason,
+        Some(per_minute),
+        created_at,
+        Some(restore),
+    )
 }
 
+/// `per_minute` is the page-wide quota a submission spends a token of;
+/// `None` spends none and is never rate limited.
 fn admit_quarantine(
     vault: &Vault,
     facts: &BookingRequestFacts,
     reason: &str,
-    per_minute: NonZeroU32,
+    per_minute: Option<NonZeroU32>,
     created_at: u64,
     restore: Option<&BookingQuarantineRestoreInput<'_>>,
 ) -> Result<BookingQuarantineAdmission, BookingError> {
@@ -277,15 +306,21 @@ fn admit_quarantine(
                 claim_id,
             )));
         }
-        let scope_hash = digest_with(QUARANTINE_RATE_DOMAIN, facts.page_ref.as_bytes());
-        match consume_rate_token_in_txn(
-            vault,
-            wtxn,
-            b"quarantine",
-            &scope_hash,
-            per_minute,
-            created_at,
-        )? {
+        let decision = match per_minute {
+            Some(per_minute) => {
+                let scope_hash = digest_with(QUARANTINE_RATE_DOMAIN, facts.page_ref.as_bytes());
+                consume_rate_token_in_txn(
+                    vault,
+                    wtxn,
+                    b"quarantine",
+                    &scope_hash,
+                    per_minute,
+                    created_at,
+                )?
+            }
+            None => BookingRateDecision::Allowed,
+        };
+        match decision {
             BookingRateDecision::Allowed => {
                 let receipt = quarantine_borderline_submission_in_txn(
                     vault, wtxn, facts, reason, created_at,

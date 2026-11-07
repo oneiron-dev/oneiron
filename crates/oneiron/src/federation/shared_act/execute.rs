@@ -1,7 +1,8 @@
 //! Executing a matured delete-the-vault, ownership-transfer or owner-removal act.
 
-use super::membership::MemberMove;
+use super::membership::{MemberMove, UnsignedExecution};
 use super::*;
+use crate::authority::{MembershipExecutionCause, MembershipHandover};
 
 impl Vault {
     /// Execute a completed `delete_vault`, `transfer_ownership` or
@@ -14,7 +15,12 @@ impl Vault {
     /// the capability slips of anyone who lost a role are revoked with it,
     /// and the host signs an ownership change into the authority log as an
     /// `OwnerHandover` naming the act and its receipt. Without `slips`, this
-    /// install's own live host issuer does both (FIX 5898).
+    /// install's own live host issuer does both (FIX 5898). With no issuer
+    /// at all, the change still lands, and its handover and the withdrawals
+    /// of the Grants an owner's signed mint made wait as one pending record
+    /// this install signs as their carrier, in this writer when it can and
+    /// on a later pass otherwise; the receipt says it is pending until that
+    /// record counts (FIX 12335).
     /// An export-first removal, once its executor and starter stand as live
     /// Owners holding the act's verb (FIX 3217), exports what its target
     /// could read before the writer opens, records that export's digest in
@@ -40,16 +46,24 @@ impl Vault {
                     member,
                     crate::edge::EdgeActorClass::Human,
                 );
-                self.export_records_archive(&ids, reader, |txn| {
-                    removal_archive::freeze_positions_in_txn(self, txn, &ids)
-                })
-                .map(|frozen| (member, records.len() as u64, frozen, ids))
+                // Built into a spool, then written as the archive's file
+                // before the writer opens (FIX 3679).
+                let (mut spool, receipt, positions) = self.export_records_archive(
+                    &ids,
+                    reader,
+                    |txn| removal_archive::freeze_positions_in_txn(self, txn, &ids),
+                    self.archive_spool_file()?,
+                )?;
+                let staged = self.stage_removal_archive(&mut spool)?;
+                Ok::<_, Error>((
+                    member,
+                    records.len() as u64,
+                    (staged, receipt.diary_reads, positions),
+                    ids,
+                ))
             })
             .transpose()?;
-        let own_issuer = match slips {
-            Some(_) => None,
-            None => self.load_host_slip_issuer().ok(),
-        };
+        let own_issuer = self.membership_issuer(slips);
         let mut txn = self.store.env.write_txn()?;
         let actor = executor.revalidate_person_in_txn(self, &txn)?;
         let act = self
@@ -102,8 +116,10 @@ impl Vault {
             Some(receipt_id.clone()),
         )?;
         // The grant ids an Owner handover wrote and retired, for its signed
-        // entry (FIX 5765).
+        // entry (FIX 5765), and the signed-mint Grants it deleted with no
+        // signed withdrawal (FIX 12335).
         let mut handover_ids = (Vec::new(), Vec::new());
+        let mut unsigned_withdrawals = Vec::new();
         let effect = match kind {
             SharedActKind::DeleteVault => {
                 let plan: DeleteVaultPlan = decode(&act.payload)?;
@@ -149,8 +165,10 @@ impl Vault {
                 let MemberMove {
                     grants,
                     revoked_slips,
+                    unsigned_withdrawals: unsigned,
                     ..
                 } = moved;
+                unsigned_withdrawals = unsigned;
                 Effect {
                     change: SharedVaultChange::OwnershipTransferred {
                         from: plan.from,
@@ -185,8 +203,10 @@ impl Vault {
                 let MemberMove {
                     grants,
                     revoked_slips,
+                    unsigned_withdrawals: unsigned,
                     ..
                 } = moved;
+                unsigned_withdrawals = unsigned;
                 Effect {
                     change: SharedVaultChange::OwnerRemoved {
                         target: plan.target,
@@ -200,58 +220,100 @@ impl Vault {
             }
             SharedActKind::Erase => return Err(invalid()),
         };
-        let mut authority_entry = None;
-        if let Some(issuer) = slips {
-            let handover = match &effect.change {
-                SharedVaultChange::OwnershipTransferred {
-                    from,
-                    to,
-                    from_keeps,
-                } => Some((OwnerHandoverCause::Transfer, from, Some(to), from_keeps)),
-                SharedVaultChange::OwnerRemoved {
-                    target,
-                    successor,
-                    target_keeps,
-                } => Some((
-                    OwnerHandoverCause::Removal,
-                    target,
-                    successor.as_ref(),
-                    target_keeps,
-                )),
-                _ => None,
-            };
-            if let Some((cause, from, to, keeps)) = handover {
-                let (affected_grants, retired_own_device_grants) = handover_ids;
-                authority_entry = Some(self.append_owner_handover_in_txn(
-                    &mut txn,
-                    issuer,
-                    OwnerHandover {
-                        shared_vault: act.vault_id,
-                        cause,
-                        from: hex_id(from)?,
-                        to: to.map(|to| hex_id(to)).transpose()?,
-                        from_keeps: keeps.map(|role| role.as_str().to_owned()),
-                        act: Some(act.id.clone()),
-                        proof: None,
-                        authorizer: None,
-                        receipt: receipt_id.clone(),
-                        affected_grants,
-                        retired_own_device_grants,
-                    },
-                )?);
+        let handover = match &effect.change {
+            SharedVaultChange::OwnershipTransferred {
+                from,
+                to,
+                from_keeps,
+            } => Some((
+                OwnerHandoverCause::Transfer,
+                MembershipExecutionCause::TransferOwnership,
+                from,
+                Some(to),
+                from_keeps,
+            )),
+            SharedVaultChange::OwnerRemoved {
+                target,
+                successor,
+                target_keeps,
+            } => Some((
+                OwnerHandoverCause::Removal,
+                MembershipExecutionCause::RemoveOwner,
+                target,
+                successor.as_ref(),
+                target_keeps,
+            )),
+            _ => None,
+        };
+        let mut record = ChangeRecord::Unnamed;
+        if let Some((cause, execution_cause, from, to, keeps)) = handover {
+            let from = hex_id(from)?;
+            let to = to.map(|to| hex_id(to)).transpose()?;
+            let from_keeps = keeps.map(|role| role.as_str().to_owned());
+            let (affected_grants, retired_own_device_grants) = handover_ids;
+            match slips {
+                Some(issuer) => {
+                    record = ChangeRecord::Signed(self.append_owner_handover_in_txn(
+                        &mut txn,
+                        issuer,
+                        OwnerHandover {
+                            shared_vault: act.vault_id,
+                            cause,
+                            from,
+                            to,
+                            from_keeps,
+                            act: Some(act.id.clone()),
+                            proof: None,
+                            authorizer: None,
+                            receipt: receipt_id.clone(),
+                            affected_grants,
+                            retired_own_device_grants,
+                        },
+                    )?);
+                }
+                // No issuer signs the handover or the withdrawals: the
+                // carrier's record of both is kept pending (FIX 12335). An
+                // issuer that signs the handover passed `require_host`, as
+                // each withdrawal it signed did, so none is left unsigned.
+                None => {
+                    record = self.file_membership_execution_in_txn(
+                        &mut txn,
+                        act.vault_id,
+                        &receipt_id,
+                        actor,
+                        now,
+                        UnsignedExecution {
+                            cause: execution_cause,
+                            member: from,
+                            act: Some(act.id.clone()),
+                            withdrawn_grants: unsigned_withdrawals,
+                            handover: Some(MembershipHandover {
+                                to,
+                                from_keeps,
+                                affected_grants,
+                                retired_own_device_grants,
+                            }),
+                        },
+                    )?;
+                }
             }
         }
         let mut export_records: Option<Vec<crate::EntityId>> = None;
-        let export = export.take().map(|(member, records, archive, ids)| {
-            export_records = Some(ids.into_iter().collect());
-            let summary = SharedActExport {
-                member: member.to_hex(),
-                records,
-                digest: blake3::hash(archive.0.bytes()).to_hex().to_string(),
-                diary_reads: archive.0.diary_reads().to_vec(),
-            };
-            (summary, archive)
-        });
+        let export =
+            export
+                .take()
+                .map(|(member, records, (staged, diary_reads, positions), ids)| {
+                    export_records = Some(ids.into_iter().collect());
+                    let summary = SharedActExport {
+                        member: member.to_hex(),
+                        records,
+                        digest: blake3::Hash::from_bytes(staged.body().blake3)
+                            .to_hex()
+                            .to_string(),
+                        diary_reads,
+                    };
+                    (summary, (staged, positions))
+                });
         let (summary, archive) = export.unzip();
         let receipt = self.record_shared_change_in_txn(
             &mut txn,
@@ -262,7 +324,7 @@ impl Vault {
             owners,
             effect,
             summary,
-            authority_entry,
+            record,
             None,
             now,
         )?;
@@ -270,8 +332,19 @@ impl Vault {
             self.keep_export_records_in_txn(&mut txn, &receipt.id, records)?;
         }
         let delivery = match (&receipt.export, archive) {
-            (Some(summary), Some((archive, positions))) => {
-                let copy = RemovalExportCopy {
+            (Some(summary), Some((staged, positions))) => {
+                // The archive's file, written before this writer opened, is
+                // named in its commit, owned by its row: the removed member
+                // and the receipt (FIX 3679).
+                let file = self.bind_removal_archive_in_txn(
+                    &mut txn,
+                    ArchiveRow {
+                        member: EntityId::from_hex(&summary.member)?,
+                        receipt: EntityId::from_hex(&receipt.id)?,
+                    },
+                    &staged,
+                )?;
+                let copy = removal_archive::KeptRemovalCopy {
                     receipt_id: receipt.id.clone(),
                     vault_id: act.vault_id,
                     member: summary.member.clone(),
@@ -279,18 +352,13 @@ impl Vault {
                     expires_at: now
                         .checked_add(REMOVAL_EXPORT_RETAIN_SECS)
                         .ok_or_else(invalid)?,
-                    export: crate::memory::MemoryExport {
-                        format: crate::batch::export::VAULT_ARCHIVE_FORMAT.to_owned(),
-                        archive: archive.bytes,
-                        digest: summary.digest.clone(),
-                        holder_requests: Vec::new(),
-                    },
+                    format: crate::batch::export::VAULT_ARCHIVE_FORMAT.to_owned(),
+                    holder_requests: Vec::new(),
                 };
                 let row_key = removal_export_key(&copy.member, &copy.receipt_id);
-                let delivery = copy.delivery();
-                let stored = removal_archive::StoredRemovalExport::new(copy, positions);
+                let stored = removal_archive::StoredRemovalExport::new(copy, file, positions);
                 REMOVAL_EXPORT.put(&self.store, &mut txn, &row_key, &stored)?;
-                Some(delivery)
+                Some(stored.delivery())
             }
             _ => None,
         };
