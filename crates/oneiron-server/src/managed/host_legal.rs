@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use oneiron::Vault;
-use oneiron::deletion::HostLegalChannel;
+use oneiron::deletion::{HostLegalChannel, HostLegalConnectionRole};
 use tokio::sync::oneshot;
 use tokio::task::{Id, JoinError, JoinHandle, JoinSet};
 
@@ -57,12 +57,21 @@ impl HostLegalListener {
     ) -> io::Result<HostLegalService> {
         let channel = HostLegalChannel::from_listener(self.listener, self.host_uid)?;
         let cancelled = Arc::new(AtomicBool::new(false));
-        let (stop, stopped) = oneshot::channel();
+        let (quiesce, quiesce_asked) = oneshot::channel();
+        let (finish, finish_asked) = oneshot::channel();
         let worker_cancelled = Arc::clone(&cancelled);
-        let task = tokio::spawn(serve(channel, vault, shutdown, stopped, worker_cancelled));
+        let task = tokio::spawn(serve(
+            channel,
+            vault,
+            shutdown,
+            quiesce_asked,
+            finish_asked,
+            worker_cancelled,
+        ));
         Ok(HostLegalService {
             cancelled,
-            stop,
+            quiesce: Some(quiesce),
+            finish,
             task,
         })
     }
@@ -71,14 +80,30 @@ impl HostLegalListener {
 /// Retained by managed startup until every accepted native collector joins.
 pub(super) struct HostLegalService {
     cancelled: Arc<AtomicBool>,
-    stop: oneshot::Sender<()>,
+    quiesce: Option<oneshot::Sender<oneshot::Sender<()>>>,
+    finish: oneshot::Sender<()>,
     task: JoinHandle<io::Result<()>>,
 }
 
 impl HostLegalService {
-    pub(super) async fn stop(self) {
+    /// At teardown's start: stops accepting, ends every capture but a
+    /// prospective order's, and waits until those have joined. Prospective
+    /// connections keep draining until [`Self::finish`].
+    pub(super) async fn quiesce(&mut self) {
+        let Some(quiesce) = self.quiesce.take() else {
+            return;
+        };
+        let (reply, quiesced) = oneshot::channel();
+        if quiesce.send(reply).is_ok() {
+            let _ = quiesced.await;
+        }
+    }
+
+    /// Once every other writing worker stopped and before the Vault closes:
+    /// the final prospective drain, then every connection ends and joins.
+    pub(super) async fn finish(self) {
         self.cancelled.store(true, Ordering::Release);
-        let _ = self.stop.send(());
+        let _ = self.finish.send(());
         match self.task.await {
             Ok(Ok(())) => {}
             Ok(Err(error)) => {
@@ -89,27 +114,50 @@ impl HostLegalService {
     }
 }
 
+/// Each accepted connection's shutdown handle and its role.
+type Accepted = HashMap<Id, (UnixStream, Arc<HostLegalConnectionRole>)>;
+
 async fn serve(
     channel: HostLegalChannel,
     vault: Arc<Vault>,
     shutdown: ManagedShutdown,
-    mut stop: oneshot::Receiver<()>,
+    mut quiesce: oneshot::Receiver<oneshot::Sender<()>>,
+    mut finish: oneshot::Receiver<()>,
     cancelled: Arc<AtomicBool>,
 ) -> io::Result<()> {
     let mut shutdown = shutdown.triggered();
     let mut workers = JoinSet::new();
-    let mut active = HashMap::new();
+    let mut active: Accepted = HashMap::new();
+    // After the stop trigger or a quiesce: nothing more is accepted, and only
+    // prospective connections still run.
+    let mut quiet = false;
+    let mut quiesce_open = true;
+    let mut quiesced: Option<oneshot::Sender<()>> = None;
     let result = loop {
+        if quiet && let Some(reply) = quiesced.take_if(|_| only_prospective(&active)) {
+            let _ = reply.send(());
+        }
         tokio::select! {
             biased;
-            _ = &mut stop => break Ok(()),
-            _ = &mut shutdown => break Ok(()),
-            completed = workers.join_next_with_id(), if !workers.is_empty() => {
-                if let Some(completed) = completed {
-                    finish(completed, &mut active);
+            _ = &mut finish => break Ok(()),
+            asked = &mut quiesce, if quiesce_open => {
+                quiesce_open = false;
+                quiesced = asked.ok();
+                if !quiet {
+                    quiet = true;
+                    quiet_captures(&vault, &cancelled, &active);
                 }
             }
-            accepted = channel.accept() => {
+            _ = &mut shutdown, if !quiet => {
+                quiet = true;
+                quiet_captures(&vault, &cancelled, &active);
+            }
+            completed = workers.join_next_with_id(), if !workers.is_empty() => {
+                if let Some(completed) = completed {
+                    joined(completed, &mut active);
+                }
+            }
+            accepted = channel.accept(), if !quiet => {
                 let connection = match accepted {
                     Ok(connection) => connection,
                     Err(error) if matches!(error.kind(), io::ErrorKind::PermissionDenied
@@ -129,33 +177,68 @@ async fn serve(
                         continue;
                     }
                 };
+                let role = connection.role();
                 let vault = Arc::clone(&vault);
                 let cancelled = Arc::clone(&cancelled);
                 let worker = workers.spawn_blocking(move || connection.run(&vault, &cancelled));
-                active.insert(worker.id(), stream);
+                active.insert(worker.id(), (stream, role));
             }
         }
     };
-    cancelled.store(true, Ordering::Release);
+    drop(channel);
+    if !quiet {
+        quiet_captures(&vault, &cancelled, &active);
+    }
+    // Every writer of this process has stopped: each prospective order
+    // drains its last entries and names its next ordinal. A listener error
+    // skips it; the outboxes stay for the next start.
+    if result.is_ok() {
+        let drain = Arc::clone(&vault);
+        if let Err(error) =
+            tokio::task::spawn_blocking(move || drain.finish_host_legal_prospective()).await
+        {
+            tracing::warn!(%error, "HOST legal final drain task failed");
+        }
+    }
     if let Err(error) = vault.stop_pending_host_legal_captures() {
         tracing::warn!(%error, "HOST legal pending captures did not stop");
     }
-    drop(channel);
     // Close every accepted socket before joining any worker: one can hold the
     // native source writer while another waits for that writer.
-    for stream in active.values() {
+    for (stream, _) in active.values() {
         let _ = stream.shutdown(Shutdown::Both);
     }
     while let Some(completed) = workers.join_next_with_id().await {
-        finish(completed, &mut active);
+        joined(completed, &mut active);
+    }
+    if let Some(reply) = quiesced.take() {
+        let _ = reply.send(());
     }
     result
 }
 
-fn finish(
-    completed: Result<(Id, oneiron::Result<()>), JoinError>,
-    active: &mut HashMap<Id, UnixStream>,
-) {
+/// The stop trigger: every capture but a prospective order's ends now, and
+/// its socket closes, since one can hold the native source writer the final
+/// drain needs. Prospective connections keep draining.
+fn quiet_captures(vault: &Vault, cancelled: &AtomicBool, active: &Accepted) {
+    cancelled.store(true, Ordering::Release);
+    if let Err(error) = vault.stop_live_host_legal_captures() {
+        tracing::warn!(%error, "HOST legal live captures did not stop");
+    }
+    for (stream, role) in active.values() {
+        if role.close_unless_prospective() {
+            let _ = stream.shutdown(Shutdown::Both);
+        }
+    }
+}
+
+/// Whether every connection still running carries a prospective order: a
+/// closed one has not joined yet.
+fn only_prospective(active: &Accepted) -> bool {
+    active.values().all(|(_, role)| role.is_prospective())
+}
+
+fn joined(completed: Result<(Id, oneiron::Result<()>), JoinError>, active: &mut Accepted) {
     match completed {
         Ok((id, outcome)) => {
             active.remove(&id);

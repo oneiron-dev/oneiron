@@ -100,11 +100,11 @@ impl Vault {
     ///
     /// # Errors
     /// A store failure, and a CODE body that does not decode.
-    pub(crate) fn admit_registered_edit_in_txn<'p>(
+    pub(crate) fn admit_registered_edit_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         repo: EntityId,
-        paths: impl IntoIterator<Item = &'p str>,
+        paths: impl IntoIterator<Item = &str>,
     ) -> Result<std::result::Result<(), RepoAccessRefusal>> {
         let Some(registration) = self
             .registered_repository_body_in_txn(txn, repo)?
@@ -129,12 +129,12 @@ impl Vault {
     ///
     /// # Errors
     /// A miss, or a store failure.
-    pub(crate) fn require_registered_edit_in_txn<'p>(
+    pub(crate) fn require_registered_edit_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         anchor: Option<EntityId>,
         locator: &str,
-        paths: impl IntoIterator<Item = &'p str>,
+        paths: impl IntoIterator<Item = &str>,
     ) -> Result<()> {
         match self.first_outside_ceiling_in_txn(txn, anchor, locator, paths)? {
             Some(path) => Err(outside_ceiling(&path)),
@@ -144,12 +144,12 @@ impl Vault {
 
     /// The first path of `paths` some ceiling of `locator` or `anchor` does
     /// not admit.
-    fn first_outside_ceiling_in_txn<'p>(
+    fn first_outside_ceiling_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         anchor: Option<EntityId>,
         locator: &str,
-        paths: impl IntoIterator<Item = &'p str>,
+        paths: impl IntoIterator<Item = &str>,
     ) -> Result<Option<String>> {
         let mut ceilings = self.registered_repositories_in_txn(txn, locator)?;
         if let Some(anchor) = anchor
