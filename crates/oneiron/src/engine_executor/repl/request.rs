@@ -55,7 +55,10 @@ impl EngineNativeExecutor<'_> {
         self.output_run = Some(record.run_id);
         let coverage = self.storage.code_run_compaction_coverage(record.run_id)?;
         let mut steps = HashMap::new();
-        for (seq, _, observation) in self.observation_refs(record)? {
+        for (seq, output, mut observation) in self.observation_refs(record)? {
+            if !clean_for_context(&self.storage, Some(record.run_id), &output)? {
+                observation.overview = CODE_RUN_OUTPUT_PREVIEW_WITHHELD.to_owned();
+            }
             self.output_context
                 .record_referenced(seq, observation.source, observation.overview)?;
             if coverage.iter().any(|row| row.covers(record.run_id, seq)) {
@@ -85,14 +88,20 @@ impl EngineNativeExecutor<'_> {
         Ok(refs)
     }
 
+    /// The step's model request, and where it shows the step before's
+    /// console whole, the slot a callable's counterfactual renders each
+    /// branch's observation into (FIX 3608): only a full view that no fold
+    /// or frame stands in for has one, in a request with no brief of the
+    /// run's results.
     pub(super) fn build_llm_request(
         &mut self,
         config: &EngineExecutorConfig,
         record: &CodeRunReplayRecord,
         wire_prompt: &str,
         continuation: Option<&ContinuationNote>,
-    ) -> EngineExecutorResult<LlmRequest> {
+    ) -> EngineExecutorResult<(LlmRequest, Option<crate::code_run::ConsoleSlot>)> {
         let completed_steps = completed_step_count(record)?;
+        let mut console_slot = None;
         let mut messages = Vec::new();
         messages.push(LlmMessage {
             role: LlmMessageRole::System,
@@ -211,6 +220,7 @@ impl EngineNativeExecutor<'_> {
                 None => {}
             }
             let view = view.clone();
+            let full = view.tier == OutputTier::Full;
             // ONE-1929 framing remains engine-authored. The stored program and
             // observation never change; only this model-facing projection does.
             let folded = epochs
@@ -274,11 +284,14 @@ impl EngineNativeExecutor<'_> {
                     text: turn.assistant_exec(),
                 }],
             });
+            let text = turn.user_console(seq as u64);
+            if full && folded.is_none() && seq as u64 + 1 == completed_steps {
+                console_slot =
+                    crate::code_run::ConsoleSlot::whole(seq as u64, messages.len(), &text);
+            }
             messages.push(LlmMessage {
                 role: LlmMessageRole::User,
-                content: vec![ContentPart::Text {
-                    text: turn.user_console(seq as u64),
-                }],
+                content: vec![ContentPart::Text { text }],
             });
             // The step's type feedback, the host's own words beside its
             // console, as it stands now: never inside the console (FIX 8277).
@@ -293,6 +306,10 @@ impl EngineNativeExecutor<'_> {
         // Past a swap, the run's results are named once more beside the
         // frame that replaced the turns that bound them.
         if swapped && let Some(brief) = self.bindings_brief(record)? {
+            // The brief lists the step before's own results too, which no
+            // branch of a callable's counterfactual rebuilds: the request
+            // keeps no console slot (FIX 3608).
+            console_slot = None;
             messages.push(LlmMessage {
                 role: LlmMessageRole::User,
                 content: vec![ContentPart::Text { text: brief }],
@@ -362,6 +379,7 @@ impl EngineNativeExecutor<'_> {
                 response_format: ResponseFormat::Text,
                 locality: config.model_locality,
                 host_keyless: false,
+                host_paid: false,
             },
             messages,
             tools: Vec::new(),
@@ -375,7 +393,7 @@ impl EngineNativeExecutor<'_> {
         // FIX 4930: the step's own call marks where its prefix ends, so the
         // fork a compaction sends after it names the same block.
         crate::code_run::main_prefix_boundary(&mut request)?;
-        Ok(request)
+        Ok((request, console_slot))
     }
 }
 

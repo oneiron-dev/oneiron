@@ -3,9 +3,15 @@
 
 use super::{EngineLimit, memory_share};
 
+macro_rules! engine_limit_rows {
+    ($($row:expr),+ $(,)?) => {
+        /// Every engine row.
+        pub const ALL: [Self; [$(stringify!($row)),+].len()] = [$($row),+];
+    };
+}
+
 impl EngineLimit {
-    /// Every engine row.
-    pub const ALL: [Self; 162] = [
+    engine_limit_rows![
         Self::KeyedFilterJsonBytes,
         Self::KeyedNamespaceSegments,
         Self::KeyedNamespaceBytes,
@@ -160,11 +166,14 @@ impl EngineLimit {
         Self::CommunityCacheBytes,
         Self::ConnectorManifestEntries,
         Self::SharedMergeEvidenceRows,
+        Self::ContextThirdParties,
+        Self::MemoryPinnedRefs,
         Self::CodebaseManifestFiles,
         Self::RequestedResultRows,
         Self::EmbeddingDimensions,
         Self::MemoryReasonEvidenceRows,
         Self::MemoryReasonTokens,
+        Self::DecisionQuestionsPerCall,
         Self::ContextEdgeHops,
         Self::ContextNeighbors,
         Self::ContextSelectedEdges,
@@ -329,11 +338,14 @@ impl EngineLimit {
             Self::CommunityCacheBytes => "limits.community_cache_bytes",
             Self::ConnectorManifestEntries => "limits.connector_manifest_entries",
             Self::SharedMergeEvidenceRows => "limits.shared_merge_evidence_rows",
+            Self::ContextThirdParties => "limits.context_third_parties",
+            Self::MemoryPinnedRefs => "limits.memory_pinned_refs",
             Self::CodebaseManifestFiles => "limits.codebase_manifest_files",
             Self::RequestedResultRows => "limits.requested_result_rows",
             Self::EmbeddingDimensions => "limits.embedding_dimensions",
             Self::MemoryReasonEvidenceRows => "limits.memory_reason_evidence_rows",
             Self::MemoryReasonTokens => "limits.memory_reason_tokens",
+            Self::DecisionQuestionsPerCall => "limits.decision_questions_per_call",
             Self::ContextEdgeHops => "limits.context_edge_hops",
             Self::ContextNeighbors => "limits.context_neighbors",
             Self::ContextSelectedEdges => "limits.context_selected_edges",
@@ -564,6 +576,8 @@ impl EngineLimit {
             Self::ConnectorManifestEntries => 4_096,
             // The shared-merge reserve's old fixed refusal.
             Self::SharedMergeEvidenceRows => 4_096,
+            // Physical65/68's owner-ruled submitted-count bounds.
+            Self::ContextThirdParties | Self::MemoryPinnedRefs => 65_536,
             // The legacy codebase snapshot manifest's threshold (FIX 74).
             Self::CodebaseManifestFiles => 10_000_000,
             // Two to the twentieth: far above any page a door serves in
@@ -582,6 +596,7 @@ impl EngineLimit {
             // question served in ordinary use. Past it the row asks, and the
             // whole question is served.
             Self::MemoryReasonTokens => 16_777_216,
+            Self::DecisionQuestionsPerCall => super::DEFAULT_DECISION_QUESTIONS_PER_CALL as u64,
             // Owner-ruled ABC row 11 (FIX 62).
             Self::ContextEdgeHops => 1_024,
             // Owner-ruled ABC row 12 (FIX 63).

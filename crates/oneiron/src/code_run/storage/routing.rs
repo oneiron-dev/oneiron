@@ -30,6 +30,7 @@ use crate::secret_rotation::ArtifactTaintState;
 use crate::store::{BODY_KEYS, BodySink, body_key_row_in_txn};
 
 mod bodies;
+mod output_progress;
 mod replay;
 mod type_feedback;
 
