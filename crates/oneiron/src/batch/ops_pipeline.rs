@@ -490,6 +490,15 @@ pub(crate) fn apply_ops_session(
                     entry.occurred,
                     entry.learned_at,
                 )?;
+                // Fix list row 16256: an overlay never births a
+                // source-audience stamp, and keeps a stored one as base does.
+                crate::source_audience::admit_session_obligation_in_txn(
+                    view,
+                    wtxn,
+                    id,
+                    *entity_type,
+                    data,
+                )?;
                 // The ENTRY's stamps, not the op's: they are the witnessing
                 // write's own and are what promote replays into the right
                 // month window (ARCH-0052 D4).
@@ -695,13 +704,13 @@ pub(super) fn contains_text_op(ops: &[BatchOp]) -> bool {
             *entity_type == crate::registry::ENTITY_TYPE_CLAIM
                 && *allow_maintenance
                 && *allow_reserved_predicate
-                && id
-                    .as_bytes()
-                    .starts_with(&crate::write_envelope::claim_body::lexical_query_hint::LEXICAL_QUERY_HINT_ID_PREFIX)
                 && crate::write_envelope::claim_body::decode_claim_body(data, true)
                     .ok()
                     .is_some_and(|body| {
-                        body.predicate == crate::write_envelope::claim_body::lexical_query_hint::PREDICATE_LEXICAL_QUERY_HINT
+                        matches!(
+                            crate::claim::canonical_lexical_query_hint(id, &body),
+                            Ok(Some(_))
+                        )
                     })
         }
         _ => false,
