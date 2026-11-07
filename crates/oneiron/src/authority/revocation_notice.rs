@@ -1,6 +1,6 @@
 //! The credential revocation notice (FIX 10381): content-free, per open
-//! vault, bumped after each commit that revoked a capability slip. A stream
-//! that judges its credential before each emission awaits it beside its own
+//! vault, bumped after a capability-slip revoke or shared-roster change. A
+//! stream that judges its credential before each emission awaits it beside its own
 //! changes, so an idle stream judges again at the revoke rather than at its
 //! next change. Never persisted, and no deadline: a notice only says
 //! "judge again".
@@ -8,8 +8,8 @@
 use crate::Vault;
 
 impl Vault {
-    /// Changes after each commit that revoked a capability slip on this open
-    /// vault. Subscribe before the first judgement; every change means "judge
+    /// Changes after a capability-slip revoke or shared-roster change on this
+    /// open vault. Subscribe before the first judgement; every change means "judge
     /// the credential again", never "this credential was revoked".
     #[must_use]
     pub fn subscribe_credential_revocations(&self) -> tokio::sync::watch::Receiver<u64> {
