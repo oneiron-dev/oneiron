@@ -281,13 +281,16 @@ pub struct WorkerStatus {
 /// it, or in the provider usage a ladder's served receipt holds under
 /// `usage`. A record that does not read as an [`InferenceCallReceipt`] is no
 /// evidence and is left out. No other nesting is read.
-fn receipts_in(raw: &JsonValue) -> Vec<InferenceCallReceipt> {
+fn receipt_values_in(raw: &JsonValue) -> Option<&JsonValue> {
     let served = || match raw.get("rung") {
         Some(rung) if rung.is_u64() => raw.get("usage")?.get(INFERENCE_CALLS_KEY),
         _ => None,
     };
-    raw.get(INFERENCE_CALLS_KEY)
-        .or_else(served)
+    raw.get(INFERENCE_CALLS_KEY).or_else(served)
+}
+
+fn receipts_in(raw: &JsonValue) -> Vec<InferenceCallReceipt> {
+    receipt_values_in(raw)
         .and_then(JsonValue::as_array)
         .map(|records| {
             records
@@ -299,6 +302,31 @@ fn receipts_in(raw: &JsonValue) -> Vec<InferenceCallReceipt> {
 }
 
 impl LlmUsage {
+    /// Replaces provider metadata with the latest call's while carrying both
+    /// calls' inference receipts in order. Other provider fields stay latest;
+    /// a non-object provider or an unreadable latest receipt list stays as-is.
+    pub fn merge_provider_metadata(&mut self, latest: &Self) {
+        let mut earlier = receipt_values_in(&self.raw_provider)
+            .and_then(JsonValue::as_array)
+            .cloned()
+            .unwrap_or_default();
+        self.raw_provider = latest.raw_provider.clone();
+        if earlier.is_empty() {
+            return;
+        }
+        match receipt_values_in(&self.raw_provider) {
+            Some(JsonValue::Array(records)) => earlier.extend(records.iter().cloned()),
+            Some(_) => return,
+            None => {}
+        }
+        if self.raw_provider.is_null() {
+            self.raw_provider = JsonValue::Object(JsonMap::new());
+        }
+        if let Some(provider) = self.raw_provider.as_object_mut() {
+            provider.insert(INFERENCE_CALLS_KEY.to_owned(), JsonValue::Array(earlier));
+        }
+    }
+
     /// The receipts the backend reported for this call, one per physical
     /// request, in order: from its usage, or from the provider usage a
     /// ladder's served receipt holds. Empty when it reported none.

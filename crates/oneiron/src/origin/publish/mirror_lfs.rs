@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use super::types::OriginPublishDestination;
 use crate::Vault;
 use crate::error::{Error, Result};
-use crate::origin::lfs::{LfsBatchRemote, LfsOid};
+use crate::origin::lfs::{DirectLfsRemote, LfsOid, upload_lfs_objects};
 use crate::origin::mirror::OriginMirrorTarget;
 
 impl Vault {
@@ -22,7 +22,7 @@ impl Vault {
         target: &OriginMirrorTarget,
         objects: &[(LfsOid, u64)],
     ) -> Result<BTreeSet<LfsOid>> {
-        let remote = LfsBatchRemote::of(&target.url)?;
+        let remote = DirectLfsRemote::of(&target.url)?;
         let destination = OriginPublishDestination {
             url: target.url.clone(),
             user: target.user.clone(),
@@ -32,7 +32,7 @@ impl Vault {
         };
         let mut answer = Err(Error::InvariantViolation("mirror LFS push never ran"));
         self.with_publish_credential(&destination, &mut |header| {
-            answer = remote.upload(self, header, objects);
+            answer = upload_lfs_objects(self, &remote.transport(Some(header)), objects);
         })?;
         answer
     }
