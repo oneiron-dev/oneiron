@@ -20,6 +20,7 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
 - [Run the server, with or without models](run-with-models.md) — `[models]` config keys
   (HIGH, MID, DETAILED), provider kinds and env vars, what the Dreamer needs to start, chat
   streaming, the saved-workflow pump, and swapping a model in one edit.
+- [Read a delivered proactivity digest](proactivity-digest-read.md) — the owner-grade SDK, facade and MCP door for an inbox `source.result` locator.
 - [Coach jobs in an embedded wake executor](dreamer-coach-embedded-executor.md) — explicit
   executor support for Coach host jobs and heals, with normal wake admission and settlement.
 - [Shared proactivity-policy proposals](proactivity-policy.md) — nightly cadence

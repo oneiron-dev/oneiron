@@ -1130,6 +1130,8 @@ class Oneiron:
         @property
         def companions(self) -> "Oneiron._VaultCompanionsVerbs": ...
         @property
+        def proactivity(self) -> "Oneiron._VaultProactivityVerbs": ...
+        @property
         def personas(self) -> "Oneiron._VaultPersonasVerbs": ...
         @property
         def fanout(self) -> "Oneiron._VaultFanoutVerbs": ...
@@ -1193,8 +1195,6 @@ class Oneiron:
         def step_up(self) -> "Oneiron._VaultStepUpVerbs": ...
         @property
         def inbox(self) -> "Oneiron._VaultInboxVerbs": ...
-        @property
-        def proactivity(self) -> "Oneiron._VaultProactivityVerbs": ...
         @property
         def skills(self) -> "Oneiron._VaultSkillsVerbs": ...
         @property
@@ -1544,6 +1544,14 @@ class Oneiron:
             """One contact's clearance in a companion's source vault, for the principal who controls that vault."""
         def set(self, spec: Facade.CompanionSharingSetRequest) -> Facade.CompanionSharingView:
             """The owner's standing yes to one frozen clearance offer for a companion's contact."""
+    class _VaultProactivityVerbs:
+        @property
+        def digest(self) -> "Oneiron._VaultProactivityDigestVerbs": ...
+    class _VaultProactivityDigestVerbs:
+        def __call__(self, spec: Facade.ProactivityDigestRequest) -> Facade.ProactivityDigestView | None:
+            """Reads a saved proactivity digest by its inbox source.result locator, or the latest, under the live owner's proof and native viewer screening. Any live owner may name any saved locator."""
+        def get(self, spec: Facade.DigestReadRequest) -> Facade.ProactivityDigestView | None:
+            """Reads a delivered Dreamer proactivity digest by its inbox source.result locator, using the caller's live vault-owner proof and the existing owner-specific view. This is owner-grade access, not a non-owner agent grant."""
     class _VaultPersonasVerbs:
         def preview(self, spec: Facade.PersonaSnapshotPreviewRequest) -> Facade.PersonaSnapshotPreview:
             """Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp."""
@@ -1990,9 +1998,6 @@ class Oneiron:
             """Reads one page of the owner's inbox groups under his proof, newest first: Dreamer consent groups by run-tree root and shape applies waiting for his word, each tagged with its kind; a page's next resumes after it."""
         def resolve(self, spec: Facade.InboxGroupResolveRequest) -> Facade.InboxGroupResolution:
             """The owner's answer to one inbox group by its kind, under his proof: accept-all, reject-all or review-each over a Dreamer group's bundle, optionally one verb class, or over a shape apply's waiting items."""
-    class _VaultProactivityVerbs:
-        def digest(self, spec: Facade.ProactivityDigestRequest) -> Facade.ProactivityDigestView | None:
-            """Reads a saved proactivity digest by its inbox source.result locator, or the latest, under the live owner's proof and native viewer screening. Any live owner may name any saved locator."""
     class _VaultSkillsVerbs:
         def bootstrap(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.BootstrapSkillView]:
             """Reads the bootstrap four and their actual resident source, lifecycle and receipts without seeding or restoring missing skills."""

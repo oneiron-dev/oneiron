@@ -67,6 +67,7 @@ both bindings and their export-census tests in one change.
 - `self.grants.asked`
 - `vault.companions.access_requests.answer`
 - `self.grants.answer`
+- `vault.proactivity.digest.get`
 - `vault.personas.preview`
 - `vault.personas.export`
 - `vault.personas.edit`

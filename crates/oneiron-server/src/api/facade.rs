@@ -151,6 +151,7 @@ mod pack_preview_doors;
 mod persona_doors;
 mod plugin_section_doors;
 mod policy_doors;
+mod proactivity_digest_doors;
 mod program_read_doors;
 mod project_card_doors;
 mod proxy_doors;
