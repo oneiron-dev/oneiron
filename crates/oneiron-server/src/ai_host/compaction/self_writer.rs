@@ -20,6 +20,7 @@
 //! flight, its retries and folds, keeps the source its first call ran on,
 //! and each receipt names it.
 
+use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use oneiron::agent_def::AgentDefinition;
@@ -42,13 +43,49 @@ use super::live_fork::{LiveBind, bind_live_compaction_fork};
 use super::serve::{Admit, Served, product_of};
 use super::{AnsweringRungSlot, LiveAdmission, ServedCompactionBackend};
 
-/// The words that turn the house compaction call into the agent's own: the
-/// home the call wears follows them. The one hook a ruling on this text
-/// changes; the persona itself comes only from the agent's home.
-pub(super) const SELF_WRITER_FRAME: &str = "You are writing this summary as yourself, in your own voice: it \
-    is your own memory of your own work. What follows is your home, read under your own Grant \
-    (your voice, your lessons and your diary). Keep the reply's JSON shape and the span's facts \
-    exactly as the window gives them.";
+/// The words that turn the house compaction call into the agent's own (FIX
+/// 4575): the prompt package's `blocks/compaction-self-writer.md`, resolved
+/// once beside the compaction prompt. Every call, retained or live, renders
+/// and counts this same text. The home the call wears follows it. It is
+/// instruction, never evidence; the persona comes only from the agent's home.
+#[derive(Clone)]
+pub(super) struct SelfWriterFrame {
+    text: Arc<str>,
+    tokens: u64,
+}
+
+impl SelfWriterFrame {
+    /// The frame `prompt_package` holds, its ends trimmed. `None` when it
+    /// holds none: self-written summaries are then off (FIX 4575), and the
+    /// house's own compaction is not.
+    pub(super) fn resolve(prompt_package: &Path) -> Option<Self> {
+        match oneiron::prompt::resolve_compaction_self_writer_prompt(prompt_package) {
+            Ok(prompt) => {
+                let text: Arc<str> = Arc::from(prompt.text.trim());
+                Some(Self {
+                    tokens: oneiron::count_context_pack_tokens(&text) as u64,
+                    text,
+                })
+            }
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    prompt_package = %prompt_package.display(),
+                    "code mode's prompt package holds no self-writer frame; agents that write their own summaries keep their raw window"
+                );
+                None
+            }
+        }
+    }
+
+    pub(super) fn text(&self) -> &str {
+        &self.text
+    }
+
+    pub(super) const fn tokens(&self) -> u64 {
+        self.tokens
+    }
+}
 
 /// The cheap writer a flight runs on: its model and where it is served, or
 /// why there is none.
@@ -115,6 +152,9 @@ pub(super) struct SelfCompactionBackend {
     key: String,
     /// The house compaction route the writer's calls take.
     route: ServedCompactionBackend,
+    /// The frame `route` resolved (FIX 4575), for every call of every
+    /// flight.
+    frame: SelfWriterFrame,
     /// The agent's definition, read when its seat was made.
     definition: AgentDefinition,
     /// The run's authenticated actor, its caller's place and its proof.
@@ -134,6 +174,7 @@ impl SelfCompactionBackend {
     pub(super) fn new(
         key: String,
         route: ServedCompactionBackend,
+        frame: SelfWriterFrame,
         definition: AgentDefinition,
         host: CompactionHostBinding,
         admission: Arc<dyn LiveAdmission>,
@@ -141,6 +182,7 @@ impl SelfCompactionBackend {
         Self {
             key,
             route,
+            frame,
             definition,
             host,
             admission,
@@ -270,7 +312,7 @@ impl SelfCompactionBackend {
     }
 
     /// A retained-turn call: the house compaction call on the cheap writer's
-    /// own model, wearing the home in its system message.
+    /// own model, wearing the frame and the home in its system message.
     fn serve_retained(
         &self,
         frozen: &Frozen,
@@ -286,16 +328,15 @@ impl SelfCompactionBackend {
             .then_some(request.sources.clone());
         self.route
             .serve(request, retry, sources, &admit, |call, room| {
-                let frame = oneiron::count_context_pack_tokens(SELF_WRITER_FRAME) as u64;
                 let home = frozen.home.render(compaction_home_budget(
                     room.context,
                     room.input,
                     room.output,
-                    frame,
+                    self.frame.tokens(),
                 ));
                 if let Some(system) = call.messages.first_mut() {
                     system.content.push(ContentPart::Text {
-                        text: format!("\n\n{SELF_WRITER_FRAME}\n\n{}", home.text),
+                        text: format!("\n\n{}\n\n{}", self.frame.text(), home.text),
                     });
                 }
                 let home_rows = compaction_home_worn_rows(&home.refs).collect();
@@ -325,10 +366,14 @@ impl SelfCompactionBackend {
             }
         };
         let while_warm = frozen.cold.is_some() && executed.is_none();
-        match self
-            .route
-            .serve_live_fork(fork, &frozen.home, request, retry, while_warm)
-        {
+        match self.route.serve_live_fork(
+            fork,
+            &self.frame,
+            &frozen.home,
+            request,
+            retry,
+            while_warm,
+        ) {
             Ok(None) => {
                 let _ = frozen.executed.set(SelfCompactionSource::RetainedTurns);
                 self.serve_retained(frozen, request, retry)
@@ -425,6 +470,7 @@ impl CompactionBackend for SelfCompactionBackend {
         };
         bind_live_compaction_fork(
             &self.route,
+            &self.frame,
             self.admission.as_ref(),
             self.host.actor().entity_ref(),
             &row,
