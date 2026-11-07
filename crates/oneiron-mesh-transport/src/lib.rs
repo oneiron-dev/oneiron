@@ -5,6 +5,9 @@ use std::{future::Future, pin::Pin, sync::Arc};
 
 use oneiron::authority::PeerMachine;
 pub use oneiron::authority::{MeshMachineAddress, MeshMachineAddressEnvelope};
+/// The ALPN sync rides (OF-535), kept beside the path receipts so a peer
+/// sync session's receipt names it too (FIX 4748).
+pub use oneiron::sync::mesh_path::SYNC_ALPN;
 pub use oneiron::sync::mesh_path::{
     MeshPathDirection, MeshPathKind, MeshPathOutcome, MeshPathReceipt,
 };
@@ -16,10 +19,6 @@ pub mod iroh_transport;
 #[cfg(feature = "sync")]
 pub mod sync_dialer;
 pub mod transport_key;
-
-/// The ALPN sync rides (OF-535): the sync server's HTTP/1.1 routes and their
-/// WebSocket upgrades, on one long-lived stream per connection.
-pub const SYNC_ALPN: &[u8] = b"oneiron/sync/1";
 
 /// Protocol-neutral identifier of a MACHINE entity in this vault.
 pub type MachineId = EntityId;

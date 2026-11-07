@@ -9,6 +9,7 @@ use super::tasks_budget::TasksRowBudget;
 use crate::auth::CoreAuth;
 use crate::error::ApiError;
 use crate::server::SyncServer;
+use crate::server::self_brief_custody::BriefResidence;
 use oneiron::EntityId;
 use oneiron::context_board::BoardFrameError;
 use oneiron::context_board::BoardSection;
@@ -40,7 +41,8 @@ pub(crate) struct ContextBoardRoomControls {
 }
 
 /// Where the ROOM rows this board rendered sit in the room's whole stream
-/// (FIX 9746, 9747): its members by actor id, then its rules by claim id.
+/// (FIX 9746, 9747): its members in the room record's order (FIX 10567),
+/// then its rules by claim id.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct ContextBoardRoomPage {
     /// Members on the room's whole roster.
@@ -750,20 +752,18 @@ pub(super) async fn board_people(
         .and_then(|actor| EntityId::from_hex(actor).ok())
         .zip(session_id.map(str::to_owned));
     let resident = match run_key {
-        Some(key) => match server.self_brief_sessions.lock().await.get(&key) {
-            Some(run) if run.emitted_epoch == Some(run.epoch) => {
-                run.render.resident_people().clone()
-            }
-            Some(run) => {
+        Some(key) => match server.self_brief_sessions.lock().await.residence(&key) {
+            BriefResidence::Acknowledged(resident) => resident,
+            BriefResidence::Pending { pinned } => {
                 people
                     .residence_within(
-                        &run.state.pinned_people(),
+                        &pinned,
                         people_budget_tok
                             .unwrap_or(oneiron::context_board::PEOPLE_PREFIX_BUDGET_TOK),
                     )
                     .resident
             }
-            None => BTreeSet::new(),
+            BriefResidence::Absent => BTreeSet::new(),
         },
         None => BTreeSet::new(),
     };
