@@ -483,7 +483,7 @@ export type ShapeApplyRequest = { plan: ShapePlan; approve?: number[]; conversat
 /** `oneiron::genui::shape_plan::ShapePlanCardItem` */
 export type ShapePlanCardItem = { seq: number; line: string; change: ShapeChange; class: ShapeItemClass; door?: string | null; state?: ShapeItemState | null }
 /** `oneiron::genui::shape_plan::ShapePlanCard` */
-export type ShapePlanCard = { frontier: string; seed_id?: string | null; resting: string; summary: ShapePlanSummary; reach_line: string; items: ShapePlanCardItem[]; undeclared: number; run?: ShapeApplyRun | null }
+export type ShapePlanCard = { frontier: string; seed_id?: string | null; resting: string; summary: ShapePlanSummary; reach_line: string; items: ShapePlanCardItem[]; undeclared: number; run?: ShapeApplyRun | null; conversation_learning?: ShapeLearningOutcome | null }
 /** `oneiron::memory::shape_card_doors::ShapePlanCardView` */
 export type ShapePlanCardView = { plan: ShapePlan; card: ShapePlanCard; generated_ui: unknown }
 /** `oneiron::memory::shape_card_doors::ShapeItemReceiptRequest` */

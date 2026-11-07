@@ -256,7 +256,7 @@ declare namespace Sdk {
   type ShapePlan = { seed_id?: string | null; seed: ShapeSeed; frontier: string; items: ShapePlanItem[]; undeclared: ShapeRow[]; summary: ShapePlanSummary; reach?: ShapePlanReach };
   type ShapeApplyRequest = { plan: ShapePlan; approve?: number[]; conversation_learning?: boolean | null };
   type ShapePlanCardItem = { seq: number; line: string; change: ShapeChange; class: ShapeItemClass; door?: string | null; state?: ShapeItemState | null };
-  type ShapePlanCard = { frontier: string; seed_id?: string | null; resting: string; summary: ShapePlanSummary; reach_line: string; items: ShapePlanCardItem[]; undeclared: number; run?: ShapeApplyRun | null };
+  type ShapePlanCard = { frontier: string; seed_id?: string | null; resting: string; summary: ShapePlanSummary; reach_line: string; items: ShapePlanCardItem[]; undeclared: number; run?: ShapeApplyRun | null; conversation_learning?: ShapeLearningOutcome | null };
   type ShapePlanCardView = { plan: ShapePlan; card: ShapePlanCard; generated_ui: unknown };
   type ShapeItemReceiptRequest = { reference: string };
   type ShapeItemReceipt = { reference: string; frontier: string; seq: number; run_id: string; attempt_id?: string | null; item: ShapeApplyItem };
