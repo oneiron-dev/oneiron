@@ -151,6 +151,7 @@ mod shape_doors;
 pub(crate) use shape_doors::AFTER_NEEDS_HANDLE;
 pub use shape_doors::DescribeRequest;
 mod signal_extraction;
+mod skill_bodies;
 mod structural;
 mod subscriptions;
 mod support;
