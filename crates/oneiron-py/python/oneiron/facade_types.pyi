@@ -9218,6 +9218,7 @@ class OfferEvidence(TypedDict):
     exposures: list[EntityId]
     rubric_revision: NotRequired[str | None]
     card: NotRequired[SufficiencyCard | None]
+    paired_measurement: NotRequired[list[int] | None]
     losses: list[str]
     risk: NotRequired[str | None]
 class ComputeDestinationSelfHostedBody(TypedDict):
