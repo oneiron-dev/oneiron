@@ -795,9 +795,9 @@ fn put_run_results_in_txn<R: Read + Seek>(
     // occurrences. These outputs rebuild each run's replay record below.
     let mut restored_outputs = BTreeMap::new();
     // The values custody knows, read in this writer and kept no longer
-    // (KS-3): each body's sweep replaces them with their handles.
-    let swept = crate::store::known_value_index::KnownValues::load_in_writer(&vault.store, wtxn)?
-        .map(std::sync::Arc::new);
+    // (KS-3), shared with the write's other passes (FIX 12210, 12229): each
+    // body's sweep replaces them with their handles.
+    let swept = crate::store::known_value_index::KnownValues::shared_in_writer(&vault.store, wtxn)?;
     let mut runs = archive.spool.rows(ArchiveRecordKind::Run);
     while let Some((_, run)) = runs.next_parsed::<ExportRun>(&archive.spool)? {
         let run_id = parse_id(&run.run_id)?;
