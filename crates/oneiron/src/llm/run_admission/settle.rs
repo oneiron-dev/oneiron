@@ -30,6 +30,80 @@ pub enum CallOutcome<'a> {
     Kept,
 }
 
+/// Pure conversion of one call's original quantity. This carries no permit,
+/// reservation or authority, and does not settle or book either meter.
+pub struct CallCharge<'a> {
+    native: &'a LeaseUnit,
+    quantity: Option<u128>,
+    reserve_native: u128,
+    kept: bool,
+}
+
+impl CallOutcome<'_> {
+    /// Uses the original admission's native unit, cost and reservation, not
+    /// the currently selected offer's terms.
+    #[must_use]
+    pub fn charge<'unit>(
+        self,
+        native: &'unit LeaseUnit,
+        unit_cost: u64,
+        reserve_native: u128,
+    ) -> CallCharge<'unit> {
+        let quantity = match self {
+            Self::Answered(usage) => {
+                let floor = u64::try_from(reserve_native).unwrap_or(u64::MAX);
+                Some(answered_units_wide(usage, floor))
+            }
+            Self::Used(quantity) | Self::UsedCounted(quantity) => {
+                Some(u128::from(quantity) * u128::from(unit_cost))
+            }
+            Self::Failed => None,
+            Self::Kept => Some(0),
+        };
+        CallCharge {
+            native,
+            quantity,
+            reserve_native,
+            kept: matches!(self, Self::Kept),
+        }
+    }
+}
+
+impl CallCharge<'_> {
+    /// `None` retains the failed-call abort path. Run-line and allocation
+    /// units each use their own original rates and reservation.
+    #[must_use]
+    pub fn usage_in(&self, unit: &LeaseUnit, rates: &[UnitRate], reserved: u64) -> Option<u64> {
+        self.quantity.map(|quantity| {
+            if self.kept {
+                0
+            } else {
+                charge(quantity, self.native, unit, rates, reserved)
+            }
+        })
+    }
+
+    /// A failed dispatched call pays this meter's original reservation;
+    /// an undispatched one pays nothing.
+    #[must_use]
+    pub fn settled_in(
+        &self,
+        unit: &LeaseUnit,
+        rates: &[UnitRate],
+        reserved: u64,
+        dispatched: bool,
+    ) -> u64 {
+        self.usage_in(unit, rates, reserved)
+            .unwrap_or(if dispatched { reserved } else { 0 })
+    }
+
+    #[must_use]
+    pub fn native_units(&self, dispatched: bool) -> u128 {
+        self.quantity
+            .unwrap_or(if dispatched { self.reserve_native } else { 0 })
+    }
+}
+
 impl RunInner {
     /// Settles `permit` on this run, its issuer. Only
     /// [`RunPermit::settle_with`], [`RunPermit::settle_stream`] and the
@@ -48,31 +122,9 @@ impl RunInner {
     ) -> Result<BudgetSettlement, RunDenied> {
         // A settled permit never starts, so its run stops holding it.
         self.lock_paid().remove(permit.lease.id());
-        let native = match outcome {
-            CallOutcome::Answered(usage) => {
-                let floor = u64::try_from(permit.reserve_native).unwrap_or(u64::MAX);
-                Some(answered_units_wide(usage, floor))
-            }
-            CallOutcome::Used(quantity) | CallOutcome::UsedCounted(quantity) => {
-                Some(u128::from(quantity) * u128::from(permit.unit_cost))
-            }
-            CallOutcome::Failed => None,
-            CallOutcome::Kept => Some(0),
-        };
-        let kept = matches!(outcome, CallOutcome::Kept);
+        let charge = outcome.charge(&permit.native, permit.unit_cost, permit.reserve_native);
         let line_unit = &permit.facts.unit;
-        let line_units = native.map(|native| {
-            if kept {
-                return 0;
-            }
-            charge(
-                native,
-                &permit.native,
-                line_unit,
-                &permit.rates,
-                permit.facts.reserved_units,
-            )
-        });
+        let line_units = charge.usage_in(line_unit, &permit.rates, permit.facts.reserved_units);
         let settled = match line_units {
             Some(units) => self.guard.settle_usage(&permit.lease, units),
             // A started call's abort charges its reservation; an unstarted
@@ -88,12 +140,8 @@ impl RunInner {
         };
         let allocation = permit.allocation.as_ref().map(|hold| {
             let reserved = hold.meter.reserved_for(&hold.lease).unwrap_or(0);
-            match native {
-                Some(_) if kept => (0, hold.meter.settle_usage(&hold.lease, 0)),
-                Some(native) => {
-                    let units = charge(native, &permit.native, &hold.unit, &permit.rates, reserved);
-                    (units, hold.meter.settle_usage(&hold.lease, units))
-                }
+            match charge.usage_in(&hold.unit, &permit.rates, reserved) {
+                Some(units) => (units, hold.meter.settle_usage(&hold.lease, units)),
                 None if started => (reserved, hold.meter.settle_reserved(&hold.lease)),
                 None => (0, hold.meter.abort(&hold.lease)),
             }

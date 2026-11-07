@@ -5,6 +5,7 @@ use crate::disclosure::{DisclosureScope, DisclosureScopeStatus};
 use crate::error::Result;
 use crate::gate::PolicyScopedGrant;
 use crate::outbound_grant::{StandingOutboundGrant, StandingOutboundGrantScope};
+use crate::store::consent_bound::SEND_VERB_CLASS;
 
 use super::bound::{
     ActionClass, ActionEnvelope, ActorBound, AudienceBound, DisclosureClass, DisclosureEnvelope,
@@ -132,10 +133,11 @@ pub fn action_grant_from_standing_outbound_grant(
     )?)
 }
 
-/// The outbound verb class used when a scope dial names a channel or contact
-/// rather than a verb: those dials are send-class by construction.
-const OUTBOUND_SEND_VERB_CLASS: &str = "send";
-
+/// The class, selectors and target a standing outbound grant's scope dial
+/// projects. A dial that names a channel or contact rather than a verb
+/// projects the registry's send class ([`SEND_VERB_CLASS`]): those dials are
+/// send-class by construction, and the bound's class axis resolves the send
+/// class's members from the same registry.
 pub(super) fn outbound_scope_axes(
     scope: &StandingOutboundGrantScope,
 ) -> (String, Vec<String>, Option<String>) {
@@ -158,7 +160,7 @@ pub(super) fn outbound_scope_axes(
             Some(artifact.clone()),
         ),
         StandingOutboundGrantScope::Contact { contact_ref } => (
-            OUTBOUND_SEND_VERB_CLASS.to_owned(),
+            SEND_VERB_CLASS.to_owned(),
             vec![format!("contact:{contact_ref}")],
             Some(contact_ref.clone()),
         ),
@@ -166,7 +168,7 @@ pub(super) fn outbound_scope_axes(
             (verb_class.clone(), vec![format!("verb:{verb_class}")], None)
         }
         StandingOutboundGrantScope::Channel { channel } => (
-            OUTBOUND_SEND_VERB_CLASS.to_owned(),
+            SEND_VERB_CLASS.to_owned(),
             vec![format!("channel:{channel}")],
             Some(channel.clone()),
         ),
