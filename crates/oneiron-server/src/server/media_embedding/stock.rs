@@ -32,6 +32,7 @@ fn request(model: &ModelId, locality: ModelLocality, parts: Vec<MediaPart>) -> M
         operation: AiOperation::Embed,
         parts,
         references: Vec::new(),
+        mask: None,
         // The first real answer supplies the native width; none is guessed or requested.
         params: BTreeMap::new(),
         voice: None,

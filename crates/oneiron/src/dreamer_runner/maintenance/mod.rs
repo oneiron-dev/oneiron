@@ -152,6 +152,29 @@ impl DreamerRunnerStore<'_> {
             now,
         )
     }
+    /// The Coach's drain of pending topology-audit candidates (FIX 7817),
+    /// queued in the writer that kept a candidate under the facet's one
+    /// fixed key: a queued or running drain absorbs it, and the drain reads
+    /// every pending candidate, so no candidate is ever without a way to its
+    /// review. The host's Coach runs it on its own line and clock.
+    pub(crate) fn enqueue_coach_topology_audit_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        now: u64,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
+        self.enqueue_kind_in_txn(
+            txn,
+            coach::COACH_HOST_QUEUE_KIND,
+            DreamerAttemptPayload {
+                attempt_type: coach::COACH_TOPOLOGY_AUDIT_FACET.into(),
+                input: Value::Nil,
+                parent_attempt: None,
+            },
+            Some(coach::COACH_TOPOLOGY_AUDIT_FACET.into()),
+            None,
+            now,
+        )
+    }
     /// The Dreamer's nightly maintenance, co-committed with a Timer wake or
     /// a Nightly recipe: the curator pass (one per rubric cadence, however
     /// many wakes ask), a proposed digest-rhythm pass, the relationship-
