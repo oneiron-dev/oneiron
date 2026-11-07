@@ -265,8 +265,10 @@ pub struct StoreReceiptTree {
     pub inputs: Vec<String>,
 }
 
-/// How a program names one of its run's results.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// How a program names one of its run's results. A step's read context
+/// keeps the reference each read of another run's result was made by (FIX
+/// 6352).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum JsResultRef {
     /// A name the run bound (`r7`).
     Name(String),
@@ -345,6 +347,15 @@ pub trait JsCodeModeHost {
     fn store_reply(&mut self, _reply: &serde_json::Value) -> Result<Option<serde_json::Value>> {
         Ok(None)
     }
+
+    /// The runtime made the guest's reply to the call this host answered
+    /// last and hands it over now (FIX 3608): the reply its guest reads, the
+    /// verb hook's view in the outcome's place and the stored card in a too
+    /// large body's, as [`Self::store_reply`] answered. A host keeps the
+    /// skill bodies that call's producer witnessed as delivered only then,
+    /// and only for a reply no view or card replaced. A host that keeps no
+    /// delivery ignores it.
+    fn guest_reply_delivered(&mut self) {}
 
     /// Answers one call a program makes of its run's own results with the
     /// reply the guest gets: `{"output": card}` (or a facet's reply), or a
