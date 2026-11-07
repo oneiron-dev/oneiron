@@ -177,6 +177,52 @@ impl FirecrackerBackend {
                 release::LaunchBackend::MicroVm,
             )
         };
+        // Record the launch evidence even when the run fails or is cancelled.
+        #[cfg(target_os = "linux")]
+        let manifest = {
+            let bytes = serde_json::to_vec(&launch::machine_config(config, budget))
+                .map_err(|_| refused("VM evidence encoding"))?;
+            let hash = blake3::hash(&bytes).to_hex().to_string();
+            oneiron_container::SessionManifest {
+                backend: "firecracker".into(),
+                runtime: config.firecracker.display().to_string(),
+                image: selected_oci.as_ref().map_or_else(
+                    || {
+                        config
+                            .pins
+                            .rootfs
+                            .iter()
+                            .map(|b| format!("{b:02x}"))
+                            .collect()
+                    },
+                    |oci| oci.as_str().to_owned(),
+                ),
+                argv_digest: hash.clone(),
+                network: "no-nic; host-vsock".into(),
+                seccomp: oneiron_container::GuestSeccomp::RuntimeDefault,
+                generation: vm.id().to_owned(),
+                fence_unproven: false,
+                fence_proof: Some(oneiron_container::FenceProof {
+                    ruleset_hash: hash.clone(),
+                    seccomp_hash: blake3::hash(&config::read_regular_bounded(
+                        &config.firecracker,
+                        256 * 1024 * 1024,
+                    )?)
+                    .to_hex()
+                    .to_string(),
+                    network_routes: vec!["no NIC; host-owned vsock only".into()],
+                    network_evidence_digest: hash,
+                    sandbox_generation: vm.id().to_owned(),
+                    launcher_digest: config
+                        .pins
+                        .rootfs
+                        .iter()
+                        .map(|b| format!("{b:02x}"))
+                        .collect(),
+                }),
+                image_release,
+            }
+        };
         {
             let mut states = self
                 .state
@@ -189,6 +235,10 @@ impl FirecrackerBackend {
                 return Err(refused("VM not armed or already consumed"));
             }
             state.phase = Phase::Running;
+            #[cfg(target_os = "linux")]
+            {
+                state.manifest = Some(manifest);
+            }
         }
         #[cfg(target_os = "linux")]
         let result = launch::run(
@@ -214,51 +264,6 @@ impl FirecrackerBackend {
             .ok_or_else(|| refused("VM state disappeared"))?;
         match result {
             Ok((exit, proposals)) => {
-                #[cfg(target_os = "linux")]
-                {
-                    let bytes = serde_json::to_vec(&launch::machine_config(config, budget))
-                        .map_err(|_| refused("VM evidence encoding"))?;
-                    let hash = blake3::hash(&bytes).to_hex().to_string();
-                    state.manifest = Some(oneiron_container::SessionManifest {
-                        backend: "firecracker".into(),
-                        runtime: config.firecracker.display().to_string(),
-                        image: selected_oci.as_ref().map_or_else(
-                            || {
-                                config
-                                    .pins
-                                    .rootfs
-                                    .iter()
-                                    .map(|b| format!("{b:02x}"))
-                                    .collect()
-                            },
-                            |oci| oci.as_str().to_owned(),
-                        ),
-                        argv_digest: hash.clone(),
-                        network: "no-nic; host-vsock".into(),
-                        seccomp: oneiron_container::GuestSeccomp::RuntimeDefault,
-                        generation: vm.id().to_owned(),
-                        fence_unproven: false,
-                        fence_proof: Some(oneiron_container::FenceProof {
-                            ruleset_hash: hash.clone(),
-                            seccomp_hash: blake3::hash(&config::read_regular_bounded(
-                                &config.firecracker,
-                                256 * 1024 * 1024,
-                            )?)
-                            .to_hex()
-                            .to_string(),
-                            network_routes: vec!["no NIC; host-owned vsock only".into()],
-                            network_evidence_digest: hash,
-                            sandbox_generation: vm.id().to_owned(),
-                            launcher_digest: config
-                                .pins
-                                .rootfs
-                                .iter()
-                                .map(|b| format!("{b:02x}"))
-                                .collect(),
-                        }),
-                        image_release,
-                    });
-                }
                 state.phase = Phase::Complete(proposals);
                 Ok(exit)
             }
