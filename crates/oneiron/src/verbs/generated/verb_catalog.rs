@@ -741,6 +741,9 @@ pub enum AgentVerb {
     VaultCodeOriginAuthorityGet,
     VaultCodeOriginAuthoritySet,
     VaultCodeOriginPublications,
+    VaultCodeSecretsPurgeRequest,
+    VaultCodeSecretsPurgeGet,
+    VaultCodeSecretsPurgeExecute,
     VaultCodeCheckoutHolderBind,
     VaultCodeCheckoutBind,
     VaultCodeCheckoutClaim,
@@ -2062,6 +2065,9 @@ impl AgentVerb {
         Self::VaultCodeOriginAuthorityGet,
         Self::VaultCodeOriginAuthoritySet,
         Self::VaultCodeOriginPublications,
+        Self::VaultCodeSecretsPurgeRequest,
+        Self::VaultCodeSecretsPurgeGet,
+        Self::VaultCodeSecretsPurgeExecute,
         Self::VaultCodeCheckoutHolderBind,
         Self::VaultCodeCheckoutBind,
         Self::VaultCodeCheckoutClaim,
@@ -3410,6 +3416,9 @@ impl AgentVerb {
             Self::VaultCodeOriginAuthorityGet => "vault.code.origin.authority.get",
             Self::VaultCodeOriginAuthoritySet => "vault.code.origin.authority.set",
             Self::VaultCodeOriginPublications => "vault.code.origin.publications",
+            Self::VaultCodeSecretsPurgeRequest => "vault.code.secrets.purge.request",
+            Self::VaultCodeSecretsPurgeGet => "vault.code.secrets.purge.get",
+            Self::VaultCodeSecretsPurgeExecute => "vault.code.secrets.purge.execute",
             Self::VaultCodeCheckoutHolderBind => "vault.code.checkout.holder.bind",
             Self::VaultCodeCheckoutBind => "vault.code.checkout.bind",
             Self::VaultCodeCheckoutClaim => "vault.code.checkout.claim",
@@ -4747,6 +4756,9 @@ impl AgentVerb {
                 | Self::VaultCodeOriginAuthorityGet
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
+                | Self::VaultCodeSecretsPurgeRequest
+                | Self::VaultCodeSecretsPurgeGet
+                | Self::VaultCodeSecretsPurgeExecute
                 | Self::VaultCodeCheckoutHolderBind
                 | Self::VaultCodeCheckoutBind
                 | Self::VaultCodeCheckoutClaim
@@ -6097,6 +6109,9 @@ impl AgentVerb {
                 | Self::VaultCodeOriginAuthorityGet
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
+                | Self::VaultCodeSecretsPurgeRequest
+                | Self::VaultCodeSecretsPurgeGet
+                | Self::VaultCodeSecretsPurgeExecute
                 | Self::VaultCodeCheckoutHolderBind
                 | Self::VaultCodeCheckoutBind
                 | Self::VaultCodeCheckoutClaim
@@ -7586,6 +7601,9 @@ impl AgentVerb {
                 | Self::VaultCodeOriginAuthorityGet
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
+                | Self::VaultCodeSecretsPurgeRequest
+                | Self::VaultCodeSecretsPurgeGet
+                | Self::VaultCodeSecretsPurgeExecute
                 | Self::VaultCodeCheckoutBind
                 | Self::VaultCodeCheckoutClaim
                 | Self::VaultCodeCheckoutGet
@@ -8543,6 +8561,8 @@ impl AgentVerb {
                 | Self::VaultCodeOriginPublishExecute
                 | Self::VaultCodeOriginPublishCancel
                 | Self::VaultCodeOriginAuthoritySet
+                | Self::VaultCodeSecretsPurgeRequest
+                | Self::VaultCodeSecretsPurgeExecute
                 | Self::VaultCodeCheckoutHolderBind
                 | Self::VaultCodeCheckoutBind
                 | Self::VaultCodeCheckoutClaim
@@ -9672,6 +9692,9 @@ impl AgentVerb {
             Self::VaultCodeOriginAuthorityGet => &["spec"],
             Self::VaultCodeOriginAuthoritySet => &["spec"],
             Self::VaultCodeOriginPublications => &["spec"],
+            Self::VaultCodeSecretsPurgeRequest => &["spec"],
+            Self::VaultCodeSecretsPurgeGet => &["spec"],
+            Self::VaultCodeSecretsPurgeExecute => &["spec"],
             Self::VaultCodeCheckoutHolderBind => &["spec"],
             Self::VaultCodeCheckoutBind => &["spec"],
             Self::VaultCodeCheckoutClaim => &["spec"],
@@ -10994,6 +11017,9 @@ impl AgentVerb {
             Self::VaultCodeOriginAuthorityGet => &["spec"],
             Self::VaultCodeOriginAuthoritySet => &["spec"],
             Self::VaultCodeOriginPublications => &["spec"],
+            Self::VaultCodeSecretsPurgeRequest => &["spec"],
+            Self::VaultCodeSecretsPurgeGet => &["spec"],
+            Self::VaultCodeSecretsPurgeExecute => &["spec"],
             Self::VaultCodeCheckoutHolderBind => &["spec"],
             Self::VaultCodeCheckoutBind => &["spec"],
             Self::VaultCodeCheckoutClaim => &["spec"],
@@ -13760,6 +13786,15 @@ impl AgentVerb {
             }
             Self::VaultCodeOriginPublications => {
                 "Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement."
+            }
+            Self::VaultCodeSecretsPurgeRequest => {
+                "Plan an owner purge of marked keys from one served repository's history: each ref's move to its masked copy, the purged blobs, dropped signatures, keep roots and what it never reaches. No ref moves."
+            }
+            Self::VaultCodeSecretsPurgeGet => {
+                "Read one of the owner's secret purge plans and, once executed, its receipt."
+            }
+            Self::VaultCodeSecretsPurgeExecute => {
+                "Confirm one secret purge plan: move each ref to its masked copy through origin publication, release listed change owners, collect unreachable objects and file the receipt. No remote is pushed."
             }
             Self::VaultCodeCheckoutHolderBind => {
                 "Materialize the caller's own live checkout without a run. One current repo read Grant must cover the full ref at the lease's pinned commit and every path of that tree. Returns the lease-bound remote URL, not a host path; no lease is minted."
