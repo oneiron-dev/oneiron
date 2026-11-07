@@ -11,7 +11,7 @@
 //! a node's binding names its ids in the version the deck is bound to.
 
 use super::model::{Locator, ReanchorOutcome};
-use crate::office_body::{DeckUnits, OfficeBodyUnits};
+use crate::office_body::{DeckExportIds, DeckUnits, OfficeBodyUnits};
 use oneiron_docedit::pptx_comments::guid_bytes;
 
 /// The shape id of a whole-slide locator.
@@ -27,11 +27,13 @@ struct Filed<'a> {
 /// The body locator of a deck thread's version locator: the one node at
 /// `at`, the frontier `version` projects, on the locator's slide whose ids
 /// in `version` the locator names. `None` when no node or more than one
-/// does.
+/// does. `exported` is the ids `version`'s own record keeps, for an export
+/// a Keep did not bind (FIX 12346).
 pub(super) fn deck_body_locator(
     at: &DeckUnits,
     head: Option<&OfficeBodyUnits>,
     version: u64,
+    exported: Option<&DeckExportIds>,
     locator: &Locator,
 ) -> Option<Locator> {
     let Locator::Pptx { slide, shape_id } = locator else {
@@ -40,7 +42,7 @@ pub(super) fn deck_body_locator(
     let ids = bound_to(at, head, version);
     let mut named = at.nodes.iter().filter(|unit| {
         unit.position == *slide
-            && filed_ids(at, ids, unit.node).is_some_and(|found| names(&found, shape_id))
+            && filed_ids(at, ids, exported, unit.node).is_some_and(|found| names(&found, shape_id))
     });
     let unit = named.next()?;
     if named.next().is_some() {
@@ -75,17 +77,19 @@ pub(super) fn move_deck_locator(to: &DeckUnits, locator: &Locator) -> Option<Rea
 /// export `version` projects: the node's slide position and the shape's
 /// creation id, else its native id. `None` when its ids there are not
 /// known, or when they name another node of that slide as well.
+/// `exported` is as [`deck_body_locator`] takes it.
 pub(super) fn deck_file_locator(
     at: &DeckUnits,
     head: Option<&OfficeBodyUnits>,
     version: u64,
+    exported: Option<&DeckExportIds>,
     locator: &Locator,
 ) -> Option<Locator> {
     let Locator::Pptx { shape_id, .. } = locator else {
         return None;
     };
     let node = shape_id.parse::<u64>().ok()?;
-    let filed = filed_ids(at, bound_to(at, head, version), node)?;
+    let filed = filed_ids(at, bound_to(at, head, version), exported, node)?;
     let shape_id = match filed.shape {
         None => WHOLE_SLIDE.to_owned(),
         Some((native, creation)) => creation
@@ -97,7 +101,8 @@ pub(super) fn deck_file_locator(
         shape_id,
     };
     // The file's ids land the comment only where they name this node alone.
-    (deck_body_locator(at, head, version, &landed).as_ref() == Some(locator)).then_some(landed)
+    (deck_body_locator(at, head, version, exported, &landed).as_ref() == Some(locator))
+        .then_some(landed)
 }
 
 /// The deck read whose bindings name `version`'s ids: `at` itself, or the
@@ -121,17 +126,32 @@ fn bound_to<'a>(
 
 /// Where `node` of `at` stands in the version `at`'s frontier projects: its
 /// slide's position at `at`, and its ids from `ids`, the deck bound to that
-/// version. A node `ids` does not hold is named by `at`'s own binding,
+/// version. With no deck bound to it, an export a Keep did not bind names
+/// its shapes by the ids its own record keeps, `exported` (FIX 12346): a
+/// shape born in the body or moved to another slide since its binding too.
+/// Without those, a node `ids` does not hold is named by `at`'s own binding,
 /// which names an earlier version's ids; an export keeps those while the
 /// node stays on the slide its binding names, so only such a node is named.
-/// That serves an export no rebinding bound the deck to, as a Keep leaves
-/// one when the deck was bound to another version since.
-fn filed_ids<'a>(at: &'a DeckUnits, ids: Option<&'a DeckUnits>, node: u64) -> Option<Filed<'a>> {
+fn filed_ids<'a>(
+    at: &'a DeckUnits,
+    ids: Option<&'a DeckUnits>,
+    exported: Option<&'a DeckExportIds>,
+    node: u64,
+) -> Option<Filed<'a>> {
     let unit = at.nodes.iter().find(|unit| unit.node == node)?;
     if unit.node == unit.slide {
         return Some(Filed {
             position: unit.position,
             shape: None,
+        });
+    }
+    if ids.is_none()
+        && let Some(exported) = exported
+    {
+        let (native, creation) = exported.get(&node)?;
+        return Some(Filed {
+            position: unit.position,
+            shape: Some((*native, creation.as_deref())),
         });
     }
     let (_, native, creation) = match ids.and_then(|ids| binding_of(ids, node)) {

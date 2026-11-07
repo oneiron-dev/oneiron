@@ -20599,6 +20599,7 @@ class OfficeBodyExportRecord(TypedDict):
     version: int
     frontier: list[int]
     rebind_frontier: NotRequired[list[int] | None]
+    deck_ids: NotRequired[dict[str, tuple[int | None, str | None]] | None]
     source_version: int
     actor: BodyActor
     author: str

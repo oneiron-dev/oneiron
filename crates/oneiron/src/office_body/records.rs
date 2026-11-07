@@ -179,6 +179,14 @@ pub struct OfficeBodyExportRecord {
     /// `None` for DOCX and XLSX, and for a deck export a Keep did not bind.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rebind_frontier: Option<Vec<u8>>,
+    /// For a deck export a Keep did not bind (`rebind_frontier` `None`):
+    /// each exported node's native id and creation id in this version's
+    /// file, by model node (FIX 12346). `frontier`'s deck places the
+    /// slides; these name the shapes the file gave them, a shape born in
+    /// the body since its binding or moved to another slide included.
+    /// `None` for every other export.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deck_ids: Option<std::collections::BTreeMap<u64, (Option<u32>, Option<String>)>>,
     pub source_version: u64,
     pub actor: BodyActor,
     /// The author the export showed; empty once its actor was erased.
