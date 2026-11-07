@@ -7,7 +7,8 @@ use super::*;
 impl RecordingJsHost<'_, '_> {
     /// The source of a `self.spawn`: one of this run's own results, read as
     /// every read of it is, its range the ref's or the whole body. A source
-    /// the run may not read now is refused as that read would be.
+    /// the run may not read now is refused as that read would be. Its
+    /// origins are this run's ledger, frozen now (FIX 7084).
     pub(super) fn delegate_source(
         &mut self,
         source: &str,
@@ -36,18 +37,21 @@ impl RecordingJsHost<'_, '_> {
             handle: output.handle.clone(),
             range: read.range().unwrap_or((0, output.raw_len)),
             rows: self.result_rows(),
+            origins: self.gated_write.frozen_result_origins(self.run_id),
         }))
     }
 
     /// `self.spawn(...)`: the source resolved in this run, then the spawn
     /// dispatched with it bound; the run's record keeps the guest's call. A
-    /// reader child's spawn goes straight to its refusal.
+    /// reader child may delegate only its own results, never its inherited input.
     pub(super) fn spawn_reader(
         &mut self,
         seq: u64,
         mut spawn: SelfReaderSpawnCall,
     ) -> Result<(SelfDispatchOutcome, Option<SelfCall>)> {
-        if self.gated_write.reader_child().is_none() {
+        if self.gated_write.reader_child().is_none()
+            || self.gated_write.reader_spawn_seat().is_some()
+        {
             match self.delegate_source(&spawn.source)? {
                 Ok(source) => spawn.bound = Some(source),
                 Err(reason) => {
@@ -81,7 +85,9 @@ impl RecordingJsHost<'_, '_> {
     /// with them bound; the run's record keeps the guest's call. A tainted
     /// member answers the reply its read would, so a withheld body is never
     /// summarized; any other refusal answers its own reason. A reader
-    /// child's call goes straight to its refusal.
+    /// child's call goes straight to its refusal. Each member's origins are
+    /// this run's ledger as its read left it, frozen then: a member another
+    /// run holds noted its own frozen origins there in that read (FIX 7084).
     pub(super) fn summarize(
         &mut self,
         seq: u64,
@@ -123,6 +129,7 @@ impl RecordingJsHost<'_, '_> {
                     handle: output.handle.clone(),
                     range: read.range().unwrap_or((0, output.raw_len)),
                     rows,
+                    origins: self.gated_write.frozen_result_origins(self.run_id),
                 });
             }
             call.bound = Some(bound);
@@ -144,7 +151,8 @@ impl RecordingJsHost<'_, '_> {
     /// A reader child's `tasks.update({task_ref, resultRef})`: its finding
     /// resolved among its own results only, a whole stored JSON value, then
     /// the report dispatched with it bound. Its parent's source is not its
-    /// own and is refused.
+    /// own and is refused. Its origins are the child's ledger, frozen now
+    /// (FIX 7084).
     pub(super) fn report_finding(
         &mut self,
         seq: u64,
@@ -185,6 +193,7 @@ impl RecordingJsHost<'_, '_> {
                 handle: output.handle,
                 bytes: output.raw_len,
                 rows: self.result_rows(),
+                origins: self.gated_write.frozen_result_origins(self.run_id),
             });
         }
         let site = ExecutorCallSite {
