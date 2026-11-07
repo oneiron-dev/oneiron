@@ -43,13 +43,15 @@ impl RecordingJsHost<'_, '_> {
 
     /// `self.spawn(...)`: the source resolved in this run, then the spawn
     /// dispatched with it bound; the run's record keeps the guest's call. A
-    /// reader child's spawn goes straight to its refusal.
+    /// reader child may delegate only its own results, never its inherited input.
     pub(super) fn spawn_reader(
         &mut self,
         seq: u64,
         mut spawn: SelfReaderSpawnCall,
     ) -> Result<(SelfDispatchOutcome, Option<SelfCall>)> {
-        if self.gated_write.reader_child().is_none() {
+        if self.gated_write.reader_child().is_none()
+            || self.gated_write.reader_spawn_seat().is_some()
+        {
             match self.delegate_source(&spawn.source)? {
                 Ok(source) => spawn.bound = Some(source),
                 Err(reason) => {

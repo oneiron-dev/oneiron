@@ -1,14 +1,6 @@
-//! The commit of a run resumed from a wait's reply: its replay record, the
-//! seen-change cursor an ask's Changed status raises, and the consumption of
-//! a bound code consent wait's settlement, in one writer.
+//! Resumed wait checkpoints and their generation-bound row retirement.
 
-use super::super::records::REPLAY_RECORDS;
-use super::super::replay_bodies::response_erased_error;
-use super::super::wait_holders::{holder_erased_in_txn, holder_erased_routed};
-use super::erased_read::delivery_in_txn;
-use super::{WaitKey, canonical_store, raise_observed_change_in, retire_wait_in_txn};
-use crate::Result;
-use crate::code_run::ExecutorStorage;
+use super::*;
 
 impl ExecutorStorage<'_> {
     /// Commits the replay record of a run resumed from `key`'s reply, the
@@ -18,8 +10,10 @@ impl ExecutorStorage<'_> {
     /// bound code consent wait's settlement is consumed in it (DOOR-079 1b):
     /// its reply must be delivered and verify, or the record does not
     /// commit. A canonical wait's rows retire in that same writer, after
-    /// consumption and the observed-change cursor; a room retires them after
-    /// the commit. Retirement consumes nothing and deletes no consumption.
+    /// consumption and the observed-change cursor. A room writing to base
+    /// deletes them with its record, then retires those exact keys from the
+    /// sealed overlay after the base commit. An overlay-route room keeps its
+    /// post-commit cleanup. Retirement consumes nothing and deletes no consumption.
     /// Once an erase of the run's actor took its replies, nothing commits
     /// and nothing is consumed: a typed unavailable (FIX 5718). A room's
     /// record commits as any other append does, along its route, and the
@@ -72,6 +66,31 @@ impl ExecutorStorage<'_> {
                 REPLAY_RECORDS.encode_value(record)?;
                 let next_generation = record.generation()?;
                 binding.answered(|| {
+                    if binding.route.target() == crate::session_overlay::RouteTarget::Base {
+                        return binding.put_base_replay_routed_retiring(
+                            record,
+                            expected,
+                            |txn, read, write| {
+                                if holder_erased_routed(canonical_store(&read), &read, txn, key)? {
+                                    return Err(response_erased_error("a resumed wait's reply"));
+                                }
+                                let delivery = delivery_in_txn(&read, txn, &key.row())?;
+                                if delivery.is_some_and(|delivery| delivery.erased) {
+                                    return Err(response_erased_error("a resumed wait's reply"));
+                                }
+                                let mut keys = Vec::new();
+                                if WAITERS.get(&read, txn, &key.waiter())? == Some(key.generation) {
+                                    WAITERS.delete(&write, txn, &key.waiter())?;
+                                    keys.push(WAITERS.key_bytes(&key.waiter()));
+                                }
+                                DELIVERIES.delete(&write, txn, &key.row())?;
+                                keys.push(DELIVERIES.key_bytes(&key.row()));
+                                TRAPS.delete(&write, txn, &key.row())?;
+                                keys.push(TRAPS.key_bytes(&key.row()));
+                                Ok(keys)
+                            },
+                        );
+                    }
                     binding.put_replay_routed(record, expected, None, |txn, write| {
                         // The run's own rows ride its route, so `write`
                         // reads them on either route.
