@@ -21,6 +21,7 @@ mod authority_clock;
 mod diary;
 mod media;
 mod packs;
+mod proactivity;
 pub(in crate::api) mod support;
 mod verdict_hooks;
 mod vision;
@@ -31,6 +32,7 @@ pub(crate) use self::authority_clock::*;
 pub(crate) use self::diary::*;
 pub(crate) use self::media::*;
 pub(crate) use self::packs::*;
+pub(crate) use self::proactivity::*;
 pub(crate) use self::verdict_hooks::*;
 pub(crate) use self::vision::*;
 
@@ -131,6 +133,13 @@ pub(crate) use super::residence_doors::*;
 pub(crate) use super::summary_doors::*;
 // The weave lens's human doors, likewise.
 pub(crate) use super::weave_doors::*;
+// The owner's reset of a person's step-up passkeys (FIX 17553).
+pub(crate) use super::step_up_doors::{vault_step_up_passkeys_reset, vault_step_up_totp_reset};
+// The weave Admin's served rows, on the passkey step-up (FIX 11694).
+pub(crate) use super::weave_admin_doors::{
+    vault_weave_admin_digest, vault_weave_admin_item_wrong, vault_weave_admin_lens,
+    vault_weave_admin_link_wrong, vault_weave_admin_report,
+};
 // The owner inbox's group doors over both kinds (FIX 3024, 3026), likewise.
 pub(crate) use super::inbox_group_doors::*;
 pub(crate) use super::web_fetch_doors::*;
