@@ -777,20 +777,13 @@ fn hex_ids(text: &str, found: &mut std::collections::BTreeSet<EntityId>) {
     }
 }
 
-/// The window identity of one step: stable per (run, step), never stored.
-pub(super) fn step_message_id(run_id: EntityId, seq: u64) -> EntityId {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"oneiron:executor-compaction-step:v1");
-    hasher.update(run_id.as_bytes());
-    hasher.update(&seq.to_be_bytes());
-    let mut bytes = [0_u8; 16];
-    bytes.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
-    loop {
-        if let Ok(id) = EntityId::from_bytes(bytes) {
-            return id;
-        }
-        bytes[0] ^= 0x42;
-    }
+/// The window identity of one step: stable per (run, step), never stored,
+/// by the one derived-id rule (FIX 9838).
+pub(super) fn step_message_id(run_id: EntityId, seq: u64) -> crate::Result<EntityId> {
+    EntityId::derive(
+        crate::entity_id::derived_domains::EXECUTOR_COMPACTION_STEP,
+        &[run_id.as_bytes(), &seq.to_be_bytes()],
+    )
 }
 
 /// The engine-authored first words of a failed step's console.
@@ -814,45 +807,39 @@ pub(super) fn failure_pin(content: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// The failure line of each step in `window`, in order: a line several
-/// steps fail with is one pin, kept once.
-pub(super) fn window_pins(window: &[crate::compaction::CompactionWindowMessage]) -> Vec<String> {
-    let mut pins = Vec::new();
-    for pin in window
+/// The pins one step brings that `pinned` does not hold yet, each once: its
+/// failure line, then each of the agent profile's literal pins (Docs Q13,
+/// agent-runtime-v1 #d7 verbatim pins) it holds word for word. Both are
+/// mandatory (FIX 9837; the gate's "every verbatim pin survives"): the
+/// summary holds each whole, or the window ends before the step that brings
+/// it.
+pub(super) fn step_pins(content: &str, literals: &[String], pinned: &[String]) -> Vec<String> {
+    let profile = literals
         .iter()
-        .filter_map(|message| failure_pin(&message.content))
-    {
-        if !pins.contains(&pin) {
+        .filter(|literal| content.contains(literal.as_str()))
+        .cloned();
+    let mut pins: Vec<String> = Vec::new();
+    for pin in failure_pin(content).into_iter().chain(profile) {
+        if !pinned.contains(&pin) && !pins.contains(&pin) {
             pins.push(pin);
         }
     }
     pins
 }
 
-/// Docs Q13 (agent-runtime-v1 #d7 verbatim pins): adds the agent profile's
-/// literal pins that occur in `window`, after its failure pins, each once.
-/// A profile pin is kept only while `fits` still holds with it, so it never
-/// displaces a failure pin or cuts the window; the failure pins stay the
-/// mandatory ones.
-pub(super) fn add_profile_pins(
-    pins: &mut Vec<String>,
+/// Every pin `window` holds, a step at a time, in order ([`step_pins`]): a
+/// line several steps fail with, or a profile pin several steps hold, is one
+/// pin, kept once.
+pub(super) fn window_pins(
     window: &[crate::compaction::CompactionWindowMessage],
     literals: &[String],
-    fits: impl Fn(&[String]) -> bool,
-) {
-    for literal in literals {
-        if pins.contains(literal)
-            || !window
-                .iter()
-                .any(|message| message.content.contains(literal.as_str()))
-        {
-            continue;
-        }
-        pins.push(literal.clone());
-        if !fits(pins) {
-            pins.pop();
-        }
+) -> Vec<String> {
+    let mut pins = Vec::new();
+    for message in window {
+        let brought = step_pins(&message.content, literals, &pins);
+        pins.extend(brought);
     }
+    pins
 }
 
 /// The bridge positions `calls` spoke at: each call that emitted a bubble.
@@ -1009,6 +996,18 @@ pub(super) fn result_read_affordance(read: &str) -> super::EngineExecutorResult<
     }))?)
 }
 
+/// The text one speech call dispatched: a hook's rewrite where one rewrote
+/// it, else the guest's own request.
+pub(super) fn speech_call_text(call: &crate::code_run::CodeRunBridgeCall) -> Option<&str> {
+    let rmpv::Value::Map(entries) = call.rewritten_request.as_ref().unwrap_or(&call.request) else {
+        return None;
+    };
+    entries
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("text"))
+        .and_then(|(_, value)| value.as_str())
+}
+
 /// Every stored result's read path `text` names.
 pub(super) fn result_reads(text: &str, found: &mut std::collections::BTreeSet<String>) {
     let mut rest = text;
@@ -1022,18 +1021,11 @@ pub(super) fn result_reads(text: &str, found: &mut std::collections::BTreeSet<St
     }
 }
 
-/// The request identity of one fold's pass: stable per (run, fold).
-pub(super) fn fold_request_id(run_id: EntityId, fold: u64) -> EntityId {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"oneiron:executor-fold-request:v1");
-    hasher.update(run_id.as_bytes());
-    hasher.update(&fold.to_be_bytes());
-    let mut bytes = [0_u8; 16];
-    bytes.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
-    loop {
-        if let Ok(id) = EntityId::from_bytes(bytes) {
-            return id;
-        }
-        bytes[0] ^= 0x42;
-    }
+/// The request identity of one fold's pass: stable per (run, fold), by the
+/// one derived-id rule (FIX 9838).
+pub(super) fn fold_request_id(run_id: EntityId, fold: u64) -> crate::Result<EntityId> {
+    EntityId::derive(
+        crate::entity_id::derived_domains::EXECUTOR_FOLD_REQUEST,
+        &[run_id.as_bytes(), &fold.to_be_bytes()],
+    )
 }
