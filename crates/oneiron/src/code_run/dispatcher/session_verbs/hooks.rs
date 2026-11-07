@@ -3,6 +3,12 @@
 //! inside its row's boundary, in the room, once per call (CALLS-10
 //! `session_hook_once_boundary`). What each hook did rides the call's answer
 //! (FIX 5425).
+//!
+//! An anonymous room serves these reads too (FIX 5166). Its route is
+//! Discard: each hook's records wait in the stretch's in-memory keep, which
+//! its close drops (FIX 5431), never in the room's overlay or in base. A
+//! room write never reaches these hooks there; the anonymous rule refuses it
+//! first.
 
 use serde_json::Value;
 

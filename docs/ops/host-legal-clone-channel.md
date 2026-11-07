@@ -46,8 +46,8 @@ The service is retained with the managed startup handles. On shutdown or a
 later startup error it stops accepting, sets the native cancellation flag and
 shuts down **all** accepted sockets before joining **any** collector. Every
 blocking collector is joined before the vault can close. This drain precedes
-control-task joins, so a control request waiting on a collector's source writer
-cannot prevent the socket shutdown that releases that writer.
+control-task joins. A gate or message collector reads one LMDB read snapshot
+and holds no writer, so no control request waits on a collector to write.
 
 Collector and listener failures are logged. Denied peers, interrupted accepts
 and aborted connections leave the listener running. Another accept I/O error

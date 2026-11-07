@@ -96,7 +96,8 @@ pub struct NeighborsRequest {
 #[serde(deny_unknown_fields)]
 pub struct AppendBlobVersionRequest {
     pub artifact_ref: String,
-    /// RFC 4648 base64; the raw bytes still use the engine blob ceiling.
+    /// RFC 4648 base64. The decoded bytes are measured against
+    /// `blob_content_bytes` and stored whole, never refused for their size.
     pub content_base64: String,
     #[serde(default)]
     pub run_ref: Option<String>,
@@ -198,26 +199,32 @@ pub struct BlobContent {
     pub content_base64: String,
 }
 
+/// Decodes the content once and lets the encoded text go before the write
+/// opens, so the version's bytes are held once, not beside their base64.
+/// Its size is measured at [`Memory::append_blob_version`], never refused
+/// (FIX 76).
 pub(super) fn append_blob(
     memory: &Memory<'_>,
     input: AppendBlobVersionRequest,
 ) -> MemoryResult<crate::memory::BlobVersionAppendOutcome> {
     use base64::Engine as _;
-    if input.content_base64.len() > crate::memory::caps::MAX_BLOB_BASE64_LEN {
-        return Err(MemoryError::bad_request(
-            "blob base64 exceeds the content ceiling",
-        ));
-    }
+    let AppendBlobVersionRequest {
+        artifact_ref,
+        content_base64,
+        run_ref,
+        occurred_at,
+        learned_at,
+    } = input;
     let content = base64::engine::general_purpose::STANDARD
-        .decode(&input.content_base64)
+        .decode(&content_base64)
         .map_err(|_| MemoryError::bad_request("invalid blob base64"))?;
-    crate::memory::caps::check_blob_bytes(content.len())?;
+    drop(content_base64);
     memory.append_blob_version(
-        &input.artifact_ref,
+        &artifact_ref,
         &content,
-        input.run_ref.as_deref(),
-        input.occurred_at,
-        input.learned_at,
+        run_ref.as_deref(),
+        occurred_at,
+        learned_at,
     )
 }
 

@@ -1,5 +1,12 @@
 //! Actual deferred payloads and their identity-bound, idempotent completion.
 
+use std::borrow::Cow;
+use std::time::Instant;
+
+use super::payload::FederationPayloadBytes;
+
+use oneiron_contracts::host_memory::{MachineMemory, MemoryRefusal};
+
 use super::schedule::{self, RetainedWorkQueue, Waiting};
 use super::{FederationBurstWorkState, FederationPeer, corrupt, erase, observations};
 use crate::store::Store;
@@ -24,7 +31,7 @@ pub(in crate::sync) enum WorkKind {
 /// The review evidence an isolated update keeps: each part its admission
 /// lands as, the window that part imports into and its admitted bytes, in
 /// import order (FIX 3662).
-pub(super) type IsolatedParts = Vec<(String, Vec<u8>)>;
+pub(super) type IsolatedParts = Vec<(String, FederationPayloadBytes)>;
 
 #[derive(Debug, Clone)]
 pub(in crate::sync) struct DeferredWork {
@@ -33,7 +40,7 @@ pub(in crate::sync) struct DeferredWork {
     /// The window the original request names: its replay address.
     pub(in crate::sync) window: String,
     pub(in crate::sync) kind: WorkKind,
-    pub(in crate::sync) payload: Vec<u8>,
+    pub(in crate::sync) payload: FederationPayloadBytes,
     pub(super) inputs: NormalizedBurstInputs,
     pub(super) peer: [u8; 32],
     pub(super) isolated_update: Option<IsolatedParts>,
@@ -50,21 +57,21 @@ pub(in crate::sync) struct DeferredWork {
 }
 
 #[derive(Serialize, Deserialize)]
-struct StoredWork {
+struct StoredWork<'a> {
     id: [u8; 32],
     authority_digest: [u8; 32],
     peer: [u8; 32],
-    selector: Vec<u8>,
-    window: String,
+    selector: Cow<'a, [u8]>,
+    window: Cow<'a, str>,
     kind: WorkKind,
-    payload: Vec<u8>,
+    payload: &'a [u8],
     rate_ratio: f32,
     streak: u32,
     streak_ratio: f32,
-    isolated_update: Option<IsolatedParts>,
+    isolated_update: Option<Vec<(&'a str, &'a [u8])>>,
     arrival: [u8; 16],
     deadline: u64,
-    carried: Vec<EntityId>,
+    carried: Cow<'a, [EntityId]>,
 }
 
 fn prefix(peer: &FederationPeer) -> Result<Vec<u8>> {
@@ -88,26 +95,15 @@ impl DeferredWork {
                 "federation payload exceeds transport bound".into(),
             ));
         }
-        let selector = encode_sync_selector(&peer.selector)?;
-        let mut hash = blake3::Hasher::new();
-        hash.update(b"oneiron/federation-work/v1");
-        hash.update(&peer.digest());
-        hash.update(blake3::hash(&selector).as_bytes());
-        hash.update(key.as_str().as_bytes());
-        hash.update(&[match kind {
-            WorkKind::Selector => 0,
-            WorkKind::MemberUpdate => 1,
-            WorkKind::GuestUpdate => 2,
-        }]);
-        hash.update(payload);
+        let (id, selector) = Self::identity(peer, key, kind, payload)?;
         Ok(Self {
-            id: *hash.finalize().as_bytes(),
+            id,
             authority_digest: [0; 32],
             peer: peer.digest(),
             selector,
             window: key.as_str().to_owned(),
             kind,
-            payload: payload.to_vec(),
+            payload: FederationPayloadBytes::copy_from_slice(payload)?,
             isolated_update: None,
             streak_ratio: 0.0,
             inputs: NormalizedBurstInputs {
@@ -135,6 +131,28 @@ impl DeferredWork {
         }
         Ok((self.deadline != 0 && self.deadline <= now)
             .then_some(FederationBurstWorkState::Expired))
+    }
+
+    /// The retained request's identity and selector, without retaining its bytes.
+    pub(in crate::sync) fn identity(
+        peer: &FederationPeer,
+        key: &WindowKey,
+        kind: WorkKind,
+        payload: &[u8],
+    ) -> Result<([u8; 32], Vec<u8>)> {
+        let selector = encode_sync_selector(&peer.selector)?;
+        let mut hash = blake3::Hasher::new();
+        hash.update(b"oneiron/federation-work/v1");
+        hash.update(&peer.digest());
+        hash.update(blake3::hash(&selector).as_bytes());
+        hash.update(key.as_str().as_bytes());
+        hash.update(&[match kind {
+            WorkKind::Selector => 0,
+            WorkKind::MemberUpdate => 1,
+            WorkKind::GuestUpdate => 2,
+        }]);
+        hash.update(payload);
+        Ok((*hash.finalize().as_bytes(), selector))
     }
 
     /// Starts this batch's wait in the admitting writer: its arrival, and its
@@ -204,23 +222,46 @@ impl DeferredWork {
     }
 
     pub(super) fn put_in_txn(&self, vault: &Vault, txn: &mut heed::RwTxn<'_>) -> Result<()> {
-        let value = postcard::to_allocvec(&StoredWork {
+        let stored = StoredWork {
             id: self.id,
             authority_digest: self.authority_digest,
             peer: self.peer,
-            selector: self.selector.clone(),
-            window: self.window.clone(),
+            selector: Cow::Borrowed(&self.selector),
+            window: Cow::Borrowed(&self.window),
             kind: self.kind,
-            payload: self.payload.clone(),
+            payload: &self.payload,
             rate_ratio: self.inputs.rate_ratio,
             streak: self.inputs.streak,
             streak_ratio: self.streak_ratio,
-            isolated_update: self.isolated_update.clone(),
+            isolated_update: self.isolated_update.as_ref().map(|parts| {
+                parts
+                    .iter()
+                    .map(|(window, bytes)| (window.as_str(), bytes.as_slice()))
+                    .collect()
+            }),
             arrival: self.arrival,
             deadline: self.deadline,
-            carried: self.carried.clone(),
-        })
-        .map_err(|_| corrupt())?;
+            carried: Cow::Borrowed(&self.carried),
+        };
+        let size = postcard::experimental::serialized_size(&stored).map_err(|_| corrupt())?;
+        let mut memory = MachineMemory::process()
+            .lease(size as u64, Instant::now())
+            .map_err(|refusal| {
+                let kind = match refusal {
+                    MemoryRefusal::Floor { .. } => std::io::ErrorKind::OutOfMemory,
+                    MemoryRefusal::WaitedOut { .. } => std::io::ErrorKind::WouldBlock,
+                };
+                crate::Error::Io(std::io::Error::new(
+                    kind,
+                    format!("federation queue serialization memory: {refusal:?}"),
+                ))
+            })?;
+        let mut value = Vec::new();
+        value.try_reserve_exact(size).map_err(|error| {
+            crate::Error::Io(std::io::Error::new(std::io::ErrorKind::OutOfMemory, error))
+        })?;
+        memory.materialized(size as u64, value.capacity() as u64);
+        let value = postcard::to_extend(&stored, value).map_err(|_| corrupt())?;
         // Storage capacity is distinct from the peer-relative burst verdict.
         // Accepted work stays durable: the queue's byte totals are observed
         // against these thresholds, never refused (FIX 7996, 8852).
@@ -265,8 +306,8 @@ impl DeferredWork {
     }
 
     pub(super) fn decode(value: &[u8]) -> Result<Self> {
-        let row: StoredWork = postcard::from_bytes(value).map_err(|_| corrupt())?;
-        if WindowKey::try_new(&row.window).is_none()
+        let row: StoredWork<'_> = postcard::from_bytes(value).map_err(|_| corrupt())?;
+        if WindowKey::try_new(row.window.as_ref()).is_none()
             || row.payload.len() > MAX_DECODED_PAYLOAD_BYTES
             || !row.rate_ratio.is_finite()
             || row.rate_ratio < 0.0
@@ -277,7 +318,7 @@ impl DeferredWork {
                 parts.is_empty()
                     || parts
                         .iter()
-                        .any(|(window, _)| WindowKey::try_new(window).is_none())
+                        .any(|(window, _)| WindowKey::try_new(*window).is_none())
             })
         {
             return Err(corrupt());
@@ -286,11 +327,24 @@ impl DeferredWork {
             id: row.id,
             authority_digest: row.authority_digest,
             peer: row.peer,
-            selector: row.selector,
-            window: row.window,
+            selector: row.selector.into_owned(),
+            window: row.window.into_owned(),
             kind: row.kind,
-            payload: row.payload,
-            isolated_update: row.isolated_update,
+            payload: FederationPayloadBytes::copy_from_slice(row.payload)?,
+            isolated_update: row
+                .isolated_update
+                .map(|parts| {
+                    parts
+                        .into_iter()
+                        .map(|(window, bytes)| {
+                            Ok((
+                                window.to_owned(),
+                                FederationPayloadBytes::copy_from_slice(bytes)?,
+                            ))
+                        })
+                        .collect::<Result<IsolatedParts>>()
+                })
+                .transpose()?,
             streak_ratio: row.streak_ratio,
             inputs: NormalizedBurstInputs {
                 rate_ratio: row.rate_ratio,
@@ -298,7 +352,7 @@ impl DeferredWork {
             },
             arrival: row.arrival,
             deadline: row.deadline,
-            carried: row.carried,
+            carried: row.carried.into_owned(),
         })
     }
 
@@ -430,10 +484,11 @@ impl DeferredWork {
                     return Err(corrupt());
                 }
                 let window = WindowKey::try_new(&work.window).ok_or_else(corrupt)?;
-                let expected = Self::new(peer, &window, work.kind, &work.payload)?;
-                if work.id != expected.id
-                    || work.selector != expected.selector
-                    || work.peer != expected.peer
+                let (expected_id, expected_selector) =
+                    Self::identity(peer, &window, work.kind, &work.payload)?;
+                if work.id != expected_id
+                    || work.selector != expected_selector
+                    || work.peer != peer.digest()
                 {
                     return Err(corrupt());
                 }

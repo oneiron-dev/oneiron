@@ -22,9 +22,23 @@
 //! that rides in parts keeps, from the same commit, the signature of each
 //! part by the key that signed that result (`part_signature`), and every
 //! install that keeps a relayed copy keeps the signatures it came with, so
-//! it relays the parts onward while the holder is away.
+//! it relays the parts onward while the holder is away. Before any install
+//! keeps or relays such a copy, whole or joined, every one of its part
+//! signatures verifies over its own frame by that result's signer
+//! (`KeptExportOutput::proof`): a copy with one missing or bad is
+//! disproven, never kept, so no relay writes parts nobody verified.
+//!
+//! A relayed row is judged in three states (FIX 12352; the unknown-signer
+//! rule of CALLS CUSTODY_INPUT_PRUNE): proven ([`ProofState::Proven`]), the
+//! only state any reader or keeper takes; unproven, its signatures, shape
+//! and copy binding sound but this install not yet holding the vault, the
+//! holder's profile or the holder's exact key, with nothing it holds
+//! against it, so the row waits in its window, never read or kept, until it
+//! proves itself or its base window retires; and disproven, so it leaves.
 
 use super::OUTPUTS;
+#[cfg(feature = "sync")]
+use super::part_signature::{OutputPartBinding, parts_verify};
 use crate::Vault;
 use crate::authority::{AuthorityEntryHash, AuthorityVaultId};
 use crate::authority::{
@@ -33,7 +47,6 @@ use crate::authority::{
 };
 #[cfg(feature = "sync")]
 use crate::authority::{OwnerWorkBody, encode_authority_log_entry_body, stored_authority_row};
-#[cfg(feature = "sync")]
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
@@ -71,8 +84,9 @@ pub(crate) struct KeptExportOutput {
     pub(crate) witness: Vec<u8>,
     /// The signature of each numbered part the copy rides in, in order, by
     /// the key that signed its result (FIX 12373), kept and relayed as the
-    /// holder made them. Empty for a copy that rides whole, and for one
-    /// kept with no part evidence, which never rides in parts.
+    /// holder made them, each verified before a copy that rides in parts
+    /// stands (`Self::proof`). Empty for a copy that rides whole, and for
+    /// one kept with no part evidence, which never rides in parts.
     pub(crate) part_signatures: Vec<[u8; SIGNATURE_BYTES]>,
     /// The copy, sealed to the recipient machine alone.
     pub(crate) sealed: Vec<u8>,
@@ -169,8 +183,9 @@ impl KeptExportOutput {
     /// its witness and its part signatures are read, not judged:
     /// `Self::stands` judges the copy and its witness, a witness past its
     /// bound among them, so such a row is admitted, never kept and pruned,
-    /// never a refused update (L03 06:5x); each part proves its signature
-    /// where it rides (FIX 12373).
+    /// never a refused update (L03 06:5x). `Self::proof` verifies the part
+    /// signatures of a copy that rides in parts; each relayed part proves
+    /// its own where it rides (FIX 12373).
     pub(crate) fn decode(bytes: &[u8]) -> Option<Self> {
         let (signed, rest) = match bytes.strip_prefix(SIGNED_LABEL) {
             Some(rest) => (true, rest),
@@ -208,20 +223,64 @@ impl KeptExportOutput {
         }
     }
 
+    /// What `fold` makes of this copy (FIX 12352): the state of its witness
+    /// ([`assess_witness`]) when the signed result it carries names the
+    /// copy's digest and length and, for a copy that rides in parts, every
+    /// part signature verifies under that result ([`Self::parts_signed_by`]);
+    /// disproven when it names another copy, a part signature is missing or
+    /// does not verify, or the witness is disproven. An unproven copy is
+    /// never read or kept.
+    #[cfg(feature = "sync")]
+    pub(crate) fn proof(&self, fold: &AuthorityFold) -> ProofState {
+        match assess_witness(fold, &self.request, &self.witness).candidate() {
+            Some((result, state))
+                if names_copy(&result.output, &self.sealed) && self.parts_signed_by(&result) =>
+            {
+                state
+            }
+            _ => ProofState::Disproven,
+        }
+    }
+
+    /// Whether this copy carries its holder's signature of every part it
+    /// rides in, each verifying by `result`'s own signer over `result`'s
+    /// vault and entry, the copy it names, this copy's request and sealing
+    /// second, the part count, the part's index and its run of this copy's
+    /// own frame ([`Self::copy_frame`], cut as its parts are), as a relayed
+    /// part proves itself (`part_signature`, FIX 12373). A copy that rides
+    /// whole needs none, so its signatures are not read.
+    #[cfg(feature = "sync")]
+    fn parts_signed_by(&self, result: &WitnessedResult) -> bool {
+        !Self::rides_in_parts(self.sealed.len() as u64)
+            || parts_verify(
+                &OutputPartBinding {
+                    vault_id: result.vault_id,
+                    request: self.request,
+                    result: result.entry,
+                    output: result.output,
+                    sealed_at: self.sealed_at,
+                },
+                &result.signer,
+                &self.copy_frame(),
+                &self.part_signatures,
+            )
+    }
+
     /// Whether a signed result of this copy's request names it, as `fold`
     /// judges it: the one its witness carries ([`witnessed_output`]), which
     /// must match the result `fold` folds when it folds one, names the
-    /// copy's digest and length (FIX 12065, 12312).
+    /// copy's digest and length (FIX 12065, 12312). Only a proven copy
+    /// ([`Self::proof`]).
     #[cfg(feature = "sync")]
     pub(crate) fn named_by(&self, fold: &AuthorityFold) -> bool {
-        witnessed_output(fold, &self.request, &self.witness)
-            .is_some_and(|output| names_copy(&output, &self.sealed))
+        self.proof(fold) == ProofState::Proven
     }
 
     /// Whether this copy is kept and relayed on `fold`: it folds the export
     /// secret request it answers, on a secret no admitted revoke ended and
     /// `fenced` does not name, and a signed result names the copy
-    /// ([`Self::named_by`]), whether or not it folds that result yet.
+    /// ([`Self::named_by`]), whether or not it folds that result yet. An
+    /// unproven copy never stands (FIX 12352).
     #[cfg(feature = "sync")]
     pub(crate) fn stands(&self, fold: &AuthorityFold, fenced: impl Fn(&EntityId) -> bool) -> bool {
         self.secret(fold)
@@ -230,19 +289,24 @@ impl KeptExportOutput {
     }
 
     /// Whether a window's row of this copy is due to leave it: its
-    /// request's rows are ([`Self::request_rows_done`]), or no signed result
-    /// names it on `fold` ([`Self::named_by`]): its witness is missing, does
-    /// not verify, names another copy, or disagrees with the result `fold`
-    /// folds (FIX 12065, 12312). Such a row is admitted and never kept. A
-    /// row its witness names stays while this vault has not folded its
-    /// request yet.
+    /// request's rows are ([`Self::request_rows_done`]), or `fold` disproves
+    /// it ([`Self::proof`]): its witness is missing, does not verify, names
+    /// another copy, disagrees with the result or the request `fold` folds,
+    /// or is signed by a key the carrier rule excludes here, or the copy
+    /// rides in parts and a part signature is missing or does not verify
+    /// (FIX 12065, 12312, 12352, 12373). Such a row is admitted and never
+    /// kept. An unproven row stays in its sealing month's base window, never
+    /// kept, until it proves itself or leaves on one of these signals or
+    /// with that window; a row its witness names stays while this vault has
+    /// not folded its request yet.
     #[cfg(feature = "sync")]
     pub(crate) fn row_done(
         &self,
         fold: &AuthorityFold,
         fenced: impl Fn(&EntityId) -> bool,
     ) -> bool {
-        Self::request_rows_done(fold, &self.request, fenced) || !self.named_by(fold)
+        Self::request_rows_done(fold, &self.request, fenced)
+            || self.proof(fold) == ProofState::Disproven
     }
 
     /// Whether every window row of a copy for `request`, whole or one of its
@@ -304,7 +368,8 @@ fn names_copy(output: &SealedWorkOutput, sealed: &[u8]) -> bool {
 /// `fold`), or the very result `fold` folds. While `fold` folds a result for
 /// `request`, the witness must name the copy that result names. `None` for
 /// a witness that names no copy so, or one past
-/// [`MAX_EXPORT_OUTPUT_WITNESS_BYTES`].
+/// [`MAX_EXPORT_OUTPUT_WITNESS_BYTES`], and for one `fold` does not prove
+/// yet ([`assess_witness`], FIX 12352).
 pub(crate) fn witnessed_output(
     fold: &AuthorityFold,
     request: &AuthorityEntryHash,
@@ -328,42 +393,151 @@ pub(crate) struct WitnessedResult {
 
 /// [`witnessed_output`] with what else the witness proves: the result's
 /// entry hash, its signer's key and its vault (FIX 12373), judged by the
-/// same rules.
+/// same rules. A proven witness only ([`assess_witness`]).
 pub(crate) fn witnessed_result(
     fold: &AuthorityFold,
     request: &AuthorityEntryHash,
     witness: &[u8],
 ) -> Option<WitnessedResult> {
-    if witness.len() > MAX_EXPORT_OUTPUT_WITNESS_BYTES {
-        return None;
+    assess_witness(fold, request, witness).proven()
+}
+
+/// What a fold makes of a relayed row, the copy whole, one of its parts or
+/// the witness either carries (FIX 12352).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProofState {
+    /// It proves itself on the fold: the only state a reader or a keeper
+    /// takes.
+    Proven,
+    /// Its signatures, its shape and its binding to the copy verify, but the
+    /// fold holds no evidence yet of the vault, the holder's profile, or the
+    /// holder's exact install key, and nothing it holds contradicts the
+    /// row. The row waits in its window, never read, joined or kept.
+    Unproven,
+    /// The fold holds what contradicts it: the row leaves its window.
+    Disproven,
+}
+
+/// What a copy's witness is on a fold ([`assess_witness`]), with the signed
+/// result it carries while the fold does not disprove it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(feature = "sync"), allow(dead_code))]
+pub(crate) enum WitnessAssessment {
+    Proven(WitnessedResult),
+    /// The result as the witness names it, its vault the entry's own: the
+    /// candidate a row's copy and parts are checked against, never trusted.
+    Unproven(WitnessedResult),
+    Disproven,
+}
+
+#[cfg_attr(not(feature = "sync"), allow(dead_code))]
+impl WitnessAssessment {
+    /// The result a proven witness names.
+    fn proven(self) -> Option<WitnessedResult> {
+        match self {
+            Self::Proven(result) => Some(result),
+            Self::Unproven(_) | Self::Disproven => None,
+        }
     }
-    let entry = decode_authority_log_entry_body(witness).ok()?;
+
+    /// The result the witness names and its state, proven or unproven;
+    /// `None` for a disproven witness.
+    pub(crate) fn candidate(self) -> Option<(WitnessedResult, ProofState)> {
+        match self {
+            Self::Proven(result) => Some((result, ProofState::Proven)),
+            Self::Unproven(result) => Some((result, ProofState::Unproven)),
+            Self::Disproven => None,
+        }
+    }
+}
+
+/// What `fold` makes of `witness`, the signed result an export copy of
+/// `request` carries (FIX 12312, 12352). Disproven: past
+/// [`MAX_EXPORT_OUTPUT_WITNESS_BYTES`], not a canonical entry whose
+/// signature verifies, not an Ed25519-signed result with a sealed copy, of
+/// no vault or another vault than `fold`'s, the result of another request,
+/// by another executor than the one the request names when `fold` folds it,
+/// naming another copy than the result `fold` folds, or signed by a key the
+/// carrier rule excludes ([`carrier_proof`]). Proven: the very result `fold`
+/// folds, or signed by an install key of the executor's the carrier rule
+/// admits. Unproven otherwise: `fold` folds no vault yet, or no profile or
+/// live key revision of the executor's that names the signing key.
+pub(crate) fn assess_witness(
+    fold: &AuthorityFold,
+    request: &AuthorityEntryHash,
+    witness: &[u8],
+) -> WitnessAssessment {
+    if witness.len() > MAX_EXPORT_OUTPUT_WITNESS_BYTES {
+        return WitnessAssessment::Disproven;
+    }
+    let Ok(entry) = decode_authority_log_entry_body(witness) else {
+        return WitnessAssessment::Disproven;
+    };
     let (AuthorityOp::OwnerWorkResult(result), AuthorityKey::Ed25519(key)) =
         (&entry.op, entry.signer_key())
     else {
-        return None;
+        return WitnessAssessment::Disproven;
     };
-    let output = *result.outcome.sealed_output()?;
-    let vault_id = fold.vault_id?;
     // A decoded entry re-encodes to its canonical bytes, so its hash holds.
-    let hash = authority_entry_hash(&entry).ok()?;
-    let folded = fold.owner_work_result(request);
-    let shaped = entry.vault_id == Some(vault_id)
-        && result.request == *request
-        && fold
-            .owner_work_request(request)
-            .is_none_or(|asked| asked.executor == result.executor)
-        && folded.is_none_or(|answer| answer.outcome.sealed_output() == Some(&output));
-    let signed = || {
-        folded.is_some_and(|answer| hash == answer.entry)
-            || owner_act_signer_admits(fold.machine(result.executor), &fold.roster, key)
+    let (Some(output), Some(vault_id), Ok(hash)) = (
+        result.outcome.sealed_output().copied(),
+        entry.vault_id,
+        authority_entry_hash(&entry),
+    ) else {
+        return WitnessAssessment::Disproven;
     };
-    (shaped && signed()).then_some(WitnessedResult {
+    let folded = fold.owner_work_result(request);
+    let contradicted = fold
+        .vault_id
+        .is_some_and(|folded_vault| folded_vault != vault_id)
+        || result.request != *request
+        || fold
+            .owner_work_request(request)
+            .is_some_and(|asked| asked.executor != result.executor)
+        || folded.is_some_and(|answer| answer.outcome.sealed_output() != Some(&output));
+    if contradicted {
+        return WitnessAssessment::Disproven;
+    }
+    let candidate = WitnessedResult {
         output,
         entry: hash,
         signer: *key,
         vault_id,
-    })
+    };
+    let state = if fold.vault_id.is_none() {
+        ProofState::Unproven
+    } else if folded.is_some_and(|answer| answer.entry == hash) {
+        ProofState::Proven
+    } else {
+        carrier_proof(fold, result.executor, key)
+    };
+    match state {
+        ProofState::Proven => WitnessAssessment::Proven(candidate),
+        ProofState::Unproven => WitnessAssessment::Unproven(candidate),
+        ProofState::Disproven => WitnessAssessment::Disproven,
+    }
+}
+
+/// The one carrier rule ([`owner_act_signer_admits`]) for `key` as an
+/// install key of `executor` on `fold`, in three states (FIX 12352): proven
+/// where it admits the key; disproven where it excludes the key on what
+/// `fold` holds: the authority roster names the key (a roster key acts as
+/// nobody), or a chain of `executor`'s removed the machine (only removal
+/// ends a linked install); unproven otherwise: `fold` folds no profile of
+/// `executor`'s, or no live chain of it names this exact key yet. A machine
+/// this install knows under another key alone does not disprove a key
+/// revision it has not folded.
+fn carrier_proof(fold: &AuthorityFold, executor: EntityId, key: &[u8; 32]) -> ProofState {
+    let machine = fold.machine(executor);
+    if owner_act_signer_admits(machine, &fold.roster, key) {
+        return ProofState::Proven;
+    }
+    let removed = machine.is_some_and(|folded| folded.chains().any(|(_, chain)| chain.removed));
+    if removed || fold.roster.contains_key(&AuthorityKey::Ed25519(*key)) {
+        ProofState::Disproven
+    } else {
+        ProofState::Unproven
+    }
 }
 
 /// The copy kept under request `request`, when it decodes as one for it.
@@ -463,7 +637,8 @@ pub(crate) fn relayed_export_output_due_in_txn(
 /// in `wtxn` ([`relayed_export_output_due_in_txn`]) and `fold` holds no
 /// import mark of its request, both checked again here against `fold`, read
 /// in `wtxn`. It is kept with the witness and the part signatures it came
-/// with, never signed again here (FIX 12373). Returns whether it kept it.
+/// with, each verified when it rides in parts ([`KeptExportOutput::proof`]),
+/// never signed again here (FIX 12373). Returns whether it kept it.
 #[cfg(feature = "sync")]
 pub(crate) fn keep_relayed_export_output_in_txn(
     vault: &Vault,
