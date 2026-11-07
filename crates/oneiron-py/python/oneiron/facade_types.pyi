@@ -18471,7 +18471,7 @@ class ConnectorCallStatusAwaitingInput(TypedDict):
     generation: int
     asked: int
     uncertain: NotRequired[bool]
-    reply: ConnectorCallReply
+    reply: ActAnswer[ConnectorCallReply]
 ConnectorCallStatus = ConnectorCallStatusPending | ConnectorCallStatusSettled | ConnectorCallStatusAwaitingInput
 class ScopedCommitRequest(TypedDict):
     claims: list[ScopedClaimInput]

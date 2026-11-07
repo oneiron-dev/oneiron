@@ -114,6 +114,7 @@
 //! - `vault.questions.schedule`
 //! - `vault.decisions.asks.confirm_grant`
 //! - `connector.call`
+//! - `connector.call_status`
 //! - `vault.conversations.turns.create`
 //! - `vault.conversations.records.append`
 //! - `vault.batch`
@@ -1790,6 +1791,7 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.questions.schedule"
                 | "vault.decisions.asks.confirm_grant"
                 | "connector.call"
+                | "connector.call_status"
                 | "vault.conversations.turns.create"
                 | "vault.conversations.records.append"
                 | "vault.batch"

@@ -31516,19 +31516,37 @@ async fn connector_call_status(
     let auth = call.auth();
     auth.require(CoreScope::Read)?;
     auth.require_unnarrowed_facets()?;
+    facade_outside_room_turn(call, "connector.call_status")?;
+    let caller = facade_actor(server, auth)?;
     let value = input?;
-    let (actor, class) = facade_actor(server, auth)?;
-    let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
-        server,
-        call,
-        actor,
-        class,
-        "connector.call_status",
-        value,
-        &producers,
-    )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    oneiron::task_verb::sdk::validate_input("connector.call_status", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "connector.call_status", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::connector_call_status(
+            server,
+            auth,
+            caller,
+            Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+                &server.vault,
+                &hooks,
+            )),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
 }
 async fn vault_commit(
     server: &Arc<SyncServer>,

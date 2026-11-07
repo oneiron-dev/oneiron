@@ -71,6 +71,7 @@ use crate::server::SyncServer;
 
 mod owner;
 mod results;
+mod status;
 pub(crate) use owner::press_owner_consent;
 use owner::{owner_rules, spend_owner_consent, withdraw_owner_ask};
 pub(crate) use results::ConnectorResultInterest;
