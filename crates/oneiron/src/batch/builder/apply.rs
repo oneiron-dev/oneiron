@@ -25,7 +25,14 @@ impl BatchBuilder<'_> {
     /// it. Actor-bound batches stage in a savepoint, so a refused routed
     /// projection leaves neither its source event nor any head change behind.
     pub fn apply(self, wtxn: &mut RwTxn<'_>) -> Result<()> {
-        self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(false, true), None, None, None)
+        self.apply_with_gate_mode(
+            wtxn,
+            ApplyOpsGateMode::new(false, true),
+            None,
+            crate::core_write::CoreWriteLaneRef::Unbound,
+            None,
+            None,
+        )
     }
 
     /// [`Self::apply`] for the replicated put a sync window's ingest door
@@ -47,6 +54,7 @@ impl BatchBuilder<'_> {
             wtxn,
             ApplyOpsGateMode::new(false, true),
             None,
+            crate::core_write::CoreWriteLaneRef::Unbound,
             authority_beside,
             own_device,
         )
@@ -55,16 +63,41 @@ impl BatchBuilder<'_> {
     /// Applies queued promotion operations while recording their gate decisions
     /// in the caller's transaction.
     pub(crate) fn apply_recording_gate_decisions(self, wtxn: &mut RwTxn<'_>) -> Result<()> {
-        self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(true, true), None, None, None)
+        self.apply_recording_gate_decisions_in_lane(
+            wtxn,
+            crate::core_write::CoreWriteLaneRef::Unbound,
+        )
+    }
+
+    /// Gate decisions for a native adapter carrying its actual caller lane.
+    pub(crate) fn apply_recording_gate_decisions_in_lane(
+        self,
+        wtxn: &mut RwTxn<'_>,
+        lane: crate::core_write::CoreWriteLaneRef<'_>,
+    ) -> Result<()> {
+        self.apply_with_gate_mode(
+            wtxn,
+            ApplyOpsGateMode::new(true, true),
+            None,
+            lane,
+            None,
+            None,
+        )
     }
 
     /// Local actor-bound batch: every direct record and reducer-touched parent
     /// is captured from the operation set, then gated before commit.
-    pub(crate) fn apply_actor(self, wtxn: &mut RwTxn<'_>, actor: &crate::WriteActor) -> Result<()> {
+    pub(crate) fn apply_actor(
+        self,
+        wtxn: &mut RwTxn<'_>,
+        actor: &crate::WriteActor,
+        lane: crate::core_write::CoreWriteLaneRef<'_>,
+    ) -> Result<()> {
         self.apply_with_gate_mode(
             wtxn,
             ApplyOpsGateMode::new(false, true),
             Some(actor),
+            lane,
             None,
             None,
         )
@@ -75,6 +108,7 @@ impl BatchBuilder<'_> {
         wtxn: &mut RwTxn<'_>,
         gate_mode: ApplyOpsGateMode,
         actor: Option<&crate::WriteActor>,
+        lane: crate::core_write::CoreWriteLaneRef<'_>,
         authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
         own_device: Option<&VerifiedOwnDeviceLane>,
     ) -> Result<()> {
@@ -108,6 +142,7 @@ impl BatchBuilder<'_> {
                 &mut staged,
                 gate_mode,
                 Some(&actor),
+                lane,
                 authority_beside,
                 own_device,
             )?;
@@ -117,7 +152,7 @@ impl BatchBuilder<'_> {
             }
             Ok(())
         } else {
-            self.apply_staged(wtxn, gate_mode, None, authority_beside, own_device)
+            self.apply_staged(wtxn, gate_mode, None, lane, authority_beside, own_device)
         }
     }
 
@@ -126,10 +161,13 @@ impl BatchBuilder<'_> {
         wtxn: &mut RwTxn<'_>,
         gate_mode: ApplyOpsGateMode,
         actor: Option<&crate::WriteActor>,
+        lane: crate::core_write::CoreWriteLaneRef<'_>,
         authority_beside: Option<crate::store::authority_rows::RowsBeside<'_>>,
         own_device: Option<&VerifiedOwnDeviceLane>,
     ) -> Result<()> {
         let vault = self.vault;
+        let mut gated =
+            super::reference_read::admit_lane_before_staging(vault, lane, wtxn, &self.ops)?;
         // Preserve original-position admission before routing removes a Put.
         // Actual head changes and the remaining ops get their own final checks.
         let original = actor
@@ -148,7 +186,46 @@ impl BatchBuilder<'_> {
             .with_caller_envelopes(std::mem::take(&mut self.caller_envelopes))
             .with_prepared_person_substrate(self.prepared_person_substrate.take())
             .with_prepared_agent_birth(self.prepared_agent_birth.take());
+        let deferred =
+            if matches!(lane, crate::core_write::CoreWriteLaneRef::Read(_)) && !gated.is_empty() {
+                let mut decisions = Vec::new();
+                let mut ids = std::collections::HashMap::new();
+                let mut deferred = super::preflight::preflight_gate_decisions_in_txn(
+                    &vault.store,
+                    &self.ops,
+                    wtxn,
+                    &mut decisions,
+                    &mut ids,
+                    None,
+                    self.origin,
+                    &gate_mode.caller_envelopes,
+                    &gate_mode.births,
+                    true,
+                )?;
+                let probes = deferred
+                    .as_mut()
+                    .map(|pending| std::mem::take(&mut pending.probes))
+                    .unwrap_or_default();
+                gate_mode = gate_mode
+                    .with_preflight_gate_decision_ids(ids)
+                    .with_pending_auto_probes(probes);
+                deferred
+            } else {
+                None
+            };
         let mut original_bodies = Vec::new();
+        let mut admission = match actor {
+            Some(actor) => Some(super::comm_projection::CommHeadWrites::actor_in_lane(
+                actor, lane,
+            )),
+            None => match lane {
+                crate::core_write::CoreWriteLaneRef::Read(reader)
+                | crate::core_write::CoreWriteLaneRef::Target(reader) => {
+                    Some(super::comm_projection::CommHeadWrites::reader(reader))
+                }
+                crate::core_write::CoreWriteLaneRef::Unbound => None,
+            },
+        };
         let taken = if actor.is_some() {
             crate::comm::take_projector_only_batch_puts_preserving_births_in_txn(
                 vault,
@@ -169,10 +246,20 @@ impl BatchBuilder<'_> {
                         routed.inputs(),
                         &mut gate_mode,
                     )?;
-                    let mut admission = super::comm_projection::CommHeadWrites::actor(actor);
-                    routed.record_with_admission_in_txn(vault, wtxn, Some(&mut admission))?
+                    routed.record_with_admission_in_txn(
+                        vault,
+                        wtxn,
+                        admission
+                            .as_mut()
+                            .map(|value| value as &mut dyn crate::comm::ProjectedHeadAdmission),
+                    )?
                 }
-                None => routed.record_in_txn(vault, wtxn)?,
+                None => match admission.as_mut() {
+                    Some(admission) => {
+                        routed.record_with_admission_in_txn(vault, wtxn, Some(admission))?
+                    }
+                    None => routed.record_in_txn(vault, wtxn)?,
+                },
             },
             None => std::collections::BTreeSet::new(),
         };
@@ -211,7 +298,7 @@ impl BatchBuilder<'_> {
             .collect();
         let mut derived = crate::embed::repo_derived_batch(&ops);
         if let Some(actor) = actor {
-            apply_actor_ops(
+            super::super::actor_content::apply_actor_ops_admitted(
                 vault,
                 wtxn,
                 actor,
@@ -236,6 +323,15 @@ impl BatchBuilder<'_> {
         }
         if let (Some(actor), Some(original)) = (actor, original) {
             original.admit_routed_inputs(vault, wtxn, actor, &original_bodies)?;
+        }
+        if let crate::core_write::CoreWriteLaneRef::Read(reader) = lane {
+            if let Some(admission) = admission {
+                gated.extend(admission.gated_claims(vault, wtxn)?);
+            }
+            super::reference_read::check_staged_references(vault, wtxn, reader, &gated)?;
+        }
+        if let Some(pending) = deferred {
+            return Err(pending.err);
         }
         derived.include_source_dependents_in(&vault.store, wtxn, &put_roots)?;
         crate::embed::finalize_repo_derived_index_copies_in_txn(vault, wtxn, derived)?;
