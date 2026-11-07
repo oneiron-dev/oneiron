@@ -22,6 +22,7 @@
 
 mod agent_run;
 mod attenuation;
+mod brief;
 pub mod budget_doors;
 mod budget_hold;
 mod codec;
@@ -211,7 +212,10 @@ use crate::failure_ladder::HealerCase;
 use rmpv::Value;
 
 pub use agent_run::AgentRun;
-pub use resident::{ResidentAgentSpec, ResidentGoalRecord, ResidentWakeMode};
+pub use resident::{
+    ResidentAgentSpec, ResidentGoalRecord, ResidentWakeMode, resident_attempt_reviews_diary,
+    resident_attempt_wakes_for_room,
+};
 
 #[cfg(test)]
 mod resident_tests;

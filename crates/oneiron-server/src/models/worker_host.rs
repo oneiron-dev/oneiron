@@ -49,6 +49,8 @@ mod probe;
 #[cfg(unix)]
 mod process;
 mod session;
+mod stock;
+pub(super) use stock::{StockWeights, capture as stock_weights};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -849,10 +851,9 @@ pub(super) fn external_workers(
     for row in rows {
         if row.binding.provider != provider_name
             || row.mode != WorkerMode::External
-            || row
-                .endpoint
-                .as_deref()
-                .is_some_and(|endpoint| endpoint != provider.base_url.as_str())
+            || row.endpoint.as_deref().is_some_and(|endpoint| {
+                endpoint.trim_end_matches('/') != provider.base_url.trim_end_matches('/')
+            })
             || !matches!(row.kind, WorkerKind::LlamaCpp | WorkerKind::Exl3)
         {
             continue;
@@ -923,6 +924,66 @@ pub(super) fn native_route(provider: &str, wire_model: &str) -> Option<NativeRou
         }
     };
     route.launch().is_some().then_some(route)
+}
+
+/// The native routes of `provider_name`'s managed EXL3 workers, captured
+/// when a runtime is built (I2-LOCAL), by wire model: each row bound to the
+/// provider whose hosted row and provider still match exactly, in a process
+/// that launches them, on a platform whose native channel checks its peer
+/// against the supervised child (Linux and macOS). A route is captured
+/// whether or not its current launch has a socket: the transport that holds
+/// it sends only over that worker's native channel, each time through
+/// `Channel::connect_launch`, or does not send. A reconfigured row is a new
+/// supervisor that a captured route never retargets to.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(super) fn native_local_routes(
+    provider_name: &str,
+    provider: &ProviderConfig,
+    rows: &[WorkerConfig],
+) -> BTreeMap<String, NativeRoute> {
+    let Some(host) = HOST.get() else {
+        return BTreeMap::new();
+    };
+    if !host.launch_permitted.load(Ordering::Relaxed) {
+        return BTreeMap::new();
+    }
+    let workers = host.lock();
+    let mut routes = BTreeMap::new();
+    for row in rows {
+        if row.binding.provider != provider_name {
+            continue;
+        }
+        let Some(hosted) = workers.get(&row.id) else {
+            continue;
+        };
+        if hosted.row != *row || hosted.provider != *provider {
+            continue;
+        }
+        let Some(slot) = hosted.native_slot() else {
+            continue;
+        };
+        routes.insert(
+            row.binding.model.clone(),
+            NativeRoute {
+                worker: hosted.worker.clone(),
+                slot: Arc::clone(slot),
+                wire_model: row.binding.model.clone(),
+            },
+        );
+    }
+    routes
+}
+
+/// No native channel here checks its peer against the supervised child, so
+/// no native route is on device (I2-LOCAL): the provider's own transport
+/// serves every call, at its own locality.
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+pub(super) fn native_local_routes(
+    _provider_name: &str,
+    _provider: &ProviderConfig,
+    _rows: &[WorkerConfig],
+) -> BTreeMap<String, NativeRoute> {
+    BTreeMap::new()
 }
 
 /// What an HTTP answer from a managed EXL3 worker must echo to keep a

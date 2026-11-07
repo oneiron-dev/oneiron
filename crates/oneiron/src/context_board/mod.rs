@@ -59,14 +59,19 @@ pub use history::{
 };
 pub(crate) use history::{fold_board_turns_in_txn, validate_board_claim};
 pub use self_brief::{
-    BriefPlacement, BriefSkillRow, ClassLimit, ClassVerdict, CommunicationLimits, PlacedSelfBrief,
-    SelfBrief, SelfBriefInput, SelfBriefSession, SelfBriefState,
+    BriefActPosture, BriefBranchBound, BriefCeiling, BriefCeilingPosture, BriefCeilingTarget,
+    BriefClassPrecedence, BriefConnectorCeiling, BriefContextBound, BriefCredentialCeiling,
+    BriefGrant, BriefGrants, BriefParentBound, BriefParentCeiling, BriefPlacement, BriefRunCeiling,
+    BriefSkillRow, BriefWorkingHandle, BriefWorkingSet, CommunicationLimits, PlacedSelfBrief,
+    SelfBrief, SelfBriefInput, SelfBriefSession, SelfBriefState, brief_credential_ceiling,
+    brief_run_ceiling,
 };
 mod hook_pins;
 mod memories;
 mod memories_frame;
 mod memories_projection;
 mod memory_pins;
+mod memory_writers;
 pub use hook_pins::{HookPin, HookShare};
 mod notifications;
 pub use memories::MemoryTier;
@@ -94,8 +99,8 @@ pub use stream::{
     AppliedStreamState, BoardEvent, BoardRenderMode, BoardSnapshot, BoardStreamFrame,
     BoardStreamRegistry, CarrierCoalesceBuffer, CoalesceOutcome, CommittedTaskBoardState,
     DeliveryClass, DeliveryPolicy, DeltaRow, FrameApplyOutcome, FrameEnqueueOutcome, FrameKind,
-    PendingDiaryReview, RouteObservation, StreamConnectionId, StreamConnectionState,
-    SubscriptionError, SubscriptionReceipt, SubscriptionScope, WakeEnvelope,
+    PendingDiaryReview, PendingRoomWake, RoomWakeRead, RouteObservation, StreamConnectionId,
+    StreamConnectionState, SubscriptionError, SubscriptionReceipt, SubscriptionScope, WakeEnvelope,
 };
 mod layout;
 mod layout_store;
@@ -168,7 +173,10 @@ pub use tasks::{
     render_tasks_section,
 };
 pub(crate) use tasks::{ack_task_in_txn, cancel_task_in_txn, task_is_acked, task_is_cancelled};
-pub use turn_opener::{is_turn_opener_line, turn_opener_line};
+pub use turn_opener::{
+    TURN_WAKE_GRAMMAR, TurnWake, is_turn_opener_line, turn_opener_line, turn_wake_line,
+    wake_batch_opener,
+};
 
 /// Collapse control characters and the Unicode line and paragraph separators
 /// (which are not controls) so a rendered row is always one physical line,

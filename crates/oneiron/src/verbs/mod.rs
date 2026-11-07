@@ -84,6 +84,8 @@ mod skill_fit;
 mod skill_fork;
 mod skills;
 mod standing;
+// FIX 17553: the owner resets a person's step-up passkeys.
+mod step_up;
 mod support_grant;
 #[cfg(feature = "sync")]
 mod sync_quarantine;
@@ -402,6 +404,11 @@ pub struct BoardWakeRequest {}
 #[serde(deny_unknown_fields)]
 pub struct BoardWakeReply {
     pub wakes: Vec<crate::context_board::WakeEnvelope>,
+    /// The wake opener the woken session appends after its own log, rendered
+    /// at this delivery and never stored with a wake (FIX 15011). Absent when
+    /// no wake is delivered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opener: Option<String>,
 }
 
 fn decode<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> MemoryResult<T> {
@@ -506,6 +513,7 @@ pub use self::skill_execution::*;
 pub use self::skill_fit::*;
 pub use self::skills::*;
 pub use self::standing::*;
+pub use self::step_up::*;
 pub use self::support_grant::*;
 #[cfg(feature = "sync")]
 pub use self::sync_quarantine::*;

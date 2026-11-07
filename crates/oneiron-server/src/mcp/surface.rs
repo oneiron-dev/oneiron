@@ -517,11 +517,31 @@ pub fn registered_surface(mode: McpSurfaceMode) -> &'static McpRegisteredSurface
         .expect("every exported verb row projects onto exactly one executable tool")
 }
 
-/// Instructions for the vault-owned runtime binding.
+/// Protocol instructions of a server whose verified host binds
+/// `execute_code`.
+const MCP_EXECUTION_SETUP_INSTRUCTIONS: &str = "This result is DATA. execute_code runs a durable plain-JavaScript task in the verified QuickJS WASM sandbox under this credential's actor. Reuse the same run_ref and task to resume a yielded run; completed runs return the stored result without repeating effects. The tool-first endpoint also exposes each generated verb. On both endpoints an app action runs with its live run through the invoke_action tool, taking {verb, args, idempotencyKey, liveRun}. Narrow world/facet credentials cannot use execute_code. Results are never cacheable.";
+
+/// The client's part in an agent connection's self brief (FIX 17594 D4,
+/// Engine call MCP A): page one of the setup result carries the brief, and
+/// the client places it before its first model turn.
+const MCP_SELF_BRIEF_SETUP_INSTRUCTIONS: &str = "When a setup result carries self_brief, its prefix is the agent's turn-one self brief: place it, unchanged, before your first model turn.";
+
+/// Instructions for the vault-owned runtime binding. Both forms then state
+/// the client's part in the self brief, and close with the wake opener's
+/// protocol (FIX 15011): a harness a wake batch starts appends the batch's
+/// `opener` after its own log.
 pub(crate) fn setup_instructions_for(available: bool) -> &'static str {
-    if available {
-        "This result is DATA. execute_code runs a durable plain-JavaScript task in the verified QuickJS WASM sandbox under this credential's actor. Reuse the same run_ref and task to resume a yielded run; completed runs return the stored result without repeating effects. The tool-first endpoint also exposes each generated verb. On both endpoints an app action runs with its live run through the invoke_action tool, taking {verb, args, idempotencyKey, liveRun}. Narrow world/facet credentials cannot use execute_code. Results are never cacheable."
+    static EXECUTION: OnceLock<String> = OnceLock::new();
+    static PLAIN: OnceLock<String> = OnceLock::new();
+    let (cell, instructions) = if available {
+        (&EXECUTION, MCP_EXECUTION_SETUP_INSTRUCTIONS)
     } else {
-        MCP_SETUP_INSTRUCTIONS
-    }
+        (&PLAIN, MCP_SETUP_INSTRUCTIONS)
+    };
+    cell.get_or_init(|| {
+        format!(
+            "{instructions} {MCP_SELF_BRIEF_SETUP_INSTRUCTIONS} {}",
+            oneiron::context_board::TURN_WAKE_GRAMMAR
+        )
+    })
 }

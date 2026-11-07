@@ -72,6 +72,14 @@ side_tables! {
     /// latest transition by id. A retry finds it and changes nothing. Key: hash32 (the request's
     /// entry hash).
     SECRET_CUSTODY_OUTPUT: VaultMeta b"secret_custody:output:v1:" Raw Engine;
+    /// The owner's mark that he imported one export secret request's supplement here, which this
+    /// install could not sign in the import's writer, with no live machine profile or no install
+    /// key loaded (FIX 12291): the owner the import revalidated, the surface he imported from
+    /// and the second the import was at, until a pass that can sign carries it or finds nothing
+    /// owed. Holds no secret byte, ciphertext, secret name, proof, credential or key. Key: hash32
+    /// (the request's entry hash).
+    SECRET_CUSTODY_PENDING_IMPORT_MARK: VaultMeta b"secret_custody:pending_import_mark:v1:" Named Engine
+        => crate::store::pending_import_mark::erase_pending_import_mark_actor_in_txn;
     /// A revoke of one portable custody record this install made but could not carry for the
     /// owner yet, with no live machine profile or no install key loaded (CALLS
     /// CUSTODY_REVOKE_PENDING_CARRY): the owner it is by, the surface he decided on, the second
@@ -240,7 +248,8 @@ side_tables! {
     /// The owner's board layout settings (BOARD-LAYOUT): the board cap, the default layout an
     /// agent's board renders under until it lays out its own, and the override whose sections win
     /// over every agent's own. Absent reads empty. Key: ().
-    BOARD_LAYOUT_SETTINGS: VaultMeta b"settings:board_layout:v1" Named;
+    BOARD_LAYOUT_SETTINGS: VaultMeta b"settings:board_layout:v1" Named
+        => crate::settings::board_layout::erase_board_layout_agent_override_in_txn;
     /// One client-readable customization-settings change-notification event. Key: u64be (sequence).
     CUSTOMIZATION_EVENT: VaultMeta b"settings:customization:v1:event:" Named Authored [accepts: crate::settings::customization_event_accepts_masked];
     /// Monotonic sequence counter for customization change-notification events. Key: ().
@@ -334,6 +343,13 @@ side_tables! {
     /// One Owner's notice that a waiting shared act matured. Key: hex32 (owner id) ":" hex32 (act
     /// id).
     SHARED_ACT_MATURED: VaultMeta b"shared-act:matured:v1:" Raw;
+    /// A membership change this install executed with no host issuer to sign it, whose
+    /// carrier-signed record it still owes (FIX 12335): the vault, the cause, the person who
+    /// executed it, the member it moved, the act, the second it was executed at, the signed-mint
+    /// Grants it withdrew and an Owner act's handover, until the pass whose writer the fold counts
+    /// the record in. Holds no value, credential or proof. Key: hex32 (receipt id).
+    SHARED_ACT_MEMBERSHIP_PENDING: VaultMeta b"shared-act:membership-pending:v1:" Named Engine
+        => crate::Vault::erase_pending_membership_execution_actor_in_txn;
     /// One recipient's notice of an executed shared act or membership change. Key: hex32 (recipient
     /// id) ":" hex32 (receipt id).
     SHARED_ACT_OUTCOME: VaultMeta b"shared-act:outcome:v1:" Raw;
@@ -363,6 +379,10 @@ side_tables! {
     SHARED_VAULT_CREATION: VaultMeta b"shared-vault:creation:v1" LegacyJson;
     /// The executed delete-the-vault act and its backup retention deadline. Key: ().
     SHARED_VAULT_DELETION: VaultMeta b"shared-vault:deleted:v1" LegacyJson;
+    /// The key a pending invitation's own slips must bind, as the invitee bound it with an
+    /// independent credential of their own or an owner's invitation pairing code (FIX 8745).
+    /// Key: hex32 (invitee id) ":" hex32 (invitation id).
+    SHARED_VAULT_INVITATION_KEY: VaultMeta b"shared-vault:invitation-key:v1:" Raw;
     /// One invitation of a person into the shared vault, pending until they accept, decline or an
     /// `add_member` holder withdraws it. Key: hex32 (invitee id) ":" hex32 (invitation id).
     SHARED_VAULT_INVITATION: VaultMeta b"shared-vault:invitation:v1:" Raw;
@@ -498,8 +518,12 @@ side_tables! {
     /// Key: ().
     SKILL_ATTRIBUTION_SWEEP_SCAN_CURSOR: VaultMeta b"skill_attribution:sweep_scan:v1" Raw;
     /// One outcome the attribution judge left `unclear`, with each unclear hunk's reason, share and
-    /// note, awaiting Dreamer clustering. Key: string (lane ":" reference).
-    SKILL_ATTRIBUTION_UNCLEAR: VaultMeta b"skill_attribution:unclear:v1:" Raw;
+    /// note, and the context frozen with them (FIX 7824): actor, skill, scope, project, task type,
+    /// attempt receipt, judge revision and model, and the rows the judge read; awaiting Dreamer
+    /// clustering. A row whose context names an erased entity goes whole. Key: string (lane ":"
+    /// reference).
+    SKILL_ATTRIBUTION_UNCLEAR: VaultMeta b"skill_attribution:unclear:v1:" Raw
+        => crate::skill_attribution::erase_unclear_entity_in_txn;
     /// Skills citing a source. Key: id16 + id16.
     SKILL_SOURCE_INDEX: VaultMeta b"skill_convert/source_index/v1\0" Raw;
     /// Staleness note of a skill. Key: id16.
@@ -715,6 +739,27 @@ side_tables! {
     /// Blake3 digest stamp of the last claim body that produced a subject's composite state-index
     /// claim, used to detect out-of-band claim edits. Key: id16.
     AFFECT_STATE_COMPOSITE_PRODUCER: VaultMeta b"state:composite:producer:v1:" Raw;
+    /// An open MFA step-up ceremony (FIX 11694): the person, the exact slip it is bound to, the
+    /// ceremony and when it closes. Key: the 32 challenge bytes.
+    STEP_UP_CHALLENGE: VaultMeta b"step_up:challenge:v1:" Named
+        => crate::authority::erase_step_up_challenges_actor_in_txn;
+    /// A person's enrolled passkey (FIX 11694): credential id, COSE algorithm, public key, RP id,
+    /// origin, counter, label and times. Holds no secret. Key: id16 (the person) + SHA-256 (32) of
+    /// the credential id.
+    STEP_UP_PASSKEY: VaultMeta b"step_up:passkey:v1:" Named
+        => crate::authority::erase_step_up_passkeys_actor_in_txn;
+    /// A completed MFA step-up on one slip (FIX 11694): the person, the factor, the passkey and
+    /// when. Key: the 32-byte slip id.
+    STEP_UP_RECORD: VaultMeta b"step_up:record:v1:" Named
+        => crate::authority::erase_step_up_records_actor_in_txn;
+    /// Pending authenticator enrollment: the exact slip, sealed seed, key ref and expiry.
+    /// Key: person id16 + enrollment id32; never replaces a confirmed enrollment.
+    STEP_UP_TOTP_PENDING: VaultMeta b"step_up:totp:pending:v1:" Named Ciphertext
+        => crate::authority::erase_step_up_totp_actor_in_txn;
+    /// A person's confirmed authenticator: sealed seed, erasable key ref and spent step.
+    /// Key: person id16 + enrollment id32. Seed bytes never rest in plaintext.
+    STEP_UP_TOTP: VaultMeta b"step_up:totp:v1:" Named Ciphertext
+        => crate::authority::erase_step_up_totp_actor_in_txn;
     /// Storage ABI stamp. Key: ().
     STORAGE_ABI_VERSION: VaultMeta b"storage_abi_version" Raw;
     /// Per-generation stream receipt keyed by its receipt ref. Key: hex32 ":" hex32.

@@ -20,7 +20,9 @@ mod client;
 mod never_sent;
 mod reply_line;
 
-pub(super) use reply_line::{ReplyBytes, charge_read, holding_chat_replies, holding_replies};
+pub(super) use reply_line::{
+    ReplyBytes, charge_read, holding_chat_replies, holding_replies, read_broker_booked,
+};
 use reply_line::{read_booked, read_whole};
 
 /// The smallest request body worth compressing (ARCH-0081 §6).
@@ -232,7 +234,6 @@ pub(super) enum HttpReleaseError {
 
 type ReleaseSending<'a> =
     Pin<Box<dyn Future<Output = Result<reqwest::Response, HttpReleaseError>> + Send + 'a>>;
-
 
 /// A finished exchange's reply as JSON: an empty body is null, and a body
 /// that does not parse is null on an error status and malformed otherwise.

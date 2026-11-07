@@ -77,6 +77,31 @@ pub(crate) fn call_verb<'a>(
             return dispatch::call_verb(server, call, verb, Ok(value)).await;
         };
         let invocation = named.expect("named invocation checked above");
+        // Settlement's run of a held call reopens its held intent (FIX 8753).
+        let resumed = call.drain().is_some();
+        // A paced call the drain already ran answers its saved outcome to
+        // the same caller's retry, before an admission intent starts again:
+        // that intent is settled, and the effect never runs twice (FIX 8753).
+        if !resumed {
+            let ended = crate::server::blocking(|| {
+                let memory = super::facade_invocation(
+                    crate::api::credential_memory(server.vault(), Some(call.auth()), actor, class)
+                        .at(call.auth().locality()),
+                    call,
+                )?;
+                Ok::<_, FacadeApiError>(memory.ended_paced_verb_reply(verb))
+            })?;
+            match ended {
+                Some(Ok(value)) => {
+                    return Ok(FacadeCallOutput::listed(
+                        value,
+                        &oneiron::memory::ProducerRows::default(),
+                    ));
+                }
+                Some(Err(error)) => return Err(error.into()),
+                None => {}
+            }
+        }
         let digest = oneiron::receipt::call_json_digest(&value);
         let room = call.room_turn()?.map(|id| id.to_hex()).unwrap_or_default();
         let fingerprint = crate::api::facade::invocation_body(
@@ -93,7 +118,16 @@ pub(crate) fn call_verb<'a>(
             let vault = Arc::clone(server.vault());
             let name = verb.clone();
             let tracker = super::clock_ingress::run_blocking(move || {
-                AdmissionTracker::start(vault, actor, class, invocation, &name, digest, fingerprint)
+                AdmissionTracker::start(
+                    vault,
+                    actor,
+                    class,
+                    invocation,
+                    &name,
+                    digest,
+                    fingerprint,
+                    resumed,
+                )
             })
             .await
             .map_err(|_| super::host_doors::support::internal(&verb))??;
