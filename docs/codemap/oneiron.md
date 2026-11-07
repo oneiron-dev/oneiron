@@ -1531,6 +1531,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/storage/records/bodies/context.rs` | src | s | 1 crate-vis | — | One code-run output body for a heal's recorded cause (FIX 7275): the context-safe read of a raw output… |
 | `src/code_run/storage/records/bodies/context_output.rs` | src | s | 1 crate-vis | — | Context outputs published with the replay record that holds them |
 | `src/code_run/storage/records/bodies/host_occurrence.rs` | src | s | 2 crate-vis | — | A host parent run's record and whose it is (FIX 9019) |
+| `src/code_run/storage/records/bodies/progress.rs` | src | s | 1 crate-vis | — | Canonical runtime-file occurrences before their bodies finish |
 | `src/code_run/storage/records/bodies/reader.rs` | src | s | 2 crate-vis | — | A result body read as it streams (FIX 3677 step 7, FIX 5392): what the whole read checks, read a frame at a… |
 | `src/code_run/storage/replay_bodies.rs` | src | s | 6 crate-vis | — | A code run's replay outcomes under body custody (KS-2B1, FIX 5683 part B1) |
 | `src/code_run/storage/replay_capsule.rs` | src | m | 1 fn · 25 crate-vis | — | The step replay capsule and contribution fork rows (FIX 3028): each capsule's metadata keyed by its attempt… |
@@ -1550,6 +1551,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/storage/routing.rs` | src | L | 42 crate-vis | — | Where one run's reads and writes land: the canonical vault or a bound off-record session |
 | `src/code_run/storage/routing/bodies.rs` | src | m | 13 crate-vis | — | A session-bound run's result bodies: the sinks they stream through, the routed rows that publish one and the… |
 | `src/code_run/storage/routing/bodies/admitted_reply.rs` | src | s | 2 crate-vis | — | A session-bound run's reply bodies, admitted as the vault's are (FIX 6647, FIX 5718 part 3) |
+| `src/code_run/storage/routing/output_progress.rs` | src | s | 1 crate-vis | — | Pre-publication descriptors for canonical runtime files |
 | `src/code_run/storage/routing/replay.rs` | src | s | 1 crate-vis | — | A bound session's replay append, on the run's one route, in one routed transaction: the record compared… |
 | `src/code_run/storage/routing/type_feedback.rs` | src | s | 14 crate-vis | — | A run's type feedback rows on its own route (FIX 10389, CALLS "session feedback lives on the session route… |
 | `src/code_run/storage/secret_lift.rs` | src | s | 5 struct · 1 fn · 1 re-export · 3 crate-vis | CodeRunSecretLiftDismiss, CodeRunSecretLiftDismissal, CodeRunSecretLiftProposalView, CodeRunSecretLiftRequest, CodeRunSecretLiftStatus | Value-free owner decisions on code-run secret lift proposals |
@@ -2906,7 +2908,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/engine_executor/continuation/seed.rs` | src | m | 3 crate-vis | — | Child-owned frozen continuation state, kept as reply-bearing content |
 | `src/engine_executor/driver.rs` | src | m | 1 struct · 11 fn · 5 crate-vis | EngineNativeExecutor | Executor driver: struct, constructors, and the witness-turn doors |
 | `src/engine_executor/history.rs` | src | s | 3 struct · 2 fn | FoldHistory, FoldHistoryEpoch, FoldHistoryStep | Durable steps and landed compaction boundaries of an attached run |
-| `src/engine_executor/host.rs` | src | m | 12 crate-vis | — | The recording JS host, its state and its runtime adapter |
+| `src/engine_executor/host.rs` | src | m | 13 crate-vis | — | The recording JS host, its state and its runtime adapter |
 | `src/engine_executor/host/boundary.rs` | src | s | 2 crate-vis | — | The linked sandbox boundary of the executor and its required host imports |
 | `src/engine_executor/host/dispatch.rs` | src | m | 7 crate-vis | — | Recording dispatch and callable-skill answers for one JS host |
 | `src/engine_executor/host/live_cutoff.rs` | src | s | 3 crate-vis | — | A scoped child's guest reads stop at its live cutoff (FIX 8233) |
