@@ -322,6 +322,66 @@ pub(in crate::sync) fn prepare_bounded_replacement(
     })
 }
 
+/// The replacement of a private world's sealed mirror `old` by `snapshot`, a mirror a bundle
+/// section carried that does not merge into it (FIX 17210): a mirror cut history-free whose root
+/// `old` lacks, or one whose operations run concurrent with `old`'s own cut. As a window
+/// replacement does, the candidate is a fresh document built from the snapshot alone, and `old`
+/// contributes what this vault holds that the snapshot does not: steps 1, 2 and 4 above, on the
+/// document alone. A mirror has no queued sends, pending mirrors or markers here, and its caller
+/// lands its rows. Returns the candidate and how many of `old`'s values it could not carry over.
+///
+/// # Errors
+///
+/// A snapshot that does not decode whole; storage failures.
+pub(crate) fn replace_detached_mirror(
+    vault: &Vault,
+    old: &LoroDoc,
+    snapshot: &[u8],
+) -> Result<(LoroDoc, usize)> {
+    let meta = LoroDoc::decode_import_blob_meta(snapshot, true).map_err(|_| rejected())?;
+    let candidate = LoroDoc::from_snapshot(snapshot).map_err(|_| rejected())?;
+    if !candidate.oplog_vv().includes_vv(&meta.partial_end_vv) {
+        return Err(rejected());
+    }
+    let mut hard = hard_tombstones(&candidate);
+    let (mut conflicts, written) = carry_over_unseen_writes(old, &candidate)?;
+    carry_over_hard_deletes(vault, old, &candidate)?;
+    carry_over_mirror_hard_deletes(old, &candidate)?;
+    hard.extend(hard_tombstones(&candidate));
+    conflicts.extend(keep_hard_deletes(&candidate, &hard, &written)?);
+    conflicts.extend(delete_wins(&candidate, &written)?);
+    candidate.commit();
+    conflicts.retain(|conflict| !holds_value(&candidate, conflict));
+    Ok((candidate, conflicts.len()))
+}
+
+/// Every hard delete the mirror `old` holds that `candidate` does not hold
+/// hard, applied to the candidate with the removal of its carriers: a mirror
+/// keeps another machine's hard deletes, which this vault may never have
+/// marked, and no replacement softens or drops one, whatever order the two
+/// copies' writes take (FIX 17210).
+fn carry_over_mirror_hard_deletes(old: &LoroDoc, candidate: &LoroDoc) -> Result<()> {
+    let tombstones = TombstoneIndex::build(&candidate.get_map("tombstones"));
+    let mut hard = Vec::new();
+    for (key, raw) in hard_tombstones(old) {
+        let Ok(id) = EntityId::from_hex(&key) else {
+            continue;
+        };
+        if !tombstones
+            .values_for(&id)
+            .iter()
+            .any(|held| crate::deletion::decode_tombstone_value(held).is_hard())
+        {
+            hard.push((id, raw));
+        }
+    }
+    for (id, raw) in &hard {
+        apply_tombstone_to_indexed_window_doc(candidate, &tombstones, id, raw)?;
+    }
+    candidate.commit();
+    Ok(())
+}
+
 /// A persisted replacement, ready to install.
 #[derive(Debug)]
 pub struct PreparedReplacement {

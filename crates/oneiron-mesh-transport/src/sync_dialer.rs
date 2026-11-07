@@ -91,3 +91,21 @@ impl SyncDialer for MeshSyncDialer {
         })
     }
 }
+
+/// Routes a bearer option-link call to the install that issued it, through
+/// the existing roster and transport policy. The MACHINE is a locator only;
+/// the original Vault bearer methods decide the call and keep their result.
+pub async fn request_ask_option_link(
+    vault: Arc<oneiron::Vault>,
+    transport: Arc<dyn MeshTransport>,
+    config: &oneiron::sync::SyncClientConfig,
+    admitting_machine: MachineId,
+    request: oneiron::sync::ask_option_link::AskOptionLinkRequest,
+) -> Result<
+    Option<oneiron::sync::ask_option_link::AskOptionLinkReply>,
+    oneiron::sync::transport::TransportError,
+> {
+    let mut origin = config.clone();
+    origin.mesh_dialer = Some(Arc::new(MeshSyncDialer::new(transport, admitting_machine)));
+    oneiron::sync::client::request_ask_option_link(vault, &origin, admitting_machine, request).await
+}

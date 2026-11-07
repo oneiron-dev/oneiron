@@ -33,6 +33,8 @@ pub struct AgentVerbAnswer {
     pub rows: Option<Vec<EntityId>>,
     pub observations: Vec<RunObservation>,
     pub hooks: Vec<SessionHookDisposition>,
+    /// Native handoff only. The write receipt keeps this in its output manifests.
+    pub(crate) stored_output: Option<crate::code_run::CodeRunRawOutput>,
 }
 
 impl AgentVerbAnswer {
@@ -45,6 +47,7 @@ impl AgentVerbAnswer {
             rows,
             observations: Vec::new(),
             hooks: Vec::new(),
+            stored_output: None,
         }
     }
 
@@ -211,10 +214,11 @@ pub trait AgentVerbDoor: Send + Sync {
 
     /// Admits one read a run bound to an off-record session serves through
     /// the room's view (WILL L11-01): `vault.get`, `vault.hydrate`,
-    /// `vault.refs.resolve` or `vault.search.bm25`. The answer is the key
-    /// the read reads under: this door's caller, as its credential and
-    /// ceiling bind them now, never a wider key. A door that admits no such
-    /// read refuses it as a session-bound run's verbs were refused before.
+    /// `vault.refs.resolve`, `vault.search.bm25` or `vault.receipts` (FIX
+    /// 7355). The answer is the key the read reads under: this door's
+    /// caller, as its credential and ceiling bind them now, never a wider
+    /// key. A door that admits no such read refuses it as a session-bound
+    /// run's verbs were refused before.
     fn admit_session_read(
         &self,
         _verb: crate::task_verb::sdk::AgentVerb,
