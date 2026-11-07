@@ -351,7 +351,7 @@ impl EngineNativeExecutor<'_> {
         let mut reads = std::collections::BTreeSet::new();
         for seq in mark.from..=mark.through {
             let message = super::compaction::window_message(
-                super::compaction::step_message_id(run_id, seq),
+                super::compaction::step_message_id(run_id, seq)?,
                 turn_id,
                 seq,
                 // A step's program, as its observation, is carried up to the
@@ -444,7 +444,7 @@ impl EngineNativeExecutor<'_> {
         let calls = u64::try_from(record.bridge_calls.len())
             .map_err(|_| crate::Error::ArithmeticOverflow("executor call count"))?;
         let request = driver.fold_request(
-            super::compaction::fold_request_id(run_id, mark.fold),
+            super::compaction::fold_request_id(run_id, mark.fold)?,
             &session,
             window,
             pins,

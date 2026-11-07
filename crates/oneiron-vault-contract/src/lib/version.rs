@@ -389,9 +389,7 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// every answer repeats it with the other six fields. A `held` answer
 /// requires `visibility`
 /// ([`RelayHoldVisibility`](crate::relay_delete::RelayHoldVisibility):
-/// `visible` or `silent_only`); the relay answers a silent-only one with a
-/// neutral `completion_pending` that names no hold, and a visible one with
-/// `held_until_release`. A relay's deferred-delete intent requires its
+/// `visible`), and the relay answers it with `held_until_release`. A relay's deferred-delete intent requires its
 /// generation too. The supervisor binds a locker and forwards a relay's
 /// retirements only to an engine boot that proved revision 2; a relay
 /// binary, broker or engine before the floor is not mixed with one after it.

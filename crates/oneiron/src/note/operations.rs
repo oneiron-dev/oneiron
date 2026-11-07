@@ -238,6 +238,9 @@ pub(super) fn resolved_authorship_with_birth_in_txn(
                         })
                 }
                 NoteActor::Erased => NoteActor::Erased,
+                // A source vault's author resolves through no local stamp
+                // token (FIX 7777).
+                imported @ NoteActor::Imported(_) => imported,
             }
         };
         resolved.push(record);

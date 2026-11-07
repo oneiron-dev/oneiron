@@ -543,11 +543,6 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         ArgvUse::Refused(NO_TUNING_LAYER_REASON),
     ),
     (
-        "max-ephemeral-payload-bytes",
-        |args| args.max_ephemeral_payload_bytes.is_some(),
-        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
-    ),
-    (
         "max-ephemeral-snapshot-bytes",
         |args| args.max_ephemeral_snapshot_bytes.is_some(),
         ArgvUse::Refused(NO_TUNING_LAYER_REASON),

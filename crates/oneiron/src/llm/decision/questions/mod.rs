@@ -67,6 +67,7 @@ pub use outcomes::{
 };
 pub(crate) use reader_authority::question_lane;
 pub(crate) use recipe::run_graph_question_with_proposals;
+pub(crate) use recipe::run_graph_question_with_proposals_sourced;
 pub use recipe::{GraphQuestionInput, GraphQuestionRef, run_graph_question};
 pub use records::*;
 pub(crate) use refresh::answer_records_in_txn;

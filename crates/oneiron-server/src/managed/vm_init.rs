@@ -468,20 +468,40 @@ fn run_engine(
     let (lost_sender, lost) = mpsc::channel();
     let mut restoring = None;
     let mut anchored = None;
+    let mut source = match super::vm_source_control::Prepared::new(&args.vault) {
+        Ok(source) => Some(source),
+        Err(error) => {
+            eprintln!("oneiron-vm-init: source control unavailable: {error:#}");
+            None
+        }
+    };
+    let mut source_owner = None;
+    let mut spawn = |fds: &[(RawFd, RawFd)],
+                     flags: &[OsString]|
+     -> anyhow::Result<std::process::Child> {
+        let engine = start_engine(args, uid, flags, fds, &runtime)?;
+        if let Some(prepared) = source.take() {
+            match prepared.start(&engine) {
+                Ok(owner) => source_owner = Some(owner),
+                Err(error) => eprintln!("oneiron-vm-init: source control unavailable: {error:#}"),
+            }
+        }
+        Ok(engine)
+    };
     let mut refresh_companion = || {
         if let Some(companion) = companion.as_mut() {
             companion.refresh(&args.vault, uid, ENGINE_PATH);
         }
     };
     let status = match restore_channel {
-        None => start_engine(args, uid, &flags, &anchor_fds, &runtime).and_then(|mut engine| {
+        None => spawn(&anchor_fds, &flags).and_then(|mut engine| {
             anchored = Some(anchor.start(lost_sender)?);
             restore::supervise(&mut engine, &lost, &mut refresh_companion)
         }),
         Some(channel) => restore::start(channel, lost_sender.clone(), |fds, restore_flags| {
             let fds = [fds, &anchor_fds[..]].concat();
             let flags = [&flags[..], restore_flags].concat();
-            start_engine(args, uid, &flags, &fds, &runtime)
+            spawn(&fds, &flags)
         })
         .and_then(|started| {
             let restoring = restoring.insert(started);
@@ -489,6 +509,8 @@ fn run_engine(
             restoring.wait(&lost, &mut refresh_companion)
         }),
     };
+    // End the original-child source owner before the existing cleanup.
+    drop(source_owner);
     // The anchor's socket goes with the engine.
     drop(anchored);
     // The companion goes first, while the key is in: it may be writing into

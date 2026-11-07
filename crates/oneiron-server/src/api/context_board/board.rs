@@ -755,11 +755,9 @@ pub(super) async fn board_people(
                 run.render.resident_people().clone()
             }
             Some(run) => {
-                let mut pinned = vec![run.state.self_ref, run.state.principal];
-                pinned.extend(run.state.cast.iter().copied());
                 people
                     .residence_within(
-                        &pinned,
+                        &run.state.pinned_people(),
                         people_budget_tok
                             .unwrap_or(oneiron::context_board::PEOPLE_PREFIX_BUDGET_TOK),
                     )

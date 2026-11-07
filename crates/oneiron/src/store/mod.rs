@@ -301,6 +301,7 @@ pub(crate) mod known_value_index;
 pub(crate) use oneiron_store::l2_evidence;
 pub mod owned_body;
 pub(crate) mod pending_custody_revoke;
+pub(crate) mod pending_import_mark;
 pub use oneiron_store::receipt_identity;
 pub mod receipt_row;
 pub mod reference_refusal;

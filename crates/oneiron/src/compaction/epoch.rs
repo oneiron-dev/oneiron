@@ -43,13 +43,6 @@ pub const EPOCH_SUMMARY_BODY_VERSION: u64 = 1;
 /// for grains are display-layer property owned elsewhere.
 pub const EPOCH_SUMMARY_LEVEL: u64 = 0;
 
-/// Hard cap on the sources a host-numbered log's summary derives from.
-///
-/// For an executor run the `DerivedFrom` set IS the erasure and disclosure
-/// fence (there is no turn range to fall back on), so a window naming more
-/// sources is refused, never cut.
-pub const EPOCH_SUMMARY_MAX_SOURCES: usize = 1024;
-
 const KEY_EPOCH_V: &str = EPOCH_SUMMARY_BODY_KEYS[0];
 const KEY_EPOCH_SESSION: &str = EPOCH_SUMMARY_BODY_KEYS[1];
 const KEY_EPOCH_EPOCH: &str = EPOCH_SUMMARY_BODY_KEYS[2];

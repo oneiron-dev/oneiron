@@ -79,6 +79,9 @@ impl CanonicalEntityDocument {
             + metadata_size(&self.metadata)
             + self.record_fields.iter().map(String::len).sum::<usize>()
             + self.birth_actor.map_or(0, |actor| actor.len())
+            + self.origin.as_ref().map_or(0, |origin| {
+                origin.incarnation.len() + 12 * origin.version.len()
+            })
             + self.history.as_ref().map_or(0, |history| {
                 let versions = history.versions.iter().map(|version| {
                     16 + 4 * version.parents.len()

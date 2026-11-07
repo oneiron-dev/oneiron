@@ -114,7 +114,9 @@ pub(super) fn validate_public_raw_put(
         // `About`/`ClaimOf` edges either. Attribution is engine-stamped, so
         // this door refuses the type outright instead of validating a body it
         // cannot bind to an actor; `put_authored_note`, reached only from
-        // `Memory::author_take`, is the one NOTE writer.
+        // `Memory::author_take`, is the one NOTE writer for this vault's
+        // actors, and `put_archived_note`, whose capability proves an
+        // imported author, the archive import's (FIX 7777).
         crate::registry::ENTITY_TYPE_NOTE => {
             return Err(Error::Record(RecordError::InvalidNoteBody(
                 ERR_RAW_NOTE_PUT_REQUIRES_AUTHOR_TAKE,

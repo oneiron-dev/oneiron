@@ -5,6 +5,8 @@
 use std::io;
 use std::os::fd::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 /// One genuinely inherited HOST listener, consumed once by managed startup.
 /// This owns the socket; there is no public raw-identity/proof constructor.
@@ -17,6 +19,52 @@ pub struct HostLegalChannel {
 /// fields or constructor; neither a request nor an owner credential makes one.
 pub struct HostLegalConnection {
     pub(super) stream: UnixStream,
+    pub(super) role: Arc<HostLegalConnectionRole>,
+}
+
+/// What an accepted connection turned out to be, decided once: a prospective
+/// order's connection, or one managed teardown closed first. A connection
+/// teardown closed never becomes prospective, and one that is prospective is
+/// never closed by teardown's stop trigger.
+#[derive(Debug, Default)]
+pub struct HostLegalConnectionRole(AtomicU8);
+
+const ROLE_UNDECIDED: u8 = 0;
+const ROLE_PROSPECTIVE: u8 = 1;
+const ROLE_CLOSED: u8 = 2;
+
+impl HostLegalConnectionRole {
+    /// Makes the connection a prospective order's, unless teardown closed it
+    /// first. True when it did.
+    pub(super) fn claim_prospective(&self) -> bool {
+        self.0
+            .compare_exchange(
+                ROLE_UNDECIDED,
+                ROLE_PROSPECTIVE,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+    }
+
+    /// Teardown's stop trigger: closes the connection unless it is a
+    /// prospective order's. True when the caller must shut its socket.
+    pub fn close_unless_prospective(&self) -> bool {
+        match self.0.compare_exchange(
+            ROLE_UNDECIDED,
+            ROLE_CLOSED,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => true,
+            Err(role) => role == ROLE_CLOSED,
+        }
+    }
+
+    /// Whether the connection is a prospective order's.
+    pub fn is_prospective(&self) -> bool {
+        self.0.load(Ordering::Acquire) == ROLE_PROSPECTIVE
+    }
 }
 
 impl HostLegalChannel {
@@ -74,6 +122,7 @@ impl HostLegalChannel {
         }
         Ok(HostLegalConnection {
             stream: stream.into_std()?,
+            role: Arc::default(),
         })
     }
 }
@@ -83,6 +132,14 @@ impl HostLegalConnection {
     /// not a cloned listener or authority that admits another connection.
     pub fn shutdown_handle(&self) -> io::Result<UnixStream> {
         self.stream.try_clone()
+    }
+
+    /// This connection's role. Managed teardown shuts every accepted stream
+    /// that is not a prospective order's at its stop trigger and leaves those
+    /// open for the final drain
+    /// ([`crate::Vault::finish_host_legal_prospective`]).
+    pub fn role(&self) -> Arc<HostLegalConnectionRole> {
+        Arc::clone(&self.role)
     }
 }
 

@@ -144,6 +144,10 @@ pub enum EngineScan {
     /// One MACHINE claim's target index: the ids of its birth, transitions
     /// and handoffs.
     MachineHistoryTargetRows,
+    /// The prior-frontier tips one signed MACHINE claim transition names,
+    /// which its put door reads whole, per claim (once refused past 64;
+    /// FIX 8673).
+    MachineTransitionFrontier,
     /// One claim's incident edges of every kind, one way, which a claim-VAD
     /// consolidation or clear reads.
     ClaimVadIncidentEdges,

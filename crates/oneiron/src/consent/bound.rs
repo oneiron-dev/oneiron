@@ -5,7 +5,7 @@ pub(super) use crate::store::consent_bound::DOMAIN_ACTION;
 pub use crate::store::consent_bound::{
     ActionClass, ActionEnvelope, ActorBound, AudienceBound, BoundClass, BoundEnvelope,
     BoundSubject, ConsentDomain, DisclosureClass, DisclosureEnvelope, GrantBound,
-    MAX_AUDIENCE_MEMBERS, MAX_CONSENT_REF_LEN, MAX_ENVELOPE_SELECTORS,
+    MAX_CONSENT_REF_LEN,
 };
 
 pub(super) fn covers(grants: &[StandingConsentGrant], required: &GrantBound) -> bool {

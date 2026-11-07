@@ -530,6 +530,14 @@ file's `log_level`). A file with `[models.voice]` and no `--voice-socket` runs
 no voice loop, logged once with the reason `voice_socket_missing`; live voice
 sessions still run.
 
+An own-device sync connection can also copy settled default CLAIM vectors from
+its reachable home during scheduled housekeeping, even when this server has no
+ready embedder. This uses the existing pass budget and write admission. The
+current source, embedding model, transform, provenance and world route must
+match; another worker's active matching lease is left alone. A miss keeps the
+pending job for a later pass or the normal model worker. This is scheduled
+catch-up, not an offline vector carrier or an immediate fill at import.
+
 A managed vault reports how it came up on every ctl `Ping`, as `readiness`
 (contract v3): `{"state":"ready"}`, or `{"state":"degraded","missing":[...]}`
 naming each signing facility it serves without, as `{"facility","reason"}`:

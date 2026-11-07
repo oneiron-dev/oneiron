@@ -5056,8 +5056,8 @@ export_facade! {
     let output = client.vault_calendar_ics_import(&input)?;
     crate::codec::lift_record("vault.calendar.ics.import", &output)
 };
-"vault.calendar.occurrences" => fn vault_calendar_occurrences(&self, input: CalendarOccurrencesRequest) -> ScopedReadResultCalendarOccurrenceViewList = |client| {
-    let input: oneiron::calendar::query::CalendarOccurrencesRequest = crate::codec::lower_record("vault.calendar.occurrences", input)?;
+"vault.calendar.occurrences" => fn vault_calendar_occurrences(&self, input: CalendarOccurrencesPageRequest) -> ScopedReadResultCalendarOccurrencesPage = |client| {
+    let input: oneiron::calendar::query::CalendarOccurrencesPageRequest = crate::codec::lower_record("vault.calendar.occurrences", input)?;
     let output = client.vault_calendar_occurrences(&input)?;
     crate::codec::lift_record("vault.calendar.occurrences", &output)
 };
@@ -5071,13 +5071,13 @@ export_facade! {
     let output = client.vault_calendar_read(&input)?;
     crate::codec::lift_record("vault.calendar.read", &output)
 };
-"vault.calendar.search" => fn vault_calendar_search(&self, input: CalendarSearchRequest) -> ScopedReadResultCalendarEventViewList = |client| {
-    let input: oneiron::calendar::CalendarSearchRequest = crate::codec::lower_record("vault.calendar.search", input)?;
+"vault.calendar.search" => fn vault_calendar_search(&self, input: CalendarSearchPageRequest) -> ScopedReadResultCalendarSearchPage = |client| {
+    let input: oneiron::calendar::query::CalendarSearchPageRequest = crate::codec::lower_record("vault.calendar.search", input)?;
     let output = client.vault_calendar_search(&input)?;
     crate::codec::lift_record("vault.calendar.search", &output)
 };
-"vault.calendar.freebusy" => fn vault_calendar_freebusy(&self, input: CalendarFreebusyRequest) -> ScopedReadResultCalendarFreebusyDto = |client| {
-    let input: oneiron::task_verb::sdk::CalendarFreebusyRequest = crate::codec::lower_record("vault.calendar.freebusy", input)?;
+"vault.calendar.freebusy" => fn vault_calendar_freebusy(&self, input: CalendarFreebusyPageRequest) -> ScopedReadResultCalendarFreebusyPage = |client| {
+    let input: oneiron::calendar::query::CalendarFreebusyPageRequest = crate::codec::lower_record("vault.calendar.freebusy", input)?;
     let output = client.vault_calendar_freebusy(&input)?;
     crate::codec::lift_record("vault.calendar.freebusy", &output)
 };

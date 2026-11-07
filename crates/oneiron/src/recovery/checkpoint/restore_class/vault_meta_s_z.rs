@@ -30,6 +30,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SECRET_CUSTODY_INPUT, LIVE),
     (&t::SECRET_CUSTODY_NAME_INDEX, SECRET_CUSTODY),
     (&t::SECRET_CUSTODY_OUTPUT, LIVE),
+    // An owed import mark stands with the custody whose relay it ends (FIX 12291).
+    (&t::SECRET_CUSTODY_PENDING_IMPORT_MARK, LIVE),
     (&t::SECRET_CUSTODY_PENDING_REVOKE, LIVE),
     (&t::SECRET_CUSTODY_REBIND, LIVE),
     // A restore's pending credentials stand with the custody they wait on (FIX-LIST 10671).
@@ -314,6 +316,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::TASK_FANOUT_LAUNCH, LIVE),
     (&t::TASK_FANOUT_RUN, CONTENT),
     (&t::TASK_FANOUT_POLICY, CONTENT),
+    (&t::TEAM_BALLOT, CONTENT),
     (&t::TEAM_DELIVERABLE, CONTENT),
     (&t::TEAM_MARKET, CONTENT),
     (&t::TEAM_PATTERN_SKILL, CONTENT),
@@ -355,6 +358,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::AFFECT_VAD_ANNOTATION_META, CONTENT),
     (&t::VAULT_CLEANUP_ATTEMPT_ARCHIVE, CONTENT),
     (&t::VAULT_CLEANUP_DIGEST, CONTENT),
+    (&t::VAULT_CLEANUP_ENTITY_ROW, CONTENT),
     (&t::VAULT_CLEANUP_EXTRACTION_PERSON, CONTENT),
     (&t::VAULT_CLEANUP_POSTURE, LIVE),
     (&t::VAULT_CLEANUP_PROPOSAL, CONTENT),

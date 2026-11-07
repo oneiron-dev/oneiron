@@ -211,7 +211,7 @@ pub(super) fn land(
             let new_reviewers = card.reviewer_revisions();
             sync_card_membership(&vault.store, txn, &key, &old_sources, &new_sources)?;
             sync_reviewer_membership(&vault.store, txn, &key, &old_reviewers, &new_reviewers)?;
-            CARDS.put(&vault.store, txn, &key, &card)?;
+            super::receipt_index::put_card_in_txn(&vault.store, txn, &key, &card)?;
             touched.insert(key);
         }
         // An open `silent` card whose attempt has spoken since shows what was
@@ -231,7 +231,7 @@ pub(super) fn land(
             }
             card.silence = Some(refresh.silence);
             card.updated_at = now;
-            CARDS.put(&vault.store, txn, &refresh.key, &card)?;
+            super::receipt_index::put_card_in_txn(&vault.store, txn, &refresh.key, &card)?;
             touched.insert(refresh.key);
         }
         // A card its leader leaves open past the TTL goes up to the owner.
@@ -258,7 +258,7 @@ pub(super) fn land(
                 changed = true;
             }
             if changed {
-                CARDS.put(&vault.store, txn, &key, &card)?;
+                super::receipt_index::put_card_in_txn(&vault.store, txn, &key, &card)?;
                 touched.insert(key);
             }
         }

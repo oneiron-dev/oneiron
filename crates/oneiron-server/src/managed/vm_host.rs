@@ -687,6 +687,14 @@ impl VaultVm {
         self.connect(VM_VOICE_PORT).await
     }
 
+    /// The root bootstrap's source-only control connection. Read its
+    /// `VmSourceEngine` hello before sending one source ctl request; the
+    /// caller still binds the VM boot, original child and source actor.
+    pub async fn source_ctl(&self) -> anyhow::Result<UnixStream> {
+        self.connect(oneiron_vault_contract::vm::VM_SOURCE_CTL_PORT)
+            .await
+    }
+
     /// One ctl verb, exactly as a node's supervisor sends it.
     pub async fn ctl(&self, request: &CtlRequest) -> anyhow::Result<CtlResponse> {
         let stream = self.connect(VM_CTL_PORT).await?;

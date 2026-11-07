@@ -7,6 +7,7 @@
 //! stale VV, then wire notice). Reads and socket imports use short-lived
 //! sessions.
 
+mod copy;
 mod destination;
 mod entity;
 mod held_copy;
@@ -14,6 +15,7 @@ mod note_fork_upload;
 mod note_requests;
 pub(crate) mod note_state;
 pub use super::selector::secret_projection::RepoCopyEditReview;
+pub(crate) use copy::judged_id_in_txn;
 pub(crate) use destination::text_withheld;
 pub use destination::{
     admit_document_destination_in_txn, document_frame_withheld, document_frame_withheld_for,
@@ -171,12 +173,27 @@ impl DocumentRegistry {
         selector: &super::selector::SyncSelector,
     ) -> Result<()> {
         let bytes = super::selector::encode_sync_selector(selector)?;
+        // FIX 10872: a marked source held here crosses only as its copy
+        // stream, so its subscription and request go under its copy id.
+        let stream = self.copy_stream(id)?;
         self.vault.with_write_txn_grouped(|txn| {
-            eligible(&self.vault, txn, id)?;
-            DS_E.put(&self.vault.store, txn, &HexId(id), &bytes)?;
+            match stream {
+                Some(stream) => {
+                    eligible(&self.vault, txn, stream.source)?;
+                    DS_E.put(&self.vault.store, txn, &HexId(stream.wire), &bytes)?;
+                    DS_E.delete(&self.vault.store, txn, &HexId(stream.source))?;
+                }
+                None => {
+                    eligible(&self.vault, txn, id)?;
+                    DS_E.put(&self.vault.store, txn, &HexId(id), &bytes)?;
+                }
+            }
             Ok(())
         })?;
-        let frame = self.request_frame(id, selector)?;
+        let frame = match stream {
+            Some(stream) => self.copy_request_frame(stream, selector)?,
+            None => self.request_frame(id, selector)?,
+        };
         let _ = self.notices.send(frame);
         Ok(())
     }
@@ -226,6 +243,18 @@ impl DocumentRegistry {
         };
         let mut out = Vec::new();
         for (HexId(id), bytes) in rows {
+            // FIX 10872: a copy stream asks under its copy id with its
+            // lineage's vector; one stored under its source's id moves there.
+            if let Some(stream) = self.copy_stream(id)?
+                && !bytes.is_empty()
+            {
+                if stream.wire != id {
+                    self.move_copy_subscription(stream, &bytes)?;
+                }
+                let selector = super::selector::decode_sync_selector(&bytes)?;
+                out.push(self.copy_request_frame(stream, &selector)?);
+                continue;
+            }
             // A deleted/unshared entity never gets resurrected by reconnect.
             if self.vault.get_raw(&id)?.is_none() {
                 continue;
@@ -251,6 +280,15 @@ impl DocumentRegistry {
         let Some(bytes) = bytes else {
             return Ok(None);
         };
+        if let Some(stream) = self.copy_stream(id)?
+            && !bytes.is_empty()
+        {
+            if stream.wire != id {
+                self.move_copy_subscription(stream, &bytes)?;
+            }
+            let selector = super::selector::decode_sync_selector(&bytes)?;
+            return self.copy_request_frame(stream, &selector).map(Some);
+        }
         if self.vault.get_raw(&id)?.is_none() {
             return Ok(None);
         }

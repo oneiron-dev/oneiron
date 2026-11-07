@@ -30,7 +30,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/peer.rs` | src | s | 7 crate-vis | — | Who this process is, and closing its memory to processes of its own uid |
 | `src/responses.rs` | src | m | 1 crate-vis | — | OpenAI Responses over one broker-upgraded WebSocket per call |
 | `src/route_keys.rs` | src | s | 1 crate-vis | — | — |
-| `src/send.rs` | src | m | 1 struct · 12 crate-vis | SendPolicy | The broker's one send: verified TLS, no redirect, no retry, no proxy, and no content encoding, so the reply… |
+| `src/send.rs` | src | m | 1 struct · 16 crate-vis | SendPolicy | The broker's one send: verified TLS, no redirect, no retry, no proxy, and no content encoding, so the reply… |
 | `src/serve.rs` | src | m | 1 struct · 1 fn · 1 const · 1 crate-vis | ServeConfig | The broker's side of the socket: one call per connection, from the daemon's uid only |
 | `src/serve/tests.rs` | test | m | — | — | The broker end to end, on a real Unix socket against the local TLS fake: one send with the key, the… |
 | `src/shape.rs` | src | m | 1 enum · 10 fn · 2 crate-vis | Shape | The shape rows: for each wire protocol the broker speaks, the method, the path, the content type, where the… |

@@ -359,7 +359,7 @@ fn answer_verdict(
                 &["Take the screenshot again in this run, and name the ref it gave."],
             ));
         }
-        (Some(handle), None) => vec![pull(lane, handle)?],
+        (Some(handle), None) => vec![pull(reader, lane, handle)?],
         (None, _) => Vec::new(),
     };
     evidence.extend(images.iter().map(|image| image.evidence.id));
@@ -716,20 +716,27 @@ fn clock(request: &AiVerdictRequest) -> (Duration, u64) {
 }
 
 /// The image behind `handle`, pulled through the caller's own scoped read
-/// before any model reads it, as an evidence ref with its body version.
-fn pull(lane: Option<&ScopedRead<'_>>, handle: &str) -> MemoryResult<DecisionImage> {
-    let lane = lane.ok_or_else(|| {
-        MemoryError::bad_request_with(
-            "this caller reads no image through ai.verdict",
-            &["Ask through the SDK host door, which reads under your scoped read."],
-        )
-    })?;
+/// or a fact hook's host-bound grant before any model reads its body version.
+fn pull(
+    reader: &Memory<'_>,
+    lane: Option<&ScopedRead<'_>>,
+    handle: &str,
+) -> MemoryResult<DecisionImage> {
     let request = ImageViewRequest {
         handle: handle.to_owned(),
         region: None,
         edge: None,
     };
-    let mut pulled = oneiron::memory::pull_image(lane, &request, true)?.value;
+    let mut pulled = if let Some(lane) = lane {
+        oneiron::memory::pull_image(lane, &request, true)?.value
+    } else if let Some(grant) = hook::current_grant() {
+        oneiron::runtime_hooks::hook_pull_image(reader, &grant, &request)?.value
+    } else {
+        return Err(MemoryError::bad_request_with(
+            "this caller reads no image through ai.verdict",
+            &["Ask through the SDK host door, which reads under your scoped read."],
+        ));
+    };
     let image = pulled.image.take().ok_or_else(internal)?;
     let evidence = pulled.evidence.take().ok_or_else(internal)?;
     readable(DecisionImage {
