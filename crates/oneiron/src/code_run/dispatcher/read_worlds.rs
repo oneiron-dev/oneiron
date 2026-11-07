@@ -12,7 +12,9 @@
 //! A descriptor of one of the run's results that another run reads freezes
 //! the ledger's origins under the same clean epoch, and a read of another
 //! run's result notes the origins its descriptor froze, or, with none,
-//! marks the ledger unknown (FIX 7084).
+//! marks the ledger unknown (FIX 7084). A delivered wait's reply notes the
+//! origins its settler froze with it, at the position of the call parked on
+//! the wait, or, with none, marks the ledger unknown (FIX 7083).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -194,8 +196,36 @@ impl HostSelfDispatcher<'_> {
         at: u64,
         origins: Option<&ResultOrigins>,
     ) {
+        self.note_served_origins(run, at, origins, ReadWorldUnknown::RetainedResult);
+    }
+
+    /// Notes what a delivered wait's reply serves `run` at bridge position
+    /// `at`, the position of the call parked on the wait (FIX 7083): the
+    /// worlds and row scopes its settler froze with it, and a proof of no
+    /// scope for each row they hold as conflicted. A reply whose origins are
+    /// unknown marks the ledger `WaitReply`. A ledger write that fails marks
+    /// it unknown and never fails the resume.
+    pub(crate) fn read_worlds_wait_reply(
+        &self,
+        run: EntityId,
+        at: u64,
+        origins: Option<&ResultOrigins>,
+    ) {
+        self.note_served_origins(run, at, origins, ReadWorldUnknown::WaitReply);
+    }
+
+    /// Notes `origins` as served to `run` at bridge position `at`: their
+    /// worlds, then their row scopes and conflicted rows once the worlds
+    /// landed. Unknown origins mark the ledger for `unknown`.
+    fn note_served_origins(
+        &self,
+        run: EntityId,
+        at: u64,
+        origins: Option<&ResultOrigins>,
+        unknown: ReadWorldUnknown,
+    ) {
         let Some(origins) = origins else {
-            self.read_worlds_unknown(run, ReadWorldUnknown::RetainedResult);
+            self.read_worlds_unknown(run, unknown);
             return;
         };
         if self.read_worlds_noted(run, at, &origins.worlds) {

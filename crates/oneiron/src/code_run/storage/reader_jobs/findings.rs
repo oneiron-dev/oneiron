@@ -3,10 +3,13 @@
 //! a result of its own run and reported as its finding; and the card a done
 //! summary's reply carries. Each write goes through the run's one reader
 //! transaction door. A finding keeps the origins frozen at its first report
-//! (FIX 7084).
+//! (FIX 7084), and a done summary's card comes back to its parked call with
+//! the origins of its finding (FIX 7083).
 
 use super::{ReportOutcome, finding_key};
-use crate::code_run::{ExecutorStorage, ReaderFindingRef, ReaderJobState, ResultOrigins};
+use crate::code_run::{
+    ExecutorStorage, OriginsUnion, ReaderFindingRef, ReaderJobState, ResultOrigins,
+};
 use crate::{EntityId, Result};
 
 /// The one name a summary job's run binds its text to.
@@ -36,28 +39,40 @@ impl ExecutorStorage<'_> {
         Ok(Some(card))
     }
 
-    /// The reply a parked `summarize` comes back with: a done summary's
-    /// card, as the same call made again answers its memo hit, in place of
-    /// the `{task, state, ref}` its settle delivered. A summary settled
-    /// short, or one whose text is gone, keeps the delivered reply.
+    /// The reply a parked `summarize` comes back with, and its origins: a
+    /// done summary's card, as the same call made again answers its memo
+    /// hit, in place of the `{task, state, ref}` its settle delivered. A
+    /// summary settled short, or one whose text is gone, keeps the delivered
+    /// reply and `origins`, the origins delivered with it. A card's origins
+    /// are `origins` with those of the finding it was read from, unknown
+    /// when either is (FIX 7083).
     pub(crate) fn delivered_summary_reply(
         &self,
         reply: serde_json::Value,
-    ) -> Result<serde_json::Value> {
+        origins: Option<ResultOrigins>,
+    ) -> Result<(serde_json::Value, Option<ResultOrigins>)> {
         let task = reply
             .get("task")
             .and_then(serde_json::Value::as_str)
             .filter(|_| reply.get("state").and_then(serde_json::Value::as_str) == Some("done"))
             .and_then(|task| EntityId::from_hex(task).ok());
         let Some(task) = task else {
-            return Ok(reply);
+            return Ok((reply, origins));
         };
         let Some(found) = self.reader_job(task)?.and_then(|job| job.finding) else {
-            return Ok(reply);
+            return Ok((reply, origins));
         };
-        Ok(self
-            .summary_output_card(found.owner, &found.path, &found.handle, task)?
-            .unwrap_or(reply))
+        let Some(card) = self.summary_output_card(found.owner, &found.path, &found.handle, task)?
+        else {
+            return Ok((reply, origins));
+        };
+        let origins = origins.zip(found.origins).map(|(delivered, finding)| {
+            let mut union = OriginsUnion::default();
+            union.add(&delivered);
+            union.add(&finding);
+            union.finish()
+        });
+        Ok((card, origins))
     }
 
     /// A child's finding report, fenced by its generation: it replaces the
