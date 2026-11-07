@@ -24,6 +24,19 @@ first. Only an actual failed rearm invokes the existing managed stop/grace path
 and normal supervisor relaunch. Guardian status never substitutes for worker
 status. There is no new timer, restart delay, cap or admission policy.
 
+## Replacement cleanup across serving-runtime restarts
+
+Each replacement owns a separate process-lifetime thread and Tokio runtime. It
+retires the original worker, stops that worker's device admission only when no
+worker still uses it, then starts the managed replacement or completes the
+external worker's probe. Replacements remain parallel. Dropping the serving
+runtime does not abandon this cleanup or cancel its wait for the original worker.
+
+If the thread or its runtime cannot start, the process worker host retains the
+same replacement job. A later configuration or worker-launch permission call
+retries it. There is no retry timer, new deadline or extra admission policy.
+The serving host still notifies each vault's drafter host when workers change.
+
 ## Restart for a vault's own drafter
 
 A vault's drafter binding (FIX 14976) restarts a managed EXL3 worker through

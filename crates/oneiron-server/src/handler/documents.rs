@@ -120,6 +120,8 @@ fn handle_document_inner(
             Ok(())
         }
         document_sub_tags::NOTE_OPS => {
+            // FIX 4748: the NOTE authority is the home, never a peer.
+            super::peer_serve::refuse_note_authority(state)?;
             let request = state
                 .documents
                 .get(&entity)
@@ -303,7 +305,9 @@ fn owner_request(
 /// publication. It applies the publication once every part is there and
 /// window sync has delivered every row it names. An owner-gate denial echoes
 /// only the supplied digest in a Refused receipt without keeping any part;
-/// admitted parts are answered once complete, on this socket alone.
+/// admitted parts are answered once complete, on this socket alone. A socket served as a peer
+/// applies none and keeps no part (FIX 4748): no receipt settles the device's outbox, which
+/// waits for the home.
 fn artifact_publication(
     server: &SyncServer,
     state: &mut ConnState,
@@ -311,6 +315,7 @@ fn artifact_publication(
     payload: &[u8],
     direct: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
 ) -> Result<(), ProtocolError> {
+    super::peer_serve::refuse_note_authority(state)?;
     let receipt = match owner_auth_checked(server, state, true) {
         Ok(auth) => server
             .vault
@@ -357,6 +362,8 @@ fn owner_document(
             Ok(())
         }
         document_sub_tags::NOTE_OPS => {
+            // FIX 4748: the NOTE authority is the home, never a peer.
+            super::peer_serve::refuse_note_authority(state)?;
             let auth = owner_auth(server, state, true)?;
             let actor = EntityId::from_hex(
                 auth.require_registered_principal()

@@ -65,6 +65,7 @@ pub(super) fn fold_policy_manifest(
             Err(error) => return Err(error),
         };
 
+        resolution.manifest_body_rows.insert(id);
         if raw.entity_type != ENTITY_TYPE_POLICY_MANIFEST {
             resolution.diagnostics.malformed_manifest_seen = true;
             continue;
@@ -199,6 +200,17 @@ pub(super) fn fold_policy_manifest(
                     match &resolution.shared_act_policies {
                         None => resolution.shared_act_policies = Some(rows),
                         Some(existing) if *existing == rows => {}
+                        Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
+                    }
+                }
+                // One common owner-change wait per vault: the same scalar
+                // twice is one configuration; two different scalars have no
+                // deterministic answer, so every act they would govern fails
+                // closed.
+                if let Some(secs) = decoded.owner_change_wait_secs {
+                    match &resolution.owner_change_wait_secs {
+                        None => resolution.owner_change_wait_secs = Some(secs),
+                        Some(existing) if *existing == secs => {}
                         Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
                     }
                 }
