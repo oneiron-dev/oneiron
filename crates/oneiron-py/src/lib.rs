@@ -6641,6 +6641,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_code_secrets_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.secrets.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.secrets.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_secrets_propose(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.secrets.propose")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.secrets.propose", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn execute_code(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "execute_code")?;
         let output = py
@@ -6984,6 +6998,20 @@ impl NativeClient {
             .detach(|| {
                 self.inner
                     .agent_verb("vault.code.origin.publications", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_checkout_holder_bind(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.checkout.holder.bind")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.checkout.holder.bind", input)
             })
             .map_err(raise)?;
         encode(&output)
