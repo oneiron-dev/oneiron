@@ -370,6 +370,7 @@ pub use support::{
     HostWriteOrigin, Memory, RewriteAdmit, SigningRequestTransport, parse_actor_key,
     resolve_entity_ref,
 };
+pub(crate) use transcript::TRANSCRIPT_READ_ATTEMPTS;
 pub use transcript::{
     MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptTurn,
 };
@@ -393,7 +394,8 @@ pub use witness::{
 };
 pub(crate) use witness::{
     MessageStreamRuntime, erase_stream_seeds_in_txn, message_completion_in_txn,
-    message_stream_finality_in_txn, scrub_stream_seed_actor_in_txn,
+    message_stream_finality_in_txn, message_stream_held_generations_in_txn,
+    scrub_stream_seed_actor_in_txn,
 };
 pub use witness::{
     TurnProgramWakeOutcome, UnpersistedWakeReason, WitnessAssertions, WitnessAuthor,

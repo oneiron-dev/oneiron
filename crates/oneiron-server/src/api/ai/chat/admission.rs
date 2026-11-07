@@ -108,20 +108,29 @@ pub(in crate::api::ai::chat) async fn start_turn(
     // FIX 4465 D: a self agent on its live fork reads its log from the
     // retained ledger, as the caller reads it where it sits; every other
     // turn takes the caller's lines as before.
-    let self_chat = crate::server::blocking(|| {
-        let reader = match auth.principal_ref() {
-            Some(_) => credential_memory(&vault, Some(auth), actor, class).at(locality),
-            None => vault.memory(actor, class),
-        };
+    let self_reader = || match auth.principal_ref() {
+        Some(_) => credential_memory(&vault, Some(auth), actor, class).at(locality),
+        None => vault.memory(actor, class),
+    };
+    let entry = crate::server::blocking(|| {
         compaction::self_chat(
             &server.ai,
             &vault,
-            &reader,
+            &self_reader(),
             agent,
             &request.conversation_ref,
             settings.history_turns,
         )
     });
+    let (self_chat, first_turn) = match entry {
+        Some(compaction::ChatEntry::Read(chat)) => (Some(chat), None),
+        Some(compaction::ChatEntry::Unread(mode)) => (None, Some(mode)),
+        None => (None, None),
+    };
+    // FIX 5034: a self agent's turn whose log did not read binds its log
+    // after its witness, when its request holds no caller line: a caller's
+    // history is never ledger evidence.
+    let first_turn = first_turn.filter(|_| request.history.len().min(settings.history_turns) == 0);
     match &self_chat {
         Some(chat) => {
             chat.push_log(&mut messages);
@@ -428,7 +437,7 @@ pub(in crate::api::ai::chat) async fn start_turn(
         (state.is_some() || tail.is_some()).then_some(segments::BoardView { state, tail })
     };
     let mut admitted = admitted.map_err(&role_refused)?;
-    if self_chat.is_some() {
+    if self_chat.is_some() || first_turn.is_some() {
         // The history before the turn's context is the prefix the next turn
         // sends again, so its end is marked beside the request's own. Today's
         // layout keeps today's marks.
@@ -491,6 +500,7 @@ pub(in crate::api::ai::chat) async fn start_turn(
             server.ai.session_app_open_applied(session_key, None);
     }
     let mut written = None;
+    let mut written_turn = None;
     let mut native_user_turn = None;
     let user = crate::server::blocking(|| {
         let memory = vault.memory(actor, class).with_session(session_key);
@@ -506,6 +516,7 @@ pub(in crate::api::ai::chat) async fn start_turn(
             witness_session.as_ref(),
             session_binding.as_ref(),
             &mut written,
+            &mut written_turn,
             &mut native_user_turn,
         )
     })
@@ -515,6 +526,15 @@ pub(in crate::api::ai::chat) async fn start_turn(
     sources.add(written.as_deref());
     let conversation = crate::server::blocking(|| vault.record_container(destination))
         .unwrap_or(Some(destination));
+    // FIX 5034: a first turn binds its breakpoint now its witness minted the
+    // conversation, from the rows that witness wrote: the history before the
+    // user's turn, proven empty, and the user's turn never added again.
+    let self_chat = self_chat.or_else(|| {
+        let mode = first_turn?;
+        crate::server::blocking(|| {
+            compaction::first_turn_chat(mode, &self_reader(), destination, written.as_deref())
+        })
+    });
     // The caller's view of the receipt, which a hook may have redacted.
     let user_turn = user
         .get("turn_short_id")
@@ -584,9 +604,15 @@ pub(in crate::api::ai::chat) async fn start_turn(
             model_call_no_record_at_arrival,
             keepalive,
             mark,
+            // FIX 5033: its seed binds the user turn this request answers,
+            // by the TURN and MESSAGE rows the witness above wrote.
             breakpoint: self_chat.map(|chat| {
                 let reader = WriteActor::new(actor, class);
+                let answered = written_turn.zip(written.clone()).map(|(turn, messages)| {
+                    oneiron::conversation::ChatBreakpointUserTurn { turn, messages }
+                });
                 chat.breakpoint(reader, locality, recalled, breakpoint_craft)
+                    .with_user_turn(answered)
             }),
             today: None,
             craft,

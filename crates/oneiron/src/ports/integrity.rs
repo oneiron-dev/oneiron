@@ -627,6 +627,9 @@ fn mark_one_stale_in_txn(
     // sieve and projector rows of them go as an erasure's do, while the
     // MESSAGE still names its turn.
     crate::dreamer_wake::erase_in_txn(write, txn, id)?;
+    // A chat breakpoint whose request holds a withdrawn summary's words goes
+    // with them (FIX 5033).
+    crate::conversation::forget_withdrawn_summary_breakpoints_in_txn(write, txn, id)?;
     // A derived claim can retain erased upstream bytes while its own entity
     // body remains. Remove every saved digest that copied it in this txn;
     // clearing the stale bit on regeneration must never revive an old copy.
@@ -664,7 +667,11 @@ pub(crate) fn source_has_dependents_in_txn(
 }
 /// Every row written from some version of `id`, by its dependency rows:
 /// those the epoch walk, a fold's words and an output occurrence record.
-fn dependents_in_txn(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<EntityId>> {
+pub(super) fn dependents_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Vec<EntityId>> {
     scan_dependents(store, txn, &[DEP, id.as_bytes()].concat())
 }
 /// An entity delete erases every source version; one document-prefix scan
