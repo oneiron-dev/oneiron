@@ -804,6 +804,9 @@ fn hash_opt_sensitivity(hasher: &mut Sha256, sensitivity: Option<PolicySensitivi
         match sensitivity {
             PolicySensitivity::Normal => "normal",
             PolicySensitivity::Sensitive => "sensitive",
+            PolicySensitivity::Public => "public",
+            PolicySensitivity::Private => "private",
+            PolicySensitivity::Restricted => "restricted",
         },
     );
 }
