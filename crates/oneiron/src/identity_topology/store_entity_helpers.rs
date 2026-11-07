@@ -80,10 +80,7 @@ pub(crate) fn guard_batch_identity_delete_in_txn(
             && !fold.resolved_proposals.contains_key(&event.event_id)
             && !fold.moot_proposals.contains(&event.event_id)
             && let super::ledger_fold::IdentityTopologyAction::Apply(op) = event.action
-            && matches!(
-                op,
-                IdentityTopologyOp::Merge(_) | IdentityTopologyOp::Split(_)
-            )
+            && op.is_resolvable_when_parked()
             && op.participants().contains(id)
         {
             return Err(Error::Sync(

@@ -21,13 +21,16 @@ impl Memory<'_> {
         occurred_at: u64,
     ) -> MemoryResult<LandedImage> {
         let description = intent.instruction.clone();
-        let response = catalog.render(intent, None, lease).await.map_err(|error| {
-            MemoryError::new(
-                MEMORY_CODE_MODEL_UNAVAILABLE,
-                format!("image generation failed: {error}"),
-                &[],
-            )
-        })?;
+        let response = catalog
+            .render(intent, None, None, lease)
+            .await
+            .map_err(|error| {
+                MemoryError::new(
+                    MEMORY_CODE_MODEL_UNAVAILABLE,
+                    format!("image generation failed: {error}"),
+                    &[],
+                )
+            })?;
         self.land_generated_image(&response, &description, occurred_at)
     }
 
@@ -152,6 +155,7 @@ impl Memory<'_> {
         let weight = EdgeKind::DerivedFrom.default_weight().unwrap_or(1.0);
         self.vault.ensure_text_index_trusted()?;
         let writer = self.write_actor();
+        let lane = self.core_write_lane()?;
         self.vault.try_with_write_txn_grouped(|wtxn| {
             crate::memory::verify_actor_binding_in_txn(
                 self.vault,
@@ -159,7 +163,8 @@ impl Memory<'_> {
                 self.actor,
                 self.actor_class,
             )?;
-            let mut content = crate::federation::ActorContentTxn::new(self.vault, wtxn, writer)?;
+            let mut content =
+                crate::federation::ActorContentTxn::new(self.vault, wtxn, writer, lane.as_ref())?;
             let landed = self.land_asset_rows(
                 &mut content,
                 asset,

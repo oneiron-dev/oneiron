@@ -88,7 +88,7 @@ pub enum Op {
     /// The slides and shapes a deck transaction addresses, and the id marks.
     #[serde(rename = "deck.read")]
     DeckRead(DeckReadArgs),
-    /// One checked deck transaction (schema 1) over a base deck.
+    /// One checked deck transaction (schema 2) over a base deck.
     #[serde(rename = "deck.transaction")]
     DeckTransaction(DeckTransactionArgs),
     /// A new deck from a kept brief over a template.
@@ -273,7 +273,7 @@ pub struct DeckReadArgs {
 #[serde(deny_unknown_fields)]
 pub struct DeckTransactionArgs {
     pub deck: u32,
-    /// The deck transaction grammar (schema 1). Its `base` is the BLAKE3 of
+    /// The deck transaction grammar (schema 2). Its `base` is the BLAKE3 of
     /// the deck input; another base refuses `stale`.
     pub transaction: Value,
     /// The pictures a `set_picture` step names, by artifact and version.
@@ -464,7 +464,7 @@ pub enum Reply {
     },
     Deck(DeckRead),
     DeckTransaction {
-        /// The deck transaction report (schema 1): candidate hash, part diff,
+        /// The deck transaction report (schema 2): candidate hash, part diff,
         /// per-step effects, the marks after the run and the handoff hash.
         report: Value,
     },
@@ -808,7 +808,8 @@ impl std::fmt::Display for ErrorCode {
 
 /// The recalculation a host plugs in for `xlsx.recalc`. The formula engine
 /// (oneiron-xlsx-formula) implements it; a host without one answers
-/// `unavailable`.
+/// `unavailable`. A host's precision fallback (LibreOffice headless, for
+/// the workbooks the formula engine refuses) implements it too.
 pub trait RecalcPort {
     fn recalculate(
         &self,
@@ -817,6 +818,22 @@ pub trait RecalcPort {
         clock: &RecalcClockArgs,
         location: Option<&DocumentLocationArgs>,
     ) -> Result<Recalculated, ContractError>;
+
+    /// [`Self::recalculate`] for a caller that also names its zone, an IANA
+    /// name (`Asia/Tokyo`) beside `clock`'s offset, which it read the offset
+    /// from: a calculator that reads local time from a zone rather than an
+    /// offset reads it there. The default reads the offset alone.
+    fn recalculate_in_zone(
+        &self,
+        workbook: &[u8],
+        limits: Limits,
+        clock: &RecalcClockArgs,
+        location: Option<&DocumentLocationArgs>,
+        zone: Option<&str>,
+    ) -> Result<Recalculated, ContractError> {
+        let _ = zone;
+        self.recalculate(workbook, limits, clock, location)
+    }
 }
 
 /// A recalculated workbook and the engine that computed its caches.

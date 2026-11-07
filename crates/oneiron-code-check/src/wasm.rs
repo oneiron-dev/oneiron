@@ -139,7 +139,22 @@ impl WasmCheck {
     /// Checks one program: how its run of tsc ended, and its peak linear
     /// memory; or why it stopped, with what it had printed.
     pub(crate) fn check(&self, input: &CheckInput<'_>) -> Result<(Exited, u64), Stopped> {
-        let deadline = Instant::now() + self.budget.wall_time;
+        self.check_before(input, Instant::now() + self.budget.wall_time)
+    }
+
+    /// How long one check runs at most.
+    pub(crate) fn wall_time(&self) -> Duration {
+        self.budget.wall_time
+    }
+
+    /// [`Self::check`], ended at the earlier of `deadline` and the check's
+    /// own wall time from now (FIX 9045): a slot it waits for counts too.
+    pub(crate) fn check_before(
+        &self,
+        input: &CheckInput<'_>,
+        deadline: Instant,
+    ) -> Result<(Exited, u64), Stopped> {
+        let deadline = deadline.min(Instant::now() + self.budget.wall_time);
         let files = project_files(input, self.budget.input_bytes)?
             .into_iter()
             .map(|(name, bytes)| (format!("{ROOT}/{name}"), bytes))
