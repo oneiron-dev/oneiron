@@ -157,6 +157,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::USAGE_METER_ROLLUP, LIVE),
     (&t::USAGE_METER, LIVE),
     (&t::USAGE_REPAIR_RECEIPT, LIVE),
+    (&t::VAULT_IMPORT_BODY_WORK, LIVE),
     (&t::VAULT_IMPORT_CONTENT, CONTENT),
     (&t::VAULT_IMPORT_RECEIPT, CONTENT),
     (&t::VAULT_IMPORT_STAMPS, CONTENT),
