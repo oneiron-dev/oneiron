@@ -6280,7 +6280,7 @@ export type DeckRender = { side: DeckRenderSide; slide: string; image_hash: numb
 /** `oneiron_store::blob_artifact::deck_context::DeckEditContext` */
 export type DeckEditContext = { made_by?: EntityId | null; thread?: EntityId | null; renders?: DeckRender[] }
 /** `oneiron::blob_artifact::verbs::DeckProposeRequest` */
-export type DeckProposeRequest = { artifact_ref: string; transaction: DeckTransaction; run_ref: string; context?: DeckEditContext; made_by?: MadeBy | null }
+export type DeckProposeRequest = { artifact_ref: string; transaction: DeckTransaction; run_ref: string; context?: DeckEditContext; made_by?: MadeBy | null; delta_receipt?: string | null }
 /** `oneiron_docedit::edit::wire::DeckInspection` */
 export type DeckInspection = { slides: DeckSlideInspection[]; ambiguities: DeckIdentityAmbiguity[]; marks: IdMarks }
 /** `oneiron_store::blob_artifact::deck_inspection::DeckRejectionInspection` */
@@ -6302,7 +6302,7 @@ export type DeckProposeRejection = { inspection: DeckRejectionInspection; report
 /** `oneiron::blob_artifact::verbs::DeckProposeOutcome` */
 export type DeckProposeOutcome = { proposed?: PendingProposalView | null; rejected?: DeckProposeRejection | null }
 /** `oneiron::blob_artifact::verbs::NativeOutputRequest` */
-export type NativeOutputRequest = { artifact_ref: string; run_ref: string; name: string; media_type: string; content_base64: string; report?: unknown; made_by?: MadeBy | null; read_rows?: string[] }
+export type NativeOutputRequest = { artifact_ref: string; run_ref: string; name: string; media_type: string; content_base64: string; report?: unknown; made_by?: MadeBy | null; read_rows?: string[]; delta_receipt?: string | null }
 /** `oneiron::blob_artifact::family::VersionReconciliation` */
 export type VersionReconciliation = { base_version: number; kept_head: ArtifactVersionView }
 /** `oneiron::edit_roundtrip::paragraph_review::ParagraphJudgment` */
@@ -8614,7 +8614,7 @@ export type SummaryEditRequest = { summary_ref: string; base: number[]; edits: S
 /** `oneiron::entity_doc::forks::ForkStatus` */
 export type ForkStatus = "Pending" | "Merged" | "Switched" | "Rejected"
 /** `oneiron::entity_doc::forks::ForkRecord` */
-export type ForkRecord = { fork: string; proposal: string; entity: string; parent_document: string; base: number[]; actor: DocActor; opened_at: number; rewrite: boolean; status: ForkStatus; read_refs: string[]; keep?: string | null }
+export type ForkRecord = { fork: string; proposal: string; entity: string; parent_document: string; base: number[]; actor: DocActor; opened_at: number; rewrite: boolean; status: ForkStatus; read_refs: string[]; keep?: string | null; delta_receipt?: string | null }
 /** `oneiron::entity_doc::forks::ProposalBundle` */
 export type ProposalBundle = { proposal: string; author: DocActor; forks: ForkRecord[]; settled: boolean; opener_lineage: string[] }
 /** `oneiron::scope_summary::public_types::SummaryForkView` */
