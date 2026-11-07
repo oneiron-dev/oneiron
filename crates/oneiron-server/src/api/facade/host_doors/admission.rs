@@ -15,13 +15,11 @@ use super::support::{
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
-/// The authority check host-door row `verb`'s own door runs first: the
-/// owner's proof, a person's proof, a bound principal or an owner-grade
-/// credential. The facade runs it before the row's pre chain, so a hook
-/// never fires on a call the door refuses; the door runs it again for the
-/// proof it acts under. A host door whose table row says
-/// `"host_door_precheck": false` has no such check and passes, as does any
-/// row that is no host door.
+/// The authority check host-door row `verb`'s own door runs first: the owner's proof, a person's
+/// proof, a bound principal or an owner-grade credential. The facade runs it before the row's pre
+/// chain, so a hook never fires on a call the door refuses; the door runs it again for the proof it
+/// acts under. A host door whose table row says `"host_door_precheck": false` has no such check and
+/// passes, as does any row that is no host door.
 pub(in crate::api::facade) fn door_admits(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -484,6 +482,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultSupportGrantsList
         | Row::VaultSupportGrantsRevoke
         | Row::VaultFilesSourcesAttach
+        | Row::VaultFilesSourcesConvert
         | Row::VaultFilesSourcesRescan
         | Row::VaultFilesSourcesDetach
         | Row::VaultFilesSourcesList
@@ -548,6 +547,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCoachTrainingOffersPilotsComplete
         | Row::VaultCoachTrainingOffersPilotsGet
         | Row::VaultCoachTrainingOffersSources
+        | Row::VaultCoachTrainingRunsCancel
         | Row::VaultDraftersList
         | Row::VaultDraftersStatus
         | Row::VaultDraftersPolicySet
@@ -569,6 +569,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultResultsSlice
         | Row::VaultCodeModelHealCount
         | Row::VaultCodeTypeDiagnostics
+        | Row::VaultCodeCorrections
         | Row::VaultCodeWaitsResolve
         | Row::VaultCodeWaitsReceipt
         | Row::VaultCodeExport

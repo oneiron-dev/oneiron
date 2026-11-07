@@ -1028,6 +1028,9 @@ class Oneiron:
         @property
         def training_offers(self) -> "Oneiron._VaultCoachTrainingOffersVerbs":
             return Oneiron._VaultCoachTrainingOffersVerbs(self._client)
+        @property
+        def training_runs(self) -> "Oneiron._VaultCoachTrainingRunsVerbs":
+            return Oneiron._VaultCoachTrainingRunsVerbs(self._client)
     class _VaultCoachTrainingOffersVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1079,6 +1082,12 @@ class Oneiron:
         def get(self, spec):
             """Read one counted Coach pilot, its pins, measurement receipts, one-off cost and computed sufficiency card."""
             return json.loads(_translate(lambda: self._client.vault_coach_training_offers_pilots_get(json.dumps(spec))))
+    class _VaultCoachTrainingRunsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def cancel(self, spec):
+            """Cancel a staged trained embedder swap while its binding still waits or fills; an applied swap keeps the existing space-move undo door."""
+            return json.loads(_translate(lambda: self._client.vault_coach_training_runs_cancel(json.dumps(spec))))
     class _VaultPeopleVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3016,6 +3025,9 @@ class Oneiron:
         def files(self, spec):
             """The owner reads one Files source's ledger: each file's path, readiness (text or name only, and why), revision and dates."""
             return json.loads(_translate(lambda: self._client.vault_files_sources_files(json.dumps(spec))))
+        def convert(self, spec):
+            """The owner converts an attached notes folder on this host to Files, keeping its existing notes, history and links. The host rescans the folder into its Files world and returns the source and rescan report."""
+            return json.loads(_translate(lambda: self._client.vault_files_sources_convert(json.dumps(spec))))
     class _VaultResidenceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -4169,6 +4181,9 @@ class Oneiron:
         def model_heal_count(self, spec):
             """Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy."""
             return json.loads(_translate(lambda: self._client.vault_code_model_heal_count(json.dumps(spec))))
+        def corrections(self, spec):
+            """Read one code run's durable correction records as the owner, oldest first: per model response its model, repairs, outcome and committed checkpoint, with the repair policy. Canonical runs only."""
+            return json.loads(_translate(lambda: self._client.vault_code_corrections(json.dumps(spec))))
         def type_diagnostics(self, spec):
             """Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref."""
             return json.loads(_translate(lambda: self._client.vault_code_type_diagnostics(json.dumps(spec))))
@@ -6475,15 +6490,36 @@ class Oneiron:
         def redo(self, spec):
             """Posts a new TASK and its try from one TASK's current brief, assignee, spec, label and parent through the task highway, under the caller's intent key; the redone TASK, its result and its receipts are never written."""
             return json.loads(_translate(lambda: self._client.tasks_redo(json.dumps(spec))))
-        def answer(self, handle, word):
-            """Admits one person's word on an ask; the word is evidence, never approval."""
-            return json.loads(_translate(lambda: self._client.tasks_answer(json.dumps({"handle": handle, "word": word}))))
+        @property
+        def answer(self) -> "Oneiron._TasksAnswerVerbs":
+            return Oneiron._TasksAnswerVerbs(self._client)
         def outcomes(self, handle):
             """Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to."""
             return json.loads(_translate(lambda: self._client.tasks_outcomes(json.dumps(handle))))
         def refuse(self, spec):
             """Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay."""
             return json.loads(_translate(lambda: self._client.tasks_refuse(json.dumps(spec))))
+    class _TasksAnswerVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, handle, word):
+            """Admits one person's word on an ask; the word is evidence, never approval."""
+            return json.loads(_translate(lambda: self._client.tasks_answer(json.dumps({"handle": handle, "word": word}))))
+        @property
+        def forward(self) -> "Oneiron._TasksAnswerForwardVerbs":
+            return Oneiron._TasksAnswerForwardVerbs(self._client)
+    class _TasksAnswerForwardVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, handle, intent_key, act, proof):
+            """Relays one person's own word, or the void of their own seat, on an ask to the node that admitted it; it stays pending until that node's result reads here."""
+            return json.loads(_translate(lambda: self._client.tasks_answer_forward(json.dumps({"handle": handle, "intent_key": intent_key, "act": act, "proof": proof}))))
+        def challenge(self, handle, intent_key, act):
+            """The challenge one person signs, through their slip's binding transcript, to relay their own word or seat void on an ask to the node that admitted it."""
+            return json.loads(_translate(lambda: self._client.tasks_answer_forward_challenge(json.dumps({"handle": handle, "intent_key": intent_key, "act": act}))))
+        def status(self, intent_ref):
+            """Where one relayed ask word stands, for its own holder: pending until the admitting node's result reads here, then that result."""
+            return json.loads(_translate(lambda: self._client.tasks_answer_forward_status(json.dumps({"intent_ref": intent_ref}))))
     class _AiVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

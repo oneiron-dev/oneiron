@@ -386,6 +386,11 @@ side_tables! {
     /// One invitation of a person into the shared vault, pending until they accept, decline or an
     /// `add_member` holder withdraws it. Key: hex32 (invitee id) ":" hex32 (invitation id).
     SHARED_VAULT_INVITATION: VaultMeta b"shared-vault:invitation:v1:" Raw;
+    /// One Sheets write's claim on its caller's invocation (FIX 4862, REVIEW-6403): the request it
+    /// bound (tool, spreadsheet id, request digest, mutation), its intent Gate record, and its send
+    /// under way or settled with what it came to and its outcome Gate record, so a replay never
+    /// sends an attempted write again. Key: id16 (invocation ref).
+    SHEETS_WRITE_INVOCATION: VaultMeta b"sheets:write_invocation:v1:" Named;
     /// Retired presentation id alias. Key: string.
     SHORT_ID_ALIAS: VaultMeta b"short_id_alias:v1\0" Raw;
     /// Presentation-id grammar generation. Key: ().
