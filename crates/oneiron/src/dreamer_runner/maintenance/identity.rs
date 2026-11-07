@@ -62,8 +62,8 @@ pub use evidence::{
     IdentityResolutionView,
 };
 pub(crate) use evidence::{clear_mention_resolutions_in_txn, erase_mention_resolutions_in_txn};
-pub(crate) use hints::hinted_mention_in_txn;
 use hints::{hinted_in_txn, put_hint_in_txn};
+pub(crate) use hints::{hinted_mention_in_txn, hinted_mention_scoped_in_txn};
 pub(super) use index::{
     INVERSE_BY_SOURCE, inverse_ids, sync_inverse_membership, sync_inverse_sets,
 };
