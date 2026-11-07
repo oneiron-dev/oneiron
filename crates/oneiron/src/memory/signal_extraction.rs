@@ -237,10 +237,10 @@ impl Memory<'_> {
                     continue;
                 };
                 let hint_body = crate::claim::decode_claim_body(bytes, true)?;
-                if hint_body.predicate != crate::claim::PREDICATE_LEXICAL_QUERY_HINT {
+                let Some(value) = crate::claim::canonical_lexical_query_hint(&hint.id, &hint_body)?
+                else {
                     continue;
-                }
-                let value = crate::claim::decode_lexical_query_hint_value(&hint_body.value)?;
+                };
                 if value.target != row.id || hint_body.source != Some(ClaimSource::Generated) {
                     continue;
                 }

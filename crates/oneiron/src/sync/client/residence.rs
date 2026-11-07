@@ -2,6 +2,8 @@
 //! socket. The steady sync socket keeps sole ownership of its own reader.
 //! Device-side opened-item residence; the home side lives in `crate::sync::residence`.
 
+mod ask_option_link;
+pub use ask_option_link::request_ask_option_link;
 mod authority;
 mod bundle;
 mod checkpoint_roots;
