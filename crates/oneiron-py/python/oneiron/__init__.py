@@ -25,7 +25,7 @@ import os
 from typing import TYPE_CHECKING, Any, Callable, TypeVar
 
 if TYPE_CHECKING:
-    from .facade_types import LegalHoldNotice
+    from .facade_types import LegalHoldNotice, RoomJoinHold
 
 from ._native import NativeClient as _NativeClient
 
@@ -60,6 +60,7 @@ class OneironError(RuntimeError):
         resets_at: list[int] | None = None,
         reason_codes: list[str] | None = None,
         legal_hold: LegalHoldNotice | None = None,
+        room_join_hold: RoomJoinHold | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -75,6 +76,7 @@ class OneironError(RuntimeError):
         # The refusal's stable reason codes, as its producer named them (FIX 7398).
         self.reason_codes = tuple(reason_codes) if reason_codes is not None else None
         self.legal_hold = legal_hold
+        self.room_join_hold = room_join_hold
 
 
 def _typed_error(payload: object, fallback: str) -> OneironError:
@@ -116,6 +118,8 @@ def _typed_error(payload: object, fallback: str) -> OneironError:
         )
         legal_hold = payload.get("legal_hold")
         legal_hold = legal_hold if isinstance(legal_hold, dict) else None
+        room_join_hold = payload.get("room_join_hold")
+        room_join_hold = room_join_hold if isinstance(room_join_hold, dict) else None
         return OneironError(
             payload["code"],
             payload["message"],
@@ -126,6 +130,7 @@ def _typed_error(payload: object, fallback: str) -> OneironError:
             resets_at,
             reason_codes,
             legal_hold,
+            room_join_hold,
         )
     return OneironError(
         "INTERNAL_SERVER_ERROR",
