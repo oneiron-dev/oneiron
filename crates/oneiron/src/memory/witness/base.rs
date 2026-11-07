@@ -532,11 +532,12 @@ impl Memory<'_> {
             }
             AdmittedTurn::Existing(_) => {}
         }
-        for ((planned, authorized), exists) in plan
+        for (((planned, authorized), exists), author) in plan
             .messages
             .iter()
             .zip(&admission.authorized)
             .zip(&admission.message_exists)
+            .zip(&admission.authors)
         {
             // An exact retry: its canonical body and bindings were proved and
             // re-authorized under the current policy; the transcript stays
@@ -562,10 +563,12 @@ impl Memory<'_> {
                 .made_by(&planned.id, birth)
                 .edge(&planned.id, EdgeKind::PartOf, &plan.turn_id, 1.0)
                 .edge(&planned.id, EdgeKind::BelongsTo, &plan.conversation_id, 1.0);
-            // An imported row's author is the source's speaker, named in its
-            // metadata; the importer did not write it.
-            if planned.message.author.names_writer() && plan.imported.is_none() {
-                batch = batch.edge(&planned.id, EdgeKind::AuthoredBy, &self.actor, 1.0);
+            // The one target admission expected: the writer of a native user
+            // or companion row; for an imported row the PERSON its source
+            // names as the speaker (FIX 15412), never the importer, which
+            // its birth above names instead.
+            if let Some(author) = author {
+                batch = batch.edge(&planned.id, EdgeKind::AuthoredBy, author, 1.0);
             }
         }
         batch.apply(wtxn)?;

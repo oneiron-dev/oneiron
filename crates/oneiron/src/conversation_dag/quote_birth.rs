@@ -4,12 +4,13 @@
 //! sit on the citation pin, and the numeric span stays request input only.
 //! The document keeps the MESSAGE's own author and time; the citing actor
 //! goes on the pin; the quote asks no edit grant. A MESSAGE whose birth a
-//! precondition stops (no author edge, as a system or imported row has; an
-//! author or citer that is not live and active as its class; a body that is
-//! not the canonical envelope) keeps the hash-bound span it is quoted by
-//! today, so no quote refuses for it. Anchors already kept are not
-//! rewritten, and a retry that quotes the same text again keeps its body
-//! anchor.
+//! precondition stops (no native author edge: a system row has none, and an
+//! imported row's edge names the PERSON its source says spoke, never a
+//! writer (FIX 15412); an author or citer that is not live and active as its
+//! class; a body that is not the canonical envelope) keeps the hash-bound
+//! span it is quoted by today, so no quote refuses for it. Anchors already
+//! kept are not rewritten, and a retry that quotes the same text again keeps
+//! its body anchor.
 
 use super::quote::{QuoteAnchor, field, message_fields, scalar_slice};
 use crate::edge::{EdgeActorClass, EdgeKind};
@@ -48,6 +49,9 @@ pub(super) fn birth_author_in(
     let [author] = authors[..] else {
         return Ok(None);
     };
+    if crate::memory::imported_message_in_txn(&vault.store, txn, &message)? {
+        return Ok(None);
+    }
     let Some(class) = author_class_in(vault, txn, message, author)? else {
         return Ok(None);
     };

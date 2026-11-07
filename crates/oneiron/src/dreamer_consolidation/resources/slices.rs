@@ -166,8 +166,19 @@ impl BranchResources<'_> {
                             }
                         }
                         let turn = labels.assign(LabelKind::Turn, *id);
+                        // The PERSON an imported turn's source names as its
+                        // speaker shows by its label beside the role (FIX
+                        // 15412); the role, the words and their offsets
+                        // stay as they are, and a turn that names no one
+                        // reads as before.
+                        let speaker = match self.texts.get(id).and_then(TurnText::source_speaker) {
+                            Some(person) => {
+                                format!(" {}", labels.assign(LabelKind::Entity, person))
+                            }
+                            None => String::new(),
+                        };
                         transcript.push_str(&format!(
-                            "[{turn} {}] {}\n",
+                            "[{turn} {}{speaker}] {}\n",
                             facts.speaker.as_deref().unwrap_or("unknown"),
                             facts.text.as_deref().unwrap_or_default(),
                         ));

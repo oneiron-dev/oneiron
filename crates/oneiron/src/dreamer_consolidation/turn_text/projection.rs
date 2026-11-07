@@ -11,9 +11,11 @@
 //! the revision and slice the citation named, joined as the projection
 //! joined them, and held to the citation's own hash. A MESSAGE it does not
 //! cite no longer refuses it. One it cites that is gone, withheld, rebound,
-//! hidden, unfinished, edited or of another speaker refuses; it never reads
-//! fewer words, and never other words at the old offsets.
+//! hidden, unfinished, edited, of another speaker or attributed to another
+//! PERSON (FIX 15412) refuses; it never reads fewer words, and never other
+//! words at the old offsets.
 
+use super::attribution::{admitted_speaker_in, attribution_hash};
 use super::{
     MESSAGES_NOT_RESIDENT, MessageSpan, SourceRow, TurnText, decode_message, message_reader, peers,
 };
@@ -24,10 +26,7 @@ use crate::dreamer_consolidation::swarm_evidence_content_hash;
 use crate::dreamer_consolidation::watermark::decode_turn_body;
 use crate::dreamer_runner::{DreamerTurnRole, dreamer_turn_role};
 use crate::edge::EdgeKind;
-use crate::gate::{
-    WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_COUNTERPARTY, WITNESS_AUTHOR_SYSTEM,
-    WITNESS_AUTHOR_USER,
-};
+use crate::gate::{WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_COUNTERPARTY, WITNESS_AUTHOR_USER};
 use crate::ports::EdgeDirection;
 use crate::registry::ENTITY_TYPE_MESSAGE;
 use crate::{EntityId, Error, Result};
@@ -114,7 +113,7 @@ fn frame_in(
 /// `txn`: still live, readable, bound to the TURN, its conversation and its
 /// byline, of the TURN's own speaker, visible, final and not words another
 /// speaker said in an import, at the exact revision (and document frontier)
-/// the citation read.
+/// and with the exact attribution the citation read.
 fn cited_words_in(
     read: &ScopedRead<'_>,
     txn: &heed::RoTxn<'_>,
@@ -135,21 +134,17 @@ fn cited_words_in(
     let message = decode_message(&body)
         .ok_or_else(|| invalid_consolidation("witnessed message body is malformed"))?;
     let out = |kind| peers(vault, txn, id, EdgeDirection::Out, kind, None);
-    let bylines = usize::from(
-        !matches!(
-            message.author.as_str(),
-            WITNESS_AUTHOR_SYSTEM | WITNESS_AUTHOR_COUNTERPARTY
-        ) && !frame.imported,
-    );
     if entity_type != ENTITY_TYPE_MESSAGE
         || out(EdgeKind::PartOf)? != [frame.turn]
         || out(EdgeKind::BelongsTo)? != [frame.conversation]
-        || out(EdgeKind::AuthoredBy)?.len() != bylines
     {
         return Err(invalid_consolidation(
             "witnessed turn message binding changed",
         ));
     }
+    let mut authors = out(EdgeKind::AuthoredBy)?;
+    authors.sort_unstable();
+    let speaker = admitted_speaker_in(vault, txn, &message.author, frame.imported, &authors)?;
     let words = !crate::memory::message_completion_in_txn(vault, txn, id)?.incomplete;
     #[cfg(feature = "sync")]
     let frontier = crate::entity_doc::source_frontier_in_txn(&vault.store, txn, id)?;
@@ -161,6 +156,7 @@ fn cited_words_in(
         || (frame.imported && message.not_the_owners)
         || swarm_evidence_content_hash(&body) != span.revision
         || frontier != span.frontier
+        || attribution_hash(&authors, speaker) != span.attribution
     {
         return Err(changed());
     }

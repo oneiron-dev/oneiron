@@ -22,7 +22,8 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::memory::{
     IMPORTED_SOURCE_KEY, ImportedTurnStamp, MAX_TRANSCRIPT_PAGE_TURNS, MEMORY_CODE_NOT_FOUND,
-    MemoryError, MemoryResult, TranscriptMessage, WitnessAuthor, WitnessMessage, WitnessTurn,
+    MemoryError, MemoryResult, SourceAttribution, TranscriptMessage, WitnessAuthor, WitnessMessage,
+    WitnessTurn,
 };
 use crate::surface_event::SurfaceConnectorPayload;
 
@@ -255,6 +256,7 @@ impl Vault {
             imported_at: now,
             conversation_body: conversation_body(origin)?,
             message_occurred: vec![occurred_at],
+            attribution: SourceAttribution::Unbound,
         };
         let receipt =
             self.memory(agent, EdgeActorClass::Agent)

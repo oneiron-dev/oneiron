@@ -4,23 +4,27 @@
 //! through the imported witness, so the vault indexes and extracts it as
 //! imported evidence and wakes no agent. In the same commit each row is
 //! bound to its thread's source audience, so it reads to the source's people
-//! alone from its first moment.
+//! alone from its first moment. A MESSAGE names the PERSON its source says
+//! sent it, when one is known (FIX 15412): that names the speaker, never a
+//! writer.
 
 use rmpv::Value as Msgpack;
 use serde_json::{Map, Value};
 
-use super::source::{MailProvider, MailSourceRow, MailSourceStatus, SOURCES};
+use super::source::{MailProvider, MailSourceKind, MailSourceRow, MailSourceStatus, SOURCES};
 use super::state::{
     BODY_QUEUE, MailOccurrence, MailPresence, MailStage, OCCURRENCES, SYNC, body_queue_key,
     occurrence_key, record_occurrence_rows_in_txn,
 };
 use super::wire::{MailFull, MailHeaders};
+use crate::channel_identity::MailboxAddr;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::{EntityId, derived_domains};
 use crate::memory::{
     IMPORTED_SOURCE_KEY, ImportedTurnStamp, MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE,
-    Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessMessage, WitnessTurn,
+    Memory, MemoryError, MemoryResult, SourceAttribution, SourceSpeaker, WitnessAuthor,
+    WitnessMessage, WitnessTurn,
 };
 use crate::{Result, Vault, source_audience};
 
@@ -107,6 +111,80 @@ fn content(headers: &MailHeaders, body: Option<&str>) -> String {
         text.push_str(body);
     }
     text
+}
+
+/// The one mailbox a `From` header names, when it names exactly one the
+/// engine's email grammar ([`MailboxAddr::parse_addr_spec`]) holds: a bare
+/// addr-spec, or a display name and one address in angle brackets. A list,
+/// a group, a comment or an address outside that grammar names none.
+fn sender_mailbox(from: &str) -> Option<MailboxAddr> {
+    let from = from.trim();
+    let addr = match from.strip_suffix('>') {
+        Some(head) => {
+            let (display, addr) = head.rsplit_once('<')?;
+            if !plain_display_name(display) {
+                return None;
+            }
+            addr
+        }
+        None => from,
+    };
+    MailboxAddr::parse_addr_spec(addr).ok()
+}
+
+/// Whether `display` is a display name alone: outside its quoted strings it
+/// holds no address, list or group separator, or angle bracket.
+fn plain_display_name(display: &str) -> bool {
+    let mut quoted = false;
+    let mut escaped = false;
+    for ch in display.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' if quoted => escaped = true,
+            '"' => quoted = !quoted,
+            '@' | ',' | ';' | ':' | '<' | '>' if !quoted => return false,
+            _ => {}
+        }
+    }
+    !quoted
+}
+
+/// Whom the source names as the speaker of a provider message's next
+/// revision (FIX 15412). A message the vault holds already keeps the binding
+/// its revisions landed with, none included: a later contact never moves it
+/// to someone else. A new message of a group address names no one; of a
+/// personal mailbox, its owner for mail the mailbox sent, else the PERSON
+/// whose comm party key is the one supported mailbox its `From` names. An
+/// unknown speaker is no refusal: the raw `From` stays in the provenance.
+/// The witness resolves the speaker in the landing's own writer: a source's
+/// kind and owner are fixed at connect (only its own person reconnects it,
+/// and an erased owner is cleared, never replaced), and an owner no longer
+/// live names no one there, so the source row read before that writer
+/// names no stale speaker.
+fn source_speaker(
+    row: &MailSourceRow,
+    headers: &MailHeaders,
+    prior: Option<&MailOccurrence>,
+) -> SourceSpeaker {
+    if let Some(prior) = prior {
+        return SourceSpeaker::Revisions(prior.messages.clone());
+    }
+    match row.kind {
+        MailSourceKind::PersonalMailbox if headers.sent_by_mailbox => row
+            .owner
+            .map_or(SourceSpeaker::Unknown, SourceSpeaker::Person),
+        MailSourceKind::PersonalMailbox => headers
+            .from
+            .as_deref()
+            .and_then(sender_mailbox)
+            .map_or(SourceSpeaker::Unknown, |mailbox| {
+                SourceSpeaker::Party(format!("email:{mailbox}"))
+            }),
+        MailSourceKind::GroupAddress | MailSourceKind::Calendar => SourceSpeaker::Unknown,
+    }
 }
 
 /// A revision's provenance, as its MESSAGE metadata.
@@ -316,6 +394,11 @@ impl<'v> Landing<'v> {
                 headers.subject.as_deref(),
             )?,
             message_occurred: vec![occurred],
+            attribution: SourceAttribution::PerMessage(vec![source_speaker(
+                row,
+                headers,
+                prior.as_ref(),
+            )]),
         };
         let landed = self.memory.witness_imported(&witness, &stamp, |wtxn| {
             self.owner.revalidate_in_txn(vault, wtxn)?;

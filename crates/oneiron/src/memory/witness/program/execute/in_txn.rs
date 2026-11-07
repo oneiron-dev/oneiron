@@ -77,12 +77,29 @@ impl Memory<'_> {
                     refused: write.refused,
                     unproven: write.unproven,
                 });
+                // FIX 15412: whom the source names as each imported MESSAGE's
+                // speaker, resolved once here, in this writer before
+                // admission; admission expects exactly that target and
+                // staging writes it.
+                let source_speakers = match plan.imported.as_ref().map(|stamp| &stamp.attribution) {
+                    Some(crate::memory::SourceAttribution::PerMessage(speakers)) => Some(
+                        super::super::super::source_attribution::admitted_source_speakers_in_txn(
+                            self.vault,
+                            wtxn,
+                            plan.conversation_id,
+                            &plan.message_ids(),
+                            speakers,
+                        )?,
+                    ),
+                    Some(crate::memory::SourceAttribution::Unbound) | None => None,
+                };
                 self.admit_witness_in_txn(
                     plan,
                     &self.vault.store,
                     wtxn,
                     assertions,
                     person_author,
+                    source_speakers.as_deref(),
                     quoted.as_ref(),
                     thread.as_ref(),
                 )?
