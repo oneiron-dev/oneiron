@@ -77,6 +77,11 @@ use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
 mod authority_enrollment;
+mod authority_recover;
+
+pub(in crate::api) fn authority_recovery_routes() -> axum::Router<Arc<SyncServer>> {
+    authority_recover::routes()
+}
 pub(crate) mod pad_access;
 pub(crate) mod root_doors;
 pub(crate) mod secret_anchor;
