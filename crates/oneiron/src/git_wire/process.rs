@@ -179,9 +179,13 @@ fn spawn_git_child(
     if let Some(profile) = &process_env.import_profile {
         profile.configure(&mut command, repo_root)?;
     }
+    if let Some(relay) = &process_env.origin_relay {
+        relay.configure(&mut command);
+    }
     let isolated = process_env.hub_root.is_some()
         || process_env.mirror_egress.is_some()
-        || process_env.import_profile.is_some();
+        || process_env.import_profile.is_some()
+        || process_env.origin_relay.is_some();
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     command.stdin(if stdin_payload.is_some() || retained_stdin.is_some() {
         Stdio::piped()
@@ -207,10 +211,14 @@ fn spawn_git_child(
     };
     let out_reader = child.stdout.take().map(|pipe| spawn_reader(pipe, cap));
     let err_reader = child.stderr.take().map(|pipe| spawn_reader(pipe, cap));
-    // An import leg's profile and a retained call lift the wall-clock
-    // bound (Rule 5); every other child keeps it.
+    // An import leg's profile, an exact publish's relay push and a retained
+    // call lift the wall-clock bound (Rule 5); every other child keeps it.
+    let relay_lifts = process_env
+        .origin_relay
+        .as_ref()
+        .is_some_and(super::origin_relay::OriginRelayEgress::lifts_child_bound);
     let timeout = match &process_env.import_profile {
-        _ if retained.is_some() => None,
+        _ if retained.is_some() || relay_lifts => None,
         Some(profile) if profile.lifts_child_bound() => None,
         _ => Some(process_env.timeout),
     };
