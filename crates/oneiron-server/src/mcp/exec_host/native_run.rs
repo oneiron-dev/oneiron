@@ -4,7 +4,9 @@
 use std::sync::Arc;
 
 use oneiron::code_run::{GatedActorWrite, SpawnHostSeat};
-use oneiron::engine_executor::{EngineExecutorConfig, EngineExecutorOutcome, RunCompaction};
+use oneiron::engine_executor::{
+    EngineExecutorConfig, EngineExecutorOutcome, RunCompaction, SelfBriefPort,
+};
 use oneiron::{EntityId, Vault, WriteActor};
 
 use super::{
@@ -19,7 +21,9 @@ use super::{
 /// `EngineNativeExecutor` own every step, replay row, and terminal marker. The
 /// server evaluates nothing and opens no second vault-write path. A run with
 /// a seat may spawn reader children under it. A run its caller's credential
-/// admitted binds that slip's lineage as its own (FIX 4705).
+/// admitted binds that slip's lineage as its own (FIX 4705). A run its host
+/// lends a self-brief port (`brief`, FIX 17594) carries the brief it
+/// prepares on either backend.
 ///
 /// FIX 7087: the door declares the caller's task text its own, and only
 /// that text. `config.task` is exactly the request's task, as `execute`
@@ -47,6 +51,7 @@ pub(super) fn run_engine_native_code_mode(
     compaction: Option<&mut RunCompaction>,
     git_door_base: Option<String>,
     consent_origin: Option<oneiron::code_run::CodeConsentRunOrigin>,
+    brief: Option<&dyn SelfBriefPort>,
 ) -> Result<EngineExecutorOutcome, McpCodeExecutionError> {
     let mut gated_write = GatedActorWrite::new(vault, write_actor, run_ref)
         .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?
@@ -90,6 +95,7 @@ pub(super) fn run_engine_native_code_mode(
             compaction,
             &reactor,
             seat.as_ref(),
+            brief,
         ),
         None => enter_engine_native_run(
             vault,
@@ -104,6 +110,7 @@ pub(super) fn run_engine_native_code_mode(
             None,
             // Keep this caller's existing unconstrained routing.
             Vec::new(),
+            brief,
         ),
     }
     .map_err(|error| match error.provider_outage() {

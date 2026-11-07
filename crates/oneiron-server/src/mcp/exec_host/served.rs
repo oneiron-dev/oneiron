@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use oneiron::code_run::SpawnHostSeat;
-use oneiron::engine_executor::{EngineExecutorOutcome, EngineExecutorStatus};
+use oneiron::engine_executor::{EngineExecutorOutcome, EngineExecutorStatus, SelfBriefPort};
 
 use super::active_run::{ActiveRun, ActiveRuns};
 use super::compaction_home::caller_compaction_seat;
@@ -198,6 +198,7 @@ impl McpEngineNativeCodeHost {
         let verbs = Arc::clone(&request.verbs);
         // The admitted caller a code consent wait of the run keeps (FIX 4606).
         let consent_origin = request.consent_origin.clone();
+        let brief = request.brief.clone();
         // The gated run source is HOST-derived: the caller's handle is a label
         // inside it, never the WHO.
         let run_ref = format!("mcp.execute_code:{}", request.run_ref);
@@ -249,6 +250,15 @@ impl McpEngineNativeCodeHost {
         // durable wait never becomes a held connection.
         let worker = crate::engine_thread("mcp-execute-code".to_owned())
             .spawn(move || {
+                // FIX 17594 D5: under the run's single flight, past its
+                // identity, admission and config checks, the run's brief
+                // is installed for this entry before it runs; one that
+                // does not install leaves the entry without it.
+                let installed = brief.as_ref().is_some_and(|brief| brief.install());
+                let port = brief
+                    .as_deref()
+                    .filter(|_| installed)
+                    .map(|brief| brief as &dyn SelfBriefPort);
                 let outcome = run_engine_native_code_mode(
                     &vault,
                     provider.as_ref(),
@@ -263,11 +273,19 @@ impl McpEngineNativeCodeHost {
                     seat.as_mut(),
                     git_door_base,
                     consent_origin,
+                    port,
                 );
+                let ended = outcome
+                    .as_ref()
+                    .is_ok_and(|outcome| matches!(outcome.status, EngineExecutorStatus::Complete));
+                // The run's brief closes as the run completes, here and
+                // not with its waiter, so a caller who hung up cannot
+                // keep it; a resumable outcome or a failure the same
+                // `run_ref` re-enters keeps it.
+                if ended && let Some(brief) = &brief {
+                    brief.close();
+                }
                 if let (Some(seat), Ok(mut seats)) = (seat, seats.lock()) {
-                    let ended = outcome.as_ref().is_ok_and(|outcome| {
-                        matches!(outcome.status, EngineExecutorStatus::Complete)
-                    });
                     seats.put(run_id, seat, ended);
                 }
                 // Completion must release single-flight and the run's
