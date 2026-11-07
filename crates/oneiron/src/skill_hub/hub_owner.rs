@@ -1,6 +1,8 @@
 //! Served hub skill doors (OF-213): the owner imports a skill from a
 //! configured hub ref, refetches one at its ref's policy, and reads the hub
-//! refs it came from. Import and sync both query OSV before the writer.
+//! refs it came from. Import and sync both query OSV before the writer; a
+//! local folder hub's query sends nothing and leaves advisories unknown.
+use super::osv::OsvQuery;
 use super::ref_sync::{RefFetch, pinned_tracking};
 use super::support::map_value;
 use super::{
@@ -106,17 +108,13 @@ impl Vault {
         let source = HubRef::new(hub, folder, pin)?;
         let at = self.now_recorded_at();
         let occurred = TimeRange { start: at, end: at };
-        let osv = Some(&super::osv::OsvDevClient as &dyn super::osv::OsvQuery);
         let caller = HoldsNothing;
         let fit = self.chosen_skill_fit(&caller)?;
-        match self.hub_ref_fetch(&pinned_tracking(source.clone())?, None)? {
-            RefFetch::Git(adapter, _) => self.import_marketplace_skill_with_query(
-                &adapter, &source, &publisher, &*fit, osv, occurred, at,
-            ),
-            RefFetch::Http(adapter, _) => self.import_marketplace_skill_with_query(
-                &adapter, &source, &publisher, &*fit, osv, occurred, at,
-            ),
-        }
+        let fetch = self.hub_ref_fetch(&pinned_tracking(source.clone())?, None)?;
+        let osv = Some(super::osv::hub_advisory_query(fetch.kind()));
+        self.import_marketplace_skill_with_query(
+            &fetch, &source, &publisher, &*fit, osv, occurred, at,
+        )
     }
 
     /// [`Self::import_skill_from_hub_ref`] for a caller that names the skill
@@ -138,12 +136,11 @@ impl Vault {
         skill_id: &str,
         version: Option<&str>,
     ) -> Result<EntityId> {
+        // The owner is checked before any host path is read.
+        self.check_restore_owner_in_txn(&self.store.env.read_txn()?, owner)?;
         let source = HubRef::new(hub, folder, pin)?;
         let fetch = self.hub_ref_fetch(&pinned_tracking(source.clone())?, None)?;
-        let package = match &fetch {
-            RefFetch::Git(adapter, _) => adapter.fetch_package(&source)?,
-            RefFetch::Http(adapter, _) => adapter.fetch_package(&source)?,
-        };
+        let package = fetch.fetch_package(&source)?;
         // The door reads the record from the package's files, so the check
         // does too.
         let parsed = super::folder::package_from_files(package.files.clone())?;
@@ -151,37 +148,22 @@ impl Vault {
         let publisher = self.admit_skill_publisher(owner, publisher, hub)?;
         let at = self.now_recorded_at();
         let occurred = TimeRange { start: at, end: at };
-        let osv = Some(&super::osv::OsvDevClient as &dyn super::osv::OsvQuery);
+        let osv = Some(super::osv::hub_advisory_query(fetch.kind()));
         let caller = HoldsNothing;
         let fit = self.chosen_skill_fit(&caller)?;
-        match &fetch {
-            RefFetch::Git(adapter, _) => self.import_marketplace_skill_with_query(
-                &PrefetchedPackage {
-                    adapter,
-                    source: &source,
-                    package,
-                },
-                &source,
-                &publisher,
-                &*fit,
-                osv,
-                occurred,
-                at,
-            ),
-            RefFetch::Http(adapter, _) => self.import_marketplace_skill_with_query(
-                &PrefetchedPackage {
-                    adapter,
-                    source: &source,
-                    package,
-                },
-                &source,
-                &publisher,
-                &*fit,
-                osv,
-                occurred,
-                at,
-            ),
-        }
+        self.import_marketplace_skill_with_query(
+            &PrefetchedPackage {
+                adapter: &fetch,
+                source: &source,
+                package,
+            },
+            &source,
+            &publisher,
+            &*fit,
+            osv,
+            occurred,
+            at,
+        )
     }
 
     /// The hub refs an imported skill's provenance names.
@@ -223,26 +205,17 @@ impl Vault {
         };
         // The ref itself is the provenance alias the sync matches; the
         // transport fetches what it names now.
-        let (package, revision) = match self.hub_ref_fetch(&tracked, fallback)? {
-            RefFetch::Git(adapter, _) => (
-                adapter.fetch_package(&tracked.hub_ref)?,
-                adapter.resolved_commit().to_owned(),
-            ),
-            RefFetch::Http(adapter, _) => {
-                let package = adapter.fetch_package(&tracked.hub_ref)?;
-                let revision = package.content_hash()?.to_hex();
-                (package, revision)
-            }
-        };
+        let (package, revision, advisories) = self.fetch_tracked_package(&tracked, fallback)?;
         self.mark_hub_ref(&tracked, &revision, false)?;
         let at = self.now_recorded_at();
-        let disposition = self.sync_skill_from_hub(
+        let disposition = self.sync_skill_from_hub_with_query(
             entity,
             &tracked.hub_ref,
             &package,
             tracked.sync_policy,
             TimeRange { start: at, end: at },
             at,
+            advisories,
         )?;
         if disposition == HubSyncDisposition::Applied {
             self.mark_hub_ref(&tracked, &revision, true)?;
@@ -277,7 +250,8 @@ impl Vault {
             HubPin::Commit(commit) => Some(commit.as_str()),
             _ => None,
         };
-        let (mut package, mut revision) = self.fetch_tracked_package(&tracked, fallback)?;
+        let (mut package, mut revision, advisories) =
+            self.fetch_tracked_package(&tracked, fallback)?;
         let current = self
             .get_skill_record(entity)?
             .ok_or_else(|| invalid("the skill has no record"))?;
@@ -292,20 +266,22 @@ impl Vault {
                 )?,
                 ..tracked.clone()
             };
-            if let Ok(found) = self.fetch_tracked_package(&named, None) {
-                (package, revision) = found;
+            if let Ok((found, found_revision, _)) = self.fetch_tracked_package(&named, None) {
+                package = found;
+                revision = found_revision;
             }
         }
         check_expected_skill(&package.record, &current.skill_id, Some(version))?;
         self.mark_hub_ref(&tracked, &revision, false)?;
         let at = self.now_recorded_at();
-        let disposition = self.sync_skill_from_hub(
+        let disposition = self.sync_skill_from_hub_with_query(
             entity,
             &tracked.hub_ref,
             &package,
             tracked.sync_policy,
             TimeRange { start: at, end: at },
             at,
+            advisories,
         )?;
         if disposition == HubSyncDisposition::Applied {
             self.mark_hub_ref(&tracked, &revision, true)?;
@@ -313,22 +289,24 @@ impl Vault {
         Ok(disposition)
     }
 
-    /// The package `tracked` names now, and the revision it resolved to.
+    /// The package `tracked` names now, the revision it resolved to (a
+    /// commit, or an index hub's content hash), and the advisory query its
+    /// hub's kind uses.
     fn fetch_tracked_package(
         &self,
         tracked: &TrackedHubRef,
         fallback: Option<&str>,
-    ) -> Result<(HubPackage, String)> {
-        match self.hub_ref_fetch(tracked, fallback)? {
-            RefFetch::Git(adapter, _) => Ok((
-                adapter.fetch_package(&tracked.hub_ref)?,
-                adapter.resolved_commit().to_owned(),
-            )),
-            RefFetch::Http(adapter, _) => {
-                let package = adapter.fetch_package(&tracked.hub_ref)?;
-                let revision = package.content_hash()?.to_hex();
-                Ok((package, revision))
-            }
-        }
+    ) -> Result<(HubPackage, String, &'static dyn OsvQuery)> {
+        let fetch = self.hub_ref_fetch(tracked, fallback)?;
+        let package = fetch.fetch_package(&tracked.hub_ref)?;
+        let revision = match &fetch {
+            RefFetch::Http(..) => package.content_hash()?.to_hex(),
+            RefFetch::Git(..) | RefFetch::Local(..) => fetch.resolved_commit()?.to_owned(),
+        };
+        Ok((
+            package,
+            revision,
+            super::osv::hub_advisory_query(fetch.kind()),
+        ))
     }
 }
