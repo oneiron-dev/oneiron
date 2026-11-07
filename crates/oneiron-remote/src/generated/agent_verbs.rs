@@ -1643,6 +1643,12 @@ impl OneironClient {
                 "vault.archive.delete.confirm" => remote_agent_verb_output::<
                     oneiron::memory::ArchiveDeleteBatchResult,
                 >(client, verb, &input),
+                "vault.archive.attempt.delete.preview" => remote_agent_verb_output::<
+                    oneiron::vault_cleanup::AttemptArchiveDeletePreviewView,
+                >(client, verb, &input),
+                "vault.archive.attempt.delete.confirm" => remote_agent_verb_output::<
+                    oneiron::vault_cleanup::AttemptArchiveDeleteReceiptView,
+                >(client, verb, &input),
                 "vault.usage.events.undecodable" => remote_agent_verb_output::<
                     oneiron::memory::usage_repair::UndecodableUsageList,
                 >(client, verb, &input),
@@ -10474,6 +10480,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.archive.delete.confirm", value)
+    }
+    pub fn vault_archive_attempt_delete_preview(
+        &self,
+        input: &oneiron::vault_cleanup::AttemptArchiveDeletePreviewRequest,
+    ) -> Result<oneiron::vault_cleanup::AttemptArchiveDeletePreviewView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.archive.attempt.delete.preview", value)
+    }
+    pub fn vault_archive_attempt_delete_confirm(
+        &self,
+        input: &oneiron::vault_cleanup::AttemptArchiveDeleteConfirmRequest,
+    ) -> Result<oneiron::vault_cleanup::AttemptArchiveDeleteReceiptView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.archive.attempt.delete.confirm", value)
     }
     pub fn vault_usage_events_undecodable(
         &self,

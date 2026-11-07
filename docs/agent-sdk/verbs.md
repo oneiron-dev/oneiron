@@ -530,6 +530,8 @@ both bindings and their export-census tests in one change.
 - `vault.cleanup.decide`
 - `vault.archive.delete.preview`
 - `vault.archive.delete.confirm`
+- `vault.archive.attempt.delete.preview`
+- `vault.archive.attempt.delete.confirm`
 - `vault.usage.events.undecodable`
 - `vault.usage.events.remove_undecodable`
 - `vault.usage.repair.receipts`

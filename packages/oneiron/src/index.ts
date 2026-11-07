@@ -1875,6 +1875,14 @@ export class Oneiron {
         /** Deletes explicit archived records under the caller's current delete authority and returns each receipt. */
         confirm: (input: Facade.ArchiveDeleteConfirmRequest): Facade.ArchiveDeleteBatchResult => this.#call(() => this.#client.vaultArchiveDeleteConfirm(input) as Facade.ArchiveDeleteBatchResult),
       },
+      attempt: {
+        delete: {
+          /** Previews one cleanup-archived completed attempt under the caller's delete authority. */
+          preview: (input: Facade.AttemptArchiveDeletePreviewRequest): Facade.AttemptArchiveDeletePreviewView => this.#call(() => this.#client.vaultArchiveAttemptDeletePreview(input) as Facade.AttemptArchiveDeletePreviewView),
+          /** Deletes the selected cleanup-archived completed attempt and returns its durable deletion receipt. */
+          confirm: (input: Facade.AttemptArchiveDeleteConfirmRequest): Facade.AttemptArchiveDeleteReceiptView => this.#call(() => this.#client.vaultArchiveAttemptDeleteConfirm(input) as Facade.AttemptArchiveDeleteReceiptView),
+        },
+      },
     },
     usage: {
       events: {

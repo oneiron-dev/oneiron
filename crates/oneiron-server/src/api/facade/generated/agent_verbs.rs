@@ -592,6 +592,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.cleanup.decide", post(facade_route))
         .route("/vault.archive.delete.preview", post(facade_route))
         .route("/vault.archive.delete.confirm", post(facade_route))
+        .route("/vault.archive.attempt.delete.preview", post(facade_route))
+        .route("/vault.archive.attempt.delete.confirm", post(facade_route))
         .route("/vault.usage.events.undecodable", post(facade_route))
         .route("/vault.usage.events.remove_undecodable", post(facade_route))
         .route("/vault.usage.repair.receipts", post(facade_route))

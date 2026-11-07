@@ -8135,6 +8135,39 @@
       "openapi": true
     },
     {
+      "name": "vault.archive.attempt.delete.preview",
+      "description": "Previews one cleanup-archived completed attempt under the caller's delete authority.",
+      "input": "crate::vault_cleanup::AttemptArchiveDeletePreviewRequest",
+      "output": "crate::vault_cleanup::AttemptArchiveDeletePreviewView",
+      "call": "crate::vault_cleanup::preview_attempt_archive_delete_wire(memory, &input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.archive.attempt.delete.confirm",
+      "description": "Deletes the selected cleanup-archived completed attempt and returns its durable deletion receipt.",
+      "input": "crate::vault_cleanup::AttemptArchiveDeleteConfirmRequest",
+      "output": "crate::vault_cleanup::AttemptArchiveDeleteReceiptView",
+      "call": "crate::vault_cleanup::confirm_attempt_archive_delete_wire(memory, &input)?",
+      "scope": "Write",
+      "admission": {
+        "lane_record_scope": true,
+        "require_granted_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.usage.events.undecodable",
       "description": "Lists the stored usage events of this server's metering scope that no longer decode, each by an opaque row ref, its byte length and the BLAKE3 hash of its bytes, for the owner or an agent whose own Grant names this verb.",
       "input": "crate::memory::usage_repair::UsageRepairListRequest",

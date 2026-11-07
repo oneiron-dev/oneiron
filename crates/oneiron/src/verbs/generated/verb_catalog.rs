@@ -528,6 +528,8 @@ pub enum AgentVerb {
     VaultCleanupDecide,
     VaultArchiveDeletePreview,
     VaultArchiveDeleteConfirm,
+    VaultArchiveAttemptDeletePreview,
+    VaultArchiveAttemptDeleteConfirm,
     VaultUsageEventsUndecodable,
     VaultUsageEventsRemoveUndecodable,
     VaultUsageRepairReceipts,
@@ -1842,6 +1844,8 @@ impl AgentVerb {
         Self::VaultCleanupDecide,
         Self::VaultArchiveDeletePreview,
         Self::VaultArchiveDeleteConfirm,
+        Self::VaultArchiveAttemptDeletePreview,
+        Self::VaultArchiveAttemptDeleteConfirm,
         Self::VaultUsageEventsUndecodable,
         Self::VaultUsageEventsRemoveUndecodable,
         Self::VaultUsageRepairReceipts,
@@ -3177,6 +3181,8 @@ impl AgentVerb {
             Self::VaultCleanupDecide => "vault.cleanup.decide",
             Self::VaultArchiveDeletePreview => "vault.archive.delete.preview",
             Self::VaultArchiveDeleteConfirm => "vault.archive.delete.confirm",
+            Self::VaultArchiveAttemptDeletePreview => "vault.archive.attempt.delete.preview",
+            Self::VaultArchiveAttemptDeleteConfirm => "vault.archive.attempt.delete.confirm",
             Self::VaultUsageEventsUndecodable => "vault.usage.events.undecodable",
             Self::VaultUsageEventsRemoveUndecodable => "vault.usage.events.remove_undecodable",
             Self::VaultUsageRepairReceipts => "vault.usage.repair.receipts",
@@ -4513,6 +4519,8 @@ impl AgentVerb {
                 | Self::VaultCleanupDecide
                 | Self::VaultArchiveDeletePreview
                 | Self::VaultArchiveDeleteConfirm
+                | Self::VaultArchiveAttemptDeletePreview
+                | Self::VaultArchiveAttemptDeleteConfirm
                 | Self::VaultUsageEventsUndecodable
                 | Self::VaultUsageEventsRemoveUndecodable
                 | Self::VaultUsageRepairReceipts
@@ -5856,6 +5864,8 @@ impl AgentVerb {
                 | Self::VaultCleanupDecide
                 | Self::VaultArchiveDeletePreview
                 | Self::VaultArchiveDeleteConfirm
+                | Self::VaultArchiveAttemptDeletePreview
+                | Self::VaultArchiveAttemptDeleteConfirm
                 | Self::VaultUsageEventsUndecodable
                 | Self::VaultUsageEventsRemoveUndecodable
                 | Self::VaultUsageRepairReceipts
@@ -7351,6 +7361,8 @@ impl AgentVerb {
                 | Self::VaultCleanupDecide
                 | Self::VaultArchiveDeletePreview
                 | Self::VaultArchiveDeleteConfirm
+                | Self::VaultArchiveAttemptDeletePreview
+                | Self::VaultArchiveAttemptDeleteConfirm
                 | Self::VaultUsageEventsUndecodable
                 | Self::VaultUsageEventsRemoveUndecodable
                 | Self::VaultUsageRepairReceipts
@@ -8381,6 +8393,7 @@ impl AgentVerb {
                 | Self::VaultCleanupRun
                 | Self::VaultCleanupDecide
                 | Self::VaultArchiveDeleteConfirm
+                | Self::VaultArchiveAttemptDeleteConfirm
                 | Self::VaultUsageEventsRemoveUndecodable
                 | Self::VaultEntitiesMention
                 | Self::VaultLegalHoldsPlace
@@ -9412,6 +9425,8 @@ impl AgentVerb {
             Self::VaultCleanupDecide => &["spec"],
             Self::VaultArchiveDeletePreview => &["spec"],
             Self::VaultArchiveDeleteConfirm => &["spec"],
+            Self::VaultArchiveAttemptDeletePreview => &["spec"],
+            Self::VaultArchiveAttemptDeleteConfirm => &["spec"],
             Self::VaultUsageEventsUndecodable => &["spec"],
             Self::VaultUsageEventsRemoveUndecodable => &["spec"],
             Self::VaultUsageRepairReceipts => &["spec"],
@@ -10727,6 +10742,8 @@ impl AgentVerb {
             Self::VaultCleanupDecide => &["spec"],
             Self::VaultArchiveDeletePreview => &["spec"],
             Self::VaultArchiveDeleteConfirm => &["spec"],
+            Self::VaultArchiveAttemptDeletePreview => &["spec"],
+            Self::VaultArchiveAttemptDeleteConfirm => &["spec"],
             Self::VaultUsageEventsUndecodable => &["spec"],
             Self::VaultUsageEventsRemoveUndecodable => &["spec"],
             Self::VaultUsageRepairReceipts => &["spec"],
@@ -13070,6 +13087,12 @@ impl AgentVerb {
             }
             Self::VaultArchiveDeleteConfirm => {
                 "Deletes explicit archived records under the caller's current delete authority and returns each receipt."
+            }
+            Self::VaultArchiveAttemptDeletePreview => {
+                "Previews one cleanup-archived completed attempt under the caller's delete authority."
+            }
+            Self::VaultArchiveAttemptDeleteConfirm => {
+                "Deletes the selected cleanup-archived completed attempt and returns its durable deletion receipt."
             }
             Self::VaultUsageEventsUndecodable => {
                 "Lists the stored usage events of this server's metering scope that no longer decode, each by an opaque row ref, its byte length and the BLAKE3 hash of its bytes, for the owner or an agent whose own Grant names this verb."
