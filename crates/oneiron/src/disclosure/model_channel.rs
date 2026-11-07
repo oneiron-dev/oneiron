@@ -256,7 +256,10 @@ pub(crate) fn model_names_admitted_in(
     admits(vault, txn, reader, DisclosureDataClass::Names, band)
 }
 
-/// The bare PERSON handle for a claim above this model channel's ceiling.
+/// The bare handle of a classed claim's subject, for a claim above this
+/// model channel's ceiling: its short handle, else its id. A claim of a
+/// data class about any record is projected, not only one about a PERSON
+/// (FIX 9785); a claim of no class stays as its scoped read admitted it.
 /// This is not a grant: the caller must already have admitted the claim.
 pub(crate) fn claim_handle_in(
     vault: &Vault,
@@ -264,24 +267,17 @@ pub(crate) fn claim_handle_in(
     reader: &ScopedReadActorKey,
     body: &ClaimBody,
 ) -> Result<Option<String>> {
-    let (ClaimSubject::Entity(person), Some(class)) = (&body.subject, claim_data_class(body))
+    let (ClaimSubject::Entity(subject), Some(class)) = (&body.subject, claim_data_class(body))
     else {
         return Ok(None);
     };
-    if vault
-        .store
-        .port_entity_record(txn, person)?
-        .map(|row| row.entity_type)
-        != Some(crate::registry::ENTITY_TYPE_PERSON)
-        || admits(vault, txn, reader, class, DisclosureBand::of_claim(body))?
-    {
+    if admits(vault, txn, reader, class, DisclosureBand::of_claim(body))? {
         return Ok(None);
     }
     let handle = vault
         .store
-        .port_short_id_reference(txn, person)?
-        .map(|(handle, _)| handle)
-        .ok_or(Error::EntityNotFound)?;
+        .port_short_id_reference(txn, subject)?
+        .map_or_else(|| subject.to_hex(), |(handle, _)| handle);
     Ok(Some(handle))
 }
 
@@ -296,14 +292,18 @@ pub(crate) fn project_model_pack_in(
     if let Some(summary) = pack.l2_base.as_mut() {
         let mut rows: Vec<serde_json::Value> = serde_json::from_str(&summary.body)
             .map_err(|_| Error::InvariantViolation("model disclosure L2 JSON"))?;
+        if rows.len() != summary.evidence_ids().len() {
+            return Err(Error::InvariantViolation(
+                "model disclosure L2 evidence rows",
+            ));
+        }
         let mut changed = false;
-        for row in &mut rows {
-            let id = row
-                .get("id")
-                .and_then(serde_json::Value::as_str)
-                .and_then(|id| EntityId::from_hex(id).ok())
-                .ok_or(Error::EntityNotFound)?;
-            if let Some(body) = vault.get_claim_in_txn(txn, &id)?
+        // A row's `id` is its display handle (a short id where one is
+        // stored), never a storage key: each row is read by the typed
+        // evidence id the producer paired with it, in the same order
+        // (FIX 21913).
+        for (row, id) in rows.iter_mut().zip(summary.evidence_ids()) {
+            if let Some(body) = vault.get_claim_in_txn(txn, id)?
                 && let Some(handle) = claim_handle_in(vault, txn, reader, &body)?
             {
                 row["val"] = serde_json::Value::String(handle);

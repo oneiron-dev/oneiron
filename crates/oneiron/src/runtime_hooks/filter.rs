@@ -107,7 +107,7 @@ pub(super) fn glob_match(pattern: &str, text: &str) -> bool {
 /// owner is human, a machine or the storage service is system, and any other
 /// writer is an agent.
 pub(super) fn actor_class(vault: &Vault, actor: EntityId) -> Result<HookActorClass> {
-    if actor == storage_service_principal()? {
+    if actor == crate::ports::storage_service_principal()? {
         return Ok(HookActorClass::System);
     }
     let txn = vault.store.env.read_txn()?;
@@ -125,15 +125,6 @@ pub(super) fn actor_class(vault: &Vault, actor: EntityId) -> Result<HookActorCla
     } else {
         HookActorClass::Agent
     })
-}
-
-/// The principal the changelog stamps on writes no actor made (supersession
-/// among them): the same digest `ports::mutation` uses.
-fn storage_service_principal() -> Result<EntityId> {
-    let digest = blake3::hash(b"oneiron:storage-service-principal:v1");
-    let mut bytes = [0; 16];
-    bytes.copy_from_slice(&digest.as_bytes()[..16]);
-    EntityId::from_bytes(bytes)
 }
 
 /// The edge actor class a [`HookActorClass`] reads and writes as.

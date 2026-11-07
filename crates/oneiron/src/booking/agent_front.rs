@@ -29,16 +29,17 @@ pub const BOOKING_SLOT_BUTTON_ACTION: &str = "booking.select_slot";
 /// Most slot buttons a single reply renders.
 const MAX_RENDERED_SLOTS: usize = 3;
 
-/// Every card this front assembles is identified by `booking-<session_ref>`.
+/// Every card this front assembles is identified by `booking-<session_ref>`
+/// when that fits a lens id.
 const CARD_ID_PREFIX: &str = "booking-";
 
-/// The surface's own bound on a lens id, which the prefixed card id must fit.
-const MAX_LENS_ID_BYTES: usize = 128;
+/// A card whose `booking-<session_ref>` would not fit a lens id is identified
+/// by `booking.<digest>`, the BLAKE3 hex of its session ref (ABC row 68). The
+/// dot keeps the two forms apart: a plain card id always starts `booking-`.
+const DIGEST_CARD_ID_PREFIX: &str = "booking.";
 
-/// Bound on the opaque per-session reference. The PREFIX counts: admitting a
-/// reference the engine cannot turn into a card id would spend a model call and
-/// a solve before surface assembly discovered it.
-const MAX_SESSION_REF_BYTES: usize = MAX_LENS_ID_BYTES - CARD_ID_PREFIX.len();
+/// The surface's own bound on a lens id, which a card id must fit.
+const MAX_LENS_ID_BYTES: usize = 128;
 
 /// The complete capability set exposed to the model side of this front.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -305,11 +306,13 @@ fn top_ranked_slots(slots: &[RankedSlot]) -> Vec<&RankedSlot> {
     by_rank.into_iter().map(|index| &slots[index]).collect()
 }
 
+/// A session ref of any length (ABC row 68): nonempty, and of the lens-token
+/// characters. A long one names its card by digest ([`card_id`]).
 fn validate_session_ref(value: &str) -> Result<(), BookingError> {
-    if value.is_empty() || value.len() > MAX_SESSION_REF_BYTES {
-        return Err(BookingError::InvalidConstraint(format!(
-            "session ref must be 1..={MAX_SESSION_REF_BYTES} bytes"
-        )));
+    if value.is_empty() {
+        return Err(BookingError::InvalidConstraint(
+            "session ref must not be empty".to_owned(),
+        ));
     }
     if !value
         .bytes()
@@ -350,13 +353,26 @@ fn deflect_card(
     )
 }
 
+/// The lens id of `session_ref`'s card: `booking-<session_ref>` when it fits
+/// a lens id, else `booking.<BLAKE3 hex of session_ref>`.
+fn card_id(session_ref: &str) -> String {
+    if CARD_ID_PREFIX.len() + session_ref.len() <= MAX_LENS_ID_BYTES {
+        format!("{CARD_ID_PREFIX}{session_ref}")
+    } else {
+        format!(
+            "{DIGEST_CARD_ID_PREFIX}{}",
+            blake3::hash(session_ref.as_bytes()).to_hex()
+        )
+    }
+}
+
 fn card(
     session_ref: &str,
     root: LensNode,
     actions: Vec<GeneratedUiActionDeclaration>,
 ) -> Result<GeneratedUiCard, BookingError> {
     surface(GeneratedUiCard::interactive(
-        surface(LensRenderId::new(format!("{CARD_ID_PREFIX}{session_ref}")))?,
+        surface(LensRenderId::new(card_id(session_ref)))?,
         surface(GeneratedLens::new(root))?,
         actions,
         GeneratedUiStateSnapshot::default(),
