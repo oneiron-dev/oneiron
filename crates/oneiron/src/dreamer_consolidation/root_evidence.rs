@@ -21,13 +21,23 @@ use serde::{Deserialize, Serialize};
 const ROOTS: SideTable<EntityId, Root, Named> =
     SideTable::new(&side_table::DREAMER_CONSOLIDATION_ROOT);
 
+pub(super) mod bridge;
+pub(crate) use bridge::erase_source_bridges_in_txn;
 mod work;
 pub(crate) use work::{frontier_frozen, pin_frozen};
+
+pub(crate) const ROOT_BRIDGE_ATTEMPT_TYPE: &str = bridge::ATTEMPT;
+
+/// Only actual entity rows named by the root payload, never its side-table key.
+pub(crate) fn root_bridge_read_context(input: &rmpv::Value) -> Option<Vec<EntityId>> {
+    bridge::RootPayload::about(input)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Root {
     owner: EntityId,
     accounting: ConsolidationRootAccounting,
+    closes: Vec<bridge::GrantedClose>,
 }
 
 pub(crate) fn reference(input: &ConsolidationReference) -> Result<super::SwarmEvidenceRef> {
@@ -361,6 +371,7 @@ fn put_root_in_txn(
         &Root {
             owner,
             accounting: accounting.clone(),
+            closes: Vec::new(),
         },
     )?;
     Ok(accounting)
@@ -487,5 +498,8 @@ pub(crate) fn erase_actor_in_txn(
             ROOTS.delete(&vault.store, txn, &id)?;
         }
     }
-    Ok(())
+    // The declared hard-erase scrub also runs for marker-only upgrades and
+    // checkpoint restore, where no active source body reaches the tear doors.
+    bridge::erase_source_bridges_in_txn(vault, txn, actor)?;
+    bridge::erase_owner_bridges_in_txn(&vault.store, txn, actor)
 }
