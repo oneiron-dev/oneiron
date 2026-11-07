@@ -10,6 +10,7 @@ use super::*;
 use crate::code_run::result_read::unplaced_answer;
 use crate::provenance::body::{owned_body_in_txn, publish_body_in_txn};
 use crate::side_table::RoutedDbs;
+use crate::store::BodyDir;
 
 mod admitted_reply;
 
@@ -49,12 +50,21 @@ impl ExecutorStorage<'_> {
         path: String,
         spool: BodySink,
         owner: EntityId,
+        receipt: Option<(&mut CodeRunReplayRecord, &mut CodeRunReplayGeneration)>,
     ) -> Result<std::result::Result<CodeRunRawOutput, serde_json::Value>> {
         let published = match self {
             Self::Canonical(vault) => {
-                vault.publish_admitted_code_run_output(path, spool, true, owner)?
+                vault.publish_admitted_code_run_output(path, spool, true, owner, receipt)?
             }
-            Self::Session(binding) => binding.publish_admitted_reply(path, spool, owner)?,
+            Self::Session(binding) => {
+                let published = binding.publish_admitted_reply(path, spool, owner)?;
+                if let ReplyBody::Published(output) = &published
+                    && let Some((receipt, _)) = receipt
+                {
+                    receipt.outputs.push(output.clone());
+                }
+                published
+            }
         };
         Ok(match published {
             ReplyBody::Published(output) => Ok(output),
@@ -118,7 +128,19 @@ impl SessionBinding<'_> {
         owner: EntityId,
         input_rows: Option<Vec<EntityId>>,
     ) -> Result<CodeRunRawOutput> {
-        let finished = finish_output_sourced(
+        self.publish_output_produced(path, sink, complete, owner, input_rows, None)
+    }
+
+    pub(super) fn publish_output_produced(
+        &self,
+        path: String,
+        sink: BodySink,
+        complete: bool,
+        owner: EntityId,
+        input_rows: Option<Vec<EntityId>>,
+        producing_step_start: Option<u64>,
+    ) -> Result<CodeRunRawOutput> {
+        let mut finished = finish_output_sourced(
             path,
             sink,
             complete,
@@ -126,6 +148,7 @@ impl SessionBinding<'_> {
             self.session.limit_watch(),
             |digest| self.session.pin_result_body(digest),
         )?;
+        finished.output.producing_step_start = producing_step_start;
         self.mark_secret(&finished.output, owner, finished.secret)?;
         self.put_output_row(&finished, &finished.output, owner)?;
         Ok(finished.output)
@@ -163,7 +186,7 @@ impl SessionBinding<'_> {
     ) -> Result<()> {
         let mut sink = self.output_sink()?;
         sink.write(raw)?;
-        let finished = finish_output_sourced(
+        let mut finished = finish_output_sourced(
             output.path.clone(),
             sink,
             true,
@@ -171,6 +194,7 @@ impl SessionBinding<'_> {
             self.session.limit_watch(),
             |digest| self.session.pin_result_body(digest),
         )?;
+        finished.output.producing_step_start = output.producing_step_start;
         if finished.output != *output {
             return Err(invalid_code_run_replay(
                 "raw output metadata does not match bytes",
@@ -217,6 +241,58 @@ impl SessionBinding<'_> {
             .transpose()
     }
 
+    /// The row of the body `finished` holds, as run `owner`'s `output`,
+    /// prepared for a writer on the run's route that its caller opens (FIX
+    /// 6592). The directory a sealed file's key is checked against is read
+    /// here, before that writer opens.
+    pub(in crate::code_run::storage) fn prepare_output_row<'f>(
+        &self,
+        finished: &'f FinishedOutput,
+        output: &'f CodeRunRawOutput,
+        owner: EntityId,
+    ) -> Result<PreparedOutputRow<'f>> {
+        Ok(PreparedOutputRow {
+            finished,
+            output,
+            owner,
+            dir: self.key_dir(finished)?,
+        })
+    }
+}
+
+/// One output row of a session-bound run, with the directory of its sealed
+/// file, prepared before the routed writer that publishes it opens (FIX
+/// 6592).
+pub(in crate::code_run::storage) struct PreparedOutputRow<'f> {
+    finished: &'f FinishedOutput,
+    output: &'f CodeRunRawOutput,
+    owner: EntityId,
+    dir: Option<BodyDir>,
+}
+
+impl PreparedOutputRow<'_> {
+    /// The secret scan's mark of the occurrence, then the row, in the
+    /// caller's routed writer (FIX 6592): what
+    /// [`SessionBinding::publish_output_sourced`] writes in two writers, in
+    /// one, its row as [`SessionBinding::put_output_row`] writes it. A
+    /// resumed reply's body is published so, in its resume commit, and a
+    /// refusal there leaves neither.
+    pub(in crate::code_run::storage) fn publish_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        read: RoutedDbs<'_>,
+        write: RoutedDbs<'_>,
+    ) -> Result<()> {
+        let (finished, output, owner, dir) = (self.finished, self.output, self.owner, &self.dir);
+        if let Some(reason) = finished.secret {
+            let key = ResultOccurrence::of(Some(owner), output)?.mark_key(&output.handle);
+            RAW_OUTPUT_SECRETS.put(&write, txn, &key, &reason.to_owned())?;
+        }
+        put_output_row_in_txn(txn, (read, write), dir.as_ref(), finished, output, owner)
+    }
+}
+
+impl SessionBinding<'_> {
     pub(super) fn get_raw_output(&self, output: &CodeRunRawOutput) -> Result<Option<Vec<u8>>> {
         validate_raw_output(output)?;
         let _pin = self.session.pin_result_body(output.raw_blake3);

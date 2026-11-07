@@ -1,5 +1,5 @@
-//! `self.team.start` and `self.team.record` (OF-540): a pattern-skill run's
-//! own team, bound to the running agent attempt. The team rules are
+//! `self.team.start`, `self.team.record` and `self.team.vote` (OF-540): a
+//! pattern-skill run's own team, bound to the running agent attempt. The team rules are
 //! [`crate::team::run`]'s; this binds them to the run. Members spawn as the
 //! run's children through the one code-mode spawn door, each with the team's
 //! stamp, so a replayed start finds the same children.
@@ -28,6 +28,7 @@ impl HostSelfDispatcher<'_> {
         let answered = match call {
             SelfTeamCall::Start(input) => self.team_start(input)?,
             SelfTeamCall::Record(input) => self.team_record(&input)?,
+            SelfTeamCall::Vote(input) => self.team_vote(&input)?,
         };
         Ok(match answered {
             Ok(answer) => SelfDispatchOutcome::Team(answer),
@@ -174,5 +175,22 @@ impl HostSelfDispatcher<'_> {
                 source_rows: None,
             })
         })
+    }
+
+    fn team_vote(&self, input: &crate::team::TeamVoteInput) -> Result<Answered> {
+        let Some(caller) = self.agent_parent else {
+            return Ok(Err("team_unbound"));
+        };
+        let ExecutorStorage::Canonical(vault) = &self.storage else {
+            return Ok(Err("team_off_record"));
+        };
+        crate::team::ballot::record_vote(vault, caller, input, crate::unix_seconds_now()).map(
+            |answered| {
+                answered.map(|answer| SelfTeamResult {
+                    answer,
+                    source_rows: Some(Vec::new()),
+                })
+            },
+        )
     }
 }

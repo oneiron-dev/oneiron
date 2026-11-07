@@ -15,27 +15,35 @@ from langgraph.store.base import (
 __all__ = ["OneironStore"]
 
 
+# The engine measures a namespace's segments and bytes, a key's bytes and a
+# filter's bytes against its [limits] rows and serves them whole; this
+# adapter checks only their grammar.
 def _namespace(value: tuple[str, ...], *, empty: bool = False) -> list[str]:
-    if not isinstance(value, tuple) or (not value and not empty) or len(value) > 32:
-        raise ValueError("namespace must contain 1..32 exact string segments")
+    if not isinstance(value, tuple) or (not value and not empty):
+        raise ValueError("namespace must contain exact string segments")
     if any(not isinstance(part, str) or not part or "\0" in part or part == "*" for part in value):
         raise ValueError("namespace segments must be nonempty strings, without wildcard or NUL")
-    if sum(len(part.encode("utf-8")) for part in value) > 4096:
-        raise ValueError("namespace exceeds 4096 UTF-8 bytes")
     return list(value)
 
 
 def _address(namespace: tuple[str, ...], key: str) -> dict[str, Any]:
-    if not isinstance(key, str) or not key or "\0" in key or len(key.encode("utf-8")) > 4096:
-        raise ValueError("key must be a nonempty bounded string")
+    if not isinstance(key, str) or not key or "\0" in key:
+        raise ValueError("key must be a nonempty string without NUL")
     return {"namespace": _namespace(namespace), "key": key}
 
 
 def _page(limit: int, offset: int) -> None:
     if type(limit) is not int or limit < 1:
         raise ValueError("limit must be a positive integer")
-    if type(offset) is not int or not 0 <= offset <= 1_000_000:
-        raise ValueError("offset must be an integer between 0 and 1000000")
+    if type(offset) is not int or offset < 0:
+        raise ValueError("offset must be a nonnegative integer")
+
+
+def _keyed_value(value: Mapping[str, Any]) -> dict[str, Any]:
+    plain = _json_object(value)
+    if len(json.dumps(plain, allow_nan=False).encode("utf-8")) > 65536:
+        raise ValueError("value exceeds the keyed payload ceiling")
+    return plain
 
 
 def _json_object(value: Mapping[str, Any]) -> dict[str, Any]:
@@ -54,10 +62,7 @@ def _json_object(value: Mapping[str, Any]) -> dict[str, Any]:
                 check(child)
     plain = dict(value)
     check(plain)
-    encoded = json.dumps(plain, allow_nan=False)
-    if len(encoded.encode("utf-8")) > 65536:
-        raise ValueError("value exceeds the keyed payload ceiling")
-    return json.loads(encoded)
+    return json.loads(json.dumps(plain, allow_nan=False))
 
 
 def _item(value: dict[str, Any], *, search: bool = False) -> Item:
@@ -95,7 +100,7 @@ class OneironStore(BaseStore):
                 raise NotImplementedError("OneironStore has no vector index configuration")
             if op.value is None:
                 return "delete", request
-            return "put", {**request, "value": _json_object(op.value),
+            return "put", {**request, "value": _keyed_value(op.value),
                 "request_id": uuid4().hex, "source": self._source}
         if isinstance(op, SearchOp):
             _page(op.limit, op.offset)
@@ -109,8 +114,8 @@ class OneironStore(BaseStore):
                 "filter": filters, "limit": op.limit, "offset": op.offset}
         if isinstance(op, ListNamespacesOp):
             _page(op.limit, op.offset)
-            if op.max_depth is not None and (type(op.max_depth) is not int or not 1 <= op.max_depth <= 32):
-                raise ValueError("max_depth must be an integer between 1 and 32")
+            if op.max_depth is not None and (type(op.max_depth) is not int or op.max_depth < 1):
+                raise ValueError("max_depth must be a positive integer")
             patterns: dict[str, list[str]] = {"prefix": [], "suffix": []}
             incompatible = False
             for condition in op.match_conditions or ():

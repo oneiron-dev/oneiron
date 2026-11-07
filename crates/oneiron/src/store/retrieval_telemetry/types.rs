@@ -479,6 +479,9 @@ pub struct RetrievalRunRecord {
     /// 7315): the blake3 hex of the SAME manifest body both reads decoded.
     /// See [`Self::policy_manifest_ref`].
     pub policy_manifest_body_hash: Option<String>,
+    /// Stable `Reranker::id` label of the scorer actually applied for this
+    /// recorded attempt, NOT a validated model revision or checkpoint hash.
+    pub reranker_id: Option<String>,
     pub signals: Vec<RetrievalSignal>,
     pub result_ids: Vec<[u8; 16]>,
     pub score_breakdown: Vec<RetrievalScoreBreakdown>,
@@ -546,6 +549,7 @@ impl RetrievalRunRecord {
             dispatch_attempt: None,
             policy_manifest_ref: None,
             policy_manifest_body_hash: None,
+            reranker_id: None,
             score_breakdown,
             total_in_scope,
             claims_suppressed,

@@ -337,11 +337,11 @@ pub(super) fn set_series(
         .get(series)
         .ok_or(NativeRefusal::Stale("no such series"))?;
     let seq = match target {
-        Target::Name => &entry.name,
-        Target::Categories => &entry.categories,
-        Target::Values => &entry.values,
+        Target::Name => entry.name.as_ref(),
+        Target::Categories => entry.categories.as_ref(),
+        Target::Values => entry.values.as_ref(),
+        Target::Size => entry.other.first(),
     }
-    .as_ref()
     .ok_or(NativeRefusal::AmbiguousChartData(
         "the sequence has no workbook source",
     ))?;
