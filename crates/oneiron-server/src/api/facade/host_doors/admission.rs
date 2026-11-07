@@ -484,6 +484,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultSupportGrantsList
         | Row::VaultSupportGrantsRevoke
         | Row::VaultFilesSourcesAttach
+        | Row::VaultFilesSourcesConvert
         | Row::VaultFilesSourcesRescan
         | Row::VaultFilesSourcesDetach
         | Row::VaultFilesSourcesList
@@ -548,6 +549,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCoachTrainingOffersPilotsComplete
         | Row::VaultCoachTrainingOffersPilotsGet
         | Row::VaultCoachTrainingOffersSources
+        | Row::VaultCoachTrainingRunsCancel
         | Row::VaultDraftersList
         | Row::VaultDraftersStatus
         | Row::VaultDraftersPolicySet

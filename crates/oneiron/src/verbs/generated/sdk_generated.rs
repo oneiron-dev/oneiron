@@ -2614,6 +2614,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.coach.training_runs.cancel",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::offer_doors::TrainingRunRef,
+                >(),
+            ),
+            (
                 "vault.drafters.list",
                 crate::code_run::vault_read::request_schema::<crate::drafter::DrafterListRequest>(),
             ),
@@ -6915,6 +6921,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.files.sources.convert",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::FilesSourceConvertRequest,
+                >(),
+            ),
+            (
                 "connector.answer",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ConnectorAnswerRequest,
@@ -7678,6 +7690,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.coach.training_offers.pilots.complete",
     "vault.coach.training_offers.pilots.get",
     "vault.coach.training_offers.sources",
+    "vault.coach.training_runs.cancel",
     "vault.drafters.list",
     "vault.drafters.list_as",
     "vault.drafters.status",
@@ -8158,6 +8171,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.identity.events.get",
     "vault.identity.proposals.resolve",
     "vault.identity.proposals.for_pair",
+    "vault.files.sources.convert",
     "self.browser.open",
     "self.browser.observe",
     "self.browser.find",
@@ -9286,6 +9300,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.coach.training_offers.sources" => crate::code_run::vault_read::request_schema::<
             crate::edit_distance::reservoir::ReservoirSourcePreview,
         >(),
+        "vault.coach.training_runs.cancel" => {
+            crate::code_run::vault_read::request_schema::<crate::embed::PendingEmbedderBinding>()
+        }
         "vault.drafters.list" => {
             crate::code_run::vault_read::request_schema::<Vec<crate::drafter::DrafterVersionView>>()
         }
@@ -10747,6 +10764,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.identity.proposals.for_pair" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::IdentityPairProposals,
+        >(),
+        "vault.files.sources.convert" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::FilesSourceAttachAnswer,
         >(),
         "self.browser.open" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::BrowserObservationPage,
@@ -14355,6 +14375,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.coach.training_offers.sources" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.coach.training_runs.cancel" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19574,6 +19601,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.files.sources.convert" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "connector.answer" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -20489,6 +20523,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.coach.training_offers.sources" => {
             validate_input_vault_coach_training_offers_sources(value)?
+        }
+        "vault.coach.training_runs.cancel" => {
+            validate_input_vault_coach_training_runs_cancel(value)?
         }
         "vault.drafters.list" => validate_input_vault_drafters_list(value)?,
         "vault.drafters.list_as" => validate_input_vault_drafters_list_as(value)?,
@@ -21479,6 +21516,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.mail.inbox" => validate_input_vault_mail_inbox(value)?,
         "vault.mail.threads.read" => validate_input_vault_mail_threads_read(value)?,
         "vault.mail.compliance.search" => validate_input_vault_mail_compliance_search(value)?,
+        "vault.files.sources.convert" => validate_input_vault_files_sources_convert(value)?,
         "connector.answer" => validate_input_connector_answer(value)?,
         "self.browser.open" => validate_input_self_browser_open(value)?,
         "self.browser.observe" => validate_input_self_browser_observe(value)?,
@@ -24155,6 +24193,11 @@ fn validate_input_vault_coach_training_offers_sources(
     value: &serde_json::Value,
 ) -> MemoryResult<()> {
     let _input: crate::task_verb::sdk::ReservoirSourcesRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_coach_training_runs_cancel(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::skill_optimize::offer_doors::TrainingRunRef = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -28254,6 +28297,11 @@ fn validate_input_vault_mail_compliance_search(value: &serde_json::Value) -> Mem
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_files_sources_convert(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::FilesSourceConvertRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_connector_answer(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::task_verb::sdk::ConnectorAnswerRequest = decode(value.clone())?;
     Ok(())
@@ -29283,6 +29331,9 @@ pub fn invoke(
         "vault.coach.training_offers.sources" => {
             invoke_vault_coach_training_offers_sources(memory, value)
         }
+        "vault.coach.training_runs.cancel" => {
+            invoke_vault_coach_training_runs_cancel(memory, value)
+        }
         "vault.drafters.list" => invoke_vault_drafters_list(memory, value),
         "vault.drafters.list_as" => invoke_vault_drafters_list_as(memory, value),
         "vault.drafters.status" => invoke_vault_drafters_status(memory, value),
@@ -30250,6 +30301,7 @@ pub fn invoke(
         "vault.mail.inbox" => invoke_vault_mail_inbox(memory, value),
         "vault.mail.threads.read" => invoke_vault_mail_threads_read(memory, value),
         "vault.mail.compliance.search" => invoke_vault_mail_compliance_search(memory, value),
+        "vault.files.sources.convert" => invoke_vault_files_sources_convert(memory, value),
         "connector.answer" => invoke_connector_answer(memory, value),
         "self.browser.open" => invoke_self_browser_open(memory, value),
         "self.browser.observe" => invoke_self_browser_observe(memory, value),
@@ -33795,6 +33847,13 @@ fn invoke_vault_coach_training_offers_sources(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_coach_training_offers_sources(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_coach_training_runs_cancel(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_coach_training_runs_cancel(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_drafters_list(
@@ -39118,6 +39177,13 @@ fn invoke_vault_mail_compliance_search(
     encode(vault_mail_compliance_search(memory, decode(value)?)?)
 }
 #[inline(never)]
+fn invoke_vault_files_sources_convert(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_files_sources_convert(memory, decode(value)?)?)
+}
+#[inline(never)]
 fn invoke_connector_answer(
     memory: &Memory<'_>,
     value: serde_json::Value,
@@ -43732,6 +43798,17 @@ pub fn vault_coach_training_offers_sources(
         &memory.embedded_owner("vault.coach.training_offers.sources")?,
         input,
     )
+}
+pub fn vault_coach_training_runs_cancel(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::offer_doors::TrainingRunRef,
+) -> MemoryResult<crate::embed::PendingEmbedderBinding> {
+    crate::skill_optimize::offer_doors::cancel_training_run(
+        memory.vault(),
+        &memory.embedded_owner("vault.coach.training_runs.cancel")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
 }
 pub fn vault_drafters_list(
     memory: &Memory<'_>,
@@ -50080,6 +50157,12 @@ pub fn vault_mail_compliance_search(
     input: crate::mail_pack::MailComplianceSearchRequest,
 ) -> MemoryResult<crate::mail_pack::MailComplianceSearchReply> {
     memory.mail_compliance_search(&input)
+}
+pub fn vault_files_sources_convert(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::FilesSourceConvertRequest,
+) -> MemoryResult<crate::task_verb::sdk::FilesSourceAttachAnswer> {
+    crate::task_verb::sdk::convert_files_source_embedded(memory, input)
 }
 pub fn connector_answer(
     memory: &Memory<'_>,

@@ -512,6 +512,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultCoachTrainingOffersPilotsComplete,
     VaultCoachTrainingOffersPilotsGet,
     VaultCoachTrainingOffersSources,
+    VaultCoachTrainingRunsCancel,
     VaultDraftersList,
     VaultDraftersStatus,
     VaultDraftersPolicySet,
@@ -907,6 +908,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultCustodyMembersDrainCommit,
     VaultCustodyMembersDrainFolder,
     VaultCustodyMembersReenrol,
+    VaultFilesSourcesConvert,
 }
 impl HostDoorRow {
     /// The row `verb` names, when it is one.
@@ -1258,6 +1260,7 @@ impl HostDoorRow {
             }
             "vault.coach.training_offers.pilots.get" => Self::VaultCoachTrainingOffersPilotsGet,
             "vault.coach.training_offers.sources" => Self::VaultCoachTrainingOffersSources,
+            "vault.coach.training_runs.cancel" => Self::VaultCoachTrainingRunsCancel,
             "vault.drafters.list" => Self::VaultDraftersList,
             "vault.drafters.status" => Self::VaultDraftersStatus,
             "vault.drafters.policy.set" => Self::VaultDraftersPolicySet,
@@ -1663,6 +1666,7 @@ impl HostDoorRow {
             "vault.custody.members.drain.commit" => Self::VaultCustodyMembersDrainCommit,
             "vault.custody.members.drain.folder" => Self::VaultCustodyMembersDrainFolder,
             "vault.custody.members.reenrol" => Self::VaultCustodyMembersReenrol,
+            "vault.files.sources.convert" => Self::VaultFilesSourcesConvert,
             _ => return None,
         })
     }

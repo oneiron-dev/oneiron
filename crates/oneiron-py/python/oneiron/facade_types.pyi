@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1273 facade rows, 4613 declarations.
-Inputs: 1202 of 1273 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1102 of 1273 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1275 facade rows, 4617 declarations.
+Inputs: 1204 of 1275 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1104 of 1275 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -6063,7 +6063,10 @@ class HookReplayCaseVerb(TypedDict):
     invocation: str
     verb: str
     phase: HookPhase
-HookReplayCase = HookReplayCaseFact | HookReplayCaseVerb
+class HookReplayCaseUnknownRun(TypedDict):
+    on: Literal["unknown_run"]
+    run_key: str
+HookReplayCase = HookReplayCaseFact | HookReplayCaseVerb | HookReplayCaseUnknownRun
 HookReplayCompare = Literal["same", "differs", "incomplete"]
 class HookReplayOutcomeRan(TypedDict):
     status: Literal["ran"]
@@ -7591,9 +7594,15 @@ class ConnectWindow(TypedDict):
     bands: list[SelectorRange]
     window_key: str
     update: list[int]
+BornWithField = Literal["prompt", "why", "keep", "intent_prompt"]
+class GuestWindowTravelNote(TypedDict):
+    content_hash: str
+    travelled: dict[str, list[BornWithField]]
+    receipt_owed: bool
 class ConnectDelivery(TypedDict):
     body: ConnectWindow
     signature: str
+    travel_receipt: NotRequired[GuestWindowTravelNote | None]
 class FederationBurstDispositionAllow(TypedDict):
     outcome: Literal["allow"]
 class FederationBurstDispositionIsolateAndPropose(TypedDict):
@@ -7930,6 +7939,7 @@ class GuestDocumentEnvelope(TypedDict):
     envelope: GuestShareEnvelope
     signer: str
     signature: list[int]
+    travel_receipt: NotRequired[GuestWindowTravelNote | None]
 class GuestRevokeRequest(TypedDict):
     grant_ref: EntityId
     peer: NotRequired[str | None]
@@ -9523,6 +9533,8 @@ class ReservoirSourcePreview(TypedDict):
     carried: int
     excluded: dict[str, int]
     sources: list[ReservoirSourceRow]
+class TrainingRunRef(TypedDict):
+    run: EntityId
 class DrafterTarget(TypedDict):
     model: str
     tokenizer: str
@@ -10863,6 +10875,10 @@ ConsentGrantStatus = Literal["active", "revoked"]
 class ConsentRevokeAction(TypedDict):
     command: str
     grant_ref: str
+class ConsentRegrantAction(TypedDict):
+    command: str
+    agent: str
+    conversation: str
 class BypassScopeProject(TypedDict):
     project: EntityId
 class BypassScopeThread(TypedDict):
@@ -10890,7 +10906,7 @@ class ConsentRegistryAgentGrant(TypedDict):
     expires_at: NotRequired[int | None]
     repo_bounds: NotRequired[RepoAccessBounds | None]
     confers: bool
-ConsentRegistryRow = TypedDict("ConsentRegistryRow", {"grant_ref": str, "domain": ConsentDomain, "subject": str, "class": str, "selectors": list[str], "scope": NotRequired[Scope | None], "status": ConsentGrantStatus, "created_at": int, "revoke_action": ConsentRevokeAction, "bypass": NotRequired[BypassExtent | None], "delegation": NotRequired[ConsentRegistryDelegation | None], "agent_grant": NotRequired[ConsentRegistryAgentGrant | None]})
+ConsentRegistryRow = TypedDict("ConsentRegistryRow", {"grant_ref": str, "domain": ConsentDomain, "subject": str, "class": str, "selectors": list[str], "scope": NotRequired[Scope | None], "status": ConsentGrantStatus, "created_at": int, "revoke_action": ConsentRevokeAction, "regrant_action": NotRequired[ConsentRegrantAction | None], "bypass": NotRequired[BypassExtent | None], "delegation": NotRequired[ConsentRegistryDelegation | None], "agent_grant": NotRequired[ConsentRegistryAgentGrant | None]})
 class ConsentRegistry(TypedDict):
     rows: list[ConsentRegistryRow]
 class HeldFailureSignalBatchView(TypedDict):
@@ -11814,7 +11830,6 @@ class LensListRow(TypedDict):
 class LensListPage(TypedDict):
     rows: list[LensListRow]
     next_after: NotRequired[str | None]
-BornWithField = Literal["prompt", "why", "keep", "intent_prompt"]
 class TravelChoice(TypedDict):
     born_with: NotRequired[list[BornWithField]]
 class LensPackExportRequest(TypedDict):
@@ -23026,6 +23041,9 @@ class MailComplianceHit(TypedDict):
 class MailComplianceSearchReply(TypedDict):
     log_sequence: int
     hits: list[MailComplianceHit]
+class FilesSourceConvertRequest(TypedDict):
+    path: str
+    exclude: NotRequired[list[str] | None]
 ConnectorAnswerAction = Literal["accept", "decline", "cancel"]
 class ConnectorQuestionAnswer(TypedDict):
     key: str

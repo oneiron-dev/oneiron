@@ -532,6 +532,10 @@ export class Oneiron {
         /** Before preparing a training run, read a reservoir scope's sources with other people or unknown people, each with its pairs, and the pairs the run would carry and leave out by reason under the ticks given so far. */
         sources: (input: Facade.ReservoirSourcesRequest): Facade.ReservoirSourcePreview => this.#call(() => this.#client.vaultCoachTrainingOffersSources(input) as Facade.ReservoirSourcePreview),
       }),
+      training_runs: {
+        /** Cancel a staged trained embedder swap while its binding still waits or fills; an applied swap keeps the existing space-move undo door. */
+        cancel: (input: Facade.TrainingRunRef): Facade.PendingEmbedderBinding => this.#call(() => this.#client.vaultCoachTrainingRunsCancel(input) as Facade.PendingEmbedderBinding),
+      },
     },
     people: {
       /** One page of the people the caller reads, in handle order. */
@@ -1646,6 +1650,8 @@ export class Oneiron {
         list: (input: Facade.FilesSourceListRequest): Facade.FilesSourceList => this.#call(() => this.#client.vaultFilesSourcesList(input) as Facade.FilesSourceList),
         /** The owner reads one Files source's ledger: each file's path, readiness (text or name only, and why), revision and dates. */
         files: (input: Facade.FilesSourceFilesRequest): Facade.FilesSourceFiles => this.#call(() => this.#client.vaultFilesSourcesFiles(input) as Facade.FilesSourceFiles),
+        /** The owner converts an attached notes folder on this host to Files, keeping its existing notes, history and links. The host rescans the folder into its Files world and returns the source and rescan report. */
+        convert: (input: Facade.FilesSourceConvertRequest): Facade.FilesSourceAttachAnswer => this.#call(() => this.#client.vaultFilesSourcesConvert(input) as Facade.FilesSourceAttachAnswer),
       },
     },
     residence: {
