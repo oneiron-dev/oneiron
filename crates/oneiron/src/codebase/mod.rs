@@ -26,6 +26,7 @@ pub(crate) use self::identity::resolve_repo_identity_in_txn;
 pub(crate) use self::ingest::{
     CODE_SNAPSHOT_CAPTURE_CONTENT_KIND, code_snapshot_capture_receipt_fields,
     read_asset_blob_in_txn, read_asset_blob_sighted_in_txn, validate_project_id,
+    with_asset_blob_reader_in_txn,
 };
 pub use self::ingest::{
     HostedMediaHashMatchDecision, HostedMediaHashMatchInput, HostedMediaHashMatchProvider,
