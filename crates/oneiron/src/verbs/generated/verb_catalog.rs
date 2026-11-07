@@ -212,6 +212,13 @@ pub enum AgentVerb {
     VaultWeaveOwnerLinkWrong,
     VaultWeaveItemWrong,
     VaultWeaveOwnerItemWrong,
+    VaultWeaveAdminReport,
+    VaultWeaveAdminLens,
+    VaultWeaveAdminDigest,
+    VaultWeaveAdminLinkWrong,
+    VaultWeaveAdminItemWrong,
+    VaultStepUpPasskeysReset,
+    VaultStepUpTotpReset,
     VaultWeaveEnqueue,
     VaultWeaveSchedulesList,
     VaultWeaveSchedulesPut,
@@ -1503,6 +1510,13 @@ impl AgentVerb {
         Self::VaultWeaveOwnerLinkWrong,
         Self::VaultWeaveItemWrong,
         Self::VaultWeaveOwnerItemWrong,
+        Self::VaultWeaveAdminReport,
+        Self::VaultWeaveAdminLens,
+        Self::VaultWeaveAdminDigest,
+        Self::VaultWeaveAdminLinkWrong,
+        Self::VaultWeaveAdminItemWrong,
+        Self::VaultStepUpPasskeysReset,
+        Self::VaultStepUpTotpReset,
         Self::VaultWeaveEnqueue,
         Self::VaultWeaveSchedulesList,
         Self::VaultWeaveSchedulesPut,
@@ -2797,6 +2811,13 @@ impl AgentVerb {
             Self::VaultWeaveOwnerLinkWrong => "vault.weave.owner.link.wrong",
             Self::VaultWeaveItemWrong => "vault.weave.item.wrong",
             Self::VaultWeaveOwnerItemWrong => "vault.weave.owner.item.wrong",
+            Self::VaultWeaveAdminReport => "vault.weave.admin.report",
+            Self::VaultWeaveAdminLens => "vault.weave.admin.lens",
+            Self::VaultWeaveAdminDigest => "vault.weave.admin.digest",
+            Self::VaultWeaveAdminLinkWrong => "vault.weave.admin.link.wrong",
+            Self::VaultWeaveAdminItemWrong => "vault.weave.admin.item.wrong",
+            Self::VaultStepUpPasskeysReset => "vault.step_up.passkeys.reset",
+            Self::VaultStepUpTotpReset => "vault.step_up.totp.reset",
             Self::VaultWeaveEnqueue => "vault.weave.enqueue",
             Self::VaultWeaveSchedulesList => "vault.weave.schedules.list",
             Self::VaultWeaveSchedulesPut => "vault.weave.schedules.put",
@@ -4124,6 +4145,13 @@ impl AgentVerb {
                 | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultWeaveItemWrong
                 | Self::VaultWeaveOwnerItemWrong
+                | Self::VaultWeaveAdminReport
+                | Self::VaultWeaveAdminLens
+                | Self::VaultWeaveAdminDigest
+                | Self::VaultWeaveAdminLinkWrong
+                | Self::VaultWeaveAdminItemWrong
+                | Self::VaultStepUpPasskeysReset
+                | Self::VaultStepUpTotpReset
                 | Self::VaultWeaveEnqueue
                 | Self::VaultWeaveSchedulesList
                 | Self::VaultWeaveSchedulesPut
@@ -5444,6 +5472,13 @@ impl AgentVerb {
                 | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultWeaveItemWrong
                 | Self::VaultWeaveOwnerItemWrong
+                | Self::VaultWeaveAdminReport
+                | Self::VaultWeaveAdminLens
+                | Self::VaultWeaveAdminDigest
+                | Self::VaultWeaveAdminLinkWrong
+                | Self::VaultWeaveAdminItemWrong
+                | Self::VaultStepUpPasskeysReset
+                | Self::VaultStepUpTotpReset
                 | Self::VaultWeaveEnqueue
                 | Self::VaultWeaveSchedulesList
                 | Self::VaultWeaveSchedulesPut
@@ -6916,6 +6951,13 @@ impl AgentVerb {
                 | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultWeaveItemWrong
                 | Self::VaultWeaveOwnerItemWrong
+                | Self::VaultWeaveAdminReport
+                | Self::VaultWeaveAdminLens
+                | Self::VaultWeaveAdminDigest
+                | Self::VaultWeaveAdminLinkWrong
+                | Self::VaultWeaveAdminItemWrong
+                | Self::VaultStepUpPasskeysReset
+                | Self::VaultStepUpTotpReset
                 | Self::VaultWeaveEnqueue
                 | Self::VaultWeaveSchedulesList
                 | Self::VaultWeaveSchedulesPut
@@ -8032,6 +8074,10 @@ impl AgentVerb {
                 | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultWeaveItemWrong
                 | Self::VaultWeaveOwnerItemWrong
+                | Self::VaultWeaveAdminLinkWrong
+                | Self::VaultWeaveAdminItemWrong
+                | Self::VaultStepUpPasskeysReset
+                | Self::VaultStepUpTotpReset
                 | Self::VaultWeaveEnqueue
                 | Self::VaultWeaveSchedulesPut
                 | Self::VaultWeaveSchedulesClear
@@ -8939,6 +8985,13 @@ impl AgentVerb {
             Self::VaultWeaveOwnerLinkWrong => &["spec"],
             Self::VaultWeaveItemWrong => &["spec"],
             Self::VaultWeaveOwnerItemWrong => &["spec"],
+            Self::VaultWeaveAdminReport => &["spec"],
+            Self::VaultWeaveAdminLens => &["spec"],
+            Self::VaultWeaveAdminDigest => &["spec"],
+            Self::VaultWeaveAdminLinkWrong => &["spec"],
+            Self::VaultWeaveAdminItemWrong => &["spec"],
+            Self::VaultStepUpPasskeysReset => &["spec"],
+            Self::VaultStepUpTotpReset => &["spec"],
             Self::VaultWeaveEnqueue => &["spec"],
             Self::VaultWeaveSchedulesList => &["spec"],
             Self::VaultWeaveSchedulesPut => &["spec"],
@@ -10231,6 +10284,13 @@ impl AgentVerb {
             Self::VaultWeaveOwnerLinkWrong => &["spec"],
             Self::VaultWeaveItemWrong => &["spec"],
             Self::VaultWeaveOwnerItemWrong => &["spec"],
+            Self::VaultWeaveAdminReport => &["spec"],
+            Self::VaultWeaveAdminLens => &["spec"],
+            Self::VaultWeaveAdminDigest => &["spec"],
+            Self::VaultWeaveAdminLinkWrong => &["spec"],
+            Self::VaultWeaveAdminItemWrong => &["spec"],
+            Self::VaultStepUpPasskeysReset => &["spec"],
+            Self::VaultStepUpTotpReset => &["spec"],
             Self::VaultWeaveEnqueue => &["spec"],
             Self::VaultWeaveSchedulesList => &["spec"],
             Self::VaultWeaveSchedulesPut => &["spec"],
@@ -11933,6 +11993,27 @@ impl AgentVerb {
             }
             Self::VaultWeaveOwnerItemWrong => {
                 "The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays."
+            }
+            Self::VaultWeaveAdminReport => {
+                "A weave Admin's live report of the shared vault, inside the Admin membership grant's Scope, after the person stepped up with a passkey on this credential (MFA-1 A); never an Owner read."
+            }
+            Self::VaultWeaveAdminLens => {
+                "A weave Admin's live report rendered into its lens on the server's model, under the stepped-up Admin proof; the server holds its frame for the card's events."
+            }
+            Self::VaultWeaveAdminDigest => {
+                "One of a weave Admin's saved digests, or the newest, under the stepped-up Admin proof and the current read policy."
+            }
+            Self::VaultWeaveAdminLinkWrong => {
+                "A weave Admin labels a link its Admin report shows as wrong, under the stepped-up Admin proof, with the grant on the label; the link stays."
+            }
+            Self::VaultWeaveAdminItemWrong => {
+                "A weave Admin labels a claim, project, budget or sieve audit row its Admin report shows as wrong, under the stepped-up Admin proof; the row stays."
+            }
+            Self::VaultStepUpPasskeysReset => {
+                "The vault owner removes every passkey a person enrolled for step-up, and that person's step-ups, so a person who lost each passkey can enroll a first one again; under the owner's own credential."
+            }
+            Self::VaultStepUpTotpReset => {
+                "The vault owner removes a person's authenticator-app enrollments and their TOTP step-ups; passkeys and passkey step-ups remain unchanged."
             }
             Self::VaultWeaveEnqueue => {
                 "Admits a generated candidate weave recipe under the owner's proof and queues its pinned execution; poll vault.consolidation.status for completion."
