@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1279 facade rows, 4624 declarations.
-Inputs: 1208 of 1279 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1108 of 1279 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1286 facade rows, 4647 declarations.
+Inputs: 1215 of 1286 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1115 of 1286 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -6063,7 +6063,10 @@ class HookReplayCaseVerb(TypedDict):
     invocation: str
     verb: str
     phase: HookPhase
-HookReplayCase = HookReplayCaseFact | HookReplayCaseVerb
+class HookReplayCaseUnknownRun(TypedDict):
+    on: Literal["unknown_run"]
+    run_key: str
+HookReplayCase = HookReplayCaseFact | HookReplayCaseVerb | HookReplayCaseUnknownRun
 HookReplayCompare = Literal["same", "differs", "incomplete"]
 class HookReplayOutcomeRan(TypedDict):
     status: Literal["ran"]
@@ -6795,6 +6798,8 @@ class AuthorityAuditRow(TypedDict):
     vault_ref: NotRequired[str | None]
     subject_ref: NotRequired[str | None]
     grant_ref: NotRequired[str | None]
+    receipt_ref: NotRequired[str | None]
+    affected_grants: NotRequired[list[str]]
     claim_ref: NotRequired[str | None]
     holder_ref: NotRequired[str | None]
     parent_ref: NotRequired[str | None]
@@ -7589,9 +7594,15 @@ class ConnectWindow(TypedDict):
     bands: list[SelectorRange]
     window_key: str
     update: list[int]
+BornWithField = Literal["prompt", "why", "keep", "intent_prompt"]
+class GuestWindowTravelNote(TypedDict):
+    content_hash: str
+    travelled: dict[str, list[BornWithField]]
+    receipt_owed: bool
 class ConnectDelivery(TypedDict):
     body: ConnectWindow
     signature: str
+    travel_receipt: NotRequired[GuestWindowTravelNote | None]
 class FederationBurstDispositionAllow(TypedDict):
     outcome: Literal["allow"]
 class FederationBurstDispositionIsolateAndPropose(TypedDict):
@@ -7928,6 +7939,7 @@ class GuestDocumentEnvelope(TypedDict):
     envelope: GuestShareEnvelope
     signer: str
     signature: list[int]
+    travel_receipt: NotRequired[GuestWindowTravelNote | None]
 class GuestRevokeRequest(TypedDict):
     grant_ref: EntityId
     peer: NotRequired[str | None]
@@ -9375,6 +9387,7 @@ class RoleSwapReceipt(TypedDict):
     at: int
     role: ModelRole
     previous: NotRequired[ModelBinding | None]
+    previous_swap: NotRequired[EntityId | None]
     binding: ModelBinding
     checkpoint: PinnedCheckpoint
     evaluation: NotRequired[HeldOutResult | None]
@@ -9521,6 +9534,8 @@ class ReservoirSourcePreview(TypedDict):
     carried: int
     excluded: dict[str, int]
     sources: list[ReservoirSourceRow]
+class TrainingRunRef(TypedDict):
+    run: EntityId
 class DrafterTarget(TypedDict):
     model: str
     tokenizer: str
@@ -10751,6 +10766,7 @@ class PolicyPassAudit(TypedDict):
     model_confidence: NotRequired[str | None]
     model_rationale: NotRequired[str | None]
     model_notes_cut: NotRequired[bool]
+    model_notes_budget_exhausted: NotRequired[bool]
     typed_decisions: NotRequired[list[TypedDecision]]
     read_error: NotRequired[PolicyReadError | None]
 PolicyPlane = Literal["owner_policy", "hosted_legal"]
@@ -10861,6 +10877,10 @@ ConsentGrantStatus = Literal["active", "revoked"]
 class ConsentRevokeAction(TypedDict):
     command: str
     grant_ref: str
+class ConsentRegrantAction(TypedDict):
+    command: str
+    agent: str
+    conversation: str
 class BypassScopeProject(TypedDict):
     project: EntityId
 class BypassScopeThread(TypedDict):
@@ -10888,7 +10908,7 @@ class ConsentRegistryAgentGrant(TypedDict):
     expires_at: NotRequired[int | None]
     repo_bounds: NotRequired[RepoAccessBounds | None]
     confers: bool
-ConsentRegistryRow = TypedDict("ConsentRegistryRow", {"grant_ref": str, "domain": ConsentDomain, "subject": str, "class": str, "selectors": list[str], "scope": NotRequired[Scope | None], "status": ConsentGrantStatus, "created_at": int, "revoke_action": ConsentRevokeAction, "bypass": NotRequired[BypassExtent | None], "delegation": NotRequired[ConsentRegistryDelegation | None], "agent_grant": NotRequired[ConsentRegistryAgentGrant | None]})
+ConsentRegistryRow = TypedDict("ConsentRegistryRow", {"grant_ref": str, "domain": ConsentDomain, "subject": str, "class": str, "selectors": list[str], "scope": NotRequired[Scope | None], "status": ConsentGrantStatus, "created_at": int, "revoke_action": ConsentRevokeAction, "regrant_action": NotRequired[ConsentRegrantAction | None], "bypass": NotRequired[BypassExtent | None], "delegation": NotRequired[ConsentRegistryDelegation | None], "agent_grant": NotRequired[ConsentRegistryAgentGrant | None]})
 class ConsentRegistry(TypedDict):
     rows: list[ConsentRegistryRow]
 class HeldFailureSignalBatchView(TypedDict):
@@ -11812,7 +11832,6 @@ class LensListRow(TypedDict):
 class LensListPage(TypedDict):
     rows: list[LensListRow]
     next_after: NotRequired[str | None]
-BornWithField = Literal["prompt", "why", "keep", "intent_prompt"]
 class TravelChoice(TypedDict):
     born_with: NotRequired[list[BornWithField]]
 class LensPackExportRequest(TypedDict):
@@ -12122,6 +12141,18 @@ class HostBudgetHitResult(TypedDict):
     seat: str
     policy: BudgetExhaustionPolicy
     accounting: HostBudgetAccounting
+HookCheckReason = Literal["cycle", "depth"]
+class LineageLink(TypedDict):
+    binding: str
+    run_key: str
+    entity: str
+    position: str
+class HookCheck(TypedDict):
+    binding: str
+    run_key: str
+    reason: HookCheckReason
+    chain: list[LineageLink]
+    raised_at: int
 class HooksReplayRequest(TypedDict):
     binding: str
     since: NotRequired[str | None]
@@ -12710,12 +12741,13 @@ class ForeignCodeOutput(TypedDict):
     bytes: list[int]
 ForeignCodeSource = Literal["generated"]
 ForeignCodeApproval = Literal["proposed"]
-class CodeFileEdit(TypedDict):
+SandboxProposalText = str
+class SandboxFileEdit(TypedDict):
     path: str
     start: int
     end: int
-    expected: str
-    replacement: str
+    expected: SandboxProposalText
+    replacement: SandboxProposalText
     new_path: NotRequired[str | None]
 class ConfidenceDetails(TypedDict):
     band: ConfidenceBand
@@ -12744,7 +12776,7 @@ class ForeignCodeEffectFileEdit(TypedDict):
     kind: Literal["file_edit"]
     path: str
     base_content_hash: str
-    edit: CodeFileEdit
+    edit: SandboxFileEdit
 class ForeignCodeEffectFileDelete(TypedDict):
     kind: Literal["file_delete"]
     path: str
@@ -12789,6 +12821,47 @@ class CodeRunModelHealCountRequest(TypedDict):
 class CodeRunModelHealCountView(TypedDict):
     model_id: str
     healed_turns: int
+class CodeRunCorrectionsRequest(TypedDict):
+    run_ref: str
+    after_step: NotRequired[int | None]
+    limit: NotRequired[int | None]
+class CodeRunCorrectionPolicy(TypedDict):
+    normalization_passes: int
+    model_repair_retries: int
+class ExecutorWireRepairs(TypedDict):
+    trimmed_transport_whitespace: bool
+    stripped_code_fence: bool
+    stripped_exec_wrapper: bool
+    discarded_console_blocks: int
+class CodeRunCorrectionOutcomeClean(TypedDict):
+    kind: Literal["clean"]
+class CodeRunCorrectionOutcomeNormalized(TypedDict):
+    kind: Literal["normalized"]
+class CodeRunCorrectionOutcomeRejected(TypedDict):
+    kind: Literal["rejected"]
+    reason: str
+CodeRunCorrectionOutcome = CodeRunCorrectionOutcomeClean | CodeRunCorrectionOutcomeNormalized | CodeRunCorrectionOutcomeRejected
+class CodeRunCorrectionCheckpoint(TypedDict):
+    step: int
+    state_hash: str
+class CodeRunCorrection(TypedDict):
+    schema: int
+    run_id: EntityId
+    step: int
+    attempt: int
+    recorded_at_ms: int
+    model_id: str
+    repairs: ExecutorWireRepairs
+    outcome: CodeRunCorrectionOutcome
+    policy: CodeRunCorrectionPolicy
+    model_repair_retries_used: int
+    exhausted: bool
+    checkpoint: NotRequired[CodeRunCorrectionCheckpoint | None]
+class CodeRunCorrectionsView(TypedDict):
+    run_ref: str
+    policy: CodeRunCorrectionPolicy
+    records: list[CodeRunCorrection]
+    next_after_step: NotRequired[int | None]
 class CodeRunTypeDiagnosticsRequest(TypedDict):
     check_ref: str
     session_ref: NotRequired[str | None]
@@ -15404,6 +15477,10 @@ class DeckDesignView(TypedDict):
     plans: list[DeckPlanView | None]
     decisions: list[list[DeckDesignDecision]]
     presentation: NotRequired[DeckPresentation]
+class GraphicLimits(TypedDict):
+    svg_bytes: int
+    raster_bytes: int
+    raster_pixels: int
 class DeckEmissionNames(TypedDict):
     text: str
     table: str
@@ -15417,6 +15494,7 @@ class DeckEmissionRequest(TypedDict):
     template: ArtifactVersionRef
     assets: NotRequired[dict[str, ArtifactVersionRef]]
     fonts: NotRequired[list[ArtifactVersionRef]]
+    graphics: NotRequired[GraphicLimits | None]
     names: DeckEmissionNames
     name: str
     run_ref: str
@@ -15642,6 +15720,7 @@ class DeckTransaction(TypedDict):
     base: Digest
     marks: NotRequired[IdMarks]
     seed: str
+    graphics: NotRequired[GraphicLimits | None]
     steps: list[DeckStep]
 DeckRenderSide = Literal["base", "candidate"]
 class DeckRender(TypedDict):
@@ -15949,6 +16028,37 @@ TaskAskWait = TaskAskWaitPending | TaskAskWaitChanged | TaskAskWaitReady | TaskA
 class TaskAnswerRequest(TypedDict):
     handle: TaskAskHandle
     word: TaskAskWord
+class AskForwardActWord(TypedDict):
+    word: TaskAskWord
+AskForwardAct = Literal["void"] | AskForwardActWord
+class TaskAnswerForwardChallengeRequest(TypedDict):
+    handle: TaskAskHandle
+    intent_key: str
+    act: AskForwardAct
+class TaskAnswerForwardChallenge(TypedDict):
+    challenge: str
+class AskForwardHolderProof(TypedDict):
+    token: str
+    signature: str
+class TaskAnswerForwardRequest(TypedDict):
+    handle: TaskAskHandle
+    intent_key: str
+    act: AskForwardAct
+    proof: AskForwardHolderProof
+class AskForwardReceiptPending(TypedDict):
+    state: Literal["pending"]
+    intent_ref: EntityId
+class AskForwardReceiptAnswered(TypedDict):
+    state: Literal["answered"]
+    intent_ref: EntityId
+    answer: TaskAskAnswer
+class AskForwardReceiptVoided(TypedDict):
+    state: Literal["voided"]
+    intent_ref: EntityId
+    generation: int
+AskForwardReceipt = AskForwardReceiptPending | AskForwardReceiptAnswered | AskForwardReceiptVoided
+class TaskAnswerForwardStatusRequest(TypedDict):
+    intent_ref: EntityId
 class OutcomeLabel(TypedDict):
     answer: str
     fact: str
@@ -20769,6 +20879,7 @@ class DeckExportRequest(TypedDict):
     artifact_ref: str
     run_ref: str
     made_by: NotRequired[Any | None]
+    graphics: NotRequired[GraphicLimits | None]
 class DeckExportView(TypedDict):
     frontier: list[int]
     profile: str
@@ -23088,6 +23199,9 @@ class MailComplianceHit(TypedDict):
 class MailComplianceSearchReply(TypedDict):
     log_sequence: int
     hits: list[MailComplianceHit]
+class FilesSourceConvertRequest(TypedDict):
+    path: str
+    exclude: NotRequired[list[str] | None]
 ConnectorAnswerAction = Literal["accept", "decline", "cancel"]
 class ConnectorQuestionAnswer(TypedDict):
     key: str
@@ -23930,7 +24044,10 @@ class AgentSpawnOutputProposedWiden(TypedDict):
 class AgentSpawnOutputTargetErased(TypedDict):
     state: Literal["target_erased"]
     kind: AgentSpawnKind
-AgentSpawnOutput = AgentSpawnOutputQueued | AgentSpawnOutputProposedWiden | AgentSpawnOutputTargetErased
+class AgentSpawnOutputAskerErased(TypedDict):
+    state: Literal["asker_erased"]
+    kind: AgentSpawnKind
+AgentSpawnOutput = AgentSpawnOutputQueued | AgentSpawnOutputProposedWiden | AgentSpawnOutputTargetErased | AgentSpawnOutputAskerErased
 class LeaderSplitInput(TypedDict):
     leader: NotRequired[str | None]
     slice: NotRequired[ScopeScope | None]
