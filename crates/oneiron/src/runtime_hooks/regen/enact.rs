@@ -295,7 +295,10 @@ impl Vault {
 impl Vault {
     /// The one enactment of a pending regen, through `put` as
     /// [`HookPut::for_hook`] resolves it for the hook, with its receipt
-    /// naming `by`.
+    /// naming `by`. The put is prepared from the pack as installed, or from
+    /// the source the hook was bound from when the installed pack holds no
+    /// body for it; when another put of the pack lands before the writer,
+    /// the enactment prepares again from the pack as it stands.
     pub(in crate::runtime_hooks) fn enact_hook_regen(
         &self,
         put: HookPut<'_>,
@@ -304,82 +307,118 @@ impl Vault {
         candidate_hash: &str,
         stamped: bool,
     ) -> Result<PackInstallDisposition> {
-        let (_, row) = self
-            .pack_hook_bindings()?
-            .into_iter()
-            .find(|(id, _)| *id == binding)
-            .ok_or(Error::EntityNotFound)?;
-        let put = put.for_hook(&row)?;
-        let record = self.hook_regen_record(binding)?;
-        let (candidate, _) = pending_candidate(record.as_ref(), candidate_hash, stamped)?;
-        let (installed, source) = self.installed_hook_pack(&row)?;
-        let (files, replaced) = files_with_hook_body(&source, &row.hook, candidate.as_bytes());
-        // The body this adoption replaces, kept for a revert (FIX 4690).
-        let replaced = replaced.and_then(|bytes| String::from_utf8(bytes).ok());
-        let prepared = put.prepare(self, files)?;
-        let disposition = self.with_write_txn_grouped(|txn| {
-            let (_, current) = self
-                .pack_hook_bindings_in_txn(txn)?
-                .into_iter()
-                .find(|(id, _)| *id == binding)
-                .ok_or(Error::EntityNotFound)?;
-            pack_unmoved(self, txn, &row, &installed)?;
-            let record = REGEN.get(&self.store, txn, &binding)?;
-            let (_, target) = pending_candidate(record.as_ref(), candidate_hash, stamped)?;
-            let stamped_diff = matches!(
-                record.as_ref().and_then(|record| record.pending.as_ref()),
-                Some(HookRegenOutcome::NeedsHumanStamp { .. })
-            );
-            let disposition = put.put_in_txn(self, txn, &prepared)?;
-            // A Candidate or Blocked put keeps the pending decision and the
-            // native proposal records, without advancing the last good body.
-            if !matches!(disposition, PackInstallDisposition::Installed(_)) {
-                return Ok(disposition);
-            }
-            // The new body binds under a new id; resolve it in this writer,
-            // before any other regen decision or pack install can intervene.
-            let rebound = self.rebound_in_txn(txn, &current, candidate_hash, binding)?;
-            // The adopted body takes the dial of the body it replaces: a
-            // body the hook ran before returns under its old binding, whose
-            // dial an earlier adoption turned off.
-            if let Some(adopted) = rebound {
-                put.set_enabled_in_txn(self, txn, adopted, current.enabled)?;
-            }
-            let previous = replaced
-                .as_ref()
-                .zip(record.as_ref())
-                .map(|(body, record)| HookRegenPrior {
-                    body: body.clone(),
-                    body_hash: body_hash(body),
-                    stamp: record.stamp.clone(),
-                });
-            let adopted = HookRegenRecord {
-                body_hash: candidate_hash.to_owned(),
-                stamp: target.clone(),
-                intent: record.and_then(|record| record.intent),
-                pending: None,
-                previous,
-                declined: None,
+        let disposition = loop {
+            let (row, put, candidate, base, source) = {
+                let txn = self.store.env.read_txn()?;
+                let (_, row) = self
+                    .pack_hook_bindings_in_txn(&txn)?
+                    .into_iter()
+                    .find(|(id, _)| *id == binding)
+                    .ok_or(Error::EntityNotFound)?;
+                let put = put.for_hook(&row)?;
+                let record = REGEN.get(&self.store, &txn, &binding)?;
+                let (candidate, _) = pending_candidate(record.as_ref(), candidate_hash, stamped)?;
+                let body_path = format!("hooks/{}/body.js", row.hook);
+                let installed = self.installed_pack_in_txn(&txn, &row.pack)?;
+                let installed_source = match &installed {
+                    Some(receipt) => Some(
+                        self.pack_source_in_txn(&txn, &EntityId::from_hex(&receipt.source_id)?)?
+                            .ok_or(Error::EntityNotFound)?,
+                    ),
+                    None => None,
+                };
+                let source = match installed_source {
+                    Some(source) if source.files().iter().any(|file| file.path == body_path) => {
+                        source
+                    }
+                    _ => self
+                        .pack_source_in_txn(&txn, &row.source)?
+                        .ok_or(Error::EntityNotFound)?,
+                };
+                let base = installed.map(|receipt| (receipt.source_id, receipt.content_hash));
+                (row, put, candidate, base, source)
             };
-            for id in std::iter::once(binding).chain(rebound) {
-                REGEN.put(self, txn, &id, &adopted)?;
+            let (files, replaced) = files_with_hook_body(&source, &row.hook, candidate.as_bytes());
+            // The body this adoption replaces, kept for a revert (FIX 4690).
+            let replaced = replaced.and_then(|bytes| String::from_utf8(bytes).ok());
+            // Preparation includes advisory lookup, so it holds no storage transaction.
+            let prepared = put.prepare(self, files)?;
+            let attempt = self.with_write_txn_grouped(|txn| {
+                let (_, current) = self
+                    .pack_hook_bindings_in_txn(txn)?
+                    .into_iter()
+                    .find(|(id, _)| *id == binding)
+                    .ok_or(Error::EntityNotFound)?;
+                let record = REGEN.get(&self.store, txn, &binding)?;
+                let (_, target) = pending_candidate(record.as_ref(), candidate_hash, stamped)?;
+                // Another put of the pack landed since the files were
+                // prepared, and installing the stale prepared pack would
+                // undo it: prepare again from the pack as it stands.
+                if self
+                    .installed_pack_in_txn(txn, &current.pack)?
+                    .map(|receipt| (receipt.source_id, receipt.content_hash))
+                    != base
+                {
+                    return Ok(None);
+                }
+                let stamped_diff = matches!(
+                    record.as_ref().and_then(|record| record.pending.as_ref()),
+                    Some(HookRegenOutcome::NeedsHumanStamp { .. })
+                );
+                let disposition = put.put_in_txn(self, txn, &prepared)?;
+                // A Candidate or Blocked put keeps the pending decision and the
+                // native proposal records, without advancing the last good body.
+                if !matches!(disposition, PackInstallDisposition::Installed(_)) {
+                    return Ok(Some(disposition));
+                }
+                // The new body binds under a new id; resolve it in this writer,
+                // before any other regen decision or pack install can intervene.
+                let rebound = self.rebound_in_txn(txn, &current, candidate_hash, binding)?;
+                // The adopted body takes the dial of the body it replaces: a
+                // body the hook ran before returns under its old binding, whose
+                // dial an earlier adoption turned off.
+                if let Some(adopted) = rebound {
+                    put.set_enabled_in_txn(self, txn, adopted, current.enabled)?;
+                }
+                let previous = replaced
+                    .as_ref()
+                    .zip(record.as_ref())
+                    .map(|(body, record)| HookRegenPrior {
+                        body: body.clone(),
+                        body_hash: body_hash(body),
+                        stamp: record.stamp.clone(),
+                    });
+                let adopted = HookRegenRecord {
+                    body_hash: candidate_hash.to_owned(),
+                    stamp: target.clone(),
+                    intent: record.and_then(|record| record.intent),
+                    pending: None,
+                    previous,
+                    declined: None,
+                };
+                for id in std::iter::once(binding).chain(rebound) {
+                    REGEN.put(self, txn, &id, &adopted)?;
+                }
+                history::append_in_txn(
+                    self,
+                    txn,
+                    binding,
+                    &current,
+                    candidate_hash,
+                    by,
+                    HookRegenEvent::Adopted {
+                        candidate_hash: candidate_hash.to_owned(),
+                        target,
+                        stamped: stamped_diff,
+                        rebound,
+                    },
+                )?;
+                Ok(Some(disposition))
+            })?;
+            if let Some(disposition) = attempt {
+                break disposition;
             }
-            history::append_in_txn(
-                self,
-                txn,
-                binding,
-                &current,
-                candidate_hash,
-                by,
-                HookRegenEvent::Adopted {
-                    candidate_hash: candidate_hash.to_owned(),
-                    target,
-                    stamped: stamped_diff,
-                    rebound,
-                },
-            )?;
-            Ok(disposition)
-        })?;
+        };
         if matches!(disposition, PackInstallDisposition::Installed(_)) {
             self.verb_hook_bindings_changed();
         }
@@ -411,7 +450,7 @@ impl Vault {
 }
 
 impl Vault {
-    /// The installed receipt of `row`'s pack and its source: a regen's put
+    /// The installed receipt of `row`'s pack and its source: a revert's put
     /// is prepared from the pack as it is installed, never from the source
     /// `row` was bound from, which another binder's put may have left
     /// behind.
