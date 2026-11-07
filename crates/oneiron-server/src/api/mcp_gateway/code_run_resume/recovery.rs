@@ -36,7 +36,7 @@ use oneiron::claim::CallerLocality;
 use oneiron::code_run::{
     CodeConsentParkedRun, CodeConsentRunEndpoint, CodeRunReplayGeneration, WaitKey,
 };
-use oneiron::runtime_hooks::verb::{VerbAskDoor, VerbAskRefusal};
+use oneiron::runtime_hooks::verb::{VerbAskDoor, VerbAskMcpCeiling, VerbAskRefusal};
 
 use super::super::McpCallContext;
 use super::super::actor_dispatch::{
@@ -214,7 +214,7 @@ impl McpCodeRunContinuation {
                 if caller.actor_ref != run.actor || caller.actor_class != run.actor_class {
                     return Err(VerbAskRefusal::CredentialChanged);
                 }
-                (caller, Some(*ceiling))
+                (caller, Some(ceiling.clone()))
             }
             VerbAskDoor::McpOwner { connection } => {
                 (owner_caller(server, auth, connection, &placement)?, None)
@@ -280,7 +280,7 @@ fn paired_caller(
     auth: CoreAuth,
     witness: &InvocationSlipBinding,
     connection: &str,
-    ceiling: &[u8; 32],
+    ceiling: &VerbAskMcpCeiling,
     placement: &CallerPlacement,
 ) -> Result<McpCallContext, VerbAskRefusal> {
     let credential = witness
@@ -297,7 +297,7 @@ fn paired_caller(
     if actor.stream_connection.0 != connection {
         return Err(VerbAskRefusal::ContextUnavailable);
     }
-    if !crate::code_consent_host::ceiling_holds(ceiling, &mcp_adapter_ceiling(&actor)) {
+    if ceiling != &mcp_adapter_ceiling(&actor) {
         return Err(VerbAskRefusal::ScopeRefused);
     }
     admitted_context(
