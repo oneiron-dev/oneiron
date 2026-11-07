@@ -35,10 +35,10 @@ use super::super::base::home_withheld_worlds;
 use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
 use crate::Vault;
 use crate::authority::{
-    AUTHORITY_CHECKPOINT_V2_MAX_BYTES, AUTHORITY_HISTORY_PAGE_MAX, AuthorityCheckpointAttestation,
-    AuthorityCheckpointPin, AuthorityCheckpointV2, AuthorityEntryHash, AuthorityHistoryFetch,
-    AuthorityHistoryRequest, AuthorityHistorySelection, AuthorityRepairOutcome,
-    authority_entry_hash, decode_authority_log_entry_body, side_world,
+    AUTHORITY_HISTORY_PAGE_MAX, AuthorityCheckpointAttestation, AuthorityCheckpointPin,
+    AuthorityCheckpointV2, AuthorityEntryHash, AuthorityHistoryFetch, AuthorityHistoryRequest,
+    AuthorityHistorySelection, AuthorityRepairOutcome, authority_entry_hash,
+    decode_authority_log_entry_body, side_world,
 };
 use crate::sync::client::SyncClientConfig;
 use crate::sync::residence::{
