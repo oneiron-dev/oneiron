@@ -111,6 +111,7 @@ sha2 = "0.10"
 # OF-468: vetted seeded FastCDC; anonymous bounded staging spool.
 fastcdc = "=3.2.1"
 tempfile = "3"
+memmap2 = "0.9"
 tree-sitter = "0.26.10"
 tree-sitter-rust = "0.24.2"
 tree-sitter-python = "=0.25.0"
@@ -138,6 +139,7 @@ oxc_codegen = { workspace = true }
 oxc_parser = { workspace = true }
 oxc_semantic = { workspace = true }
 oxc_span = { workspace = true }
+oxc_syntax = { workspace = true }
 oxc_transformer = { workspace = true }
 whichlang = "0.1.1"
 kamadak-exif = "0.5"
