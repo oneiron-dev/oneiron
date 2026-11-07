@@ -198,7 +198,7 @@ pub use oneiron_authority::authority::{
     OwnerWorkRequest, OwnerWorkResult, PrivacyDirection, RESIDENCE_REASON_MAX,
     RESIDENCE_WINDOW_KEY_MAX, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY,
     ReadLocation, RecoveryRootId, ResidenceAct, ResidenceDirective, ResidenceResult,
-    ResidenceResultStatus, RootChange, SEAT_CLAIM_LEASE_OWNER_MAX_BYTES,
+    ResidenceResultStatus, RootChange, SEAT_CLAIM_LEASE_OWNER_MAX_BYTES, SEAT_MODEL_CHANNEL,
     SUPPORT_GRANT_DEFAULT_TTL_SECS, SUPPORT_GRANT_MAX_TTL_SECS, SealedCopies, SeatClaimSlipBinding,
     SlipClaims, SlipMintAction, SupportDelegation, SupportRepair, TrustedContactSlipBinding,
     WORLD_MODEL_ROUTE_MAX_BYTES, WorldKeyMode, WorldKeyWrapsRecord, WorldPrivacy, WorldPrivacyEdit,
@@ -303,6 +303,8 @@ pub use history_fetch::{
     AuthorityHistorySelection, AuthorityHistoryVerificationCoverage,
 };
 pub use history_repair::AuthorityRepairOutcome;
+#[cfg(feature = "sync")]
+pub(crate) use history_transfer::HandoffRoster;
 pub use history_transfer::{VaultRecoveryRequest, recover_vaults_independently};
 pub(crate) use home_candidacy::{
     JudgedHomeCandidacy, election_home_candidacies_in_txn, home_candidacies_in_txn,
@@ -314,7 +316,9 @@ pub use host_action::HostActionAuthority;
 pub use host_re_root::{HostReRoot, RetiredSlip};
 pub use ingest_observation::*;
 pub use invocation_slip::InvocationSlipBinding;
-pub use local_host_root::{LocalHostRootContext, LocalHostRootValidated, RetainedHostRootReplace};
+pub use local_host_root::{
+    HostIssuerSeedSlot, LocalHostRootContext, LocalHostRootValidated, RetainedHostRootReplace,
+};
 pub use local_open::LocalOpenProfile;
 pub use log_budget::{
     AUTHORITY_LOG_SIGNER_COUNT_ADVISORY, AuthorityLogCheck, MAX_AUTHORITY_ROWS_PER_SIGNER,
@@ -351,6 +355,7 @@ pub use recover_many::{
     VaultRecovered, VaultRecoveryOutcome, VaultRecoveryProof, VaultRecoveryStep, recover_vaults,
 };
 pub use slip::*;
+pub(crate) use slip_pairing::PendingInvitationLink;
 pub use slip_pairing::{
     PairingDescriptor, PairingLink, PairingPinRef, PairingPrincipal, PairingRedeemed,
     format_pairing_link, format_pinned_pairing_link, machine_possession_transcript,
@@ -373,7 +378,7 @@ pub use support_grant::{
     SupportGrantRevoked, SupportGrantRow, SupportGrantStatus, SupportHolderClass,
 };
 pub use task_actor::AdmittedTaskGrant;
-pub(crate) use task_actor::{RunnerLease, TaskActorProof, TaskActorVerb};
+pub(crate) use task_actor::{RunnerLease, TaskActorProof, TaskActorVerb, TaskGrantStanding};
 pub use valid_entries::{EntryHashSet, ValidEntries};
 pub use vault_api::AuthorityEntryStatus;
 pub use weave_admin::{

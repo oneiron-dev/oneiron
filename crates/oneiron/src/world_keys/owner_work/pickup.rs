@@ -68,11 +68,12 @@ impl Vault {
     /// custody revoke is settled here, byte-free (`settle_revoked_custody`
     /// in `crate::secret_custody`), each kept custody input whose request is
     /// answered is forgotten, and so is each kept export secret copy whose
-    /// secret ended (FIX 12064), and each revoke this install owes the owner's
-    /// other machines is carried once it can sign (FIX 4851), as is each
-    /// membership change's record no host issuer signed (FIX 12335). A wait a root
-    /// request's pickup committed is cleared once the fold holds that
-    /// request cancelled or superseded, byte-free (FIX 5582). The machine
+    /// secret ended (FIX 12064), and each revoke and import mark this install
+    /// owes the owner's other machines is carried once it can sign (FIX 4851,
+    /// 12291), as is each membership change's record no host issuer signed
+    /// (FIX 12335). A wait a root request's pickup committed is cleared once
+    /// the fold holds that request cancelled or superseded, byte-free (FIX
+    /// 5582). The machine
     /// secret is read outside every transaction, and only when a request's
     /// kind reads it: with no keystore, slot or secret here each such
     /// request stays pending, and nothing is taken over. A custody revoke,
@@ -119,6 +120,10 @@ impl Vault {
         // So is the record of a membership change no host issuer signed
         // (FIX 12335).
         self.carry_owed_membership_executions();
+        // An import mark this install could not sign when the owner
+        // imported is signed once it can (FIX 12291), whether or not any
+        // work names this install now.
+        self.carry_owed_import_marks();
         // A restore's credentials pending on their source's evidence are
         // judged again on it (FIX-LIST 10671).
         self.resolve_pending_credential_restores_logged();
@@ -234,7 +239,15 @@ impl Vault {
         let Some(outcome) = outcome else {
             return Ok(Ran::Pending);
         };
-        self.append_owner_work_result_in_txn(txn, hash, machine, outcome.clone())?;
+        let (result, signing) =
+            self.append_owner_work_result_with_key_in_txn(txn, hash, machine, outcome.clone())?;
+        // An export copy's numbered parts are signed by the key that signed
+        // its result, in this commit (FIX 12373).
+        if let (OwnerWorkBody::ExportSecret(_), OwnerWorkOutcome::Sealed { output }) =
+            (&request.work, &outcome)
+        {
+            self.sign_export_output_parts_in_txn(txn, &fold, hash, result, output, &signing)?;
+        }
         Ok(Ran::Answered(outcome))
     }
 
