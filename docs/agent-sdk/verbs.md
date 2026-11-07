@@ -367,6 +367,7 @@ both bindings and their export-census tests in one change.
 - `vault.members.leave`
 - `vault.members.invitations`
 - `vault.members.accept`
+- `vault.members.accept_with_credential`
 - `vault.members.decline`
 - `vault.members.withdraw_invitation`
 - `vault.shared.object`
@@ -743,6 +744,9 @@ both bindings and their export-census tests in one change.
 - `vault.code.origin.authority.get`
 - `vault.code.origin.authority.set`
 - `vault.code.origin.publications`
+- `vault.code.secrets.purge.request`
+- `vault.code.secrets.purge.get`
+- `vault.code.secrets.purge.execute`
 - `vault.code.checkout.holder.bind`
 - `vault.code.checkout.bind`
 - `vault.code.checkout.claim`
@@ -1079,6 +1083,7 @@ both bindings and their export-census tests in one change.
 - `vault.search.temporal`
 - `vault.search.bm25`
 - `vault.neighbors`
+- `vault.edges.provenance`
 - `vault.structural.put`
 - `vault.habits.checkin`
 - `vault.productivity.create`

@@ -443,7 +443,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/off_record_doors.rs` | src | m | 11 crate-vis | — | The host doors of the off-record session rows (DOOR-127, e2e PRIVACY-06) |
 | `src/api/facade/off_record_doors/run_reads.rs` | src | s | 4 crate-vis | — | The read and answer doors of a session-bound code run (FIX 4284): `self.off_record.results.list` and… |
 | `src/api/facade/off_record_room_doors.rs` | src | s | 10 crate-vis | — | Typed room off-record verbs over the existing participant handlers |
-| `src/api/facade/origin_doors.rs` | src | m | 21 crate-vis | — | Credential-bound host projections of the typed origin and checkout doors (DOOR-139) |
+| `src/api/facade/origin_doors.rs` | src | m | 24 crate-vis | — | Credential-bound host projections of the typed origin and checkout doors (DOOR-139) |
 | `src/api/facade/origin_publish_doors.rs` | src | s | 7 crate-vis | — | Credential-bound host projections of the exact publish doors (FIX 6866) |
 | `src/api/facade/outbound_call_erase_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's per-call outbound request erase (FIX 11801): `vault.outbound_calls.request.erase` |
 | `src/api/facade/outbox_diverged_doors.rs` | src | m | 8 crate-vis | — | `vault.outbox.diverged.list` and `vault.outbox.diverged.answer` (FIX 11739): a vault VM's outbox carrier… |
@@ -486,7 +486,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/share_doors.rs` | src | s | 3 crate-vis | — | The share doors past create (OF-491): the issuer or the vault's owner stops a share, and its recipient opens… |
 | `src/api/facade/shared_act_doors.rs` | src | m | 17 crate-vis | — | The host doors of the shared-vault rows (OF-158): the acts the shared preset waits on (`vault.shared.*`)… |
 | `src/api/facade/shared_admin_doors.rs` | src | s | 3 crate-vis | — | Typed named Admin policy/powers and the one-hop scoped Delegate mint |
-| `src/api/facade/shared_member_doors.rs` | src | m | 17 crate-vis | — | The host doors of the shared-vault invitation rows (OF-531 / OF-158), beside `shared_act_doors`: an invitee… |
+| `src/api/facade/shared_member_doors.rs` | src | m | 18 crate-vis | — | The host doors of the shared-vault invitation rows (OF-531 / OF-158), beside `shared_act_doors`: an invitee… |
 | `src/api/facade/shared_policy_doors.rs` | src | s | 5 crate-vis | — | The host doors of the shared-act policy rows (DOOR-129), beside `shared_act_doors`: a live Owner reads every… |
 | `src/api/facade/sieve_doors.rs` | src | s | 9 crate-vis | — | The owner's sieve doors: the interest queue and its retained spans, consumed-span receipts, the sieve and… |
 | `src/api/facade/sieve_observation_doors.rs` | src | s | 5 crate-vis | — | The owner's evidence replay and recorded shared-scheduler observations |
@@ -525,7 +525,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/git_http/gate/push.rs` | src | s | 3 crate-vis | — | The push half of the smart-HTTP gate (FIX 6867, G1-PUSH): the pusher's sidecar, built from the credential… |
 | `src/api/git_http/import_relay.rs` | src | m | 4 crate-vis | — | The outside import's per-call transport (FIX 6871, G7 PR1) |
 | `src/api/git_http/import_source_relay.rs` | src | m | 4 crate-vis | — | An outside import's bound source fetch through the credential broker (ARCH-0069 OSH-3, FIX 15702) |
-| `src/api/git_http/mirror_relay.rs` | src | m | 1 crate-vis | — | An exact publish's mirror git through the credential broker on a served host (ARCH-0069 OSH-3, ARCH-0068… |
+| `src/api/git_http/mirror_relay.rs` | src | m | 1 crate-vis | — | An origin mirror's git through the credential broker on a served host: an exact publish's and an automatic… |
 | `src/api/git_http/mod.rs` | src | s | 4 crate-vis | — | Git smart-HTTP routes (ARCH-0068 Phase A, ONE-1908) |
 | `src/api/git_http/projection.rs` | src | s | 4 crate-vis | — | The Git read recipient a host binds, apart from its push caller (FIX 7608 slice 2b-ii-A, ASK 1) |
 | `src/api/git_http/routes.rs` | src | m | 9 crate-vis | — | Git smart-HTTP routes and per-service RPC handlers |
@@ -555,7 +555,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/actor_dispatch.rs` | src | s | 4 crate-vis | — | Tool execution dispatch across actors |
 | `src/api/mcp_gateway/actor_dispatch/auth.rs` | src | m | 9 crate-vis | — | Who an MCP call acts as: its actor, resolved from its credential, proof headers and placement |
 | `src/api/mcp_gateway/actor_dispatch/execute.rs` | src | s | 3 crate-vis | — | How an admitted MCP tool call executes: its params, its validation and its dispatch |
-| `src/api/mcp_gateway/actor_dispatch/gates.rs` | src | s | 7 crate-vis | — | The gates an MCP call passes before it executes: proof, verb, credential and execute_code |
+| `src/api/mcp_gateway/actor_dispatch/gates.rs` | src | s | 10 crate-vis | — | The gates an MCP call passes before it executes: proof, verb, credential, execute_code's session and each… |
 | `src/api/mcp_gateway/admission.rs` | src | m | 13 crate-vis | — | Scoped-call admission and actor resolution |
 | `src/api/mcp_gateway/admission_intent.rs` | src | s | 4 crate-vis | — | The durable admission receipt (ARCH-0044 C5) of a generated verb an MCP `tools/call` runs under the… |
 | `src/api/mcp_gateway/board_observations.rs` | src | m | 10 crate-vis | — | Session-clock read observations and turn-local riders for MCP boards |
