@@ -2,6 +2,7 @@
 //! key custody, persistence, legal access audit and destruction. No clone is a
 //! Vault, and no ordinary owner/member/agent surface routes to this channel.
 
+mod artifact;
 mod auth;
 mod collector;
 mod live;
@@ -95,6 +96,16 @@ impl HostLegalConnection {
             return messages::capture(&mut self.stream, vault, &request, &public, ids, || {
                 check(vault, &request, cancelled)
             });
+        }
+        if let CaptureScope::ArtifactMessages(selection) = &request.scope {
+            return artifact::capture(
+                &mut self.stream,
+                vault,
+                &request,
+                &public,
+                selection,
+                || check(vault, &request, cancelled),
+            );
         }
         let check = || check(vault, &request, cancelled);
         // Gate custody BEFORE its source snapshot, one LMDB read snapshot held
