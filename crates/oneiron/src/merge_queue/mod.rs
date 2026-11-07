@@ -13,6 +13,7 @@ mod check_store;
 mod check_tree;
 mod checks;
 mod composition;
+mod contract_review;
 mod driver;
 mod driver_materialize;
 mod driver_store;

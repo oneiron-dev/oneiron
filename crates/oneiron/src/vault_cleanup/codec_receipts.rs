@@ -159,7 +159,14 @@ pub(super) fn put_proposal_in_txn(
         ),
     ]);
     let encoded = encode_row(&row, PROPOSAL_ROW_LABEL)?;
-    PROPOSAL.put(&vault.store, wtxn, &proposal.id, &encoded)?;
+    // Its candidates are indexed with it, so an erase finds it (FIX 7616).
+    super::entity_rows::put_in_txn(
+        &vault.store,
+        wtxn,
+        super::entity_rows::Listing::Proposal,
+        proposal.id.as_bytes(),
+        &encoded,
+    )?;
     // An open proposal is pending digest work too.
     crate::batch::queue_proactivity_change(vault, wtxn);
     Ok(())
@@ -232,7 +239,14 @@ pub(super) fn put_digest_in_txn(
         row.push((Value::from(KEY_REJECTED), id_value_list(&digest.rejected)));
     }
     let encoded = encode_row(&Value::Map(row), DIGEST_ROW_LABEL)?;
-    DIGEST.put(&vault.store, wtxn, &digest.id, &encoded)?;
+    // Its slots are indexed with it, so an erase finds it (FIX 7616).
+    super::entity_rows::put_in_txn(
+        &vault.store,
+        wtxn,
+        super::entity_rows::Listing::Digest,
+        digest.id.as_bytes(),
+        &encoded,
+    )?;
     // The decision is pending digest work: the deadline re-reads after commit.
     crate::batch::queue_proactivity_change(vault, wtxn);
     Ok(())

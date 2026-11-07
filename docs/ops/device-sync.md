@@ -177,6 +177,15 @@ the named executor, pending work, or relay behavior. Full failure details stay i
 the existing operator logs; this reply carries only closed reasons, not paths,
 URLs or credentials.
 
+On the executor, a publication's reply also carries `unmerged_upload`, pending or
+answered, when the last upload this install assembled for that home carries a
+world section it may read unchanged because the section did not open, decode or
+merge here: the generation, and per section the world, the window whose merge
+failed, the stage and the error's kind. It is the same record the upkeep's
+`unmerged_uploads` shows (`GET /v1/owner/recovery-kit/upkeep`), so the request's
+result does not hide it. The upload keeps the section and still publishes; the
+section is yours to repair. The field is left out when no such section rides.
+
 ## What the log shows
 
 - `device sync started` with this machine's id, the home's, and `over` (`mesh` or `url`).

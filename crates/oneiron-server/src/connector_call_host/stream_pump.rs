@@ -83,12 +83,10 @@ impl Pump {
         let (credit, credits) = mpsc::channel();
         let waiting = Arc::new(AtomicBool::new(true));
         let (reader_post, reader_waiting) = (post.clone(), Arc::clone(&waiting));
-        std::thread::Builder::new()
-            .name("connector-stream".to_owned())
+        crate::engine_thread("connector-stream".to_owned())
             .spawn(move || read_stream(stream, &reader_post, &credits, &reader_waiting))
             .ok()?;
-        std::thread::Builder::new()
-            .name("connector-answers".to_owned())
+        crate::engine_thread("connector-answers".to_owned())
             .spawn(move || forward_answers(&commands, &post))
             .ok()?;
         Some(Self {

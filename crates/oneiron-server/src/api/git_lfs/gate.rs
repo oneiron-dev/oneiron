@@ -18,7 +18,8 @@ pub(crate) fn lfs_routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route(
             "/git/{repo}/info/lfs/chunks",
-            // The handler reads its body, within a frame, at its turn.
+            // The handler decodes its body as its frames arrive, at its turn
+            // (FIX 145).
             post(super::chunks::exchange),
         )
         .route("/git/{repo}/info/lfs/objects/batch", post(lfs_batch))
