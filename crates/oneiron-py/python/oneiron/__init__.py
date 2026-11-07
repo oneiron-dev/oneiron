@@ -1118,7 +1118,7 @@ class Oneiron:
             """The owner asserts two identities are distinct through one symmetric claim that suppresses merge re-proposals."""
             return json.loads(_translate(lambda: self._client.vault_identity_assert_distinct(json.dumps(spec))))
         def propose(self, spec):
-            """The owner parks a nominated merge or split candidate with no topology effects; distinct pairs suppress merge proposals."""
+            """The owner parks a nominated merge, split or facet candidate with no topology effects; distinct pairs suppress merge proposals."""
             return json.loads(_translate(lambda: self._client.vault_identity_propose(json.dumps(spec))))
         def undo(self, spec):
             """The owner undoes one current topology event by appending a counter-event under its observed revision."""

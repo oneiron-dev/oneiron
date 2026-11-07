@@ -4453,18 +4453,18 @@ declare namespace Sdk {
   type IdentityReassignmentItem = { kind: "claim"; claim: EntityId } | { kind: "edge"; source: EntityId; edge_kind: string; target: EntityId };
   type IdentityReassignmentTarget = { kind: "head"; head: EntityId } | { kind: "facet"; index: number } | { kind: "residue" };
   type IdentityReassignment = { item: IdentityReassignmentItem; target: IdentityReassignmentTarget };
+  type IdentityFacetSpec = { label: string };
   type IdentityProposalOutcome = "approved_untouched" | "approved_amended" | "rejected";
-  type IdentityAmendment = { op: "merge"; sources: EntityId[]; survivor: EntityId; survivorship_plan: IdentitySurvivorshipPlan } | { op: "split"; entity: EntityId; heads: EntityId[]; reassignment_map: IdentityReassignment[] };
-  type IdentityEventAction = { op: "merge"; sources: EntityId[]; survivor: EntityId } | { op: "split"; entity: EntityId; heads: EntityId[]; reassignment_map: IdentityReassignment[]; applied_assigned: number; applied_residue: number } | { op: "facet"; entity: EntityId; facets: EntityId[]; reassignment_map: IdentityReassignment[]; applied_assigned: number; applied_residue: number; forked: EntityId[] } | { op: "assert_distinct"; a: EntityId; b: EntityId; claim: EntityId } | { op: "undo"; target: EntityId } | { op: "proposal_resolution"; proposal: EntityId; outcome: IdentityProposalOutcome; op_kind: string; target_class: string; proposer: string; amendment?: IdentityAmendment | null } | { op: "proposal_cancellation"; proposal: EntityId; participant: EntityId };
+  type IdentityAmendment = { op: "merge"; sources: EntityId[]; survivor: EntityId; survivorship_plan: IdentitySurvivorshipPlan } | { op: "split"; entity: EntityId; heads: EntityId[]; reassignment_map: IdentityReassignment[] } | { op: "facet"; entity: EntityId; facets: IdentityFacetSpec[]; reassignment_map: IdentityReassignment[] };
+  type IdentityEventAction = { op: "merge"; sources: EntityId[]; survivor: EntityId } | { op: "split"; entity: EntityId; heads: EntityId[]; reassignment_map: IdentityReassignment[]; applied_assigned: number; applied_residue: number } | { op: "facet"; entity: EntityId; facets: EntityId[]; reassignment_map: IdentityReassignment[]; applied_assigned: number; applied_residue: number; forked: EntityId[] } | { op: "parked_facet"; entity: EntityId; specs: IdentityFacetSpec[]; reassignment_map: IdentityReassignment[] } | { op: "assert_distinct"; a: EntityId; b: EntityId; claim: EntityId } | { op: "undo"; target: EntityId } | { op: "proposal_resolution"; proposal: EntityId; outcome: IdentityProposalOutcome; op_kind: string; target_class: string; proposer: string; amendment?: IdentityAmendment | null } | { op: "proposal_cancellation"; proposal: EntityId; participant: EntityId };
   type IdentityTopologyReceipt = { event: EntityId; seq: number; at: number; actor?: EntityId | null; source: ClaimSource; approval: ClaimApprovalStatus; confidence: number; evidence?: IdentityEvidence | null; action: IdentityEventAction; seen: string };
   type IdentityLifecycle = "active" | "merged" | "split";
   type IdentityTransition = { entity: EntityId; state: IdentityLifecycle };
   type IdentityTopologyResult = { outcome: "applied"; receipt: IdentityTopologyReceipt; transitions: IdentityTransition[] } | { outcome: "parked"; receipt: IdentityTopologyReceipt } | { outcome: "noop" };
   type IdentitySplitRequest = { entity: EntityId; heads: EntityId[]; reassignment_map: IdentityReassignment[]; evidence: IdentityEvidence };
-  type IdentityFacetSpec = { label: string };
   type IdentityFacetRequest = { entity: EntityId; facets: IdentityFacetSpec[]; reassignment_map: IdentityReassignment[]; evidence: IdentityEvidence };
   type IdentityAssertDistinctRequest = { a: EntityId; b: EntityId; reason: string };
-  type IdentityProposedOp = { op: "merge"; spec: IdentityMergeRequest } | { op: "split"; spec: IdentitySplitRequest };
+  type IdentityProposedOp = { op: "merge"; spec: IdentityMergeRequest } | { op: "split"; spec: IdentitySplitRequest } | { op: "facet"; spec: IdentityFacetRequest };
   type IdentityProposeRequest = { operation: IdentityProposedOp };
   type IdentityUndoRequest = { event: EntityId; seen: string };
   type IdentityEntityRequest = { entity: EntityId };
@@ -6517,7 +6517,7 @@ declare const vault: Sdk.VaultHost & {
       /** The owner approves, amends then approves, or rejects a parked topology proposal under its observed revision. */
       resolve(input: Sdk.IdentityProposalResolveRequest): Promise<Sdk.IdentityProposalResolutionResult | StoredResult>;
     };
-    /** The owner parks a nominated merge or split candidate with no topology effects; distinct pairs suppress merge proposals. */
+    /** The owner parks a nominated merge, split or facet candidate with no topology effects; distinct pairs suppress merge proposals. */
     propose(input: Sdk.IdentityProposeRequest): Promise<Sdk.IdentityTopologyResult | StoredResult>;
     /** The owner resolves an identity to its current head set and reads shell edges, facets and evidence assignments. */
     resolve(input: Sdk.IdentityEntityRequest): Promise<Sdk.IdentityResolution | StoredResult>;
