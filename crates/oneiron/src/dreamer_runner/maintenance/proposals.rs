@@ -94,6 +94,42 @@ pub(super) fn emit_in_txn(
             value,
             evidence,
         },
+        None,
+        envelope,
+        now,
+    )
+    .map(|(id, _)| id)
+}
+
+/// [`emit_in_txn`] for a finding whose claim stands where `scope` places it
+/// (FIX 21886): the opaque claim scope map, whose `scopeProjectId` is the
+/// claim's project stamp. The same signing and Gate path writes it; a replay
+/// of the same content in another scope is refused.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one finding's subject, claim, evidence, scope and write envelope"
+)]
+pub(super) fn emit_scoped_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    subject: EntityId,
+    predicate: &str,
+    value: &serde_json::Value,
+    evidence: &[EntityId],
+    scope: &Value,
+    envelope: &crate::WriteEnvelope,
+    now: u64,
+) -> Result<EntityId> {
+    write_in_txn(
+        vault,
+        txn,
+        &Finding {
+            subject,
+            predicate,
+            value,
+            evidence,
+        },
+        Some(scope),
         envelope,
         now,
     )
@@ -110,15 +146,42 @@ pub(super) fn emit_fresh_in_txn(
     envelope: &crate::WriteEnvelope,
     now: u64,
 ) -> Result<(EntityId, bool)> {
-    write_in_txn(vault, txn, finding, envelope, now)
+    write_in_txn(vault, txn, finding, None, envelope, now)
 }
 
-/// Lands one finding under `envelope`, or returns the one already landed
-/// with the same content; the flag is true only for a fresh landing.
+/// The id a finding with this subject, predicate and JSON value lands under:
+/// its content's, so the same finding lands once.
+fn finding_id(subject: EntityId, predicate: &str, value: &[u8]) -> Result<EntityId> {
+    crate::codebase::entity_id_from_hash_material(
+        b"oneiron:dreamer-maintenance-proposal:v1",
+        &[subject.as_bytes(), predicate.as_bytes(), value],
+    )
+}
+
+/// Whether the finding with this subject, predicate and value was erased:
+/// its id stays tombstoned, so the same content cannot land again
+/// (FIX 21885). A writer that withdraws a finding by erasing it asks before
+/// it lands the same content anew.
+pub(super) fn finding_erased_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    subject: EntityId,
+    predicate: &str,
+    value: &serde_json::Value,
+) -> Result<bool> {
+    let bytes = serde_json::to_vec(value).map_err(|_| super::invalid())?;
+    let id = finding_id(subject, predicate, &bytes)?;
+    Ok(crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, txn, &id)?.deleted)
+}
+
+/// Lands one finding under `envelope`, its claim scoped by `scope` when one
+/// is given, or returns the one already landed with the same content and
+/// scope; the flag is true only for a fresh landing.
 fn write_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     finding: &Finding<'_>,
+    scope: Option<&Value>,
     envelope: &crate::WriteEnvelope,
     now: u64,
 ) -> Result<(EntityId, bool)> {
@@ -129,10 +192,7 @@ fn write_in_txn(
         evidence,
     } = *finding;
     let bytes = serde_json::to_vec(value).map_err(|_| super::invalid())?;
-    let id = crate::codebase::entity_id_from_hash_material(
-        b"oneiron:dreamer-maintenance-proposal:v1",
-        &[subject.as_bytes(), predicate.as_bytes(), &bytes],
-    )?;
+    let id = finding_id(subject, predicate, &bytes)?;
     if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &*txn, &id)? {
         let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or_else(super::invalid)?;
         if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
@@ -147,12 +207,13 @@ fn write_in_txn(
             || body.value.as_str() != std::str::from_utf8(&bytes).ok()
             || body.source != Some(crate::ClaimSource::Generated)
             || crate::claim::session_claim_producer(&body) != Some(envelope.actor().entity_ref())
+            || scope.is_some_and(|scope| body.scope.as_ref() != Some(scope))
         {
             return Err(super::invalid());
         }
         return Ok((id, false));
     }
-    let candidate = ClaimCandidate::new(
+    let mut candidate = ClaimCandidate::new(
         predicate,
         ClaimSubject::Entity(subject),
         Value::from(String::from_utf8(bytes).map_err(|_| super::invalid())?),
@@ -165,6 +226,10 @@ fn write_in_txn(
             source_meet: crate::ClaimSource::Generated,
         },
     ));
+    // Placed before it is signed, so the signature covers its scope.
+    if let Some(scope) = scope {
+        candidate = candidate.with_scope(scope.clone());
+    }
     let mut envelope = envelope.clone();
     vault.sign_retained_machine_claim_in_txn(&*txn, &id, &candidate, &mut envelope)?;
     // Rule A: the finding is concluded from every record it cites.
@@ -227,7 +292,7 @@ impl Landing {
         now: u64,
         effect: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<MaintenanceInverse>,
     ) -> Result<EntityId> {
-        let (id, fresh) = write_in_txn(vault, txn, finding, &self.envelope, now)?;
+        let (id, fresh) = write_in_txn(vault, txn, finding, None, &self.envelope, now)?;
         if self.applied && fresh {
             let inverse = effect(txn)?;
             self.record_in_txn(vault, txn, id, inverse, now)?;
