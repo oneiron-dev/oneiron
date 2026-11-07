@@ -18,6 +18,7 @@
 //! typed unavailable, while every other holder reads the reply as before.
 
 mod erased_read;
+mod resume;
 mod settle_report;
 
 use std::cell::Cell;
@@ -68,6 +69,15 @@ const WAITERS: SideTable<([u8; 1], EntityId, EntityId), u64, Raw> =
 
 const TRAPS: SideTable<(EntityId, EntityId, u64), TrapRef, Raw> =
     SideTable::new(&side_table::CODE_RUN_WAIT_TRAP);
+
+fn retire_wait_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>, key: &WaitKey) -> Result<()> {
+    if WAITERS.get(&vault.store, txn, &key.waiter())? == Some(key.generation) {
+        WAITERS.delete(&vault.store, txn, &key.waiter())?;
+    }
+    DELIVERIES.delete(&vault.store, txn, &key.row())?;
+    TRAPS.delete(&vault.store, txn, &key.row())?;
+    Ok(())
+}
 
 fn reply_text(reply: &serde_json::Value) -> Result<String> {
     serde_json::to_string(reply)
@@ -467,14 +477,9 @@ impl ExecutorStorage<'_> {
     /// captured route. The resumed record already names the next generation.
     pub(crate) fn clear_wait(&self, key: &WaitKey) -> Result<()> {
         match self {
-            Self::Canonical(vault) => vault.with_write_txn_grouped(|txn| {
-                if WAITERS.get(&vault.store, txn, &key.waiter())? == Some(key.generation) {
-                    WAITERS.delete(&vault.store, txn, &key.waiter())?;
-                }
-                DELIVERIES.delete(&vault.store, txn, &key.row())?;
-                TRAPS.delete(&vault.store, txn, &key.row())?;
-                Ok(())
-            }),
+            Self::Canonical(vault) => {
+                vault.with_write_txn_grouped(|txn| retire_wait_in_txn(vault, txn, key))
+            }
             Self::Session(binding) => binding.answered(|| {
                 binding
                     .session
@@ -726,83 +731,4 @@ pub(crate) fn deliver_changed_wait_in_txn(
         }
     }
     Ok(delivered)
-}
-
-impl ExecutorStorage<'_> {
-    /// Commits the replay record of a run resumed from `key`'s reply, the
-    /// result of its parked step `step_seq` at `resumed_path`. When that
-    /// reply is an ask's Changed status, the run's seen-change cursor rises
-    /// in the same transaction, so a failed append acknowledges nothing. A
-    /// bound code consent wait's settlement is consumed in it (DOOR-079 1b):
-    /// its reply must be delivered and verify, or the record does not
-    /// commit. Retiring the wait's rows afterwards consumes nothing and
-    /// deletes no consumption. Once an erase of the run's actor took its
-    /// replies, nothing commits and nothing is consumed: a typed unavailable
-    /// (FIX 5718). A room's record commits as any other append does, along
-    /// its route, and the same check runs in that writer (FIX 6586).
-    pub(crate) fn put_code_run_wait_resume_record(
-        &self,
-        record: &crate::code_run::CodeRunReplayRecord,
-        expected: Option<crate::code_run::CodeRunReplayGeneration>,
-        key: &WaitKey,
-        step_seq: u64,
-        resumed_path: &str,
-    ) -> Result<crate::code_run::CodeRunReplayGeneration> {
-        match self {
-            Self::Canonical(vault) => vault.put_code_run_replay_record_if_generation_with_heal_and(
-                record,
-                expected,
-                None,
-                |txn| {
-                    if holder_erased_in_txn(vault, txn, key)? {
-                        return Err(response_erased_error("a resumed wait's reply"));
-                    }
-                    let delivery = delivery_in_txn(&vault.store, txn, &key.row())?;
-                    if delivery.as_ref().is_some_and(|delivery| delivery.erased) {
-                        return Err(response_erased_error("a resumed wait's reply"));
-                    }
-                    let resume = crate::code_run::CodeConsentResume {
-                        record,
-                        key: *key,
-                        step_seq,
-                        resumed_path,
-                    };
-                    let delivered = delivery.as_ref().map(|delivery| delivery.reply.as_str());
-                    if crate::code_run::consume_code_consent_wait_in_txn(
-                        vault, txn, &resume, delivered,
-                    )? {
-                        return Ok(());
-                    }
-                    let Some(delivery) = delivery else {
-                        return Ok(());
-                    };
-                    if let Ok(crate::task_verb::TaskAskStatus::Changed { generation, .. }) =
-                        serde_json::from_str::<crate::task_verb::TaskAskStatus>(&delivery.reply)
-                    {
-                        raise_observed_change_in(vault, txn, key.run, key.wait_id, generation)?;
-                    }
-                    Ok(())
-                },
-            ),
-            Self::Session(binding) => {
-                REPLAY_RECORDS.encode_value(record)?;
-                let next_generation = record.generation()?;
-                binding.answered(|| {
-                    binding.put_replay_routed(record, expected, None, |txn, write| {
-                        // The run's own rows ride its route, so `write`
-                        // reads them on either route.
-                        if holder_erased_routed(canonical_store(&write), &write, txn, key)? {
-                            return Err(response_erased_error("a resumed wait's reply"));
-                        }
-                        let delivery = delivery_in_txn(&write, txn, &key.row())?;
-                        if delivery.is_some_and(|delivery| delivery.erased) {
-                            return Err(response_erased_error("a resumed wait's reply"));
-                        }
-                        Ok(())
-                    })
-                })?;
-                Ok(next_generation)
-            }
-        }
-    }
 }
