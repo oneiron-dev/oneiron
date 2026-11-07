@@ -190,9 +190,47 @@ pub(crate) fn seal_prospective_message_in_txn(
         sealed_any = true;
     }
     if sealed_any {
+        note_prior_edges_in_txn(store, wtxn, message)?;
         store.host_legal_prospective.bump();
     }
     Ok(())
+}
+
+/// Notes the outgoing edge rows the new message `message` already has as it
+/// lands: rows an earlier write stored under its id, which its birth batch
+/// did not write (FIX 13866). The batch's edge seal leaves them out.
+fn note_prior_edges_in_txn(store: &Store, txn: &RoTxn<'_>, message: [u8; 16]) -> Result<()> {
+    let prior: Vec<(Vec<u8>, [u8; 32])> = edge_rows_in_txn(store, txn, &message)?
+        .into_iter()
+        .map(|(key, value)| (key, *blake3::hash(&value).as_bytes()))
+        .collect();
+    let at = std::ptr::from_ref(store).addr();
+    PRIOR_EDGES.with(|notes| {
+        let mut notes = notes.borrow_mut();
+        notes.retain(|(store, id, _)| !(*store == at && *id == message));
+        notes.push((at, message, prior));
+    });
+    Ok(())
+}
+
+/// The prior edge rows noted for `message`; `None` when none were noted on
+/// this thread. Every standing order reads the same note; the outermost
+/// batch clears its notes as it ends ([`clear_prior_edges`]).
+fn prior_edges(store: &Store, message: &[u8; 16]) -> Option<Vec<(Vec<u8>, [u8; 32])>> {
+    let at = std::ptr::from_ref(store).addr();
+    PRIOR_EDGES.with(|notes| {
+        notes
+            .borrow()
+            .iter()
+            .find(|(store, id, _)| *store == at && id == message)
+            .map(|(_, _, prior)| prior.clone())
+    })
+}
+
+/// Clears every prior-edge note of `store` on this thread.
+fn clear_prior_edges(store: &Store) {
+    let at = std::ptr::from_ref(store).addr();
+    PRIOR_EDGES.with(|notes| notes.borrow_mut().retain(|(store, _, _)| *store != at));
 }
 
 /// Appends `entry` at `standing`'s next ordinal. The caller stores the
@@ -217,6 +255,11 @@ thread_local! {
     /// store's address. A nested apply of the same store, in the same
     /// writer, is part of its outer batch.
     static OPEN_BATCHES: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
+    /// For each new message sealed on this thread, by its store's address:
+    /// the outgoing edge rows (key and BLAKE3 of the value) it already had
+    /// when it landed (FIX 13866).
+    static PRIOR_EDGES: RefCell<Vec<(usize, [u8; 16], Vec<(Vec<u8>, [u8; 32])>)>> =
+        const { RefCell::new(Vec::new()) };
 }
 
 /// One base batch's op loop, open on this thread until dropped. Only the
@@ -254,6 +297,10 @@ impl<'s> ProspectiveBatch<'s> {
 impl Drop for ProspectiveBatch<'_> {
     fn drop(&mut self) {
         let key = std::ptr::from_ref(self.store).addr();
+        if self.outermost {
+            // A batch that ended before its seal leaves no note behind.
+            clear_prior_edges(self.store);
+        }
         OPEN_BATCHES.with(|open| {
             let mut open = open.borrow_mut();
             if let Some(at) = open.iter().rposition(|of| *of == key) {
@@ -263,14 +310,19 @@ impl Drop for ProspectiveBatch<'_> {
     }
 }
 
-/// Seals the outgoing edge rows of each message this batch sealed into a
-/// standing order's outbox, as the batch left them, in the writer that wrote
-/// them: called once at the end of every outermost base batch. Each row is its own
-/// entry after the message's, under the revision its row carried. A message
-/// whose row the same batch replaced or removed after it was sealed has no
-/// edges sealed as its own: it is recorded as missed. Edges a later batch
-/// adds are later edits, not captured. A seal that fails keeps the user's
-/// batch: the message is recorded as missed. Only a storage error fails.
+/// Seals the outgoing edge rows each message this batch sealed into a
+/// standing order's outbox got from this batch, as the batch left them, in
+/// the writer that wrote them: called once at the end of every outermost
+/// base batch. Each row is its own entry after the message's, under the
+/// revision its row carried. A row the message already had when it landed,
+/// unchanged since, is not the batch's: it is not sealed, and since the
+/// batch may have written the same bytes again, the message is recorded as
+/// missed (FIX 13866). So is a message whose prior rows were not noted on
+/// this thread, when it has any edge row. A message whose row the same batch
+/// replaced or removed after it was sealed has no edges sealed as its own:
+/// it is recorded as missed. Edges a later batch adds are later edits, not
+/// captured. A seal that fails keeps the user's batch: the message is
+/// recorded as missed. Only a storage error fails.
 fn seal_prospective_edges_in_txn(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<()> {
     if !prospective_standing_in_txn(store, wtxn)? {
         return Ok(());
@@ -290,6 +342,7 @@ fn seal_prospective_edges_in_txn(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<
             }
         }
         for (message, revision) in born {
+            let prior = prior_edges(store, &message);
             let current = store.entities().get(wtxn, &message[..])?;
             if current.is_none_or(|row| *blake3::hash(&row).as_bytes() != revision) {
                 append_in_txn(
@@ -302,7 +355,19 @@ fn seal_prospective_edges_in_txn(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<
                 sealed_any = true;
                 continue;
             }
-            for (edge_key, value) in edge_rows_in_txn(store, wtxn, &message)? {
+            let rows = edge_rows_in_txn(store, wtxn, &message)?;
+            let mut unowned = prior.is_none() && !rows.is_empty();
+            let mut missed = false;
+            for (edge_key, value) in rows {
+                let had = prior.as_ref().is_some_and(|prior| {
+                    prior.iter().any(|(key, hash)| {
+                        *key == edge_key && *hash == *blake3::hash(&value).as_bytes()
+                    })
+                });
+                if had || prior.is_none() {
+                    unowned = true;
+                    continue;
+                }
                 let sealed = seal_component(
                     &standing,
                     key,
@@ -324,17 +389,29 @@ fn seal_prospective_edges_in_txn(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<
                         OutboxEntry::Missed { message }
                     }
                 };
-                let missed = matches!(entry, OutboxEntry::Missed { .. });
+                missed = matches!(entry, OutboxEntry::Missed { .. });
                 append_in_txn(store, wtxn, key, &mut standing, &entry)?;
                 sealed_any = true;
                 if missed {
                     break;
                 }
             }
+            if unowned && !missed {
+                append_in_txn(
+                    store,
+                    wtxn,
+                    key,
+                    &mut standing,
+                    &OutboxEntry::Missed { message },
+                )?;
+                sealed_any = true;
+            }
         }
         standing.edges_from = standing.next_ordinal;
         STANDINGS.put(store, wtxn, &key, &standing)?;
     }
+    // Every standing order read the batch's notes; none outlives the batch.
+    clear_prior_edges(store);
     if sealed_any {
         store.host_legal_prospective.bump();
     }

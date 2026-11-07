@@ -781,6 +781,9 @@ impl PolicyManifestResolution {
             .unwrap_or(PolicyCriticality::Critical)
     }
 
+    /// `predicate`'s rung on the content ladder, the most restrictive label
+    /// any pack selects for it; `sensitive` when no pack labels it or the
+    /// manifest fails closed.
     #[must_use]
     pub(in crate::gate) fn sensitivity_for_predicate(&self, predicate: &str) -> PolicySensitivity {
         if self.is_fail_closed() {
