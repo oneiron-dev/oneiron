@@ -237,7 +237,9 @@ impl RecordingJsHost<'_, '_> {
     /// caller's step goes on. A callable's own call nests inside it: past
     /// the `[limits] callable_nest_depth` row it asks, and the call runs.
     /// A call that would start below the thread's stack floor answers
-    /// `skills_call_stack_floor` instead.
+    /// `skills_call_stack_floor` instead. A call the step's own program made
+    /// that answered is kept for the step's replay context (FIX 3608): what
+    /// its load selected, its arguments and where its own calls end.
     pub(super) fn call_skill(
         &mut self,
         seq: u64,
@@ -298,6 +300,7 @@ impl RecordingJsHost<'_, '_> {
             return Ok(failed("skills_call_no_executor".to_owned()));
         };
         let (run_id, determinism) = (self.run_id, self.determinism);
+        let from_program = self.callable_depth == 0;
         self.callable_depth += 1;
         lease.vault.measure_limit(
             crate::limit_ask::EngineLimit::CallableNestDepth,
@@ -306,7 +309,7 @@ impl RecordingJsHost<'_, '_> {
         // The skill's stored body and its own calls reach the run (FIX 6130).
         let cause = crate::code_run::ReadWorldUnknown::CallableSkill;
         self.gated_write.read_worlds_unknown(run_id, cause);
-        let mut loaded = Vec::new();
+        let (mut loaded, mut selected) = (Vec::new(), None);
         // The answer check holds its buffers on the run's own share (FIX
         // 10149); a host lent none checks unheld, as before.
         let memory = self.result_share.zip(self.storage).map(|(share, storage)| {
@@ -329,6 +332,7 @@ impl RecordingJsHost<'_, '_> {
             started_at_ms / 1000,
             parent,
             &mut loaded,
+            &mut selected,
             memory,
         );
         self.callable_rows.0.extend(loaded);
@@ -372,6 +376,19 @@ impl RecordingJsHost<'_, '_> {
             }),
             Err(error) => failed(error.to_string()).0,
         };
+        if from_program
+            && matches!(outcome, SelfDispatchOutcome::SkillCall(_))
+            && let Some(selected) = selected
+        {
+            let callable = crate::code_run::CapturedCallable {
+                seq,
+                nested_end: self.next_seq,
+                skill: skill.skill,
+                selected,
+                args: skill.args,
+            };
+            self.context_capture.callables.push(callable);
+        }
         // The post chain reads the answer as the guest gets it: a large one
         // by its handle.
         let outcome = self.store_large_answer(seq, outcome)?;
