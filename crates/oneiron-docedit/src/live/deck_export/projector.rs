@@ -10,6 +10,7 @@ pub fn project(
     assets: &dyn Assets,
 ) -> Result<ExportOutcome, LiveError> {
     let key = export_key(deck, package, document, profile)?;
+    let graphics = profile.graphics.unwrap_or_default();
     // Opaque replacements carry only their hash in the live model; the
     // replacement bytes must already be the retained part's bytes.
     for (part, expected) in &deck.opaque_parts {
@@ -184,7 +185,7 @@ pub fn project(
                 continue;
             }
             let part = home.get(id).cloned().ok_or(LiveError::UnknownNode)?;
-            let added = born(&mut work, deck, *id, &part, assets)?;
+            let added = born(&mut work, deck, *id, &part, assets, graphics)?;
             work.raise_shape(&part, added);
             work.at.insert(*id, (part, added));
         }
@@ -388,7 +389,7 @@ pub fn project(
             project_marks(&mut work, *id, &part, native, body)?;
         }
         if node.binding.is_some() {
-            project_payload(&mut work, deck, *id, &part, native, assets)?;
+            project_payload(&mut work, deck, *id, &part, native, assets, graphics)?;
         }
     }
 

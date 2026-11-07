@@ -39,6 +39,7 @@ pub use self::code_check::TypeFeedback;
 pub(crate) use self::code_check::{CheckedDoor, LatestFeedback, RowsCheck};
 pub use self::compaction::{CompactionReport, CompactionSpawn, RunCompaction, WindowFullReason};
 pub use self::driver::EngineNativeExecutor;
+pub(crate) use self::host::ACT_GATES_COUNT_CALLABLE_ROWS;
 // DOOR-141 PR3b: a turn program's pinned entry, for its runtime alone.
 pub(crate) use self::program_entry::{PinnedProgramEntry, PinnedProgramRun};
 #[cfg(test)]

@@ -37,6 +37,7 @@ struct Leg<'c> {
     call: &'c RoleCall<'c>,
     locality: ModelLocality,
     keyless: bool,
+    paid: bool,
     policy: &'c WakeRecipePolicy,
     sizing: Sizing,
     key: [u8; 32],
@@ -178,6 +179,7 @@ impl ConsolidationExecutor<'_> {
             ));
         };
         let keyless = call.inference.selected_keyless();
+        let paid = call.inference.selected_paid();
         let writer = Writer {
             attempt: attempt.status.attempt.id,
             generation: attempt.status.attempt.attempt_count,
@@ -203,6 +205,7 @@ impl ConsolidationExecutor<'_> {
                 call: &call,
                 locality,
                 keyless,
+                paid,
                 policy: &policy,
                 sizing: Sizing::new(
                     self.roles.follower_window_tokens(),
@@ -248,11 +251,17 @@ impl ConsolidationExecutor<'_> {
             return Err(Error::InvariantViolation("a follower suffix asks nothing"));
         };
         let labels = request::labels(&work.asked);
-        let request =
-            match request::ask_request(leg.call.model, leg.locality, leg.keyless, work, &labels) {
-                Ok(request) => request,
-                Err(error) => return Ok(Some(charges.park_on_error(&error))),
-            };
+        let request = match request::ask_request(
+            leg.call.model,
+            leg.locality,
+            leg.keyless,
+            leg.paid,
+            work,
+            &labels,
+        ) {
+            Ok(request) => request,
+            Err(error) => return Ok(Some(charges.park_on_error(&error))),
+        };
         let (request, step_hash) = match admit(leg, request) {
             Ok(admitted) => admitted,
             Err(refusal) => return Ok(Some(refused(charges, &refusal))),
@@ -443,6 +452,7 @@ impl ConsolidationExecutor<'_> {
             leg.call.model,
             leg.locality,
             leg.keyless,
+            leg.paid,
             &leg.policy.follower_keyframe_instruction,
             group,
             pins,
