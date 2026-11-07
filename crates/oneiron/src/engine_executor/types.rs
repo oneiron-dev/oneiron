@@ -391,6 +391,13 @@ pub trait JsCodeModeHost {
         None
     }
 
+    /// An isolated program's own error text with each value this host's run
+    /// knows replaced by its stand-in (FIX 9209). A host with no storage
+    /// knows no value; the release shape sanitizer runs after this either way.
+    fn mask_guest_error(&self, body: &str) -> Result<String> {
+        Ok(body.to_owned())
+    }
+
     /// [`Self::dispatch_self_nested`] for a caller whose step `cancel` may
     /// stop (FIX 600). A host that runs the nested step overrides it and
     /// runs that step under a child of `cancel`, so a stop of the caller

@@ -16,7 +16,8 @@ pub mod bindings {
     wasmtime::component::bindgen!({ path: "wit", world: "guest" });
 }
 
-use super::source::{PreparedSource, prepare_source, split_guest_error};
+use super::guest_error::guest_failure;
+use super::source::{PreparedSource, prepare_source};
 use super::{SandboxBoundaryAdapter, SandboxBoundaryContract, SandboxGuestTier};
 use crate::engine_executor::{
     CANCEL_POLL_SLICE, JsCodeModeHost, JsCodeModeOutput, JsCodeModeRuntime, JsCodeModeStep,
@@ -503,7 +504,7 @@ impl JsCodeModeRuntime for WasmtimeComponentRuntime {
             ..step
         };
         let outcome = match super::microvm::select_backend_for_tier(step.boundary.tier())? {
-            Some(backend) => isolated::run(self, step, backend, cancel, host),
+            Some(backend) => isolated::run(self, step, prepared, backend, cancel, host),
             None => self.execute_cancellable(step, prepared, host, cancel),
         };
         cancel.check()?;
@@ -648,26 +649,6 @@ enum HostEvent {
         reply: mpsc::SyncSender<Result<u64>>,
     },
     Finished(Result<Stepped>),
-}
-
-/// Characters of a guest's error text a failed step keeps. A program can
-/// throw text of any size; its head says why.
-const GUEST_ERROR_CHARS: usize = 2048;
-
-/// The guest's own error text for a failed step, so the model learns why its
-/// program stopped. The guest's position header never reaches it; a
-/// TypeScript program's error ends with where it threw in the TypeScript
-/// source, past the text's cut, and a JavaScript program's is as it was.
-fn guest_failure(message: &str, prepared: &PreparedSource<'_>) -> Error {
-    let (message, at) = split_guest_error(message);
-    let mut text: String = message.chars().take(GUEST_ERROR_CHARS).collect();
-    if text.len() < message.len() {
-        text.push_str(&format!(" … ({} bytes in all)", message.len()));
-    }
-    if let Some(position) = prepared.failure_position(at) {
-        text.push_str(&position);
-    }
-    Error::InvalidConfig(format!("guest reported step failure: {text}"))
 }
 
 fn failure(detail: &'static str) -> Error {
