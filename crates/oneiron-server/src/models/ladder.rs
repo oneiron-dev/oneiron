@@ -599,8 +599,9 @@ impl OfferLadder {
     /// `locality` on this ladder, for the engine's inference admission: the
     /// supervised native attestation when the call's route is on device and
     /// this ladder sends only over supervised native channels
-    /// ([`Self::native_local`], I2-LOCAL); otherwise the advertised route,
-    /// with `keyless` as the calling door verified it.
+    /// ([`Self::native_local`], I2-LOCAL), `paid` when a rung of it is paid
+    /// work ([`Self::all_free_work`] false, FIX 18407); otherwise the
+    /// advertised route, with `keyless` as the calling door verified it.
     #[must_use]
     pub(crate) fn host_binding(
         &self,
@@ -609,7 +610,10 @@ impl OfferLadder {
         keyless: bool,
     ) -> HostInferenceBinding {
         if locality == ModelLocality::OnDevice && self.native_local() {
-            HostInferenceBinding::SupervisedNativeLocal { model }
+            HostInferenceBinding::SupervisedNativeLocal {
+                model,
+                paid: !self.all_free_work(),
+            }
         } else {
             HostInferenceBinding::Advertised {
                 model,
