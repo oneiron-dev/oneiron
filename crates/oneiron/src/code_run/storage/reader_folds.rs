@@ -5,15 +5,18 @@
 //! A receipt is written with the binding of the result it describes, in the
 //! checkpoint's one transaction, so neither exists without the other. It is
 //! computed by the host from the jobs it names; the guest only names them.
-//! The step's replay context joins the same transaction beside its capsule
-//! (FIX 6351, `replay_capsule::context`).
+//! The model response's correction record (FIX 4411) joins the same commit,
+//! and the step's replay context joins the same transaction beside its
+//! capsule (FIX 6351, `replay_capsule::context`).
 
+use super::corrections::{committed_checkpoint, put_correction_in_txn};
 use super::program_resume::{ProgramResumeCommit, join_program_resume_in_txn};
 use super::records::REPLAY_RECORDS;
 use super::replay_capsule::{join_step_context_in_txn, stage_step_context};
 use super::routing::SessionBinding;
 use crate::code_run::{
-    CodeRunReplayGeneration, CodeRunReplayRecord, ExecutorStorage, ParkedWait, StepContextCommit,
+    CodeRunCorrectionCheckpoint, CodeRunCorrectionDraft, CodeRunReplayGeneration,
+    CodeRunReplayRecord, ExecutorStorage, ParkedWait, StepContextCommit,
     seal_parked_code_consent_in_txn,
 };
 use crate::side_table::{self, Raw, SideTable};
@@ -66,14 +69,15 @@ impl Vault {
 impl SessionBinding<'_> {
     /// [`ExecutorStorage::put_code_run_replay_record_with_receipts_if_generation`]
     /// on the room's route: the record compared and put, its heal tally when
-    /// the turn healed, and every receipt beside it, in one routed
-    /// transaction.
+    /// the turn healed, every receipt beside it and the response's
+    /// correction record, in one routed transaction.
     fn put_replay_record_with_receipts(
         &self,
         record: &CodeRunReplayRecord,
         expected: Option<CodeRunReplayGeneration>,
         healed_model: Option<&ModelId>,
         receipts: &[ReaderFoldReceipt],
+        correction: Option<(&CodeRunCorrectionDraft<'_>, CodeRunCorrectionCheckpoint)>,
     ) -> Result<()> {
         // The routed append fences a base row against a spawn target's erase
         // in its own writer (FIX 9180), with or without a heal.
@@ -82,6 +86,9 @@ impl SessionBinding<'_> {
                 for receipt in receipts {
                     let key = (receipt.folded.owner, receipt.folded.occurrence);
                     FOLDS.put(&write, txn, &key, receipt)?;
+                }
+                if let Some((draft, checkpoint)) = correction {
+                    put_correction_in_txn(&write, txn, draft, Some(checkpoint))?;
                 }
                 Ok(())
             })
@@ -94,6 +101,11 @@ impl ExecutorStorage<'_> {
     /// replay append, its heal tally and every receipt in one transaction, so a receipt never exists without its
     /// binding, nor a binding without its receipt.
     ///
+    /// The model response the step ran joins the same commit as its
+    /// correction record (FIX 4411), naming the checkpoint `record` commits
+    /// for its step; its heal tally moves exactly when the response needed a
+    /// repair, once per committed turn (ONE-1929).
+    ///
     /// A step that parks its run on `parked` seals the code consent wait it
     /// names in the same transaction (DOOR-079 1b), when one is bound to it,
     /// so the binding is sealed exactly when its parked step commits. A
@@ -104,7 +116,7 @@ impl ExecutorStorage<'_> {
         &self,
         record: &CodeRunReplayRecord,
         expected: Option<CodeRunReplayGeneration>,
-        healed_model: Option<&ModelId>,
+        correction: &CodeRunCorrectionDraft<'_>,
         receipts: &[ReaderFoldReceipt],
         parked: Option<&ParkedWait>,
         context: &StepContextCommit,
@@ -112,7 +124,7 @@ impl ExecutorStorage<'_> {
         self.put_replay_record_with_receipts_and_resume(
             record,
             expected,
-            healed_model,
+            Some(correction),
             receipts,
             parked,
             None,
@@ -152,12 +164,16 @@ impl ExecutorStorage<'_> {
         &self,
         record: &CodeRunReplayRecord,
         expected: Option<CodeRunReplayGeneration>,
-        healed_model: Option<&ModelId>,
+        correction: Option<&CodeRunCorrectionDraft<'_>>,
         receipts: &[ReaderFoldReceipt],
         parked: Option<&ParkedWait>,
         resume: Option<&ProgramResumeCommit>,
         context: &StepContextCommit,
     ) -> Result<CodeRunReplayGeneration> {
+        let healed_model = correction.and_then(CodeRunCorrectionDraft::healed_model);
+        let correction = correction
+            .map(|draft| committed_checkpoint(record, draft).map(|checkpoint| (draft, checkpoint)))
+            .transpose()?;
         match self {
             Self::Canonical(vault) => {
                 // Its body instances are minted before the writer opens.
@@ -170,6 +186,9 @@ impl ExecutorStorage<'_> {
                         for receipt in receipts {
                             let key = (receipt.folded.owner, receipt.folded.occurrence);
                             FOLDS.put(&vault.store, wtxn, &key, receipt)?;
+                        }
+                        if let Some((draft, checkpoint)) = correction {
+                            put_correction_in_txn(&vault.store, wtxn, draft, Some(checkpoint))?;
                         }
                         if let Some(parked) = parked {
                             seal_parked_code_consent_in_txn(vault, wtxn, record, parked)?;
@@ -192,8 +211,6 @@ impl ExecutorStorage<'_> {
                     },
                 )
             }
-            Self::Session(_) if receipts.is_empty() => self
-                .put_code_run_replay_record_if_generation_with_heal(record, expected, healed_model),
             Self::Session(binding) => {
                 REPLAY_RECORDS.encode_value(record)?;
                 let next = record.generation()?;
@@ -202,6 +219,7 @@ impl ExecutorStorage<'_> {
                     expected,
                     healed_model,
                     receipts,
+                    correction,
                 )?;
                 Ok(next)
             }
