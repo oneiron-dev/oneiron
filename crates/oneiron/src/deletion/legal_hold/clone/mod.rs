@@ -8,7 +8,7 @@ mod live;
 mod messages;
 mod outbox;
 
-pub use auth::{HostLegalChannel, HostLegalConnection};
+pub use auth::{HostLegalChannel, HostLegalConnection, HostLegalConnectionRole};
 pub(crate) use live::HostLegalCaptures;
 
 use std::io::{self, Write};
@@ -28,9 +28,12 @@ use crate::{EntityId, Vault};
 use collector::Collector;
 
 impl HostLegalConnection {
-    /// Run on the managed blocking executor. Teardown cancels the private live
-    /// registry, shuts ALL accepted streams and joins ALL workers before Vault
-    /// close. A successful stream ACK covers only its declared source extent.
+    /// Run on the managed blocking executor. At its stop trigger teardown
+    /// cancels the private live registry and shuts every accepted stream but
+    /// a prospective order's; after every writer stopped it runs the final
+    /// prospective drain, then shuts the rest and joins ALL workers before
+    /// Vault close. A successful stream ACK covers only its declared source
+    /// extent.
     pub fn run(mut self, vault: &Vault, cancelled: &AtomicBool) -> Result<()> {
         self.stream.set_nonblocking(false)?;
         SourceHello {
@@ -71,7 +74,15 @@ impl HostLegalConnection {
             return self.run_live(vault, request, public);
         }
         if matches!(&request.scope, CaptureScope::ProspectiveMessages(_)) {
-            return self.run_prospective(vault, request, public, cancelled);
+            // Teardown's stop trigger leaves this stream open; the final
+            // drain, a release or the order's term ends it. A connection the
+            // trigger already closed never becomes prospective.
+            if !self.role.claim_prospective() {
+                return Err(
+                    io::Error::new(io::ErrorKind::Interrupted, "legal capture stopped").into(),
+                );
+            }
+            return self.run_prospective(vault, request, public);
         }
         if let CaptureScope::Messages(ids) = &request.scope {
             return messages::capture(&mut self.stream, vault, &request, &public, ids, || {
