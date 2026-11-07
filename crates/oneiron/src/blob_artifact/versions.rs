@@ -7,6 +7,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edit_settle::{MadeByReader, PendingProposalView};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::federation::record_scope::BirthPosition;
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::store::{BodyMint, ManifestDbs, StagedAssetBody};
@@ -250,7 +251,9 @@ impl Vault {
     /// content-write authority checked beside it; HEAD stays untouched until
     /// Keep takes the existing authorized settlement path (FIX 8208). The read
     /// lane is constructed only for a retained envelope naming sources beyond
-    /// its writer, never for a landed append (FIX 12562).
+    /// its writer, never for a landed append (FIX 12562). No producing host
+    /// binds a position on this door: the claim keeps the birth default
+    /// (FIX 3171).
     #[expect(clippy::too_many_arguments)]
     pub fn append_blob_artifact_version_checked<'reader, E>(
         &self,
@@ -278,6 +281,7 @@ impl Vault {
                 actor,
                 occurred,
                 learned_at,
+                BirthPosition::default(),
                 crate::core_write::CoreWriteLaneRef::Unbound,
             )
         })?;
@@ -447,8 +451,12 @@ impl Vault {
 
     /// The trusted Keep path: the retained envelope was bound to its
     /// producer when the proposal was authenticated, so it lands validated
-    /// but unchanged. The keeper's write authority stays out of the producer
+    /// but unchanged. A row retained with none lands with the default
+    /// envelope. The keeper's write authority stays out of the producer
     /// receipt: no rebind to the approver (blind review of #4554).
+    /// `producer_position` is the producing run's position, frozen when the
+    /// proposal was retained (FIX 3171): the claim is born there, never at
+    /// the keeper's.
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn append_blob_artifact_version_kept_in_txn(
         &self,
@@ -457,24 +465,26 @@ impl Vault {
         fork_parent: Option<u64>,
         bytes: &[u8],
         provenance: &BlobVersionProvenance,
-        made_by: &MadeBy,
+        made_by: Option<&MadeBy>,
         actor: WriteActor,
         occurred: TimeRange,
         learned_at: u64,
+        producer_position: BirthPosition,
     ) -> Result<BlobArtifactVersion> {
-        self.append_blob_artifact_version_body_in_txn(
+        self.append_blob_artifact_version_body_with_authority_in_txn(
             wtxn,
             artifact_id,
             VersionBody::Bytes(bytes),
             provenance,
-            actor,
+            VersionAuthority::Actor(actor),
             occurred,
             learned_at,
             fork_parent,
             None,
-            Some(made_by),
+            made_by,
             true,
             false,
+            producer_position,
             crate::core_write::CoreWriteLaneRef::Unbound,
         )
     }
