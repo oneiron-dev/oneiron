@@ -135,12 +135,12 @@ impl LocalVisionModel {
             content.push(ContentPart::Text { text: rubric });
         }
         content.push(ContentPart::Text {
-            text: json!({"question": call.question.text, "state": state}).to_string(),
+            text: json!({"question": call.question_text(), "state": state}).to_string(),
         });
         let purpose = CallPurpose::Other {
             name: PURPOSE.to_owned(),
         };
-        Ok(LlmRequest {
+        let mut request = LlmRequest {
             model: self.model.clone(),
             envelope: CallEnvelope {
                 seat_effort: None,
@@ -151,6 +151,7 @@ impl LocalVisionModel {
                 response_format: ResponseFormat::Json { schema },
                 locality: self.locality,
                 host_keyless: false,
+                host_paid: false,
             },
             messages: vec![LlmMessage {
                 role: LlmMessageRole::User,
@@ -160,7 +161,11 @@ impl LocalVisionModel {
             params: BTreeMap::new(),
             provider_options: BTreeMap::new(),
             host_segments: None,
-        })
+        };
+        if let Some(labels) = call.labels {
+            labels.bind(&mut request);
+        }
+        Ok(request)
     }
 }
 
@@ -196,6 +201,7 @@ impl DecisionModel for LocalVisionModel {
                 paired: None,
                 person: None,
                 served: None,
+                cost_per_thousand: None,
             });
         };
         let request = self.request(call, schema)?;
@@ -327,6 +333,7 @@ fn score_answer(text: &str, min: f64, max: f64) -> Option<ProviderDecision> {
         paired: None,
         person: None,
         served: None,
+        cost_per_thousand: None,
     })
 }
 
@@ -373,6 +380,7 @@ fn choice_answer(text: &str, options: &[String]) -> Option<ProviderDecision> {
         paired: None,
         person: None,
         served: None,
+        cost_per_thousand: None,
     })
 }
 
@@ -385,6 +393,7 @@ fn noul_answer(text: &str) -> Option<ProviderDecision> {
         paired: None,
         person: None,
         served: None,
+        cost_per_thousand: None,
     })
 }
 
@@ -448,6 +457,7 @@ fn box_answer(text: &str) -> Option<ProviderDecision> {
         paired: None,
         person: None,
         served: None,
+        cost_per_thousand: None,
     })
 }
 

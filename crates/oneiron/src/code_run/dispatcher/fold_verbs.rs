@@ -63,7 +63,7 @@ impl HostSelfDispatcher<'_> {
             .iter()
             .map(|row| row.last())
             .max();
-        let answer = if call.writes() {
+        let mut answer = if call.writes() {
             self.storage
                 .update_code_run_folds(run_id, |ledger| ledger.answer(call, step, prefix_end))?
         } else {
@@ -71,6 +71,52 @@ impl HostSelfDispatcher<'_> {
                 .code_run_folds(run_id)?
                 .answer(call, step, prefix_end)
         };
+        // A fold's answer can quote its stub, ids and note: every known
+        // custody value in its text reaches the guest as its handle. Only
+        // text values are masked, so the answer stays the same JSON.
+        mask_answer_text(&self.storage, &mut answer)?;
         Ok(SelfDispatchOutcome::Fold(answer.to_string()))
     }
+}
+
+/// The fields of a fold answer that quote text a fold keeps: a stub, a
+/// note, ids, result handles and a mark's failure. Every other field is
+/// engine-typed (fold handles, spans, kinds, verbs, sources, flags) and is
+/// never masked.
+const FOLD_ANSWER_TEXT_KEYS: [&str; 5] = ["stub", "note", "ids", "handles", "failed"];
+
+/// Masks every known custody value in the text fields of one fold answer,
+/// by its schema: only string values under a [`FOLD_ANSWER_TEXT_KEYS`] field,
+/// at any depth, pass through the masking. Keys, numbers, booleans and the
+/// typed fields keep their values, so the answer stays the same JSON.
+fn mask_answer_text(
+    storage: &crate::code_run::storage::ExecutorStorage<'_>,
+    value: &mut serde_json::Value,
+) -> Result<()> {
+    mask_answer_value(storage, value, false)
+}
+
+fn mask_answer_value(
+    storage: &crate::code_run::storage::ExecutorStorage<'_>,
+    value: &mut serde_json::Value,
+    text: bool,
+) -> Result<()> {
+    match value {
+        serde_json::Value::String(string) if text => {
+            *string = crate::engine_executor::mask_known_text(storage, string)?;
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                mask_answer_value(storage, item, text)?;
+            }
+        }
+        serde_json::Value::Object(fields) => {
+            for (key, item) in fields.iter_mut() {
+                let text = text || FOLD_ANSWER_TEXT_KEYS.contains(&key.as_str());
+                mask_answer_value(storage, item, text)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }

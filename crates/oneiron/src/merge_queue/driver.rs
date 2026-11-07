@@ -183,6 +183,10 @@ impl MergeQueue<'_> {
             }
             QueueWork::Stage { batch, .. } => self.drive_stage(config, batch, pass),
             QueueWork::Diagnose { batch, .. } => {
+                // A removed public name waits for its person review (FIX 4365).
+                if let Some(waiting) = self.hold_for_contract_review(batch)? {
+                    return Ok(waiting);
+                }
                 let request = QueueCheckRequest::Diagnose {
                     batch: batch.clone(),
                 };

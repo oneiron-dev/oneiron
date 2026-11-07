@@ -216,7 +216,7 @@ impl Memory<'_> {
         let mut current = BTreeMap::new();
         for symbol in &manifest.symbols {
             current.insert(
-                code_symbol_entity_id(&manifest.repo_ref, symbol)?,
+                code_symbol_entity_id(&manifest.repo_identity, symbol)?,
                 symbol.path.clone(),
             );
         }
