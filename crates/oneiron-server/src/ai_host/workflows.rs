@@ -63,7 +63,7 @@ const LEASE_OWNER: &str = "oneiron-server-workflows";
 /// settlement never reads one as its own.
 const DETECTION_LEASE_OWNER: &str = "oneiron-server-project-detection";
 /// How often waiting work no change signals is looked at again.
-const WAITING_RECHECK: Duration = Duration::from_secs(30);
+pub(super) const WAITING_RECHECK: Duration = Duration::from_secs(30);
 
 /// What the pump waits for after a pass, beside the attempt signal (FIX
 /// 9467): the next real scheduled or backoff instant, and whether some
