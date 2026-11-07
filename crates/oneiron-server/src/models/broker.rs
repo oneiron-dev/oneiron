@@ -461,7 +461,27 @@ pub(super) async fn call_with_key_released(
     release: Option<oneiron::llm::DispatchRelease<'_>>,
     lease: Option<&BudgetLease>,
 ) -> LlmResult<oneiron_broker::BrokerReply> {
-    let (connection, key) = connect_with_key_released(client, keys, secret, release, lease).await?;
+    let (connection, key) = connect_with_key_released(client, keys, secret, None, None).await?;
+    if let Some(release) = release {
+        release()?;
+        let before_send = || {
+            release()?;
+            if let Some(lease) = lease {
+                lease.begin_physical_attempt();
+            }
+            Ok::<(), LlmError>(())
+        };
+        return connection
+            .call_released(header, body, key, &before_send)
+            .await
+            .map_err(|error| match error {
+                oneiron_broker::DispatchError::Broker(error) => broker_error(error),
+                oneiron_broker::DispatchError::Release(error) => error,
+            });
+    }
+    if let Some(lease) = lease {
+        lease.begin_physical_attempt();
+    }
     connection
         .call(header, body, key)
         .await
@@ -509,20 +529,6 @@ async fn connect_with_key_released(
         })?;
     if let Some(release) = release {
         release()?;
-        let before_send = || {
-            release()?;
-            if let Some(lease) = lease {
-                lease.begin_physical_attempt();
-            }
-            Ok::<(), LlmError>(())
-        };
-        return connection
-            .call_released(header, body, key, &before_send)
-            .await
-            .map_err(|error| match error {
-                oneiron_broker::DispatchError::Broker(error) => broker_error(error),
-                oneiron_broker::DispatchError::Release(error) => error,
-            });
     }
     if let Some(lease) = lease {
         lease.begin_physical_attempt();
