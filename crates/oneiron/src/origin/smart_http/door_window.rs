@@ -287,8 +287,9 @@ fn scan_window(
         true,
         context.scan,
         &mut |at, blob| {
-            let path = decode_tip_path(&blob.path)?;
-            if let Some(pointer) = LfsPushedPointer::from_pointer_content(&path, &blob.content) {
+            if let Some(pointer) =
+                LfsPushedPointer::from_pointer_content(blob.path_bytes(), &blob.content)
+            {
                 lfs_pointers.push(pointer);
                 pointer_moves.push(at.cloned());
             }
@@ -459,7 +460,16 @@ fn read_framed_stream(
                 return Err(serve_failed("door history record is not terminated").into());
             }
         }
-        each(at.as_ref(), PushedBlob { path, oid, content })?;
+        let tip_raw_path = moves.then(|| decode_tip_path(&path)).transpose()?;
+        each(
+            at.as_ref(),
+            PushedBlob {
+                path,
+                tip_raw_path,
+                oid,
+                content,
+            },
+        )?;
     }
 }
 
@@ -737,7 +747,7 @@ fn parse_blob_record_header(header: &str) -> Result<(String, u64, String)> {
     Ok((oid.to_owned(), len, path.to_owned()))
 }
 
-/// Decode the exact bytes of a TIP-stream path for LFS attribution and receive marks.
+/// Decode exact TIP-stream path bytes for LFS attribution, dotenv classification and receive marks.
 ///
 /// The tip producer frames `git diff-tree --raw` text, so a tip path that
 /// starts with `"` is git's C-quoted form; plain tip paths pass through

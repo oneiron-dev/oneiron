@@ -22,7 +22,8 @@
 //! session's children run in its overlay and are not restart-durable: the
 //! overlay evaporates.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, Weak};
 use std::time::{Duration, Instant};
@@ -32,10 +33,11 @@ use oneiron::agent_dispatch::{AgentDispatcher, LAUNCH_COST_PRIOR_UNITS, SpendSco
 use oneiron::claim::CallerLocality;
 use oneiron::code_run::{
     AgentVerbDoor, ClaimOutcome, DEFAULT_READER_WINDOW_TOKENS, HostSelfDispatcher, ReaderJob,
-    ReaderJobKind, ReaderJobRunner, ReaderJobWake, ReaderJobs, ReaderRunEnd, ReaderSpend,
-    RunDeadline, SCOPED_CHILD_PARENT_LEASE_LOST, SUMMARY_READ_BYTES_PER_TOKEN, ScopedChildPorts,
-    ScopedChildProfile, SpawnHostSeat, SummarizeRecipe, SummaryRead, reader_task_brief,
-    summarize_input, summarize_prompt, summary_exceeds_window, summary_token_budget,
+    ReaderJobKind, ReaderJobRunner, ReaderJobWake, ReaderJobs, ReaderQueueCursor, ReaderRunEnd,
+    ReaderSpend, RunDeadline, SCOPED_CHILD_PARENT_LEASE_LOST, SUMMARY_READ_BYTES_PER_TOKEN,
+    ScopedChildPorts, ScopedChildProfile, SpawnHostSeat, SummarizeRecipe, SummaryRead,
+    reader_task_brief, summarize_input, summarize_prompt, summary_exceeds_window,
+    summary_token_budget,
 };
 use oneiron::engine_executor::{
     ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorError, EngineExecutorStatus, EngineNativeExecutor,
@@ -74,7 +76,8 @@ const READER_RESIDENT_BYTES: u64 = 32 << 20;
 /// The longest the worker waits between two ticks.
 const TICK: Duration = Duration::from_secs(1);
 
-/// Queued children one tick looks at in one store.
+/// Queued children one tick tries to claim in one store, and the queue rows
+/// one page of its walk reads (FIX 9708).
 const QUEUED_PER_TICK: usize = 64;
 
 /// The purpose a summary job's model call is admitted under.
@@ -304,11 +307,11 @@ impl ReaderRunner {
             signals: signals.clone(),
             wakes,
             sessions: BTreeSet::new(),
+            resume: RefCell::new(BTreeMap::new()),
             recovers,
         };
-        let started = std::thread::Builder::new()
-            .name("oneiron-reader-runner".to_owned())
-            .spawn(move || worker.run());
+        let started =
+            crate::engine_thread("oneiron-reader-runner".to_owned()).spawn(move || worker.run());
         if let Err(error) = started {
             tracing::error!(%error, "the reader runner did not start; reader children stay queued until their cutoff");
         }
@@ -350,6 +353,11 @@ struct Worker {
     wakes: Receiver<Signal>,
     /// The live sessions the runner holds children for.
     sessions: BTreeSet<SessionSeat>,
+    /// Where each store's claim walk goes on from at the next tick: just
+    /// after the last child the last tick's walk reached before its tries or
+    /// the background permits ran out (FIX 9708). The canonical store is
+    /// `None`.
+    resume: RefCell<BTreeMap<Option<SessionSeat>, ReaderQueueCursor>>,
     /// Whether it is its vault's first live runner in this process, which
     /// alone recovers what a stopped one left active.
     recovers: bool,
@@ -433,6 +441,7 @@ impl Worker {
             }
         }
         for held in done {
+            self.resume.get_mut().remove(&Some(held.clone()));
             self.sessions.remove(&held);
         }
         next
@@ -455,43 +464,87 @@ impl Worker {
         // A child parked on its payer is queued again once the owners said
         // yes (FIX 3740); while one waits, its session stays held.
         let parked = crate::ai_host::payer_funding::resume_reader_payer_parks(vault, jobs, now);
-        let queued = jobs.queued(QUEUED_PER_TICK)?;
-        let waiting = !queued.is_empty() || parked > 0;
+        let front = jobs.queued_after(None, QUEUED_PER_TICK)?;
+        let waiting = !front.jobs.is_empty() || parked > 0;
         let host = self.shared.host();
         if let Some(native) = host.as_ref().and_then(|host| host.engine_native()) {
             // Parents whose window is full, or whose scope has nothing left
-            // to hold, wait for the next tick.
+            // to hold, wait for the next tick, and the walk pages on past
+            // their children (FIX 9708). It starts where the last tick's
+            // stopped, goes to the queue's end, then from the front up to
+            // that start, so each queued child gets its try in turn, until
+            // the tick has tried QUEUED_PER_TICK claims or the background
+            // permits run out.
+            let key = session.cloned();
+            let start = self.resume.borrow_mut().remove(&key);
+            let mut page = match start {
+                Some(at) => jobs.queued_after(Some(at), QUEUED_PER_TICK)?,
+                None => front,
+            };
+            // Set once the walk turned back to the front: where it stops.
+            let mut bound = None;
+            let mut last = start;
+            let mut stopped = None;
             let mut held_back = HashSet::new();
-            for job in queued {
-                let parent = job.binding.parent_run;
-                if held_back.contains(&parent) {
-                    continue;
-                }
-                if self.shared.running_of(parent) >= self.shared.per_parent {
-                    held_back.insert(parent);
-                    continue;
-                }
-                let Some(permit) = native.runs().try_admit_background() else {
-                    break;
-                };
-                match jobs.claim(job.task, now) {
-                    Ok(ClaimOutcome::Claimed(job)) => {
-                        let child = Child {
-                            clock: self.shared.seats.clock(job.binding.parent_run),
-                            job: *job,
-                            session: session.cloned(),
-                            provider: Arc::clone(native.provider()),
-                        };
-                        self.spawn(vault, jobs, child, permit, now);
+            let mut tried = 0;
+            'walk: loop {
+                for job in page.jobs {
+                    let here = ReaderQueueCursor::after(&job);
+                    if bound.is_some_and(|bound| here > bound) {
+                        break 'walk;
                     }
-                    Ok(ClaimOutcome::WaitingForSpend) => {
+                    let parent = job.binding.parent_run;
+                    if held_back.contains(&parent) {
+                        last = Some(here);
+                        continue;
+                    }
+                    if self.shared.running_of(parent) >= self.shared.per_parent {
                         held_back.insert(parent);
+                        last = Some(here);
+                        continue;
                     }
-                    Ok(ClaimOutcome::SourceNotReady | ClaimOutcome::Settled) => {}
-                    Err(error) => {
-                        tracing::warn!(%error, task = %job.task.to_hex(), "a reader child was not claimed");
+                    let permit = if tried < QUEUED_PER_TICK {
+                        native.runs().try_admit_background()
+                    } else {
+                        None
+                    };
+                    let Some(permit) = permit else {
+                        stopped = last;
+                        break 'walk;
+                    };
+                    tried += 1;
+                    last = Some(here);
+                    match jobs.claim(job.task, now) {
+                        Ok(ClaimOutcome::Claimed(job)) => {
+                            let child = Child {
+                                clock: self.shared.seats.clock(job.binding.parent_run),
+                                job: *job,
+                                session: session.cloned(),
+                                provider: Arc::clone(native.provider()),
+                            };
+                            self.spawn(vault, jobs, child, permit, now);
+                        }
+                        Ok(ClaimOutcome::WaitingForSpend) => {
+                            held_back.insert(parent);
+                        }
+                        Ok(ClaimOutcome::SourceNotReady | ClaimOutcome::Settled) => {}
+                        Err(error) => {
+                            tracing::warn!(%error, task = %job.task.to_hex(), "a reader child was not claimed");
+                        }
                     }
                 }
+                page = match (page.next, start) {
+                    (Some(next), _) => jobs.queued_after(Some(next), QUEUED_PER_TICK)?,
+                    (None, Some(start)) if bound.is_none() => {
+                        bound = Some(start);
+                        last = None;
+                        jobs.queued_after(None, QUEUED_PER_TICK)?
+                    }
+                    (None, _) => break,
+                };
+            }
+            if let Some(at) = stopped {
+                self.resume.borrow_mut().insert(key, at);
             }
         }
         Ok((jobs.next_due()?, waiting))
@@ -513,14 +566,12 @@ impl Worker {
         let shared = Arc::clone(&self.shared);
         let signals = self.signals.clone();
         let vault = Arc::clone(vault);
-        let spawned = std::thread::Builder::new()
-            .name("oneiron-code-reader".to_owned())
-            .spawn(move || {
-                child.run_and_settle(&shared, &vault);
-                drop(permit);
-                shared.ended(parent);
-                let _ = signals.send(Signal::Freed);
-            });
+        let spawned = crate::engine_thread("oneiron-code-reader".to_owned()).spawn(move || {
+            child.run_and_settle(&shared, &vault);
+            drop(permit);
+            shared.ended(parent);
+            let _ = signals.send(Signal::Freed);
+        });
         if let Err(error) = spawned {
             tracing::warn!(%error, task = %task.to_hex(), "a reader child's thread did not start");
             self.shared.ended(parent);
