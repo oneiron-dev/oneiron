@@ -1,8 +1,12 @@
 //! First-party library source: offline seeding, immutable Git ref, explicit import.
+//! The library reads through a Git hub or a local folder hub (FIX 21922) at a
+//! pinned commit; an index hub names no commit and refuses.
 
+#[cfg(test)]
+use super::GitEndpointSkillHubAdapter;
 use super::{
-    ForeignSkillPublisher, GitEndpointSkillHubAdapter, HubPin, HubRef, HubSyncPolicy,
-    SkillHubAdapter, SkillHubKind, SkillHubRecord, TrackedHubRef,
+    ForeignSkillPublisher, HubPin, HubRef, HubSyncPolicy, RefFetch, SkillHubAdapter, SkillHubKind,
+    SkillHubRecord, TrackedHubRef,
     pack_catalog::{
         PackFitPolicy, PackFitVerdict, PackInstallDisposition, PackInstallReceipt, PackPermissions,
         PackSource,
@@ -40,22 +44,35 @@ pub struct DefaultSkillHub {
 }
 
 impl DefaultSkillHub {
-    fn skill_adapter(&self) -> Result<GitEndpointSkillHubAdapter> {
-        let HubPin::Commit(commit) = &self.skills.hub_ref.pin else {
+    fn skill_adapter(&self) -> Result<RefFetch> {
+        if self.skills.sync_policy != HubSyncPolicy::PinnedCommit {
             return Err(crate::error::Error::InvalidConfig(
-                "default skill library requires an immutable commit pin".to_owned(),
-            ));
-        };
-        if self.record.kind != SkillHubKind::Git
-            || self.record.sync_policy != HubSyncPolicy::PinnedCommit
-            || self.skills.sync_policy != HubSyncPolicy::PinnedCommit
-        {
-            return Err(crate::error::Error::InvalidConfig(
-                "default skill hub requires pinned Git configuration".to_owned(),
+                "default skill hub requires a pinned-commit Git or local folder configuration"
+                    .to_owned(),
             ));
         }
-        GitEndpointSkillHubAdapter::new(self.hub, &self.record.endpoint, commit)
+        library_fetch(self.hub, &self.record, &self.skills.hub_ref)
     }
+}
+
+/// The library transport for `reference`: the configured Git or local folder
+/// hub, under a pinned-commit policy, at the commit `reference` pins.
+fn library_fetch(hub: EntityId, row: &SkillHubRecord, reference: &HubRef) -> Result<RefFetch> {
+    if !matches!(reference.pin, HubPin::Commit(_)) {
+        return Err(crate::error::Error::InvalidConfig(
+            "default skill library requires an immutable commit pin".to_owned(),
+        ));
+    }
+    if !matches!(row.kind, SkillHubKind::Git | SkillHubKind::LocalDir)
+        || row.sync_policy != HubSyncPolicy::PinnedCommit
+    {
+        return Err(crate::error::Error::InvalidConfig(
+            "default skill hub requires a pinned-commit Git or local folder configuration"
+                .to_owned(),
+        ));
+    }
+    let tracked = TrackedHubRef::new(reference.clone(), HubSyncPolicy::PinnedCommit);
+    super::ref_sync::configured_ref_fetch(hub, row, &tracked, None)
 }
 
 /// The model catalog ref as an owner reads it: its policy and pin, the
@@ -199,7 +216,7 @@ impl Vault {
             let (entity, imported) = self.restore_default_hub_skill_from_source(
                 owner,
                 &entry.ref_string,
-                adapter.resolved_commit(),
+                adapter.resolved_commit()?,
                 &source,
                 occurred,
                 learned_at,
@@ -250,13 +267,8 @@ impl Vault {
         self.check_restore_owner_in_txn(&self.store.env.read_txn()?, owner)?;
         let id = default_skill_hub_id()?;
         let row = self.skill_hub_record(&id)?;
-        if row.kind != SkillHubKind::Git || row.sync_policy != HubSyncPolicy::PinnedCommit {
-            return Err(crate::error::Error::InvalidConfig(
-                "default skill hub requires pinned Git configuration".to_owned(),
-            ));
-        }
-        let adapter = GitEndpointSkillHubAdapter::new(id, &row.endpoint, HUB_COMMIT)?;
         let reference = HubRef::new(id, subtree, HubPin::Commit(HUB_COMMIT.to_owned()))?;
+        let adapter = library_fetch(id, &row, &reference)?;
         let package = adapter.fetch_package(&reference)?;
         super::hub_owner::check_expected_skill(&package.record, skill_id, version)?;
         let inventory = super::osv::dependency_inventory(&package)?;
@@ -266,7 +278,7 @@ impl Vault {
                 &reference,
                 &package,
                 &inventory,
-                &super::osv::OsvDevClient,
+                super::osv::hub_advisory_query(row.kind),
                 occurred,
                 learned_at,
             )?
@@ -416,15 +428,12 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<EntityId> {
+        // The owner is checked before any host path is read.
+        self.check_restore_owner_in_txn(&self.store.env.read_txn()?, owner)?;
         let id = default_skill_hub_id()?;
         let row = self.skill_hub_record(&id)?;
-        if row.kind != SkillHubKind::Git || row.sync_policy != HubSyncPolicy::PinnedCommit {
-            return Err(crate::error::Error::InvalidConfig(
-                "default skill hub requires pinned Git configuration".to_owned(),
-            ));
-        }
-        let adapter = GitEndpointSkillHubAdapter::new(id, &row.endpoint, commit)?;
         let reference = HubRef::new(id, subtree, HubPin::Commit(commit.to_owned()))?;
+        let adapter = library_fetch(id, &row, &reference)?;
         self.import_skill_from_adapter(owner, &adapter, &reference, occurred, learned_at)
     }
 
@@ -438,13 +447,15 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<EntityId> {
+        // The owner is checked before any host path is read.
+        self.check_restore_owner_in_txn(&self.store.env.read_txn()?, owner)?;
         let source = self.default_skill_hub()?;
         let adapter = source.skill_adapter()?;
         Ok(self
             .restore_default_hub_skill_from_source(
                 owner,
                 subtree,
-                adapter.resolved_commit(),
+                adapter.resolved_commit()?,
                 &source,
                 occurred,
                 learned_at,
@@ -489,8 +500,8 @@ impl Vault {
         let id = configured.hub;
         self.check_restore_owner_in_txn(&self.store.env.read_txn()?, owner)?;
         configured.skill_adapter()?;
-        let adapter = GitEndpointSkillHubAdapter::new(id, &configured.record.endpoint, commit)?;
         let source = HubRef::new(id, subtree, HubPin::Commit(commit.to_owned()))?;
+        let adapter = library_fetch(id, &configured.record, &source)?;
         let package = adapter.fetch_package(&source)?;
         let hash = package.content_hash()?;
         // A no-op restore makes no advisory request. Recheck after the
@@ -505,8 +516,12 @@ impl Vault {
             return Ok((entity, false));
         }
         let coordinates = super::osv::dependency_inventory(&package)?;
-        let (_, _, scans) =
-            self.dependency_advisories(hash, &coordinates, &super::osv::OsvDevClient, learned_at)?;
+        let (_, _, scans) = self.dependency_advisories(
+            hash,
+            &coordinates,
+            super::osv::hub_advisory_query(configured.record.kind),
+            learned_at,
+        )?;
         let mut txn = self.store.env.write_txn()?;
         self.check_restore_owner_in_txn(&txn, owner)?;
         self.check_default_skill_source_in_txn(&txn, configured)?;

@@ -90,6 +90,30 @@ impl OsvQuery for OsvDevClient {
         Ok(combined)
     }
 }
+/// The advisory query of a hub that reaches no network (FIX 21922). It sends
+/// nothing: an empty inventory answers empty, and any coordinate answers
+/// unavailable, which the advisory door records as Unknown / Partial, never
+/// as a clean result.
+struct OfflineOsvQuery;
+impl OsvQuery for OfflineOsvQuery {
+    fn query(&self, coordinates: &[DependencyCoordinate]) -> Result<Vec<Vec<String>>> {
+        validate_coordinates(coordinates)?;
+        if coordinates.is_empty() {
+            return Ok(Vec::new());
+        }
+        Err(Error::InvalidConfig(
+            "a local folder hub sends no advisory query; its advisories are unknown".into(),
+        ))
+    }
+}
+/// The advisory query a hub of `kind` uses: a local folder hub never reaches
+/// OSV; a Git or index hub queries it.
+pub(crate) fn hub_advisory_query(kind: super::SkillHubKind) -> &'static dyn OsvQuery {
+    match kind {
+        super::SkillHubKind::LocalDir => &OfflineOsvQuery,
+        super::SkillHubKind::Git | super::SkillHubKind::HttpIndex => &OsvDevClient,
+    }
+}
 fn validate_coordinates(coordinates: &[DependencyCoordinate]) -> Result<()> {
     for coordinate in coordinates {
         coordinate.validate()?;

@@ -136,4 +136,4 @@ use std::path::Path;
 #[cfg(test)]
 use std::time::Duration;
 
-pub(crate) use hub_read::read_hub_git;
+pub(crate) use hub_read::{read_hub_git, read_local_hub_git};

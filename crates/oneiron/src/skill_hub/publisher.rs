@@ -41,6 +41,8 @@ impl Vault {
     /// Registers or revises a configured hub on an authenticated owner decision.
     /// A source grants no activation permission. The immutable ask binds this full
     /// row, so changing endpoint or trust invalidates an in-flight install ask.
+    /// A local folder hub (FIX 21922) stores its canonical absolute directory
+    /// and needs a pinned-commit policy; nothing is read from it here.
     pub fn configure_skill_hub(
         &self,
         owner: &AuthenticatedOwner,
@@ -61,12 +63,15 @@ impl Vault {
                 record.endpoint = super::git_fetch::normalize_endpoint(&record.endpoint)?;
                 super::http_fetch::checked_url(&record.endpoint)?;
             }
-            super::SkillHubKind::LocalDir
-                if !std::path::Path::new(&record.endpoint).is_absolute() =>
-            {
-                return Err(invalid(
-                    "local hub requires an absolute host-configured path",
-                ));
+            super::SkillHubKind::LocalDir => {
+                // The owner is checked before the host path is read.
+                self.check_restore_owner_in_txn(&self.store.env.read_txn()?, owner)?;
+                if record.sync_policy != super::HubSyncPolicy::PinnedCommit {
+                    return Err(Error::InvalidConfig(
+                        super::local_dir::LOCAL_DIR_COMMIT_ONLY.to_owned(),
+                    ));
+                }
+                record.endpoint = super::git_fetch::normalize_local_endpoint(&record.endpoint)?;
             }
             _ => {}
         }

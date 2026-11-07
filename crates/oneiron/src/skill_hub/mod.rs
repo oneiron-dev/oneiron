@@ -16,6 +16,7 @@ mod http_fetch;
 mod hub_owner;
 mod import_receipt;
 mod install_transition;
+mod local_dir;
 pub use import_receipt::{
     CallerPermissions, HoldsNothing, HubImportReceipt, MarketplaceFit, MarketplaceFitDecision,
     MarketplaceFitEvaluator, RuleSkillFit, SkillFitSetting,
@@ -51,6 +52,7 @@ pub use default_hub::{
 pub use git_fetch::GitEndpointSkillHubAdapter;
 pub use http_fetch::HttpEndpointSkillHubAdapter;
 pub use install_transition::{InstallDisposition, InstallHoldReason, InstallLifecycle};
+pub use local_dir::LocalDirEndpointSkillHubAdapter;
 pub(crate) use package_codec::remove_hub_package_in_txn;
 pub use package_codec::{decode_hub_package, encode_hub_package};
 pub use publisher::ForeignSkillPublisher;

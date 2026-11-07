@@ -14,11 +14,29 @@ use std::{
 };
 
 pub(crate) fn read_hub_git(root: &Path, args: &[&str], limit: usize) -> Result<Vec<u8>> {
+    read_hub_git_with_mode(root, args, limit, false)
+}
+
+/// [`read_hub_git`] under the local-only profile of a local folder hub
+/// (FIX 21922): the origin is the only config it sets, the fetch takes every
+/// blob of the commit with no filter and no promisor, and the process runs on
+/// the file transport alone.
+pub(crate) fn read_local_hub_git(root: &Path, args: &[&str], limit: usize) -> Result<Vec<u8>> {
+    read_hub_git_with_mode(root, args, limit, true)
+}
+
+fn read_hub_git_with_mode(
+    root: &Path,
+    args: &[&str],
+    limit: usize,
+    local_only: bool,
+) -> Result<Vec<u8>> {
     // This internal door only touches the caller-owned scratch repository.
     // It cannot become a general mutation bridge or accept arbitrary -c pairs.
     let valid = args == ["init", "--bare", "--quiet", "repo"]
         || (args.first() == Some(&"--git-dir=repo")
             && match args.get(1).copied() {
+                Some("config") if local_only => args.len() == 4 && args[2] == "remote.origin.url",
                 Some("config") => {
                     args.len() == 4
                         && matches!(
@@ -27,6 +45,18 @@ pub(crate) fn read_hub_git(root: &Path, args: &[&str], limit: usize) -> Result<V
                                 | "remote.origin.promisor"
                                 | "remote.origin.partialclonefilter"
                         )
+                }
+                Some("fetch") if local_only => {
+                    args.len() == 9
+                        && args[2..8]
+                            == [
+                                "--quiet",
+                                "--no-tags",
+                                "--no-recurse-submodules",
+                                "--depth=1",
+                                "--",
+                                "origin",
+                            ]
                 }
                 Some("fetch") => {
                     args.len() == 10
@@ -57,6 +87,7 @@ pub(crate) fn read_hub_git(root: &Path, args: &[&str], limit: usize) -> Result<V
     let mut env =
         GitWireProcessEnv::capture()?.with_limits(Duration::from_secs(30), limit.max(4096))?;
     env.hub_root = Some(root.to_path_buf());
+    env.hub_local_only = local_only;
     // Validation above guarantees a subcommand at args[1] outside init.
     let op = if args[0] == "init" { "init" } else { args[1] };
     let started = Instant::now();
