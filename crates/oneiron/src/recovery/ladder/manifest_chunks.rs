@@ -26,6 +26,7 @@ enum Stage {
     RowBirths,
     WithdrawnCutoffs,
     AssetBodyRefs,
+    SourceAudiences,
     SchemaManifest,
     ContainerManifests,
     Documents,
@@ -100,6 +101,11 @@ impl ManifestChunks {
             Stage::AssetBodyRefs => (
                 "asset_body_refs",
                 pack(&snapshot.asset_body_refs)?,
+                Stage::SourceAudiences,
+            ),
+            Stage::SourceAudiences => (
+                "source_audiences",
+                pack(&snapshot.source_audiences)?,
                 Stage::SchemaManifest,
             ),
             Stage::SchemaManifest => (

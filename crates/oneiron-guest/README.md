@@ -54,9 +54,9 @@ source text, step-result JSON and individual file chunks. Snapshot and proposed
 files have no whole-file wire size bound. Canonical path/tree checks remain in
 the shared sandbox contract, including 4096-byte virtual paths. Source and
 outbound request budgets are 16384 (outbound reserves result and finish slots).
-Host calls have a 16383-call ceiling. Workspace files are read to EOF; each
-random-byte output retains a 1 MiB bound. There is no cumulative
-read/random-output byte ceiling.
+Host calls have a 16383-call ceiling. Workspace files are read to EOF.
+Random-byte outputs use fallible native allocation with no separate per-call
+byte ceiling. There is no cumulative read/random-output byte ceiling.
 The runtime caps each store to one 64 MiB memory, eight tables, 10000 table
 elements, 32 instances, and 100000000 fuel. The host wall-clock watchdog bounds
 compilation, credential I/O, and VM execution.

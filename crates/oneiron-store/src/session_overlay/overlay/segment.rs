@@ -1,4 +1,7 @@
 //! Txn segment install, leases, commit/apply guards.
+mod base_retirement;
+pub use base_retirement::BaseRowRetirementGuard;
+
 use std::marker::PhantomData;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -101,6 +104,13 @@ impl SessionOverlay {
         reason = "ONE-1728 witness is the first lib-target session write transaction"
     )]
     pub fn install_txn_segment(self: &Arc<Self>) -> Result<TxnSegmentGuard> {
+        self.install_segment(None)
+    }
+
+    fn install_segment(
+        self: &Arc<Self>,
+        base_mode_generation: Option<u64>,
+    ) -> Result<TxnSegmentGuard> {
         ACTIVE_SEGMENT.with(|slot| {
             if slot.borrow().is_some() {
                 return Err(Error::InvariantViolation(
@@ -110,7 +120,10 @@ impl SessionOverlay {
             Ok(())
         })?;
 
-        let lease = self.acquire_segment_lease()?;
+        let lease = match base_mode_generation {
+            Some(mode_generation) => self.acquire_base_retirement_lease(mode_generation)?,
+            None => self.acquire_segment_lease()?,
+        };
         let generation = lease.generation;
         let snapshot = self.state.load_full();
         let segment = TxnSegment {
