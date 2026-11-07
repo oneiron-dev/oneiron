@@ -87,9 +87,10 @@ pub(crate) struct DocumentWriter<'v> {
     /// `finish`, when that set and the unlogged diaries are final.
     carried_ids: BTreeSet<EntityId>,
     row_births: BTreeMap<EntityId, RowBirth>,
-    /// Each receipt a carried row's derivation envelope keeps the body of,
-    /// by that row and the receipt's id (fix list row 15416: the rows that
-    /// body was made from count as carried through it).
+    /// Each receipt whose body the copy writes in a carried row's derivation
+    /// envelope, by that row and the receipt's id (fix list row 15416: the
+    /// rows that body was made from count as carried through it). An OKF
+    /// copy writes no receipt body.
     carried_receipts: BTreeSet<(EntityId, String)>,
 }
 
@@ -180,23 +181,22 @@ impl<'v> DocumentWriter<'v> {
                 &raw.task_receipts,
                 raw.archived_receipts.as_ref(),
             )?;
-            self.carried_receipts.extend(
-                receipts
-                    .iter()
-                    .filter(|source| {
-                        matches!(
-                            source,
-                            crate::batch::export::ExportReceiptSource::Preserved { .. }
-                        )
-                    })
-                    .map(|source| (raw.id, source.receipt_id().to_owned())),
-            );
             let envelope = ExportDerivationEnvelope {
                 id: id.clone(),
                 evidence: evidence.clone(),
                 receipts,
             };
-            self.push_nulled(ArchiveRecordKind::DerivationEnvelope, &envelope, 2)?;
+            let row = nulled(&envelope, "", 2)?;
+            // The rows a receipt's body was made from count as carried only
+            // through a body this copy writes (fix list row 15416): an
+            // archive writes each envelope's receipts as the nulling pass
+            // leaves them; an OKF copy writes only its evidence.
+            if self.cut == ExportCut::Archive {
+                self.carried_receipts.extend(
+                    written_receipt_bodies(&envelope, &row).map(|receipt| (raw.id, receipt)),
+                );
+            }
+            self.push(ArchiveRecordKind::DerivationEnvelope, &row)?;
         }
         let entity = ExportEntity {
             id,
@@ -469,8 +469,8 @@ impl<'v> DocumentWriter<'v> {
         &self.carried_ids
     }
 
-    /// Each receipt whose body a carried row's derivation envelope keeps, by
-    /// that row and the receipt's id (fix list row 15416).
+    /// Each receipt whose body the copy writes in a carried row's derivation
+    /// envelope, by that row and the receipt's id (fix list row 15416).
     pub(crate) const fn carried_receipts(&self) -> &BTreeSet<(EntityId, String)> {
         &self.carried_receipts
     }
@@ -764,6 +764,30 @@ fn file_members_kept(typed: &Value, kept: &Value, files: &str) -> bool {
             != Some("file")
             || kept.pointer(&format!("{files}/{index}/content")) == content
     })
+}
+
+/// The id of each receipt of `envelope` whose body its row `written`, as the
+/// nulling pass left it, still holds: a preserved receipt the pass kept with
+/// its body, in the place the envelope lists it (fix list row 15416).
+fn written_receipt_bodies<'a>(
+    envelope: &'a ExportDerivationEnvelope,
+    written: &'a Value,
+) -> impl Iterator<Item = String> + 'a {
+    let rows = written.get("receipts").and_then(Value::as_array);
+    envelope
+        .receipts
+        .iter()
+        .enumerate()
+        .filter(move |(at, source)| {
+            matches!(
+                source,
+                crate::batch::export::ExportReceiptSource::Preserved { .. }
+            ) && rows
+                .and_then(|rows| rows.get(*at))
+                .and_then(|row| row.get("body"))
+                .is_some_and(|body| !body.is_null())
+        })
+        .map(|(_, source)| source.receipt_id().to_owned())
 }
 
 /// `row` as the document's pass leaves it at `depth` under `key`.

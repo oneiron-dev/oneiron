@@ -1412,10 +1412,10 @@ fn code_memory_rows(family: ArchiveSideFamily, value: &[u8]) -> Option<Vec<Entit
 /// mailbox it leaves out stays home though no edge or stamp names that row.
 ///
 /// - each version of a blob artifact's chain (its version and head records)
-///   and each `blob.version` claim about it, which a replica holds without the
-///   chain: every row its made_by names is a source of the artifact and of the
-///   version's ledger claim, and, with the artifact, of one use of the ASSET
-///   its bytes are;
+///   and each stored `blob.version` claim whose subject it is, which a replica
+///   holds without the chain and before any `claim_of` edge to it: every row
+///   its made_by names is a source of the artifact and of the version's ledger
+///   claim, and, with the artifact, of one use of the ASSET its bytes are;
 /// - a born-from row: its task, ask or skill source, of its artifact;
 /// - an edit settlement: every row its record names, of its artifact;
 /// - a code revision's record, integrity fold, stranded proposal (the

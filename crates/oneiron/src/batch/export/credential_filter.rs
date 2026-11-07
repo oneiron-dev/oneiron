@@ -321,14 +321,23 @@ impl Vault {
             }
             // A member's mailbox the copy does not carry, and what was
             // learned from it, stay home: what the row's own lineage names,
-            // and what the side ledgers record its body was made from (fix
-            // list row 15416).
+            // what the side ledgers record its body was made from, and the
+            // rows a blob version's ledger claim names, as an archive and an
+            // OKF copy judge them (fix list row 15416).
             let mut sources = Vec::new();
             if let Some(judge) = judge.as_mut() {
                 let carried = judge.carries(*id, Some(raw.as_slice()))?;
                 match recorded.admitted(judge, *id)? {
                     Some(admitted) if carried => sources = admitted,
                     Some(_) | None => continue,
+                }
+                if let Some(names) =
+                    super::copy_release::version_claim_names(header.entity_type, &raw)
+                {
+                    if !judge.carries_all(names.as_deref())? {
+                        continue;
+                    }
+                    sources.extend(names.into_iter().flatten());
                 }
             }
             // A file-plane ASSET leaves as its body, never the manifest its
