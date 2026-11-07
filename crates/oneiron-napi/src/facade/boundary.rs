@@ -1,4 +1,4 @@
-//! JS-boundary guards: error constructors, timestamp/number narrowing, blob ceiling.
+//! JS-boundary guards: error constructors, timestamp/number narrowing, blob decoding.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
@@ -96,21 +96,10 @@ pub(super) fn outbound_schedule_context_to_engine(
 /// number of claims retracted.
 pub(super) const FORGET_PAGE_SIZE: usize = 64;
 
-/// Blob content ceiling for the N-API boundary: 32 MiB raw (double the
-/// B8-validated 16 MiB probe). The base64 length is bounded BEFORE any
-/// decode allocation, so oversized inputs cannot exhaust process memory.
-/// ONE-1441: aliased to the shared boundary contract in `oneiron-remote`, so
-/// the N-API and remote transports enforce one number rather than two.
-pub(super) const MAX_NAPI_BLOB_CONTENT_BYTES: usize = oneiron_remote::MAX_BLOB_CONTENT_BYTES;
-
-pub(super) const MAX_NAPI_BLOB_BASE64_LEN: usize = oneiron_remote::MAX_BLOB_BASE64_LEN;
-
+/// Decodes blob content that crossed as standard base64. Its size is never
+/// refused here: the engine's append door measures it against
+/// `blob_content_bytes` and stores it whole (FIX 76).
 pub(super) fn decode_blob_base64(input: &str) -> BoundaryResult<Vec<u8>> {
-    if input.len() > MAX_NAPI_BLOB_BASE64_LEN {
-        return Err(format!(
-            "bytes_base64 exceeds the {MAX_NAPI_BLOB_CONTENT_BYTES}-byte blob content ceiling"
-        ));
-    }
     BASE64_STANDARD
         .decode(input.as_bytes())
         .map_err(|_| "bytes_base64 is not valid standard base64".to_owned())

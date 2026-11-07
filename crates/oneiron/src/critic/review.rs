@@ -94,7 +94,8 @@ pub struct ReviewResult {
     pub verdict_claim: EntityId,
     pub triage: CritiqueTriage,
     pub artifacts: Vec<CritiqueArtifact>,
-    /// One receipt per typed question asked; empty when the review replays from its cache.
+    /// One receipt per typed question asked; a replay from the cache gives back the first
+    /// ask's (FIX 9780), and a review cached before they were kept gives none.
     pub receipts: Vec<DecisionReceipt>,
     /// The launched run the stored review is declared for, the first one
     /// declared; `None` when none is recorded.
@@ -188,8 +189,7 @@ pub fn review_artifact(
     triage.auto_resolved =
         super::findings::verdict_confidence(&artifacts, &reliabilities, triage.verdict)
             >= request.auto_resolve_threshold;
-    let mut result = persist_review(vault, request, &review_key, &triage, &artifacts)?;
-    result.receipts = receipts;
+    let result = persist_review(vault, request, &review_key, &triage, &artifacts, &receipts)?;
     let result = keep_declared_spawn(vault, request, result);
     preserve_overruled(vault, &result, request.at)?;
     Ok(result)

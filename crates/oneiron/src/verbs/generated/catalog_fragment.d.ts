@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1319 code-mode rows (1279 host rows, 40 run rows), 4668 declarations.
-// Replies: 1130 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1320 code-mode rows (1279 host rows, 41 run rows), 4669 declarations.
+// Replies: 1131 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -2061,9 +2061,7 @@ declare namespace Sdk {
   type LiftAndEraseShownState = { title: string; prompt: string; records: EntityId[]; claim_free_partition?: boolean; holds: ShownCustomerHold[] };
   type LegalHoldLiftAndEraseRequest = { records: EntityId[]; claim_free_partition?: boolean; shown_state: LiftAndEraseShownState };
   type ErasePendingReason = "historical_sweep" | "custody_retirement" | "veto_window";
-  type LegalHoldBoundKind = "law";
-  type LegalHoldBound = { kind: LegalHoldBoundKind; order_ref?: string | null; legal_basis_ref?: string | null; jurisdiction?: string | null; issuing_authority_ref?: string | null; ends_at?: number | null };
-  type LegalHoldEraseState = { state: "erased"; receipt_ref?: string | null } | { state: "completion_pending"; receipt_ref?: string | null; reason?: ErasePendingReason | null } | { state: "retained_for_law"; bound: LegalHoldBound; works_self_hosted: boolean; self_hosted_note: string } | { state: "failed"; message: string };
+  type LegalHoldEraseState = { state: "erased"; receipt_ref?: string | null } | { state: "completion_pending"; receipt_ref?: string | null; reason?: ErasePendingReason | null } | { state: "failed"; message: string };
   type LegalHoldErasedRecord = { record: EntityId; status: LegalHoldEraseState };
   type LegalHoldLiftAndErased = { holds: EntityId[]; records: LegalHoldErasedRecord[]; changed?: LiftAndEraseShownState | null };
   type LegalHoldWithdrawEraseRequest = { records: EntityId[] };
@@ -3711,6 +3709,8 @@ declare namespace Sdk {
   type ScopedCommitRequest = { claims: ScopedClaimInput[] };
   type RefusalReason = "INVENTED_REFERENCE" | "GATE_REFUSED";
   type LegalHoldState = "retained_for_law" | "use_restricted";
+  type LegalHoldBoundKind = "law";
+  type LegalHoldBound = { kind: LegalHoldBoundKind; order_ref?: string | null; legal_basis_ref?: string | null; jurisdiction?: string | null; issuing_authority_ref?: string | null; ends_at?: number | null };
   type LegalHoldNotice = { state: LegalHoldState; bound: LegalHoldBound; works_self_hosted: boolean; self_hosted_note: string };
   type RecordRefusal = { reason: RefusalReason; code: string; message: string; suggestions: string[]; field: string; legal_hold?: LegalHoldNotice | null };
   type CommitOutcome = (CommitReceipt & { outcome: "landed" }) | { outcome: "refused"; refusal: RecordRefusal; receipt_ref?: string | null };
@@ -4668,10 +4668,11 @@ declare namespace Sdk {
   type TeamStartInput = { pattern: string; intentKey: string; members: TeamMemberInput[]; tournament?: string | null };
   type TeamPattern = "ceo_decides" | "committee" | "vote" | "market" | "rotation";
   type TeamMemberAnswer = { agent: string; attemptRef?: string | null; proposalRef?: string | null };
-  type TeamRunAnswer = { verb: "started"; teamRef: string; pattern: TeamPattern; members: TeamMemberAnswer[] } | { verb: "proposed_widen"; teamRef: string; pattern: TeamPattern; members: TeamMemberAnswer[] } | { verb: "recorded"; teamRef: string; pattern: TeamPattern; width: number; belowFloor: boolean; models: string[]; patternSkill?: string | null; replay: boolean };
+  type TeamRunAnswer = { verb: "started"; teamRef: string; pattern: TeamPattern; members: TeamMemberAnswer[] } | { verb: "proposed_widen"; teamRef: string; pattern: TeamPattern; members: TeamMemberAnswer[] } | { verb: "voted"; teamRef: string; choice: string } | { verb: "recorded"; teamRef: string; pattern: TeamPattern; width: number; belowFloor: boolean; models: string[]; patternSkill?: string | null; replay: boolean };
   type TeamDecisionInput = { kind: "leader" } | { kind: "chair" } | { kind: "vote"; tally: Record<string, number> } | { kind: "referee"; rule: string; signedAt: number };
   type TeamCoverageInput = { cellsFilled: number; cellsTotal: number };
   type TeamRecordInput = { teamRef: string; members: string[]; axis: TeamAxis; decidedBy: TeamDecisionInput; roles?: Record<string, number> | null; coverage?: TeamCoverageInput | null };
+  type TeamVoteInput = { teamRef: string; choice: string };
   type TeamSubmitInput = { team: string; outputRevision: string };
   type TeamSubmitAnswer = { team: string; outputRevision: string; reviewClaim: string; alreadySubmitted: boolean };
   type ReaderSpawnInput = { source: unknown; ask: string; intent_key: string };
@@ -5208,6 +5209,7 @@ declare namespace self {
     record(input: Sdk.TeamRecordInput): Promise<Sdk.TeamRunAnswer | StoredResult>;
     start(input: Sdk.TeamStartInput): Promise<Sdk.TeamRunAnswer | StoredResult>;
     submit(input: Sdk.TeamSubmitInput): Promise<Sdk.TeamSubmitAnswer | StoredResult>;
+    vote(input: Sdk.TeamVoteInput): Promise<Sdk.TeamRunAnswer | StoredResult>;
   };
   const unfold: (input: Sdk.FoldUnfoldInput) => Promise<Sdk.FoldReply<Sdk.FoldUnfolded> | StoredResult>;
   /** Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value. */
