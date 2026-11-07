@@ -139,6 +139,9 @@ pub struct SyncServer {
     pub(crate) retained: Arc<crate::byte_line::ByteLine>,
     /// The presence hub's charge on `retained`.
     pub(crate) presence: Arc<super::presence::PresenceCharge>,
+    /// Authenticated booking calls per actor this minute (FIX 128-131),
+    /// measured against their `[limits]` rows; never a window.
+    pub(crate) booking_calls: super::booking_calls::AuthenticatedBookingCalls,
     /// The wakes of removed holders' archive delivery sessions (FIX 3396).
     pub(crate) removal_deliveries: super::removal_delivery::RemovalDeliveries,
     /// Dedicated shared environments retained for leave checks and their own
