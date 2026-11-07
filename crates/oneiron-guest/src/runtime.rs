@@ -1,5 +1,6 @@
 //! Canonical typed Component Model execution with seven non-write imports and
-//! the three that stream a proposed file to the host.
+//! the three that stream a proposed file to the host. A program's own error
+//! reaches the host in a step-error frame (FIX 9209).
 
 use crate::{
     Error, Result,
@@ -259,7 +260,15 @@ fn run<T: Read + Write + 'static>(
     if store.data().poisoned {
         return Err(Error::Protocol("host transport failed"));
     }
-    let output = output.map_err(|_| Error::Runtime("component returned error"))?;
+    let output = match output {
+        Ok(output) => output,
+        Err(message) => {
+            // FIX 9209: the program's own error goes to the host exactly as
+            // the WIT returned it. A send that fails leaves the fixed failure.
+            let _ = store.data_mut().session.step_error(&message);
+            return Err(Error::Runtime("component returned error"));
+        }
+    };
     // Every proposed file is already with the host, frame by frame; one
     // left open is refused with the step.
     if store.data().proposed.open.is_some() {
@@ -287,9 +296,6 @@ fn proposals(
     base: &Snapshot,
     proposed: &mut Proposed,
 ) -> Result<Vec<GuestProposal>> {
-    if output.result_json.len() > MAX_FILE {
-        return Err(Error::Runtime("step result bounds"));
-    }
     serde_json::from_str::<serde_json::Value>(&output.result_json)
         .map_err(|_| Error::Runtime("result-json is invalid JSON"))?;
     let mut proposals = Vec::new();
