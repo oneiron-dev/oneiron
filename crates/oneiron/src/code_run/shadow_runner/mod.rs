@@ -42,14 +42,18 @@ use std::future::Future;
 use std::pin::Pin;
 
 pub use self::admit::admit_published_inline;
-pub(crate) use self::bridge::{ArmReads, ShadowBridgeHost};
+pub(crate) use self::bridge::{
+    ArmCallableLoad, ArmCallables, ArmReads, ArmTreatedCall, ShadowBridgeHost,
+    absent_delivery_outcome,
+};
 pub use self::frames::{ShadowFrame, ShadowFrameBody, ShadowModelAnswer, ShadowReceiptFrame};
 pub use self::release::{ShadowReleaseSource, read_for_model};
-pub(crate) use self::source::prepare_admitted_shadow_step_source;
 pub use self::source::{
-    PreparedShadowStep, ShadowSourceAdmission, prepare_shadow_step_source, shadow_route_prompt,
+    PreparedShadowStep, ShadowSourceAdmission, ShadowSourceWitness, WitnessedRelease,
+    prepare_shadow_step_source, prepare_witnessed_shadow_step_source, shadow_route_prompt,
     shadow_source_gone,
 };
+pub(crate) use self::source::{admission_lapsed, prepare_admitted_shadow_step_source};
 pub use self::store::{ShadowBodyStore, ShadowSourceHold};
 pub use self::types::{
     ArtifactDigest, ArtifactDigestAlgorithm, EngineArtifactPin, ShadowArmLease, ShadowBodyRef,
