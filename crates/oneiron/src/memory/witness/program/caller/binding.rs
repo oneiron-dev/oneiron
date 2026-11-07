@@ -101,6 +101,44 @@ impl SessionWitnessBinding {
         self.context(author.vault)?.witness(author, turn)
     }
 
+    /// Keeps this binding for code consent wait `wait_id` of the held call
+    /// `call_ref`, whose first typed ask did not open (FIX 4520). It goes
+    /// into the RAM of the exact session instance it captured, never to
+    /// disk. A route or instance that no longer holds keeps nothing.
+    pub(crate) fn retain_for_code_consent_ask(
+        self,
+        vault: &crate::Vault,
+        wait_id: EntityId,
+        call_ref: EntityId,
+    ) -> MemoryResult<()> {
+        let context = self.context(vault)?;
+        context
+            .session
+            .retain_code_consent_ask(wait_id, call_ref, Arc::new(self))?;
+        Ok(())
+    }
+
+    /// Opens code consent wait `wait_id`'s question again as this original
+    /// caller (FIX 4520). It runs the same native ask as the first one, on
+    /// the caller's own surface in its exact session, so hooks and receipts
+    /// are kept or not kept as the first ask kept them. The caller's proof,
+    /// the session instance, its membership and the captured route are
+    /// checked before the question lands and in each commit that attaches
+    /// the ask. The ask's own writers check the author's write authority.
+    pub(crate) fn retry_code_consent_ask(
+        &self,
+        vault: &crate::Vault,
+        wait_id: EntityId,
+        text: &str,
+    ) -> MemoryResult<EntityId> {
+        let context = self.context(vault)?;
+        let caller = context
+            .caller
+            .clone()
+            .in_off_record_session(&self.session_ref);
+        caller.open_code_consent_ask(wait_id, text, &|txn| context.admit_in_txn(txn))
+    }
+
     pub(in crate::memory::witness) fn check_stream_caller(
         &self,
         vault: &crate::Vault,
