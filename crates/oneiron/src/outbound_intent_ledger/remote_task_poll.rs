@@ -8,11 +8,17 @@
 //! with its delivery uncertain (the provider has not shown it never took
 //! effect), its reserved budget kept; a running one is polled again after
 //! the provider's hint, never sooner than the host's pass, backing off while
-//! it runs. A task waiting on input (`input_required`) is polled as running:
-//! this host answers no task input, so such a task ends when its provider
-//! drops it. A session the connector ended (HTTP 404) is renewed: the host
-//! opens a new one under the row's own endpoint and credential, and the
-//! handle keeps its id for the polls that follow (FIX 16028). A session
+//! it runs. A task waiting on input (`input_required`) is polled as running,
+//! its requests read through `tasks/result`: a form question, in a session
+//! that declared form elicitation, is parked for the owner, and a task whose
+//! parked question the owner answered is due on the host's next pass, which
+//! sends the answer (FIX 16029). Each writer that drops a task's poll row
+//! forgets its parked question and stages the retirement of its task-input
+//! subject, whether or not a question ever committed, or keeps the poll row
+//! for the next pass. A session the connector ended (HTTP 404) is
+//! renewed: the host opens a new one under the row's own endpoint and
+//! credential, declaring what the send's session declared, and the handle
+//! keeps its id for the polls that follow (FIX 16028). A session
 //! whose handle goes before it ended (an erase takes the request, or the
 //! row settles another way) is owed its end: the host ends it on its next
 //! pass. The poll table keeps only
@@ -59,6 +65,12 @@ pub struct RemoteTaskPoll {
     pub protocol: String,
     /// The credential the send presented, presented again for each poll.
     pub credential: RemoteTaskCredential,
+    /// Whether the send's `initialize` declared form elicitation (FIX
+    /// 16029): a renewed session declares the same, and only then is a form
+    /// question the task asks parked for the owner. A handle kept without
+    /// it reads as none declared.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub form_elicitation: bool,
 }
 
 impl fmt::Debug for RemoteTaskPoll {
@@ -67,6 +79,7 @@ impl fmt::Debug for RemoteTaskPoll {
             .field("session", &self.session.as_ref().map(|_| "[redacted]"))
             .field("protocol", &self.protocol)
             .field("credential", &self.credential)
+            .field("form_elicitation", &self.form_elicitation)
             .finish()
     }
 }
@@ -246,7 +259,12 @@ pub(crate) fn schedule_first_poll_in_txn(
 impl Vault {
     /// The Deferred sends whose tasks are due a poll at `now_ms`, at most
     /// `limit`, each with its frozen call opened. A poll row whose ledger
-    /// row is gone, settled, or keeps no poll any more is dropped.
+    /// row is gone, settled, or keeps no poll any more is dropped, in the
+    /// writer that forgets its task's parked question and stages the
+    /// retirement of its task-input subject whether or not a question
+    /// committed (FIX 16029); a row whose question cannot be forgotten now
+    /// stays for the next pass, so the intent is found again. The key
+    /// retirements are carried out after the commit.
     ///
     /// # Errors
     /// Storage, row-codec and custody faults.
@@ -295,15 +313,36 @@ impl Vault {
             }
         }
         if !stale.is_empty() {
-            self.try_with_write_txn_grouped(|txn| -> IntentLedgerResult<()> {
-                for id in &stale {
-                    // A row settled another way may keep the session its
-                    // polls had open: it is owed its end (FIX 16028).
-                    keep_session_end_in_txn(self, txn, id)?;
-                    POLLS.delete(&self.store, txn, id)?;
-                }
-                Ok(())
-            })?;
+            let withdrawn =
+                self.try_with_write_txn_grouped(|txn| -> IntentLedgerResult<Vec<u64>> {
+                    let mut withdrawn = Vec::new();
+                    for id in &stale {
+                        // The task is done with: its parked question goes, and
+                        // its task-input subject's retirement is staged even
+                        // with no question row (a first park whose writer
+                        // failed may have published its key, FIX 16029).
+                        match self.forget_input_in_txn(txn, id) {
+                            Ok(ask) => withdrawn.extend(ask),
+                            Err(error) => {
+                                tracing::warn!(
+                                    %error,
+                                    "a remote task's parked question was not forgotten; its poll \
+                                     row waits for the next pass"
+                                );
+                                continue;
+                            }
+                        }
+                        // A row settled another way may keep the session its
+                        // polls had open: it is owed its end (FIX 16028).
+                        keep_session_end_in_txn(self, txn, id)?;
+                        POLLS.delete(&self.store, txn, id)?;
+                    }
+                    Ok(withdrawn)
+                })?;
+            for seq in withdrawn {
+                self.signal_decision_answer(seq);
+            }
+            self.finish_remote_task_input_retirements();
         }
         Ok(due)
     }
@@ -374,6 +413,37 @@ impl Vault {
         Ok(())
     }
 
+    /// Makes the polls of `intents` due at `now_ms` (FIX 16029): each is a
+    /// task whose parked question the owner answered, which the host's next
+    /// pass drives to `tasks/result` however recently it last read the task.
+    /// The backoff of every other poll stays as it is; an intent with no
+    /// poll row, or one already due, changes nothing.
+    ///
+    /// # Errors
+    /// Storage faults.
+    pub fn remote_task_polls_due_at(
+        &self,
+        intents: &[[u8; 32]],
+        now_ms: u64,
+    ) -> IntentLedgerResult<()> {
+        if intents.is_empty() {
+            return Ok(());
+        }
+        self.with_write_txn_grouped(|txn| {
+            for intent in intents {
+                let Some(mut state) = POLLS.get(&self.store, txn, intent)? else {
+                    continue;
+                };
+                if state.next_poll_ms > now_ms {
+                    state.next_poll_ms = now_ms;
+                    POLLS.put(&self.store, txn, intent, &state)?;
+                }
+            }
+            Ok(())
+        })?;
+        Ok(())
+    }
+
     /// Whether row `intent` is still a Deferred send whose kept handle names
     /// the task `task_id` and keeps how to poll it: read again just before a
     /// poll leaves, so an erase or a settlement since the pass began sends
@@ -429,10 +499,15 @@ impl Vault {
     /// a completed task is the send's Done
     /// ([`Vault::settle_remote_outbound_task`]); any other end stops the send
     /// with its delivery uncertain and its reserved budget kept. Its poll row
-    /// goes.
+    /// goes, in the writer that forgets its parked question and its owner
+    /// Ask and stages the retirement of its task-input subject whether or
+    /// not a question ever committed (FIX 16029); the Ask's waiters wake and
+    /// the key retirement is carried out after that commit. A stop before
+    /// that writer leaves the poll row, and the next pass's due read drops
+    /// it the same way.
     ///
     /// # Errors
-    /// A row that is not Deferred; storage faults.
+    /// A row that is not Deferred; storage and custody faults.
     pub fn settle_polled_remote_task(
         &self,
         intent: &[u8; 32],
@@ -448,7 +523,15 @@ impl Vault {
                 self.now_recorded_at(),
             )?,
         };
-        self.with_write_txn_grouped(|txn| POLLS.delete(&self.store, txn, intent).map(|_| ()))?;
+        let withdrawn =
+            self.try_with_write_txn_grouped(|txn| -> IntentLedgerResult<Option<u64>> {
+                POLLS.delete(&self.store, txn, intent)?;
+                self.forget_input_in_txn(txn, intent)
+            })?;
+        if let Some(seq) = withdrawn {
+            self.signal_decision_answer(seq);
+        }
+        self.finish_remote_task_input_retirements();
         Ok(state)
     }
 }
