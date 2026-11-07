@@ -9,7 +9,7 @@
 
 use std::io::Cursor;
 
-use ed25519_dalek::{Signature, VerifyingKey};
+use ed25519_dalek::VerifyingKey;
 use rmpv::Value;
 
 use crate::edge::EdgeActorClass;
@@ -327,9 +327,15 @@ pub(crate) fn verify_machine_claim_transition_event(
     event: &SignedClaimTransitionEvent,
 ) -> Result<()> {
     let transcript = machine_claim_transition_transcript(event)?;
-    let key = VerifyingKey::from_bytes(&event.host_public_key).map_err(|_| invalid())?;
-    key.verify_strict(&transcript, &Signature::from_bytes(&event.signature))
-        .map_err(|_| invalid())
+    if oneiron_authority::authority::ed25519_verified_once(
+        &event.host_public_key,
+        &transcript,
+        &event.signature,
+    ) {
+        Ok(())
+    } else {
+        Err(invalid())
+    }
 }
 
 /// Full BLAKE3 hash over the signed canonical event, not the unsigned payload.
