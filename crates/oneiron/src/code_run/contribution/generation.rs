@@ -3,26 +3,28 @@
 //! the capsule's route prompt from its body just before it is sent, and
 //! lends it to that call alone (FIX 6255): a prompt that does not read is
 //! no fork, paid for nothing, and is never sent as some other prompt.
+//!
+//! The Coach is admitted to the step before any of its source is read, and
+//! again before each fork's prompt is read and its call sent (FIX 20607).
 
-use super::super::replay_capsule::{CapsuleRequest, ExposureSlot, ReplayRung, StepReplayCapsule};
-use super::super::shadow_runner::{ShadowUnavailable, ShadowUnavailableReason};
+use super::super::replay_capsule::{CapsuleRequest, ExposureSlot, ReplayRung};
+use super::super::shadow_runner::{ShadowUnavailable, ShadowUnavailableReason, admission_lapsed};
 use super::super::storage::{capsule_request, capsule_route_prompt, store_fork_response};
-use super::ancestor::target_slots;
+use super::ancestor::{TargetStep, target_slots};
 use super::execution::freeze_program_step;
 use super::{
     ContributionForkReceipt, ContributionReplayUnavailable, FORK_RECEIPT_PREFIX, ForkRows,
-    ForkScoring, ForkScoringIdentity, ForkTreatment, Outcome, Prepared, Runner, anchor_hash,
-    request_hash, without_exposure,
+    ForkScoring, ForkScoringIdentity, ForkTreatment, Outcome, PairReader, PairSourceAdmission,
+    Prepared, Runner, anchor_hash, request_hash, without_exposure,
 };
 use crate::entity_id::bytes_to_hex_lower;
 use crate::learning::Anchor;
 
 impl Runner<'_> {
-    pub(super) fn prepare(
-        &self,
-        rows: &ForkRows,
-        capsule: std::result::Result<StepReplayCapsule, ContributionReplayUnavailable>,
-    ) -> Outcome<Prepared> {
+    /// A pair's inputs, settled before either fork is paid for: a knowledge
+    /// pair's here, a callable's or a delivery's ([`Self::prepare_caller`],
+    /// FIX 3608) once its anchor is one a pair replays.
+    pub(super) fn prepare(&self, rows: &ForkRows, step: TargetStep) -> Outcome<Prepared> {
         use ContributionReplayUnavailable as Unavailable;
         // An owner verdict's pair is generated here like any other and
         // judged by the owner (FIX 3609); a world outcome is not replayed.
@@ -33,9 +35,10 @@ impl Runner<'_> {
             return Ok(Err(Unavailable::AnchorNotReplayable));
         }
         let target = self.candidate.target;
-        let capsule = match capsule {
-            Ok(capsule) => capsule,
-            Err(reason) => return Ok(Err(reason)),
+        let capsule = match step {
+            TargetStep::Knowledge(Ok(capsule)) => capsule,
+            TargetStep::Knowledge(Err(reason)) => return Ok(Err(reason)),
+            TargetStep::Caller(caller) => return self.prepare_caller(rows, *caller),
         };
         // An erased capsule's content went with its actor (FIX 6144): none of
         // its rung, exposures or request is read, and the pair is unreadable.
@@ -71,6 +74,11 @@ impl Runner<'_> {
             return Ok(Err(Unavailable::SkillRevisionMoved));
         }
         let exposure_revision = first.revision.clone();
+        // FIX 20607: the Coach is admitted to the step before its request is
+        // read. With no Grant that admits it now, the pair waits.
+        let Some(admission) = self.reader.admit(self.vault, &capsule)? else {
+            return Ok(Err(Unavailable::Unfinished));
+        };
         let Some(with_skill) = capsule_request(self.vault, &capsule)? else {
             return Ok(Err(
                 if matches!(&capsule.request, CapsuleRequest::Kept { erased: true, .. }) {
@@ -87,8 +95,15 @@ impl Runner<'_> {
             Ok(anchor) => anchor,
             Err(reason) => return Ok(Err(reason)),
         };
-        // An engine step's window is frozen once here, before either fork.
-        let frozen_program = freeze_program_step(self.vault, &capsule, self.program)?;
+        // An engine step's window is frozen once here, before either fork,
+        // under the Coach's admission. A lapse while it is read stops the
+        // pair; it is never the program's outcome (FIX 20607).
+        let frozen_program = freeze_program_step(self.vault, &capsule, self.program, &admission)?;
+        if let Some(Err(unavailable)) = &frozen_program
+            && admission_lapsed(unavailable)
+        {
+            return Ok(Err(Unavailable::Unfinished));
+        }
         let anchor_scoring = ForkScoringIdentity::of(&anchor)?;
         let anchor_hash = anchor_hash(self.candidate, &anchor_scoring)?;
         if [&rows.with_skill, &rows.without_skill]
@@ -110,6 +125,7 @@ impl Runner<'_> {
             anchor_scoring,
             anchor_hash,
             frozen_program,
+            source: PairSourceAdmission::new(self.reader, vec![admission]),
         }))
     }
 
@@ -117,7 +133,8 @@ impl Runner<'_> {
     /// A fork its writer does not keep is unavailable for that writer's own
     /// reason (FIX 6256): a subject gone now is `Unfinished`, never a
     /// lasting `Unreadable`, so a restore before a later writer cannot make
-    /// the stop permanent.
+    /// the stop permanent. The Coach is admitted again before the fork's
+    /// prompt is read and its call sent (FIX 20607).
     pub(super) fn generated(
         &self,
         prepared: &Prepared,
@@ -127,7 +144,9 @@ impl Runner<'_> {
         if let Some(fork) = stored {
             return Ok(Ok(fork));
         }
-        if !self.clock.decision_may_start() {
+        if !self.clock.decision_may_start()
+            || !prepared.source.admits_now(self.vault, PairReader::Coach)?
+        {
             return Ok(Err(ContributionReplayUnavailable::Unfinished));
         }
         let (request, hash) = match treatment {
