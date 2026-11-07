@@ -37,6 +37,9 @@ pub struct SkillsConfig {
     /// "mint", justification} | {kind:"merge_into", existing, rationale}}.
     /// Unset means selected-message conversion is unavailable, never a fallback prompt.
     pub conversion_prompt: Option<String>,
+    /// Complete host-supplied instructions for regenerating a hook body on
+    /// an engine contract change. Unset starts no automatic regeneration.
+    pub hook_regen_prompt: Option<String>,
     /// `[skills.replay_judge]`: the serve replay judge's wording, each key
     /// the shipped text until a layer sets it. Always resolved: no key turns
     /// replay judging off.
@@ -56,6 +59,9 @@ impl SkillsConfig {
         }
         if let Some(value) = over.conversion_prompt {
             self.conversion_prompt = Some(value);
+        }
+        if let Some(value) = over.hook_regen_prompt {
+            self.hook_regen_prompt = Some(value);
         }
         if let Some(value) = over.replay_judge {
             self.replay_judge.apply_override(value);
@@ -80,6 +86,13 @@ impl SkillsConfig {
             .is_some_and(|prompt| prompt.trim().is_empty())
         {
             anyhow::bail!("skills.conversion_prompt must not be empty");
+        }
+        if self
+            .hook_regen_prompt
+            .as_ref()
+            .is_some_and(|prompt| prompt.trim().is_empty())
+        {
+            anyhow::bail!("skills.hook_regen_prompt must not be empty");
         }
         self.replay_judge.validate()
     }
@@ -118,6 +131,7 @@ pub(super) struct SkillsConfigOverride {
     pub(super) project_proposal_draft_skill: Option<String>,
     pub(super) goal_intake_skill: Option<String>,
     pub(super) conversion_prompt: Option<String>,
+    pub(super) hook_regen_prompt: Option<String>,
     pub(super) replay_judge: Option<ReplayJudgeWordingOverride>,
 }
 
@@ -136,12 +150,14 @@ pub(super) fn lookup_skills_override(
     let project_proposal_draft_skill = lookup("ONEIRON_SKILLS_PROJECT_PROPOSAL_DRAFT_SKILL");
     let goal_intake_skill = lookup("ONEIRON_SKILLS_GOAL_INTAKE_SKILL");
     let conversion_prompt = lookup("ONEIRON_SKILLS_CONVERSION_PROMPT");
+    let hook_regen_prompt = lookup("ONEIRON_SKILLS_HOOK_REGEN_PROMPT");
     let replay_judge = lookup_replay_judge_override(lookup);
     let over = SkillsConfigOverride {
         live_pulls_per_axis,
         project_proposal_draft_skill,
         goal_intake_skill,
         conversion_prompt,
+        hook_regen_prompt,
         replay_judge,
     };
     Ok((over != SkillsConfigOverride::default()).then_some(over))

@@ -386,7 +386,7 @@ impl Vault {
                         grants.owner_revoked.insert(record.grant);
                     }
                 },
-                AuthorityOp::SlipGrantRevoke { grant_ref } => {
+                AuthorityOp::SlipGrantRevoke { grant_ref, .. } => {
                     grants.membership_revoked.insert(grant_ref);
                 }
                 // A membership change no host issuer signed, signed later

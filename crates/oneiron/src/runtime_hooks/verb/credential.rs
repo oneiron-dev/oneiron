@@ -15,6 +15,12 @@
 //! reference names the person, and the host checks at settlement that the
 //! vault records him as its live owner then. Nothing is minted or kept for
 //! him, so nothing of his expires or is revoked.
+//!
+//! A self-hosted root's own call reads through its host action, with no
+//! person's proof (FIX 4744). Its reference names the root slip like any
+//! slip's, and its witness is the action's durable identity: ids alone, no
+//! signed binding. At settlement the host proves that identity again and
+//! verifies the root it retains as that same root.
 
 use std::cell::RefCell;
 use std::marker::PhantomData;
@@ -23,7 +29,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::authority::InvocationSlipBinding;
+use crate::authority::{HostActionIdentity, InvocationSlipBinding};
 use crate::memory::{MEMORY_CODE_OWNER_BINDING_REQUIRED, MemoryError, MemoryResult};
 use crate::receipt::{ActionInputs, CallOutcome, CallReceiptInput, CallTransport};
 use crate::side_table::{self, Named, SideTable};
@@ -88,8 +94,9 @@ impl VerbAskInstrument {
 }
 
 /// The instrument a credential call's request was admitted on, pinned beside
-/// its stopped call: a slip's signed binding, or the attested owner's person
-/// alone, which is provenance and grants nothing.
+/// its stopped call: a slip's signed binding, the attested owner's person
+/// alone, or a self-hosted root's recorded host action, which are
+/// provenance and grant nothing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VerbAskCredentialWitness {
@@ -97,15 +104,24 @@ pub enum VerbAskCredentialWitness {
     Slip(InvocationSlipBinding),
     /// The attested owner the call was admitted for.
     AttestedOwner { holder: EntityId },
+    /// The host action a self-hosted root's call acted through, as its
+    /// durable identity (FIX 4744): the posture, the owner and the root by
+    /// its mint. It carries no token, challenge or signature; the host
+    /// proves it again and verifies the root it retains.
+    HostAction(HostActionIdentity),
 }
 
 impl VerbAskCredentialWitness {
     /// Whether this witness backs `source`: a slip's binding a slip, the
-    /// same person an attested owner.
+    /// same person an attested owner, a recorded host action the very root
+    /// slip it acts under (FIX 4744).
     #[must_use]
     pub fn backs(&self, source: &VerbAskCredentialSource) -> bool {
         match (self, source) {
             (Self::Slip(_), VerbAskCredentialSource::Slip { .. }) => true,
+            (Self::HostAction(identity), VerbAskCredentialSource::Slip { slip, .. }) => {
+                identity.root_slip_id() == Some(*slip)
+            }
             (
                 Self::AttestedOwner { holder },
                 VerbAskCredentialSource::AttestedOwner { holder: named },
@@ -119,7 +135,7 @@ impl VerbAskCredentialWitness {
     pub const fn slip(&self) -> Option<&InvocationSlipBinding> {
         match self {
             Self::Slip(binding) => Some(binding),
-            Self::AttestedOwner { .. } => None,
+            Self::AttestedOwner { .. } | Self::HostAction(_) => None,
         }
     }
 }
@@ -494,7 +510,8 @@ pub(super) fn witness_on_thread() -> Option<VerbAskCredentialWitness> {
 
 /// One credential call's pinned witness: the ask it waits on, the reference
 /// it backs and the instrument itself. No secret: a slip, its holder's
-/// challenge and that signature, or the attested owner's person.
+/// challenge and that signature, the attested owner's person, or a
+/// self-hosted root's host action by ids (FIX 4744).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct VerbAskWitness {
     #[serde(with = "crate::serialize::entity_ref")]

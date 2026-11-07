@@ -284,6 +284,7 @@ vaultPacksSync(input: unknown): unknown
 vaultPacksGet(input: unknown): unknown
 vaultSkillsImport(input: unknown): unknown
 vaultSkillsSync(input: unknown): unknown
+vaultSkillsProposalSettle(input: unknown): unknown
 vaultSkillsReceipts(input: unknown): unknown
 vaultSkillsConvert(input: unknown): unknown
 vaultSkillsGet(input: unknown): unknown
@@ -1276,6 +1277,8 @@ vaultMailInbox(input: unknown): unknown
 vaultMailThreadsRead(input: unknown): unknown
 vaultMailComplianceSearch(input: unknown): unknown
 vaultFilesSourcesConvert(input: unknown): unknown
+vaultSyncRepoManifestsConflictReview(input: unknown): unknown
+vaultSyncRepoManifestsConflictDiscard(input: unknown): unknown
 connectorAnswer(input: unknown): unknown
 selfBrowserOpen(input: unknown): unknown
 selfBrowserObserve(input: unknown): unknown
