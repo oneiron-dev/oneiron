@@ -112,7 +112,17 @@ fn named_id(name: &str) -> Option<SnapshotId> {
 /// `catalog id ‖ manifest`, after the domain: what each chunk of a body
 /// binds, so it opens under its own row alone.
 fn associated_data(id: &SnapshotId, manifest: &SnapshotManifest) -> Result<Vec<u8>> {
-    let manifest = rmp_serde::to_vec_named(manifest).map_err(|_| corrupt())?;
+    let manifest = rmp_serde::to_vec_named(manifest).map_err(|error| match error {
+        rmp_serde::encode::Error::InvalidValueWrite(error) => {
+            let error: std::io::Error = error.into();
+            if error.kind() == ErrorKind::OutOfMemory {
+                error.into()
+            } else {
+                corrupt()
+            }
+        }
+        _ => corrupt(),
+    })?;
     let len = AAD_DOMAIN
         .len()
         .checked_add(16)

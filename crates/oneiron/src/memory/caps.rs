@@ -67,13 +67,25 @@ pub fn check_witness_turn(turn: &WitnessTurn) -> Result<(), MemoryError> {
     Ok(())
 }
 
-/// Validates a claim's boundary-checkable fields before dispatch.
-///
-/// `confidence` and `salience` are already `f32` on the engine DTO, so the
-/// non-finite refusal for them happens in the binding layers where the host's
-/// `f64` narrows. The payload ceiling covers the complete serialized DTO,
-/// including scope and refs.
+/// Validates a claim's boundary-checkable fields before dispatch: finite
+/// numbers, and a value that serializes. Its size is never refused here
+/// (ABC row 22): the vault's claim door measures it
+/// ([`claim_input_json_bytes`]).
 pub fn check_claim_input(claim: &ClaimInput) -> Result<(), MemoryError> {
+    claim_input_json_bytes(claim).map(|_| ())
+}
+
+/// The complete serialized JSON bytes of `claim`, scope and refs included,
+/// counted with a fixed memory footprint and never cut short: what the
+/// vault's claim door measures against `claim_input_json_bytes` (ABC row
+/// 22). `confidence` and `salience` are already `f32` on the engine DTO, so
+/// the non-finite refusal for them also happens in the binding layers where
+/// the host's `f64` narrows.
+///
+/// # Errors
+///
+/// A non-finite confidence or salience, or a value that does not serialize.
+pub fn claim_input_json_bytes(claim: &ClaimInput) -> Result<u64, MemoryError> {
     if !claim.confidence.is_finite() {
         return Err(MemoryError::bad_request_with(
             "confidence must be a finite number",
@@ -88,28 +100,23 @@ pub fn check_claim_input(claim: &ClaimInput) -> Result<(), MemoryError> {
     }
     let mut counter = PayloadCounter { len: 0 };
     if let Err(error) = serde_json::to_writer(&mut counter, claim) {
-        // The counter stops serialization at the first byte over the cap.
-        check_payload_bytes("claim payload", counter.len)?;
         return Err(MemoryError::new(
             MEMORY_CODE_INTERNAL,
             format!("claim payload could not be serialized: {error}"),
             &["Send a JSON-representable claim value."],
         ));
     }
-    check_payload_bytes("claim payload", counter.len)
+    Ok(counter.len)
 }
 
-/// Counts serialized bytes with a fixed memory footprint and stops at the cap.
+/// Counts serialized bytes with a fixed memory footprint, every byte.
 struct PayloadCounter {
-    len: usize,
+    len: u64,
 }
 
 impl std::io::Write for PayloadCounter {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.len = self.len.saturating_add(bytes.len());
-        if self.len > MAX_ENTITY_PAYLOAD_BYTES {
-            return Err(std::io::Error::other("claim payload ceiling exceeded"));
-        }
+        self.len = self.len.saturating_add(bytes.len() as u64);
         Ok(bytes.len())
     }
 
