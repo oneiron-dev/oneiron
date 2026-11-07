@@ -1,4 +1,4 @@
-//! Membership effects: the Owner handover the two Owner acts apply, and the
+//! Membership effects: Owner additions and handovers, and the
 //! ordinary member changes an Admin's named power makes at once. Each rewrites
 //! or deletes FEDERATION_GRANT records in the caller's writer and revokes the
 //! capability slips of whoever lost a role, using the supplied issuer or this
@@ -311,6 +311,25 @@ impl Vault {
         })
     }
 
+    /// Add one Owner without moving or revoking any existing Owner's grants.
+    pub(super) fn add_owner_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        vault_id: u64,
+        owners: &BTreeSet<EntityId>,
+        starter: EntityId,
+        owner: EntityId,
+        now: u64,
+    ) -> Result<MemberMove> {
+        self.check_add_owner_in_txn(txn, owners, starter, owner)?;
+        Ok(MemberMove {
+            grants: self.set_member_role_in_txn(txn, vault_id, owner, Role::Owner, now)?,
+            retired_own_device: Vec::new(),
+            revoked_slips: Vec::new(),
+            unsigned_withdrawals: Vec::new(),
+        })
+    }
+
     /// The handover both Owner acts apply, revalidated at execution: `loser`
     /// stops being an Owner and keeps `keeps` (or leaves), `gainer` becomes
     /// one, and at least one live Owner remains.
@@ -452,9 +471,7 @@ impl Vault {
             &mut txn, id, vault_id, None, actor_id, owners, effect, None, record, None, now,
         )?;
         txn.commit()?;
-        if !receipt.revoked_slips.is_empty() {
-            self.store.notify_credential_revocations();
-        }
+        self.store.notify_credential_revocations();
         Ok(receipt)
     }
 
@@ -735,9 +752,7 @@ impl Vault {
             now,
         )?;
         txn.commit()?;
-        if !receipt.revoked_slips.is_empty() {
-            self.store.notify_credential_revocations();
-        }
+        self.store.notify_credential_revocations();
         Ok(receipt)
     }
 
