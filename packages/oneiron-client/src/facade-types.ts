@@ -4080,12 +4080,8 @@ export type LiftAndEraseShownState = { title: string; prompt: string; records: E
 export type LegalHoldLiftAndEraseRequest = { records: EntityId[]; claim_free_partition?: boolean; shown_state: LiftAndEraseShownState }
 /** `oneiron::deletion::legal_hold::types::ErasePendingReason` */
 export type ErasePendingReason = "historical_sweep" | "custody_retirement" | "veto_window"
-/** `oneiron_contracts::error::legal_hold::LegalHoldBoundKind` */
-export type LegalHoldBoundKind = "law"
-/** `oneiron_contracts::error::legal_hold::LegalHoldBound` */
-export type LegalHoldBound = { kind: LegalHoldBoundKind; order_ref?: string | null; legal_basis_ref?: string | null; jurisdiction?: string | null; issuing_authority_ref?: string | null; ends_at?: number | null }
 /** `oneiron::verbs::legal_hold::LegalHoldEraseState` */
-export type LegalHoldEraseState = { state: "erased"; receipt_ref?: string | null } | { state: "completion_pending"; receipt_ref?: string | null; reason?: ErasePendingReason | null } | { state: "retained_for_law"; bound: LegalHoldBound; works_self_hosted: boolean; self_hosted_note: string } | { state: "failed"; message: string }
+export type LegalHoldEraseState = { state: "erased"; receipt_ref?: string | null } | { state: "completion_pending"; receipt_ref?: string | null; reason?: ErasePendingReason | null } | { state: "failed"; message: string }
 /** `oneiron::verbs::legal_hold::LegalHoldErasedRecord` */
 export type LegalHoldErasedRecord = { record: EntityId; status: LegalHoldEraseState }
 /** `oneiron::verbs::legal_hold::LegalHoldLiftAndErased` */
@@ -7174,6 +7170,10 @@ export type ScopedCommitRequest = { claims: ScopedClaimInput[] }
 export type RefusalReason = "INVENTED_REFERENCE" | "GATE_REFUSED"
 /** `oneiron_contracts::error::legal_hold::LegalHoldState` */
 export type LegalHoldState = "retained_for_law" | "use_restricted"
+/** `oneiron_contracts::error::legal_hold::LegalHoldBoundKind` */
+export type LegalHoldBoundKind = "law"
+/** `oneiron_contracts::error::legal_hold::LegalHoldBound` */
+export type LegalHoldBound = { kind: LegalHoldBoundKind; order_ref?: string | null; legal_basis_ref?: string | null; jurisdiction?: string | null; issuing_authority_ref?: string | null; ends_at?: number | null }
 /** `oneiron_contracts::error::legal_hold::LegalHoldNotice` */
 export type LegalHoldNotice = { state: LegalHoldState; bound: LegalHoldBound; works_self_hosted: boolean; self_hosted_note: string }
 /** `oneiron::memory::claims::RecordRefusal` */
