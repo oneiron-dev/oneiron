@@ -332,12 +332,10 @@ fn save_lineage(vault: &Vault, txn: &mut RwTxn<'_>, copy: EntityId, doc: &LoroDo
         .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportSnapshot, e))?;
     // The lineage's version after the export's implicit commit.
     let version = doc.oplog_vv();
-    let moved = match stored {
+    let moved = match stored.map(|stored| VersionVector::decode(&stored)) {
         None => version != VersionVector::default(),
-        Some(stored) => match VersionVector::decode(&stored) {
-            Ok(stored) => stored != version,
-            Err(_) => true,
-        },
+        Some(Ok(stored)) => stored != version,
+        Some(Err(_)) => true,
     };
     let frontier = doc.oplog_frontiers();
     vault.store.port_document_snapshot_put(txn, slot, &bytes)?;
