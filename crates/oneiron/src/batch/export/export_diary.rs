@@ -57,7 +57,9 @@ impl ExportDiaryLedger {
 
     /// Admits `entry`, a diary entry by `author`: true when it is read. An
     /// erased author's entry is held ([`ERASED_AUTHOR_HOLD`]), never read
-    /// through a stand-in agent.
+    /// through a stand-in agent. An imported one's is read: it is the
+    /// vault's evidence, no local agent's, and the export is its owner's
+    /// own read, as [`Vault::read_imported_note`] is (FIX 7777).
     pub(crate) fn admit(
         &mut self,
         vault: &Vault,
@@ -65,6 +67,9 @@ impl ExportDiaryLedger {
         author: NoteActor,
         entry: EntityId,
     ) -> Result<bool> {
+        if author.imported().is_some() {
+            return Ok(true);
+        }
         let Some(agent) = author.id() else {
             *self.held.entry((None, ERASED_AUTHOR_HOLD)).or_default() += 1;
             return Ok(false);

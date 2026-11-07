@@ -22,6 +22,7 @@ mod peer_origins;
 mod rebuild;
 mod row_births;
 mod snapshot_ops;
+mod source_audiences;
 mod validation_work;
 mod vocabulary;
 mod withdrawn_cutoffs;
@@ -40,6 +41,7 @@ pub use rebuild::rebuild_vault_window_from_canonical;
 #[cfg(feature = "sync")]
 pub(crate) use rebuild::{RebuildAt, rebuild_page, rebuild_start};
 pub use row_births::CanonicalRowBirth;
+pub use source_audiences::CanonicalSourceAudience;
 pub(crate) use validation_work::CanonicalValidation;
 pub use vocabulary::{
     CanonicalBaseEdge, CanonicalContainerManifest, CanonicalCustodyTransition,
@@ -77,6 +79,9 @@ impl CanonicalEntityDocument {
             + metadata_size(&self.metadata)
             + self.record_fields.iter().map(String::len).sum::<usize>()
             + self.birth_actor.map_or(0, |actor| actor.len())
+            + self.origin.as_ref().map_or(0, |origin| {
+                origin.incarnation.len() + 12 * origin.version.len()
+            })
             + self.history.as_ref().map_or(0, |history| {
                 let versions = history.versions.iter().map(|version| {
                     16 + 4 * version.parents.len()

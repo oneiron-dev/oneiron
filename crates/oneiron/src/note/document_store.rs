@@ -394,7 +394,7 @@ impl Memory<'_> {
                     .edge(&id, EdgeKind::AuthoredBy, &self.actor(), 1.0)
                     .made_by(&id, brief_birth(actor, pins, now)),
             )?;
-            content.update_note(id, |txn| {
+            content.update_note(id, |txn, _lane| {
                 let doc = load(self.vault(), txn, id)?;
                 for pin in pins {
                     doc.add_pin(pin, stamp)?;
@@ -517,7 +517,7 @@ impl Memory<'_> {
         act: Option<&str>,
     ) -> MemoryResult<PurgeReceipt> {
         self.with_actor_content_write_txn(|content| {
-            content.update_note(note, |txn| {
+            content.update_note(note, |txn, _lane| {
                 if let Some(owner) = owner
                     && owner.revalidate_in_txn(self.vault(), txn)? != self.actor()
                 {
