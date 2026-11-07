@@ -11,6 +11,9 @@ use crate::side_table::{self, Named, SideTable};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
 use crate::{Error, Result, Vault};
 
+mod room;
+pub use room::CodeRunRoomSecretLiftRequest;
+
 const DISMISSED: SideTable<String, CodeRunSecretLiftDismissal, Named> =
     SideTable::new(&side_table::CODE_RUN_SECRET_LIFT_DISMISSED);
 const CONTENT_KIND: &str = "code_run_secret_lift";
