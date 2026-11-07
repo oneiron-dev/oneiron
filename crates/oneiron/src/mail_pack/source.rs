@@ -153,30 +153,30 @@ pub enum MailSourceStatus {
 /// One stored source.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MailSourceRow {
-    pub(super) provider: MailProvider,
-    pub(super) kind: MailSourceKind,
+    pub provider: MailProvider,
+    pub kind: MailSourceKind,
     /// The mailbox or group address, or the calendar's provider id, as given.
-    pub(super) address: String,
+    pub address: String,
     /// The provider's stable account (or tenant and principal) id.
-    pub(super) provider_account: String,
+    pub provider_account: String,
     /// The custody record the credential is stored under. Never its value.
-    pub(super) custody_ref: String,
+    pub custody_ref: String,
     /// The delegated channel identity this source reads through, if any.
-    pub(super) channel_identity: Option<EntityId>,
+    pub channel_identity: Option<EntityId>,
     /// The PERSON who owns a personal mailbox or a calendar; `None` for a
     /// group address, or once that person was erased.
     pub(super) owner: Option<EntityId>,
     /// The source policy its rows are born under
     /// ([`crate::source_audience`]).
-    pub(super) audience: EntityId,
-    pub(super) copy: MailCopySetting,
-    pub(super) on_provider_delete: MailProviderDeleteSetting,
+    pub audience: EntityId,
+    pub copy: MailCopySetting,
+    pub on_provider_delete: MailProviderDeleteSetting,
     pub(super) calendar_details: CalendarDetailSetting,
-    pub(super) status: MailSourceStatus,
+    pub status: MailSourceStatus,
     /// Who connected it; `None` once that actor was erased.
     pub(super) connected_by: Option<EntityId>,
     pub(super) connected_at: u64,
-    pub(super) updated_at: u64,
+    pub updated_at: u64,
 }
 
 /// One connected source, as its readers see it.

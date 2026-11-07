@@ -669,7 +669,8 @@ pub use crate::write_envelope::{
     ClaimCandidate, SourceLineage, WriteActor, WriteEnvelope, WriteProvenance,
 };
 
-pub(crate) use oneiron_base::{unix_millis_now, unix_seconds_now};
+pub(crate) use oneiron_base::unix_millis_now;
+pub use oneiron_base::unix_seconds_now;
 
 pub(crate) fn le_bytes_to_f32_vec(bytes: &[u8], dimensions: usize) -> Result<Vec<f32>> {
     crate::store::decode_vector_row(bytes, dimensions)

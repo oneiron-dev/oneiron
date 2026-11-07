@@ -15,9 +15,11 @@
 //! let _cannot_reshare = SyncSelectorWorld::World(foreign);
 //! ```
 
-pub(crate) use oneiron_contracts::entity_id::{
-    ENTITY_ID_LEN, bytes_to_hex_lower, derived_domains, parse_entity_id, serde_hex,
-};
+pub(crate) use oneiron_contracts::entity_id::ENTITY_ID_LEN;
+pub(crate) use oneiron_contracts::entity_id::bytes_to_hex_lower;
+pub use oneiron_contracts::entity_id::derived_domains;
+pub(crate) use oneiron_contracts::entity_id::parse_entity_id;
+pub(crate) use oneiron_contracts::entity_id::serde_hex;
 pub use oneiron_contracts::entity_id::{
     EntityId, FOREIGN_WORLD_ID_RANGE_START_BYTE, ForeignWorldId, LocalWorldId,
     MIN_PRESENTATION_PREFIX_LEN, ParsedPresentationId, is_foreign_world_id_range,

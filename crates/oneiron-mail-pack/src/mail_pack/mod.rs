@@ -37,9 +37,11 @@ pub use oneiron::mail_pack::*;
 
 mod importer;
 mod landing;
-mod pack;
+#[doc(hidden)]
+pub mod pack;
 mod provider_delete;
-mod state;
+#[doc(hidden)]
+pub mod state;
 mod wire;
 
 pub use importer::MailPackImporterVaultExt;

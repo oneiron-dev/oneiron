@@ -414,15 +414,15 @@ pub(crate) use support::{
 pub use witness::IMPORTED_SOURCE_KEY;
 pub use witness::ImportedTurnStamp;
 pub(crate) use witness::guard_import_stamp;
+pub use witness::next_witness_message_order;
+pub(crate) use witness::sole_edge_target;
+pub(crate) use witness::taken_witness_message_order;
 pub(crate) use witness::turn_admits_message_bodies;
 pub(crate) use witness::witness_message_body;
+pub(crate) use witness::witness_message_order;
 pub(crate) use witness::{
     ArchivedMessage, ArchivedMessageAdmission, ArchivedMessageLink, archived_container_body,
     archived_message_body,
-};
-pub(crate) use witness::{
-    next_witness_message_order, sole_edge_target, taken_witness_message_order,
-    witness_message_order,
 };
 
 // Read-version, revision-change, and publication types are available under

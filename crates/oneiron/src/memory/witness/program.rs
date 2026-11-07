@@ -89,11 +89,11 @@ pub(super) enum WitnessTarget<'a, 'v> {
 /// the Dreamer sees them as new evidence about the past.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportedTurnStamp {
-    pub(crate) source: &'static str,
-    pub(crate) imported_at: u64,
-    pub(crate) conversation_body: Vec<u8>,
+    pub source: &'static str,
+    pub imported_at: u64,
+    pub conversation_body: Vec<u8>,
     /// Unix seconds per message, in the turn's message order.
-    pub(crate) message_occurred: Vec<u64>,
+    pub message_occurred: Vec<u64>,
 }
 
 /// Who holds the door, and which turn-id capability they carry.

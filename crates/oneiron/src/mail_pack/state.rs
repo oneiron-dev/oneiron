@@ -34,7 +34,7 @@ pub const OCCURRENCE_ROWS: SideTable<(EntityId, EntityId, [u8; 32]), u64, Named>
 pub struct MailSyncState {
     /// The provider's change anchor the source stands at (Gmail
     /// `historyId`); changes after it are read from the change feed.
-    pub(super) anchor: Option<String>,
+    pub anchor: Option<String>,
     /// The newest-first listing's next page; `None` before the first page
     /// and once it is done.
     pub backfill_page: Option<String>,
@@ -49,19 +49,19 @@ pub struct MailSyncState {
     pub backfill_copy: Option<MailCopySetting>,
     /// Bumped each time the listing starts over (an expired anchor, a
     /// changed copy setting).
-    pub(super) generation: u64,
+    pub generation: u64,
     /// The change feed's next page, read from `history_page_anchor`: a feed
     /// longer than one step's budget goes on from it at the next step.
     #[serde(default)]
     pub history_page: Option<String>,
     #[serde(default)]
     pub history_page_anchor: Option<String>,
-    pub(super) landed: u64,
-    pub(super) bodies: u64,
-    pub(super) deleted_at_provider: u64,
-    pub(super) last_step_at: Option<u64>,
+    pub landed: u64,
+    pub bodies: u64,
+    pub deleted_at_provider: u64,
+    pub last_step_at: Option<u64>,
     /// The last step's failure, in words, for the source's owner.
-    pub(super) last_error: Option<String>,
+    pub last_error: Option<String>,
 }
 
 /// How much of a message has landed.
@@ -96,27 +96,27 @@ pub enum MailPresence {
 /// One provider message of one source and the rows it landed as.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MailOccurrence {
-    pub(super) provider_id: String,
+    pub provider_id: String,
     pub thread_key: String,
-    pub(super) conversation: EntityId,
-    pub(super) turn: EntityId,
+    pub conversation: EntityId,
+    pub turn: EntityId,
     /// Each revision's MESSAGE, oldest first: the headers, then the whole
     /// message.
-    pub(super) messages: Vec<EntityId>,
+    pub messages: Vec<EntityId>,
     /// Each revision's content hash, in the same order.
     pub content_hashes: Vec<String>,
-    pub(super) stage: MailStage,
-    pub(super) presence: MailPresence,
-    pub(super) labels: Vec<String>,
-    pub(super) rfc_message_id: Option<String>,
+    pub stage: MailStage,
+    pub presence: MailPresence,
+    pub labels: Vec<String>,
+    pub rfc_message_id: Option<String>,
     /// The sender and subject, as the inbox lists the message.
-    pub(super) from: Option<String>,
-    pub(super) subject: Option<String>,
-    pub(super) received_at: u64,
+    pub from: Option<String>,
+    pub subject: Option<String>,
+    pub received_at: u64,
     /// Whether a search fetched it: kept whatever the copy setting.
     pub searched: bool,
-    pub(super) landed_at: u64,
-    pub(super) updated_at: u64,
+    pub landed_at: u64,
+    pub updated_at: u64,
 }
 
 /// The body queue key of a message received at `received_at`.

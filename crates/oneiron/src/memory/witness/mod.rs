@@ -47,11 +47,11 @@ pub(crate) use self::codec::witness_message_body;
 pub use self::program::ImportedTurnStamp;
 pub use self::program::{SessionWitnessBinding, SessionWitnessContext, SessionWitnessOutcome};
 
+pub use self::validation::next_witness_message_order;
+pub(crate) use self::validation::sole_edge_target;
+pub(crate) use self::validation::taken_witness_message_order;
 pub(super) use self::validation::validate_witness_occurrence;
-pub(crate) use self::validation::{
-    next_witness_message_order, sole_edge_target, taken_witness_message_order,
-    witness_message_order,
-};
+pub(crate) use self::validation::witness_message_order;
 
 // Helpers the sibling test suite resolves through `use super::witness::*`;
 // they keep the flat module's `memory`-level visibility here.
