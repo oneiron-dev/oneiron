@@ -796,7 +796,7 @@ pub(super) fn resumed_output_path(seq: u64, wait_id: EntityId) -> String {
 }
 
 /// The step and the wait (lower-case hex) a resumed reply's path names.
-pub(super) fn resumed_output_wait(path: &str) -> Option<(u64, &str)> {
+pub(crate) fn resumed_output_wait(path: &str) -> Option<(u64, &str)> {
     let rest = path.strip_prefix(SCRIPT_OUTPUT_DIR)?.strip_prefix('/')?;
     let (seq, rest) = rest.split_once(RESUMED_OUTPUT_INFIX)?;
     let wait = rest.strip_suffix(".json")?;
@@ -871,7 +871,7 @@ pub(super) fn is_terminal_output_path(path: &str) -> bool {
 }
 
 /// The step a terminal marker's path names.
-pub(super) fn terminal_output_seq(path: &str) -> Option<u64> {
+pub(crate) fn terminal_output_seq(path: &str) -> Option<u64> {
     let seq = path
         .strip_prefix(SCRIPT_OUTPUT_DIR)?
         .strip_prefix('/')?

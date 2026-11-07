@@ -150,6 +150,7 @@ impl AgentDispatcher<'_> {
                         },
                     },
                     result: None,
+                    code_run_output: None,
                 })
             }
             _ => None,

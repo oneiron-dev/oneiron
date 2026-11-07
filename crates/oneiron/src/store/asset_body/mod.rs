@@ -456,6 +456,7 @@ pub(crate) fn stage_asset_body_in_txn(
                     body: facts.body_ref(),
                 },
                 result: None,
+                code_run_output: None,
             })
         }
         None => None,
@@ -476,6 +477,7 @@ pub(crate) fn stage_asset_body_in_txn(
                         body: superseded.clone(),
                     },
                     result: None,
+                    code_run_output: None,
                 },
             )?;
         }
