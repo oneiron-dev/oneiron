@@ -531,6 +531,27 @@ pub(crate) fn register_room_facts_observer(
     )
 }
 
+/// Observer B for a window's source audience map (Engine A, 6 Nov 03:46),
+/// base or world: each policy revision and late binding an import brings
+/// lands here.
+pub(crate) fn register_source_audiences_observer(
+    doc: &LoroDoc,
+    vault: &Arc<Vault>,
+    materializer: &Arc<Materializer>,
+    window_key: &str,
+) -> Subscription {
+    let map = doc.get_map(crate::sync::source_audiences::SOURCE_AUDIENCES_MAP);
+    subscribe_map_observer(
+        doc,
+        &map,
+        vault,
+        materializer,
+        window_key,
+        crate::sync::source_audiences::materialize_from_delta,
+        ("source_audiences", None),
+    )
+}
+
 /// Observer B for the base window's document pin map (FIX 853): each pin
 /// an import brings is installed here.
 pub(crate) fn register_document_pins_observer(

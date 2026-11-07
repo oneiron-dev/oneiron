@@ -625,6 +625,7 @@ fn birth_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result
         generation: 0,
         pending: 0,
         birth_frontier: Some(born.doc.frontier()),
+        restored: None,
     };
     storage::persist_scanned(vault, txn, entity, &mut head, &born.doc, None, synced(None))?;
     Ok(head)
@@ -676,6 +677,7 @@ fn carried_head_in_txn(
         generation: 0,
         pending: 0,
         birth_frontier: None,
+        restored: None,
     })
 }
 

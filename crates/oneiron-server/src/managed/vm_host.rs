@@ -160,6 +160,12 @@ pub struct VaultVmConfig {
     /// key's identifier. Required: a profile without a valid one never boots,
     /// and a guest that finds it contradicted refuses its provisioning.
     pub provision: VmProvisionBinding,
+    /// The operator-pinned public ONHB recipient sent in provisioning
+    /// revision 2. Required: `null` when unavailable, which does not veto
+    /// the guest's start or invent a recipient.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub checkpoint_host_holds_recipient:
+        Option<oneiron_vault_contract::checkpoint_recipient::CheckpointHostHoldsRecipient>,
     /// Where this host keeps the vault's outboxes and the carrier's records
     /// (FIX 5235): the trees its shippers read. Without it no attachment is
     /// bound, and the guest keeps its outbox work, deferred.
@@ -691,7 +697,8 @@ impl VaultVm {
     /// `VmSourceEngine` hello before sending one source ctl request; the
     /// caller still binds the VM boot, original child and source actor.
     pub async fn source_ctl(&self) -> anyhow::Result<UnixStream> {
-        self.connect(oneiron_vault_contract::vm::VM_SOURCE_CTL_PORT).await
+        self.connect(oneiron_vault_contract::vm::VM_SOURCE_CTL_PORT)
+            .await
     }
 
     /// One ctl verb, exactly as a node's supervisor sends it.

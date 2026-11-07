@@ -7,9 +7,9 @@ pub(crate) use self::execute_code::execute_mcp_execute_code;
 // `execute_code` reaches the gateway's names through this module.
 use super::{
     McpBoardOmissions, McpBoardState, McpCallContext, McpCarrierPolicy, McpGatewayError,
-    actor_dispatch, code_mode_verbs, device_release, hex_bytes, mcp_actor_result,
-    mcp_board_frame_error, mcp_board_verb_error, mcp_current_board, mcp_endpoint_result,
-    mcp_engine_error, mcp_page_cursor_error, type_feedback_release,
+    actor_dispatch, code_mode_self_brief, code_mode_verbs, device_release, hex_bytes,
+    mcp_actor_result, mcp_board_frame_error, mcp_board_verb_error, mcp_current_board,
+    mcp_endpoint_result, mcp_engine_error, mcp_page_cursor_error, type_feedback_release,
 };
 use crate::mcp::McpPageBudget;
 use crate::mcp::McpResolvedActor;
@@ -368,21 +368,16 @@ pub(crate) async fn deliver_run_board_hooks(
 }
 
 /// Drops a pumped run's board connection, snapshot and stream reader (FIX
-/// 4888), and the self brief snapshot installed for that connection (FIX
-/// 2086). Its session, cursor and read set, stays until the run ends, when
+/// 4888). Its session, cursor and read set, stays until the run ends, when
 /// the host's live runs close it (FIX 8143): a run parked on a durable wait
-/// keeps it.
+/// keeps it. The self brief installed for the connection is its door's to
+/// close: a turn program's goes with the door, a pumped run's with its live
+/// run (FIX 17594 D3).
 pub(crate) async fn drop_run_board(
     server: &SyncServer,
-    actor: oneiron::WriteActor,
     connection: &oneiron::context_board::StreamConnectionId,
 ) {
     server.mcp_registry.lock().await.drop_run_board(connection);
-    server
-        .self_brief_sessions
-        .lock()
-        .await
-        .remove(&(actor.entity_ref(), connection.0.clone()));
 }
 
 /// A keyframe of the board just went back with its actor's layout batch:

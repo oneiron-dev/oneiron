@@ -268,13 +268,14 @@ embedder_requests = 2048          # requests `embedder serve` holds at once; pas
 embedder_answer_bytes = 268435456 # bytes `embedder serve`'s answers hold until delivered; past it they queue
 decision_reads = 2048             # owner decision-read probes held at once; past it they queue
 task_work = 2048                  # can, ask, wait and tasks.answer calls the vault runs at once; past it each caller waits a fair turn, then runs
-renderer_work = 2                 # deck and slide renders at once (LibreOffice + pdftoppm); past it each caller waits a fair turn, then render_deadline (default: a quarter of the cores, at least 1)
+renderer_work = 2                 # deck and slide renders at once (LibreOffice + pdftoppm); past it each caller waits a fair turn, then render_deadline (default: a quarter of the cores, at least 1); LibreOffice workbook recalculations take the host's own turns here
 media_reply_bytes = 2147483648    # bytes provider media replies (images, clips, speech) hold until decoded; past it a reply waits its turn, never refused for size (default: an eighth of memory)
 chat_reply_bytes = 2147483648     # bytes the JSON replies a chat send reads whole hold until the send ends; past it a crossing is recorded, never a wait or a refusal (default: an eighth of memory)
 lfs_quota_bytes = 68719476736     # LFS bytes stored plus uploads in flight; past it the row asks
 transfer_idle_timeout_ms = 300000 # a git or LFS transfer moving no byte this long ends
 retrieval_query_bytes = 1048576   # one retrieval query, as sent (413 past it)
 projection_body_bytes = 4194304   # body bytes one multi-row read decodes
+request_body_bytes = 67108864     # one request body a route reads whole (default: memory / 1024, at least 64 MiB; 413 naming the row past it)
 git_scan_blob_bytes = 1073741824  # one pushed blob the push door scans (default: RAM / 64)
 git_scan_disk_floor_bytes = 1073741824 # free disk the door's hook leaves while it frames a push
 queue_wait_timeout_ms = 300000    # how long queued work waits for its turn
@@ -291,6 +292,11 @@ booking_local_time_windows = 65536 # distinct local time windows one booking con
 claim_input_json_bytes = 67108864 # serialized JSON bytes of one claim input at the vault's claim door; past it the claim is written whole and the row asks
 core_batch_entities = 1048576     # entities one core batch write carries; past it every entity lands in the same one atomic batch and the row asks
 legacy_batch_entities = 1048576   # entities one legacy batch_put_entities call (N-API or C FFI) carries; past it every entity lands in one atomic transaction and the row asks
+blob_content_bytes = 4294967296  # raw bytes of one blob artifact version or asset an engine door stores (default: memory / 16, the least of RAM and the container limit); past it the content is stored whole and the row asks
+booking_availability_calls_per_minute = 1000000 # availability listings one authenticated booking actor asks for in one minute; past it every listing is served and the row asks
+booking_hold_calls_per_minute = 1000000 # holds one authenticated booking actor requests in one minute; past it every hold is served and the row asks
+booking_write_calls_per_minute = 1000000 # confirms and amendments one authenticated booking actor sends in one minute, counted together; past it every write is served and the row asks
+booking_quarantine_calls_per_minute = 1000000 # quarantined confirms one authenticated booking actor submits in one minute; past it every submission is kept for review and the row asks
 code_result_inline_bytes = 1048576 # one code-mode result kept inline in LMDB; a bigger one is a file in the vault's bodies/
 code_result_disk_floor_bytes = 1073741824 # free disk the result body store keeps; below it the row asks and the result is stored whole
 code_result_scan_bytes = 268435456 # bytes one result search or query scans before it answers with a cursor
@@ -611,6 +617,19 @@ Calibri and Cambria.
 
 Without both tools the slides stay withdrawn, and their wake is held and tried
 again every five minutes. The rest of the review still lands on Keep.
+
+## Workbook Precision Recalculation
+
+An XLSX export, preview or live read whose workbook the in-process formula
+engine refuses recalculates through LibreOffice Calc headless when `soffice`
+is on the server's `PATH`. Each run uses its own temporary profile, which
+recalculates every formula on load, updates no external link, runs no macro
+and reaches no network, and a timeout. Only the computed formula values come
+back, written into the workbook itself; every other part keeps its bytes. The
+version names `libreoffice` and the `soffice --version` line as its
+calculator. LibreOffice reads `NOW()` and `TODAY()` from the server's clock,
+in the caller's zone. Without `soffice`, or when a run fails, the workbook is
+marked to recalculate when it is opened.
 
 ## Service Templates
 

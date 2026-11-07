@@ -44,6 +44,10 @@ pub(super) struct Head {
     /// (FIX 8942); `None` for a document carried from another machine,
     /// rebuilt or born of anything else.
     pub birth_frontier: Option<Vec<u8>>,
+    /// What a canonical restore left here (FIX 3553); `None` for a document
+    /// no restore rebuilt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restored: Option<super::succession::Restored>,
 }
 
 /// Pointer from an entity to its owning document, plus generation/pending
@@ -439,6 +443,7 @@ impl Vault {
                 generation: 0,
                 pending: 0,
                 birth_frontier: Some(doc.frontier()),
+                restored: None,
             };
             persist(self, txn, entity, &mut h, &doc, None)?;
             // A MESSAGE's quotes taken of its atomic text are pinned at the
@@ -706,6 +711,23 @@ pub(crate) fn record_head_row_in_txn(
     };
     let slot = DocumentSlot::from_hex(&h.document)?;
     Ok(Some((ENTITY_DOC_HEAD.key_bytes(&key), bytes, slot)))
+}
+
+/// The full key of `entity`'s document head row.
+pub(crate) fn record_head_key(entity: &EntityId) -> Vec<u8> {
+    ENTITY_DOC_HEAD.key_bytes(&HexId(*entity))
+}
+
+/// The document slot an exact stored head row of `entity` names, decoded
+/// from its bytes as [`record_head_row_in_txn`] decodes them; for a
+/// legal-clone read of a head a checkpoint carries. A head that names
+/// another entity, or does not decode, is corrupt.
+pub(crate) fn record_head_slot(entity: &EntityId, bytes: &[u8]) -> Result<DocumentSlot> {
+    let head = ENTITY_DOC_HEAD.decode_value(bytes)?;
+    if head.entity != entity.to_hex() {
+        return Err(Error::CorruptedIndex("entity document head"));
+    }
+    DocumentSlot::from_hex(&head.document)
 }
 
 /// Read-only view for existing typed record readers; the durable row retains
