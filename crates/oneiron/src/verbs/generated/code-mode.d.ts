@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1334 code-mode rows (1293 host rows, 41 run rows), 4699 declarations.
+// Census: 1334 code-mode rows (1293 host rows, 41 run rows), 4702 declarations.
 // Replies: 1142 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
@@ -2135,7 +2135,9 @@ declare namespace Sdk {
   type PolicyEnforcementAction = "allow" | "warn" | "reword" | "block" | "route_to_help" | "hold" | "skipped";
   type PolicySkipReason = "no-backend" | "no-document" | "backend-unavailable" | "response-unusable" | "budget-exhausted" | "admission-denied" | "policy-moving";
   type PolicyClassifyDecision = "allow" | "warn" | "reword" | "block" | "route-to-help" | "hold" | { skipped: PolicySkipReason };
-  type PolicyVerdictCategory = { category: "none" } | { category: "owner_policy"; sub: { row_ref: string } } | { category: "hosted_legal"; sub: { category: string; jurisdiction: string; policy_version: string; row_ref: string } };
+  type HostedLegalBasisKind = "law" | "provider_terms" | "capacity";
+  type HostedLegalBasis = { kind: HostedLegalBasisKind; subject: string; reference: string };
+  type PolicyVerdictCategory = { category: "none" } | { category: "owner_policy"; sub: { row_ref: string } } | { category: "hosted_legal"; sub: { category: string; jurisdiction: string; policy_version: string; row_ref: string; basis: HostedLegalBasis } };
   type PolicyHedgeBucket = "certain" | "high" | "medium" | "low";
   type PolicyConfidence = { calibrated: number; hedge_bucket: PolicyHedgeBucket };
   type PolicyContentBinding = { content_hash: number[]; read_frontier_hash: number[] };
@@ -2157,9 +2159,10 @@ declare namespace Sdk {
   type PolicyBargeInKill = { cancel_tts: boolean; flush_playout_buffer: boolean; cancel_llm: boolean };
   type PolicyModelEnforcement = { action: PolicyEnforcementAction; verdict: PolicyClassifyVerdict; final_content?: string | null; outbound_halted: boolean; receipt_ref?: string | null; moderation_ref?: string | null; system_notice?: string | null; notice_voice?: PolicyEnforcementVoice | null; system_notices?: GateSystemNoticeRecord[]; help_routing?: PolicyHelpRouting | null; reword?: PolicyRewordRequest | null; classify_trace: PolicyClassifyVerdict[]; pre_display_block: boolean; barge_in_kill?: PolicyBargeInKill | null; custom_tier_skipped: boolean };
   type RelayBoundaryDegrade = "safeguard_model_unavailable" | "safeguard_model_response_unusable" | "safeguard_model_tier_absent" | "output_contract_undeclared" | "policy_binding_moved_mid_pass";
+  type HostedLegalRowBound = { row_ref: string; basis: HostedLegalBasis };
   type RelayResolution = "pattern_decided" | "model_decided" | "pattern_gated_allow" | "log_only" | "no_policy_in_play" | "vault_side_decided" | "unresolved";
   type HostedPassEvidence = { version: string; policy_hash: string; verify_content_hash: number[] };
-  type HostedRelayDecision = { service_identity: string; verdict?: PolicyClassifyVerdict | null; degraded?: RelayBoundaryDegrade | null; resolution?: RelayResolution | null; hosted_evidence?: HostedPassEvidence | null; receipt_ref?: string | null; final_content?: string | null; outbound_halted: boolean; system_notice?: string | null; system_notices: GateSystemNoticeRecord[] };
+  type HostedRelayDecision = { service_identity: string; verdict?: PolicyClassifyVerdict | null; degraded?: RelayBoundaryDegrade | null; outage_bounds: HostedLegalRowBound[]; resolution?: RelayResolution | null; hosted_evidence?: HostedPassEvidence | null; receipt_ref?: string | null; final_content?: string | null; outbound_halted: boolean; system_notice?: string | null; system_notices: GateSystemNoticeRecord[] };
   type ApproveOnceRequest = { effect_digest: string };
   type ConsentActReceipt = { decision_ref: string; outcome: string; reason_code: string; grant_ref?: string | null; diff_handle: number[] };
   type ConnectorCallApproveOnceRequest = { call_ref: string; approval_digest: string };
