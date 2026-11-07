@@ -751,12 +751,21 @@ impl Vault {
             record.explicit_end_hint = Some(timestamp);
         }
         OPEN_POINTER.delete(&self.store, wtxn, &key.pointer())?;
-        // The sitting's own scratchpad ends with it (FIX 9748); a seal that
-        // fails leaves the close as it was.
-        if let Err(error) =
-            crate::context_board::seal_session_pad_in_txn(self, wtxn, key.actor, &id.to_hex())
-        {
-            tracing::warn!(?error, "sitting close left its scratchpad unsealed");
+        // The sitting's own scratchpad ends with it (FIX 9748). The seal runs
+        // in a savepoint (FIX 10566): one that fails part-way leaves none of
+        // its writes, and the close lands as it was.
+        let mut seal = self.store.env.nested_write_txn(wtxn)?;
+        match crate::context_board::seal_session_pad_in_txn(
+            self,
+            &mut seal,
+            key.actor,
+            &id.to_hex(),
+        ) {
+            Ok(_) => seal.commit()?,
+            Err(error) => {
+                drop(seal);
+                tracing::warn!(?error, "sitting close left its scratchpad unsealed");
+            }
         }
 
         // (e) The CHAT-lane actor-distill job (ARCH-0053 §3, ONE-1739),
