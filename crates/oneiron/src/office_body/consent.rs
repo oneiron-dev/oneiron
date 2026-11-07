@@ -772,7 +772,7 @@ pub(super) fn settle_in_txn(
 /// Everyone whose answer on `member` would be the opener's own: the
 /// proposal's opener and the member's. No agent or run lineage resolver
 /// exists yet, so each is exactly itself (FIX-LIST).
-fn lineage(header: &ProposalHeader, member: &ProposalMember) -> BTreeSet<EntityId> {
+pub(super) fn lineage(header: &ProposalHeader, member: &ProposalMember) -> BTreeSet<EntityId> {
     [header.opener, member.opener]
         .into_iter()
         .filter_map(BodyActor::id)

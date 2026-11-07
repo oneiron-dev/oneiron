@@ -37,6 +37,7 @@ mod pad_objects;
 mod pad_reopen;
 mod payload;
 mod rebuild;
+mod removal_files;
 mod response_rows;
 mod restore_class;
 mod side_pads;
@@ -550,6 +551,7 @@ impl Vault {
             Custody::Fork(Some((&live, &pads))),
             &erased,
             budget,
+            None,
         )?;
         // A pack source it erased halts the copy's routes too (FIX 6086).
         response_rows::removals::halt_erased_pack_routes(&vault, &erased)?;
@@ -808,11 +810,18 @@ impl Vault {
         let erased = crate::deletion::hard_erased_ids_in(current)?;
         let installed = current.installed_pack_sources()?;
         let (mut image, checkpoint_id, bodies) = read_image(path, key)?;
+        // The receipts the image keeps removal archives under, read before
+        // the carry replaces those Live rows with `current`'s (FIX 3679).
+        let image_owners =
+            crate::federation::removal_archive_owners_in_rows(&image.databases["vault_meta"]);
         // The carried rows hold `current`'s custody binding and retirements,
         // and its pad objects are captured in the read that carried them.
         let classes = restore_class::Classes::new(current, &image.databases)?;
         let (home_table_notes, current_pads) =
             authority_plane::carry_current_authority(&mut image.databases, current, &classes)?;
+        // Each kept removal archive's file and descriptor follow its Live
+        // row (FIX 3679).
+        let archives = removal_files::carry_live(&mut image, current, image_owners)?;
         // A Live family's response row came with it, and its binding, by the
         // same classes (FIX 6994): the image's copy is passed over (KS-2B2).
         response_rows::supersede_live(&mut image, &classes);
@@ -834,6 +843,7 @@ impl Vault {
             custody,
             &erased,
             &write_budget::Unfloored,
+            Some(archives),
         )?;
         // A home table whose live rows did not read came from the image.
         report.home_table_notes = home_table_notes;
