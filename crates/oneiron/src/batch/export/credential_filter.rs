@@ -239,7 +239,7 @@ impl Vault {
             self,
             &bundle.json,
             bundle.thread_roots,
-            &member_mail,
+            Some(&member_mail),
         ) {
             Ok(()) => Ok(bundle.json),
             // The write did not commit: no audit row and no notice of it
@@ -255,7 +255,14 @@ impl Vault {
                         "an export whose mailboxes' people were not told carries a mailbox",
                     ));
                 }
-                crate::memory::record_raw_json_export(self, &bundle.json, bundle.thread_roots);
+                // The copy made again leaves only once its own audit row,
+                // counting no mailbox, commits (fix list row 15416).
+                crate::memory::record_member_mail_json_export(
+                    self,
+                    &bundle.json,
+                    bundle.thread_roots,
+                    None,
+                )?;
                 Ok(bundle.json)
             }
         }
