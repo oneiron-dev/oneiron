@@ -160,7 +160,7 @@ fn copy_clean(vault: &Vault, txn: &RoTxn<'_>, item: EntityId, bytes: &[u8]) -> R
     let Some(framed) = bytes.strip_prefix(&[TAG_DOCUMENT]) else {
         return Ok(false);
     };
-    let Ok(frame) = crate::sync::transport::decode_document(framed) else {
+    let Ok(frame) = crate::sync::transport::decode_unsplit_document(framed) else {
         return Ok(false);
     };
     if frame.entity != item || frame.kind != document_sub_tags::STATE {
