@@ -348,6 +348,7 @@ both bindings and their export-census tests in one change.
 - `vault.shared.propose_delete`
 - `vault.shared.propose_transfer`
 - `vault.shared.propose_remove_owner`
+- `vault.shared.propose_add_owner`
 - `vault.shared.execute`
 - `vault.shared.receipt`
 - `vault.shared.outcomes`
@@ -379,6 +380,8 @@ both bindings and their export-census tests in one change.
 - `vault.shared.policy.answer`
 - `vault.shared.policy.change`
 - `vault.shared.policy.changes`
+- `vault.shared.owner_change_wait.set`
+- `vault.shared.owner_change_wait.get`
 - `vault.federation.coreference.link`
 - `vault.federation.coreference.confirm`
 - `vault.federation.coreference.share_consent`

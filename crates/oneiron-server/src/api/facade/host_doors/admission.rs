@@ -629,6 +629,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultSharedPolicyGet
         | Row::VaultSharedPolicyChange
         | Row::VaultSharedPolicyChanges
+        | Row::VaultSharedOwnerChangeWaitGet
         | Row::VaultRootsRequestsCreate
         | Row::VaultRootsRequestsList
         | Row::VaultOwnerWorkGet
@@ -665,6 +666,8 @@ pub(in crate::api::facade) fn door_admits(
         Row::VaultSharedProposeDelete
         | Row::VaultSharedProposeTransfer
         | Row::VaultSharedProposeRemoveOwner
+        | Row::VaultSharedProposeAddOwner
+        | Row::VaultSharedOwnerChangeWaitSet
         | Row::VaultSharedExecute
         | Row::VaultSharedReceipt
         | Row::VaultSharedOutcomes

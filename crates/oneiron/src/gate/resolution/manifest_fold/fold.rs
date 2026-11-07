@@ -202,6 +202,17 @@ pub(super) fn fold_policy_manifest(
                         Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
                     }
                 }
+                // One common owner-change wait per vault: the same scalar
+                // twice is one configuration; two different scalars have no
+                // deterministic answer, so every act they would govern fails
+                // closed.
+                if let Some(secs) = decoded.owner_change_wait_secs {
+                    match &resolution.owner_change_wait_secs {
+                        None => resolution.owner_change_wait_secs = Some(secs),
+                        Some(existing) if *existing == secs => {}
+                        Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
+                    }
+                }
                 // Every valid row carries its version's pinned membership, so
                 // the newest version among trusted packs is the floor.
                 if let Some(floor) = decoded.catastrophe_floor

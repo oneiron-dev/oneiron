@@ -1751,6 +1751,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.shared.propose_add_owner",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedAddOwnerRequest,
+                >(),
+            ),
+            (
                 "vault.shared.execute",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::SharedActRequest,
@@ -1933,6 +1939,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::SharedVaultRequest,
                 >(),
+            ),
+            (
+                "vault.shared.owner_change_wait.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedOwnerChangeWaitSetRequest,
+                >(),
+            ),
+            (
+                "vault.shared.owner_change_wait.get",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
             (
                 "vault.federation.coreference.link",
@@ -7667,6 +7683,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.shared.policy.answer",
     "vault.shared.policy.change",
     "vault.shared.policy.changes",
+    "vault.shared.owner_change_wait.set",
+    "vault.shared.owner_change_wait.get",
     "vault.federation.coreference.link",
     "vault.federation.coreference.confirm",
     "vault.federation.coreference.share_consent",
@@ -9056,6 +9074,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.shared.policy.changes" => crate::code_run::vault_read::request_schema::<
             Vec<crate::federation::SharedActPolicyChange>,
         >(),
+        "vault.shared.owner_change_wait.set" => {
+            crate::code_run::vault_read::request_schema::<Option<u64>>()
+        }
+        "vault.shared.owner_change_wait.get" => {
+            crate::code_run::vault_read::request_schema::<Option<u64>>()
+        }
         "vault.federation.coreference.link" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::CoreferenceLinkReceipt,
         >(),
@@ -13503,6 +13527,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.shared.propose_add_owner" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.shared.execute" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -13708,6 +13739,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.shared.policy.changes" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shared.owner_change_wait.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shared.owner_change_wait.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -20514,6 +20559,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.shared.propose_remove_owner" => {
             validate_input_vault_shared_propose_remove_owner(value)?
         }
+        "vault.shared.propose_add_owner" => validate_input_vault_shared_propose_add_owner(value)?,
         "vault.shared.execute" => validate_input_vault_shared_execute(value)?,
         "vault.shared.receipt" => validate_input_vault_shared_receipt(value)?,
         "vault.shared.outcomes" => validate_input_vault_shared_outcomes(value)?,
@@ -20549,6 +20595,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.shared.policy.answer" => validate_input_vault_shared_policy_answer(value)?,
         "vault.shared.policy.change" => validate_input_vault_shared_policy_change(value)?,
         "vault.shared.policy.changes" => validate_input_vault_shared_policy_changes(value)?,
+        "vault.shared.owner_change_wait.set" => {
+            validate_input_vault_shared_owner_change_wait_set(value)?
+        }
+        "vault.shared.owner_change_wait.get" => {
+            validate_input_vault_shared_owner_change_wait_get(value)?
+        }
         "vault.federation.coreference.link" => {
             validate_input_vault_federation_coreference_link(value)?
         }
@@ -23633,6 +23685,11 @@ fn validate_input_vault_shared_propose_remove_owner(value: &serde_json::Value) -
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_shared_propose_add_owner(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::SharedAddOwnerRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_vault_shared_execute(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::task_verb::sdk::SharedActRequest = decode(value.clone())?;
     Ok(())
@@ -23787,6 +23844,20 @@ fn validate_input_vault_shared_policy_change(value: &serde_json::Value) -> Memor
 #[inline(never)]
 fn validate_input_vault_shared_policy_changes(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::task_verb::sdk::SharedVaultRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_shared_owner_change_wait_set(
+    value: &serde_json::Value,
+) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::SharedOwnerChangeWaitSetRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_shared_owner_change_wait_get(
+    value: &serde_json::Value,
+) -> MemoryResult<()> {
+    let _input: EmptyRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -29417,6 +29488,7 @@ pub fn invoke(
         "vault.shared.propose_remove_owner" => {
             invoke_vault_shared_propose_remove_owner(memory, value)
         }
+        "vault.shared.propose_add_owner" => invoke_vault_shared_propose_add_owner(memory, value),
         "vault.shared.execute" => invoke_vault_shared_execute(memory, value),
         "vault.shared.receipt" => invoke_vault_shared_receipt(memory, value),
         "vault.shared.outcomes" => invoke_vault_shared_outcomes(memory, value),
@@ -29452,6 +29524,12 @@ pub fn invoke(
         "vault.shared.policy.answer" => invoke_vault_shared_policy_answer(memory, value),
         "vault.shared.policy.change" => invoke_vault_shared_policy_change(memory, value),
         "vault.shared.policy.changes" => invoke_vault_shared_policy_changes(memory, value),
+        "vault.shared.owner_change_wait.set" => {
+            invoke_vault_shared_owner_change_wait_set(memory, value)
+        }
+        "vault.shared.owner_change_wait.get" => {
+            invoke_vault_shared_owner_change_wait_get(memory, value)
+        }
         "vault.federation.coreference.link" => {
             invoke_vault_federation_coreference_link(memory, value)
         }
@@ -33115,6 +33193,13 @@ fn invoke_vault_shared_propose_remove_owner(
     encode(vault_shared_propose_remove_owner(memory, decode(value)?)?)
 }
 #[inline(never)]
+fn invoke_vault_shared_propose_add_owner(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_shared_propose_add_owner(memory, decode(value)?)?)
+}
+#[inline(never)]
 fn invoke_vault_shared_execute(
     memory: &Memory<'_>,
     value: serde_json::Value,
@@ -33330,6 +33415,20 @@ fn invoke_vault_shared_policy_changes(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_shared_policy_changes(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_shared_owner_change_wait_set(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_shared_owner_change_wait_set(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_shared_owner_change_wait_get(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_shared_owner_change_wait_get(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_federation_coreference_link(
@@ -43003,6 +43102,16 @@ pub fn vault_shared_propose_remove_owner(
         input,
     )
 }
+pub fn vault_shared_propose_add_owner(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedAddOwnerRequest,
+) -> MemoryResult<crate::federation::PendingAuthorityAct> {
+    crate::task_verb::sdk::propose_shared_add_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.shared.propose_add_owner")?,
+        input,
+    )
+}
 pub fn vault_shared_execute(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::SharedActRequest,
@@ -43293,6 +43402,25 @@ pub fn vault_shared_policy_changes(
         memory.vault(),
         &memory.embedded_owner("vault.shared.policy.changes")?,
         input,
+    )
+}
+pub fn vault_shared_owner_change_wait_set(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedOwnerChangeWaitSetRequest,
+) -> MemoryResult<Option<u64>> {
+    crate::task_verb::sdk::set_shared_owner_change_wait(
+        memory.vault(),
+        &memory.embedded_owner("vault.shared.owner_change_wait.set")?,
+        input,
+    )
+}
+pub fn vault_shared_owner_change_wait_get(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Option<u64>> {
+    crate::task_verb::sdk::read_shared_owner_change_wait(
+        memory.vault(),
+        &memory.embedded_owner("vault.shared.owner_change_wait.get")?,
     )
 }
 pub fn vault_federation_coreference_link(
