@@ -68,6 +68,22 @@ impl Memory<'_> {
         self
     }
 
+    /// Conjoins the frozen call ceilings of a genuine phone reader holding
+    /// this exact actor and verified credential. It grants no read, replaces
+    /// no proof, and never drops an earlier phone ceiling.
+    pub fn within_phone_line_read(
+        mut self,
+        key: &crate::claim::ScopedReadActorKey,
+    ) -> MemoryResult<Self> {
+        let proof = self
+            .read_proof
+            .as_ref()
+            .ok_or_else(|| MemoryError::from(crate::phone_line::invalid()))?;
+        key.phone_line_ceilings_for(proof, self.actor)?;
+        self.phone_reads.push(key.clone());
+        Ok(self)
+    }
+
     /// Marks this surface's claim writes as made in person by the vault's
     /// authenticated owner: owner-authored writes carry their own
     /// confirmation, so a critical claim they land attaches no confirm.

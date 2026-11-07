@@ -100,6 +100,36 @@ impl OpenAiMediaTransport for MediaHttp {
                         body: reply.body,
                     })
                 }
+                (
+                    OpenAiMediaMethod::Post,
+                    OpenAiMediaBody::Multipart { fields, files },
+                    Some(release),
+                ) => {
+                    let mut form = reqwest::multipart::Form::new();
+                    for (name, value) in fields {
+                        form = form.text(name, value);
+                    }
+                    for file in files {
+                        let part = reqwest::multipart::Part::bytes(file.bytes)
+                            .file_name(file.filename)
+                            .mime_str(&file.media_type)
+                            .map_err(|_| FatalLlmError::InvalidRequest)?;
+                        form = form.part(file.name, part);
+                    }
+                    let reply = self
+                        .http
+                        .send_multipart_released(&path, form, release, lease)
+                        .await
+                        .map_err(|error| match error {
+                            HttpReleaseError::Transport(failure) => transport(failure),
+                            HttpReleaseError::Release(error) => error,
+                        })?;
+                    Ok(OpenAiMediaHttpResponse {
+                        status: reply.status,
+                        headers: reply.headers,
+                        body: reply.body,
+                    })
+                }
                 (method, body, _) => {
                     self.execute(OpenAiMediaHttpRequest { method, path, body }, lease)
                         .await

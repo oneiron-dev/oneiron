@@ -19,7 +19,7 @@ use serde_json::Value as JsonValue;
 
 use super::cache_usage::carry_chat_evidence;
 use super::exl3_evidence::{Tie, external_tie};
-use super::http::{HttpFailure, ProviderHttp, SseItem};
+use super::http::{HttpFailure, HttpReleaseError, ProviderHttp, SseItem};
 use super::llama_identity::{AnsweringIdentity, LlamaIdentityResolver, execution_mode};
 use super::output_cap::OutputCap;
 use super::served::record_served_model;
@@ -84,7 +84,7 @@ impl OpenAiHttp {
             );
             let mut reply = self
                 .http
-                .post_json(&request.path, &request.headers, &body)
+                .post_json_leased(&request.path, &request.headers, &body, lease)
                 .await?;
             let answering = match reply.body.get("model").and_then(JsonValue::as_str) {
                 Some(returned) if (200..300).contains(&reply.status) => {
@@ -142,7 +142,9 @@ impl OpenAiHttp {
                 .and_then(|wire| self.engine_models.get(wire))
                 .cloned(),
         );
-        let events = self.http.post_sse(&request.path, &request.headers, &body);
+        let events = self
+            .http
+            .post_sse_leased(&request.path, &request.headers, &body, lease);
         let frames = futures_util::stream::unfold(
             Frames {
                 transport: self,
@@ -179,6 +181,15 @@ impl From<HttpFailure> for OpenAiCompatTransportError {
             | HttpFailure::EventTooLarge
             | HttpFailure::BodyTooLarge
             | HttpFailure::OutOfMemory => Self::Server,
+        }
+    }
+}
+
+impl From<HttpReleaseError> for OpenAiCompatTransportError {
+    fn from(error: HttpReleaseError) -> Self {
+        match error {
+            HttpReleaseError::Transport(error) => error.into(),
+            HttpReleaseError::Release(error) => Self::DispatchRelease(error),
         }
     }
 }
@@ -480,7 +491,7 @@ type Frame = Result<OpenAiCompatStreamFrame, OpenAiCompatTransportError>;
 
 impl<S> Frames<'_, S>
 where
-    S: futures_util::Stream<Item = Result<SseItem, HttpFailure>>,
+    S: futures_util::Stream<Item = Result<SseItem, HttpReleaseError>>,
 {
     async fn next(mut self) -> Option<(Frame, Self)> {
         if self.closed {
@@ -514,7 +525,7 @@ where
         Some((frame, self))
     }
 
-    async fn frame(&mut self, item: Result<SseItem, HttpFailure>) -> Frame {
+    async fn frame(&mut self, item: Result<SseItem, HttpReleaseError>) -> Frame {
         match item? {
             SseItem::Status(mut reply) => {
                 let native = has_inference_calls(&reply.body);
