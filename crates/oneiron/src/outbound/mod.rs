@@ -51,7 +51,8 @@ pub use self::capability::{
 };
 pub use self::connector_reply::{ConnectorReply, ConnectorReplyDispatch, connector_reply_request};
 pub use self::connector_task::{
-    CONNECTOR_SEND_TASK_SUBKIND, ConnectorSendTask, ConnectorSendTaskOutcome, connector_actor_id,
+    CONNECTOR_SEND_TASK_SUBKIND, ConnectorSendTask, ConnectorSendTaskOutcome, SendExecutorLease,
+    connector_actor_id,
 };
 pub(crate) use self::dispatch_attempt_id::{
     connector_logical_send_ref, outbound_dispatch_attempt_id,
