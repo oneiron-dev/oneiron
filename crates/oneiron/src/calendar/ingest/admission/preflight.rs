@@ -16,6 +16,7 @@ impl PollAdmission<'_> {
             uid: event.uid.clone(),
             last_sequence: event.sequence,
             content_hash: event.content_hash,
+            source: self.source,
             direction: CalendarPassportDirection::Inbound,
             last_seen_at: self.now,
             presence: CalendarPassportPresence::Live,

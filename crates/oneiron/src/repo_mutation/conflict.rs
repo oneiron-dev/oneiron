@@ -3,6 +3,7 @@
 //! `conflict_value` owns the claim values; `write` owns the checked claim writer.
 
 // The checked claim writer, shared with the merge queue's overlap handoff.
+mod queue;
 mod write;
 
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
@@ -260,7 +261,7 @@ pub(super) fn resolve_repo_conflict_file(
             "resolved path must be one of the recorded conflicted paths",
         )));
     }
-    let current_branch = current_branch(repo_root)?;
+    let current_branch = current_branch(vault, repo_root)?;
     if current_branch != branch_name {
         return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "repo conflict resolution must run on the recorded branch",
@@ -290,7 +291,7 @@ pub(super) fn finish_repo_conflict_resolution(
         &prepared.resolved_tree,
         "resolved tree must be a 40-hex object id",
     )?;
-    if current_branch(repo_root)? != prepared.branch_name {
+    if current_branch(vault, repo_root)? != prepared.branch_name {
         return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "prepared conflict resolution must finish on its recorded branch",
         )));
@@ -648,14 +649,19 @@ pub(super) fn tree_hash_for_ref(repo_root: &Path, git_ref: &str) -> Result<Strin
     Ok(tree)
 }
 
-fn current_branch(repo_root: &Path) -> Result<String> {
-    let branch = utf8_trimmed(
+pub(super) fn current_branch(vault: &Vault, repo_root: &Path) -> Result<String> {
+    let mut branch = utf8_trimmed(
         run_git(
             repo_root,
             &["branch".to_owned(), "--show-current".to_owned()],
         )?,
         "git branch name must be UTF-8",
     )?;
+    if branch.is_empty()
+        && let Some(logical) = vault.queue_source_branch_at_root(repo_root)?
+    {
+        branch = logical;
+    }
     validate_git_ref_label(&branch)?;
     Ok(branch)
 }
