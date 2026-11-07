@@ -58,6 +58,7 @@ pub trait SeatNotes: Send + Sync {
 ///
 /// A provider reads the task and the eligible candidates as the call's bounded state; no
 /// evidence id names them.
+#[derive(Clone)]
 pub struct SeatDecisions {
     pub ladder: HeldLadder,
     pub principal: EntityId,
@@ -72,6 +73,16 @@ pub struct SeatDecisions {
 }
 
 impl SeatDecisions {
+    /// This pick made for `principal`, on the same ladder, dial, bands, wording, budget
+    /// and notes (FIX 4543): a dispatched agent's wake picks its seat in its own voice.
+    #[must_use]
+    pub fn for_principal(&self, principal: EntityId) -> Self {
+        Self {
+            principal,
+            ..self.clone()
+        }
+    }
+
     /// Which candidate the seat pins, then, unless the holder fixed the effort or the
     /// model has one rung, which of its allowed efforts it runs at, under `deadline`, the
     /// clock its caller already runs on (FIX 7507): both questions share it, so a birth
