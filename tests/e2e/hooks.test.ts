@@ -1,10 +1,14 @@
 import { afterAll, expect, test } from "bun:test";
+import { resolve } from "node:path";
+import { readFile, readdir } from "node:fs/promises";
 import type { Facade, FacadeInput, FacadeResult } from "@oneiron/client";
 import { EngineFixture, awaitPublic } from "./support/engine.ts";
-import type { McpClient } from "./support/clients.ts";
+import { createPrivateKey, createPublicKey } from "node:crypto";
+import { credentialParts, McpClient, PublicHttpClient } from "./support/clients.ts";
+import type { JsonRpcReply, WireReply } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 import type { FixtureCatalog } from "./support/fixtures.ts";
-import { defineFile, redactor } from "./support/run.ts";
+import { BlockedDoor, defineFile, redactor } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
@@ -39,6 +43,21 @@ interface Corpus {
     annotation: string; packFiles: Record<string, string>;
   };
 }
+interface FactCorpus {
+  packName: string; hookName: string; hookVersion: string;
+  triggerPredicate: string; otherPredicate: string; outputPredicate: string;
+  matchingWorld: string; otherWorld: string; marker: string;
+  writes: {
+    id: string; match: boolean; axis: "matching" | "predicate" | "world" | "actor_class";
+    value: { sequence: number; fact: string };
+  }[];
+  expected: {
+    matchingSequences: number[];
+    landedEffects: { marker: string; sequence: number; fact: string }[];
+  };
+  packFiles: Record<string, string>;
+}
+
 async function packInput(catalog: FixtureCatalog, entries: Record<string, string>): Promise<Facade.PackPutRequest> {
   return { files: await Promise.all(Object.entries(entries).map(async ([path, id]) => ({
     path, text: new TextDecoder().decode(await catalog.readArchive(id)),
@@ -48,7 +67,7 @@ async function packInput(catalog: FixtureCatalog, entries: Record<string, string
 // The shared MCP client intentionally returns protocol bodies. This local
 // typed envelope reader supplies no authority, retries, paging or verb fallback.
 type HookMcpVerb = "vault.packs.put" | "vault.claims.upsert" | "vault.claims.list"
-  | "vault.receipts" | "vault.hooks.replay";
+  | "vault.receipts" | "vault.hooks.replay" | "self.actor" | "vault.scope.ceiling";
 interface ToolCatalog {
   tools: { name: string; inputSchema: { properties: { schema_version: { const: string } } } }[];
 }
@@ -116,27 +135,156 @@ async function readHookReplay(
   }
 }
 
-/* HOOKS-01 — Fact hook commit and restart catchup should work. OF-579.
- * Canon: ARCH-0080 #fact-inputs/#fact-sources/#crash-safety/#hook-grant.
- * Install: vault.packs.put({files:[{path,text}]}) -> PackPutReceipt.
- * Canonical grant, not an invented callable verb:
- *   HookGrant { reader: EntityRef, reader_class: Human|Agent|System,
- *               predicates: PredicateGlob[], worlds: WorldRef[] }
- * The owner assigns it to a binding; a fact hook has no writer session.
- * Current owner hooks GET returns {id,binding}[], not the effective grant;
- * set_hook_grant exists only in the library, not HTTP/MCP/generated SDK/CLI.
- *
- * Once typed grant assignment/read exist, install the claim.landed fixture
- * with a narrow author grant. Commit two matching writes in known order,
- * interleaved with wrong predicate/world/class writes. Observe each public
- * write receipt before SIGKILL, restart the same EngineFixture, then await
- * Hook receipts and exactly one landed effect per envelope. Check per-source
- * commit order, author and Generated provenance, then restart again and require
- * unchanged effect ids/counts. A restart may deliver again, never land twice.
- * Do not fake a queue drain, grant record, cursor reset or crash transaction.
- * G09: use claim.landed only; no requirement for later source families is made.
+/* HOOKS-01 — OF-579, ARCH-0080 fact-inputs/fact-sources/crash-safety/hook-grant.
+ * Use the public owner grant doors and a NEW independent canonical body.js pack.
+ * Trigger actor class is not the observer grant's reader_class. The non-owner
+ * writer has a real principal and its own paired credential, not a forged actor.
+ * All five source receipts are observed before SIGKILL on the same fixture.
+ * Pending work at the instant of the kill is not forced or claimed here.
  */
-suite.todo(test, "HOOKS-01", "waits on typed hook grant assignment and effective-grant read — Fact hook commit and restart catchup should work");
+suite.test(test, "HOOKS-01", "Fact hook commit and restart catchup should work", async () => {
+  const catalog = await loadFixtures();
+  const data = await catalog.readJson<Corpus>("hooks-scenarios");
+  const spec = await catalog.readJson<FactCorpus>("hooks-fact-scenario");
+  const engine = await EngineFixture.start({ id: "HOOKS-01", profile });
+  const owner = engine.pairedActor.principalRef;
+
+  // Create the agent through the stopped-vault CLI, before the journey's crash.
+  await engine.client.call("vault.receipts", { limit: 1 });
+  await engine.kill();
+  const minted = await engine.cli.run([
+    "token", "agent", "--name", "hooks-fact-nonmatch", "--tier", "full-access",
+    "--config", resolve(engine.root, "oneiron.toml"),
+    "--out", resolve(engine.root, "hooks-fact-nonmatch.credential"),
+  ], undefined, undefined, true);
+  expect(minted.exitCode).toBe(0);
+  const principal = JSON.parse(minted.stdout) as { principal_ref: string; actor_class: string };
+  expect(principal.principal_ref).toMatch(/^[a-f0-9]{32}$/);
+  expect(principal.actor_class).toBe("agent");
+  expect(principal.principal_ref).not.toBe(owner);
+  await engine.restart();
+  const agent = await engine.pairActor({
+    principalRef: principal.principal_ref, actorClass: "agent",
+    scope: ["core:read", "core:propose", "core:write"],
+  });
+  const baseScope = await ownerBaseClaimScope(engine.client, owner);
+  const installed = await engine.client.call("vault.packs.put", await packInput(catalog, spec.packFiles));
+  expect(installed.outcome).toBe("installed");
+  expect(installed.receipt?.pack_name).toBe(spec.packName);
+  expect(installed.receipt?.status).toBe("active");
+  const bindings = (await engine.client.call("vault.packs.hooks.list", {}))
+    .filter(row => row.binding.pack === spec.packName && row.binding.hook === spec.hookName);
+  expect(bindings).toHaveLength(1);
+  const binding = bindings[0]!;
+  expect(binding.binding.owner).toBe(owner);
+  expect(binding.binding.author).toEqual({ kind: "owner" });
+  expect(binding.binding.enabled).toBe(true);
+  expect(binding.binding.selector.phase).toBe("fact");
+  expect(binding.binding.selector.verbs).toEqual([`claim.landed:${spec.triggerPredicate}`]);
+  expect(binding.binding.selector.actors).toEqual(["human"]);
+  expect(binding.binding.selector.scope).toBe(`world:${spec.matchingWorld}`);
+  const grant: Facade.HookGrant = {
+    reader: owner, reader_class: "human",
+    predicates: [spec.triggerPredicate], worlds: [spec.matchingWorld],
+  };
+  expect(await engine.client.call("vault.packs.hooks.grant.set", { binding: binding.id, grant }))
+    .toEqual({ binding: binding.id, grant });
+  const readGrant = () => engine.client.call("vault.packs.hooks.grant.get", { binding: binding.id });
+  expect(await readGrant()).toEqual({ binding: binding.id, grant });
+
+  const matching = spec.writes.filter(row => row.match);
+  expect(matching.map(row => row.value.sequence)).toEqual(spec.expected.matchingSequences);
+  expect(spec.writes.filter(row => !row.match).map(row => row.axis))
+    .toEqual(["predicate", "world", "actor_class"]);
+  const sourceReceipts: Facade.MemoryReceipt[] = [];
+  for (const row of spec.writes) {
+    const writer = row.axis === "actor_class" ? agent : engine.pairedActor;
+    const world = row.axis === "world" ? spec.otherWorld : spec.matchingWorld;
+    const committed = await writer.client.call("vault.claims.upsert", {
+      id: row.id, subject_ref: owner,
+      predicate: row.axis === "predicate" ? spec.otherPredicate : spec.triggerPredicate,
+      value: row.value, confidence: 1, source: "user_stated",
+      scope: { ...baseScope, world_id: world },
+    });
+    const page = await engine.client.call("vault.receipts", { limit: data.pageBound });
+    expect(page.undecodable).toBe(0);
+    expect(page.next_after == null).toBe(true);
+    const receipt = page.receipts.find(item => item.receipt_ref === committed.receipt_ref);
+    expect(receipt).toBeDefined();
+    expect(receipt!.outcome).toBe("allow");
+    expect(receipt!.actor_ref).toBe(writer.principalRef);
+    sourceReceipts.push(receipt!);
+  }
+  const hookReceipts = async () => (await readHookReceipts(
+    input => engine.client.call("vault.receipts", input), data.pageBound,
+  )).filter(row => row.fields?.hook === `${spec.packName}/${spec.hookName}`);
+  const readEffects = async () => {
+    const page = await engine.client.call("vault.claims.list", {
+      subject_ref: owner, predicate: spec.outputPredicate, limit: data.pageBound,
+    });
+    expect(page.value.length).toBeLessThan(data.pageBound);
+    return byClaimId(page.value);
+  };
+  const beforeKill = await hookReceipts();
+  await engine.kill();
+  await engine.restart();
+  expect(await readGrant()).toEqual({ binding: binding.id, grant });
+  const receipts = await awaitPublic(hookReceipts, rows => rows.length >= matching.length,
+    { label: "HOOKS-01 durable Hook receipts after SIGKILL" });
+  expect(receipts).toHaveLength(matching.length);
+  const effects = await awaitPublic(readEffects, rows => rows.length >= matching.length,
+    { label: "HOOKS-01 one landed effect per matching envelope" });
+  expect(effects).toHaveLength(spec.expected.landedEffects.length);
+  const ordered = matching.map(row => {
+    const found = receipts.filter(receipt => receipt.fields?.trigger_ref === row.id);
+    expect(found).toHaveLength(1);
+    return found[0]!;
+  });
+  const positions = ordered.map(row => receiptField(row, "position"));
+  for (const position of positions) expect(position).toMatch(/^[a-f0-9]+$/);
+  expect(BigInt(`0x${positions[0]!}`) < BigInt(`0x${positions[1]!}`)).toBe(true);
+  const runKeys = ordered.map(row => receiptField(row, "run_key"));
+  expect(new Set(runKeys).size).toBe(matching.length);
+  for (const key of runKeys) expect(key).toMatch(/^[a-f0-9]{64}$/);
+  // Positions prove source order; run clocks may tie. No public unique apply
+  // sequence exists, so these reads do not claim strict apply serialization.
+  const clocks = ordered.map(row => Number(receiptField(row, "now")));
+  expect(clocks.every(Number.isSafeInteger)).toBe(true);
+  expect(clocks[0]!).toBeLessThanOrEqual(clocks[1]!);
+  expect(ordered[0]!.created_at).toBeLessThanOrEqual(ordered[1]!.created_at);
+  for (const [index, receipt] of ordered.entries()) {
+    expect(receipt.outcome).toBe("propose");
+    expect(receipt.actor_ref).toBe(owner);
+    expect(receiptField(receipt, "binding")).toBe(binding.id);
+    expect(receiptField(receipt, "source")).toBe("claim_changelog");
+    expect(receiptField(receipt, "fact")).toBe("claim.landed");
+    expect(receiptField(receipt, "hook_version")).toBe(spec.hookVersion);
+    const expected = spec.expected.landedEffects[index]!;
+    const landed = effects.filter(row => typeof row.value === "object" && row.value !== null
+      && "sequence" in row.value && row.value.sequence === expected.sequence);
+    expect(landed).toHaveLength(1);
+    expect(landed[0]!.value).toEqual(expected);
+    expect(landed[0]!.subject_ref).toBe(owner);
+    expect(landed[0]!.source).toBe("generated");
+    expect(landed[0]!.approval).toBe("proposed");
+    // Author is public on the binding and Hook receipt, not made_by on this
+    // worker's Proposed row. Value echo and cardinality correlate the two.
+  }
+  await engine.artifacts.json("fact-commit-restart.json", {
+    sourceReceipts, beforeKill, receipts, effects, grant,
+    pendingAtKillForced: false,
+  });
+  await engine.kill();
+  await engine.restart();
+  expect(await readGrant()).toEqual({ binding: binding.id, grant });
+  expect(await readEffects()).toEqual(effects);
+  const afterSecond = await hookReceipts();
+  expect(afterSecond.map(row => row.receipt_ref).sort())
+    .toEqual(receipts.map(row => row.receipt_ref).sort());
+  await engine.artifacts.json("fact-second-restart.json", {
+    receipts: afterSecond, effects: await readEffects(),
+  });
+});
 
 suite.test(test, "HOOKS-02", "Hook replay lands nothing should work", async () => {
   const catalog = await loadFixtures();
@@ -269,30 +417,376 @@ suite.test(test, "HOOKS-02", "Hook replay lands nothing should work", async () =
   }
 });
 
-/* HOOKS-03 — Before-hook rewrite and durable ask should work. OF-580.
- * Canon: ARCH-0080 #verb-outcomes/#ask-continuation, one logical invocation.
- * Existing typed carrier input: vault.claims.upsert(ClaimInput).
- * Existing outcomes: Rewrite {kind:"rewrite",args:ClaimInput}, then
- * Ask {kind:"ask",question:string}; Pending carries invocation + ask handle.
- * Existing tasks.answer({handle:{group_ref},word:TaskAskWord}) and the SDK's
- * retry(pending, verb, originalInput) are real; they are NOT the missing doors.
- *
- * The required canonical caller/claim scope names world, facet, relationship
- * and project explicitly. ClaimInput currently exposes scope?:unknown and
- * optional world_ref/relationship_ref, not that typed contract. A core:write
- * token is not proof of a bounded session's four-axis row authority.
- * Once available, pair the same scoped actor for HTTP and MCP, install ordered
- * Rewrite then Ask, and invoke the same verb on each carrier. Count one pre
- * run per invocation, check rewritten values and validation refusal, then
- * attempt a world/facet/project escape and require current-gate refusal with
- * no landed row. Keep each typed Pending, restart, answer its actual ask once,
- * retry under its saved invocation and observe one resumption/effect. A repeat
- * must return the same ask/result, never a second ask or effect. Also narrow
- * authority before a saved call resumes: a task answer cannot authorize it.
- * Do not use execute_code, caller-authored grants or a raw scope map as G01
- * substitutes for the absent typed scope contract.
+/* HOOKS-03 — OF-580, ARCH-0080 verb-outcomes/ordering/ask-continuation.
+ * ClaimScope is row placement; the support slip's typed Scope is the caller
+ * ceiling. The owner issues it to a real CLI-created agent, not to himself.
+ * Revoke reduces the SAME saved credential to no authority; attenuation would
+ * make another instrument. A task answer supplies no effect authority.
  */
-suite.todo(test, "HOOKS-03", "waits on typed four-axis caller/session scope for Rewrite re-admission — Before-hook rewrite and durable ask should work");
+suite.test(test, "HOOKS-03", "Before-hook rewrite and durable ask should work", async () => {
+  type Carrier = "HTTP" | "MCP";
+  type Mode = "allowed" | "invalid" | "world" | "facet" | "project" | "revoked";
+  type Input = FacadeInput<"vault.claims.upsert">;
+  type Output = FacadeResult<"vault.claims.upsert">;
+  interface Case { mode: Mode; id: string; predicate: string }
+  interface Control extends Case { phase: "live" | "revoked"; invocation: string }
+  interface RewriteCorpus {
+    packName: string; hookVersion: string; rewriteHook: string; askHook: string;
+    originalFact: string; rewrittenValue: { marker: string; fact: string };
+    question: string; otherWorld: string; otherProject: string;
+    cases: Record<Carrier, Case[]>; progressControls: Control[];
+    packFiles: Record<string, string>;
+  }
+  interface ErrorBody {
+    error: { code: string; message: string; hook?: Facade.VerbHookStop; receiptRef?: string };
+  }
+  interface HookToolReply {
+    isError: boolean;
+    structuredContent: { output?: Output; hook?: Facade.VerbHookStop; meta?: { end: string } };
+  }
+  type Wire = { carrier: "HTTP"; reply: WireReply<Output | ErrorBody> }
+    | { carrier: "MCP"; reply: JsonRpcReply<HookToolReply> };
+  type Pending = {
+    carrier: Carrier; input: Input; row: Case;
+    stop: Extract<Facade.VerbHookStop, { status: "pending" }>;
+  };
+  const catalog = await loadFixtures();
+  const common = await catalog.readJson<Corpus>("hooks-scenarios");
+  const spec = await catalog.readJson<RewriteCorpus>("hooks-rewrite-ask-scenario");
+  const engine = await EngineFixture.start({ id: "HOOKS-03", profile });
+  const owner = engine.pairedActor.principalRef;
+  await engine.client.call("vault.receipts", { limit: 1 });
+  await engine.kill();
+  const minted = await engine.cli.run([
+    "token", "agent", "--name", "hooks-rewrite-agent", "--tier", "full-access",
+    "--config", resolve(engine.root, "oneiron.toml"),
+    "--out", resolve(engine.root, "hooks-rewrite-agent.credential"),
+  ], undefined, undefined, true);
+  expect(minted.exitCode).toBe(0);
+  const principal = JSON.parse(minted.stdout) as { principal_ref: string; actor_class: string };
+  expect(principal.principal_ref).toMatch(/^[a-f0-9]{32}$/);
+  expect(principal.principal_ref).not.toBe(owner);
+  expect(principal.actor_class).toBe("agent");
+  await engine.restart();
+  const agent = await engine.pairActor({
+    principalRef: principal.principal_ref, actorClass: "agent",
+    scope: ["core:read", "core:propose", "core:write"],
+  });
+  const position = await ownerBaseClaimScope(engine.client, owner);
+  const facets = () => engine.client.call("vault.neighbors", {
+    entity_ref: owner, opts: { edge_kind: "has_facet", limit: common.pageBound },
+  });
+  const facetsBefore = new Set((await facets()).value.map(row => row.short_id));
+  await engine.client.call("vault.identity.facet", {
+    entity: owner, facets: [{ label: "Rewrite escape fixture facet" }],
+    reassignment_map: [], evidence: { refs: [], rationale: "Independent HOOKS-03 row-position oracle" },
+  });
+  const added = (await facets()).value.filter(row => !facetsBefore.has(row.short_id));
+  expect(added).toHaveLength(1);
+  const { value: otherFacet } = await engine.client.call("vault.get", { entity_ref: added[0]!.short_id });
+  expect(otherFacet?.kind).toBe("FACET");
+  if (!otherFacet) throw new Error("Public facet creation returned no readable FACET");
+  expect(otherFacet.id_hex).not.toBe(position.scope_facet_id);
+  expect(spec.otherWorld).not.toBe(position.world_id);
+  expect(spec.otherProject).not.toBe(position.scope_project_id);
+
+  const { seed } = credentialParts(agent.credential);
+  const key = createPrivateKey({
+    key: Buffer.concat([Buffer.from("302e020100300506032b657004220420", "hex"), Buffer.from(seed, "hex")]),
+    format: "der", type: "pkcs8",
+  });
+  const publicKey = createPublicKey(key).export({ format: "der", type: "spki" }).subarray(-32).toString("hex");
+  const ceiling: Facade.Scope = {
+    worlds: { kind: "some", values: [position.world_id] },
+    facets: { kind: "some", values: [position.scope_facet_id] },
+    audience: { kind: "some", values: [position.scope_project_id] },
+    bands: { kind: "all" }, verbs: { kind: "some", values: ["write"] },
+    sensitivity: { kind: "all" },
+  };
+  const mintSupport = (purpose: string) => engine.client.call("vault.support_grants.mint", {
+    holder: principal.principal_ref, holder_class: "agent", holder_key: publicKey,
+    scope: ceiling, records: [], purpose,
+  });
+  const support = await mintSupport("HOOKS-03 scoped rewrite and saved questions");
+  const makeCaller = (slip: string) => {
+    expect(slip).toMatch(/^v2\.slip\.[a-f0-9]+$/);
+    const credential = `v2.cred.${slip.slice("v2.slip.".length)}.${seed}`;
+    redactor.add(slip, slip.slice("v2.slip.".length), credential);
+    const http = new PublicHttpClient(engine.url, { credential, artifacts: engine.artifacts });
+    return { http, mcp: new McpClient(http) };
+  };
+  const caller = makeCaller(support.slip);
+  expect(support.grant.holder).toBe(principal.principal_ref);
+  expect(support.grant.holder_class).toBe("agent");
+  const verifyCeiling = (value: Facade.CredentialCeiling) => {
+    expect(value.kind).toBe("ceiling");
+    expect(value.scope.worlds).toEqual(ceiling.worlds);
+    expect(value.scope.facets).toEqual(ceiling.facets);
+    expect(value.scope.audience).toEqual(ceiling.audience);
+    expect(value.scope.bands).toEqual(ceiling.bands);
+    expect(value.scope.sensitivity).toEqual(ceiling.sensitivity);
+    expect(value.scope.verbs).toEqual({ kind: "some", values: ["read", "write"] });
+  };
+  const httpActor = await caller.http.call("self.actor", {});
+  expect(httpActor.actor_ref).toBe(principal.principal_ref);
+  expect(httpActor.actor_class).toBe("agent");
+  verifyCeiling(await caller.http.call("vault.scope.ceiling", {}));
+  await caller.mcp.initialize();
+  const tools = await caller.mcp.listTools() as ToolCatalog;
+  const mcpActor = await mcpCall(caller.mcp, tools, "self.actor", {});
+  expect(mcpActor.actor_ref).toBe(principal.principal_ref);
+  expect(mcpActor.actor_class).toBe("agent");
+  verifyCeiling(await mcpCall(caller.mcp, tools, "vault.scope.ceiling", {}));
+  const tool = tools.tools.find(item => item.name === "vault.claims.upsert");
+  if (!tool) throw new Error("Required vault.claims.upsert MCP tool is absent");
+  const schemaVersion = tool.inputSchema.properties.schema_version.const;
+  const installed = await engine.client.call("vault.packs.put", await packInput(catalog, spec.packFiles));
+  expect(installed.outcome).toBe("installed");
+  expect(installed.receipt?.pack_name).toBe(spec.packName);
+  expect(installed.receipt?.status).toBe("active");
+  const bindings = (await engine.client.call("vault.packs.hooks.list", {}))
+    .filter(row => row.binding.pack === spec.packName);
+  expect(bindings).toHaveLength(2);
+  for (const [name, priority] of [[spec.rewriteHook, 20], [spec.askHook, 10]] as const) {
+    const binding = bindings.find(row => row.binding.hook === name);
+    expect(binding?.binding.owner).toBe(owner);
+    expect(binding?.binding.author).toEqual({ kind: "owner" });
+    expect(binding?.binding.selector).toEqual(expect.objectContaining({
+      phase: "pre", actors: ["agent"], verbs: ["vault.claims.upsert"], priority,
+    }));
+  }
+
+  // Explicit metadata preserves the real stopped call. callTool() would mint
+  // another invocation; no credentials, asks or result envelopes are invented.
+  const call = async (
+    actor: ReturnType<typeof makeCaller>, carrier: Carrier, input: Input, invocation: string, ask?: string,
+  ): Promise<Wire> => {
+    if (carrier === "HTTP") return { carrier, reply: await actor.http.raw<Output | ErrorBody>(
+      "POST", "/v1/core/facade/vault.claims.upsert", input,
+      { "x-oneiron-invocation": invocation, ...(ask === undefined ? {} : { "x-oneiron-hook-ask": ask }) },
+    ) };
+    return { carrier, reply: await actor.mcp.rpc<HookToolReply>("tools/call", {
+      name: "vault.claims.upsert",
+      arguments: {
+        schema_version: schemaVersion,
+        consent: { policy_ref: "policy:hooks-e2e", purpose: "runtime hook public journey" },
+        arguments: { spec: input },
+      },
+      _meta: { "oneiron/invocation": invocation, ...(ask === undefined ? {} : { hook_ask: ask }) },
+    }) };
+  };
+  const stopOf = (wire: Wire): Facade.VerbHookStop | undefined => {
+    if (wire.carrier === "HTTP") return "error" in wire.reply.body ? wire.reply.body.error.hook : undefined;
+    return "result" in wire.reply ? wire.reply.result.structuredContent.hook : undefined;
+  };
+  const pendingOf = (wire: Wire) => {
+    const stop = stopOf(wire);
+    if (!stop || stop.status !== "pending") throw new Error("Expected the real typed Pending hook stop");
+    if (wire.carrier === "HTTP") expect(wire.reply.status).toBe(202);
+    else if ("result" in wire.reply) expect(wire.reply.result.isError).toBe(true);
+    return stop;
+  };
+  const outputOf = (wire: Wire): Output => {
+    if (wire.carrier === "HTTP") {
+      expect(wire.reply.status).toBe(200);
+      if ("error" in wire.reply.body) throw new Error("Saved successful call returned a refusal");
+      return wire.reply.body;
+    }
+    if ("error" in wire.reply) throw new Error("Saved successful MCP call returned a protocol refusal");
+    expect(wire.reply.result.isError).toBe(false);
+    expect(wire.reply.result.structuredContent.meta?.end).toBe("Complete");
+    const output = wire.reply.result.structuredContent.output;
+    if (!output) throw new Error("Saved successful MCP call has no typed output");
+    return output;
+  };
+  const refusedOf = (wire: Wire, invocation: string) => {
+    const stop = stopOf(wire);
+    if (!stop || stop.status !== "completed_with_error") throw new Error("Expected the saved call's typed failure");
+    expect(stop.invocation).toBe(invocation);
+    expect(stop.code).toBe("FORBIDDEN");
+    if (wire.carrier === "HTTP") {
+      expect(wire.reply.status).toBe(403);
+      expect("error" in wire.reply.body && wire.reply.body.error.code).toBe("FORBIDDEN");
+    } else if ("result" in wire.reply) expect(wire.reply.result.isError).toBe(true);
+    return { invocation: stop.invocation, code: stop.code, message: stop.message, receipt_ref: stop.receipt_ref };
+  };
+  const inputFor = (row: Case): Input => ({
+    id: row.id, subject_ref: owner, predicate: row.predicate, confidence: 1, source: "user_stated",
+    scope: position,
+    value: { mode: row.mode, fact: spec.originalFact,
+      ...(row.mode === "world" ? { target: spec.otherWorld } : {}),
+      ...(row.mode === "facet" ? { target: otherFacet.id_hex } : {}),
+      ...(row.mode === "project" ? { target: spec.otherProject } : {}),
+    },
+  });
+  const readClaims = async (row: Case) => {
+    const page = await engine.client.call("vault.claims.list", {
+      subject_ref: owner, predicate: row.predicate, limit: common.pageBound,
+    });
+    expect(page.value.length).toBeLessThan(common.pageBound);
+    return page.value;
+  };
+  const hookReceipts = async () => (await readHookReceipts(
+    input => engine.client.call("vault.receipts", input), common.pageBound,
+  )).filter(row => row.fields?.hook === `${spec.packName}/${spec.rewriteHook}`
+    || row.fields?.hook === `${spec.packName}/${spec.askHook}`);
+  const answers: { invocation: string; ask: string; answer: FacadeResult<"tasks.answer"> }[] = [];
+  const answer = async (pending: Pending) => {
+    const result = await engine.client.call("tasks.answer", {
+      handle: { group_ref: pending.stop.ask }, word: { result_ref: owner, option: "proceed" },
+    });
+    answers.push({ invocation: pending.stop.invocation, ask: pending.stop.ask, answer: result });
+    return result;
+  };
+  const stopped: Pending[] = [];
+  for (const carrier of ["HTTP", "MCP"] as const) {
+    expect(spec.cases[carrier].map(row => row.mode)).toEqual(["allowed", "invalid", "world", "facet", "project", "revoked"]);
+    for (const row of spec.cases[carrier]) {
+      const input = inputFor(row);
+      const initial = await call(caller, carrier, input, row.id);
+      const stop = pendingOf(initial);
+      expect(stop.invocation).toBe(row.id);
+      expect(pendingOf(await call(caller, carrier, input, stop.invocation, stop.ask))).toEqual(stop);
+      stopped.push({ carrier, input, row, stop });
+      await engine.artifacts.json(`rewrite-${carrier}-${row.mode}-pending.json`, initial);
+    }
+  }
+  const beforeKill = await awaitPublic(hookReceipts, rows => rows.length >= stopped.length * 2,
+    { label: "HOOKS-03 durable pre-hook runs before SIGKILL" });
+  expect(beforeKill).toHaveLength(stopped.length * 2);
+  await engine.kill();
+  await engine.restart();
+  // The live MCP credential re-registers its same fingerprint before any
+  // answer can wake the saved MCP calls; a task answer is not a credential.
+  await caller.mcp.initialize();
+  for (const pending of stopped) {
+    expect(pendingOf(await call(caller, pending.carrier, pending.input,
+      pending.stop.invocation, pending.stop.ask))).toEqual(pending.stop);
+  }
+
+  const live = stopped.filter(pending => pending.row.mode !== "revoked");
+  for (const pending of live) await answer(pending);
+  for (const pending of live.filter(item => item.row.mode === "allowed" || item.row.mode === "invalid")) {
+    const rows = await awaitPublic(() => readClaims(pending.row), rows => rows.length > 0,
+      { label: `HOOKS-03 ${pending.carrier} saved effect` });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.claim_ref).toBe(pending.row.id);
+    expect(rows[0]!.value).toEqual(pending.row.mode === "invalid" ? pending.input.value : spec.rewrittenValue);
+    expect(rows[0]!.confidence).toBe(1);
+  }
+
+  // These independent live calls observe runner progress, not a fabricated
+  // revoked-call receipt. Invocation keys sort after all original cases.
+  const controlSupport = await mintSupport("HOOKS-03 independent live runner progress controls");
+  const controlCaller = makeCaller(controlSupport.slip);
+  const controls: Pending[] = [];
+  const runControl = async (phase: Control["phase"]) => {
+    const row = spec.progressControls.find(item => item.phase === phase);
+    if (!row) throw new Error(`Missing independent ${phase} progress-control fixture`);
+    for (const pending of stopped) expect(row.invocation > pending.stop.invocation).toBe(true);
+    const input = inputFor(row);
+    const stop = pendingOf(await call(controlCaller, "HTTP", input, row.invocation));
+    const pending: Pending = { carrier: "HTTP", input, row, stop };
+    controls.push(pending);
+    await answer(pending);
+    const claims = await awaitPublic(() => readClaims(row), rows => rows.length > 0,
+      { label: `HOOKS-03 ${phase} live runner progress` });
+    expect(claims).toHaveLength(1);
+    expect(claims[0]!.value).toEqual(spec.rewrittenValue);
+    const output = outputOf(await call(controlCaller, "HTTP", input, stop.invocation, stop.ask));
+    expect(outputOf(await call(controlCaller, "HTTP", input, stop.invocation, stop.ask))).toEqual(output);
+    await engine.artifacts.json(`rewrite-${phase}-progress-control.json`, { stop, claims, output });
+  };
+  await runControl("live");
+  const liveResults: unknown[] = [];
+  for (const pending of live) {
+    const wire = await call(caller, pending.carrier, pending.input, pending.stop.invocation, pending.stop.ask);
+    const repeat = await call(caller, pending.carrier, pending.input, pending.stop.invocation, pending.stop.ask);
+    if (pending.row.mode === "allowed" || pending.row.mode === "invalid") {
+      expect(outputOf(repeat)).toEqual(outputOf(wire));
+      expect(await readClaims(pending.row)).toHaveLength(1);
+    } else {
+      expect(refusedOf(repeat, pending.stop.invocation)).toEqual(refusedOf(wire, pending.stop.invocation));
+      expect(await readClaims(pending.row)).toEqual([]);
+    }
+    liveResults.push({ carrier: pending.carrier, mode: pending.row.mode, stop: pending.stop, wire, repeat });
+  }
+
+  const revoked = stopped.filter(pending => pending.row.mode === "revoked");
+  const revoke = await engine.client.call("vault.support_grants.revoke", { grant_ref: support.grant.grant_ref });
+  expect(revoke.changed).toBe(true);
+  expect(revoke.holder).toBe(principal.principal_ref);
+  for (const pending of revoked) await answer(pending);
+  await runControl("revoked");
+  const revokedReplies: unknown[] = [];
+  for (const pending of revoked) {
+    const wire = await call(caller, pending.carrier, pending.input, pending.stop.invocation, pending.stop.ask);
+    if (wire.carrier === "HTTP") expect(wire.reply.status).toBe(401);
+    else {
+      if (!("error" in wire.reply)) throw new Error("Revoked MCP credential was admitted");
+      expect(wire.reply.error.code).toBe(-32001);
+      expect((wire.reply.error.data as { kind: string }).kind).toBe("mcp_credential_revoked");
+    }
+    expect(await readClaims(pending.row)).toEqual([]);
+    revokedReplies.push(wire);
+  }
+  const all = [...stopped, ...controls];
+  const receipts = await awaitPublic(hookReceipts, rows => rows.length >= all.length * 2,
+    { label: "HOOKS-03 complete per-invocation pre-hook receipts" });
+  expect(receipts).toHaveLength(all.length * 2);
+  for (const pending of all) {
+    const chain = receipts.filter(row => row.fields?.invocation === pending.stop.invocation);
+    expect(chain).toHaveLength(2);
+    const rewrite = chain.filter(row => row.fields?.hook === `${spec.packName}/${spec.rewriteHook}`);
+    const ask = chain.filter(row => row.fields?.hook === `${spec.packName}/${spec.askHook}`);
+    expect(rewrite).toHaveLength(1);
+    expect(ask).toHaveLength(1);
+    expect(rewrite[0]!.outcome).toBe(pending.row.mode === "invalid" ? "refused" : "rewrite");
+    expect(ask[0]!.outcome).toBe("ask");
+    if (pending.row.mode === "invalid") expect(receiptField(rewrite[0]!, "reason")).toContain("confidence");
+    for (const receipt of chain) {
+      expect(receipt.actor_ref).toBe(principal.principal_ref);
+      expect(receipt.actor_class).toBe("agent");
+      expect(receiptField(receipt, "phase")).toBe("pre");
+      expect(receiptField(receipt, "hook_version")).toBe(spec.hookVersion);
+    }
+  }
+  expect(answers).toHaveLength(all.length);
+  await engine.artifacts.json("rewrite-ask-results.json", {
+    principal: principal.principal_ref, position, otherFacet: otherFacet.id_hex,
+    grant: support.grant, revoke, answers, beforeKill, receipts, liveResults, revokedReplies,
+    progressControls: controls.map(item => item.stop),
+    revokedTerminalReceiptObserved: false,
+  });
+  await engine.kill();
+  // stop() awaited the real server captures. A control is not proof of a
+  // healthy pass if a target hit a transient drain failure; do not pass on
+  // a truncated log or the tail-only diagnostic ring.
+  const captures = (await readdir(engine.artifacts.root))
+    .filter(name => name.startsWith("server-") && name.endsWith(".json"));
+  expect(captures.length).toBeGreaterThan(0);
+  for (const name of captures) {
+    const capture = JSON.parse(await readFile(resolve(engine.artifacts.root, name), "utf8")) as {
+      stdout: string; stderr: string; stdoutTruncated: boolean; stderrTruncated: boolean;
+    };
+    if (typeof capture.stdout !== "string" || typeof capture.stderr !== "string"
+      || capture.stdoutTruncated !== false || capture.stderrTruncated !== false) {
+      throw new BlockedDoor("inconclusive HOOKS-03 progress proof: server diagnostics are missing or truncated");
+    }
+    const diagnostic = `${capture.stdout}\n${capture.stderr}`;
+    if (diagnostic.includes("a settled verb hook ask waits for the next pass")
+      || diagnostic.includes("settled verb hook asks wait for the next pass")) {
+      throw new BlockedDoor("inconclusive HOOKS-03 progress proof: the runner reported a drain failure");
+    }
+  }
+  await engine.restart();
+  for (const pending of stopped) {
+    const rows = await readClaims(pending.row);
+    expect(rows).toHaveLength(pending.row.mode === "allowed" || pending.row.mode === "invalid" ? 1 : 0);
+  }
+  expect((await hookReceipts()).map(row => row.receipt_ref).sort())
+    .toEqual(receipts.map(row => row.receipt_ref).sort());
+});
 
 suite.test(test, "HOOKS-04", "After-hook redaction is monotone should work", async () => {
   const catalog = await loadFixtures();
