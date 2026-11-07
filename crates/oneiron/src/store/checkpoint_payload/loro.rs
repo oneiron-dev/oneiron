@@ -5,6 +5,7 @@ pub(crate) use oneiron_store::checkpoint_payload::loro::*;
 
 use self::frame::{read_frame, write_frame};
 pub(crate) use self::proof::prove_loro_equivalent;
+pub(crate) use self::shallow::shallow_names_no_one;
 use super::corrupt;
 use super::rows::{
     ActorPart, Captured, OwnerRef, RoundTripPolicy, RowLocator, RowPart, Unresolved,
@@ -20,14 +21,19 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod frame;
 mod proof;
+mod shallow;
 
-/// Splits one document group, a full snapshot then its updates in replay
-/// order, through `codec`: each row's content and actors, in the group's
-/// order. Every change's message and every map insertion of every row is
-/// read, not only the values that stand now. The split stands only once
-/// its all-open join gives each stored row back under `policy`, and the
-/// rebuilt document's state is the stored one; otherwise the whole group
-/// stays under the vault-wide seal with the reason it gives.
+/// Splits one document group, a snapshot then its updates in replay order,
+/// through `codec`: each row's content and actors, in the group's order.
+/// Every change's message and every map insertion of every row is read, not
+/// only the values that stand now. A shallow or state-only snapshot holds no
+/// history before its cut, so it splits only when it names no one
+/// ([`shallow_names_no_one`]): it is then its own no-one form, kept as
+/// stored, and its updates split on it as on a full one (FIX 6442). The
+/// split stands only once its all-open join gives each stored row back
+/// under `policy`, and the rebuilt document's state is the stored one;
+/// otherwise the whole group stays under the vault-wide seal with the
+/// reason it gives.
 pub(crate) fn split_loro<C: LoroActorCodec>(
     rows: &[&[u8]],
     codec: &C,
@@ -35,9 +41,9 @@ pub(crate) fn split_loro<C: LoroActorCodec>(
 ) -> std::result::Result<Vec<SplitRow>, Unresolved> {
     let (snapshot, updates) = rows.split_first().ok_or(Unresolved::Undecodable)?;
     let source = LoroDoc::new();
-    import_snapshot(&source, snapshot)?;
-    let mut slices = vec![Slice::Snapshot];
-    let mut stored = vec![history(&source, &Slice::Snapshot)];
+    let first = import_snapshot(&source, snapshot, codec)?;
+    let mut stored = vec![history(&source, &first)];
+    let mut slices = vec![first];
     for update in updates {
         let slice = update_slice(update).ok_or(Unresolved::Undecodable)?;
         import_blob(&source, update).map_err(undecodable)?;
@@ -51,7 +57,7 @@ pub(crate) fn split_loro<C: LoroActorCodec>(
         free.push(changes);
         atoms.push(row_atoms);
     }
-    let contents = no_one_contents::<C>(&slices, &free, &atoms);
+    let contents = no_one_contents::<C>(rows, &slices, &free, &atoms);
     let contents = contents.map_err(not_proved)?;
     let opened: Vec<OpenedRow<'_>> = contents
         .iter()
@@ -88,24 +94,32 @@ fn not_proved<E>(_: E) -> Unresolved {
     Unresolved::ActorSplit(NOT_PROVED)
 }
 
-/// The stored snapshot `bytes` in the empty `doc`: a full one whose state is
-/// its head.
-fn import_snapshot(doc: &LoroDoc, bytes: &[u8]) -> std::result::Result<(), Unresolved> {
+/// The stored snapshot `bytes` in the empty `doc`, and the slice it is: a
+/// full one whose state is its head, or a shallow or state-only one whose
+/// state is its head and which names no one through `codec` (FIX 6442).
+fn import_snapshot<C: LoroActorCodec>(
+    doc: &LoroDoc,
+    bytes: &[u8],
+    codec: &C,
+) -> std::result::Result<Slice, Unresolved> {
     let meta = LoroDoc::decode_import_blob_meta(bytes, true);
     let meta = meta.map_err(undecodable)?;
-    match meta.mode {
-        EncodedBlobMode::ShallowSnapshot => return Err(Unresolved::ActorSplit(SHALLOW)),
-        EncodedBlobMode::Snapshot => {}
+    let slice = match meta.mode {
+        EncodedBlobMode::ShallowSnapshot => Slice::ShallowSnapshot,
+        EncodedBlobMode::Snapshot => Slice::Snapshot,
         _ => return Err(Unresolved::Undecodable),
-    }
+    };
     import_blob(doc, bytes).map_err(undecodable)?;
-    if doc.is_shallow() {
+    if doc.is_shallow() != (slice == Slice::ShallowSnapshot) {
         return Err(Unresolved::ActorSplit(SHALLOW));
     }
     if doc.state_frontiers() != doc.oplog_frontiers() {
         return Err(Unresolved::ActorSplit(STATE_NOT_HEAD));
     }
-    Ok(())
+    if slice == Slice::ShallowSnapshot {
+        shallow_names_no_one(bytes, codec)?;
+    }
+    Ok(slice)
 }
 
 /// Imports `bytes` into `doc`, refusing one whose dependencies it lacks.
@@ -132,27 +146,49 @@ fn import_changes(doc: &LoroDoc, changes: &[JsonChange]) -> Result<()> {
     Ok(())
 }
 
-/// `slice` of `doc`, as a row stores it.
+/// `slice` of `doc`, as a row stores it. A shallow snapshot is kept as
+/// stored, never exported anew ([`rebuild_row`]).
 fn export_slice(doc: &LoroDoc, slice: &Slice) -> Result<Vec<u8>> {
     let mode = match slice {
         Slice::Snapshot => ExportMode::Snapshot,
         Slice::Updates(spans) => ExportMode::updates_in_range(spans.as_slice()),
+        Slice::ShallowSnapshot => return Err(corrupt()),
     };
     doc.export(mode).map_err(|_| corrupt())
 }
 
+/// One row of `slice` rebuilt in `doc`, which holds the rows before it: a
+/// shallow snapshot is `stored`, its own no-one form, imported as it is
+/// (FIX 6442); any other row is `changes` imported, then exported as its
+/// slice.
+fn rebuild_row(
+    doc: &LoroDoc,
+    slice: &Slice,
+    stored: &[u8],
+    changes: &[JsonChange],
+) -> Result<Vec<u8>> {
+    if *slice == Slice::ShallowSnapshot {
+        import_blob(doc, stored)?;
+        return Ok(stored.to_vec());
+    }
+    import_changes(doc, changes)?;
+    export_slice(doc, slice)
+}
+
 /// Each row's content: its no-one history exported as the row's slice of a
-/// scratch document that holds the rows before it, with its holes.
+/// scratch document that holds the rows before it, with its holes. A
+/// shallow snapshot's is its stored bytes (`rows`), which name no one.
 fn no_one_contents<C: LoroActorCodec>(
+    rows: &[&[u8]],
     slices: &[Slice],
     free: &[Vec<JsonChange>],
     atoms: &[Vec<Atom>],
 ) -> Result<Vec<Vec<u8>>> {
     let scratch = LoroDoc::new();
     let mut contents = Vec::with_capacity(slices.len());
-    for ((slice, changes), row_atoms) in slices.iter().zip(free).zip(atoms) {
-        import_changes(&scratch, changes)?;
-        let history = export_slice(&scratch, slice)?;
+    let parts = rows.iter().zip(slices).zip(free).zip(atoms);
+    for (((row, slice), changes), row_atoms) in parts {
+        let history = rebuild_row(&scratch, slice, row, changes)?;
         contents.push(write_frame(C::FAMILY, slice, row_atoms, &history)?);
     }
     Ok(contents)
@@ -186,7 +222,9 @@ fn prove_split(
 
 /// Rebuilds one group's rows from their contents and the atoms that opened:
 /// each hole whose actor did not open keeps its erased form, and no actor is
-/// taken from anywhere else. Refuses a content that does not read, an atom
+/// taken from anywhere else. A shallow snapshot first is kept as stored, and
+/// its updates are rebuilt on it (FIX 6442). Refuses a content that does not
+/// read, a shallow snapshot with a hole or one that names someone, an atom
 /// for no hole or for one twice, and a rebuild whose bytes do not carry the
 /// filled history.
 pub(crate) fn join_loro<C: LoroActorCodec>(
@@ -198,8 +236,20 @@ pub(crate) fn join_loro<C: LoroActorCodec>(
         .map(|row| read_frame(C::FAMILY, row.content))
         .collect::<Result<Vec<_>>>()?;
     let mut shapes = frames.iter().map(|frame| &frame.slice);
-    if shapes.next() != Some(&Slice::Snapshot) || shapes.any(|slice| *slice == Slice::Snapshot) {
+    let shallow = match shapes.next() {
+        Some(Slice::Snapshot) => false,
+        Some(Slice::ShallowSnapshot) => true,
+        _ => return Err(corrupt()),
+    };
+    if shapes.any(|slice| !matches!(slice, Slice::Updates(_))) {
         return Err(corrupt());
+    }
+    if shallow {
+        let frame = frames.first().ok_or_else(corrupt)?;
+        if !frame.holes.is_empty() {
+            return Err(corrupt());
+        }
+        shallow_names_no_one(&frame.history, codec).map_err(|_| corrupt())?;
     }
     // The no-one history, row by row, each filled with its opened actors.
     let free = LoroDoc::new();
@@ -209,7 +259,7 @@ pub(crate) fn join_loro<C: LoroActorCodec>(
             return Err(corrupt());
         }
         import_blob(&free, &frame.history)?;
-        if free.is_shallow() {
+        if free.is_shallow() != shallow {
             return Err(corrupt());
         }
         let changes = history(&free, &frame.slice);
@@ -220,8 +270,8 @@ pub(crate) fn join_loro<C: LoroActorCodec>(
     let rebuilt = LoroDoc::new();
     let mut bytes = Vec::with_capacity(frames.len());
     for (frame, changes) in frames.iter().zip(&filled) {
-        import_changes(&rebuilt, changes)?;
-        bytes.push(export_slice(&rebuilt, &frame.slice)?);
+        let row = rebuild_row(&rebuilt, &frame.slice, &frame.history, changes)?;
+        bytes.push(row);
     }
     // What those bytes carry, read back in another fresh document.
     let doc = LoroDoc::new();
@@ -235,7 +285,7 @@ pub(crate) fn join_loro<C: LoroActorCodec>(
         prove_loro_equivalent(changes, &carried)?;
         histories.push(carried);
     }
-    if doc.is_shallow() || doc.get_deep_value() != rebuilt.get_deep_value() {
+    if doc.is_shallow() != shallow || doc.get_deep_value() != rebuilt.get_deep_value() {
         return Err(corrupt());
     }
     Ok(JoinedLoro {
