@@ -32,7 +32,7 @@ use crate::Vault;
 use crate::error::{Error, Result, SecretError};
 use crate::world_keys::keystore_error;
 
-use crate::authority::{HostReRoot, authority_refused};
+use crate::authority::{HostIssuerSeedSlot, HostReRoot, authority_refused};
 
 /// This install holds no host issuer seed for this vault: it never rooted
 /// it, its keystore lost the slot, or the host installed no keystore.
@@ -168,6 +168,30 @@ impl Vault {
             .device_keystore()
             .map_err(|_| KeystoreError::Unavailable("the host installed no keystore"))?;
         keystore.replace(&self.issuer_slot_for(install), seed)
+    }
+
+    /// Whether this install's `HostIssuerSeed` slot for this vault, the one
+    /// [`Self::load_host_slip_issuer`] reads and a validated re-key replaces
+    /// in place ([`Self::replace_retained_host_root_secret`]), holds a seed
+    /// now (FIX-LIST 11108). Read-only, and no byte leaves it: an install
+    /// with no machine identity names no slot, so it is empty. A host with
+    /// no keystore, or a keystore fault, is the error.
+    pub fn host_issuer_seed_slot(&self) -> Result<HostIssuerSeedSlot> {
+        let keystore = self.device_keystore()?;
+        let txn = self.store.env.read_txn()?;
+        let install = crate::identity::read_machine_id_in_txn(self, &txn)?;
+        drop(txn);
+        let Some(install) = install else {
+            return Ok(HostIssuerSeedSlot::Empty);
+        };
+        let held = keystore
+            .get(&self.issuer_slot_for(install))
+            .map_err(keystore_error)?;
+        Ok(if held.is_some() {
+            HostIssuerSeedSlot::Filled
+        } else {
+            HostIssuerSeedSlot::Empty
+        })
     }
 
     /// This install's `HostIssuerSeed` slot for this vault, by the machine
