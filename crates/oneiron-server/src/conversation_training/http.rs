@@ -141,8 +141,7 @@ impl Intake {
         };
         let (sent, answers) = mpsc::sync_channel(1);
         // Detached: once cut, it ends by itself, by its time at the latest.
-        std::thread::Builder::new()
-            .name("training-shipper-post".to_owned())
+        crate::engine_thread("training-shipper-post".to_owned())
             .spawn(move || {
                 let body = Body::sized(body, len);
                 let _ = sent.send(post_on(&client, url, &content_type, body, timeout));

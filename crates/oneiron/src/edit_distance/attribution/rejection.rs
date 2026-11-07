@@ -31,7 +31,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::learning_setting::{ATTRIBUTION_UNCLEAR_FLOOR, setting_value_in_txn};
 use crate::skill_attribution::{
-    AttributionLane, UnclearAttribution, delete_unclear_in_txn, put_unclear_in_txn,
+    AttributionLane, UnclearAttribution, UnclearContext, delete_unclear_in_txn, put_unclear_in_txn,
 };
 
 /// The edit mass a rejection carries: the decider discarded the whole
@@ -257,6 +257,19 @@ fn judge_rejection_cause_in_txn(
                 reference: judgment.receipt_id.clone(),
                 evidence_receipts: judgment.evidence_receipts.clone(),
                 notes: split.unclear.clone(),
+                // What the rejection truthfully knows (FIX 7824): no attempt,
+                // task type or read rows.
+                context: UnclearContext {
+                    actor: judgment.actor,
+                    skill: judgment.skill,
+                    scope: Some(judgment.scope.clone()),
+                    project: judgment.project,
+                    type_ref: None,
+                    attempt_receipt: None,
+                    judge_revision: judgment.judge.clone(),
+                    judge_model: judgment.judge_model.clone(),
+                    sources: Vec::new(),
+                },
                 at: judgment.at,
             },
         )?;

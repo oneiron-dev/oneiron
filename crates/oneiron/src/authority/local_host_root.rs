@@ -76,6 +76,21 @@ pub enum RetainedHostRootReplace {
     Unsupported(&'static str),
 }
 
+/// What this install's `HostIssuerSeed` slot for this vault holds now, as a
+/// re-key reads it before it writes ([`Vault::host_issuer_seed_slot`]): the
+/// slot [`Vault::load_host_slip_issuer`] reads and
+/// [`Vault::replace_retained_host_root_secret`] replaces. A configured
+/// `auth_secret` never names it (FIX-LIST 11108).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostIssuerSeedSlot {
+    /// The slot holds a seed, so a validated replacement is written over it
+    /// in place.
+    Filled,
+    /// The slot holds none, or this install has no machine identity to name
+    /// one: a replace never fills it, so there is nothing to re-key.
+    Empty,
+}
+
 impl Vault {
     /// The settled root's vault id and this install's machine, read in one
     /// snapshot, for a host to show before the owner re-keys this install.
