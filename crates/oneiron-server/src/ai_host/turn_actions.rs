@@ -23,21 +23,27 @@
 //! It wakes on the vault's post-commit attempt signal and once at start. An
 //! attempt claimed a second time was cut off when the process stopped under
 //! it: it is failed and never run again, so its reply stays as saved until
-//! someone asks again.
+//! someone asks again. The one exception is an action its host hook asked
+//! about first (FIX 1765): it waits, held, for the answer, and once the ask
+//! no longer waits the same attempt runs again and crosses the same saved
+//! hook call, which decides. Held actions are looked at again on each wake
+//! and on the workflows' slow recheck.
 //!
 //! [`CONTINUE_INSTRUCTION`]: crate::api::ai::chat::CONTINUE_INSTRUCTION
 use std::sync::{Arc, Weak};
 
 use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
 use oneiron::attempt_queue::{
-    AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt, FailAttempt,
-    ManifestEntry,
+    AttemptId, AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt,
+    FailAttempt, ManifestEntry,
 };
 use oneiron::claim::CallerLocality;
 use oneiron::conversation::{
     TURN_ACTION_ATTEMPT_KIND, TurnAction, TurnActionAttempt, TurnActionAuthority,
+    turn_action_hook_parent, turn_action_resumed_from_hook,
 };
 use oneiron::memory::{Memory, MessageWriteMode, WitnessAuthor};
+use oneiron::runtime_hooks::{InvocationId, VerbHookStop};
 use oneiron::{EntityId, LlmMessage, LlmMessageRole, Vault, WriteActor};
 use tokio::sync::{broadcast, watch};
 
@@ -48,6 +54,7 @@ use crate::api::ai::chat::{
     ActionSession, Answer, AnswerRefused, ChatReuse, ReplyAssertionCollector, TurnCredential,
     TurnSources, after_turn, begin_sourced_answer_with_fallback, keepalive_every,
     live_fork_unavailable, reuse_chat_breakpoint, text_message, turn_generate_pre,
+    turn_generate_pre_retained,
 };
 use crate::api::{action_board, freeze_chat_context, record_action_answer};
 use crate::server::{SyncServer, blocking};
@@ -80,9 +87,9 @@ fn run(vault: &Arc<Vault>, ai: &AiHandle, server: Option<Weak<SyncServer>>) {
     let ai = ai.clone();
     let mut stopped = ai.turns.stop_signal();
     tokio::spawn(async move {
-        let Some(mut signals) = vault
+        let Some((mut signals, mut held)) = vault
             .upgrade()
-            .map(|vault| AttemptQueue::new(&vault).subscribe())
+            .map(|vault| (AttemptQueue::new(&vault).subscribe(), held_at_start(&vault)))
         else {
             return;
         };
@@ -95,7 +102,12 @@ fn run(vault: &Arc<Vault>, ai: &AiHandle, server: Option<Weak<SyncServer>>) {
                     break;
                 };
                 let result = act(&vault, &ai, server.as_ref(), &attempt).await;
-                settle(&vault, &attempt, result);
+                if settle(&vault, &attempt, result) && !held.contains(&attempt.id) {
+                    held.push(attempt.id);
+                }
+            }
+            if let Some(vault) = vault.upgrade() {
+                recheck_held(&vault, &mut held);
             }
             tokio::select! {
                 biased;
@@ -105,6 +117,7 @@ fn run(vault: &Arc<Vault>, ai: &AiHandle, server: Option<Weak<SyncServer>>) {
                         return;
                     }
                 }
+                () = tokio::time::sleep(super::workflows::WAITING_RECHECK), if !held.is_empty() => {}
             }
             // Drain the burst our own commits (and any concurrent ones) caused.
             while let Ok(()) | Err(broadcast::error::TryRecvError::Lagged(_)) = signals.try_recv() {
@@ -116,6 +129,40 @@ fn run(vault: &Arc<Vault>, ai: &AiHandle, server: Option<Weak<SyncServer>>) {
 /// Whether shutdown asked the worker to stop; the borrow ends here.
 fn stopping(stopped: &watch::Receiver<bool>) -> bool {
     *stopped.borrow()
+}
+
+/// The actions held on their host hook when the worker starts: a stop left
+/// them waiting (FIX 1765).
+fn held_at_start(vault: &Vault) -> Vec<AttemptId> {
+    blocking(|| vault.held_turn_action_hooks()).unwrap_or_else(|error| {
+        tracing::warn!(kind = ?error.kind(), "held turn actions were not read");
+        Vec::new()
+    })
+}
+
+/// Resumes each held action whose ask no longer waits, so the next claim
+/// runs it again; keeps the ones that still wait, and any not read now.
+fn recheck_held(vault: &Vault, held: &mut Vec<AttemptId>) {
+    let now = vault.now_recorded_at();
+    held.retain(|id| match blocking(|| vault.resume_turn_action_hook(*id, now)) {
+        Ok(waits) => waits,
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), attempt = ?id, "a held turn action was not looked at again");
+            true
+        }
+    });
+}
+
+/// How a claimed action's run here ended, short of a refusal.
+enum Acted {
+    /// The reply was saved, complete or not.
+    Saved,
+    /// Its host hook asked first (FIX 1765): the hook call that asked, and
+    /// its ask.
+    Asked {
+        invocation: InvocationId,
+        ask: EntityId,
+    },
 }
 
 fn claim(vault: &Vault) -> Option<AttemptRecord> {
@@ -138,16 +185,17 @@ fn claim(vault: &Vault) -> Option<AttemptRecord> {
     }
 }
 
-/// Runs one claimed action to its reply's terminal. `Ok` once the reply is
-/// saved, complete or not; the reason it did not run or was not saved
-/// otherwise. `server`, the host's own once bound, reads its fresh board.
+/// Runs one claimed action to its reply's terminal. [`Acted::Saved`] once
+/// the reply is saved, complete or not; [`Acted::Asked`] when its host hook
+/// asked first; the reason it did not run or was not saved otherwise.
+/// `server`, the host's own once bound, reads its fresh board.
 async fn act(
     vault: &Arc<Vault>,
     ai: &AiHandle,
     server: Option<&Weak<SyncServer>>,
     attempt: &AttemptRecord,
-) -> Result<(), String> {
-    if attempt.attempt_count > 1 {
+) -> Result<Acted, String> {
+    if attempt.attempt_count > 1 && !turn_action_resumed_from_hook(attempt) {
         return Err("cut off when the process stopped; not run again".into());
     }
     let action = TurnActionAttempt::decode(attempt).map_err(|error| error.to_string())?;
@@ -380,21 +428,41 @@ async fn act(
             .idle_timeout_ms,
     );
     // `host.turn.generate`'s pre chain runs once the reply is admitted and
-    // before its stream opens: a skip, or an ask, ends the turn with its
-    // reason. Its post chain runs once the reply's producer ends.
-    // A queued action carries no credential: its hooks read as its actor.
-    // Its room is the conversation the action's context resolved.
-    let generating = turn_generate_pre(
-        vault,
-        actor,
-        None,
-        None,
-        &action.conversation.to_hex(),
-        Some(action.conversation),
-        None,
-    )
-    .map_err(|error| error.to_string())?
-    .map_err(|stop| stop.to_string())?;
+    // before its stream opens: a skip ends the action with its reason, and
+    // an ask holds it for the answer (FIX 1765). Its post chain runs once the
+    // reply's producer ends. A queued action carries no credential: its hooks
+    // read as its actor. Its room is the conversation the action's context
+    // resolved. Its call derives from the attempt, so the same attempt run
+    // again finds the call that asked and the answer; run again, it needs
+    // that saved call, and one that is gone ends it as a skip.
+    let parent = turn_action_hook_parent(attempt);
+    let room_ref = action.conversation.to_hex();
+    let pre = if turn_action_resumed_from_hook(attempt) {
+        turn_generate_pre_retained(vault, actor, parent, &room_ref, Some(action.conversation))
+    } else {
+        turn_generate_pre(
+            vault,
+            actor,
+            Some(parent),
+            None,
+            &room_ref,
+            Some(action.conversation),
+            None,
+        )
+    };
+    let generating = match pre.map_err(|error| error.to_string())? {
+        Ok(generating) => generating,
+        Err(VerbHookStop::Pending { invocation, ask }) => {
+            return match (
+                InvocationId::parse_hex(&invocation),
+                EntityId::from_hex(&ask),
+            ) {
+                (Some(invocation), Ok(ask)) => Ok(Acted::Asked { invocation, ask }),
+                _ => Err(VerbHookStop::Pending { invocation, ask }.to_string()),
+            };
+        }
+        Err(stop) => return Err(stop.to_string()),
+    };
     let open = answer_open(vault, &action);
     let answering = begin_sourced_answer_with_fallback(
         ai,
@@ -470,7 +538,7 @@ async fn act(
     if outcome.saved.is_none() {
         return Err("the reply was not recorded".into());
     }
-    Ok(())
+    Ok(Acted::Saved)
 }
 
 /// The reader a queued `action`'s craft and session metadata use (FIX 9464,
@@ -531,8 +599,9 @@ fn stamp_craft(
     }
 }
 
-/// Completes or fails the attempt; either is terminal.
-fn settle(vault: &Vault, attempt: &AttemptRecord, result: Result<(), String>) {
+/// Completes or fails the attempt, either terminal, or holds it on its host
+/// hook's ask (FIX 1765). Whether it is held.
+fn settle(vault: &Vault, attempt: &AttemptRecord, result: Result<Acted, String>) -> bool {
     let queue = AttemptQueue::new(vault);
     let now = vault.now_recorded_at();
     let fail = |reason: String| {
@@ -545,7 +614,22 @@ fn settle(vault: &Vault, attempt: &AttemptRecord, result: Result<(), String>) {
         })
     };
     let settled = match result {
-        Ok(()) => queue
+        Ok(Acted::Asked { invocation, ask }) => {
+            match vault.hold_turn_action_for_hook(attempt, LEASE_OWNER, invocation, ask, now) {
+                Ok(()) => return true,
+                // One that cannot wait fails as an ask always did.
+                Err(_) => fail(
+                    VerbHookStop::Pending {
+                        invocation: invocation.to_hex(),
+                        ask: ask.to_hex(),
+                    }
+                    .to_string(),
+                )
+                .or_else(|_| fail(FAILED.to_owned()))
+                .map(drop),
+            }
+        }
+        Ok(Acted::Saved) => queue
             .complete(CompleteAttempt {
                 id: attempt.id,
                 lease_owner: LEASE_OWNER.to_owned(),
@@ -560,4 +644,5 @@ fn settle(vault: &Vault, attempt: &AttemptRecord, result: Result<(), String>) {
     if let Err(error) = settled {
         tracing::warn!(kind = ?error.kind(), attempt = ?attempt.id, "turn action was not settled");
     }
+    false
 }

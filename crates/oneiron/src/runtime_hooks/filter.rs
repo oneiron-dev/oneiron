@@ -150,7 +150,7 @@ pub(super) fn actor_class_in_txn(
     txn: &heed::RoTxn<'_>,
     actor: EntityId,
 ) -> Result<HookActorClass> {
-    if actor == storage_service_principal()? {
+    if actor == crate::ports::storage_service_principal()? {
         return Ok(HookActorClass::System);
     }
     stored_actor_class_in_txn(vault, txn, actor)

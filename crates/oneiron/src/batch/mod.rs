@@ -66,6 +66,7 @@ pub(crate) use self::vad_postcommit::queue_room_join;
 pub(crate) use self::vad_postcommit::queue_settled_tasks;
 #[cfg(feature = "sync")]
 pub(crate) use self::vad_postcommit::queue_task_updates;
+pub(crate) use self::vad_postcommit::queue_verb_hook_ask_change;
 
 pub(crate) use self::authority_log::{
     validate_replicated_authority_log_beside_for_local_vault,
@@ -88,8 +89,6 @@ pub(crate) use self::deindex::{
     delete_door_protected, drop_seeded_actor_row, stage_cascade_tombstone_in_txn,
 };
 pub(crate) use self::facet_validation::{validate_facet_of_edge, validate_replayed_facet_of_edge};
-#[cfg(test)]
-pub(crate) use self::lexical_query_hints::legacy_lexical_query_hint_claim_ids_for_target;
 pub(crate) use self::lexical_query_hints::reject_family_owned_candidate;
 pub(crate) use self::lexical_query_hints::validate_staged_raw_put;
 #[cfg(test)]
