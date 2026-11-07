@@ -202,9 +202,9 @@ pub enum AuthorityOp {
     /// cosigned by the install key of the carrier of his act. A main-log
     /// entry, so every machine the owner admits folds it.
     OwnerKeyEnroll(OwnerKeyEnroll),
-    /// One canonical group of a wide causal frontier's heads, signed by the
-    /// install key of the act it leads to, or by the host's slip issuer for a
-    /// host-issued op (FIX 7908). A main-log entry with no semantic payload.
+    /// Every head of a wide causal frontier, signed by the install key of
+    /// the act it leads to, or by the host's slip issuer for a host-issued op
+    /// (FIX 7908, 8527). A main-log entry with no semantic payload.
     FrontierJoin(FrontierJoin),
     /// One owner cut of a repository's origin authority: the epoch it opens
     /// and the one machine that writes the repository's refs at it, signed
@@ -246,9 +246,13 @@ pub struct AuthorityLogEntry {
 
 impl AuthorityLogEntry {
     /// Public so `oneiron`'s authority code calls it across the crate line.
+    /// A frontier join names every head of the frontier it joins, so its
+    /// parents have no count bound beyond the entry's own bytes (FIX 8527);
+    /// every other entry names at most [`MAX_PARENTS`].
     pub fn validate_shape(&self) -> Result<()> {
+        let joins_frontier = matches!(self.op, AuthorityOp::FrontierJoin(_));
         if self.schema_version != AUTHORITY_LOG_SCHEMA_VERSION
-            || self.parent_hashes.len() > MAX_PARENTS
+            || (!joins_frontier && self.parent_hashes.len() > MAX_PARENTS)
             || self.cosigns.len() > MAX_COSIGNS
         {
             return Err(invalid_authority());
