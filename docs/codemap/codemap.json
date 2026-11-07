@@ -19654,6 +19654,7 @@
       "SandboxClaimProposal",
       "SandboxDirectoryOpaqueProposal",
       "SandboxFileDeleteProposal",
+      "SandboxFileEdit",
       "SandboxFileEditProposal",
       "SandboxFileRenameProposal",
       "SandboxFileWriteProposal",
@@ -19664,11 +19665,11 @@
      "path": "src/code_sandbox/proposal.rs",
      "purpose": "The proposal-delta channel a guest write becomes instead of a direct mutation",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 10,
       "re-export": 2,
-      "struct": 7
+      "struct": 8
      }
     },
     {
@@ -19684,7 +19685,22 @@
      "surface": {
       "crate-vis": 1,
       "fn": 15,
+      "re-export": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SandboxProposalText"
+     ],
+     "path": "src/code_sandbox/proposal/body/text.rs",
+     "purpose": "Immutable UTF-8 edit spans",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -19704,7 +19720,7 @@
      "path": "src/code_sandbox/proposal/spooled_edit.rs",
      "purpose": "Whole-file proposals compared with a spooled boot snapshot",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -92763,7 +92779,7 @@
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls"
     },
     "code_sandbox": {
-     "files": 53,
+     "files": 54,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94095,7 +94111,7 @@
    },
    "over_bar": 184,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6648,
+   "source_files": 6649,
    "test_files": 895
   },
   "oneiron-android": {
@@ -144047,7 +144063,6 @@
       "CodeExportSide",
       "CodeFileChange",
       "CodeFileDiffView",
-      "CodeFileEdit",
       "CodeFileMetadataEdit",
       "CodeFilePresence",
       "CodeForkDocumentView",
@@ -146872,6 +146887,7 @@
       "RunnerWorkResumeChoice",
       "RunnerWorkResumeRequest",
       "RunnerWorkResumeView",
+      "SandboxFileEdit",
       "SavedIntentState",
       "SavedQueryArchiveRequest",
       "SavedQueryCreateRequest",
