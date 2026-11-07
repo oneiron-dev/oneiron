@@ -64,6 +64,9 @@ impl Memory<'_> {
             NotificationKind::ThreadJoinRequested if producer == THREAD_NOTICE_PRODUCER => {
                 self.thread_join_actions(row)
             }
+            NotificationKind::Ask if producer == crate::mail_pack::MAIL_REPLY_ASK_PRODUCER => {
+                self.mail_reply_ask_actions(row)
+            }
             _ => Vec::new(),
         }
     }
