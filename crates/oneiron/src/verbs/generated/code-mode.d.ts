@@ -2050,11 +2050,11 @@ declare namespace Sdk {
   type ArchiveDeleteConfirmEntry = { entity: string; result: ArchiveDeleteConfirmOutcome };
   type ArchiveDeleteBatchResult = { entries: ArchiveDeleteConfirmEntry[] };
   type UsageRepairListRequest = Record<string, never>;
-  type UndecodableUsageReason = "stored_event_decode_failed";
+  type UndecodableUsageReason = "stored_event_decode_failed" | "stored_pending_decode_failed";
   type UndecodableUsageRow = { rowRef: string; byteLength: number; hash: string; decodeReason: UndecodableUsageReason };
   type UndecodableUsageList = { events: UndecodableUsageRow[] };
   type UsageRepairRemoveRequest = { rowRef: string; expectedHash: string };
-  type UsageRepairReason = "undecodable_event_removed";
+  type UsageRepairReason = "undecodable_event_removed" | "undecodable_pending_removed";
   type UsageRepairAuthority = { kind: "owner"; ref: string } | { kind: "grant"; ref: string };
   type UsageRepairSurface = { kind: "this_install" } | { kind: "linked_device"; machine: string } | { kind: "hosted_console" };
   type UsageRepairReceipt = { receiptId: string; owner: string; vaultId: string; rowRef: string; hash: string; byteLength: number; reason: UsageRepairReason; actorRef: string; actorClass: string; authority: UsageRepairAuthority; surface: UsageRepairSurface; recordedAt: number };
