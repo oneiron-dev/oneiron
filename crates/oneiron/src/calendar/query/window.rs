@@ -28,9 +28,10 @@ pub struct CalendarOccurrenceView {
     /// The occurrence's recurrence key: a UTC instant, or for an all-day or
     /// floating series its civil start read as UTC.
     pub original_start_utc: u64,
-    /// Inclusive UTC bounds; for an all-day or floating occurrence, the
-    /// span it falls in across every zone, its days or wall times in
-    /// [`Self::civil`].
+    /// Inclusive UTC bounds; for an all-day occurrence in a zone its
+    /// calendar names, its days in that zone; for any other all-day or
+    /// floating occurrence, the span it falls in across every zone. Its days
+    /// or wall times are in [`Self::civil`].
     pub start_utc: u64,
     pub end_utc: u64,
     /// An all-day or floating occurrence's days or wall times (FIX 17869).
@@ -252,19 +253,20 @@ impl PreparedOccurrences {
                         });
                     }
                 }
-                (None, Some((_, length))) => {
+                (None, Some(_)) => {
                     let all_day = master.facts.civil_all_day();
                     let duration = master.facts.civil_duration();
                     let kept: std::collections::BTreeSet<u64> = mask_master_exceptions(
                         master_id,
                         uid,
-                        civil_all.iter().map(|&(key, _)| key).collect(),
+                        civil_all.iter().map(|&(key, _, _)| key).collect(),
                         &keys,
                     )
                     .into_iter()
                     .collect();
-                    for &(key, start) in civil_all.iter().filter(|(key, _)| kept.contains(key)) {
-                        let span = super::facts::civil_envelope(start, length);
+                    for &(key, start, span) in
+                        civil_all.iter().filter(|(key, _, _)| kept.contains(key))
+                    {
                         result.push(CalendarOccurrenceView {
                             event_ref: master_id.to_hex(),
                             master_ref: master_id.to_hex(),
