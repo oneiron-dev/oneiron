@@ -246,6 +246,7 @@ pub mod dreamer_wake_policy;
 pub use oneiron_store::setting_seed;
 pub use oneiron_store::snapshot_key;
 pub use oneiron_store::snapshot_lock_result;
+pub(crate) use oneiron_store::source_audience_obligation;
 
 pub(crate) use active_write_txn::{active_write_txn_depth, active_write_txn_guard};
 use oneiron_store::active_write_txn;
@@ -300,6 +301,7 @@ pub(crate) mod known_value_index;
 pub(crate) use oneiron_store::l2_evidence;
 pub mod owned_body;
 pub(crate) mod pending_custody_revoke;
+pub(crate) mod pending_import_mark;
 pub use oneiron_store::receipt_identity;
 pub mod receipt_row;
 pub mod reference_refusal;
@@ -320,6 +322,7 @@ pub(crate) mod side_table_erase_scan;
 pub mod site_skill_exposure;
 pub mod skill_attribution_evidence;
 pub(crate) mod text_index;
+pub(crate) mod totp_custody;
 pub(crate) mod vector_index;
 mod vector_index_dbs;
 pub mod workflow_definition;
@@ -438,6 +441,9 @@ pub(crate) use body_envelope::{
     erase_bodies_for_owner_in_txn, governed_body_instances_in_txn, note_settled_inline_in_txn,
     settle_inline_asset_in_txn,
 };
+// The erase debts a kept body carries through a leave's purge (FIX 3679).
+#[cfg(all(unix, feature = "sync"))]
+pub(crate) use body_envelope::owed_erase_side_keys_in_txn;
 // KS-2B1: row-held responses under body custody.
 #[cfg(unix)]
 pub(crate) use body_envelope::{
