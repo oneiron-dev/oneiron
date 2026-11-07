@@ -9,11 +9,11 @@ use serde::{Deserialize, Serialize};
 
 use super::claim_stale::ReadFilterInput;
 use super::{Memory, MemoryError, MemoryResult};
-use crate::claim::{ClaimLifecycleStatus, ClaimReadStatus, ScopedRead, ScopedReadResult};
+use crate::claim::{ClaimLifecycleStatus, ClaimReadStatus, ScopedReadResult};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::Error;
-use crate::provenance::{EdgeRef, StoredProvenanceClaim, SupersessionStatus};
-use crate::vault::{ReadMode, RevisionRef};
+use crate::provenance::{EdgeRef, SupersessionStatus};
+use crate::vault::ReadMode;
 
 /// `vault.edges.provenance` input: one directed edge, named by its two
 /// endpoint refs and its kind.
@@ -156,8 +156,9 @@ impl Memory<'_> {
     /// included, newest first by the claims' own precedence. One snapshot
     /// binds the read: the edge's endpoints and exact pair must pass the
     /// caller's admission, then each claim is read as an ordinary point read
-    /// under the request's filter, and a claim whose author or cited source
-    /// revision this lane may not read is withheld whole. Read suffices: the
+    /// under the request's filter, whose shared CLAIM admission withholds
+    /// whole a claim whose author or cited source revision this lane may not
+    /// read (`ScopedRead::provenance_cited_readable_in`). Read suffices: the
     /// reader need not be the author. An endpoint name that resolves to no
     /// record, and a missing or withheld edge, read empty with the same
     /// receipt; only a malformed request is refused.
@@ -208,9 +209,7 @@ impl Memory<'_> {
                         )
                         .into());
                     }
-                    if let Some(row) = row
-                        && cited_refs_readable_in(self.vault, &lane, txn, &claim)?
-                    {
+                    if let Some(row) = row {
                         admitted.push((claim, lifecycle, row));
                     }
                 }
@@ -259,37 +258,4 @@ impl Memory<'_> {
             },
         )
     }
-}
-
-/// Whether `lane` may read, in `txn`, every record `claim` names beside its
-/// edge: its actor, and the document its `source_revision_ref` cites, at that
-/// revision; an unreadable one withholds the claim whole. A cited revision no
-/// record retains (an opaque legacy value, such as a Dreamer evidence hash)
-/// names no record, so it reveals none and is shown as stored.
-fn cited_refs_readable_in(
-    vault: &crate::Vault,
-    lane: &ScopedRead<'_>,
-    txn: &heed::RoTxn<'_>,
-    claim: &StoredProvenanceClaim,
-) -> MemoryResult<bool> {
-    if !lane
-        .entities_readable_in_txn(txn, &[claim.record.actor_entity_ref])?
-        .into_iter()
-        .all(|readable| readable)
-    {
-        return Ok(false);
-    }
-    let Some(revision) = claim.record.source_revision_ref else {
-        return Ok(true);
-    };
-    let revision = RevisionRef(revision);
-    let Some(document) = vault.revision_record_in(txn, revision)? else {
-        return Ok(true);
-    };
-    Ok(lane
-        .get_entities_parts_with_mode_in_txn(txn, &[document], ReadMode::Pinned(revision))?
-        .into_iter()
-        .next()
-        .flatten()
-        .is_some())
 }
