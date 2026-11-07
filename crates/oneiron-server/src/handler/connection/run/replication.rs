@@ -41,6 +41,10 @@ use crate::server::SyncServer;
 /// `socket` comes with the engine's stop it lives under (OF-237): on it the
 /// loop stops reading at its next wait, the transport closes, and the
 /// connection ends once every verb RPC it admitted has.
+///
+/// `peer_serve` is the session this machine serves as a peer of another
+/// machine of its vault while their home is down (FIX 4748): its socket
+/// takes none of the home's relays, and its receipt takes the close.
 #[expect(clippy::cognitive_complexity)]
 pub(super) async fn handle_connection(
     (socket, mut stop): (WebSocket, crate::embedded::UpgradeStop),
@@ -49,7 +53,10 @@ pub(super) async fn handle_connection(
     (session_jti, owner): (Option<String>, Option<CoreAuth>),
     telemetry_actor: String,
     locality: oneiron::claim::CallerLocality,
-    machine: oneiron::authority::PeerMachine,
+    (machine, peer_serve): (
+        oneiron::authority::PeerMachine,
+        Option<super::super::super::peer_serve::PeerServe>,
+    ),
     signing_request_transport: Option<oneiron::memory::SigningRequestTransport>,
 ) {
     // Every frame this connection ever writes goes through here, and each one
@@ -121,6 +128,8 @@ pub(super) async fn handle_connection(
     // Channel for direct responses (e.g. VV_REQUEST replies sent only to requester)
     let (direct_tx, mut direct_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = ConnState::new(protocol_version).with_peer_machine(machine);
+    let peer_served = peer_serve.is_some();
+    conn_state.peer_served = peer_served;
     conn_state.locality = locality;
     conn_state.signing_request_transport = signing_request_transport;
     conn_state.bound_auth.clone_from(&owner);
@@ -134,8 +143,10 @@ pub(super) async fn handle_connection(
         "socket machine"
     );
     // A proven machine's socket carries custody carrier leaf keys while it
-    // lives (FIX 11785).
-    let _leaf_key_socket = LeafKeySocket::register(&server, conn_id, machine, &direct_tx);
+    // lives (FIX 11785); the relay is the home's, so a peer's carries none
+    // (FIX 4748).
+    let _leaf_key_socket =
+        (!peer_served).then(|| LeafKeySocket::register(&server, conn_id, machine, &direct_tx));
     // A machine of the owner's whose hello listed sealed world updates is
     // offered the home's queue of them (DEC-0005 fix 8).
     conn_state.sealed_world_updates = transport.peer_codecs().decodes_sealed_world_updates();
@@ -205,7 +216,7 @@ pub(super) async fn handle_connection(
             broadcast_result = subscriber.recv() => ConnEvent::Broadcast(broadcast_result),
             _ = app_tick.tick(), if app_connection.has_active_subscriptions() => ConnEvent::AppDelivery,
             _ = asset_body_tick.tick(), if direct_rx.is_empty() => ConnEvent::AssetBodies,
-            _ = leaf_key_tick.tick(), if direct_rx.is_empty() => ConnEvent::LeafKeys,
+            _ = leaf_key_tick.tick(), if direct_rx.is_empty() && !peer_served => ConnEvent::LeafKeys,
         };
 
         let next_message = match event {
@@ -768,5 +779,8 @@ pub(super) async fn handle_connection(
     conn_state.residence_work.drain().await;
     while verb_calls.join_next().await.is_some() {}
     conn_state.closed(server.vault());
+    if let Some(peer_serve) = peer_serve {
+        peer_serve.close(server.vault());
+    }
     tracing::info!(conn_id, "connection closed");
 }

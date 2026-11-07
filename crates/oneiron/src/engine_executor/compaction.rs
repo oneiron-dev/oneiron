@@ -10,7 +10,7 @@
 //! typed reason instead of truncating.
 
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, TryRecvError, channel};
+use std::sync::mpsc::{TryRecvError, channel};
 use std::time::Instant;
 
 use crate::code_run::{CodeRunBridgeCall, CodeRunHistoryTurn};
@@ -27,6 +27,9 @@ use crate::tokenizer::count_context_pack_tokens;
 use crate::{ContentPart, LlmRequest, WriteActor};
 
 pub(super) mod live_fork;
+mod wait;
+
+use wait::FlightReceiver;
 
 /// Runs one background pass where the host chooses: a thread, a blocking
 /// pool. The executor never spawns one itself.
@@ -53,7 +56,7 @@ struct LiveSeat {
     placement: EpochPlacement,
     hot_steps: u64,
     spawn: Arc<dyn CompactionSpawn>,
-    flight: Option<Receiver<FlightOutcome>>,
+    flight: Option<FlightReceiver>,
     /// The in-flight batch's folds by kind: they need no backend call and
     /// land with its passes, in the same ledger write.
     kind_folds: Option<KindFolds>,
@@ -323,20 +326,25 @@ impl RunCompaction {
         let Seat::Live(seat) = &mut self.seat else {
             return None;
         };
-        let outcome = match seat.flight.as_ref()?.try_recv() {
-            Ok(outcome) => outcome,
-            Err(TryRecvError::Empty) => return None,
-            Err(TryRecvError::Disconnected) => FlightOutcome {
-                epoch: Some(PassOutcome::Refused(CompactionRefusal {
-                    suppression: CompactionSuppression::TurnScoped { check: None },
-                    detail: "the compaction pass ended without an answer".to_owned(),
-                })),
-                folds: Vec::new(),
-                epoch_execution: None,
-                unavailable: None,
+        let outcome = match seat.flight.take()? {
+            FlightReceiver::Ready(outcome) => outcome,
+            FlightReceiver::Receiving(receiver) => match receiver.try_recv() {
+                Ok(outcome) => outcome,
+                Err(TryRecvError::Empty) => {
+                    seat.flight = Some(FlightReceiver::Receiving(receiver));
+                    return None;
+                }
+                Err(TryRecvError::Disconnected) => FlightOutcome {
+                    epoch: Some(PassOutcome::Refused(CompactionRefusal {
+                        suppression: CompactionSuppression::TurnScoped { check: None },
+                        detail: "the compaction pass ended without an answer".to_owned(),
+                    })),
+                    folds: Vec::new(),
+                    epoch_execution: None,
+                    unavailable: None,
+                },
             },
         };
-        seat.flight = None;
         let kind_folds = seat.kind_folds.take();
         let hooks = std::mem::take(&mut seat.hooks);
         self.report.in_flight = false;
@@ -563,7 +571,7 @@ impl RunCompaction {
                                     unavailable: None,
                                 });
                             }));
-                            seat.flight = Some(receiver);
+                            seat.flight = Some(FlightReceiver::Receiving(receiver));
                             seat.kind_folds = kind_folds;
                             seat.hooks = hooks;
                             self.report.in_flight = true;

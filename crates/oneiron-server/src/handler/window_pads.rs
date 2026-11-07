@@ -150,6 +150,17 @@ pub(super) fn release(
     let Some(key) = WindowKey::try_new(window_key) else {
         return Err(Released::Withheld);
     };
+    // FIX 4748: a socket served as a peer is sent state, never operations:
+    // of a window only a state-only copy the export door cut for it leaves,
+    // and every other window frame, an update since a vector or a live one,
+    // is refused here.
+    if !super::peer_serve::releases_window_frame(conn_state, &key, payload) {
+        tracing::warn!(
+            window = window_key,
+            "window frame withheld: a peer is served state-only copies, never operations"
+        );
+        return Vec::new();
+    }
     let window = server.reassert_manager.window(&key);
     let context = window.as_ref().map(|window| &window.doc);
     // FIX 7608 slice 4: a peer gets a marked repo item's masked copy, made

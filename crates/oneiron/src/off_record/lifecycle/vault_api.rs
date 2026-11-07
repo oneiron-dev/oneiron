@@ -485,6 +485,9 @@ impl Vault {
                 entered_at: record.entered_at,
             },
         );
+        // The caller bindings its sealed held calls kept for a code consent
+        // ask go the same way (FIX 4520).
+        entry.code_consent_asks.clear();
         // PRE-CLOSE CENSUS (K8). Session-local retrieval-run receipts and
         // witnessed transcript entities live in the overlay, so close does not
         // delete them — the overlay's evaporation does. They are unobservable
@@ -519,7 +522,17 @@ impl Vault {
             }
             // Session handles lend composed views from `&self`, so safe
             // callers must drop all read views before consuming close.
-            entry.overlay.close()?;
+            let now = crate::unix_millis_now() / 1000;
+            entry.overlay.close_with_single_rows(
+                OverlayKeyspace::VaultMeta,
+                &mut |key, value| {
+                    if let Err(error) = crate::code_run::settle_evaporated_reader_spend(
+                        self, session_ref, key, value, now,
+                    ) {
+                        tracing::warn!(kind = ?error.kind(), "a closed session's reader spend was not settled");
+                    }
+                },
+            )?;
         }
         // The room's spilled result bodies go with its overlay: nothing it
         // wrote off record outlives the close on disk either.

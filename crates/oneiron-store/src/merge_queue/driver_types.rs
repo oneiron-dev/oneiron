@@ -57,7 +57,8 @@ pub enum QueueDriveHoldReason {
     WaitingCheck,
     /// A predecessor's symbol declaration still holds the run entry.
     WaitingSymbols,
-    /// A member lacks its unanimous critic review.
+    /// A member lacks its unanimous critic review, or a removed public name
+    /// waits for a person review (FIX 4365).
     WaitingReview,
     /// The reviewed landing refused its admission.
     WaitingAdmission,
