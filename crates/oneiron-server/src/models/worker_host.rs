@@ -49,6 +49,8 @@ mod probe;
 #[cfg(unix)]
 mod process;
 mod session;
+mod stock;
+pub(super) use stock::{StockWeights, capture as stock_weights};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
