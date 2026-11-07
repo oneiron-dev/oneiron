@@ -2791,6 +2791,11 @@ export_facade! {
     let output = client.vault_connectors_calls_approve_once(&input)?;
     crate::codec::lift_record("vault.connectors.calls.approve_once", &output)
 };
+"vault.connectors.replies.retry_failed" => fn vault_connectors_replies_retry_failed(&self, input: ConnectorReplyRetryRequest) -> ConnectorReplyRetryView = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorReplyRetryRequest = crate::codec::lower_record("vault.connectors.replies.retry_failed", input)?;
+    let output = client.vault_connectors_replies_retry_failed(&input)?;
+    crate::codec::lift_record("vault.connectors.replies.retry_failed", &output)
+};
 "vault.consent.deny" => fn vault_consent_deny(&self, input: DenyConsentRequest) -> ConsentActReceipt = |client| {
     let input: oneiron::consent::lifecycle::DenyConsentRequest = crate::codec::lower_record("vault.consent.deny", input)?;
     let output = client.vault_consent_deny(&input)?;
