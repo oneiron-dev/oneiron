@@ -1,7 +1,8 @@
 //! Whose act a repo proposal records, and the erase that forgets it
 //! (FIX 3520): its proposer, the critics whose evidence judged it (FIX 4477),
-//! the journal claims it wrote (FIX 4479) and the owner who settled it, with
-//! that settlement's receipt claim (FIX 5220).
+//! the journal claims it wrote (FIX 4479), the owner who settled it (FIX
+//! 5220) and the owner who decided its removed-name review, with each
+//! settlement receipt claim that names either owner (FIX 4365).
 
 use std::collections::BTreeSet;
 
@@ -116,6 +117,26 @@ impl RepoProposal {
         }
         Ok(true)
     }
+
+    /// Names no one in place of `actor` on each removed-name review decision
+    /// it made here (FIX 4365); the receipts of those decisions, each once.
+    /// Each decision keeps its value, its verdict binding and its time.
+    fn forget_contract_reviewer(&mut self, actor: EntityId) -> Vec<EntityId> {
+        let mut receipts = Vec::new();
+        for settled in self
+            .contract_reviews
+            .iter_mut()
+            .filter_map(|request| request.decision.as_mut())
+        {
+            if settled.actor.is(actor) {
+                settled.actor = ProposalActor::Erased;
+                if !receipts.contains(&settled.receipt) {
+                    receipts.push(settled.receipt);
+                }
+            }
+        }
+        receipts
+    }
 }
 
 /// The session claim a proposal writes beside its proposed diff: one per
@@ -170,10 +191,11 @@ fn erase_journal_in_txn(
 }
 
 /// Rewrites a proposal's settlement receipt claim `receipt`, naming no one
-/// once `actor`, who settled it, was erased (FIX 5220): the value's actor
-/// reads [`ERASED_CALL_IDENTITY`] and any evidence goes. It keeps its id,
-/// proposal, decision and times, and its revision ledger starts over from
-/// the rewritten row, so no older revision keeps the actor.
+/// once `actor`, who made that decision, was erased (FIX 4365): the value's
+/// actor reads [`ERASED_CALL_IDENTITY`] and any evidence goes. It keeps its
+/// id, proposal, decision, answered verdicts and times, and its revision
+/// ledger starts over from the rewritten row, so no older revision keeps
+/// the actor.
 fn erase_settlement_receipt_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -225,6 +247,31 @@ fn erase_settlement_receipt_in_txn(
     Ok(())
 }
 
+/// Rewrites each settlement receipt claim that still names `actor`, found by
+/// the predicate's posting list (FIX 4365). A receipt outlives its proposal
+/// row: an earlier erase of the proposer can delete the row that pointed at
+/// it. Each keeps its decision, its answered verdicts and its times. The row
+/// sweep already rewrote each receipt in `scrubbed`, so none is rewritten
+/// twice.
+fn erase_actor_settlement_receipts_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+    scrubbed: &BTreeSet<EntityId>,
+) -> Result<()> {
+    let receipts = crate::claim::claim_ids_for_predicate_in_txn(
+        &vault.store,
+        wtxn,
+        "repo.proposal_settlement",
+    )?;
+    for receipt in receipts {
+        if !scrubbed.contains(&receipt) {
+            erase_settlement_receipt_in_txn(vault, wtxn, receipt, actor)?;
+        }
+    }
+    Ok(())
+}
+
 /// What an actor's erase does with a proposal it opened that has not run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PendingRepoProposalErase {
@@ -249,7 +296,11 @@ pub const ACTOR_ERASE_PENDING_REPO_PROPOSAL: PendingRepoProposalErase =
 /// member instead (FIX 5219). Either way its journal claims name no one (FIX
 /// 4479). Each proposal it judged as a critic keeps that evidence under an
 /// opaque ref (FIX 4477). Each it settled keeps its decision and names no
-/// settler, in its row and in its receipt claim (FIX 5220). One-way, in the
+/// settler, in its row and in its receipt claim (FIX 5220). Each
+/// removed-name review it decided keeps its
+/// decision and names no one, in its row and in its receipt claim (FIX
+/// 4365). Each settlement receipt claim that names it names no one too, even
+/// when no proposal row points at it any more (FIX 4365). One-way, in the
 /// erase's own transaction. An id whose entity is no actor scans nothing.
 ///
 /// # Errors
@@ -271,24 +322,30 @@ pub(crate) fn erase_proposal_actor_in_txn(
         if proposer {
             proposal.actor = ProposalActor::Erased;
         }
-        let mut settled = None;
+        let mut receipts = proposal.forget_contract_reviewer(*actor);
+        // The owner who settled it is forgotten on its row too, and its
+        // receipt is scrubbed with the others (FIX 5220).
         if let Some(settlement) = proposal.settlement.as_mut()
             && settlement.actor == Some(*actor)
         {
             settlement.actor = None;
-            settled = Some(settlement.receipt);
+            if !receipts.contains(&settlement.receipt) {
+                receipts.push(settlement.receipt);
+            }
         }
-        if proposal.forget_critic(vault, &critic)? || proposer || settled.is_some() {
-            named.push((id, proposal, proposer, settled));
+        if proposal.forget_critic(vault, &critic)? || proposer || !receipts.is_empty() {
+            named.push((id, proposal, proposer, receipts));
         }
     }
     let mut gone = BTreeSet::new();
-    for (id, proposal, proposer, settled) in named {
+    let mut scrubbed = BTreeSet::new();
+    for (id, proposal, proposer, receipts) in named {
         if proposer {
             erase_journal_in_txn(vault, wtxn, &proposal, actor)?;
         }
-        if let Some(receipt) = settled {
+        for receipt in receipts {
             erase_settlement_receipt_in_txn(vault, wtxn, receipt, actor)?;
+            scrubbed.insert(receipt);
         }
         let pending = proposer
             && proposal.operation_seq.is_none()
@@ -303,22 +360,7 @@ pub(crate) fn erase_proposal_actor_in_txn(
             PROPOSAL.put(&vault.store, wtxn, &id, &proposal)?;
         }
     }
-    // A receipt that names the erased settler is scrubbed even when no
-    // proposal row points at it any more, such as one whose proposal an
-    // earlier erase of its proposer deleted.
-    let receipts: Vec<EntityId> = vault
-        .claims_with_predicate_in_txn(wtxn, "repo.proposal_settlement")?
-        .into_iter()
-        .filter(|(_, body)| {
-            matches!(&body.value, Value::Map(entries) if entries.iter().any(|(key, value)| {
-                key.as_str() == Some("actor") && value.as_str() == Some(critic.as_str())
-            }))
-        })
-        .map(|(id, _)| id)
-        .collect();
-    for receipt in receipts {
-        erase_settlement_receipt_in_txn(vault, wtxn, receipt, actor)?;
-    }
+    erase_actor_settlement_receipts_in_txn(vault, wtxn, actor, &scrubbed)?;
     if gone.is_empty() {
         return Ok(());
     }
