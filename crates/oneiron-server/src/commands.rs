@@ -128,6 +128,8 @@ mod account;
 pub use account::account;
 mod device;
 pub use device::device_enrol;
+#[cfg(feature = "code-sandbox-wasmtime")]
+pub(crate) mod hook_regen;
 mod serve;
 pub(crate) use self::serve::hook_sandbox;
 pub(crate) use self::serve::open_served_vault_anchored;
