@@ -428,8 +428,12 @@ fn link_imports<T: Read + Write + 'static>(linker: &mut Linker<State<T>>) -> was
         |mut context: StoreContextMut<'_, State<T>>, (length,): (u32,)| {
             let state = context.data_mut();
             state.count_call()?;
-            state.count_bytes(length as usize)?;
-            let mut bytes = vec![0; length as usize];
+            let length = length as usize;
+            let mut bytes = Vec::new();
+            if bytes.try_reserve_exact(length).is_err() {
+                return Ok((Err(String::from("random unavailable")),));
+            }
+            bytes.resize(length, 0);
             let result = std::fs::File::open("/dev/urandom")
                 .and_then(|mut file| file.read_exact(&mut bytes));
             Ok((result

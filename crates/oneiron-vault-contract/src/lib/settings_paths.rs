@@ -71,6 +71,8 @@ pub const OWNER_PATHS: &[&str] = &[
     "models.dreamer.wording.coach_skill_draft_prompt_file",
     "models.dreamer.wording.coach_skill_cause_prompt_file",
     "models.dreamer.wording.coach_producer_fix_prompt_file",
+    "models.dreamer.wording.coach_environment_repair_prompt_file",
+    "models.dreamer.wording.coach_prompt_repair_prompt_file",
     "models.roles.*.prompt_file",
     "models.roles.*.rungs.prompt_file",
     "models.dreamer.wording.code_fix_reproduced_prompt_file",
@@ -84,6 +86,7 @@ pub const OWNER_PATHS: &[&str] = &[
     "models.code_mode.check.microsoft_tsc",
     "models.decision_read.recipe",
     "models.voice.extraction_prompt_file",
+    "models.dreamer.wording.coach_session_distill_prompt_file",
     "models.dreamer.wording.coach_heal_route_prompt_file",
     "models.dreamer.wording.coach_health_draft_prompt_file",
 ];

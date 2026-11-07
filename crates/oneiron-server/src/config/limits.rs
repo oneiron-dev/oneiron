@@ -86,6 +86,8 @@ pub struct LimitsConfig {
     pub task_work: usize,
     /// Deck and slide renders at once (FIX 7653): past it each caller's render
     /// waits its fair turn, then answers `render_deadline`. Never a refusal.
+    /// LibreOffice's workbook recalculations (FIX 2462) take the host's own
+    /// turns in the same line, behind every caller.
     pub renderer_work: usize,
     /// Bytes stored LFS objects may come to, counting what uploads in flight
     /// have reserved: each reserves its declared size, or the per-object row
@@ -167,6 +169,15 @@ pub struct LimitsConfig {
     /// a GET link's query. A memory floor: a longer note is refused with 413
     /// before it is stored. Room for any v1 feedback bundle.
     pub feedback_inbox_bytes: u64,
+    /// Bytes one request body may carry where its route reads it whole and
+    /// sets no bound of its own: the API's request floor (ABC transport rows
+    /// T1, T3, T4), in place of axum's implicit 2 MiB and the LLM routes'
+    /// 64 MiB and 16 KiB. The idempotency layer reads a keyed body up to it
+    /// too. A memory floor sized from the machine for a body read into a
+    /// typed request: a 1024th of its memory, never under 64 MiB (the
+    /// facade's own body bound), and 64 MiB when memory cannot be read. A
+    /// body that declares more is refused with a 413 naming this row.
+    pub request_body_bytes: u64,
     /// Failed pairing redemptions one client address may make before it
     /// waits (FIX 12477): each attempt past these waits twice as long as the
     /// one before, from one second, up to `pairing_redeem_wait_ceiling_ms`.
@@ -223,6 +234,7 @@ impl Default for LimitsConfig {
             media_reply_bytes: memory_floor(),
             chat_reply_bytes: memory_floor(),
             feedback_inbox_bytes: 128 * 1024,
+            request_body_bytes: request_body_floor(),
             // Room for an owner's typos; past them, a 40-bit code guessed at
             // one try an hour per address (FIX 12477, CALLS row).
             pairing_redeem_free_failures: 5,
@@ -236,6 +248,15 @@ impl Default for LimitsConfig {
 /// An eighth of the machine's memory for what LFS transfers hold in memory,
 /// and as much for app-tier state kept between frames and for media replies,
 /// each at least 256 MiB; 2 GiB when the platform does not say.
+/// `limits.request_body_bytes`'s default: a 1024th of the machine's memory
+/// (the least of its RAM and its container limit), the share the input-caps
+/// plan gives one body read into a typed request, never under 64 MiB, the
+/// facade's own body bound; 64 MiB when memory cannot be read.
+fn request_body_floor() -> u64 {
+    const FLOOR: u64 = 64 * 1024 * 1024;
+    crate::machine::memory_bytes().map_or(FLOOR, |memory| (memory / 1024).max(FLOOR))
+}
+
 fn memory_floor() -> u64 {
     const MIB: u64 = 1024 * 1024;
     crate::machine::memory_bytes().map_or(2_048 * MIB, |memory| (memory / 8).max(256 * MIB))
@@ -290,6 +311,7 @@ impl LimitsConfig {
             media_reply_bytes,
             chat_reply_bytes,
             feedback_inbox_bytes,
+            request_body_bytes,
             pairing_redeem_free_failures,
             pairing_redeem_wait_ceiling_ms,
             pairing_redeem_quiet_ms,
@@ -304,6 +326,11 @@ impl LimitsConfig {
             claim_input_json_bytes,
             core_batch_entities,
             legacy_batch_entities,
+            blob_content_bytes,
+            booking_availability_calls_per_minute,
+            booking_hold_calls_per_minute,
+            booking_write_calls_per_minute,
+            booking_quarantine_calls_per_minute,
             code_result_inline_bytes,
             code_result_disk_floor_bytes,
             code_result_scan_bytes,
@@ -486,6 +513,7 @@ impl LimitsConfig {
         set(&mut self.media_reply_bytes, media_reply_bytes);
         set(&mut self.chat_reply_bytes, chat_reply_bytes);
         set(&mut self.feedback_inbox_bytes, feedback_inbox_bytes);
+        set(&mut self.request_body_bytes, request_body_bytes);
         set(
             &mut self.pairing_redeem_free_failures,
             pairing_redeem_free_failures,
@@ -516,6 +544,23 @@ impl LimitsConfig {
             (EngineLimit::ClaimInputJsonBytes, claim_input_json_bytes),
             (EngineLimit::CoreBatchEntities, core_batch_entities),
             (EngineLimit::LegacyBatchEntities, legacy_batch_entities),
+            (EngineLimit::BlobContentBytes, blob_content_bytes),
+            (
+                EngineLimit::BookingAvailabilityCallsPerMinute,
+                booking_availability_calls_per_minute,
+            ),
+            (
+                EngineLimit::BookingHoldCallsPerMinute,
+                booking_hold_calls_per_minute,
+            ),
+            (
+                EngineLimit::BookingWriteCallsPerMinute,
+                booking_write_calls_per_minute,
+            ),
+            (
+                EngineLimit::BookingQuarantineCallsPerMinute,
+                booking_quarantine_calls_per_minute,
+            ),
             (EngineLimit::CodeResultInlineBytes, code_result_inline_bytes),
             (
                 EngineLimit::CodeResultDiskFloorBytes,
@@ -789,6 +834,7 @@ impl LimitsConfig {
             ("media_reply_bytes", self.media_reply_bytes),
             ("chat_reply_bytes", self.chat_reply_bytes),
             ("feedback_inbox_bytes", self.feedback_inbox_bytes),
+            ("request_body_bytes", self.request_body_bytes),
             (
                 "pairing_redeem_wait_ceiling_ms",
                 self.pairing_redeem_wait_ceiling_ms,
