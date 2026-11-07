@@ -977,6 +977,10 @@ export class Oneiron {
         /** Archives a campaign program: it stays readable, enrolls no one, and its queued enrollment work stops. */
         archive: (input: Facade.ArchiveCampaignProgramRequest): Facade.CampaignProgramRecord => this.#call(() => this.#client.vaultCampaignProgramArchive(input) as Facade.CampaignProgramRecord),
       },
+      /** The owner reviews the last-observed campaign enrollment holds and their queued redrives; a redrive is not a sent or completed call. */
+      held: (input: Facade.EmptyRequest = {}): Facade.CampaignEnrollmentHeldCall[] => this.#call(() => this.#client.vaultCampaignHeld(input) as Facade.CampaignEnrollmentHeldCall[]),
+      /** The owner approves exactly one current campaign enrollment hold by its call ref and reviewed digest, queuing the original work without a standing grant or bypassing its ordinary send checks. */
+      approve_once: (input: Facade.CampaignEnrollmentApproveOnceRequest): Facade.ConsentActReceipt => this.#call(() => this.#client.vaultCampaignApproveOnce(input) as Facade.ConsentActReceipt),
     },
     turn_programs: {
       /** Arms a pinned callable skill entry for the caller's own future turns, in one conversation or any of its own; arming the same definition again returns the standing registration. */

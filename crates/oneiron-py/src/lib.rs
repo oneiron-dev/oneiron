@@ -5421,6 +5421,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_campaign_held(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.campaign.held")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.campaign.held", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_campaign_approve_once(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.campaign.approve_once")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.campaign.approve_once", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_connectors_calls_approve_once(
         &self,
         py: Python<'_>,

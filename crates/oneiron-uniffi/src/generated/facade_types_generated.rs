@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1286 facade rows, 4655 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1238.
+// UniFFI census: 1288 facade rows, 4657 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1240.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -34084,6 +34084,65 @@ pub struct ConsentActReceipt {
     pub grant_ref: Option<String>,
     #[serde(rename = "diff_handle")]
     pub diff_handle: Vec<u8>,
+}
+
+/// `oneiron::campaign::enrollment::held::CampaignEnrollmentHeldCall`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CampaignEnrollmentHeldCall {
+    #[serde(rename = "call_ref")]
+    pub call_ref: String,
+    #[serde(rename = "consequence_ref")]
+    pub consequence_ref: String,
+    #[serde(rename = "call_seq")]
+    pub call_seq: u64,
+    #[serde(rename = "campaign_ref")]
+    pub campaign_ref: String,
+    #[serde(rename = "program_ref")]
+    pub program_ref: String,
+    #[serde(rename = "step_ref")]
+    pub step_ref: String,
+    #[serde(rename = "member_ref")]
+    pub member_ref: String,
+    #[serde(rename = "owner_actor")]
+    pub owner_actor: String,
+    #[serde(rename = "frozen_event_ref")]
+    pub frozen_event_ref: String,
+    #[serde(rename = "attempt_ref")]
+    pub attempt_ref: String,
+    #[serde(rename = "approval_digest")]
+    pub approval_digest: String,
+    #[serde(
+        rename = "approval_actor",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub approval_actor: Option<String>,
+    #[serde(rename = "envelope_hash")]
+    pub envelope_hash: String,
+    #[serde(rename = "held_at_ms")]
+    pub held_at_ms: u64,
+    #[serde(
+        rename = "owner_ask_seq",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub owner_ask_seq: Option<u64>,
+    #[serde(
+        rename = "approved_redrive",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub approved_redrive: Option<String>,
+}
+
+/// `oneiron::verbs::campaign_enrollment::CampaignEnrollmentApproveOnceRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CampaignEnrollmentApproveOnceRequest {
+    #[serde(rename = "call_ref")]
+    pub call_ref: String,
+    #[serde(rename = "approval_digest")]
+    pub approval_digest: String,
 }
 
 /// `oneiron::verbs::connector_call::ConnectorCallApproveOnceRequest`.

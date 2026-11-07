@@ -51,21 +51,20 @@ impl Vault {
                 .as_deref()
                 .and_then(EntityMetadataHeader::parse)
                 .is_some_and(|header| header.entity_type == ENTITY_TYPE_CLAIM);
-            let (outcome, _changed, cancelled) =
+            let (outcome, _changed, effects) =
                 self.apply_replayed_tombstone_in_txn(&mut wtxn, id, raw_value)?;
             let claims_changed = is_claim && outcome.changed_local_state();
             wtxn.commit()?;
-            Ok((outcome, cancelled, claims_changed))
+            Ok((outcome, effects, claims_changed))
         });
         self.store.flush_legal_hold_refusals_settled();
         // A fence its actor scrub committed reaches key custody now (FIX 11211).
         self.store.journal_staged_fence_facts();
-        let (outcome, cancelled, claims_changed) = applied?;
+        let (outcome, effects, claims_changed) = applied?;
         if claims_changed {
             self.verb_hook_bindings_changed();
         }
-        crate::attempt_queue::AttemptQueue::new(self)
-            .erased_payload_cancellations_committed(&cancelled);
+        effects.committed(self);
         while self.collect_lfs_garbage(32)? != 0 {}
         #[cfg(unix)]
         self.collect_released_result_bodies(256)?;
@@ -101,7 +100,7 @@ impl Vault {
     ) -> Result<(
         ReplayedTombstoneOutcome,
         Vec<EntityId>,
-        Vec<(crate::attempt_queue::AttemptId, u32)>,
+        crate::deletion::ErasureEffects,
     )> {
         // A Grant this replica holds, live or as a deleted shell, that its
         // peer deleted (a user delete or a hard erase, never an archive)
@@ -129,7 +128,7 @@ impl Vault {
     ) -> Result<(
         ReplayedTombstoneOutcome,
         Vec<EntityId>,
-        Vec<(crate::attempt_queue::AttemptId, u32)>,
+        crate::deletion::ErasureEffects,
     )> {
         let decoded = decode_tombstone_value(raw_value);
         self.replayed_tombstone_protection_in_txn(wtxn, id, &decoded)?;
@@ -162,7 +161,7 @@ impl Vault {
         let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
         // Receiver-only room MESSAGE content must be erased before the TURN
         // loses its PartOf edges, even when the host never held the child.
-        let mut cancelled =
+        let mut effects =
             crate::conversation::replay_room_message_tombstone(self, wtxn, *id, raw_value)?;
         // ARCH-0038 DELETE interplay: an `edge.provenance` Claim's subject
         // EdgeRef and sweep refs are only readable PRE-scrub. A hard replay of
@@ -260,7 +259,7 @@ impl Vault {
                         || had_merge_receipt,
                 },
                 changed_documents,
-                cancelled,
+                effects,
             ));
         }
 
@@ -353,7 +352,7 @@ impl Vault {
             crate::vault_cleanup::erase_in_txn(&self.store, wtxn, id)?;
             // A replayed erase holds no owner act here: the machine that made
             // it carries its custody revokes (FIX 11883).
-            cancelled.extend(crate::deletion::actor_fields::erase_actor_fields_in_txn(
+            effects.extend(crate::deletion::actor_fields::erase_actor_fields_in_txn(
                 crate::deletion::ActorErasureWriter::new(self, wtxn, *id),
                 None,
             )?);
@@ -364,7 +363,7 @@ impl Vault {
                     sweep_key: None,
                 },
                 residence_changed,
-                cancelled,
+                effects,
             ));
         }
         // ARCH-0055 §9 (r6) on the RECEIVING side: a remote hard erase must
@@ -373,7 +372,7 @@ impl Vault {
         // the shell edges with it, in the caller's transaction.
         let (cascaded_shells, mut changed_documents, shell_cancelled) =
             self.cascade_hard_erase_to_redirect_shells_in_txn(wtxn, id, None)?;
-        cancelled.extend(shell_cancelled);
+        effects.extend(shell_cancelled);
         let (_existed, citing, purged_cancelled) = self.purge_entity_active_store_in_txn(
             wtxn,
             id,
@@ -382,7 +381,7 @@ impl Vault {
             None,
         )?;
         changed_documents.extend(citing);
-        cancelled.extend(purged_cancelled);
+        effects.extend(purged_cancelled);
         // The replay reserves no topology delete, so the purge kept the
         // checkpoint payload leaves; the tombstone's own reason settles them.
         crate::deletion::checkpoint_payload::settle_checkpoint_payloads_for_reason_in_txn(
@@ -489,7 +488,7 @@ impl Vault {
                 sweep_key: Some(sweep_key),
             },
             changed_documents,
-            cancelled,
+            effects,
         ))
     }
 
