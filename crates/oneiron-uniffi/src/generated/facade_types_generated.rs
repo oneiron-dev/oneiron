@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1275 facade rows, 4616 generated types.
+// UniFFI census: 1275 facade rows, 4617 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1227.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -29234,6 +29234,12 @@ pub struct RoleSwapReceipt {
     pub role: ModelRole,
     #[serde(rename = "previous", default, skip_serializing_if = "Option::is_none")]
     pub previous: Option<ModelBinding>,
+    #[serde(
+        rename = "previous_swap",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub previous_swap: Option<String>,
     #[serde(rename = "binding")]
     pub binding: ModelBinding,
     #[serde(rename = "checkpoint")]
@@ -48921,6 +48927,18 @@ pub struct DeckDesignView {
     pub presentation: Option<DeckPresentation>,
 }
 
+/// `oneiron_docedit::graphic::GraphicLimits`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GraphicLimits {
+    #[serde(rename = "svg_bytes")]
+    pub svg_bytes: u64,
+    #[serde(rename = "raster_bytes")]
+    pub raster_bytes: u64,
+    #[serde(rename = "raster_pixels")]
+    pub raster_pixels: u64,
+}
+
 /// `oneiron::blob_artifact::deck_creation::DeckEmissionNames`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -48953,6 +48971,8 @@ pub struct DeckEmissionRequest {
     pub assets: Option<std::collections::HashMap<String, ArtifactVersionRef>>,
     #[serde(rename = "fonts", default, skip_serializing_if = "Option::is_none")]
     pub fonts: Option<Vec<ArtifactVersionRef>>,
+    #[serde(rename = "graphics", default, skip_serializing_if = "Option::is_none")]
+    pub graphics: Option<GraphicLimits>,
     #[serde(rename = "names")]
     pub names: DeckEmissionNames,
     #[serde(rename = "name")]
@@ -49514,6 +49534,8 @@ pub struct DeckTransaction {
     pub marks: Option<IdMarks>,
     #[serde(rename = "seed")]
     pub seed: String,
+    #[serde(rename = "graphics", default, skip_serializing_if = "Option::is_none")]
+    pub graphics: Option<GraphicLimits>,
     #[serde(rename = "steps")]
     pub steps: Vec<DeckStep>,
 }
@@ -64626,6 +64648,8 @@ pub struct DeckExportRequest {
     pub run_ref: String,
     #[serde(rename = "made_by", default, skip_serializing_if = "Option::is_none")]
     pub made_by: Option<crate::WireJson>,
+    #[serde(rename = "graphics", default, skip_serializing_if = "Option::is_none")]
+    pub graphics: Option<GraphicLimits>,
 }
 
 /// `oneiron::office_body::pptx::verbs::DeckExportView`.

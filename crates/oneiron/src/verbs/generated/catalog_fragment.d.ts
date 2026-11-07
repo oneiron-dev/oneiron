@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1327 code-mode rows (1286 host rows, 41 run rows), 4675 declarations.
+// Census: 1327 code-mode rows (1286 host rows, 41 run rows), 4676 declarations.
 // Replies: 1135 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
@@ -1867,7 +1867,7 @@ declare namespace Sdk {
   type CandleParityCheck = { tokens_match: boolean; token_mismatches?: string[]; logits_match?: boolean | null };
   type ExportCheck = { hash_mismatches: string[]; probe_coverage_matches: boolean; probe_checkpoints_match: boolean; settings_match: boolean; harness_matches: boolean; argmax_flips: number; max_logit_difference: number; tolerance: number; question_check?: QuestionExportCheck | null; candle_parity?: CandleParityCheck | null };
   type SwapChoice = { kind: "evaluated" } | { kind: "explicit_override"; reason: string };
-  type RoleSwapReceipt = { id: EntityId; run: EntityId; owner: TrainingOwner; at: number; role: ModelRole; previous?: ModelBinding | null; binding: ModelBinding; checkpoint: PinnedCheckpoint; evaluation?: HeldOutResult | null; checks: ExportCheck; exact_hash_overlaps: number; promotion_exposure?: EvalExposure | null; choice: SwapChoice };
+  type RoleSwapReceipt = { id: EntityId; run: EntityId; owner: TrainingOwner; at: number; role: ModelRole; previous?: ModelBinding | null; previous_swap?: EntityId | null; binding: ModelBinding; checkpoint: PinnedCheckpoint; evaluation?: HeldOutResult | null; checks: ExportCheck; exact_hash_overlaps: number; promotion_exposure?: EvalExposure | null; choice: SwapChoice };
   type BindingSource = { kind: "offer"; offer: EntityId; owner: SwitchOwner } | { kind: "training"; receipt: RoleSwapReceipt };
   type SpaceRef = "text_index" | { declared: string };
   type BindingMoveLink = { candidate: string; incumbent: SpaceRef; started_at: number };
@@ -3100,8 +3100,9 @@ declare namespace Sdk {
   type DeckDesignShortfall = { block: string; reason: DeckShortfallReason };
   type DeckDesignDecision = { page: string; options: DeckDesignOption[]; shortfalls: DeckDesignShortfall[] };
   type DeckDesignView = { spec: DesignSpec; plans: (DeckPlanView | null)[]; decisions: DeckDesignDecision[][]; presentation?: DeckPresentation };
+  type GraphicLimits = { svg_bytes: number; raster_bytes: number; raster_pixels: number };
   type DeckEmissionNames = { text: string; table: string; chart: string; picture: string; figure: string; sheet: string };
-  type DeckEmissionRequest = { outline_ref: string; kept: DeckKeepBinding; template: ArtifactVersionRef; assets?: Record<string, ArtifactVersionRef>; fonts?: ArtifactVersionRef[]; names: DeckEmissionNames; name: string; run_ref: string; trigger?: MadeByTrigger | null };
+  type DeckEmissionRequest = { outline_ref: string; kept: DeckKeepBinding; template: ArtifactVersionRef; assets?: Record<string, ArtifactVersionRef>; fonts?: ArtifactVersionRef[]; graphics?: GraphicLimits | null; names: DeckEmissionNames; name: string; run_ref: string; trigger?: MadeByTrigger | null };
   type CreatedInput = { source: ArtifactVersionRef; content_hash: number[]; provenance_kind: string };
   type CreatedSlide = { part: string; sld_id: number; page: string; layout: string };
   type DeckCreationRecord = { artifact: EntityId; version: number; content_hash: number[]; outline: EntityId; outline_version: string; outline_hash: number[]; template: ArtifactVersionRef; template_hash: number[]; asset_inputs: Record<string, CreatedInput>; font_inputs: CreatedInput[]; run_ref: string; made_by?: EntityId | null; slides: CreatedSlide[]; write_set: string[]; omitted: string[]; fit_unverified: [string, string, number][]; estimates: CreatedEstimate[]; created_at: number };
@@ -3126,7 +3127,7 @@ declare namespace Sdk {
   type StepSequence = "name" | "categories" | "values";
   type StepCell = "missing" | { number: number } | { text: string } | { date: string };
   type DeckStep = { set_text: { target: StepTarget; text: string } } | { replace_run_text: { target: StepTarget; paragraph: number; run: number; expected: string; text: string } } | { set_xfrm: { target: StepTarget; xfrm: StepXfrm } } | { move_in_slide_space: { target: StepTarget; dx: number; dy: number } } | { set_picture: { target: StepTarget; asset: AssetRef } } | { set_notes: { slide: string; expected?: string | null; text: string } } | { add_shape: { slide: string; preset: StepPreset; name: string; offset: number[]; extent: number[] } } | { delete_shape: { target: StepTarget; cascade?: boolean } } | { reparent: { target: StepTarget; parent?: number | null } } | { duplicate_slide: { slide: string; expected: Digest } } | { reorder_slides: { order: number[] } } | { set_table_cell: { slide: string; table: number; row: number; col: number; expected: string; value: string } } | { set_series_values: { chart: string; series: number; sequence: StepSequence; values: StepCell[] } } | { release_media: { slide: string; relationships: string[] } };
-  type DeckTransaction = { schema: number; base: Digest; marks?: IdMarks; seed: string; steps: DeckStep[] };
+  type DeckTransaction = { schema: number; base: Digest; marks?: IdMarks; seed: string; graphics?: GraphicLimits | null; steps: DeckStep[] };
   type DeckRenderSide = "base" | "candidate";
   type DeckRender = { side: DeckRenderSide; slide: string; image_hash: number[]; renderer: string };
   type DeckEditContext = { made_by?: EntityId | null; thread?: EntityId | null; renders?: DeckRender[] };
@@ -4105,7 +4106,7 @@ declare namespace Sdk {
   type Landing = "merge" | "switch";
   type DeckForkMergeRequest = { artifact_ref: string; fork_ref: string; reviewed_head: number[]; reviewed_fork: number[]; scope?: ApproveScope | null; landing?: Landing | null; made_by?: unknown | null };
   type LandingReceipt = { proposal: string; proposer: string; settler: string; scope: ApproveScope; landing: Landing; automatic: boolean; reviewed_version: number; landed_version: number; affected: NodeId[]; switched_away: NodeId[] };
-  type DeckExportRequest = { artifact_ref: string; run_ref: string; made_by?: unknown | null };
+  type DeckExportRequest = { artifact_ref: string; run_ref: string; made_by?: unknown | null; graphics?: GraphicLimits | null };
   type DeckExportView = { frontier: number[]; profile: string; projector: string; authoritative: boolean; noop: boolean; changed_parts: string[]; effects: string[]; record?: OfficeBodyExportRecord | null; proposed?: PendingProposalView | null; reconciliation?: VersionReconciliation | null };
   type DeckGateRequest = { profile?: string | null };
   type StepOutcome = "passed" | { failed: string } | { inconclusive: string } | "not_run";
