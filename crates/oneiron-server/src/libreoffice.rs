@@ -1,10 +1,10 @@
-//! The host's LibreOffice headless runs, shared by the review renderer
-//! ([`crate::slide_render`]) and the precision recalculator
+//! The host's LibreOffice headless runs for the precision recalculator
 //! ([`crate::xlsx_recalc`]): where `soffice` is and the version it names,
-//! which each looks for once; a fresh private scratch directory with its
-//! own user profile; and a child run in its own process group, with no input
-//! and no error output, under its own timeout, its work's deadline and a stop
-//! flag its caller sets on leaving.
+//! which it looks for once; a fresh private scratch directory with its own
+//! user profile; and a child run in its own process group, with no input and
+//! no error output, under its own timeout, its work's deadline and a stop
+//! flag its caller sets on leaving. The review renderer
+//! ([`crate::slide_render`]) keeps its own, with its capped scratch (#5494).
 //! Entry: `Soffice::find`.
 
 use std::path::{Path, PathBuf};
