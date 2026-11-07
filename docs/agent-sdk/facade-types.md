@@ -6230,7 +6230,7 @@ export type AssetRef = { artifact: string; version: number; hash: Digest; kind: 
 /** `oneiron_docedit::edit::transaction::StepPreset` */
 export type StepPreset = "rect" | "roundRect" | "ellipse" | "triangle" | "rightArrow"
 /** `oneiron_docedit::edit::transaction::StepSequence` */
-export type StepSequence = "name" | "categories" | "values"
+export type StepSequence = "name" | "categories" | "values" | "size"
 /** `oneiron_docedit::edit::transaction::StepCell` */
 export type StepCell = "missing" | { number: number } | { text: string } | { date: string }
 /** `oneiron_docedit::edit::transaction::DeckStep` */

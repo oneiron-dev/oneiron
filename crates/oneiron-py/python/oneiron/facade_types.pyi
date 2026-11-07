@@ -15634,7 +15634,7 @@ class AssetRef(TypedDict):
     kind: StepAssetKind
     description: str
 StepPreset = Literal["rect", "roundRect", "ellipse", "triangle", "rightArrow"]
-StepSequence = Literal["name", "categories", "values"]
+StepSequence = Literal["name", "categories", "values", "size"]
 class StepCellNumber(TypedDict):
     number: float
 class StepCellText(TypedDict):
