@@ -35,6 +35,7 @@
 //! landed.
 
 pub(crate) mod carried;
+pub(crate) mod checkpoint;
 mod obligation;
 mod replica;
 mod wake;
@@ -50,7 +51,13 @@ use crate::side_table::{self, Named, SideTable};
 use crate::store::source_audience_obligation::SourceAudienceObligation;
 use crate::{EntityId, Vault};
 
-pub(crate) use obligation::SourceAudienceBirth;
+pub(crate) use obligation::{
+    SourceAudienceBirth, admit_obligation_in_txn, admit_session_obligation_in_txn,
+    binding_stands_on, body_names_obligation, keeps_row_obligation, mark_birth_in_txn,
+    refuse_unbound_births_in, refuse_written_obligation, restorable_obligation,
+};
+#[cfg(feature = "sync")]
+pub(crate) use obligation::{row_obligation, unbound_obligation_in};
 pub(crate) use replica::{
     ReplicaMerge, bind_replicated_in_txn, event_conflicts_in, event_join,
     event_names_erased_actor_in, event_without_erased_actors, merge_event_in_txn,
@@ -69,6 +76,11 @@ pub(crate) use walk::{
     withheld_from_replication_in,
 };
 
+/// Each row a source landing is about to stamp with the source-audience
+/// obligation, marked in its own write before it stages the row (fix list
+/// row 16256). Binding the row takes the mark away, and the landing commits
+/// with none of its rows still marked: a mark never outlives its write.
+const BIRTHS: SideTable<EntityId, (), Named> = SideTable::new(&side_table::SOURCE_AUDIENCE_BIRTH);
 /// One policy, by its id.
 const POLICIES: SideTable<EntityId, SourceAudiencePolicy, Named> =
     SideTable::new(&side_table::SOURCE_AUDIENCE_POLICY);
@@ -605,7 +617,8 @@ pub(crate) fn thread_policy_in_txn(
 /// the same policy changes nothing, and one to another policy is refused.
 /// Only a CONVERSATION, TURN or MESSAGE whose live bytes in `txn` carry the
 /// source-audience obligation is bound (fix list row 16256): the stamp in
-/// its own body is what tells every later read it is a source's row.
+/// its own body is what tells every later read it is a source's row. The
+/// bind takes away the birth mark its landing left on the row.
 pub(crate) fn bind_record_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -630,12 +643,16 @@ pub(crate) fn bind_record_in_txn(
         ));
     }
     match RECORDS.get(&vault.store, txn, record)? {
-        Some(bound) if bound == *policy => Ok(()),
-        Some(_) => Err(Error::InvalidConfig(
-            "a row stays under the source audience it was born under".into(),
-        )),
-        None => RECORDS.put(&vault.store, txn, record, policy),
+        Some(bound) if bound == *policy => {}
+        Some(_) => {
+            return Err(Error::InvalidConfig(
+                "a row stays under the source audience it was born under".into(),
+            ));
+        }
+        None => RECORDS.put(&vault.store, txn, record, policy)?,
     }
+    // The landing that marked the row born binds it here: the mark goes.
+    obligation::clear_birth_in_txn(vault, txn, record)
 }
 
 /// Shares the thread policy `thread` with `person` (`share`), or withdraws
