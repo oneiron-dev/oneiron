@@ -10,12 +10,15 @@
 //! parent parked on them, read in the transaction that settles the reply
 //! (FIX 7083). Any other reply has unknown origins.
 
+mod caller;
 mod close;
 mod findings;
 pub(crate) use self::close::settle_evaporated_reader_spend;
 mod read;
 mod scoped;
 mod txn;
+
+pub(crate) use caller::erase_reader_caller_actor_in_txn;
 
 use std::collections::BTreeMap;
 use std::ops::Bound;
