@@ -16,6 +16,7 @@ mod http_fetch;
 mod hub_owner;
 mod import_receipt;
 mod install_transition;
+mod local_dir;
 pub use import_receipt::{
     CallerPermissions, HoldsNothing, HubImportReceipt, MarketplaceFit, MarketplaceFitDecision,
     MarketplaceFitEvaluator, RuleSkillFit, SkillFitSetting,
@@ -51,6 +52,7 @@ pub use default_hub::{
 pub use git_fetch::GitEndpointSkillHubAdapter;
 pub use http_fetch::HttpEndpointSkillHubAdapter;
 pub use install_transition::{InstallDisposition, InstallHoldReason, InstallLifecycle};
+pub use local_dir::LocalDirEndpointSkillHubAdapter;
 pub(crate) use package_codec::remove_hub_package_in_txn;
 pub use package_codec::{decode_hub_package, encode_hub_package};
 pub use publisher::ForeignSkillPublisher;
@@ -132,7 +134,7 @@ pub(crate) use self::index::{
 pub(crate) use self::package::{MAX_HUB_FILE_BYTES, MAX_HUB_PACKAGE_TOTAL_BYTES};
 pub(crate) use self::verdict::{
     scan_verdict_row_risk, skill_scan_verdict_heads_for_content_hash_in_store,
-    skill_scan_verdicts_for_content_hash_in_store,
+    skill_scan_verdict_heads_sourced_in_store, skill_scan_verdicts_for_content_hash_in_store,
 };
 
 // The flat skill_hub.rs module used to provide these names to the test module

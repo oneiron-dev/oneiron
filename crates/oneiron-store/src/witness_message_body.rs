@@ -3,6 +3,9 @@
 use rmpv::Value;
 
 use crate::gate_reason::GateReasonCode;
+use crate::source_audience_obligation::{
+    SOURCE_AUDIENCE_REQUIRED_KEY, encode_source_audience_required,
+};
 use oneiron_base::error::{Error, RecordError, Result};
 use oneiron_contracts::limit_ask::{EngineLimit, LimitWatch};
 
@@ -31,8 +34,10 @@ const TURN_KEY_SPEAKER: &str = "speaker";
 
 /// Envelope-axis names metadata may not restate, at ANY depth. Metadata is
 /// opaque passenger data; a key that shadows an axis the door authorizes is a
-/// second, ungated copy of that axis riding inside the first.
-const RESERVED_METADATA_KEYS: [&str; 7] = [
+/// second, ungated copy of that axis riding inside the first. The engine's
+/// source-audience obligation is one of them: only the top-level key of a
+/// source-bound row carries it (fix list row 16256).
+const RESERVED_METADATA_KEYS: [&str; 8] = [
     BODY_KEY_AUTHOR,
     BODY_KEY_TYPE,
     BODY_KEY_CONTENT,
@@ -40,6 +45,7 @@ const RESERVED_METADATA_KEYS: [&str; 7] = [
     BODY_KEY_IS_VISIBLE,
     BODY_KEY_ORDER,
     TURN_KEY_SPEAKER,
+    SOURCE_AUDIENCE_REQUIRED_KEY,
 ];
 
 /// Metadata nesting bound, the root map at depth 0: the decoder's own floor
@@ -124,6 +130,19 @@ impl WitnessMessageEnvelope<'_> {
             .map_err(|_| Error::InvalidClaimBody("witness message body is not encodable"))?;
         Ok(out)
     }
+
+    /// The canonical body of a SOURCE-BOUND MESSAGE (fix list row 16256):
+    /// [`Self::encode_body`] with the engine's source-audience obligation
+    /// appended last. Only the source landing's proof-bearing door stages
+    /// these bytes; every other door binds [`Self::encode_body`] and so
+    /// refuses them.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::encode_body`].
+    pub fn encode_source_bound_body(&self) -> Result<Vec<u8>> {
+        encode_source_audience_required(&self.encode_body()?)
+    }
 }
 
 /// Envelope shape, vocabulary and coherence. Unknown or malformed values fail
@@ -165,6 +184,28 @@ pub fn witness_message_envelope_denial(
     }
 }
 
+/// [`witness_message_envelope_denial`] for a SOURCE-BOUND MESSAGE (fix list
+/// row 16256): every axis check over the envelope's plain encoding, then the
+/// bind of `body` to [`WitnessMessageEnvelope::encode_source_bound_body`],
+/// so the one extra key is the obligation, last, as `true`, and nothing else.
+#[must_use]
+pub fn source_bound_witness_message_envelope_denial(
+    envelope: &WitnessMessageEnvelope<'_>,
+    body: &[u8],
+) -> Option<GateReasonCode> {
+    let malformed = Some(GateReasonCode::DenyWitnessMessageMalformedEnvelope);
+    let Ok(plain) = envelope.encode_body() else {
+        return malformed;
+    };
+    if let Some(reason_code) = witness_message_envelope_denial(envelope, &plain) {
+        return Some(reason_code);
+    }
+    match envelope.encode_source_bound_body() {
+        Ok(stamped) if stamped == body => None,
+        _ => malformed,
+    }
+}
+
 /// The canonical-envelope verdict for one MESSAGE body, at the storage
 /// materialization chokepoint (ONE-1686).
 ///
@@ -196,6 +237,13 @@ pub enum WitnessMessageBodyAuthor {
 /// not the canonical key set in canonical order, carry an unknown author or
 /// type token, hide a `user` row, carry malformed
 /// metadata, or do not re-encode byte-identically.
+///
+/// A source-bound row (fix list row 16256) carries one more key, the
+/// engine's source-audience obligation, LAST and only as `true`; its bytes
+/// must re-encode as [`WitnessMessageEnvelope::encode_source_bound_body`].
+/// Accepting it here is format, not authority: every door that writes
+/// MESSAGE rows binds its own encoding, and only the source landing's
+/// carries it.
 pub fn validate_canonical_witness_message_body(body: &[u8]) -> Result<WitnessMessageBodyAuthor> {
     let malformed = || {
         Error::Record(RecordError::InvalidWitnessMessageBody(
@@ -216,7 +264,8 @@ pub fn validate_canonical_witness_message_body(body: &[u8]) -> Result<WitnessMes
     let mut metadata: Option<Value> = None;
     let mut is_visible: Option<bool> = None;
     let mut order: Option<u32> = None;
-    for (key, value) in &entries {
+    let mut source_bound = false;
+    for (position, (key, value)) in entries.iter().enumerate() {
         let Some(key) = key.as_str() else {
             return Err(malformed());
         };
@@ -260,6 +309,14 @@ pub fn validate_canonical_witness_message_body(body: &[u8]) -> Result<WitnessMes
                 order = value.as_u64().and_then(|value| u32::try_from(value).ok());
                 order.is_none()
             }
+            // The obligation is the last key, once, as `true`.
+            SOURCE_AUDIENCE_REQUIRED_KEY => {
+                if position + 1 != entries.len() || value.as_bool() != Some(true) {
+                    return Err(malformed());
+                }
+                source_bound = true;
+                false
+            }
             _ => return Err(malformed()),
         };
         if duplicated {
@@ -281,9 +338,15 @@ pub fn validate_canonical_witness_message_body(body: &[u8]) -> Result<WitnessMes
         order,
     };
     // The SAME floor the ceiling door runs, including the canonical-bytes bind
-    // (`encode_body() == body`), which is what makes key ORDER and the absence
-    // of any extra byte part of the answer rather than of the parse.
-    if witness_message_envelope_denial(&envelope, body).is_some() {
+    // (`encode_body() == body`, or its source-bound twin), which is what makes
+    // key ORDER and the absence of any extra byte part of the answer rather
+    // than of the parse.
+    let denial = if source_bound {
+        source_bound_witness_message_envelope_denial(&envelope, body)
+    } else {
+        witness_message_envelope_denial(&envelope, body)
+    };
+    if denial.is_some() {
         return Err(malformed());
     }
     Ok(match envelope.author {

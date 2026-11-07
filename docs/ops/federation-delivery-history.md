@@ -31,6 +31,29 @@ readers use one unconditional codec, including builds without `sync`. Values are
 80 bytes plus the existing optional 16-byte world; intent values are 128 bytes.
 These are current formats only, with no migration or old-format reader.
 
+## Current admitted source image
+
+Each consolidation evidence view also exposes `current_image` for its requested
+`source_ref`. It comes from the same scoped-read snapshot as that source's
+admission and evidence facts. `learned_at` is the row's write stamp.
+`body_hash` is the native domain-separated consolidation hash over the exact live
+projected body read by this door, excluding the row metadata header. Its domain
+is `oneiron:dreamer-evidence:v1`; it is not the plain BLAKE3 full-row hash in
+`delivery_history`, a short-reference byte, or a hash of a cited transcript slice.
+
+The optional `document` pairs the source's own active document id (`doc`) with
+its native causal frontier (`at`) in that snapshot. `null` means that this
+optional pin is unavailable, including an unmigrated source or a build without
+`sync`. A missing pin never withholds the existing evidence result. A document
+edit can move this frontier and the projected-body hash without changing the
+row's write stamp or its historical landed-row hash.
+
+These facts cover only the requested source itself. They do not refresh frozen
+`evidence_refs`, locators, source refs, or MESSAGE pins. A TURN body or its own
+document pin does not version its joined MESSAGE transcript. An unchanged row
+hash or source image therefore does not prove that all cited text is current.
+No freshness boolean, current grant authority, or first-party status is inferred.
+
 This does not complete SYNC-07's typed consolidation input or establish the
 canon's unspecified connection/grant-epoch actor attribution. It is not a claim
 of runtime, current-content, full-history or first-party-corroboration proof.

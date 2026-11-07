@@ -325,8 +325,10 @@ fn saved_runs_page(
     Ok((runs, next))
 }
 
-/// The saved row a run index row names.
+/// The saved row a run index row names, or the run marked missing when
+/// that row is gone (FIX 2394).
 fn saved_run_in(vault: &Vault, rtxn: &RoTxn<'_>, run: HookRunRef) -> Result<SavedRun> {
+    let key = run.key();
     let saved = match run {
         HookRunRef::Fact(key) => store::MEMOS
             .get(&vault.store, rtxn, &key)?
@@ -335,7 +337,5 @@ fn saved_run_in(vault: &Vault, rtxn: &RoTxn<'_>, run: HookRunRef) -> Result<Save
             .get(&vault.store, rtxn, &key)?
             .map(|saved| SavedRun::Verb(key, saved)),
     };
-    saved.ok_or(Error::CorruptedIndex(
-        "a hook run index row names no saved run",
-    ))
+    Ok(saved.unwrap_or(SavedRun::Missing(key)))
 }

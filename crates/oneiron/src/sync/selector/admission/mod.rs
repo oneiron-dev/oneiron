@@ -222,7 +222,10 @@ fn staged_lane(receipt_id: &[u8; 32]) -> String {
 /// `guest` is the source namespace a guest's pact or a staged artifact's
 /// claimed manifest names, never authentication. With one, the update's
 /// CLAIMs land in their foreign WORLD copies ([`Routes`], FIX 3497), and the
-/// admitted update holds one part per window it lands in.
+/// admitted update holds one part per window it lands in. The birth placement
+/// it carries for a TASK or SUMMARY is validated and remapped there too, and
+/// each part holds its rows' placements beside its bytes (FIX 3656). Without
+/// one, no placement is read: a member's rows land as they always did.
 #[cfg(feature = "sync")]
 fn admit_window_update(
     vault: &Vault,
@@ -246,6 +249,9 @@ fn admit_window_update(
         .with_write_txn_grouped(|wtxn| crate::gate::resolve_policy_manifest(&vault.store, wtxn))?;
 
     reject_federated_tombstones(&remote)?;
+    // Engine A: a federated copy brings no source audience assertion; the
+    // map rides the owner's full-window lane alone (L02 3, 6 Nov 06:24).
+    crate::sync::source_audiences::refuse_foreign_map(&remote)?;
     // The withheld CLAIMs and the contained cross-world edges (FIX 3660).
     let mut terminal = crate::sync::quarantine::TerminalRejectionBatch::new(key.as_str());
     let routes = match guest {
@@ -343,6 +349,9 @@ fn admit_window_update(
         };
         let peer_rows = crate::sync::ingest::carry_peer_rows(&admitted)?;
         let delivered = crate::sync::ingest::delivered_rows(&admitted.get_map("entities"));
+        // The birth placements a guest carried never enter the admitted
+        // bytes: the part's import lands each beside its row (FIX 3656).
+        let placements = routes.admitted_placements(&admitted);
         admitted.commit_with(CommitOptions::new().origin(role.origin()));
         let rows = admitted.get_map("entities").len() + admitted.get_map("edges").len();
         let bytes = admitted
@@ -357,6 +366,7 @@ fn admit_window_update(
             peer_rows,
             delivered,
             born_with,
+            placements,
             lane: lane.clone(),
             routed: Vec::new(),
         });
@@ -486,6 +496,9 @@ fn refuse_peer_agent_definition_widening(
 /// materialization must discard.
 #[cfg(feature = "sync")]
 fn validate_admitted_replicated_body(id: &EntityId, entity_type: u8, body: &[u8]) -> Result<()> {
+    // Fix list row 16256: a restricted lane carries no source-audience key,
+    // whatever its value; a peer's body naming it is refused as it came.
+    crate::source_audience::refuse_written_obligation(entity_type, body)?;
     if entity_type != crate::registry::ENTITY_TYPE_AGENT_DEF {
         crate::agent_def::validate_put_at_seeded_id(id, entity_type, None)?;
     }
