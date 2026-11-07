@@ -10035,7 +10035,7 @@ class RsiSettlementSpent(TypedDict):
     Spent: int
 class RsiSettlementExposure(TypedDict):
     Exposure: int
-RsiSettlement = Literal["Refunded"] | RsiSettlementSpent | RsiSettlementExposure
+RsiSettlement = Literal["Unknown", "Refunded"] | RsiSettlementSpent | RsiSettlementExposure
 class ResearchReservation(TypedDict):
     id: EntityId
     line: ResearchReservationLine

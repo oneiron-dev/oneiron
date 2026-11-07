@@ -1990,7 +1990,7 @@ declare namespace Sdk {
   type ResearchWorkWire = { root: EntityId; purpose: RsiSpendPurpose; units: number; attempt?: EntityId | null };
   type ResearchSettleWire = { root: EntityId; reservation: EntityId; actual: number };
   type ResearchReservationLine = { work: { purpose: RsiSpendPurpose } } | "exploration";
-  type RsiSettlement = { Spent: number } | { Exposure: number } | "Refunded";
+  type RsiSettlement = { Spent: number } | "Unknown" | { Exposure: number } | "Refunded";
   type ResearchReservation = { id: EntityId; line: ResearchReservationLine; units: number; attempt?: AttemptId | null; settlement?: RsiSettlement | null; reserved_at: number };
   type ResearchRefundWire = { root: EntityId; reservation: EntityId };
   type ResearchExplorationWire = { root: EntityId; units: number; attempt?: EntityId | null };

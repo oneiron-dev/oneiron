@@ -3939,7 +3939,7 @@ export type ResearchSettleWire = { root: EntityId; reservation: EntityId; actual
 /** `oneiron::autoreason_campaign::research::budget::ResearchReservationLine` */
 export type ResearchReservationLine = { work: { purpose: RsiSpendPurpose } } | "exploration"
 /** `oneiron::research_budget::RsiSettlement` */
-export type RsiSettlement = { Spent: number } | { Exposure: number } | "Refunded"
+export type RsiSettlement = { Spent: number } | "Unknown" | { Exposure: number } | "Refunded"
 /** `oneiron::autoreason_campaign::research::budget::ResearchReservation` */
 export type ResearchReservation = { id: EntityId; line: ResearchReservationLine; units: number; attempt?: AttemptId | null; settlement?: RsiSettlement | null; reserved_at: number }
 /** `oneiron::verbs::research::ResearchRefundWire` */
