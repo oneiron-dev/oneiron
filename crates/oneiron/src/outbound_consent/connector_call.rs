@@ -259,6 +259,14 @@ pub(super) fn connector_call_ref(
     )?)
 }
 
+impl ConnectorCallInvocation {
+    /// The native row identity for this invocation and its verified caller.
+    /// This derives an identity only; it grants no right to read or send.
+    pub fn call_ref(self, principal: EntityId) -> Result<EntityId, IntentLedgerError> {
+        connector_call_ref(&principal.to_hex(), self)
+    }
+}
+
 pub(super) fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
