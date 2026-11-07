@@ -2,9 +2,9 @@
 //!
 //! At pin d81235049384534c167caea52b85a694f6103d14, env, argv and file
 //! handlers append accepted keys. Env keys and a key/file flag at the start
-//! of the operator args, or after only the known context/slot prefix, stay
-//! valid with any later args. Other argv and preset-only authentication
-//! keep the existing unauthenticated GET.
+//! of the operator args, or after only the known single-value launch options
+//! and zero-value launch flags, stay valid with any later args. Other argv
+//! and preset-only authentication keep the existing unauthenticated GET.
 use std::path::Path;
 
 use reqwest::header::{AUTHORIZATION, HeaderValue};
@@ -39,10 +39,155 @@ impl MetricsRoute {
     }
 }
 
-// Skip only the pinned context/slot options, each with exactly one value.
+// Skip only the pinned launch options with their original value arity.
 fn auth_args(mut args: &[String]) -> &[String] {
-    while let [flag, _, rest @ ..] = args {
-        if !matches!(flag.as_str(), "--parallel" | "-np" | "--ctx-size" | "-c") {
+    while let [flag, rest @ ..] = args {
+        if matches!(
+            flag.as_str(),
+            "--no-host"
+                | "-cmoe"
+                | "--cpu-moe"
+                | "--check-tensors"
+                | "--swa-full"
+                | "-sp"
+                | "--special"
+                | "-kvu"
+                | "--kv-unified"
+                | "-no-kvu"
+                | "--no-kv-unified"
+                | "--cache-idle-slots"
+                | "--no-cache-idle-slots"
+                | "--context-shift"
+                | "--no-context-shift"
+                | "--perf"
+                | "--no-perf"
+                | "-e"
+                | "--escape"
+                | "--no-escape"
+                | "--warmup"
+                | "--no-warmup"
+        ) {
+            args = rest;
+            continue;
+        }
+        let [_, rest @ ..] = rest else {
+            break;
+        };
+        if !matches!(
+            flag.as_str(),
+            "--parallel"
+                | "-np"
+                | "--ctx-size"
+                | "-c"
+                | "-b"
+                | "--batch-size"
+                | "-ub"
+                | "--ubatch-size"
+                | "-n"
+                | "--predict"
+                | "--n-predict"
+                | "--keep"
+                | "-ctxcp"
+                | "--ctx-checkpoints"
+                | "--swa-checkpoints"
+                | "-cms"
+                | "--checkpoint-min-step"
+                | "-cram"
+                | "--cache-ram"
+                | "-fa"
+                | "--flash-attn"
+                | "-t"
+                | "--threads"
+                | "-tb"
+                | "--threads-batch"
+                | "--threads-http"
+                | "-C"
+                | "--cpu-mask"
+                | "-Cr"
+                | "--cpu-range"
+                | "--cpu-strict"
+                | "--prio"
+                | "--poll"
+                | "-Cb"
+                | "--cpu-mask-batch"
+                | "-Crb"
+                | "--cpu-range-batch"
+                | "--cpu-strict-batch"
+                | "--prio-batch"
+                | "--poll-batch"
+                | "-dev"
+                | "--device"
+                | "-ngl"
+                | "--gpu-layers"
+                | "--n-gpu-layers"
+                | "-lm"
+                | "--load-mode"
+                | "-lzm"
+                | "--lazy-mode"
+                | "--numa"
+                | "--host"
+                | "--port"
+                | "-to"
+                | "--timeout"
+                | "-m"
+                | "--model"
+                | "-r"
+                | "--reverse-prompt"
+                | "--samplers"
+                | "-s"
+                | "--seed"
+                | "--sampler-seq"
+                | "--sampling-seq"
+                | "--temp"
+                | "--temperature"
+                | "--top-k"
+                | "--top-p"
+                | "--min-p"
+                | "--top-nsigma"
+                | "--top-n-sigma"
+                | "--xtc-probability"
+                | "--xtc-threshold"
+                | "--typical"
+                | "--typical-p"
+                | "--repeat-last-n"
+                | "--repeat-penalty"
+                | "--presence-penalty"
+                | "--frequency-penalty"
+                | "--dry-multiplier"
+                | "--dry-base"
+                | "--dry-allowed-length"
+                | "--dry-penalty-last-n"
+                | "--dry-sequence-breaker"
+                | "--adaptive-target"
+                | "--adaptive-decay"
+                | "--dynatemp-range"
+                | "--dynatemp-exp"
+                | "--mirostat"
+                | "--mirostat-lr"
+                | "--mirostat-ent"
+                | "-l"
+                | "--logit-bias"
+                | "--grammar"
+                | "--grammar-file"
+                | "-j"
+                | "--json-schema"
+                | "-jf"
+                | "--json-schema-file"
+                | "--pooling"
+                | "--rope-scaling"
+                | "--rope-scale"
+                | "--rope-freq-base"
+                | "--rope-freq-scale"
+                | "--yarn-orig-ctx"
+                | "--yarn-ext-factor"
+                | "--yarn-attn-factor"
+                | "--yarn-beta-slow"
+                | "--yarn-beta-fast"
+                | "-ctk"
+                | "--cache-type-k"
+                | "-ctv"
+                | "--cache-type-v"
+        ) {
             break;
         }
         args = rest;
