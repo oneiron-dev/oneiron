@@ -367,7 +367,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/federation_burst_doors.rs` | src | s | 10 crate-vis | — | Signed Connect ingress and owner lifecycle doors over the shared burst engine |
 | `src/api/facade/federation_connect_doors.rs` | src | s | 12 crate-vis | — | The typed owner federation doors share the existing owner HTTP operations |
 | `src/api/facade/feedback_doors.rs` | src | s | 5 crate-vis | — | The host doors of subject-bound feedback (OF-420/537): the owner's report disclosure, route and outbound… |
-| `src/api/facade/files_doors.rs` | src | s | 5 crate-vis | — | The host doors of the Files world's source rows (FIX 6942): `vault.files.sources.attach`, `.rescan`… |
+| `src/api/facade/files_doors.rs` | src | s | 6 crate-vis | — | The host doors of the Files world's source rows (FIX 6942): `vault.files.sources.attach`, `.convert`… |
 | `src/api/facade/fold_doors.rs` | src | m | 7 crate-vis | — | Public run-bound folds, through the caller's existing live-run action door |
 | `src/api/facade/foreign_code_doors.rs` | src | s | 2 crate-vis | — | The foreign `execute_code` projection |
 | `src/api/facade/free_time_doors.rs` | src | s | 6 crate-vis | — | The free-time host doors (FIX 4453): the owner's `vault.free_time.policy.get`, `.policy.set`, `.cycles` and… |
