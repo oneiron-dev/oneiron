@@ -148,7 +148,8 @@ pub use self::replay_capsule::{
 pub(crate) use self::replay_capsule::{StepCapture, StepStartBody, StepStartCapture, capture_step};
 pub(crate) use self::replay_context::{
     CapturedGuestResponse, CapturedReaderChild, ReaderFindingSelection, ReaderReadCapture,
-    SelectedFinding, StepContextCapture, StepContextCommit, StepReplayContext, reveals_secret,
+    RetainedReadVerdict, SelectedFinding, StepContextCapture, StepContextCommit, StepReplayContext,
+    reveals_secret,
 };
 pub use self::repo_calls::RepoRunCall;
 pub use self::result_read::ResultFacet;
@@ -253,7 +254,7 @@ pub use self::reader::{
     ClaimOutcome, DEFAULT_READER_FOLD_RESERVE_MS, DEFAULT_READER_WINDOW_TOKENS, DelegatedSource,
     ReaderActor, ReaderFindingRef, ReaderJob, ReaderJobKind, ReaderJobRunner, ReaderJobState,
     ReaderJobWake, ReaderParent, ReaderQueueCursor, ReaderQueuePage, ReaderReportReceipt,
-    ReaderRoute, ReaderRunEnd, ReaderSpawnReceipt, ReaderSpend, RunDeadline,
+    ReaderRoute, ReaderRunEnd, ReaderSpawnReceipt, ReaderSpend, ResultOrigins, RunDeadline,
     SUMMARY_GROUP_EXCEEDS_WINDOW, SUMMARY_READ_BYTES_PER_TOKEN, SUMMARY_WINDOW_DIVISOR,
     SelfReaderReportCall, SelfReaderSpawnCall, SelfSummarizeCall, SpawnHostSeat,
     SpawnParentBinding, SummarizeEffort, SummarizeRecipe, SummarizeReply, TaskWaitFailure,
@@ -261,8 +262,8 @@ pub use self::reader::{
     summary_exceeds_window, summary_exceeds_window_bytes, summary_token_budget,
 };
 pub(crate) use self::reader::{
-    reader_attempt_id, reader_run_id, reader_task_id, reader_wait_id, reduce_task_wait_set,
-    summary_memo_key, summary_task_id, valid_reader_key, vault_ref,
+    OriginsUnion, reader_attempt_id, reader_run_id, reader_task_id, reader_wait_id,
+    reduce_task_wait_set, summary_memo_key, summary_task_id, valid_reader_key, vault_ref,
 };
 pub use self::reader_brief::reader_task_brief;
 pub(crate) use self::reader_clock::{reader_job_cutoff, reader_wait_cutoff};
