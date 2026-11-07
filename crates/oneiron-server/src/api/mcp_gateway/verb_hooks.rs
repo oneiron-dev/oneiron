@@ -101,7 +101,7 @@ fn mcp_verb_ask_credential(
     let door = actor
         .drain
         .as_ref()
-        .filter(|drain| drain.invocation() == memory.invocation())
+        .filter(|drain| Some(drain.invocation()) == memory.invocation())
         .and_then(|drain| drain.credential_door())
         .cloned()
         .unwrap_or_else(|| {
