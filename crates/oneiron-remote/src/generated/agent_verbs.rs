@@ -2278,6 +2278,15 @@ impl OneironClient {
                 "vault.code.origin.publications" => remote_agent_verb_output::<
                     oneiron::memory::origin_doors::OriginPublicationsView,
                 >(client, verb, &input),
+                "vault.code.secrets.purge.request" => remote_agent_verb_output::<
+                    oneiron::memory::origin_doors::RepoSecretPurgePlan,
+                >(client, verb, &input),
+                "vault.code.secrets.purge.get" => remote_agent_verb_output::<
+                    oneiron::memory::origin_doors::RepoSecretPurgeView,
+                >(client, verb, &input),
+                "vault.code.secrets.purge.execute" => remote_agent_verb_output::<
+                    oneiron::memory::origin_doors::RepoSecretPurgeReceipt,
+                >(client, verb, &input),
                 "vault.code.checkout.holder.bind" => remote_agent_verb_output::<
                     oneiron::memory::repo_doors::RepoCheckoutBindOutput,
                 >(client, verb, &input),
@@ -13000,6 +13009,42 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.code.origin.publications", value)
+    }
+    pub fn vault_code_secrets_purge_request(
+        &self,
+        input: &oneiron::memory::origin_doors::RepoSecretPurgeRequest,
+    ) -> Result<oneiron::memory::origin_doors::RepoSecretPurgePlan, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.secrets.purge.request", value)
+    }
+    pub fn vault_code_secrets_purge_get(
+        &self,
+        input: &oneiron::memory::origin_doors::RepoSecretPurgeIdRequest,
+    ) -> Result<oneiron::memory::origin_doors::RepoSecretPurgeView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.secrets.purge.get", value)
+    }
+    pub fn vault_code_secrets_purge_execute(
+        &self,
+        input: &oneiron::memory::origin_doors::RepoSecretPurgeIdRequest,
+    ) -> Result<oneiron::memory::origin_doors::RepoSecretPurgeReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.secrets.purge.execute", value)
     }
     pub fn vault_code_checkout_holder_bind(
         &self,

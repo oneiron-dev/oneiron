@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1289 facade rows, 4668 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1241.
+// UniFFI census: 1292 facade rows, 4678 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1244.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -43459,6 +43459,148 @@ pub struct OriginPublicationsView {
     pub repo: String,
     #[serde(rename = "publications")]
     pub publications: Vec<OriginPublicationView>,
+}
+
+/// `oneiron::origin::secret_purge::RepoSecretPurgeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RepoSecretPurgeRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "marks", default, skip_serializing_if = "Option::is_none")]
+    pub marks: Option<Vec<String>>,
+}
+
+/// `oneiron::origin::secret_purge::RepoSecretPurgeRefMove`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RepoSecretPurgeRefMove {
+    #[serde(rename = "ref_name")]
+    pub ref_name: String,
+    #[serde(rename = "old_oid")]
+    pub old_oid: String,
+    #[serde(rename = "new_oid")]
+    pub new_oid: String,
+}
+
+/// `oneiron::origin::secret_purge::RepoSecretPurgeKeepRoot`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RepoSecretPurgeKeepRoot {
+    #[serde(rename = "kind")]
+    pub kind: String,
+    #[serde(rename = "owner")]
+    pub owner: String,
+    #[serde(rename = "oid")]
+    pub oid: String,
+    #[serde(rename = "releases")]
+    pub releases: bool,
+}
+
+/// `oneiron::origin::secret_purge::RepoSecretPurgeOutstanding`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RepoSecretPurgeOutstanding {
+    #[serde(rename = "backups_and_checkpoints")]
+    BackupsAndCheckpoints,
+    #[serde(rename = "outside_copies")]
+    OutsideCopies,
+    #[serde(rename = "repo_snapshots")]
+    RepoSnapshots,
+    #[serde(rename = "code_documents")]
+    CodeDocuments,
+    #[serde(rename = "lfs_objects")]
+    LfsObjects,
+}
+
+/// `oneiron::origin::secret_purge::RepoSecretPurgePlan`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RepoSecretPurgePlan {
+    #[serde(rename = "plan")]
+    pub plan: String,
+    #[serde(rename = "owner")]
+    pub owner: String,
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "store")]
+    pub store: String,
+    #[serde(rename = "marks")]
+    pub marks: Vec<String>,
+    #[serde(rename = "moves")]
+    pub moves: Vec<RepoSecretPurgeRefMove>,
+    #[serde(rename = "purged_blobs")]
+    pub purged_blobs: Vec<String>,
+    #[serde(rename = "rewritten_objects")]
+    pub rewritten_objects: u64,
+    #[serde(rename = "signatures_dropped")]
+    pub signatures_dropped: u64,
+    #[serde(rename = "keep_roots")]
+    pub keep_roots: Vec<RepoSecretPurgeKeepRoot>,
+    #[serde(rename = "outstanding")]
+    pub outstanding: Vec<RepoSecretPurgeOutstanding>,
+    #[serde(rename = "planned_at")]
+    pub planned_at: u64,
+}
+
+/// `oneiron::origin::secret_purge::RepoSecretPurgeIdRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RepoSecretPurgeIdRequest {
+    #[serde(rename = "plan")]
+    pub plan: String,
+}
+
+/// `oneiron::origin::secret_purge::RepoSecretPurgeState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RepoSecretPurgeState {
+    #[serde(rename = "complete_local")]
+    CompleteLocal,
+    #[serde(rename = "partial")]
+    Partial,
+    #[serde(rename = "stale")]
+    Stale,
+}
+
+/// `oneiron::origin::secret_purge::RepoSecretPurgeRefOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RepoSecretPurgeRefOutcome {
+    #[serde(rename = "ref_name")]
+    pub ref_name: String,
+    #[serde(rename = "old_oid")]
+    pub old_oid: String,
+    #[serde(rename = "new_oid")]
+    pub new_oid: String,
+    #[serde(rename = "moved")]
+    pub moved: bool,
+    #[serde(rename = "failure", default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<String>,
+}
+
+/// `oneiron::origin::secret_purge::RepoSecretPurgeReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RepoSecretPurgeReceipt {
+    #[serde(rename = "receipt")]
+    pub receipt: String,
+    #[serde(rename = "plan")]
+    pub plan: String,
+    #[serde(rename = "state")]
+    pub state: RepoSecretPurgeState,
+    #[serde(rename = "refs")]
+    pub refs: Vec<RepoSecretPurgeRefOutcome>,
+    #[serde(rename = "released")]
+    pub released: Vec<RepoSecretPurgeKeepRoot>,
+    #[serde(rename = "still_present")]
+    pub still_present: Vec<String>,
+    #[serde(rename = "outstanding")]
+    pub outstanding: Vec<RepoSecretPurgeOutstanding>,
+    #[serde(rename = "executed_at")]
+    pub executed_at: u64,
+}
+
+/// `oneiron::origin::secret_purge::RepoSecretPurgeView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RepoSecretPurgeView {
+    #[serde(rename = "plan")]
+    pub plan: RepoSecretPurgePlan,
+    #[serde(rename = "receipt", default, skip_serializing_if = "Option::is_none")]
+    pub receipt: Option<RepoSecretPurgeReceipt>,
 }
 
 /// `oneiron::memory::repo_doors::custody::RepoCheckoutBindInput`.

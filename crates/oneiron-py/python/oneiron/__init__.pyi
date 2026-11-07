@@ -2732,6 +2732,15 @@ class Oneiron:
             """Read one repository's marked secrets and linked remediations, value-free: each mark's blob, path, detector kind, where the push saw it and its custody handle. Owner only."""
         def propose(self, spec: Facade.CodeRepoSecretProposeRequest) -> Facade.CodeRepoSecretRemediation:
             """Stage one remediation of a repository's current code: marked keys become secret references, committed .env files go, .gitignore and .env.example follow. Owner only. It only proposes."""
+        @property
+        def purge(self) -> "Oneiron._VaultCodeSecretsPurgeVerbs": ...
+    class _VaultCodeSecretsPurgeVerbs:
+        def request(self, spec: Facade.RepoSecretPurgeRequest) -> Facade.RepoSecretPurgePlan:
+            """Plan an owner purge of marked keys from one served repository's history: each ref's move to its masked copy, the purged blobs, dropped signatures, keep roots and what it never reaches. No ref moves."""
+        def get(self, spec: Facade.RepoSecretPurgeIdRequest) -> Facade.RepoSecretPurgeView:
+            """Read one of the owner's secret purge plans and, once executed, its receipt."""
+        def execute(self, spec: Facade.RepoSecretPurgeIdRequest) -> Facade.RepoSecretPurgeReceipt:
+            """Confirm one secret purge plan: move each ref to its masked copy through origin publication, release listed change owners, collect unreachable objects and file the receipt. No remote is pushed."""
     class _VaultCodeWaitsVerbs:
         def resolve(self, spec: Facade.CodeWaitResolveRequest) -> Facade.CodeWaitReceiptView:
             """Answer a sealed code consent wait as its authenticated owner or current policy-admitted power holder, on their own word. First answer wins; the effect meets its current gate once. No raw reply, grant or consumption."""

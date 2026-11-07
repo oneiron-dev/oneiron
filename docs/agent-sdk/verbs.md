@@ -739,6 +739,9 @@ both bindings and their export-census tests in one change.
 - `vault.code.origin.authority.get`
 - `vault.code.origin.authority.set`
 - `vault.code.origin.publications`
+- `vault.code.secrets.purge.request`
+- `vault.code.secrets.purge.get`
+- `vault.code.secrets.purge.execute`
 - `vault.code.checkout.holder.bind`
 - `vault.code.checkout.bind`
 - `vault.code.checkout.claim`
