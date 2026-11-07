@@ -337,7 +337,11 @@ impl Vault {
             // rows that record it, so the purge's actor sweep runs (FIX 3654).
             // Its code runs' replies retire first, as the provenance door's
             // erase retires them, read before the sweep releases them (FIX
-            // 5718).
+            // 5718). Before them, the code-run outputs it sourced and the
+            // kept step starts it owns retire, as that door retires them
+            // (FIX 20329).
+            #[cfg(unix)]
+            crate::code_run::retire_sourced_code_outputs_in_txn(&self.store, wtxn, id)?;
             #[cfg(unix)]
             crate::code_run::retire_actor_responses_in_txn(&self.store, wtxn, id)?;
             // So do the responses its stamps named, as the provenance
