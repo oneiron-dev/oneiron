@@ -18,6 +18,13 @@ unchanged and does not prevent the projection.
 
 The joined judge is learning provenance, not a reliability-cell key. This path
 does not turn the Done model's answer into an external correctness anchor.
-Existing credit receipts and learning rows are not backfilled by this change.
+A replay of an existing anchored outcome, or its late-credit reconciliation,
+also fills the judge on its existing learning rows when still unknown. It
+keeps the evidence key, anchored observation, weight, timestamp, amendments,
+and all other provenance. Known judges and missing rows remain untouched.
+The PACK, credit and credit-adjustment receipts stay immutable. The ordinary
+learning fold updates derived heads, including its existing judge conversion
+and decay rules; the original anchored outcome is never rescored. A failed
+refresh rolls back only that capture and does not reject the original credit.
 A typed Done with no model answer keeps its judge unknown. No deploy, policy,
 configuration, or SDK change is required.

@@ -16,8 +16,9 @@ use std::collections::BTreeMap;
 
 pub(crate) const PREFIX_NOTIFICATION_LIMIT: usize = 128;
 
-/// Timeline rows one notification page scans. A page only paces the walk,
-/// which goes on until the caller's page fills or history ends (FIX 8144).
+/// Notification ids one admission read takes. A page only paces the walk,
+/// which goes on until the caller's page fills or the type's rows end
+/// (FIX 8144).
 pub(crate) const PREFIX_NOTIFICATION_SCAN_PAGE: usize = 4096;
 
 /// The session prefix every caller reads: no count and no activity date. A
@@ -34,8 +35,10 @@ pub(crate) fn empty_session_prefix() -> SessionContext {
 /// The caller's pending notifications: those `read`, its own read, reads,
 /// whose recipient markers name it. A recipient marker targets delivery; it
 /// never grants a read the caller does not hold. Each body is the one the
-/// read admits, in the snapshot that admits it. The newest-first walk pages
-/// on until [`PREFIX_NOTIFICATION_LIMIT`] rows are admitted or history ends,
+/// read admits, in the snapshot that admits it. The walk takes the vault's
+/// NOTIFICATION ids from the type index, newest learned first (FIX 9454), so
+/// it reads the notifications alone, never the whole timeline. It pages
+/// on until [`PREFIX_NOTIFICATION_LIMIT`] rows are admitted or the ids end,
 /// so a row the caller cannot read, or that is another's or already
 /// surfaced, never spends the caller's page (FIX 8144).
 pub(crate) fn pending_notifications(
@@ -43,21 +46,16 @@ pub(crate) fn pending_notifications(
     read: &oneiron::claim::ScopedRead<'_>,
     caller: &str,
 ) -> Result<Vec<NotificationItem>, ApiError> {
+    let newest_first = server
+        .vault
+        .entity_ids_by_type_newest_first(ENTITY_TYPE_NOTIFICATION)
+        .inspect_err(|e| {
+            tracing::error!(error = %e, "pending notification type scan failed");
+        })
+        .map_err(|_| ApiError::internal_server_error("pending notification scan failed"))?;
     let mut notifications = Vec::new();
-    let mut after = None;
-    loop {
-        let (rows, next) = server
-            .vault
-            .latest_entity_bodies_by_type_page(
-                ENTITY_TYPE_NOTIFICATION,
-                after,
-                PREFIX_NOTIFICATION_SCAN_PAGE,
-            )
-            .inspect_err(|e| {
-                tracing::error!(error = %e, "pending notification latest scan failed");
-            })
-            .map_err(|_| ApiError::internal_server_error("pending notification scan failed"))?;
-        let ids: Vec<_> = rows.into_iter().map(|(id, _, _)| id).collect();
+    for page in newest_first.chunks(PREFIX_NOTIFICATION_SCAN_PAGE) {
+        let ids: Vec<_> = page.iter().map(|(id, _)| *id).collect();
         let admitted = read
             .get_entities_parts_with_receipt(&ids, None)
             .inspect_err(|e| {
@@ -90,11 +88,8 @@ pub(crate) fn pending_notifications(
                 return Ok(notifications);
             }
         }
-        match next {
-            Some(next) => after = Some(next),
-            None => return Ok(notifications),
-        }
     }
+    Ok(notifications)
 }
 
 /// The caller's unprocessed items, as its own read admits them (FIX 7740):

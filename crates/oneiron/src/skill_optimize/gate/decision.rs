@@ -6,6 +6,9 @@ use crate::limit_ask::EngineLimit;
 use crate::skill_optimize::labels::JUDGE_SKILL_ID;
 
 mod commit;
+mod sources;
+
+use self::sources::{accepted_in_cycle_sourced_in_txn, judge_revision_due_sourced_in_txn};
 
 use self::commit::decide_in_txn;
 
@@ -577,17 +580,7 @@ pub(super) fn accepted_in_cycle_in_txn(
     cycle: &SkillEditCycle,
     spending: &EntityId,
 ) -> Result<u32> {
-    let mut accepted: BTreeSet<EntityId> = BTreeSet::new();
-    for verdict in verdict_rows_in_txn(vault, rtxn)? {
-        if verdict.disposition.admits()
-            && verdict.cycle == cycle.as_str()
-            && verdict.proposal != *spending
-            && verdict.displaced_by_revision.is_none()
-        {
-            accepted.insert(verdict.proposal);
-        }
-    }
-    Ok(u32::try_from(accepted.len()).unwrap_or(u32::MAX))
+    accepted_in_cycle_sourced_in_txn(vault, rtxn, cycle, spending).map(|(count, _)| count)
 }
 
 /// k: the fresh anchored labels a judge rubric revision needs since the last
@@ -611,27 +604,8 @@ fn judge_revision_due_in_txn(
     target: &EntityId,
     world_outcomes: usize,
 ) -> Result<bool> {
-    let mut since = 0_u64;
-    for verdict in verdict_rows_in_txn(vault, rtxn)? {
-        if !verdict.disposition.admits()
-            || verdict.displaced_by_revision.is_some()
-            || verdict.proposal == *spending
-        {
-            continue;
-        }
-        // The ruling that made `target` the judge, or another edit of it.
-        if verdict.proposal == *target || verdict.skill == *target {
-            if verdict.cycle == cycle.as_str() {
-                return Ok(false);
-            }
-            if verdict.proposal == *target {
-                since = since.max(verdict.at);
-            }
-        }
-    }
-    let picks = crate::skill_optimize::labels::anchor_labels_since_in_txn(vault, rtxn, since)?;
-    let outcomes = u64::try_from(world_outcomes).unwrap_or(u64::MAX);
-    Ok(picks.saturating_add(outcomes) >= JUDGE_REVISION_FRESH_LABELS)
+    judge_revision_due_sourced_in_txn(vault, rtxn, cycle, spending, target, world_outcomes)
+        .map(|(due, _)| due)
 }
 
 /// Whether an approval of an edit to `target` may admit in `cycle`: always,
@@ -702,28 +676,15 @@ fn standing_ruling_in_txn(
     cycle: &SkillEditCycle,
     judge_revision: &str,
 ) -> Result<Option<HeldOutVerdict>> {
-    let standing = standing_verdict_in_txn(vault, rtxn, proposal)?.filter(|verdict| {
-        basis.matches(verdict)
-            && verdict.displaced_by_revision.is_none()
-            && verdict.judge_revision.as_deref() == Some(judge_revision)
-            && (verdict.disposition.admits()
-                || verdict.disposition == SkillEditDisposition::NeedsTradeoffDecision
-                || (matches!(
-                    verdict.disposition,
-                    SkillEditDisposition::DeferredCycleCap
-                        | SkillEditDisposition::DeferredJudgeCadence
-                        | SkillEditDisposition::DeferredInconclusive
-                ) && verdict.cycle == cycle.as_str()))
-    });
-    match standing {
-        Some(pending)
-            if pending.disposition == SkillEditDisposition::NeedsTradeoffDecision
-                && !tradeoff::pending_waits_in_txn(vault, rtxn, &pending)? =>
-        {
-            Ok(None)
-        }
-        standing => Ok(standing),
-    }
+    Ok(sources::standing_ruling_sourced_in_txn(
+        vault,
+        rtxn,
+        proposal,
+        basis,
+        cycle,
+        judge_revision,
+    )?
+    .0)
 }
 
 /// The most recent ruling on one proposal, whatever it said.
