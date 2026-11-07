@@ -62,8 +62,8 @@ mod lmdb_index;
 mod lmdb_short_id_maintenance;
 mod mutation;
 pub(crate) use mutation::{
-    EntityPutAudit, MutationAudit, audit_entity_put_in_txn, audit_mutation_in_txn,
-    storage_service_principal,
+    EntityPutAudit, MutationAudit, MutationAuditProjection, PreparedMutationAudit,
+    audit_entity_put_in_txn, audit_mutation_in_txn, storage_service_principal,
 };
 use oneiron_store::ports::records;
 mod regeneration;
@@ -108,3 +108,4 @@ pub(crate) use time::{
     persist_id_floor_in_txn, recorded_at_in_txn,
 };
 pub use time::{Clock, IdGen, StoreClock};
+pub(crate) use time::{PreparedRecordingClock, RecordingClockProjection};
