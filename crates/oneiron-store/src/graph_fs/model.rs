@@ -223,6 +223,11 @@ pub struct GraphFsPage {
     pub next_cursor: Option<String>,
     pub byte_count: usize,
     pub read_receipt: Option<oneiron_contracts::claim::ScopedReadReceipt>,
+    /// Per entry, the cursor of the page that starts right after it in the
+    /// listing's own order, for a walk to resume after the last entry it
+    /// finished (FIX 4885). Empty for a listing that gives none; never
+    /// rendered.
+    pub entry_cursors: Vec<Option<String>>,
 }
 
 impl GraphFsPage {
@@ -260,6 +265,13 @@ impl GraphFsPage {
     #[must_use]
     pub fn next_cursor(&self) -> Option<&str> {
         self.next_cursor.as_deref()
+    }
+
+    /// The cursor of the page that starts right after entry `index`, when
+    /// its listing gives one.
+    #[must_use]
+    pub fn entry_cursor(&self, index: usize) -> Option<&str> {
+        self.entry_cursors.get(index).and_then(Option::as_deref)
     }
 
     #[must_use]

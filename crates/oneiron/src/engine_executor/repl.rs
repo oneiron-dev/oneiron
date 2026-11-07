@@ -37,7 +37,8 @@ use super::{compaction, types};
 use crate::code_run::{
     CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunBridgeCall, CodeRunHistoryTurn, CodeRunRawOutput,
     CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunResultBinding, CodeRunStepCheckpoint,
-    ReaderFoldReceipt, SelfDurableWait, SelfDurableWaitReason, SelfEffect, WaitKey,
+    ReaderFoldReceipt, SelfDurableWait, SelfDurableWaitReason, SelfEffect, StepContextCapture,
+    WaitKey,
 };
 use crate::code_sandbox::source::{PreparedSource, TranspiledSource, prepare_source};
 use crate::compaction::output::{OutputAffordance, OutputRef, OutputTier, OutputWorkingContext};
@@ -260,7 +261,17 @@ impl EngineNativeExecutor<'_> {
             // runs as the JavaScript Oxc prints for it, kept beside the
             // program with its map and Oxc pin; JavaScript runs as written.
             let prepared = prepare_source(&script);
-            record_prepared_source(&self.storage, &mut record, completed_steps, &prepared)?;
+            // Feedback mode checks the program as its author wrote it, on
+            // its own thread, while the program runs: nothing waits on the
+            // check or is refused for it (FIX 8277). It starts once the
+            // program is, so every way out of the step from here, a failure
+            // before the program runs included, leaves its feedback, its
+            // preparation note included (FIX 9046).
+            let mut checking = self.start_step_check(&record, completed_steps, &prepared);
+            self.kept(
+                &checking,
+                record_prepared_source(&self.storage, &mut record, completed_steps, &prepared),
+            )?;
             let bridge_start = record.bridge_calls.len();
             // ONE-1314: the DURABLE history is the load-bearing half of the
             // lineage seam. An outbound effect parks its step, so a run that
@@ -270,19 +281,30 @@ impl EngineNativeExecutor<'_> {
             // dispatch; the dispatcher owns the history-to-lineage mapping.
             self.gated_write
                 .observe_bridge_history(&record.bridge_calls);
-            self.gated_write.observe_consumed_code_replies(&record)?;
-            let recoverable = self.observation_refs(&record)?;
-            let mut host = RecordingJsHost::new(
-                self.gated_write,
-                config.run_id,
-                bridge_start as u64,
-                config.determinism,
-                self.legibility,
-            )
-            .with_recoverable_outputs(&self.storage, &record, recoverable)?
-            .with_skill_executor(&config.model)
-            .with_result_share(&self.result_share)
-            .with_callable_checks(CallableChecks::new(self.code_check, completed_steps));
+            self.kept(
+                &checking,
+                self.gated_write.observe_consumed_code_replies(&record),
+            )?;
+            let recoverable = self.kept(&checking, self.observation_refs(&record))?;
+            let mut host = self
+                .kept(
+                    &checking,
+                    RecordingJsHost::new(
+                        self.gated_write,
+                        config.run_id,
+                        bridge_start as u64,
+                        config.determinism,
+                        self.legibility,
+                    )
+                    .with_recoverable_outputs(
+                        &self.storage,
+                        &record,
+                        recoverable,
+                    ),
+                )?
+                .with_skill_executor(&config.model)
+                .with_result_share(&self.result_share)
+                .with_callable_checks(CallableChecks::new(self.code_check, completed_steps));
             let step = JsCodeModeStep {
                 run_id: config.run_id,
                 seq: completed_steps,
@@ -290,11 +312,6 @@ impl EngineNativeExecutor<'_> {
                 boundary,
                 determinism: config.determinism,
             };
-            // Feedback mode checks the program as its author wrote it, on
-            // its own thread, while the program runs: nothing waits on the
-            // check or is refused for it (FIX 8277). Every way out of the
-            // step leaves its feedback, its preparation note included.
-            let mut checking = self.start_step_check(&record, completed_steps, &prepared);
             let step_outcome = self
                 .runtime
                 .run_prepared_step_cancellable(step, &prepared, &mut host, cancel);
@@ -324,6 +341,7 @@ impl EngineNativeExecutor<'_> {
                             captured,
                             bound,
                             receipts,
+                            host.context_capture,
                             callable_rows,
                             durable_wait,
                             format!("Runtime error after host bridge calls: {err}"),
@@ -369,6 +387,7 @@ impl EngineNativeExecutor<'_> {
                     captured,
                     bound,
                     receipts,
+                    host.context_capture,
                     callable_rows,
                     durable_wait,
                     format!("Host bridge call failed: {failure}"),
@@ -412,6 +431,7 @@ impl EngineNativeExecutor<'_> {
                             captured,
                             bound,
                             receipts,
+                            host.context_capture,
                             callable_rows,
                             durable_wait,
                             format!(
@@ -539,7 +559,8 @@ impl EngineNativeExecutor<'_> {
             if let Some(status) = &terminal_status {
                 record_terminal_output(&self.storage, &mut record, completed_steps, status)?;
             }
-
+            let (end, context) =
+                self.step_context(config, &record, bridge_start, host.context_capture)?;
             let checkpoint = CodeRunStepCheckpoint::new(
                 completed_steps,
                 checkpoint_label(completed_steps),
@@ -555,13 +576,18 @@ impl EngineNativeExecutor<'_> {
                     &step_result,
                     implicit_speak_bytes.as_deref(),
                     &record.bridge_calls[bridge_start..],
+                    end,
                 )?,
                 config
                     .determinism
                     .frozen_unix_ms
                     .saturating_add(completed_steps),
-            )?;
-            record.step_checkpoints.push(checkpoint);
+            )?
+            .ending_at(end.bridge_end);
+            let bridge_end = record.bridge_calls.len();
+            record
+                .step_checkpoints
+                .push(checkpoint.with_bridge_calls(bridge_start, bridge_end));
             // Replay persistence and its one-per-healed-turn signal are one
             // transaction. A generation conflict, tally error, or failed
             // commit advances neither; a durable append has already counted.
@@ -580,6 +606,7 @@ impl EngineNativeExecutor<'_> {
                     repairs.healed().then_some(&config.model),
                     &host.receipts,
                     parked.as_ref(),
+                    &context,
                 ) {
                 Err(error) if matches!(error, Error::Storage(_) | Error::MapFull) => {
                     tracing::warn!(
@@ -592,6 +619,7 @@ impl EngineNativeExecutor<'_> {
                             repairs.healed().then_some(&config.model),
                             &host.receipts,
                             parked.as_ref(),
+                            &context,
                         )?
                 }
                 result => result?,

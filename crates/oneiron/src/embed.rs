@@ -41,7 +41,7 @@ pub(crate) use eligibility::{
     turn_text_in_txn,
 };
 pub use evidence::EmbeddingMatchEvidence;
-pub(crate) use locality::clear_embedding_locality_in_txn;
+pub(crate) use locality::{clear_embedding_locality_in_txn, stamp_embedding_locality_in_txn};
 #[cfg(feature = "sync")]
 pub(crate) use media::text_vector_sources_in_txn;
 pub use media::{
@@ -49,12 +49,14 @@ pub use media::{
 };
 pub use repo_projection::{RepoDerivedIndexReport, RepoDerivedIndexTextAuthor};
 pub(crate) use repo_projection::{
-    apply_ops_session_projected, finalize_repo_derived_index_copies_in_txn,
-    refresh_repo_derived_projection_in_txn, repo_blob_body_in_txn, repo_derived_batch,
-    repo_derived_fields, repo_derived_index_text_in, repo_envelope_copies_in_txn, repo_media_bytes,
-    requeue_repo_embedding_in_txn, retire_repo_derived_index_copies_in_txn,
+    apply_ops_session_projected, discard_repo_derived_index_copy_in_txn,
+    finalize_repo_derived_index_copies_in_txn, refresh_repo_derived_projection_in_txn,
+    repo_blob_body_in_txn, repo_derived_batch, repo_derived_fields, repo_derived_index_text_in,
+    repo_envelope_copies_in_txn, repo_media_bytes, requeue_repo_embedding_in_txn,
+    retire_repo_derived_index_copies_in_txn,
 };
 pub use session_media::SessionMediaRefusals;
+pub(crate) use session_media::{RoomMediaDrops, drop_room_media_copies_in_txn};
 pub use space::EMBEDDING_SETUP_LEARNED_AT;
 #[cfg(feature = "sync")]
 pub use space::MediaVectorReplica;
@@ -763,6 +765,21 @@ impl PendingEmbeddingReconciler {
                     &self.vault.store,
                     wtxn,
                     &work.input.entity_id,
+                )?;
+            }
+            // A fill the revision door staged keeps its locality with it, for
+            // idle publication to stamp beside the vector (FIX 12783).
+            if token_was_current
+                && current_after.as_deref() == Some(work.input.pending_embedding_token.as_slice())
+            {
+                crate::vault::entity_revision::defer_index_inputs(
+                    &self.vault.store,
+                    wtxn,
+                    &work.input.entity_id,
+                    None,
+                    Some((vector, Some(provenance))),
+                    Some(work.input.pending_embedding_token.as_slice()),
+                    Some(locality),
                 )?;
             }
             filled_current = token_was_current && current_after.is_none();

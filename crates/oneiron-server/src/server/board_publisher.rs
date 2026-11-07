@@ -15,12 +15,19 @@
 //! FIX 2879, FIX 6957): each review wakes its reviewed agent's own
 //! connections, naming the review and nothing of it. That loop runs
 //! alongside the TASK loop and never inside it.
+//!
+//! The same pass reads the staged room wakes
+//! (`oneiron::context_board::PendingRoomWake`, FIX 15647): a room turn that
+//! addresses an agent no resident pump runs wakes that agent's own
+//! connections, naming the room and the turn and nothing of the turn. A wake
+//! handed to a connection, or no longer live, is settled; one whose agent has
+//! no connection waits for one.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::attempt_queue::AttemptQueue;
-use oneiron::context_board::{CommittedTaskBoardState, PendingDiaryReview};
+use oneiron::context_board::{CommittedTaskBoardState, PendingDiaryReview, PendingRoomWake};
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 
 use super::core::{BroadcastPayload, SyncServer};
@@ -114,11 +121,12 @@ impl SyncServer {
         })
     }
 
-    /// One pass over the pending reviews first, then one per commit
-    /// announcement or connection attach. Signals queued meanwhile, or lost
-    /// to lag, fold into the next pass, which reads the whole pending set
-    /// fresh. A failed pass is logged and retried at the next commit or
-    /// attach; it never reaches the write that opened the review.
+    /// One pass over the pending reviews and the staged room wakes first,
+    /// then one per commit announcement or connection attach. Signals queued
+    /// meanwhile, or lost to lag, fold into the next pass, which reads the
+    /// whole pending set fresh. A failed pass is logged and retried at the
+    /// next commit or attach; it never reaches the write that opened the
+    /// review or minted the room turn.
     async fn publish_reviews_forever(
         self: Arc<Self>,
         mut commits: tokio::sync::broadcast::Receiver<()>,
@@ -131,6 +139,7 @@ impl SyncServer {
             .attach_notifier();
         loop {
             self.publish_pending_reviews().await;
+            self.publish_staged_room_wakes().await;
             tokio::select! {
                 commit = commits.recv() => match commit {
                     Ok(()) | Err(RecvError::Lagged(_)) => {}
@@ -161,6 +170,59 @@ impl SyncServer {
                 tracing::warn!(
                     panicked = error.is_panic(),
                     "board publisher review read did not finish"
+                );
+            }
+        }
+    }
+
+    /// One pass over the staged room wakes (FIX 15647): each live wake of an
+    /// agent no resident pump runs reaches that agent's subscribed
+    /// connections, and each one handed over, or no longer live, is settled.
+    /// A wake whose agent has no connection stays staged for a later pass.
+    async fn publish_staged_room_wakes(&self) {
+        let vault = Arc::clone(self.vault());
+        let read = tokio::task::spawn_blocking(move || PendingRoomWake::read_all(&vault)).await;
+        let read = match read {
+            Ok(Ok(read)) => read,
+            Ok(Err(error)) => {
+                tracing::warn!(kind = ?error.kind(), "board publisher could not read staged room wakes; it reads them again at the next commit or attach");
+                return;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    panicked = error.is_panic(),
+                    "board publisher room wake read did not finish"
+                );
+                return;
+            }
+        };
+        // A live wake stays staged however many queues it reached, so a
+        // connection that attaches later (the bridge's own instance) still
+        // hears it; only a wake no longer live is settled (FIX 15647).
+        let settle = read.spent;
+        self.mcp_registry
+            .lock()
+            .await
+            .streams_mut()
+            .publish_room_wakes(read.pending);
+        if settle.is_empty() {
+            return;
+        }
+        let vault = Arc::clone(self.vault());
+        let settled = tokio::task::spawn_blocking(move || {
+            let now = vault.now_recorded_at();
+            vault.settle_room_wakes(&settle, now)
+        })
+        .await;
+        match settled {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                tracing::warn!(kind = ?error.kind(), "board publisher could not settle room wakes; the next pass hands them over again");
+            }
+            Err(error) => {
+                tracing::warn!(
+                    panicked = error.is_panic(),
+                    "board publisher room wake settle did not finish"
                 );
             }
         }

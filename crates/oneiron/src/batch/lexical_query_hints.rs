@@ -52,6 +52,13 @@ pub(super) enum RawPutDoor {
     /// and the crate's internal one — and the witness program writes its rows
     /// through `batch_in()` like every other engine door.
     WitnessMessage,
+    /// The FIX 7777 archive MESSAGE door
+    /// ([`super::BatchBuilder::put_archived_message`]).
+    ///
+    /// Reachable only by presenting a `memory::ArchivedMessageAdmission`,
+    /// whose sole constructor proves the body a canonical envelope an import
+    /// marked: a capability, like the witness arm, never a caller's flag.
+    ArchivedMessage,
 }
 
 /// [`validate_public_raw_put`] through the public door, for a bound raw
@@ -91,7 +98,9 @@ pub(super) fn validate_public_raw_put(
         // `About`/`ClaimOf` edges either. Attribution is engine-stamped, so
         // this door refuses the type outright instead of validating a body it
         // cannot bind to an actor; `put_authored_note`, reached only from
-        // `Memory::author_take`, is the one NOTE writer.
+        // `Memory::author_take`, is the one NOTE writer for this vault's
+        // actors, and `put_archived_note`, whose capability proves an
+        // imported author, the archive import's (FIX 7777).
         crate::registry::ENTITY_TYPE_NOTE => {
             return Err(Error::Record(RecordError::InvalidNoteBody(
                 ERR_RAW_NOTE_PUT_REQUIRES_AUTHOR_TAKE,
@@ -109,7 +118,12 @@ pub(super) fn validate_public_raw_put(
         // `Vault::batch_in()` — because a second engine-tier door disagreeing
         // about the same body is not a seam, it is a hole. The witness door
         // says so by name, with the ceiling's own proof in hand.
-        crate::registry::ENTITY_TYPE_MESSAGE if door != RawPutDoor::WitnessMessage => {
+        crate::registry::ENTITY_TYPE_MESSAGE
+            if !matches!(
+                door,
+                RawPutDoor::WitnessMessage | RawPutDoor::ArchivedMessage
+            ) =>
+        {
             return Err(Error::Record(RecordError::InvalidWitnessMessageBody(
                 ERR_RAW_MESSAGE_PUT_REQUIRES_WITNESS,
             )));

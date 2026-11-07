@@ -618,10 +618,6 @@ pub(super) fn archive_only_reason(row: &ExportEntity) -> Option<ImportOmissionRe
         crate::registry::ENTITY_TYPE_PSYCH_PROFILE => {
             Some(ImportOmissionReason::LocalProjectionNotRestored)
         }
-        crate::registry::ENTITY_TYPE_MESSAGE => {
-            Some(ImportOmissionReason::WitnessAuthorizationNotRestored)
-        }
-        crate::registry::ENTITY_TYPE_NOTE => Some(ImportOmissionReason::NoteAuthorshipNotRestored),
         ENTITY_TYPE_CLAIM => {
             // Decode a reserved claim only for classification; NEVER store it.
             let predicate = match &row.body {

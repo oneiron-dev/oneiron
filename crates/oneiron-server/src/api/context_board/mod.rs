@@ -829,7 +829,8 @@ async fn hydrate_inner(
     // A replay re-admits each row it named beyond its documents: every
     // notification, rider row (those its overflow counts too), pack source,
     // named or stamped contact, named reader definition and discovered
-    // capability, and what each INBOX row rests on (FIX 8145).
+    // capability, what each INBOX row rests on (FIX 8145), and what the
+    // MEMORIES filter chose its rows by (BOARD-LAYOUT).
     let mut admit: Vec<_> = response
         .notifications
         .iter()
@@ -840,6 +841,7 @@ async fn hydrate_inner(
     admit.extend(named_refs);
     admit.extend(parts.named);
     admit.extend(parts.inbox);
+    admit.extend(parts.memories_filter);
     admit.extend(scratchpad_pad);
     if let Some(pack) = &response.pack {
         admit.extend(pack.replay_admits());
@@ -955,25 +957,45 @@ pub(crate) async fn describe_self_for_auth(
     validate_session_id(session_id, "session_id")?;
     let read = super::scoped_read_for_core_auth(&server.vault, auth)?;
     let (people, _) = board::board_people(server, auth, &read, Some(session_id), None).await?;
-    let mut runs = server.self_brief_sessions.lock().await;
-    let run = runs
-        .get_mut(&(actor, session_id.to_owned()))
-        .ok_or_else(|| {
-            crate::error::ApiError::bad_request("run has no self brief", Some("session_id"))
-        })?;
     let read_set = server
         .memories_cursors
         .lock()
         .await
         .session_reads(&actor.to_hex(), Some(session_id))
         .clone();
-    let (card, sources) = run
-        .render
-        .describe_self_listing(&server.vault, &run.state, &read_set, Some(&people))
-        .map_err(|error| super::core_engine_error("self brief failed", error))?;
-    let tail = card.tail.ok_or_else(|| {
-        crate::error::ApiError::internal_server_error("self brief tail is missing")
-    })?;
+    let mut runs = server.self_brief_sessions.lock().await;
+    let (tail, sources) = match runs.get_mut(&(actor, session_id.to_owned())) {
+        Some(run) => {
+            let (card, sources) = run
+                .render
+                .describe_self_listing(&server.vault, &run.state, &read_set, Some(&people))
+                .map_err(|error| super::core_engine_error("self brief failed", error))?;
+            let tail = card.tail.ok_or_else(|| {
+                crate::error::ApiError::internal_server_error("self brief tail is missing")
+            })?;
+            (tail, sources)
+        }
+        // FIX 11461: no host installed a snapshot for this session, so the
+        // brief is resolved as a pumped run's is: the agent, the person its
+        // subject anchor names, the clock and the skills this session
+        // loaded, with every field no host resolves (and the budget, as no
+        // run line binds a credential's call) named on one unavailable
+        // line, never stated as a value.
+        None => {
+            let state =
+                run_self::resolved_state(server, actor, None, &read_set).map_err(|error| {
+                    tracing::warn!(code = %error.code, "a credential's self brief did not resolve");
+                    crate::error::ApiError::internal_server_error("self brief failed")
+                })?;
+            let brief = state
+                .describe(&server.vault, &read_set, Some(&people))
+                .map_err(|error| super::core_engine_error("self brief failed", error))?;
+            let sources = brief
+                .sources(&server.vault, Some(&people))
+                .map_err(|error| super::core_engine_error("self brief failed", error))?;
+            (brief.render(), sources)
+        }
+    };
     let value = serde_json::to_value(oneiron::task_verb::TaskDescription::SelfCard { tail })
         .map_err(|_| crate::error::ApiError::internal_server_error("self brief encoding failed"))?;
     Ok((value, sources))

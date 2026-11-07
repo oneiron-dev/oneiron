@@ -53,23 +53,16 @@ pub(super) fn unmarked_known(
     }
     let mut found = Vec::new();
     let mut read_leaf = |path: &[MemberStep], leaf: &[u8]| -> Result<()> {
-        if !holds_spans(leaf) {
-            return Ok(());
-        }
         let held = prior
             .iter()
             .find(|(at, _)| at.as_slice() == path)
             .map_or(&[][..], |(_, spans)| spans.as_slice());
-        for hit in known.spans_except(leaf, &keep) {
+        for hit in known_leaf_hits(path, leaf, known, &keep) {
             let (start, end) = (offset(hit.span.start)?, offset(hit.span.end)?);
             if held.iter().any(|&(from, to)| from < end && start < to) {
                 continue;
             }
-            found.push(KnownMark {
-                path: path.to_vec(),
-                span: hit.span,
-                custody: hit.custody,
-            });
+            found.push(hit);
         }
         Ok(())
     };
@@ -81,6 +74,30 @@ pub(super) fn unmarked_known(
         Ok(()) | Err(Stop::Refuse(_)) => Ok(found),
         Err(Stop::Fail(error)) => Err(error),
     }
+}
+
+/// Each known value in `leaf`, the bytes at `path` in a file (none for the
+/// file's own), that `keep` does not keep: the one leaf selection the lift
+/// sweep and a masked repo read share (FIX 8966). A raw ZIP, gzip, tar or xz
+/// buffer holds no span of its own; its members are read instead.
+pub(super) fn known_leaf_hits(
+    path: &[MemberStep],
+    leaf: &[u8],
+    known: &KnownValues,
+    keep: &impl Fn(&[u8]) -> bool,
+) -> Vec<KnownMark> {
+    if !holds_spans(leaf) {
+        return Vec::new();
+    }
+    known
+        .spans_except(leaf, keep)
+        .into_iter()
+        .map(|hit| KnownMark {
+            path: path.to_vec(),
+            span: hit.span,
+            custody: hit.custody,
+        })
+        .collect()
 }
 
 /// `prior` (the file's mark, if it has one) with each of `found` marked
