@@ -136,8 +136,10 @@ impl<'v> ScopedRead<'v> {
         }
         let lane = self.as_owner(owner)?;
         let floor = policy.retrieval_floor_for_actor(Some(&lane.actor_key));
-        let filter = crate::gate::narrow_retrieval_filter(&floor, request)?
-            .under_credential_of(&lane.actor_key);
+        let filter = lane.under_caller_filter(
+            crate::gate::narrow_retrieval_filter(&floor, request)?
+                .under_credential_of(&lane.actor_key),
+        );
         Ok(lane
             .own_row_readable_in(rtxn, policy, id, raw, &filter, authority, None)?
             .then_some(lane))

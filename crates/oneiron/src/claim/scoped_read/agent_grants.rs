@@ -214,8 +214,10 @@ impl ScopedRead<'_> {
             return Ok(false);
         }
         let floor = policy.retrieval_floor_for_actor_with_scope(Some(&self.actor_key), Some(grant));
-        let filter = crate::gate::narrow_retrieval_filter(&floor, request)?
-            .under_credential_of(&self.actor_key);
+        let filter = self.under_caller_filter(
+            crate::gate::narrow_retrieval_filter(&floor, request)?
+                .under_credential_of(&self.actor_key),
+        );
         self.own_row_readable_in(rtxn, policy, id, raw, &filter, authority, Some(grant))
     }
 

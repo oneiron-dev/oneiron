@@ -50,7 +50,10 @@ impl ClaimReadStatusExt for ClaimReadStatus {
                     ) && lifecycle == ClaimLifecycleStatus::Active
                         && (filter.include_stale || !stale)
                 }
-                Self::Recorded => true,
+                // Every approval and lifecycle status, and stale claims
+                // whatever the floor says; the caller's own exclusion of
+                // stale claims binds here too (FIX 3977).
+                Self::Recorded => !(stale && filter.caller_excludes_stale),
             }
     }
 }
