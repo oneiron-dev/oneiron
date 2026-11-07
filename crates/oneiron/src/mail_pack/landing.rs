@@ -4,7 +4,10 @@
 //! through the imported witness, so the vault indexes and extracts it as
 //! imported evidence and wakes no agent. In the same commit each row is
 //! bound to its thread's source audience, so it reads to the source's people
-//! alone from its first moment.
+//! alone from its first moment. Each row also carries the source-audience
+//! obligation in its own bytes, stamped under the landing's proof (fix list
+//! row 16256), so a read knows it for a source's row even where its binding
+//! or its TURN has not arrived.
 
 use rmpv::Value as Msgpack;
 use serde_json::{Map, Value};
@@ -49,6 +52,19 @@ pub(super) enum LandOutcome {
     Same,
     /// The write door or a gate refused it; the import goes on.
     Refused(String),
+}
+
+/// What a landing that met `error` did: an engine fault fails it; any other
+/// refusal is the landing's outcome, and the import goes on.
+fn refused(error: MemoryError) -> MemoryResult<LandOutcome> {
+    if error.code == MEMORY_CODE_INTERNAL {
+        return Err(error);
+    }
+    Ok(LandOutcome::Refused(format!(
+        "{}: {}",
+        error.code.to_ascii_lowercase(),
+        error.message
+    )))
 }
 
 fn label(text: &str) -> String {
@@ -249,7 +265,7 @@ impl<'v> Landing<'v> {
         let text = content(headers, full.and_then(|full| full.body_text.as_deref()));
         let hash = blake3::hash(text.as_bytes()).to_hex().to_string();
         let key = occurrence_key(source, &headers.provider_id);
-        let (prior, order) = {
+        let (prior, order, birth) = {
             let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
             let prior = OCCURRENCES.get(&vault.store, &txn, &key)?;
             if let Some(prior) = &prior
@@ -266,7 +282,15 @@ impl<'v> Landing<'v> {
                 |prior| Ok(prior.turn),
             )?;
             let order = crate::memory::next_witness_message_order(&vault.store, &txn, &turn)?;
-            (prior, order)
+            // The landing's proof, under the mailbox's source policy: every
+            // row it lands is stamped with the source-audience obligation
+            // (fix list row 16256). The writer mints it again below.
+            let birth =
+                match source_audience::SourceAudienceBirth::mint_in(vault, &txn, &row.audience) {
+                    Ok(birth) => birth,
+                    Err(error) => return refused(error.into()),
+                };
+            (prior, order, birth)
         };
         let conversation = match &prior {
             Some(prior) => prior.conversation,
@@ -316,6 +340,7 @@ impl<'v> Landing<'v> {
                 headers.subject.as_deref(),
             )?,
             message_occurred: vec![occurred],
+            source_audience: Some(birth),
         };
         let landed = self.memory.witness_imported(&witness, &stamp, |wtxn| {
             self.owner.revalidate_in_txn(vault, wtxn)?;
@@ -335,6 +360,17 @@ impl<'v> Landing<'v> {
                 return Err(MemoryError::new(
                     MEMORY_CODE_INVALID_STATE,
                     "another landing wrote this message first",
+                    &[],
+                ));
+            }
+            // The proof the rows were stamped under is the one this writer
+            // mints from the mailbox's live source policy.
+            let minted =
+                source_audience::SourceAudienceBirth::mint_in(vault, wtxn, &current.audience)?;
+            if stamp.source_audience.as_ref() != Some(&minted) {
+                return Err(MemoryError::new(
+                    MEMORY_CODE_INVALID_STATE,
+                    "the mail source's audience is not the one its rows were stamped under",
                     &[],
                 ));
             }
@@ -415,12 +451,7 @@ impl<'v> Landing<'v> {
         });
         match landed {
             Ok(_) => Ok(LandOutcome::Landed),
-            Err(error) if error.code == MEMORY_CODE_INTERNAL => Err(error),
-            Err(error) => Ok(LandOutcome::Refused(format!(
-                "{}: {}",
-                error.code.to_ascii_lowercase(),
-                error.message
-            ))),
+            Err(error) => refused(error),
         }
     }
 
