@@ -17839,6 +17839,41 @@ async fn vault_connectors_calls_approve_once(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_connectors_replies_retry_failed(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.connectors.replies.retry_failed")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.connectors.replies.retry_failed", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.connectors.replies.retry_failed", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_connectors_replies_retry_failed(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_consent_deny(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -45456,6 +45491,14 @@ fn boxed_vault_connectors_calls_approve_once<'a>(
     Box::pin(vault_connectors_calls_approve_once(server, call, input))
 }
 #[inline(never)]
+fn boxed_vault_connectors_replies_retry_failed<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_connectors_replies_retry_failed(server, call, input))
+}
+#[inline(never)]
 fn boxed_vault_consent_deny<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
@@ -52431,6 +52474,9 @@ async fn call_verb_row(
         "vault.connectors.calls.approve_once" => {
             boxed_vault_connectors_calls_approve_once(server, call, input).await
         }
+        "vault.connectors.replies.retry_failed" => {
+            boxed_vault_connectors_replies_retry_failed(server, call, input).await
+        }
         "vault.consent.deny" => boxed_vault_consent_deny(server, call, input).await,
         "vault.consent.create_standing_grant" => {
             boxed_vault_consent_create_standing_grant(server, call, input).await
@@ -53749,6 +53795,7 @@ async fn call_verb_row(
         | "self.code.symbols.renew"
         | "self.code.symbols.release"
         | "self.code.proposal_submit"
+        | "self.code.proposal_resolve"
         | "self.code.merge_queue.enqueue"
         | "self.code.checkout.bind"
         | "self.code.export"

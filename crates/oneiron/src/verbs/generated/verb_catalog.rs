@@ -564,6 +564,7 @@ pub enum AgentVerb {
     VaultPolicyRelayDecide,
     VaultConsentApproveOnce,
     VaultConnectorsCallsApproveOnce,
+    VaultConnectorsRepliesRetryFailed,
     VaultConsentDeny,
     VaultConsentCreateStandingGrant,
     VaultConsentCreateAutoWeaveGrant,
@@ -1883,6 +1884,7 @@ impl AgentVerb {
         Self::VaultPolicyRelayDecide,
         Self::VaultConsentApproveOnce,
         Self::VaultConnectorsCallsApproveOnce,
+        Self::VaultConnectorsRepliesRetryFailed,
         Self::VaultConsentDeny,
         Self::VaultConsentCreateStandingGrant,
         Self::VaultConsentCreateAutoWeaveGrant,
@@ -3223,6 +3225,7 @@ impl AgentVerb {
             Self::VaultPolicyRelayDecide => "vault.policy.relay.decide",
             Self::VaultConsentApproveOnce => "vault.consent.approve_once",
             Self::VaultConnectorsCallsApproveOnce => "vault.connectors.calls.approve_once",
+            Self::VaultConnectorsRepliesRetryFailed => "vault.connectors.replies.retry_failed",
             Self::VaultConsentDeny => "vault.consent.deny",
             Self::VaultConsentCreateStandingGrant => "vault.consent.create_standing_grant",
             Self::VaultConsentCreateAutoWeaveGrant => "vault.consent.create_auto_weave_grant",
@@ -4564,6 +4567,7 @@ impl AgentVerb {
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
                 | Self::VaultConnectorsCallsApproveOnce
+                | Self::VaultConnectorsRepliesRetryFailed
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentCreateAutoWeaveGrant
@@ -5912,6 +5916,7 @@ impl AgentVerb {
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
                 | Self::VaultConnectorsCallsApproveOnce
+                | Self::VaultConnectorsRepliesRetryFailed
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentCreateAutoWeaveGrant
@@ -7412,6 +7417,7 @@ impl AgentVerb {
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
                 | Self::VaultConnectorsCallsApproveOnce
+                | Self::VaultConnectorsRepliesRetryFailed
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentCreateAutoWeaveGrant
@@ -8438,6 +8444,7 @@ impl AgentVerb {
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
                 | Self::VaultConnectorsCallsApproveOnce
+                | Self::VaultConnectorsRepliesRetryFailed
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentCreateAutoWeaveGrant
@@ -9482,6 +9489,7 @@ impl AgentVerb {
             Self::VaultPolicyRelayDecide => &["spec"],
             Self::VaultConsentApproveOnce => &["spec"],
             Self::VaultConnectorsCallsApproveOnce => &["spec"],
+            Self::VaultConnectorsRepliesRetryFailed => &["spec"],
             Self::VaultConsentDeny => &["spec"],
             Self::VaultConsentCreateStandingGrant => &["spec"],
             Self::VaultConsentCreateAutoWeaveGrant => &["spec"],
@@ -10802,6 +10810,7 @@ impl AgentVerb {
             Self::VaultPolicyRelayDecide => &["spec"],
             Self::VaultConsentApproveOnce => &["spec"],
             Self::VaultConnectorsCallsApproveOnce => &["spec"],
+            Self::VaultConnectorsRepliesRetryFailed => &["spec"],
             Self::VaultConsentDeny => &["spec"],
             Self::VaultConsentCreateStandingGrant => &["spec"],
             Self::VaultConsentCreateAutoWeaveGrant => &["spec"],
@@ -13217,6 +13226,9 @@ impl AgentVerb {
             Self::VaultConnectorsCallsApproveOnce => {
                 "The owner approves once exactly one held connector call, by its call ref and the approve-once digest its current ask names; no standing grant is created and nothing is sent."
             }
+            Self::VaultConnectorsRepliesRetryFailed => {
+                "The owner returns one Failed connector reply job (Ambiguous, owner-act Fault) to the queue now as its queued successor; the Failed predecessor row and its kept result stay as history."
+            }
             Self::VaultConsentDeny => {
                 "The owner denies exactly one engine-emitted effect digest and records the refusal without granting authority."
             }
@@ -14517,10 +14529,10 @@ impl AgentVerb {
             }
             Self::ConnectorStatus => "One catalogued connector by name, removed ones included.",
             Self::ConnectorCall => {
-                "Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data."
+                "Calls a connector tool from the selected catalog or builtin source; omitted source keeps implicit name selection. Catalog calls retain the caller's own grant and gate. Replies are foreign data."
             }
             Self::ConnectorSchema => {
-                "One catalogued connector tool's approved input schema, as the caller's own grant resolves it."
+                "One connector tool's input schema for the selected catalog or builtin source; omitted source keeps implicit name selection. Catalog schemas use the caller's own governing grant and approved manifest."
             }
             Self::ConnectorCallStatus => {
                 "Where one connector.call stands, by the call_ref its held, pending_delivery or awaiting_input reply named: pending, the questions it waits on, or its settled reply. Only its caller and the vault's owner read it."

@@ -8044,7 +8044,7 @@
       "name": "vault.roots.requests.create",
       "description": "The owner decides one root change (pin, activate, restore or anchor) for one linked install, ids only; that install makes it when it syncs. The receipt says recorded, awaiting a holder, or why nothing was.",
       "input": "crate::task_verb::sdk::RootRequestCreateRequest",
-      "output": "crate::world_keys::OwnerWorkReceipt",
+      "output": "crate::task_verb::sdk::OwnerWorkView",
       "call": "crate::task_verb::sdk::create_root_request_as(memory.vault(), &memory.embedded_owner(\"vault.roots.requests.create\")?, crate::authority::ActSurface::ThisInstall, input)?",
       "host_door": true,
       "host_door_lists": true,
@@ -8075,7 +8075,7 @@
       "name": "vault.owner_work.get",
       "description": "The owner reads where one owner work request stands, by its signed entry: recorded and awaiting its holder, enacted, refused, cancelled or superseded, as this install's fold derives it.",
       "input": "crate::task_verb::sdk::OwnerWorkGetRequest",
-      "output": "crate::world_keys::OwnerWorkReceipt",
+      "output": "crate::task_verb::sdk::OwnerWorkView",
       "call": "crate::task_verb::sdk::owner_work_receipt_as(memory.vault(), &memory.embedded_owner(\"vault.owner_work.get\")?, &input)?",
       "host_door": true,
       "host_door_lists": true,
@@ -8678,6 +8678,22 @@
       },
       "section": false,
       "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.connectors.replies.retry_failed",
+      "description": "The owner returns one Failed connector reply job (Ambiguous, owner-act Fault) to the queue now as its queued successor; the Failed predecessor row and its kept result stay as history.",
+      "input": "ConnectorReplyRetryRequest",
+      "output": "crate::task_verb::sdk::ConnectorReplyRetryView",
+      "call": "crate::task_verb::sdk::retry_failed_connector_reply_as(memory.vault(), &memory.embedded_owner(\"vault.connectors.replies.retry_failed\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_precheck": false,
       "host_door_lists": true,
       "openapi": true
     },
@@ -15916,7 +15932,7 @@
     },
     {
       "name": "connector.call",
-      "description": "Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data.",
+      "description": "Calls a connector tool from the selected catalog or builtin source; omitted source keeps implicit name selection. Catalog calls retain the caller's own grant and gate. Replies are foreign data.",
       "input": "crate::outbound_consent::ConnectorCallRequest",
       "output": "crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::ConnectorCallReply>",
       "call": "crate::task_verb::sdk::ActAnswer::Done(crate::task_verb::sdk::connector_call_host_only(memory, &input)?)",
@@ -15932,7 +15948,7 @@
     },
     {
       "name": "connector.schema",
-      "description": "One catalogued connector tool's approved input schema, as the caller's own grant resolves it.",
+      "description": "One connector tool's input schema for the selected catalog or builtin source; omitted source keeps implicit name selection. Catalog schemas use the caller's own governing grant and approved manifest.",
       "input": "crate::task_verb::sdk::ConnectorSchemaRequest",
       "output": "crate::task_verb::sdk::ConnectorSchemaReply",
       "call": "crate::task_verb::sdk::connector_schema_read(memory, input)?",
@@ -20925,6 +20941,14 @@
       "scope": "Write",
       "context": "run",
       "effect": "RepoProposalSubmit"
+    },
+    {
+      "name": "self.code.proposal_resolve",
+      "input": "crate::memory::repo_doors::RepoProposalResolveInput",
+      "output": "crate::memory::repo_doors::RepoProposalSubmitOutput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "RepoProposalResolve"
     },
     {
       "name": "self.code.merge_queue.enqueue",
