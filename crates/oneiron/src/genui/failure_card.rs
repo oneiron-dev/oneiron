@@ -249,6 +249,8 @@ fn message_occurred_start(vault: &Vault, message_ref: EntityId) -> Result<u64> {
 /// Authorship is likewise an edge fact. A MESSAGE with NO `AuthoredBy` edge —
 /// System-authored rows carry none by design — fails validation; surface
 /// system/tool output by referencing the containing witnessed exchange instead.
+/// An imported MESSAGE's edge names its source's speaker, so it is no witness
+/// either.
 fn require_witnessed_author(
     vault: &Vault,
     message_ref: EntityId,
@@ -263,6 +265,13 @@ fn require_witnessed_author(
         "message",
     )
     .map_err(|error| Error::InvalidConfig(error.to_string()))?;
+    // An imported MESSAGE's edge names the PERSON its source says spoke, not
+    // an actor who witnessed it (FIX 15412).
+    let author = if crate::memory::imported_message_in_txn(&vault.store, &txn, &message_ref)? {
+        None
+    } else {
+        author
+    };
     if author.is_none() {
         return Err(Error::InvalidConfig(
             "healer qa message_ref carries no AuthoredBy witness".to_owned(),

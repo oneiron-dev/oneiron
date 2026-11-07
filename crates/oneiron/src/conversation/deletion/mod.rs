@@ -282,6 +282,22 @@ pub(crate) fn guard_room_message_delete(
     Ok(())
 }
 
+/// The native writer a room MESSAGE's `AuthoredBy` target `author` proves:
+/// none for imported speech, whose edge names the PERSON its source says
+/// spoke, never a writer (FIX 15412). A GDPR subject is still matched against
+/// `author` itself; only the personal-authority decision reads this.
+fn native_message_author(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    message: EntityId,
+    author: Option<EntityId>,
+) -> Result<Option<EntityId>> {
+    if author.is_some() && crate::memory::imported_message_in_txn(&vault.store, txn, &message)? {
+        return Ok(None);
+    }
+    Ok(author)
+}
+
 /// Resolve room MESSAGE custody from its structural bindings, not from the
 /// TURN byline: later actors can add their own messages to an earlier TURN.
 /// An absent author is allowed only for owner/admin policy deletion.

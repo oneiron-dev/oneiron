@@ -635,7 +635,9 @@ impl<'v> Linker<'v> {
     /// them. `None` when no one person is it: the turn's messages name no
     /// single author, the room is not such a pair, or the person is no
     /// entity a mention may name in a world of this turn. One member of a
-    /// group is never picked.
+    /// group is never picked. An imported turn's author is the PERSON its
+    /// source names as the speaker, read as that PERSON's one live canonical
+    /// head (FIX 15412); one with no such head names no one.
     fn speaker_link(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -643,6 +645,10 @@ impl<'v> Linker<'v> {
         link: &SpeakerLink,
     ) -> Result<Option<MentionLink>> {
         let store = &self.vault.store;
+        let mut imported = false;
+        for message in messages {
+            imported |= crate::memory::imported_message_in_txn(store, txn, message)?;
+        }
         let mut authors = BTreeSet::new();
         for message in messages {
             for edge in store.port_edges(
@@ -652,7 +658,17 @@ impl<'v> Linker<'v> {
                 Some(EdgeKind::AuthoredBy),
                 None,
             )? {
-                authors.insert(edge?.target);
+                let author = edge?.target;
+                if !imported {
+                    authors.insert(author);
+                    continue;
+                }
+                let Some(person) =
+                    crate::memory::live_canonical_person_in_txn(self.vault, txn, &author)?
+                else {
+                    return Ok(None);
+                };
+                authors.insert(person);
             }
         }
         let mut authors = authors.into_iter();

@@ -10,6 +10,7 @@ mod linked;
 mod program;
 mod reply_assertions;
 mod session;
+mod source_attribution;
 mod stream;
 mod turn_program;
 mod types;
@@ -42,6 +43,10 @@ pub(crate) use self::codec::{
 };
 pub(crate) use self::program::ImportedTurnStamp;
 pub use self::program::{SessionWitnessBinding, SessionWitnessContext, SessionWitnessOutcome};
+pub(crate) use self::source_attribution::{
+    SourceAttribution, SourceSpeaker, imported_message_in_txn, live_canonical_person_in_txn,
+    source_speaker_in_txn,
+};
 
 pub(super) use self::validation::validate_witness_occurrence;
 pub(crate) use self::validation::{

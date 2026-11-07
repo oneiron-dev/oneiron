@@ -290,6 +290,10 @@ fn encode_message_span(span: &MessageSpan) -> Value {
     if let Some(frontier) = &span.frontier {
         row.push((Value::from("frontier"), Value::Binary(frontier.clone())));
     }
+    row.push((
+        Value::from("attribution"),
+        Value::Binary(span.attribution.to_vec()),
+    ));
     Value::Map(row)
 }
 

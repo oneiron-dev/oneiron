@@ -121,8 +121,11 @@ pub(super) fn validate_existing_witness_quote(
 /// no-ops, while changed text/kind/order/visibility or a new parent/actor is a
 /// refusal rather than an overwrite or a second edge.
 ///
-/// `expected_author` is the `AuthoredBy` target the landing writes: the bound
-/// actor for an attributed row, none for a system row or an imported one.
+/// `expected_author` is the `AuthoredBy` target admission holds the row to:
+/// the bound actor for an attributed row, none for a system or counterparty
+/// row, and for an imported row the PERSON its source names, or none. An
+/// imported row already stored is held to the one edge it was born with, so
+/// its retry never moves to, or adds, another speaker (FIX 15412).
 pub(super) fn validate_existing_witness_message(
     dbs: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,

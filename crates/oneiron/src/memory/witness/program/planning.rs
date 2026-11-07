@@ -104,7 +104,9 @@ impl Memory<'_> {
     /// room guard fixed for its quoted messages, in its first body (OF-460,
     /// FIX 2028), and `thread`, its thread binding (FIX 2951).
     /// `assertions` reads the reply's cited and created records first, when
-    /// it names any (OF-063).
+    /// it names any (OF-063). `source_speakers` is, for an import whose
+    /// source names its speakers, the `AuthoredBy` target each message is
+    /// admitted with, resolved in this writer before admission (FIX 15412).
     #[expect(
         clippy::too_many_arguments,
         reason = "the shared admission joins both landings' in-transaction inputs"
@@ -116,6 +118,7 @@ impl Memory<'_> {
         wtxn: &heed::RoTxn<'_>,
         assertions: Option<AssertionRead<'_, '_>>,
         person_author: Option<EntityId>,
+        source_speakers: Option<&[Option<EntityId>]>,
         quoted: Option<&crate::conversation_dag::QuotedReply>,
         thread: Option<&crate::store::conversation_body::ThreadBinding>,
     ) -> MemoryResult<WitnessAdmission<'p>> {
@@ -204,9 +207,19 @@ impl Memory<'_> {
                 "the witnessed turn no longer exists",
             ));
         }
+        // One exact `AuthoredBy` target per message: the bound actor for a
+        // native user or companion row, none for a system or counterparty
+        // one; for an import, the PERSON its source names, or none. A stored
+        // row is compared against it and never takes a second edge.
         let mut message_exists = Vec::with_capacity(plan.messages.len());
-        for planned in &plan.messages {
-            let attributed = plan.imported.is_none() && planned.message.author.names_writer();
+        let mut authors = Vec::with_capacity(plan.messages.len());
+        for (position, planned) in plan.messages.iter().enumerate() {
+            let author = match &plan.imported {
+                None => planned.message.author.names_writer().then_some(self.actor),
+                Some(_) => source_speakers
+                    .and_then(|speakers| speakers.get(position).copied())
+                    .flatten(),
+            };
             message_exists.push(validate_existing_witness_message(
                 dbs,
                 wtxn,
@@ -214,8 +227,9 @@ impl Memory<'_> {
                 &planned.body,
                 &plan.turn_id,
                 &plan.conversation_id,
-                attributed.then_some(self.actor),
+                author,
             )?);
+            authors.push(author);
         }
         let turn = match existing_turn {
             Some(record) => {
@@ -271,6 +285,7 @@ impl Memory<'_> {
             turn,
             authorized,
             message_exists,
+            authors,
         })
     }
 }
