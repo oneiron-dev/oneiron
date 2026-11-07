@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1281 facade rows, 4637 declarations.
-Inputs: 1210 of 1281 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1110 of 1281 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1288 facade rows, 4665 declarations.
+Inputs: 1217 of 1288 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1117 of 1288 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -110,6 +110,20 @@ class CommitmentCreateReceipt(TypedDict):
     index: CommitmentIndexOutcome
 class CommitmentRefRequest(TypedDict):
     commitment_ref: str
+class CommitmentLedgerRequest(TypedDict):
+    contact_ref: str
+class CommitmentLedgerItem(TypedDict):
+    valid_from: int
+    valid_to: int
+    commitment: CommitmentView
+class CommitmentLedgerView(TypedDict):
+    contact_ref: str
+    identity_ref: str
+    counterparty: str
+    channel: str
+    address_or_handle: str
+    owed_by_them: list[CommitmentLedgerItem]
+    owed_to_them: list[CommitmentLedgerItem]
 CommitmentWakePhase = Literal["lead", "due"]
 class CommitmentWakeProposal(TypedDict):
     proposal_ref: str
@@ -1283,6 +1297,7 @@ class ShapePlanCard(TypedDict):
     items: list[ShapePlanCardItem]
     undeclared: int
     run: NotRequired[ShapeApplyRun | None]
+    conversation_learning: NotRequired[ShapeLearningOutcome | None]
 class ShapePlanCardView(TypedDict):
     plan: ShapePlan
     card: ShapePlanCard
@@ -5687,6 +5702,14 @@ class HubSkillSyncReceipt(TypedDict):
     outcome: HubSkillSyncOutcome
     proposal: NotRequired[EntityId | None]
     approval: NotRequired[ClaimApprovalStatus | None]
+class HubSkillProposalSettleRequest(TypedDict):
+    entity: EntityId
+    proposal: EntityId
+    accept: bool
+class HubSkillProposalSettled(TypedDict):
+    entity: EntityId
+    proposal: EntityId
+    approval: ClaimApprovalStatus
 class SkillConvertRequest(TypedDict):
     message_refs: list[EntityId]
     hint: NotRequired[str | None]
@@ -10706,6 +10729,11 @@ PolicySkipReason = Literal["no-backend", "no-document", "backend-unavailable", "
 class PolicyClassifyDecisionSkipped(TypedDict):
     skipped: PolicySkipReason
 PolicyClassifyDecision = Literal["allow", "warn", "reword", "block", "route-to-help", "hold"] | PolicyClassifyDecisionSkipped
+HostedLegalBasisKind = Literal["law", "provider_terms", "capacity"]
+class HostedLegalBasis(TypedDict):
+    kind: HostedLegalBasisKind
+    subject: str
+    reference: str
 class PolicyVerdictCategoryNone(TypedDict):
     category: Literal["none"]
 class PolicyVerdictCategoryOwnerPolicyContent(TypedDict):
@@ -10718,6 +10746,7 @@ class PolicyVerdictCategoryHostedLegalContent(TypedDict):
     jurisdiction: str
     policy_version: str
     row_ref: str
+    basis: HostedLegalBasis
 class PolicyVerdictCategoryHostedLegal(TypedDict):
     category: Literal["hosted_legal"]
     sub: PolicyVerdictCategoryHostedLegalContent
@@ -10830,6 +10859,9 @@ class PolicyModelEnforcement(TypedDict):
     barge_in_kill: NotRequired[PolicyBargeInKill | None]
     custom_tier_skipped: bool
 RelayBoundaryDegrade = Literal["safeguard_model_unavailable", "safeguard_model_response_unusable", "safeguard_model_tier_absent", "output_contract_undeclared", "policy_binding_moved_mid_pass"]
+class HostedLegalRowBound(TypedDict):
+    row_ref: str
+    basis: HostedLegalBasis
 RelayResolution = Literal["pattern_decided", "model_decided", "pattern_gated_allow", "log_only", "no_policy_in_play", "vault_side_decided", "unresolved"]
 class HostedPassEvidence(TypedDict):
     version: str
@@ -10839,6 +10871,7 @@ class HostedRelayDecision(TypedDict):
     service_identity: str
     verdict: NotRequired[PolicyClassifyVerdict | None]
     degraded: NotRequired[RelayBoundaryDegrade | None]
+    outage_bounds: list[HostedLegalRowBound]
     resolution: NotRequired[RelayResolution | None]
     hosted_evidence: NotRequired[HostedPassEvidence | None]
     receipt_ref: NotRequired[str | None]
@@ -17358,6 +17391,13 @@ class ModelStreamTerminal(TypedDict):
     failure: NotRequired[str | None]
 class ModelStreamTerminalRequest(TypedDict):
     stream_key: str
+class ModelStreamRelease(TypedDict):
+    stream_key: str
+class ModelStreamReleased(TypedDict):
+    stream_ref: str
+    stream_key: str
+    status: ModelStreamStatus
+    released: bool
 class AiReplyReader(TypedDict):
     definition: str
     task_family: NotRequired[str | None]
@@ -17507,6 +17547,21 @@ class LiveVoiceEventsRequest(TypedDict):
     after: NotRequired[int]
     limit: NotRequired[int | None]
 LiveVoiceStopReason = Literal["user_barge_in", "safeguard", "roster_changed", "output_failed", "session_end"]
+HeardCoverage = Literal["full", "partial", "unplayed"]
+class HeardUtterance(TypedDict):
+    submission: int
+    text: str
+    sample_rate: int
+    samples: int
+    played_samples: int
+    coverage: HeardCoverage
+    heard_text: NotRequired[str | None]
+HeardBasis = Literal["client_report", "sent_upper_bound"]
+class HeardPlayback(TypedDict):
+    session_ref: str
+    generation: int
+    utterances: list[HeardUtterance]
+    basis: HeardBasis
 class LiveVoiceEventKindGenerationStarted(TypedDict):
     kind: Literal["generation_started"]
     run: str
@@ -17540,6 +17595,9 @@ class LiveVoiceEventKindMemories(TypedDict):
 class LiveVoiceEventKindToolContext(TypedDict):
     kind: Literal["tool_context"]
     source: str
+class LiveVoiceEventKindHeard(TypedDict):
+    kind: Literal["heard"]
+    playback: HeardPlayback
 class LiveVoiceEventKindFinished(TypedDict):
     kind: Literal["finished"]
 class LiveVoiceEventKindError(TypedDict):
@@ -17547,7 +17605,7 @@ class LiveVoiceEventKindError(TypedDict):
     code: str
 class LiveVoiceEventKindSessionEnded(TypedDict):
     kind: Literal["session_ended"]
-LiveVoiceEventKind = LiveVoiceEventKindGenerationStarted | LiveVoiceEventKindPcm | LiveVoiceEventKindPlayoutEnd | LiveVoiceEventKindFlush | LiveVoiceEventKindPlayoutStop | LiveVoiceEventKindMediaCancelled | LiveVoiceEventKindSafeguard | LiveVoiceEventKindNotice | LiveVoiceEventKindMemories | LiveVoiceEventKindToolContext | LiveVoiceEventKindFinished | LiveVoiceEventKindError | LiveVoiceEventKindSessionEnded
+LiveVoiceEventKind = LiveVoiceEventKindGenerationStarted | LiveVoiceEventKindPcm | LiveVoiceEventKindPlayoutEnd | LiveVoiceEventKindFlush | LiveVoiceEventKindPlayoutStop | LiveVoiceEventKindMediaCancelled | LiveVoiceEventKindSafeguard | LiveVoiceEventKindNotice | LiveVoiceEventKindMemories | LiveVoiceEventKindToolContext | LiveVoiceEventKindHeard | LiveVoiceEventKindFinished | LiveVoiceEventKindError | LiveVoiceEventKindSessionEnded
 class LiveVoiceEvent(TypedDict):
     sequence: int
     utterance_id: NotRequired[str | None]
@@ -17564,6 +17622,7 @@ class LiveVoiceAckRequest(TypedDict):
     generation: int
     event_sequence: int
     kind: LiveVoiceAckKind
+    played_samples: NotRequired[int | None]
 class LiveVoiceUsageRequest(TypedDict):
     session_ref: str
     generation: int
@@ -17887,6 +17946,9 @@ class AiPartEmbedding(TypedDict):
     kind: Literal["embedding"]
     vector: list[float]
 AiPart = AiPartText | AiPartImage | AiPartAudio | AiPartVideo | AiPartEmbedding
+class AiImageMask(TypedDict):
+    media_type: str
+    data: str
 class AiVoiceStock(TypedDict):
     kind: Literal["stock"]
     name: str
@@ -17900,6 +17962,7 @@ class AiCallRequest(TypedDict):
     prompt: NotRequired[str | None]
     input: NotRequired[list[AiPart]]
     references: NotRequired[list[AiPart]]
+    mask: NotRequired[AiImageMask | None]
     params: NotRequired[dict[str, Any]]
     voice: NotRequired[AiVoice | None]
     idempotency_key: NotRequired[str | None]
@@ -18256,6 +18319,28 @@ class QuestionPaused(TypedDict):
 class GraphQuestionInput(TypedDict):
     unit: str
     evidence: list[str]
+class QuestionPrepareRequest(TypedDict):
+    id: EntityId
+    expected_version: int
+    input: GraphQuestionInput
+class QuestionPreparedSource(TypedDict):
+    id: EntityId
+    entity_type: int
+    body: list[int]
+    hash: list[int]
+class QuestionPrepared(TypedDict):
+    question: DecisionQuestion
+    dial: DecisionDial
+    principal: EntityId
+    unit: EntityId
+    sources: list[QuestionPreparedSource]
+    source_frontier: list[int]
+class QuestionAdmitRequest(TypedDict):
+    id: EntityId
+    expected_version: int
+    input: GraphQuestionInput
+    source_frontier: list[int]
+    decision: TypedDecision
 class QuestionBackfillRequest(TypedDict):
     id: EntityId
     expected_version: int
@@ -19558,6 +19643,11 @@ class VerbHookStopCompletedWithError(TypedDict):
     message: str
     receipt_ref: NotRequired[str | None]
 VerbHookStop = VerbHookStopSkipped | VerbHookStopPending | VerbHookStopHidden | VerbHookStopCompleted | VerbHookStopCompletedWithError
+class RoomJoinHold(TypedDict):
+    room: EntityId
+    person: EntityId
+    intent_key: str
+    needs: list[ConsentNeed]
 class FacadeMemoryError(TypedDict):
     attempted: NotRequired[str]
     replacement: NotRequired[str]
@@ -19574,6 +19664,7 @@ class FacadeMemoryError(TypedDict):
     resets_at: NotRequired[list[int]]
     reason_codes: NotRequired[list[str]]
     legal_hold: NotRequired[LegalHoldNotice | None]
+    room_join_hold: NotRequired[RoomJoinHold | None]
 class EsignDocumentTrailReadable(TypedDict):
     trail: Literal["readable"]
     status: DocumentStatus
@@ -23173,6 +23264,48 @@ class MailComplianceSearchReply(TypedDict):
 class FilesSourceConvertRequest(TypedDict):
     path: str
     exclude: NotRequired[list[str] | None]
+class RepoManifestConflictReviewRequest(TypedDict):
+    window: str
+    portable_repo: str
+RepoPortableId = str
+class RepoManifestWriter(TypedDict):
+    machine: EntityId
+    signature: list[int]
+class RepoManifest(TypedDict):
+    portable: RepoPortableId
+    version: int
+    code: EntityId
+    minted_at: int
+    origin_name: NotRequired[str | None]
+    visible_refs: list[tuple[str, str]]
+    lfs_pointers: list[str]
+    epoch: int
+    updated_at: int
+    writer: NotRequired[RepoManifestWriter | None]
+class RepoManifestConflictReviewView(TypedDict):
+    window: str
+    portable_repo: str
+    held: RepoManifest
+    carried: RepoManifest
+    binding: str
+class RepoManifestConflictDiscardRequest(TypedDict):
+    binding: str
+class RepoManifestConflictQueueViewQueued(TypedDict):
+    state: Literal["queued"]
+    sequence: int
+class RepoManifestConflictQueueViewFailed(TypedDict):
+    state: Literal["failed"]
+    error: str
+RepoManifestConflictQueueView = RepoManifestConflictQueueViewQueued | RepoManifestConflictQueueViewFailed
+class RepoManifestConflictDiscardViewDiscarded(TypedDict):
+    state: Literal["discarded"]
+    update_base64: str
+    queue: RepoManifestConflictQueueView
+class RepoManifestConflictDiscardViewStale(TypedDict):
+    state: Literal["stale"]
+class RepoManifestConflictDiscardViewWindowLive(TypedDict):
+    state: Literal["window_live"]
+RepoManifestConflictDiscardView = RepoManifestConflictDiscardViewDiscarded | RepoManifestConflictDiscardViewStale | RepoManifestConflictDiscardViewWindowLive
 ConnectorAnswerAction = Literal["accept", "decline", "cancel"]
 class ConnectorQuestionAnswer(TypedDict):
     key: str
