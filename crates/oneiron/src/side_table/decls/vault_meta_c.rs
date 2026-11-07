@@ -172,6 +172,20 @@ side_tables! {
     /// The latest wake waiting for a free live health-review slot (FIX 9224).
     /// Key: target attempt id16 + big-endian lease generation4.
     COACH_AGENT_HEALTH_LIVE_PENDING: VaultMeta b"coach:agent_health_live_pending:v1:" Named Engine;
+    /// Where the Coach's unclear-note clustering resumes (FIX 7824): the unclear-ledger key of the
+    /// last outcome a pass finished, cleared at the ledger's end. Key: ().
+    COACH_ATTRIBUTION_LABEL_CURSOR: VaultMeta b"coach:attribution_label_cursor:v1" Named Engine;
+    /// One unclear note the Coach's same-pattern choice judged (FIX 7824): its scope's group hash,
+    /// the pattern it joined (none when it names no pattern) and the fingerprint it was judged
+    /// at. No note text. Key: u32be length + unclear-ledger key + u32be note index.
+    COACH_ATTRIBUTION_LABEL_MEMBER: VaultMeta b"coach:attribution_label_member:v1:" Named Engine;
+    /// One recurring unclear-note pattern within one scope (FIX 7824): the note it is shown by
+    /// and the proposal filed for it, which suppresses a second filing. No note text. Key: group
+    /// hash32 + pattern id16.
+    COACH_ATTRIBUTION_LABEL_PATTERN: VaultMeta b"coach:attribution_label_pattern:v1:" Named Engine;
+    /// One note's support for a pattern (FIX 7824), with the outcome identity it counts as. Key:
+    /// group hash32 + pattern id16 + the member key.
+    COACH_ATTRIBUTION_LABEL_SUPPORT: VaultMeta b"coach:attribution_label_support:v1:" Named Engine;
     /// An agent's `self.report_blocked` receipt waiting for the Coach's Issues job. Key: id16 of
     /// the receipt.
     COACH_BLOCKED_ISSUE: VaultMeta b"coach:blocked_issue:v1:" Named;
@@ -325,6 +339,12 @@ side_tables! {
     /// `owner_pair` or `unavailable`).
     CODE_RUN_CONTRIBUTION_FORK: VaultMeta b"code_run:contribution_fork:v1:" Named Engine
         => crate::code_run::erase_contribution_forks_in_txn;
+    /// One model response a live code-mode REPL normalized at one step (FIX 4411, 4412): the
+    /// configured model id, the four packaging repairs, the outcome (clean, normalized, or
+    /// rejected with the executor's stable reason), the repair policy and, for a committed step,
+    /// its checkpoint. Ids, counts, flags and engine text only, never response text. Key:
+    /// id16(run) + be64(step) + be64(attempt).
+    CODE_RUN_CORRECTION: VaultMeta b"code_run:correction:v1:" Named Engine;
     /// Which executor run's fold a fold-words dependent stands for: the dependency walk reaches
     /// it when a record the fold's summary came from is withdrawn (fixed 24-byte frame: id16(run)
     /// + fold u64 BE). Key: id16(dependent).

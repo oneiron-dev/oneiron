@@ -9,6 +9,11 @@ pub mod action_mode;
 pub mod agent_health;
 mod applied;
 pub mod attribution_audits;
+pub mod attribution_labels;
+pub(crate) use attribution_labels::{
+    erase_label_proposals_naming_in_txn, erase_unclear_note_copies_in_txn,
+    forget_unclear_notes_in_txn,
+};
 pub mod browser_candidate;
 pub mod browser_programs;
 mod calibration_asks;
@@ -19,6 +24,7 @@ pub mod coach_diagnostic;
 mod coach_environment;
 pub mod coach_heal;
 pub mod coach_learning;
+mod coach_person;
 mod coach_prompt_repair;
 mod coach_repair;
 mod coach_research;
