@@ -37,7 +37,9 @@ pub(crate) fn stamp_put(
         // A peer cannot mint a birth position for an opaque row merely by
         // picking its ID and bytes. Only an existing stamped row inherits.
         // A replicated NOTIFICATION stays unstamped through its recipient's
-        // local marks too (FIX 6552).
+        // local marks too (FIX 6552). A guest's TASK or SUMMARY whose
+        // sender's stamp admission validated takes it from
+        // `stamp_carried_placement`, in this put's transaction (FIX 3656).
         return Ok(());
     }
     let stamp = Stamp {
@@ -48,6 +50,36 @@ pub(crate) fn stamp_put(
     };
     SCOPE_RECORD.put(store, txn, &id, &stamp)?;
     Ok(())
+}
+
+/// Lands the birth position a guest's update carried for `id`, a TASK or
+/// SUMMARY whose replicated put landed it here first, in that put's
+/// transaction (FIX 3656): its sender's stamp, at the foreign WORLD copy
+/// admission remapped the sender's world to ([`GuestPlacement`]). It is the
+/// one door that stamps a replicated non-CLAIM row (`stamp_put`). A row
+/// already stamped keeps its stamp, and a row not stored here as the
+/// placement's kind takes none.
+#[cfg(feature = "sync")]
+pub(crate) fn stamp_carried_placement(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    placement: &GuestPlacement,
+) -> Result<()> {
+    if SCOPE_RECORD.get(store, txn, &id)?.is_some() {
+        return Ok(());
+    }
+    let stored = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?;
+    let kind = stored
+        .as_deref()
+        .and_then(EntityMetadataHeader::parse)
+        .map(|header| header.entity_type);
+    if kind != Some(placement.kind()) {
+        return Ok(());
+    }
+    let stamp = placement.stamp(id)?;
+    bump_scope_revision(store, txn)?;
+    SCOPE_RECORD.put(store, txn, &id, &stamp)
 }
 
 /// Whether `id` is stored here with a birth position.
