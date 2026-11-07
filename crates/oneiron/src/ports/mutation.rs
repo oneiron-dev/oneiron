@@ -6,6 +6,10 @@ use crate::store::Store;
 use crate::write_envelope::WriteEnvelope;
 use crate::{EntityId, TimeRange};
 
+mod plan;
+pub(super) use plan::append_changelog_in_txn;
+pub(crate) use plan::{MutationAuditProjection, PreparedMutationAudit};
+
 /// A storage service principal, not a user, person, session, or runtime slot.
 /// Used when the mutation door carries no authenticated actor binding, and
 /// the actor a critical-confirm timeout demotion settles as (FIX 1093). The
@@ -41,8 +45,16 @@ pub(crate) fn prepare_mutation_audit_in_txn(
     txn: &mut heed::RwTxn<'_>,
     mutation: MutationAudit<'_>,
 ) -> Result<ChangeLogRecord> {
-    let id = store.clock.ulid()?;
-    let recorded_at = recorded_at_in_txn(store, txn)?;
+    prepare_mutation_audit(&store.clock, || recorded_at_in_txn(store, txn), mutation)
+}
+
+fn prepare_mutation_audit(
+    clock: &super::time::StoreClock,
+    recorded_at: impl FnOnce() -> Result<u64>,
+    mutation: MutationAudit<'_>,
+) -> Result<ChangeLogRecord> {
+    let id = clock.ulid()?;
+    let recorded_at = recorded_at()?;
     Ok(ChangeLogRecord {
         id,
         entity: mutation.entity,
@@ -91,6 +103,16 @@ pub(crate) fn prepare_entity_put_audit_in_txn(
     put: EntityPutAudit<'_>,
 ) -> Result<Option<ChangeLogRecord>> {
     let old = store.entities.get(txn, put.id.as_bytes())?;
+    let Some(mutation) = entity_put_mutation(old.as_deref(), put) else {
+        return Ok(None);
+    };
+    prepare_mutation_audit_in_txn(store, txn, mutation).map(Some)
+}
+
+fn entity_put_mutation<'a>(
+    old: Option<&[u8]>,
+    put: EntityPutAudit<'a>,
+) -> Option<MutationAudit<'a>> {
     if let Some(raw) = old.as_ref()
         && let Some(header) = EntityMetadataHeader::parse(raw)
         && raw.get(ENTITY_METADATA_HEADER_LEN..) == Some(put.data)
@@ -98,7 +120,7 @@ pub(crate) fn prepare_entity_put_audit_in_txn(
         && header.occurred_end == put.occurred.end
         && header.learned_at == put.learned_at
     {
-        return Ok(None);
+        return None;
     }
     let mut op = if old.is_some() {
         ChangeOp::Update
@@ -140,17 +162,12 @@ pub(crate) fn prepare_entity_put_audit_in_txn(
         .transition
         .and_then(VerifiedClaimTransition::closed_at)
         .unwrap_or(put.occurred.start);
-    prepare_mutation_audit_in_txn(
-        store,
-        txn,
-        MutationAudit {
-            entity: put.id,
-            op,
-            actor_principal,
-            occurred_at,
-            input: put.data,
-            reason: None,
-        },
-    )
-    .map(Some)
+    Some(MutationAudit {
+        entity: put.id,
+        op,
+        actor_principal,
+        occurred_at,
+        input: put.data,
+        reason: None,
+    })
 }
