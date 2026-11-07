@@ -17,7 +17,7 @@ use super::retrieval::invalid;
 use super::{
     AsrEvent, AsrEventKind, BrainEvent, BrainRequest, ControlEvent, GenerationEpoch, OutputStop,
     PartialEnricher, PartialRetrieval, PcmFrame, SafeguardRequest, SentenceEnforcement,
-    SentenceWork, SpeculativeRetrievalBridge, StopReason, ToolEvent, UtteranceHandle,
+    SentenceWork, SpeculativeRetrievalBridge, StopReason, ToolEvent, UtteranceHandle, backchannel,
 };
 
 #[path = "preparation.rs"]
@@ -28,6 +28,12 @@ pub use preparation::PreparedAsr;
 /// not place stays open: the ask door's own default for an ask with no
 /// class (CALLS.md: FIX 1388 ask expiry).
 pub const VOICE_IDENTITY_ASK_SECONDS: u64 = 24 * 60 * 60;
+
+/// How long the person's speech over the agent's output runs before it
+/// takes the floor whatever it says (CALLS, FIX 4899): an engine call. A
+/// shorter run past the barge-in hold stops the output only once its words
+/// are not a backchannel (ARCH-0061 #backchannel).
+pub const SUSTAINED_INTERRUPTION_HOLD: Duration = Duration::from_millis(600);
 
 /// A voice session's trusted binding to the committed container it is
 /// heard in (OF-365 P5). Only the host's auth layer supplies it, never a
@@ -56,7 +62,10 @@ pub struct VoiceSessionConfig {
     /// resolution is re-read at each final, not copied into another identity DB.
     pub interlocutors: InterlocutorResolutionInput,
     pub tools_enabled: bool,
-    /// Must be within 100–150 ms. Default 120 ms.
+    /// Must be within 100–150 ms. Default 120 ms. Speech held this long
+    /// over the agent's output is a pending interruption (FIX 4899): it
+    /// stops the output at [`SUSTAINED_INTERRUPTION_HOLD`], or once its
+    /// words are not a backchannel.
     pub barge_in_hold: Duration,
     pub policy_world_ref: Option<String>,
     pub policy_caller_ref: Option<String>,
@@ -105,6 +114,21 @@ pub enum AsrUpdate {
     Closed(OutputStop),
 }
 
+/// What the person's words did to the floor the agent holds (FIX 4899).
+#[must_use = "dispatch an interruption's stop, then prepare the words unless they were a backchannel"]
+#[derive(Debug)]
+pub enum FloorWords {
+    /// Prepare the words as usual: the agent does not hold the floor, or
+    /// the words leave it with the agent.
+    Prepare,
+    /// The words took the floor. Dispatch the stop before another playback
+    /// dequeue, then prepare them.
+    Interrupt(OutputStop),
+    /// A backchannel final while the agent held the floor: its utterance
+    /// is closed, it starts no reply, and it is not queued for later.
+    Backchannel,
+}
+
 #[must_use = "deliver backend status and dispatch any output stop before playback"]
 #[derive(Debug)]
 pub struct SafeguardUpdate {
@@ -141,6 +165,10 @@ struct Generation {
     audio_open: bool,
     sentence: u64,
     pending_safeguards: BTreeSet<u64>,
+    /// The host acknowledged its playout drained after the brain was done:
+    /// the agent no longer holds the floor, though a verdict still out
+    /// keeps the generation until it lands (FIX 4899).
+    drained: bool,
 }
 
 pub struct VoiceCascadeSession {
@@ -153,6 +181,9 @@ pub struct VoiceCascadeSession {
     ended: bool,
     speech_started: Option<Duration>,
     speech_latched: bool,
+    /// A speech run passed the barge-in hold while the agent held the
+    /// floor, and neither a stop nor its words settled it yet (FIX 4899).
+    interruption_pending: bool,
     last_speech_observation: Option<Duration>,
     preparation_serial: u64,
     prepared_asr: Option<PreparedAsr>,
@@ -184,6 +215,7 @@ impl VoiceCascadeSession {
             ended: false,
             speech_started: None,
             speech_latched: false,
+            interruption_pending: false,
             last_speech_observation: None,
             preparation_serial: 0,
             prepared_asr: None,
@@ -320,6 +352,7 @@ impl VoiceCascadeSession {
                     audio_open: true,
                     sentence: 0,
                     pending_safeguards: BTreeSet::new(),
+                    drained: false,
                 });
                 Ok(AsrUpdate::Final(request))
             }
@@ -570,6 +603,11 @@ impl VoiceCascadeSession {
     /// speech since the previous observation; ANY silence resets the hold.
     /// Sparse partial text or endpoint timing is never used as a speech clock.
     /// One interruption per continuous speech interval; backward time is refused.
+    /// A backchannel does not take the floor (FIX 4899): speech held past the
+    /// barge-in hold over the agent's output is a pending interruption, and
+    /// it stops the output once held to [`SUSTAINED_INTERRUPTION_HOLD`], or
+    /// once its words are not a backchannel ([`Self::observe_words`]). A run
+    /// that ends in silence stops nothing.
     pub fn observe_speech(&mut self, now: Duration, speaking: bool) -> Result<Option<OutputStop>> {
         self.require_open()?;
         if self.last_speech_observation.is_some_and(|last| now < last) {
@@ -582,17 +620,94 @@ impl VoiceCascadeSession {
             return Ok(None);
         }
         let started = *self.speech_started.get_or_insert(now);
-        if self.speech_latched || now - started < self.config.barge_in_hold {
+        let held = now - started;
+        if self.speech_latched || held < self.config.barge_in_hold {
             return Ok(None);
         }
-        if self.generation.is_none() {
+        // Idle speech, or speech after the agent's playout drained, does not
+        // spend this interval's interruption. A final may start output while
+        // the same continuous speech is still in progress.
+        if !self.holds_floor() {
             return Ok(None);
         }
+        self.interruption_pending = true;
+        if held < SUSTAINED_INTERRUPTION_HOLD {
+            return Ok(None);
+        }
+        Ok(Some(self.interrupt()))
+    }
+
+    /// The person's words while the agent holds the floor (FIX 4899,
+    /// ARCH-0061 #backchannel), before the host prepares them. Words that
+    /// are not a backchannel, heard while a speech run's interruption is
+    /// pending, take the floor: the output stops, and the words go on to be
+    /// prepared. A partial that can still complete a backchannel ("I" of "I
+    /// see") is undecided and stops nothing; the run's later words, its
+    /// final or the sustained hold settle it. A backchannel final while the
+    /// agent holds the floor starts no reply: its utterance closes, and
+    /// nothing waits for it. Words with no interruption pending, words of an
+    /// utterance not open, and every word once the agent's playout drained,
+    /// are prepared as usual: a final after the drain is an answer, and when
+    /// a verdict still out keeps the drained generation, the final releases
+    /// it as a barge-in would. A host validates the words first
+    /// ([`Self::validate_asr`]): a stale or mismatched event must not reach
+    /// the floor.
+    pub fn observe_words(
+        &mut self,
+        handle: &UtteranceHandle,
+        kind: AsrEventKind,
+        text: &str,
+    ) -> FloorWords {
+        if self.ended
+            || !matches!(kind, AsrEventKind::Partial | AsrEventKind::Final)
+            || !self.retrieval.is_open(handle)
+        {
+            return FloorWords::Prepare;
+        }
+        if !self.holds_floor() {
+            // The playout drained: a final is the person's answer, and a
+            // generation kept only for its verdicts must not refuse it.
+            return if kind == AsrEventKind::Final && self.generation.is_some() {
+                FloorWords::Interrupt(self.interrupt())
+            } else {
+                FloorWords::Prepare
+            };
+        }
+        if !backchannel::has_words(text) {
+            return FloorWords::Prepare;
+        }
+        // Undecided: the person may be saying "I see" or "なるほど" yet.
+        if kind == AsrEventKind::Partial && backchannel::may_become_backchannel(text) {
+            return FloorWords::Prepare;
+        }
+        if !backchannel::is_backchannel(text) {
+            return if self.interruption_pending {
+                FloorWords::Interrupt(self.interrupt())
+            } else {
+                FloorWords::Prepare
+            };
+        }
+        // A backchannel final: the run's words settle its interruption.
+        self.interruption_pending = false;
+        self.close_utterance(handle);
+        FloorWords::Backchannel
+    }
+
+    /// Whether the agent holds the floor: a generation is live and its
+    /// playout has not drained (FIX 4899).
+    fn holds_floor(&self) -> bool {
+        self.generation
+            .as_ref()
+            .is_some_and(|active| !active.drained)
+    }
+
+    /// The person took the floor from the live generation.
+    fn interrupt(&mut self) -> OutputStop {
         let stop = self.stop_generation(StopReason::UserBargeIn, true);
-        // Idle speech does not spend this interval's interruption. A final may
-        // start output while the same continuous speech is still in progress.
-        self.speech_latched = true;
-        Ok(Some(stop))
+        // One interruption per continuous speech interval: a run still in
+        // progress spends it.
+        self.speech_latched = self.speech_started.is_some();
+        stop
     }
 
     /// Check at BOTH enqueue and dequeue in the audio sibling. This also accepts
@@ -621,14 +736,21 @@ impl VoiceCascadeSession {
     /// Normal response completion: the host acknowledges TTS end AND drained
     /// server/client output. Pending verdicts must still be able to stop playback,
     /// so neither Done nor an early drain acknowledgement drops the generation.
+    /// A drain after Done still releases the agent's floor (FIX 4899): with
+    /// a verdict still out, the person's next final is an answer, not a
+    /// backchannel ([`Self::observe_words`]).
     pub fn finish_playout(&mut self, generation: GenerationEpoch) -> Result<bool> {
         let Some(active) = self
             .generation
-            .as_ref()
+            .as_mut()
             .filter(|active| active.request.generation == generation)
         else {
             return Ok(false);
         };
+        if active.llm_done {
+            active.drained = true;
+            self.interruption_pending = false;
+        }
         if !active.llm_done || !active.pending_safeguards.is_empty() {
             return Err(invalid(
                 "brain or safeguard still pending at playout finish",
@@ -637,6 +759,7 @@ impl VoiceCascadeSession {
         self.generation = None;
         self.prepared_asr = None;
         self.preparation_active = false;
+        self.interruption_pending = false;
         Ok(true)
     }
 
@@ -825,6 +948,7 @@ impl VoiceCascadeSession {
     fn stop_generation(&mut self, reason: StopReason, cancel_llm: bool) -> OutputStop {
         self.prepared_asr = None;
         self.preparation_active = false;
+        self.interruption_pending = false;
         let generation = self
             .generation
             .as_ref()
