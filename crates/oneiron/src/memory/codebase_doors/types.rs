@@ -118,6 +118,10 @@ pub struct CodeSnapshotView {
     /// anchor; absent for an unregistered capture.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository: Option<EntityId>,
+    /// The committed capture's receipt, returned by ingest. Manifest reads
+    /// omit it; retained captures remain available through `vault.receipts`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture_receipt: Option<String>,
 }
 
 /// One frozen file of a pinned snapshot, read from its stored blob and never
