@@ -56,11 +56,20 @@ and `exports["name"]`. Top-level comma expressions apply those same direct
 assignment and delete rules in left-to-right order, including nested comma
 expressions. They share the ordinary wrapper and alias state. Direct chains such
 as `exports.a = exports.b = 1` contribute every eligible named property when all
-links are plain assignments to the current wrapper export object. Whole-module
-or wrapper-identifier assignments, unknown computed keys, `__proto__`, compound
-operators and sequence-valued terminals keep the ordinary outer-only handling and
-unresolved sites. The terminal value is not evaluated; its unknown wrapper
-references still produce unresolved sites. No conditional expressions are evaluated.
+links are plain assignments to the current wrapper export object. Mixed replacement
+chains such as `module.exports = exports = {a: 1}` and
+`exports = module.exports = {a: 1}` also contribute the literal's static own keys.
+Every link must be a plain assignment to either the native `module.exports` slot or
+the wrapper `exports` binding, both kinds must occur, and the terminal must be an
+object literal. Both slots receive that same literal value, so later `exports.b`
+assignments refer to the new module value. References are collected before applying
+the chain; no admitted link rebinds `module` or targets a property of the replaced
+value. The literal uses the ordinary own-key, spread and `__proto__` rules.
+Other whole-module or wrapper-identifier chains, unknown computed keys, `__proto__`
+property assignments, compound operators and sequence-valued terminals keep the
+ordinary outer-only handling and unresolved sites. Terminal values are not executed;
+their unknown wrapper references still produce unresolved sites. No conditional
+expressions are evaluated.
 Uninitialized root `var module` and `var exports` redeclare the CommonJS wrapper
 parameters, including hoisted or repeated redeclarations. Direct simple `var`
 initializers update the same alias state in
