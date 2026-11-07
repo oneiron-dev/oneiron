@@ -162,7 +162,19 @@ missing id, or an id whose row is not a MESSAGE, fails the capture before its
 summary, so no acknowledgement can claim it. For each message, in id order, the
 stream carries its exact entity row (component 8), then its document head and
 every stored row and update of that document slot (component 9), then every
-stored outgoing edge row (component 10), all copied as stored. When the
+stored outgoing edge row (component 10), then its revision ledger (component
+12), all copied as stored. The ledger is the history that keeps a message's
+earlier full stored rows when its row was replaced: the history document
+(family `entity_revision:doc`, key `entity_revision:doc:` + id16), the
+revision state (`entity_revision:state`, `entity_revision:state:` + id16),
+each retained frontier (`entity_revision:frontier`,
+`entity_revision:frontier:` + id16 + revision16, in key order), then each of
+those frontiers' reverse identity rows whose value is the message id
+(`entity_revision:identity`, `entity_revision:identity:` + revision16), ids
+as raw bytes. A row the vault does not hold is absent, not an error. A message
+replaced while it had a record head keeps its text history in that head's
+document instead, which component 9 already carries. Edges keep no history:
+an edge row removed since lives on only in an earlier backup. When the
 message's result attachment names a body that the message still holds (its own
 body occurrence, that exact digest and length, from the producer run,
 occurrence and path the attachment names), that body's exact bytes follow as
