@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use oneiron::code_run::shadow_runner::{
     ShadowArmLease, ShadowBodyRef, ShadowMeterContext, ShadowRunRequest, ShadowRunResult,
-    ShadowRunner, ShadowSourceAdmission, ShadowUnavailable,
+    ShadowSourceAdmission, ShadowSourceWitness, ShadowUnavailable,
 };
 use oneiron::dreamer_runner::maintenance::code_fix::{CodeFixShadowHost, PublisherCandidate};
 
@@ -72,9 +72,15 @@ impl CoachShadow {
 }
 
 impl CodeFixShadowHost for CoachShadow {
-    fn run_arm(&self, request: ShadowRunRequest) -> oneiron::Result<ShadowRunResult> {
+    fn run_arm(
+        &self,
+        request: ShadowRunRequest,
+        witness: ShadowSourceWitness,
+    ) -> oneiron::Result<ShadowRunResult> {
         // The arm runs on the server's runtime; this blocking worker waits.
-        self.handle.block_on(self.runner.run(request))
+        // FIX 9446: its source is prepared again under the Coach's witness.
+        self.handle
+            .block_on(self.runner.run_witnessed(request, witness))
     }
 
     fn read_arm_body_for_model(
