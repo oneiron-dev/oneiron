@@ -4443,7 +4443,7 @@
      "path": "src/authority/invitee_slip.rs",
      "purpose": "FIX 1925: an invitee's own credential",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -22972,7 +22972,7 @@
      "path": "src/consent/doors/request_credential.rs",
      "purpose": "The slip a person's request arrived with, bound to their proof as a liveness guard alone (FIX 4328…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1
      }
     },
@@ -38635,7 +38635,7 @@
       "const": 1,
       "crate-vis": 7,
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -88466,7 +88466,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1332
+      "fn": 1333
      }
     },
     {
@@ -89552,8 +89552,10 @@
      "notable": [
       "HandoffAlarmRequest",
       "InvitationSlip",
+      "MemberSlip",
       "SharedActExecuted",
       "SharedActRequest",
+      "SharedInvitationAcceptedWithCredential",
       "SharedMemberAddRequest",
       "SharedMemberRequest",
       "SharedMemberRoleRequest",
@@ -89565,9 +89567,9 @@
      "path": "src/verbs/shared.rs",
      "purpose": "The inputs and answers of the shared-vault rows a host door answers (OF-158): the acts the shared preset…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 14,
-      "struct": 11
+      "struct": 13
      }
     },
     {
@@ -89602,6 +89604,7 @@
       "InvitationSlipRequest",
       "SharedEraseAskCloseRequest",
       "SharedEraseAskRequest",
+      "SharedInvitationAcceptWithCredentialRequest",
       "SharedInvitationRequest",
       "SharedInvitationWithdrawRequest"
      ],
@@ -89609,8 +89612,8 @@
      "purpose": "The invitation rows of a shared vault (OF-531 / OF-158): `vault.members.add` invites, and the invitee lists…",
      "surface": {
       "crate-vis": 1,
-      "fn": 17,
-      "struct": 9
+      "fn": 19,
+      "struct": 10
      }
     },
     {
@@ -110814,7 +110817,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1300
+      "fn": 1301
      }
     },
     {
@@ -112607,7 +112610,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1301
+      "fn": 1302
      }
     },
     {
@@ -119116,7 +119119,7 @@
      "path": "src/api/facade/shared_member_doors.rs",
      "purpose": "The host doors of the shared-vault invitation rows (OF-531 / OF-158), beside `shared_act_doors`: an invitee…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -148277,6 +148280,7 @@
       "MemberProjection",
       "MemberRelationship",
       "MemberRelationshipContext",
+      "MemberSlip",
       "MemberVerdict",
       "MembershipConsent",
       "MembershipRowSource",
@@ -149822,6 +149826,8 @@
       "SharedEraseAskCloseRequest",
       "SharedEraseAskRequest",
       "SharedInvitation",
+      "SharedInvitationAcceptWithCredentialRequest",
+      "SharedInvitationAcceptedWithCredential",
       "SharedInvitationRequest",
       "SharedInvitationState",
       "SharedInvitationWithdrawRequest",
@@ -150605,7 +150611,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1157,
-      "struct": 3546
+      "struct": 3549
      }
     },
     {
