@@ -375,6 +375,9 @@ impl Vault {
             match store.read_inference_snapshot_key(&wtxn, &id.0) {
                 Ok(Some(wrapped)) => (record, wrapped),
                 Ok(None) => return Ok(None),
+                Err(Error::Io(error)) if error.kind() == ErrorKind::OutOfMemory => {
+                    return Err(error.into());
+                }
                 Err(_) => {
                     drop(wtxn);
                     self.retire_inference_snapshot(id)?;
