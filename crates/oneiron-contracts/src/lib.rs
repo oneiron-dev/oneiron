@@ -10,6 +10,7 @@ pub mod edge;
 pub mod entity_id;
 pub mod error;
 pub mod gate;
+pub mod host_descriptors;
 pub mod host_memory;
 pub mod identity_topology;
 pub mod limit_ask;

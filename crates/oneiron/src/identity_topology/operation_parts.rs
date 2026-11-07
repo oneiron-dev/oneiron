@@ -78,6 +78,9 @@ fn fits_one_record(decision: &StoredIdentityOpEvent, body_len: usize) -> bool {
         StoredIdentityOpAction::Facet { facets, .. } => {
             facets.len() <= MAX_IDENTITY_TOPOLOGY_EVENT_FACETS
         }
+        StoredIdentityOpAction::ParkedFacet { specs, .. } => {
+            specs.len() <= MAX_IDENTITY_TOPOLOGY_EVENT_FACETS
+        }
         _ => true,
     }
 }
@@ -108,6 +111,7 @@ pub(super) fn operation_records(
         StoredIdentityOpAction::Merge { .. }
             | StoredIdentityOpAction::Split { .. }
             | StoredIdentityOpAction::Facet { .. }
+            | StoredIdentityOpAction::ParkedFacet { .. }
     );
     if !carries_parts || fits_one_record(&decision, payload.len()) {
         return Ok(OperationRecords {
