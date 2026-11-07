@@ -2133,12 +2133,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/deletion/exhaust_erase.rs` | src | m | 7 crate-vis | — | Canonical BYOA exhausts reached by an accepted source erase (FIX 7617) |
 | `src/deletion/gate.rs` | src | m | 25 crate-vis | — | — |
 | `src/deletion/identity_event_stamps.rs` | src | s | 2 crate-vis | — | Erase independent author-attribution carriers without changing decisions |
-| `src/deletion/legal_hold/clone/auth.rs` | src | s | 2 struct · 3 fn | HostLegalChannel, HostLegalConnection | The inherited manager-created listener is the native transport authority |
+| `src/deletion/legal_hold/clone/auth.rs` | src | s | 3 struct · 6 fn · 1 crate-vis | HostLegalChannel, HostLegalConnection, HostLegalConnectionRole | The inherited manager-created listener is the native transport authority |
 | `src/deletion/legal_hold/clone/collector.rs` | src | s | 7 crate-vis | — | Streaming ciphertext and exact completion shared by native source families |
-| `src/deletion/legal_hold/clone/live.rs` | src | m | 1 fn · 7 crate-vis | — | Exact HOST order standing for a live entry, independent of any one socket |
+| `src/deletion/legal_hold/clone/live.rs` | src | m | 3 fn · 7 crate-vis | — | Exact HOST order standing for a live entry, independent of any one socket |
 | `src/deletion/legal_hold/clone/messages.rs` | src | m | 1 crate-vis | — | Exact stored on-record MESSAGE records for an order that names them (LEGAL-HOLD-USE = B as a clone, owner… |
 | `src/deletion/legal_hold/clone/mod.rs` | src | s | 1 fn · 1 re-export · 1 crate-vis | — | Native source half of an order-scoped legal clone |
-| `src/deletion/legal_hold/clone/outbox.rs` | src | s | 5 crate-vis | — | The connection half of a HOST order's prospective capture (FIX 13866): stands the order, then streams its… |
+| `src/deletion/legal_hold/clone/outbox.rs` | src | m | 7 crate-vis | — | The connection half of a HOST order's prospective capture (FIX 13866): stands the order, then streams its… |
 | `src/deletion/legal_hold/confirmation.rs` | src | m | 2 struct · 4 fn · 2 crate-vis | LiftAndEraseShownState, ShownCustomerHold | The owner's one "Lift the hold and erase?" confirm, bound to what it showed (OF-470, FIX 1462), and the… |
 | `src/deletion/legal_hold/held_scrubs.rs` | src | s | 2 crate-vis | — | What a legal hold kept an erase from scrubbing, settled once it lifts (FIX 6386, 7993, 7994) |
 | `src/deletion/legal_hold/mod.rs` | src | m | 13 fn · 2 re-export · 7 crate-vis | — | Legal hold doors (OF-470, design B; owner ruling 2026-10-17: "B, and that stuff is for cloud only + we… |
