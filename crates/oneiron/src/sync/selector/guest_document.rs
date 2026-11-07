@@ -72,7 +72,7 @@ fn export(
     manager: &Arc<WindowManager>,
     issuer: &HostSlipIssuer,
     input: &GuestDocumentShareRequest,
-    admit: impl Fn(&Vault, &FederationGrant) -> Result<()>,
+    admit: impl Fn(&Vault, &FederationGrant) -> Result<EntityId>,
     readable: impl Fn(&Vault, &[EntityId]) -> Result<bool>,
 ) -> Result<(GuestDocumentEnvelope, Vec<EntityId>)> {
     let vault = manager.vault();
@@ -92,7 +92,7 @@ fn export(
         return Err(refused());
     }
     let window = manager.open_window(&key)?;
-    let (body, rows) = super::codec::guest_share_envelope_body_listing(
+    let (body, rows, travelled) = super::codec::guest_share_envelope_body_listing(
         vault,
         &window.doc,
         &key,
@@ -105,11 +105,23 @@ fn export(
         return Err(refused());
     }
     let (current, after) = context(vault, input)?;
-    admit(vault, &current)?;
+    let by = admit(vault, &current)?;
     if current != grant || before != after {
         return Err(refused());
     }
-    Ok((issuer.sign_guest_document_envelope(after, body)?, rows))
+    let mut envelope = issuer.sign_guest_document_envelope(after, body)?;
+    envelope.travel_receipt = Some(vault.record_guest_window_travel(
+        &input.grant_ref,
+        &current.member_ref,
+        current.scope,
+        key.as_str(),
+        &input.world_ref,
+        &rows,
+        &envelope.envelope.body.update,
+        &by,
+        travelled,
+    ));
+    Ok((envelope, rows))
 }
 
 /// The owner's share and re-share paths use one local-world-only engine door.
@@ -125,7 +137,10 @@ pub fn share_guest_document_as_owner(
         manager,
         issuer,
         input,
-        |vault, _| vault.recheck_owner(owner),
+        |vault, _| {
+            vault.recheck_owner(owner)?;
+            owner.actor_for_read(vault)
+        },
         |_, _| Ok(true),
     )
 }
@@ -153,7 +168,7 @@ pub fn export_guest_document_for_guest(
             {
                 return Err(refused());
             }
-            Ok(())
+            Ok(grant.member_ref)
         },
         |vault, rows| {
             let key = vault.credential_read_key(proof)?.ok_or_else(refused)?;
