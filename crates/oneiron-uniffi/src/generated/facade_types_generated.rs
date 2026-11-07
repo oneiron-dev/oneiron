@@ -16328,6 +16328,12 @@ pub struct InboxLensRow {
         skip_serializing_if = "Option::is_none"
     )]
     pub payload_ref: Option<String>,
+    #[serde(
+        rename = "approval_digest",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub approval_digest: Option<String>,
     #[serde(rename = "concern", default, skip_serializing_if = "Option::is_none")]
     pub concern: Option<InboxLensConcern>,
     #[serde(
@@ -45677,6 +45683,12 @@ pub struct RepoAnchorBindOutput {
 pub struct RepoSnapshotsGetInput {
     #[serde(rename = "repo")]
     pub repo: String,
+    #[serde(
+        rename = "portable_repo",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub portable_repo: Option<String>,
     #[serde(rename = "ref")]
     pub r#ref: String,
     #[serde(rename = "snapshot")]
@@ -45716,6 +45728,12 @@ pub struct RepoSnapshotView {
 pub struct RepoSnapshotsReadInput {
     #[serde(rename = "repo")]
     pub repo: String,
+    #[serde(
+        rename = "portable_repo",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub portable_repo: Option<String>,
     #[serde(rename = "ref")]
     pub r#ref: String,
     #[serde(rename = "snapshot")]
@@ -45759,6 +45777,12 @@ pub struct RepoSnapshotsReadOutput {
 pub struct RepoSymbolsDefinitionsInput {
     #[serde(rename = "repo")]
     pub repo: String,
+    #[serde(
+        rename = "portable_repo",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub portable_repo: Option<String>,
     #[serde(rename = "ref")]
     pub r#ref: String,
     #[serde(rename = "snapshot")]
@@ -45953,6 +45977,12 @@ pub struct RepoMergeQueueObserveOutput {
 pub struct RepoSnapshotsIngestInput {
     #[serde(rename = "repo")]
     pub repo: String,
+    #[serde(
+        rename = "portable_repo",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub portable_repo: Option<String>,
     #[serde(rename = "ref")]
     pub r#ref: String,
 }
@@ -45973,6 +46003,12 @@ pub struct LiveRunRequestRepoSnapshotsIngestInput {
 pub struct RepoWorkOpenInput {
     #[serde(rename = "repo")]
     pub repo: String,
+    #[serde(
+        rename = "portable_repo",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub portable_repo: Option<String>,
     #[serde(rename = "ref")]
     pub r#ref: String,
 }
