@@ -218,6 +218,11 @@ impl SyncServer {
                     }
                 }
             }
+            let copies = Arc::clone(server.vault());
+            let budget = server.housekeeping_passes.budget(HOUSEKEEPING_PASS_BUDGET);
+            if let Err(error) = copies.reuse_pending_home_claim_vectors(budget).await {
+                tracing::warn!(kind = ?error.kind(), "home CLAIM vector catch-up failed");
+            }
             // FIX 4747 slice 4: a connector send whose machine closed or
             // vanished is taken here, in the ruled order, when this machine
             // can send it.

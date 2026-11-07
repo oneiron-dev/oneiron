@@ -339,6 +339,7 @@ fn raw_rows(store: &Store, txn: &RoTxn<'_>) -> Result<Vec<RawRow>> {
     for row in CATALOG.iter_raw_from(store, txn, &[])? {
         let (key, bytes) = row?;
         let row = SnapshotId::decode_key(&key).map(|id| (id, CATALOG.decode_value(&bytes).ok()));
+        out.try_reserve(1).map_err(std::io::Error::from)?;
         out.push((key, row));
     }
     Ok(out)
@@ -347,10 +348,12 @@ fn raw_rows(store: &Store, txn: &RoTxn<'_>) -> Result<Vec<RawRow>> {
 /// Every row of the catalog, in id order. A key of the wrong width, which
 /// no writer here makes, is skipped.
 pub(crate) fn rows(store: &Store, txn: &RoTxn<'_>) -> Result<Vec<CatalogRow>> {
-    Ok(raw_rows(store, txn)?
-        .into_iter()
-        .filter_map(|(_, row)| row)
-        .collect())
+    let mut out = Vec::new();
+    for row in raw_rows(store, txn)?.into_iter().filter_map(|(_, row)| row) {
+        out.try_reserve(1).map_err(std::io::Error::from)?;
+        out.push(row);
+    }
+    Ok(out)
 }
 
 /// Every row of `conversation` that decodes and may serve a restore, by the
