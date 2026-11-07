@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1302 facade rows, 4717 declarations.
-Inputs: 1231 of 1302 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1131 of 1302 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1297 facade rows, 4701 declarations.
+Inputs: 1226 of 1297 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1126 of 1297 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -1605,7 +1605,6 @@ class TaskRow(TypedDict):
     counter_task_ref: NotRequired[str | None]
     cancel_pathology: NotRequired[CancelRejectionPathology | None]
     widening: NotRequired[ConsultWidening | None]
-    due_at: NotRequired[int | None]
     fits: NotRequired[list[str]]
 class TasksOverflow(TypedDict):
     known_omitted_rows: int
@@ -7514,17 +7513,6 @@ class SharedInvitation(TypedDict):
 class SharedInvitationRequest(TypedDict):
     vault_id: str
     invitation: str
-class SharedInvitationAcceptWithCredentialRequest(TypedDict):
-    vault_id: str
-    invitation: str
-    expires_at: int
-class MemberSlip(TypedDict):
-    slip_id: str
-    slip: str
-    expires_at: int
-class SharedInvitationAcceptedWithCredential(TypedDict):
-    receipt: SharedActExecutionReceipt
-    credential: MemberSlip
 class SharedInvitationWithdrawRequest(TypedDict):
     vault_id: str
     member: str
@@ -12622,7 +12610,6 @@ class GraphFsLinkView(TypedDict):
     mount: GraphFsMountRequest
     path: str
     target: NotRequired[str | None]
-    read_receipt: NotRequired[ScopedReadReceipt | None]
 class GraphFsLsRequest(TypedDict):
     mount: GraphFsMountRequest
     path: str
@@ -13616,12 +13603,19 @@ class OriginMirrorReadinessNotReady(TypedDict):
     objects: list[OriginMirrorLfsObject]
     omitted_objects: int
 OriginMirrorReadiness = OriginMirrorReadinessReady | OriginMirrorReadinessNotReady
+OriginMirrorLfsRoute = Literal["broker", "daemon"]
+BrokerIsolation = Literal["separate_user", "same_user"]
+class OriginMirrorLfsTransfer(TypedDict):
+    route: OriginMirrorLfsRoute
+    broker_isolation: NotRequired[BrokerIsolation | None]
+    credential_rewrites: NotRequired[int]
 class OriginMirrorRun(TypedDict):
     at: int
     refs: int
     deleted: int
     failure: NotRequired[str | None]
     readiness: NotRequired[OriginMirrorReadiness | None]
+    lfs_transfer: NotRequired[OriginMirrorLfsTransfer | None]
 OriginMirrorSyncStrategy = Literal["ask_me", "schedule", "full_auto"]
 OriginMirrorHoldCause = Literal["storage", "decode", "review", "remote_read"]
 class OriginMirrorHold(TypedDict):
@@ -13713,7 +13707,6 @@ class MirrorBatchClaimSent(TypedDict):
 class MirrorBatchClaimPaused(TypedDict):
     state: Literal["paused"]
 MirrorBatchClaim = MirrorBatchClaimPending | MirrorBatchClaimClaimed | MirrorBatchClaimSent | MirrorBatchClaimPaused
-BrokerIsolation = Literal["separate_user", "same_user"]
 class OriginMirrorPlanBatchView(TypedDict):
     claim: MirrorBatchClaim
     refs: list[int]
@@ -13866,53 +13859,6 @@ class OriginPublicationsRequest(TypedDict):
 class OriginPublicationsView(TypedDict):
     repo: str
     publications: list[OriginPublicationView]
-class RepoSecretPurgeRequest(TypedDict):
-    repo: str
-    marks: NotRequired[list[EntityId] | None]
-class RepoSecretPurgeRefMove(TypedDict):
-    ref_name: str
-    old_oid: str
-    new_oid: str
-class RepoSecretPurgeKeepRoot(TypedDict):
-    kind: str
-    owner: str
-    oid: str
-    releases: bool
-RepoSecretPurgeOutstanding = Literal["backups_and_checkpoints", "outside_copies", "repo_snapshots", "code_documents", "lfs_objects"]
-class RepoSecretPurgePlan(TypedDict):
-    plan: EntityId
-    owner: EntityId
-    repo: str
-    store: EntityId
-    marks: list[EntityId]
-    moves: list[RepoSecretPurgeRefMove]
-    purged_blobs: list[str]
-    rewritten_objects: int
-    signatures_dropped: int
-    keep_roots: list[RepoSecretPurgeKeepRoot]
-    outstanding: list[RepoSecretPurgeOutstanding]
-    planned_at: int
-class RepoSecretPurgeIdRequest(TypedDict):
-    plan: EntityId
-RepoSecretPurgeState = Literal["complete_local", "partial", "stale"]
-class RepoSecretPurgeRefOutcome(TypedDict):
-    ref_name: str
-    old_oid: str
-    new_oid: str
-    moved: bool
-    failure: NotRequired[str | None]
-class RepoSecretPurgeReceipt(TypedDict):
-    receipt: EntityId
-    plan: EntityId
-    state: RepoSecretPurgeState
-    refs: list[RepoSecretPurgeRefOutcome]
-    released: list[RepoSecretPurgeKeepRoot]
-    still_present: list[str]
-    outstanding: list[RepoSecretPurgeOutstanding]
-    executed_at: int
-class RepoSecretPurgeView(TypedDict):
-    plan: RepoSecretPurgePlan
-    receipt: NotRequired[RepoSecretPurgeReceipt | None]
 class RepoCheckoutBindInput(TypedDict):
     repo: EntityId
     ref: str
@@ -19567,36 +19513,6 @@ class NeighborHit(TypedDict):
     weight: float
     direction: str
     record: NotRequired[RecordRef | None]
-class EdgeProvenanceRequest(TypedDict):
-    source_ref: str
-    edge_kind: str
-    target_ref: str
-    filter: NotRequired[ReadFilterInput | None]
-EdgeProvenanceActorClass = Literal["human", "agent", "system"]
-EdgeProvenanceSupersession = Literal["proposed", "confirmed", "disputed", "retracted"]
-EdgeProvenanceLifecycle = Literal["active", "superseded", "retracted"]
-class EdgeProvenanceView(TypedDict):
-    claim_ref: str
-    short_ref: NotRequired[str | None]
-    source_ref: str
-    edge_kind: str
-    target_ref: str
-    actor_entity_ref: str
-    actor_class: EdgeProvenanceActorClass
-    source_revision_ref: NotRequired[str | None]
-    body_snapshot_ref: NotRequired[str | None]
-    confidence: float
-    supersession_status: EdgeProvenanceSupersession
-    valid_from: NotRequired[int | None]
-    valid_to: NotRequired[int | None]
-    substrate_ref: NotRequired[str | None]
-    reasoning_effort: NotRequired[str | None]
-    lifecycle: EdgeProvenanceLifecycle
-    stale: bool
-    learned_at: int
-    occurred_start: int
-    occurred_end: int
-    winner: bool
 class TextIndexField(TypedDict):
     field: str
     value: str
@@ -22832,7 +22748,6 @@ AuthorTakeTarget = AuthorTakeTargetSubject | AuthorTakeTargetClaim
 class AuthorTakeRequest(TypedDict):
     target: AuthorTakeTarget
     markdown: str
-    source_ref: NotRequired[str | None]
 class CreateNoteFromEntityRequest(TypedDict):
     source_ref: str
     kind: str
