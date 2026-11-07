@@ -49,6 +49,7 @@
   "contract_outputs": {},
   "contracts": {
     "rust_crates": {},
+    "js_modules": {},
     "schemas": {},
     "outputs": []
   }
