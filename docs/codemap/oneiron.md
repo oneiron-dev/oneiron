@@ -4408,7 +4408,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/office_body/live_recalc.rs` | src | s | 3 crate-vis | — | A live workbook's formula cells as an export would compute them (FIX 11982, FIX 12052) |
 | `src/office_body/live_units.rs` | src | m | 1 re-export · 19 crate-vis | — | A live body's position when an ask read its artifact, and the units an edit never exported changed since… |
 | `src/office_body/masked_view.rs` | src | s | 3 crate-vis | — | A typed body's view as a reader masked from lifted keys reads it (OF-067): the body read, a fork's diff and… |
-| `src/office_body/mod.rs` | src | s | 13 re-export · 9 crate-vis | — | Live office body records and Vault doors |
+| `src/office_body/mod.rs` | src | s | 16 re-export · 9 crate-vis | — | Live office body records and Vault doors |
 | `src/office_body/pptx.rs` | src | m | 3 struct · 7 fn · 3 re-export · 10 crate-vis | PptxBody, PptxExport, PptxReview | The PPTX body: the OF-510 live deck (`oneiron_docedit::live`) as a Loro document on the typed-body door… |
 | `src/office_body/pptx/doc.rs` | src | m | 11 crate-vis | — | The PPTX body inside its Loro document, schema 1 (ARCH-0077, "One deck, one document") |
 | `src/office_body/pptx/doc/chart.rs` | src | s | 3 crate-vis | — | A chart frame's chart in the body's `charts` root, keyed by the frame's identity (ARCH-0077: "Ordered… |
@@ -4424,6 +4424,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/office_body/pptx/preview.rs` | src | m | 3 struct · 1 fn | DeckPreview, DeckPreviewRequest, DeckPreviewSlide | `vault.artifacts.body.deck.preview`: the asked slides of a deck's head, or of an open fork's merge candidate… |
 | `src/office_body/pptx/preview/drawn_parts.rs` | src | s | 7 crate-vis | — | The parts of a deck's retained package a preview's asked slides draw, and the keys their marks name (OF-510… |
 | `src/office_body/pptx/verbs.rs` | src | m | 9 struct · 5 fn | DeckBodyView, DeckExportRequest, DeckExportView, DeckForkMergeRequest, DeckGateRequest, DeckGateView, DeckNodeView, DeckOracleRequest +1 | `vault.artifacts.body.deck.*`: the deck doors the generic body verbs do not cover, as agent verbs (FIX 2284) |
+| `src/office_body/precision.rs` | src | s | 1 fn · 1 type · 3 crate-vis | — | The precision fallback for workbooks the native formula engine refuses (ARCH-0075 xlsx row; FIX 2462, OF-505… |
 | `src/office_body/records.rs` | src | s | 9 struct · 2 enum · 1 fn · 8 crate-vis | ForkState, OfficeBodyEdit, OfficeBodyExport, OfficeBodyExportAuthor, OfficeBodyExportRecord, OfficeBodyExportRequest, OfficeBodyFork, OfficeBodyHead +3 | Office body records and side-table bindings |
 | `src/office_body/resources.rs` | src | s | 1 re-export · 3 crate-vis | — | Office error mapping over the document-resource port |
 | `src/office_body/revision_window.rs` | src | m | 3 crate-vis | — | FIX 595 sequential per-actor DOCX projection, in memory (Engine 16:22) |
