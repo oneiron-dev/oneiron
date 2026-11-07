@@ -7,7 +7,7 @@ use crate::secret_record::types::CustodyClass;
 use crate::secret_record::types::SecretCustodyRecord;
 use oneiron_contracts::entity_id::EntityId;
 
-/// What the owner did about one found key.
+/// An owner action on one found key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FoundKeyAction {
@@ -22,6 +22,8 @@ pub enum FoundKeyAction {
     NotASecret,
     /// The owner accepted the risk and kept the marked span as text by choice.
     KeptAsText,
+    /// Re-enters a kept value without changing the owner's standing ruling.
+    ReEnter,
 }
 
 impl FoundKeyAction {
@@ -34,6 +36,7 @@ impl FoundKeyAction {
             Self::Grant => "grant",
             Self::NotASecret => "not_a_secret",
             Self::KeptAsText => "kept_as_text",
+            Self::ReEnter => "re_enter",
         }
     }
 }

@@ -253,6 +253,7 @@ pub enum AgentVerb {
     VaultPacksGet,
     VaultSkillsImport,
     VaultSkillsSync,
+    VaultSkillsProposalSettle,
     VaultSkillsReceipts,
     VaultSkillsConvert,
     VaultSkillsGet,
@@ -1267,6 +1268,8 @@ pub enum AgentVerb {
     VaultMailThreadsRead,
     VaultMailComplianceSearch,
     VaultFilesSourcesConvert,
+    VaultSyncRepoManifestsConflictReview,
+    VaultSyncRepoManifestsConflictDiscard,
     VaultDreamerFollowerKeyframe,
     ConnectorAnswer,
     SelfBrowserOpen,
@@ -1558,6 +1561,7 @@ impl AgentVerb {
         Self::VaultPacksGet,
         Self::VaultSkillsImport,
         Self::VaultSkillsSync,
+        Self::VaultSkillsProposalSettle,
         Self::VaultSkillsReceipts,
         Self::VaultSkillsConvert,
         Self::VaultSkillsGet,
@@ -2572,6 +2576,8 @@ impl AgentVerb {
         Self::VaultMailThreadsRead,
         Self::VaultMailComplianceSearch,
         Self::VaultFilesSourcesConvert,
+        Self::VaultSyncRepoManifestsConflictReview,
+        Self::VaultSyncRepoManifestsConflictDiscard,
         Self::VaultDreamerFollowerKeyframe,
         Self::ConnectorAnswer,
         Self::SelfBrowserOpen,
@@ -2866,6 +2872,7 @@ impl AgentVerb {
             Self::VaultPacksGet => "vault.packs.get",
             Self::VaultSkillsImport => "vault.skills.import",
             Self::VaultSkillsSync => "vault.skills.sync",
+            Self::VaultSkillsProposalSettle => "vault.skills.proposal.settle",
             Self::VaultSkillsReceipts => "vault.skills.receipts",
             Self::VaultSkillsConvert => "vault.skills.convert",
             Self::VaultSkillsGet => "vault.skills.get",
@@ -3914,6 +3921,12 @@ impl AgentVerb {
             Self::VaultMailThreadsRead => "vault.mail.threads.read",
             Self::VaultMailComplianceSearch => "vault.mail.compliance.search",
             Self::VaultFilesSourcesConvert => "vault.files.sources.convert",
+            Self::VaultSyncRepoManifestsConflictReview => {
+                "vault.sync.repo_manifests.conflict.review"
+            }
+            Self::VaultSyncRepoManifestsConflictDiscard => {
+                "vault.sync.repo_manifests.conflict.discard"
+            }
             Self::VaultDreamerFollowerKeyframe => "vault.dreamer.follower.keyframe",
             Self::ConnectorAnswer => "connector.answer",
             Self::SelfBrowserOpen => "self.browser.open",
@@ -4207,6 +4220,7 @@ impl AgentVerb {
                 | Self::VaultPacksGet
                 | Self::VaultSkillsImport
                 | Self::VaultSkillsSync
+                | Self::VaultSkillsProposalSettle
                 | Self::VaultSkillsReceipts
                 | Self::VaultSkillsConvert
                 | Self::VaultSkillsGet
@@ -5199,6 +5213,8 @@ impl AgentVerb {
                 | Self::VaultMailThreadsRead
                 | Self::VaultMailComplianceSearch
                 | Self::VaultFilesSourcesConvert
+                | Self::VaultSyncRepoManifestsConflictReview
+                | Self::VaultSyncRepoManifestsConflictDiscard
                 | Self::VaultDreamerFollowerKeyframe
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
@@ -5541,6 +5557,7 @@ impl AgentVerb {
                 | Self::VaultPacksGet
                 | Self::VaultSkillsImport
                 | Self::VaultSkillsSync
+                | Self::VaultSkillsProposalSettle
                 | Self::VaultSkillsReceipts
                 | Self::VaultSkillsConvert
                 | Self::VaultSkillsGet
@@ -6533,6 +6550,8 @@ impl AgentVerb {
                 | Self::VaultMailThreadsRead
                 | Self::VaultMailComplianceSearch
                 | Self::VaultFilesSourcesConvert
+                | Self::VaultSyncRepoManifestsConflictReview
+                | Self::VaultSyncRepoManifestsConflictDiscard
                 | Self::VaultDreamerFollowerKeyframe
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
@@ -7028,6 +7047,7 @@ impl AgentVerb {
                 | Self::VaultPacksGet
                 | Self::VaultSkillsImport
                 | Self::VaultSkillsSync
+                | Self::VaultSkillsProposalSettle
                 | Self::VaultSkillsReceipts
                 | Self::VaultSkillsConvert
                 | Self::VaultSkillsGet
@@ -7963,6 +7983,8 @@ impl AgentVerb {
                 | Self::VaultMailThreadsRead
                 | Self::VaultMailComplianceSearch
                 | Self::VaultFilesSourcesConvert
+                | Self::VaultSyncRepoManifestsConflictReview
+                | Self::VaultSyncRepoManifestsConflictDiscard
                 | Self::VaultDreamerFollowerKeyframe
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
@@ -8143,6 +8165,7 @@ impl AgentVerb {
                 | Self::VaultPacksSync
                 | Self::VaultSkillsImport
                 | Self::VaultSkillsSync
+                | Self::VaultSkillsProposalSettle
                 | Self::VaultSkillsConvert
                 | Self::VaultSkillsArchive
                 | Self::VaultSkillsRestore
@@ -8740,6 +8763,7 @@ impl AgentVerb {
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailComplianceSearch
                 | Self::VaultFilesSourcesConvert
+                | Self::VaultSyncRepoManifestsConflictDiscard
                 | Self::VaultDreamerFollowerKeyframe
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
@@ -9074,6 +9098,7 @@ impl AgentVerb {
             Self::VaultPacksGet => &["spec"],
             Self::VaultSkillsImport => &["spec"],
             Self::VaultSkillsSync => &["spec"],
+            Self::VaultSkillsProposalSettle => &["spec"],
             Self::VaultSkillsReceipts => &["spec"],
             Self::VaultSkillsConvert => &["spec"],
             Self::VaultSkillsGet => &["spec"],
@@ -10088,6 +10113,8 @@ impl AgentVerb {
             Self::VaultMailThreadsRead => &["spec"],
             Self::VaultMailComplianceSearch => &["spec"],
             Self::VaultFilesSourcesConvert => &["spec"],
+            Self::VaultSyncRepoManifestsConflictReview => &["spec"],
+            Self::VaultSyncRepoManifestsConflictDiscard => &["spec"],
             Self::VaultDreamerFollowerKeyframe => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
@@ -10380,6 +10407,7 @@ impl AgentVerb {
             Self::VaultPacksGet => &["spec"],
             Self::VaultSkillsImport => &["spec"],
             Self::VaultSkillsSync => &["spec"],
+            Self::VaultSkillsProposalSettle => &["spec"],
             Self::VaultSkillsReceipts => &["spec"],
             Self::VaultSkillsConvert => &["spec"],
             Self::VaultSkillsGet => &["spec"],
@@ -11394,6 +11422,8 @@ impl AgentVerb {
             Self::VaultMailThreadsRead => &["spec"],
             Self::VaultMailComplianceSearch => &["spec"],
             Self::VaultFilesSourcesConvert => &["spec"],
+            Self::VaultSyncRepoManifestsConflictReview => &["spec"],
+            Self::VaultSyncRepoManifestsConflictDiscard => &["spec"],
             Self::VaultDreamerFollowerKeyframe => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
@@ -12176,6 +12206,9 @@ impl AgentVerb {
             }
             Self::VaultSkillsSync => {
                 "The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities."
+            }
+            Self::VaultSkillsProposalSettle => {
+                "The owner accepts the exact package in a pending hub update, or rejects only its proposal without changing the working skill."
             }
             Self::VaultSkillsReceipts => {
                 "Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner."
@@ -14103,7 +14136,7 @@ impl AgentVerb {
                 "Reads the owner-pinned v2 model manifest, or none when no manifest is configured."
             }
             Self::VaultModelsManifestReplace => {
-                "Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically clearing resident route overrides."
+                "Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically retaining resident route overrides that remain admitted."
             }
             Self::VaultSettingsWebConnector => {
                 "Reads the owner's web connector switch: which provider serves connector.web.search and fetch, on the backend key, the owner's own secret or a hub connector. Unset reads as Tavily on the backend key."
@@ -14115,7 +14148,7 @@ impl AgentVerb {
                 "Reads the web connector's usage rows, newest first: provider, tool, key source, latency, cost and its basis, provider request id and outcome per call, with the summed cost. No query, URL or result text."
             }
             Self::VaultModelsOneironerBind => {
-                "Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and clearing resident route overrides."
+                "Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and retaining resident route overrides that remain admitted."
             }
             Self::VaultModelsRoutesRead => {
                 "Reads one independent model slot route with its manifest pin and effective resident narrowing."
@@ -14353,7 +14386,7 @@ impl AgentVerb {
             Self::VaultDecisionsAsksConfirmGrant => "",
             Self::SelfDecisionsAsks => "",
             Self::ConnectorList => {
-                "Every live catalogued connector whose name or summary matches the query."
+                "Every matching live catalogued connector and first-party web interface, distinguished by source."
             }
             Self::ConnectorStatus => "One catalogued connector by name, removed ones included.",
             Self::ConnectorCall => {
@@ -15142,6 +15175,12 @@ impl AgentVerb {
             }
             Self::VaultFilesSourcesConvert => {
                 "The owner converts an attached notes folder on this host to Files, keeping its existing notes, history and links. The host rescans the folder into its Files world and returns the source and rescan report."
+            }
+            Self::VaultSyncRepoManifestsConflictReview => {
+                "The owner reviews one durable repo-manifest conflict and its exact held/carried manifests; return the opaque binding to discard that reviewed carrier."
+            }
+            Self::VaultSyncRepoManifestsConflictDiscard => {
+                "The owner discards exactly the reviewed carrier, keeping the held manifest; report Stale or WindowLive, or the actual delta and queue acceptance, never delivery."
             }
             Self::VaultDreamerFollowerKeyframe => {
                 "The owner marks each existing follower session to fold retained frames into a keyframe after its prepared suffix drains. Returns sessions marked, not folds completed."
