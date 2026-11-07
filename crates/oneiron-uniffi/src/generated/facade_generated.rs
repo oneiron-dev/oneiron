@@ -2581,7 +2581,7 @@ export_facade! {
     let output = client.vault_roots_requests_cancel(&input)?;
     crate::codec::lift_record("vault.roots.requests.cancel", &output)
 };
-"vault.roots.requests.create" => fn vault_roots_requests_create(&self, input: RootRequestCreateRequest) -> OwnerWorkReceipt = |client| {
+"vault.roots.requests.create" => fn vault_roots_requests_create(&self, input: RootRequestCreateRequest) -> OwnerWorkView = |client| {
     let input: oneiron::task_verb::sdk::RootRequestCreateRequest = crate::codec::lower_record("vault.roots.requests.create", input)?;
     let output = client.vault_roots_requests_create(&input)?;
     crate::codec::lift_record("vault.roots.requests.create", &output)
@@ -2591,7 +2591,7 @@ export_facade! {
     let output = client.vault_roots_requests_list(&input)?;
     crate::codec::lift_record("vault.roots.requests.list", &output)
 };
-"vault.owner_work.get" => fn vault_owner_work_get(&self, input: OwnerWorkGetRequest) -> OwnerWorkReceipt = |client| {
+"vault.owner_work.get" => fn vault_owner_work_get(&self, input: OwnerWorkGetRequest) -> OwnerWorkView = |client| {
     let input: oneiron::task_verb::sdk::OwnerWorkGetRequest = crate::codec::lower_record("vault.owner_work.get", input)?;
     let output = client.vault_owner_work_get(&input)?;
     crate::codec::lift_record("vault.owner_work.get", &output)
@@ -2790,6 +2790,11 @@ export_facade! {
     let input: oneiron::task_verb::sdk::ConnectorCallApproveOnceRequest = crate::codec::lower_record("vault.connectors.calls.approve_once", input)?;
     let output = client.vault_connectors_calls_approve_once(&input)?;
     crate::codec::lift_record("vault.connectors.calls.approve_once", &output)
+};
+"vault.connectors.replies.retry_failed" => fn vault_connectors_replies_retry_failed(&self, input: ConnectorReplyRetryRequest) -> ConnectorReplyRetryView = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorReplyRetryRequest = crate::codec::lower_record("vault.connectors.replies.retry_failed", input)?;
+    let output = client.vault_connectors_replies_retry_failed(&input)?;
+    crate::codec::lift_record("vault.connectors.replies.retry_failed", &output)
 };
 "vault.consent.deny" => fn vault_consent_deny(&self, input: DenyConsentRequest) -> ConsentActReceipt = |client| {
     let input: oneiron::consent::lifecycle::DenyConsentRequest = crate::codec::lower_record("vault.consent.deny", input)?;

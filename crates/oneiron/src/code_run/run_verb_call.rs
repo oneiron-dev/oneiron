@@ -250,6 +250,7 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
         | RunVerb::SelfCodeSymbolsRenew
         | RunVerb::SelfCodeSymbolsRelease
         | RunVerb::SelfCodeProposalSubmit
+        | RunVerb::SelfCodeProposalResolve
         | RunVerb::SelfCodeMergeQueueEnqueue
         | RunVerb::SelfCodeCheckoutBind
         | RunVerb::SelfCodeExport) => SelfCall::Repo(
