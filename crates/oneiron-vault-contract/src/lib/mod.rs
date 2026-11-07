@@ -137,11 +137,11 @@ pub use self::preview::{
 pub use self::secrets::{
     Credentials, TokenHex, from_hex, hex, read_credentials, write_credentials,
 };
+pub use self::usage_export::{UsageExportChunk, UsageExportCursor, UsageExportPage};
 pub use self::version::{CONTRACT_VERSION, SLIM_CONTRACT_VERSION, supports_slim};
 pub use self::wake::{
     Schedule, UnixTs, WakeEntry, now_ts, valid_vault_name, validate_wake_entries,
 };
-pub use self::usage_export::{UsageExportChunk, UsageExportCursor, UsageExportPage};
 
 // The flat lib.rs module used to provide these names to the sibling test
 // module through `use super::*`: the serde derive macros the frozen v1

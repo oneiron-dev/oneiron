@@ -1528,6 +1528,35 @@ recall is `memory_miss`, a consolidation error `task_failure`, a consent storm o
 diagnostic does not say which agent failed, so these counts carry the agent `unattributed`.
 Counts wait in the vault, across restarts, until the publisher takes them.
 
+## Coach environment repair drafts
+
+When a failure case is routed to `environment`, the served Coach author can draft a
+reviewable change to one of the agent's actual access grants. It uses the configured
+Coach model and the pass's existing draft budget. The input contains the recorded
+case, agent, checkpoint, diagnosis, failure class and cause context, plus every native
+grant target the engine selected. Each target includes its `grant_ref`, term digest
+and canonical grant terms as data. Revoked and expired terms remain reviewable; they
+do not authorize access or renewal.
+
+The shipped instruction is `prompts/coach-environment-repair.md`. Override it through
+`[models.dreamer.wording]` with `coach_environment_repair_prompt` or
+`coach_environment_repair_prompt_file`. Inline/file resolution and relative paths
+follow the other Coach wording settings.
+
+The answer is `{"grant_ref":"<supplied target>","change":{"<term>":"<proposed value>"},"rationale":"<why>"}`.
+A null `grant_ref` declines; use null `change` with that decline. The engine still
+checks that a drafted change is a non-empty object, has a non-blank rationale and
+names one supplied target. In the same transaction as the heal, it rechecks the case,
+agent and current grant terms before filing a `coach.environment_repair` Proposed
+artifact. Declines, malformed answers, unavailable models, author errors, unusable
+changes, unbound targets and stale cases or terms retain the ordinary route-only heal.
+Custom `CoachHealAuthor` implementations keep their default `None` unless they
+implement this method.
+
+No draft mutates or revives a grant, applies a repair, changes a tool or connector,
+resumes a run, grants authority or proves a replay passed. A proposal about terminal
+access still requires a new grant for renewal. The Issues path is unchanged.
+
 ## Coach prompt repair drafts
 
 When a case is routed to `prompt_inject`, the served Coach author can now draft prompt text

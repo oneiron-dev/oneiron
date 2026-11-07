@@ -1,5 +1,5 @@
 //! Core server state: the `SyncServer` struct, construction, and shared helpers.
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -43,15 +43,6 @@ pub(crate) enum BroadcastPayload {
     LocalDocs(Vec<oneiron::EntityId>),
     /// A producer lost notifications before they reached this channel.
     Resync { missed: u64 },
-}
-
-/// One host-resolved agent run and the prefix this session actually emitted.
-/// The host advances the epoch only after a real fold; an HTTP request cannot.
-pub(crate) struct HostSelfBriefSession {
-    pub(crate) state: oneiron::context_board::SelfBriefState,
-    pub(crate) render: oneiron::context_board::SelfBriefSession,
-    pub(crate) epoch: u64,
-    pub(crate) emitted_epoch: Option<u64>,
 }
 
 /// One piece of task work's turn on a vault ([`SyncServer::admit_task_work`]).
@@ -215,9 +206,11 @@ pub struct SyncServer {
     pub(crate) web_fetcher: std::sync::OnceLock<Arc<oneiron::web_fetch::WebFetcher>>,
     /// Actor/session read observations share the server lifetime, never a process global.
     pub(crate) memories_cursors: Arc<Mutex<crate::api::MemoriesCursorStore>>,
-    /// Host-resolved run briefs, keyed by authenticated actor and session.
-    pub(crate) self_brief_sessions:
-        Mutex<BTreeMap<(oneiron::EntityId, String), HostSelfBriefSession>>,
+    /// Host-resolved run briefs, keyed by authenticated actor and session,
+    /// and their prefix custody: the one owner every host stages, delivers,
+    /// reads and closes them through. The host's live runs share it, to
+    /// close a pumped run's brief as the run retires (FIX 17594 D3).
+    pub(crate) self_brief_sessions: Arc<super::self_brief_custody::SelfBriefCustody>,
     /// ONE-207: the optional deep-retrieval host.
     ///
     /// `None` on every server [`SyncServer::new`] builds, and that is the
@@ -346,11 +339,20 @@ fn live_rows(
 }
 
 impl SyncServer {
+    /// The most bytes one WebSocket message this server reads may reassemble
+    /// to (ABC transport row T25): its request floor,
+    /// `limits.request_body_bytes`, set at every upgrade in place of
+    /// tungstenite's implicit 64 MiB. A frame keeps its own bound.
+    pub(crate) fn socket_message_bytes(&self) -> usize {
+        usize::try_from(self.config.limits.request_body_bytes).unwrap_or(usize::MAX)
+    }
+
     // ─── Device-lease registry (ONE-1140, OD-3) ──────────────────────────
 
     /// Install an already resolved run snapshot from the trusted host. The
     /// HTTP request never supplies scope, class verdicts, or budget. Advancing
-    /// `epoch` happens only when the host has completed a real fold.
+    /// `epoch` happens only when the host has completed a real fold. The
+    /// installation goes through the server's one self-brief custody owner.
     pub async fn install_self_brief_session(
         &self,
         actor: oneiron::EntityId,
@@ -358,25 +360,10 @@ impl SyncServer {
         epoch: u64,
         state: oneiron::context_board::SelfBriefState,
     ) -> oneiron::Result<()> {
-        if state.self_ref != actor || session_id.is_empty() {
-            return Err(oneiron::Error::InvariantViolation(
-                "self brief actor or session mismatch",
-            ));
-        }
-        let mut runs = self.self_brief_sessions.lock().await;
-        let entry = runs
-            .entry((actor, session_id))
-            .or_insert_with(|| HostSelfBriefSession {
-                state: state.clone(),
-                render: oneiron::context_board::SelfBriefSession::default(),
-                epoch,
-                emitted_epoch: None,
-            });
-        if epoch < entry.epoch {
-            return Err(oneiron::Error::InvariantViolation("stale self brief epoch"));
-        }
-        entry.state = state;
-        entry.epoch = epoch;
+        self.self_brief_sessions
+            .lock()
+            .await
+            .install(actor, session_id, epoch, state)?;
         Ok(())
     }
 

@@ -78,7 +78,8 @@ pub enum ForeignCodeEffect {
     FileEdit {
         path: String,
         base_content_hash: String,
-        edit: crate::code_document::CodeFileEdit,
+        #[schemars(with = "crate::code_document::CodeFileEdit")]
+        edit: crate::code_sandbox::SandboxFileEdit,
     },
     FileDelete {
         path: String,

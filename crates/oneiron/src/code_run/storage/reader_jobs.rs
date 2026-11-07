@@ -8,6 +8,7 @@
 mod findings;
 mod read;
 mod scoped;
+mod txn;
 
 use std::collections::BTreeMap;
 use std::ops::Bound;
@@ -560,71 +561,6 @@ pub(crate) enum WaitSetOutcome {
 }
 
 impl ExecutorStorage<'_> {
-    /// One transaction of the run's reader rows on its route: a canonical
-    /// run's in one vault write transaction, a session-bound run's in its
-    /// room's routed one, answered as its participant stands. Nothing the
-    /// closure holds outlives the transaction, as the vault's grouped write
-    /// door requires.
-    pub(crate) fn reader_txn<T>(
-        &self,
-        f: impl FnOnce(&mut ReaderTxn<'_, '_>) -> Result<T>,
-    ) -> Result<T> {
-        match self {
-            Self::Canonical(vault) => {
-                let vault: &Vault = vault;
-                vault.with_write_txn_grouped(|txn| {
-                    f(&mut ReaderTxn {
-                        txn,
-                        read: RoutedDbs::Base(vault),
-                        write: RoutedDbs::Base(vault),
-                        spend: SpendBook::new(vault),
-                        staged: BTreeMap::new(),
-                        vault: Some(vault),
-                        settled: Vec::new(),
-                    })
-                })
-            }
-            Self::Session(binding) => {
-                let spend = binding.session.spend_book();
-                let (answer, settled) = binding.answered(|| {
-                    binding
-                        .session
-                        .routed_side_txn(&binding.route, |txn, read, write| {
-                            let mut tx = ReaderTxn {
-                                txn,
-                                read,
-                                write,
-                                spend,
-                                staged: BTreeMap::new(),
-                                vault: None,
-                                settled: Vec::new(),
-                            };
-                            let answer = f(&mut tx)?;
-                            Ok((answer, tx.settled))
-                        })
-                })?;
-                for (wait, reply, now_ms) in settled {
-                    self.deliver_wait(wait, &reply, None, now_ms)?;
-                }
-                Ok(answer)
-            }
-        }
-    }
-
-    /// One read of the run's reader rows through its route's view.
-    pub(super) fn reader_read<T>(
-        &self,
-        f: impl FnOnce(&RoTxn<'_>, RoutedDbs<'_>) -> Result<T>,
-    ) -> Result<T> {
-        match self {
-            Self::Canonical(vault) => {
-                let txn = vault.store.env.read_txn()?;
-                f(&txn, RoutedDbs::Base(vault))
-            }
-            Self::Session(binding) => binding.answered(|| binding.session.routed_side_read(f)),
-        }
-    }
-
     /// The base spend scopes the run's children spend under.
     pub(crate) fn spend_book(&self) -> SpendBook<'_> {
         match self {
