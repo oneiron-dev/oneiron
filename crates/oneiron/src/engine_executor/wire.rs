@@ -3,6 +3,7 @@
 use super::types::EngineExecutorResult;
 use crate::code_run::{
     CODE_RUN_CONSOLE_CLOSE, CODE_RUN_CONSOLE_OPEN, CODE_RUN_EXEC_CLOSE, CODE_RUN_EXEC_OPEN,
+    ExecutorWireRepairs,
 };
 use crate::{ContentPart, Error, FinishReason, LlmResponse};
 
@@ -10,27 +11,6 @@ use crate::{ContentPart, Error, FinishReason, LlmResponse};
 /// inert packaging metadata: `ts`, `typescript`, `js`, `javascript`,
 /// `readscript`, and arbitrary tags all follow the same path.
 const CODE_FENCE: &str = "```";
-
-/// What ONE-1929 had to remove from one model reply to reach a bare program.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(super) struct ExecutorWireRepairs {
-    pub trimmed_transport_whitespace: bool,
-    pub stripped_code_fence: bool,
-    pub stripped_exec_wrapper: bool,
-    pub discarded_console_blocks: u32,
-}
-
-impl ExecutorWireRepairs {
-    /// Whether this turn needed ANY healing. One healed turn counts once, no
-    /// matter how many of these repairs it took.
-    #[must_use]
-    pub(crate) const fn healed(self) -> bool {
-        self.trimmed_transport_whitespace
-            || self.stripped_code_fence
-            || self.stripped_exec_wrapper
-            || self.discarded_console_blocks != 0
-    }
-}
 
 /// One model reply, normalized onto the strict bare wire.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,17 +74,30 @@ pub(super) fn heal_executor_reply(
 /// the post-hook view a step heals, with no copy of the reply made for it
 /// (FIX 448).
 pub(super) fn heal_executor_text(text: &str) -> EngineExecutorResult<HealedExecutorReply> {
+    heal_executor_text_tracking_repairs(text, &mut ExecutorWireRepairs::default())
+}
+
+/// [`heal_executor_text`], writing each repair into `repairs` as it is made.
+/// A reply the normalization refuses leaves the repairs made before the
+/// refusal in `repairs`, for its correction record (FIX 4412).
+pub(super) fn heal_executor_text_tracking_repairs(
+    text: &str,
+    repairs: &mut ExecutorWireRepairs,
+) -> EngineExecutorResult<HealedExecutorReply> {
+    *repairs = ExecutorWireRepairs::default();
     let (candidate, trailing) = partition_reply(text);
-    let (cleaned_trailing, trailing_discards) =
-        partition_top_level_console_blocks(trailing, ConsoleRegion::Trailing)?;
+    // Each scan adds every block it discarded to the shared count, a scan
+    // that later refuses included, so a refused reply's record names the
+    // repairs made before its refusal (FIX 4412).
+    let cleaned_trailing = partition_top_level_console_blocks_into(
+        trailing,
+        ConsoleRegion::Trailing,
+        &mut repairs.discarded_console_blocks,
+    )?;
     let trailing_speak = cleaned_trailing.trim();
 
     let trimmed = candidate.trim();
-    let mut repairs = ExecutorWireRepairs {
-        trimmed_transport_whitespace: trimmed.len() != candidate.len(),
-        discarded_console_blocks: trailing_discards,
-        ..ExecutorWireRepairs::default()
-    };
+    repairs.trimmed_transport_whitespace = trimmed.len() != candidate.len();
 
     let unfenced = match strip_one_whole_fence(trimmed)? {
         Some(interior) => {
@@ -113,14 +106,11 @@ pub(super) fn heal_executor_text(text: &str) -> EngineExecutorResult<HealedExecu
         }
         None => trimmed,
     };
-    let (deconsoled, candidate_discards) =
-        partition_top_level_console_blocks(unfenced, ConsoleRegion::Candidate)?;
-    repairs.discarded_console_blocks = repairs
-        .discarded_console_blocks
-        .checked_add(candidate_discards)
-        .ok_or(Error::ArithmeticOverflow(
-            "executor discarded console blocks",
-        ))?;
+    let deconsoled = partition_top_level_console_blocks_into(
+        unfenced,
+        ConsoleRegion::Candidate,
+        &mut repairs.discarded_console_blocks,
+    )?;
     let unwrapped = match strip_one_whole_exec_wrapper(&deconsoled) {
         Some(interior) => {
             repairs.stripped_exec_wrapper = true;
@@ -128,15 +118,11 @@ pub(super) fn heal_executor_text(text: &str) -> EngineExecutorResult<HealedExecu
             // console blocks directly inside it are top-level model packaging
             // too. Scan that interior once; a nested second exec wrapper still
             // protects its own body and survives into the mandatory gate.
-            let (cleaned, wrapper_discards) =
-                partition_top_level_console_blocks(interior, ConsoleRegion::Candidate)?;
-            repairs.discarded_console_blocks = repairs
-                .discarded_console_blocks
-                .checked_add(wrapper_discards)
-                .ok_or(Error::ArithmeticOverflow(
-                    "executor discarded console blocks",
-                ))?;
-            cleaned
+            partition_top_level_console_blocks_into(
+                interior,
+                ConsoleRegion::Candidate,
+                &mut repairs.discarded_console_blocks,
+            )?
         }
         None => deconsoled,
     };
@@ -146,7 +132,7 @@ pub(super) fn heal_executor_text(text: &str) -> EngineExecutorResult<HealedExecu
     Ok(HealedExecutorReply {
         code: code.to_owned(),
         trailing_speak: (!trailing_speak.is_empty()).then(|| trailing_speak.to_owned()),
-        repairs,
+        repairs: *repairs,
     })
 }
 
@@ -389,7 +375,31 @@ pub(super) fn partition_top_level_console_blocks(
     input: &str,
     region: ConsoleRegion,
 ) -> EngineExecutorResult<(String, u32)> {
-    ConsoleScanner::new(input, region).run()
+    let mut discarded = 0;
+    let out = partition_top_level_console_blocks_into(input, region, &mut discarded)?;
+    Ok((out, discarded))
+}
+
+/// [`partition_top_level_console_blocks`], adding each block it discards to
+/// `discarded` as it goes: a scan that refuses a later block still counts
+/// the ones it already discarded (FIX 4412).
+///
+/// # Errors
+///
+/// As [`partition_top_level_console_blocks`], and a count past `u32`.
+fn partition_top_level_console_blocks_into(
+    input: &str,
+    region: ConsoleRegion,
+    discarded: &mut u32,
+) -> EngineExecutorResult<String> {
+    let mut scanner = ConsoleScanner::new(input, region);
+    let scanned = scanner.scan();
+    *discarded = discarded
+        .checked_add(scanner.discarded)
+        .ok_or(Error::ArithmeticOverflow(
+            "executor discarded console blocks",
+        ))?;
+    scanned.map(|()| scanner.out)
 }
 
 /// The source-aware scanner behind [`partition_top_level_console_blocks`].
@@ -423,13 +433,15 @@ impl<'a> ConsoleScanner<'a> {
         }
     }
 
-    fn run(mut self) -> EngineExecutorResult<(String, u32)> {
+    /// Scans the whole input into `out`, counting each discarded block in
+    /// `discarded` as it goes.
+    fn scan(&mut self) -> EngineExecutorResult<()> {
         while self.cursor < self.input.len() {
             if !self.take_wire_token()? {
                 self.take_source_span();
             }
         }
-        Ok((self.out, self.discarded))
+        Ok(())
     }
 
     /// Consumes one wrapper/fence/console token when the cursor sits in a

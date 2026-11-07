@@ -145,6 +145,7 @@ pub(super) fn resolve<'a>(
         learning,
         rows.iter().map(|(row, _, _)| row.model.clone()),
     );
+    let _ = vault.measure_decision_pack(&decisions.bands, rows.len());
     let grading = decisions
         .fitness(
             task,
