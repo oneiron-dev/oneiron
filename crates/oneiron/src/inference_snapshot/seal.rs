@@ -29,7 +29,7 @@ use aes_gcm::{Aes256Gcm, Nonce};
 use getrandom::SysRng;
 use oneiron_crypto::{
     Argon2Cost, Envelope, Kek, OpenKey, OpenPolicy, Purpose, SealKey, SealParams, SuiteId,
-    WrapType, seal_with_aad,
+    WrapType, seal_with_aad_into,
 };
 use zeroize::Zeroizing;
 
@@ -223,15 +223,30 @@ fn seal_chunk(
         recipient: RECIPIENT,
         vault_id: id,
     };
-    Ok(seal_with_aad(
+    let len = plaintext
+        .len()
+        .checked_add(oneiron_crypto::TAG_LEN)
+        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::OutOfMemory))?;
+    let mut ciphertext = Vec::new();
+    ciphertext
+        .try_reserve_exact(len)
+        .map_err(std::io::Error::from)?;
+    ciphertext.resize(len, 0);
+    let envelope = seal_with_aad_into(
         &params,
         SealKey::SymmetricKek(kek),
         plaintext,
         extra,
         &mut SysRng,
+        ciphertext,
     )
-    .map_err(|_| refused("sealing an inference snapshot failed"))?
-    .to_bytes())
+    .map_err(|_| refused("sealing an inference snapshot failed"))?;
+    let mut frame = Vec::new();
+    frame
+        .try_reserve_exact(envelope.len())
+        .map_err(std::io::Error::from)?;
+    envelope.write_to(&mut frame)?;
+    Ok(frame)
 }
 
 fn chunk_policy<'a>(id: &'a [u8; ID_LEN], key_id: &'a [u8; 27]) -> OpenPolicy<'a> {
