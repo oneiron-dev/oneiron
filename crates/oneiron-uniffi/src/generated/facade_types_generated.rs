@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1289 facade rows, 4668 generated types.
+// UniFFI census: 1289 facade rows, 4669 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1241.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -40988,6 +40988,19 @@ pub struct CodeWaitBrowserAction {
     pub press: String,
 }
 
+/// `oneiron::code_run::consent_wait::standing_offer::CodeConsentStandingOffer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeConsentStandingOffer {
+    #[serde(rename = "actor_ref")]
+    pub actor_ref: String,
+    #[serde(rename = "verb_class")]
+    pub verb_class: String,
+    #[serde(rename = "selectors")]
+    pub selectors: Vec<String>,
+    #[serde(rename = "target", default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+}
+
 /// `oneiron::memory::code_wait_doors::types::CodeWaitAnswerView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CodeWaitAnswerView {
@@ -41011,6 +41024,18 @@ pub struct CodeWaitAnswerView {
     pub decision_ref: String,
     #[serde(rename = "answered_at_ms")]
     pub answered_at_ms: u64,
+    #[serde(
+        rename = "standing_grant_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub standing_grant_ref: Option<String>,
+    #[serde(
+        rename = "standing_receipt_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub standing_receipt_ref: Option<String>,
 }
 
 /// `oneiron::memory::code_wait_doors::types::CodeWaitSettleOutcome`.
@@ -41088,6 +41113,12 @@ pub struct CodeWaitReceiptView {
     pub ask_ref: Option<String>,
     #[serde(rename = "allowed_answers")]
     pub allowed_answers: Vec<CodeWaitChoice>,
+    #[serde(
+        rename = "standing_offer",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub standing_offer: Option<CodeConsentStandingOffer>,
     #[serde(rename = "answer", default, skip_serializing_if = "Option::is_none")]
     pub answer: Option<CodeWaitAnswerView>,
     #[serde(
