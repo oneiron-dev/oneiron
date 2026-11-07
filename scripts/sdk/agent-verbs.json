@@ -3426,6 +3426,113 @@
       "section": false
     },
     {
+      "name": "vault.weave.admin.report",
+      "description": "A weave Admin's live report of the shared vault, inside the Admin membership grant's Scope, after the person stepped up with a passkey on this credential (MFA-1 A); never an Owner read.",
+      "input": "crate::authority::WeaveAdminReportRequest",
+      "output": "crate::claim::WeaveReportView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.weave.admin.report\", &input)?",
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.weave.admin.lens",
+      "description": "A weave Admin's live report rendered into its lens on the server's model, under the stepped-up Admin proof; the server holds its frame for the card's events.",
+      "input": "crate::authority::WeaveAdminLensRequest",
+      "output": "crate::lens::LensFrameCard",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.weave.admin.lens\", &input)?",
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
+      "host_door_client_surface": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.weave.admin.digest",
+      "description": "One of a weave Admin's saved digests, or the newest, under the stepped-up Admin proof and the current read policy.",
+      "input": "crate::authority::WeaveAdminDigestRequest",
+      "output": "Option<crate::claim::WeaveDigestView>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.weave.admin.digest\", &input)?",
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.weave.admin.link.wrong",
+      "description": "A weave Admin labels a link its Admin report shows as wrong, under the stepped-up Admin proof, with the grant on the label; the link stays.",
+      "input": "crate::authority::WeaveAdminLinkWrongRequest",
+      "output": "crate::claim::WeaveLinkCorrectionView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.weave.admin.link.wrong\", &input)?",
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.weave.admin.item.wrong",
+      "description": "A weave Admin labels a claim, project, budget or sieve audit row its Admin report shows as wrong, under the stepped-up Admin proof; the row stays.",
+      "input": "crate::authority::WeaveAdminItemWrongRequest",
+      "output": "crate::claim::WeaveItemCorrectionView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.weave.admin.item.wrong\", &input)?",
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.step_up.passkeys.reset",
+      "description": "The vault owner removes every passkey a person enrolled for step-up, and that person's step-ups, so a person who lost each passkey can enroll a first one again; under the owner's own credential.",
+      "input": "crate::authority::StepUpPasskeysResetRequest",
+      "output": "crate::authority::StepUpPasskeysReset",
+      "call": "crate::task_verb::sdk::reset_step_up_passkeys_as(memory.vault(), &memory.embedded_owner(\"vault.step_up.passkeys.reset\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.step_up.totp.reset",
+      "description": "The vault owner removes a person's authenticator-app enrollments and their TOTP step-ups; passkeys and passkey step-ups remain unchanged.",
+      "input": "crate::authority::StepUpTotpResetRequest",
+      "output": "crate::authority::StepUpTotpReset",
+      "call": "crate::task_verb::sdk::reset_step_up_totp_as(memory.vault(), &memory.embedded_owner(\"vault.step_up.totp.reset\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_precheck": false,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.weave.enqueue",
       "description": "Admits a generated candidate weave recipe under the owner's proof and queues its pinned execution; poll vault.consolidation.status for completion.",
       "input": "crate::task_verb::sdk::WeaveEnqueueRequest",
@@ -5444,10 +5551,10 @@
     },
     {
       "name": "vault.members.add",
-      "description": "An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending.",
+      "description": "An Admin invites a live person into a shared vault at a non-root role; they join when they accept. It names no key: the invitee binds a key of their own to the invitation.",
       "input": "crate::task_verb::sdk::SharedMemberAddRequest",
-      "output": "crate::task_verb::sdk::SharedMemberInvited",
-      "call": "crate::task_verb::sdk::add_shared_member_as(memory.vault(), &memory.embedded_owner(\"vault.members.add\")?, None, input)?",
+      "output": "crate::federation::SharedActExecutionReceipt",
+      "call": "crate::task_verb::sdk::add_shared_member_as(memory.vault(), &memory.embedded_owner(\"vault.members.add\")?, input)?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
@@ -5458,10 +5565,24 @@
     },
     {
       "name": "vault.members.invitation_slip",
-      "description": "An Admin mints a pending invitation's slip for the public key the invitee generated on their own device: a founding invitation's, or one whose slip was lost.",
+      "description": "The invitee binds their own pending invitation to the key of the independent human credential the request came on, and gets the invitation's slip: good only at that invitation's doors while it is pending and that key stays bound.",
       "input": "crate::task_verb::sdk::InvitationSlipRequest",
       "output": "crate::task_verb::sdk::InvitationSlip",
       "call": "crate::task_verb::sdk::mint_invitation_slip_embedded(memory, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.members.invitation_code",
+      "description": "The owner mints a single-use pairing code for a pending invitation, passed to the invitee by any channel; redeemed at the pairing door with the invitee's own key, it binds the invitation to that key.",
+      "input": "crate::task_verb::sdk::InvitationCodeRequest",
+      "output": "crate::task_verb::sdk::InvitationCode",
+      "call": "crate::task_verb::sdk::issue_invitation_code_embedded(memory, input)?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
@@ -9039,6 +9160,21 @@
       "host_door_precheck": true,
       "host_door_lists": true,
       "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.secrets.code_run_room_lifts",
+      "description": "The owner lists value-free positive MESSAGE-linked secret lift proposals in one room overlay, under participant, historical sight and private-thread visibility. Absence is not clearance; no body, preview or dismissal is returned.",
+      "input": "crate::code_run::CodeRunRoomSecretLiftRequest",
+      "output": "Vec<crate::code_run::CodeRunSecretLiftProposalView>",
+      "call": "memory.vault().code_run_room_secret_lifts_as_owner(&memory.embedded_owner(\"vault.secrets.code_run_room_lifts\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
       },
@@ -16576,13 +16712,14 @@
     },
     {
       "name": "vault.calendar.occurrences",
-      "description": "Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions.",
-      "input": "crate::calendar::query::CalendarOccurrencesRequest",
-      "output": "crate::claim::ScopedReadResult<Vec<crate::calendar::query::CalendarOccurrenceView>>",
-      "call": "memory.calendar_occurrences(&input)?",
+      "description": "Expands an admitted stored master in an inclusive UTC window under the caller's read scope, masking detached exceptions, as one page: an optional deadline_ms, and resume_from to continue.",
+      "input": "crate::calendar::query::CalendarOccurrencesPageRequest",
+      "output": "crate::claim::ScopedReadResult<crate::calendar::query::CalendarOccurrencesPage>",
+      "call": "memory.calendar_occurrences_page(&input)?",
       "scope": "Read",
       "admission": {
-        "lane_record_scope": true
+        "lane_record_scope": true,
+        "validate": "crate::memory::caps::check_deadline_ms(input.deadline_ms)?;"
       },
       "mcp_scope": "filtered",
       "section": false,
@@ -16619,13 +16756,14 @@
     },
     {
       "name": "vault.calendar.search",
-      "description": "Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt.",
-      "input": "crate::calendar::CalendarSearchRequest",
-      "output": "crate::claim::ScopedReadResult<Vec<crate::calendar::CalendarEventView>>",
-      "call": "memory.calendar_search(&input)?",
+      "description": "Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, as one page in time order: an optional deadline_ms, and resume_from to continue.",
+      "input": "crate::calendar::query::CalendarSearchPageRequest",
+      "output": "crate::claim::ScopedReadResult<crate::calendar::query::CalendarSearchPage>",
+      "call": "memory.calendar_search_page(&input)?",
       "scope": "Read",
       "admission": {
-        "lane_record_scope": true
+        "lane_record_scope": true,
+        "validate": "crate::memory::caps::check_deadline_ms(input.deadline_ms)?;"
       },
       "mcp_scope": "filtered",
       "section": false,
@@ -16633,13 +16771,14 @@
     },
     {
       "name": "vault.calendar.freebusy",
-      "description": "Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt.",
-      "input": "crate::task_verb::sdk::CalendarFreebusyRequest",
-      "output": "crate::claim::ScopedReadResult<crate::memory::CalendarFreebusyDto>",
-      "call": "memory.calendar_freebusy(&input.calendars, input.range.to_time_range())?",
+      "description": "Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals, one page of the covered prefix: an optional deadline_ms, and resume_from to continue.",
+      "input": "crate::calendar::query::CalendarFreebusyPageRequest",
+      "output": "crate::claim::ScopedReadResult<crate::calendar::query::CalendarFreebusyPage>",
+      "call": "memory.calendar_freebusy_page(&input)?",
       "scope": "Read",
       "admission": {
-        "lane_record_scope": true
+        "lane_record_scope": true,
+        "validate": "crate::memory::caps::check_deadline_ms(input.deadline_ms)?;"
       },
       "mcp_scope": "filtered",
       "section": false,
@@ -18310,8 +18449,7 @@
         "unrestricted_record_scope": true,
         "readable": [
           "artifact_ref"
-        ],
-        "validate": "if input.content_base64.len() > crate::memory::caps::MAX_BLOB_BASE64_LEN { return Err(MemoryError::bad_request(\"blob base64 exceeds the content ceiling\")); }"
+        ]
       },
       "section": false,
       "binding": {
@@ -19053,6 +19191,7 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
+      "host_door_paced": true,
       "openapi": true
     },
     {
@@ -19068,6 +19207,7 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
+      "host_door_paced": true,
       "openapi": true
     },
     {
@@ -19098,6 +19238,7 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
+      "host_door_paced": true,
       "openapi": true
     },
     {
@@ -19113,6 +19254,7 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
+      "host_door_paced": true,
       "openapi": true
     },
     {
@@ -19128,6 +19270,7 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
+      "host_door_paced": true,
       "openapi": true
     },
     {
@@ -20524,6 +20667,14 @@
       "effect": "Team"
     },
     {
+      "name": "self.team.vote",
+      "input": "crate::team::TeamVoteInput",
+      "output": "crate::team::TeamRunAnswer",
+      "scope": "Write",
+      "context": "run",
+      "effect": "Team"
+    },
+    {
       "name": "self.team.submit",
       "input": "crate::code_run::TeamSubmitInput",
       "output": "crate::code_run::TeamSubmitAnswer",
@@ -20737,7 +20888,7 @@
     },
     {
       "name": "vault.identity.propose",
-      "description": "The owner parks a nominated merge or split candidate with no topology effects; distinct pairs suppress merge proposals.",
+      "description": "The owner parks a nominated merge, split or facet candidate with no topology effects; distinct pairs suppress merge proposals.",
       "input": "crate::task_verb::sdk::IdentityProposeRequest",
       "output": "crate::task_verb::sdk::IdentityTopologyResult",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.identity.propose\", &input)?",

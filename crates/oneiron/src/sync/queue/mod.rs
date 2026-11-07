@@ -83,8 +83,11 @@ pub struct SyncQueue {
 pub(super) mod checkpoint;
 mod codec;
 mod core;
+mod embed_page;
 mod scrub;
 mod seq;
+
+pub(crate) use self::embed_page::EmbedQueueRow;
 
 pub(in crate::sync) use self::scrub::scrub_receiver_outbox_on_remote_hard_delete_in_txn;
 pub(crate) use self::scrub::{
