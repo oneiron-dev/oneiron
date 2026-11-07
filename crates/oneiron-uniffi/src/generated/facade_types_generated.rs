@@ -11039,6 +11039,12 @@ pub struct RetrievalRunRecord {
         skip_serializing_if = "Option::is_none"
     )]
     pub query_expander_id: Option<String>,
+    #[serde(
+        rename = "reranker_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub reranker_id: Option<String>,
     #[serde(rename = "signals")]
     pub signals: Vec<RetrievalSignal>,
     #[serde(rename = "result_ids")]
