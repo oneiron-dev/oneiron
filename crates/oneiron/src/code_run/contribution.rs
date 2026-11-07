@@ -35,12 +35,20 @@
 //! origin, an ancestor the run read through a verb, an anchor that cannot
 //! judge a new output, and any missing or ambiguous context are
 //! unavailable, never "did not contribute".
+//!
+//! Each pair reads its captured source only under its readers' own
+//! admission (FIX 20607, [`source_admission`]). The host declares the
+//! pair's consumer first. The Coach's own Grant admits each step before the
+//! Coach reads it, and the consumer's own admission is asked before each
+//! read for its scorer or its owner. A pair whose reader is not admitted now
+//! waits as `Unfinished`.
 
 mod admission;
 mod ancestor;
 mod execution;
 mod generation;
 mod owner;
+mod source_admission;
 
 use serde::{Deserialize, Serialize};
 
@@ -58,11 +66,14 @@ pub(crate) use self::owner::{
     OwnerPair, OwnerPairAnswer, OwnerPairChoice, OwnerPairRoute, OwnerPairTexts,
     settle_owner_pair_in_txn,
 };
+pub use self::source_admission::{
+    ContributionSourceConsumer, ContributionSourcePurpose, ContributionSourceReadRequest,
+};
+use self::source_admission::{ContributionSourceReader, PairReader, PairSourceAdmission};
 use super::replay_capsule::{ExposureSlot, ReplayRung, StepReplayCapsule, StoredRungBinding};
 use super::shadow_runner::ShadowUnavailable;
 use super::storage::{
-    ForkProvenance, ForkRows, fork_response, fork_rows, put_fork, put_unavailable,
-    step_replay_capsules_in_txn,
+    ForkProvenance, ForkRows, fork_rows, put_fork, put_unavailable, step_replay_capsules_in_txn,
 };
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::maintenance::ContributionForks;
@@ -124,7 +135,8 @@ pub enum ContributionReplayUnavailable {
     /// The forks did not finish by the clock, or the scorer did not decide.
     /// A fork writer that found a subject of the pair gone now stops here
     /// too: a soft delete may be restored, so the stop is never lasting
-    /// (FIX 6256).
+    /// (FIX 6256). So does a pair whose reader is not admitted to its
+    /// source now (FIX 20607): a Grant given later may admit it.
     Unfinished,
     /// An engine step's fork's program did not run against the captured
     /// step now (FIX 3607), for the shadow runner's own reason, one a retry
@@ -360,23 +372,33 @@ pub trait ContributionForkScorer {
 /// kept (FIX 3607), and both scored against one anchor in the pair's one
 /// evidence mode. A fork already generated, run or scored is reused, never
 /// paid for again. A reason that holds for good is recorded, so a later
-/// pass returns it without paying.
+/// pass returns it without paying. `request` names who reads the pair's
+/// source once the Coach processed it, and why (FIX 20607). It must be the
+/// request the candidate's anchor reads under. It admits no read.
 ///
 /// # Errors
 ///
-/// Storage errors, and a failed fork or scoring call.
+/// Storage errors, a failed fork or scoring call, and a `request` that is
+/// not the one the candidate's anchor reads under.
 pub fn run_contribution_forks(
     vault: &Vault,
     candidate: &ContributionCandidate,
+    request: ContributionSourceReadRequest,
     model: &dyn ContributionForkModel,
     program: &dyn ContributionForkProgram,
     scorer: &dyn ContributionForkScorer,
     clock: &RetrievalDeadline,
 ) -> Result<std::result::Result<ContributionForks, ContributionReplayUnavailable>> {
+    if !request.fits(&candidate.anchor) {
+        return Err(Error::InvalidConfig(
+            "contribution forks: the source read request is not the anchor's".to_owned(),
+        ));
+    }
+    let reader = ContributionSourceReader::new(vault, request)?;
     let (provenance, target) = {
         let txn = vault.store.env.read_txn()?;
         let capsules = attempt_capsules_in_txn(vault, &txn, candidate)?;
-        let target = select_target(vault, &txn, &capsules, candidate.target)?;
+        let target = select_target(vault, &txn, &capsules, candidate.target, reader.coach())?;
         let provenance = ForkProvenance::for_candidate_in_txn(
             vault,
             &txn,
@@ -393,6 +415,7 @@ pub fn run_contribution_forks(
         vault,
         provenance,
         candidate,
+        reader,
         model,
         program,
         scorer,
@@ -452,11 +475,16 @@ struct Prepared {
     /// An engine step's frozen window and execution pin, or why it has none
     /// now; `None` for a workflow step.
     frozen_program: Option<std::result::Result<ProgramStep, ShadowUnavailable>>,
+    /// The Coach's admission to each step the forks are made from, and the
+    /// pair's readers, asked again before each later read (FIX 20607).
+    source: PairSourceAdmission,
 }
 
 struct Runner<'a> {
     vault: &'a Vault,
     candidate: &'a ContributionCandidate,
+    /// The Coach and the pair's declared consumer (FIX 20607).
+    reader: ContributionSourceReader,
     model: &'a dyn ContributionForkModel,
     program: &'a dyn ContributionForkProgram,
     scorer: &'a dyn ContributionForkScorer,
@@ -526,7 +554,9 @@ impl Runner<'_> {
     /// both forks; in the `Executed` mode it is read with what its program
     /// did (FIX 3607). A fork kept scored in another mode diverged. A score
     /// its writer refuses is unavailable for that writer's own reason
-    /// (FIX 6256).
+    /// (FIX 6256). Its answer and execution are read for the pair's
+    /// consumer, and the consumer is asked again before the scorer sends
+    /// them (FIX 20607). A text-only score never stands in for a denial.
     fn scored(
         &self,
         prepared: &Prepared,
@@ -536,17 +566,18 @@ impl Runner<'_> {
         if fork.score.is_some() {
             return Ok(scored_in(fork, mode));
         }
-        let Some(response) = fork_response(self.vault, prepared.capsule.run, &fork)? else {
-            return Ok(Err(if fork.response_erased {
-                ContributionReplayUnavailable::Erased
-            } else {
-                ContributionReplayUnavailable::Unreadable
-            }));
+        let consumer = PairReader::Consumer { owner: None };
+        let response = match self.read_response(prepared, &fork, consumer)? {
+            Ok(response) => response,
+            Err(reason) => return Ok(Err(reason)),
         };
-        let executed = match self.executed_view(prepared, &fork, mode)? {
+        let executed = match self.executed_view(prepared, &fork, mode, consumer)? {
             Ok(executed) => executed,
             Err(reason) => return Ok(Err(reason)),
         };
+        if !prepared.source.admits_now(self.vault, consumer)? {
+            return Ok(Err(ContributionReplayUnavailable::Unfinished));
+        }
         let scored = ScoredFork {
             receipt: &fork.receipt,
             task: &prepared.without_skill,
