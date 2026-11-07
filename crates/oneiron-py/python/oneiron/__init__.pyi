@@ -594,6 +594,8 @@ class Oneiron:
         @property
         def weave(self) -> "Oneiron._VaultWeaveVerbs": ...
         @property
+        def step_up(self) -> "Oneiron._VaultStepUpVerbs": ...
+        @property
         def inbox(self) -> "Oneiron._VaultInboxVerbs": ...
         @property
         def proactivity(self) -> "Oneiron._VaultProactivityVerbs": ...
@@ -830,6 +832,8 @@ class Oneiron:
             """Inspects one blocked report as the Coach reads it: its fenced receipt, linked diagnostic band, working set, and the repair proposal the Coach filed, through the caller's own lane."""
         @property
         def training_offers(self) -> "Oneiron._VaultCoachTrainingOffersVerbs": ...
+        @property
+        def training_runs(self) -> "Oneiron._VaultCoachTrainingRunsVerbs": ...
     class _VaultCoachTrainingOffersVerbs:
         def __call__(self, spec: Facade.OfferListRequest) -> list[Facade.OfferView]:
             """Read Coach offer snapshots, their exact owner answers and later promise checks; optionally select a seat or only pending offers."""
@@ -861,6 +865,9 @@ class Oneiron:
             """Record immutable owner-evaluator pilot measurements bound to counted own-seat families; fixed code derives sufficiency and preserves unknown cost and score."""
         def get(self, spec: Facade.OfferPilotRef) -> Facade.OfferPilot | None:
             """Read one counted Coach pilot, its pins, measurement receipts, one-off cost and computed sufficiency card."""
+    class _VaultCoachTrainingRunsVerbs:
+        def cancel(self, spec: Facade.TrainingRunRef) -> Facade.PendingEmbedderBinding:
+            """Cancel a staged trained embedder swap while its binding still waits or fills; an applied swap keeps the existing space-move undo door."""
     class _VaultPeopleVerbs:
         def list(self, spec: Facade.PeopleListRequest) -> Facade.PeoplePage:
             """One page of the people the caller reads, in handle order."""
@@ -1286,6 +1293,8 @@ class Oneiron:
         def owner(self) -> "Oneiron._VaultWeaveOwnerVerbs": ...
         @property
         def item(self) -> "Oneiron._VaultWeaveItemVerbs": ...
+        @property
+        def admin(self) -> "Oneiron._VaultWeaveAdminVerbs": ...
         def enqueue(self, spec: Facade.WeaveEnqueueRequest) -> Facade.DreamerAttemptRef:
             """Admits a generated candidate weave recipe under the owner's proof and queues its pinned execution; poll vault.consolidation.status for completion."""
         @property
@@ -1323,6 +1332,23 @@ class Oneiron:
     class _VaultWeaveItemVerbs:
         def wrong(self, spec: Facade.WeaveWrongItemRequest) -> Facade.WeaveItemCorrectionView:
             """A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays."""
+    class _VaultWeaveAdminVerbs:
+        def report(self, spec: Facade.WeaveAdminReportRequest) -> Facade.WeaveReportView:
+            """A weave Admin's live report of the shared vault, inside the Admin membership grant's Scope, after the person stepped up with a passkey on this credential (MFA-1 A); never an Owner read."""
+        def lens(self, spec: Facade.WeaveAdminLensRequest) -> Facade.LensFrameCard:
+            """A weave Admin's live report rendered into its lens on the server's model, under the stepped-up Admin proof; the server holds its frame for the card's events."""
+        def digest(self, spec: Facade.WeaveAdminDigestRequest) -> Facade.WeaveDigestView | None:
+            """One of a weave Admin's saved digests, or the newest, under the stepped-up Admin proof and the current read policy."""
+        @property
+        def link(self) -> "Oneiron._VaultWeaveAdminLinkVerbs": ...
+        @property
+        def item(self) -> "Oneiron._VaultWeaveAdminItemVerbs": ...
+    class _VaultWeaveAdminLinkVerbs:
+        def wrong(self, spec: Facade.WeaveAdminLinkWrongRequest) -> Facade.WeaveLinkCorrectionView:
+            """A weave Admin labels a link its Admin report shows as wrong, under the stepped-up Admin proof, with the grant on the label; the link stays."""
+    class _VaultWeaveAdminItemVerbs:
+        def wrong(self, spec: Facade.WeaveAdminItemWrongRequest) -> Facade.WeaveItemCorrectionView:
+            """A weave Admin labels a claim, project, budget or sieve audit row its Admin report shows as wrong, under the stepped-up Admin proof; the row stays."""
     class _VaultWeaveSchedulesVerbs:
         def list(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.WeaveScheduleView]:
             """Lists every reader's daily or weekly weave digest schedule under the owner's proof."""
@@ -1340,6 +1366,17 @@ class Oneiron:
     class _VaultWeaveDigestFeedbackVerbs:
         def put(self, spec: Facade.WeaveDigestFeedback) -> Facade.WeaveDigestFeedback:
             """Tells the Coach the owner's own digest preference: a rhythm, a section to lead with, or keep the settings as they are."""
+    class _VaultStepUpVerbs:
+        @property
+        def passkeys(self) -> "Oneiron._VaultStepUpPasskeysVerbs": ...
+        @property
+        def totp(self) -> "Oneiron._VaultStepUpTotpVerbs": ...
+    class _VaultStepUpPasskeysVerbs:
+        def reset(self, spec: Facade.StepUpPasskeysResetRequest) -> Facade.StepUpPasskeysReset:
+            """The vault owner removes every passkey a person enrolled for step-up, and that person's step-ups, so a person who lost each passkey can enroll a first one again; under the owner's own credential."""
+    class _VaultStepUpTotpVerbs:
+        def reset(self, spec: Facade.StepUpTotpResetRequest) -> Facade.StepUpTotpReset:
+            """The vault owner removes a person's authenticator-app enrollments and their TOTP step-ups; passkeys and passkey step-ups remain unchanged."""
     class _VaultInboxVerbs:
         @property
         def concerns(self) -> "Oneiron._VaultInboxConcernsVerbs": ...
@@ -1964,6 +2001,8 @@ class Oneiron:
             """The owner lists this install's Files world and every Files source, with each one's exclusions and ledger counts."""
         def files(self, spec: Facade.FilesSourceFilesRequest) -> Facade.FilesSourceFiles:
             """The owner reads one Files source's ledger: each file's path, readiness (text or name only, and why), revision and dates."""
+        def convert(self, spec: Facade.FilesSourceConvertRequest) -> Facade.FilesSourceAttachAnswer:
+            """The owner converts an attached notes folder on this host to Files, keeping its existing notes, history and links. The host rescans the folder into its Files world and returns the source and rescan report."""
     class _VaultResidenceVerbs:
         def mode(self, spec: Facade.ResidenceModeRequest) -> Facade.ResidenceModeAnswer:
             """Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive."""
@@ -2466,6 +2505,8 @@ class Oneiron:
         def revoke(self, spec: Facade.ShareRevokeRequest) -> Facade.ShareRevokeReceipt: ...
         def view(self, spec: Facade.ShareViewRequest) -> Facade.ScopedReadResult[Facade.SharedBriefView | None]: ...
     class _VaultHooksVerbs:
+        def checks(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.HookCheck]:
+            """The owner reads saved hook cycle and depth checks, including their causal lineage. Reads no hook arguments, body or result values and changes nothing; keeps the native list's oldest-key order and 1000-row limit."""
         def replay(self, spec: Facade.HooksReplayRequest) -> Facade.HooksReplayPage:
             """The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands, 256 entries a page; next_cursor continues to the rest."""
         @property
