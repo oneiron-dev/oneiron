@@ -58170,7 +58170,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/outbound_consent/connector_call.rs",
@@ -58178,6 +58178,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 12,
+      "fn": 1,
       "re-export": 1
      }
     },
@@ -114894,11 +114895,21 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/body_codec.rs",
      "purpose": "Compressed bodies on the HTTP API (ARCH-0081 §8, OF-604)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/body_codec/stream.rs",
+     "purpose": "Ordinary compressed facade requests, staged before the route reads them",
      "surface": {
       "crate-vis": 2
      }
@@ -117335,6 +117346,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/live_voice_settlement.rs",
+     "purpose": "Observes an already admitted connector call; never resends or answers it",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/merge_queue_checker_doors.rs",
      "purpose": "Credential-bound host projections of the owner's merge queue checker doors (FIX 6868)",
      "surface": {
@@ -117768,7 +117789,7 @@
      "path": "src/api/facade/secret_body.rs",
      "purpose": "The wiping body path for the custody rows that carry a secret's value in plaintext over the HTTP facade (FIX…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -124323,7 +124344,7 @@
      "path": "src/connector_elicitation.rs",
      "purpose": "The questions a connector asks mid-call, kept live for their caller, and the caller's answers (ONE-2510)",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -124334,6 +124355,16 @@
      "purpose": "The owner's ruling on an answer under `always ask` (FIX 3837, 3842): the ask raised or reused for exactly…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_elicitation/results.rs",
+     "purpose": "Caller-bound live results exist only while an admitted consumer watches",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -132450,7 +132481,7 @@
      "path": "src/voice_host/public.rs",
      "purpose": "Credential-bound public sessions",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 21
      }
     },
     {
@@ -133142,7 +133173,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 713,
+     "files": 715,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -133254,7 +133285,7 @@
      "purpose": "The connector-call settler (ONE-2510): the served loop that re-enters every held or pending-delivery…"
     },
     "connector_elicitation": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -133676,7 +133707,7 @@
    },
    "over_bar": 58,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1718,
+   "source_files": 1721,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
