@@ -20,7 +20,7 @@ use std::sync::Weak;
 use oneiron::attempt_queue::AttemptRecord;
 use oneiron::dreamer_runner::maintenance::coach_diagnostic::{ProducerFixDraft, ProducerTarget};
 use oneiron::dreamer_runner::maintenance::coach_heal::{
-    CoachEnvironmentDraft, CoachHealAuthor, EnvironmentGrantTarget,
+    CoachEnvironmentDraft, CoachHealAuthor, CoachPromptDraft, EnvironmentGrantTarget,
 };
 use oneiron::dreamer_runner::maintenance::coach_learning::coach_improver_skill_id;
 use oneiron::failure_ladder::HealerCase;
@@ -222,6 +222,40 @@ impl CoachHealAuthor for CoachSkillAuthor {
             )?
             .ok_or_else(|| failed("no seat served the Coach"))?;
         parse_environment(&text).ok_or_else(|| failed("the answer is not a draft"))
+    }
+
+    fn draft_prompt(
+        &self,
+        case: &HealerCase,
+        cause: &HealEvidenceContext,
+    ) -> oneiron::Result<Option<CoachPromptDraft>> {
+        let server = self
+            .server
+            .upgrade()
+            .ok_or_else(|| failed("the server stopped"))?;
+        let models = self.models_for(&server, &format!("coach-prompt-repair:{}", case.case_ref))?;
+        let wording = server.ai.dreamer_wording();
+        let data = serde_json::json!({
+            "case": case.case_ref,
+            "agent": case.scope.agent_ref,
+            "checkpoint": case.pre_fail_checkpoint_ref,
+            "diagnosis": case.evidence_ref,
+            "failure_class": case.failure_class,
+            "untrusted_cause_context": cause.value(),
+        });
+        let text = models
+            .generate(
+                models.coach(),
+                vec![
+                    message(
+                        LlmMessageRole::System,
+                        wording.coach_prompt_repair().to_owned(),
+                    ),
+                    message(LlmMessageRole::User, data.to_string()),
+                ],
+            )?
+            .ok_or_else(|| failed("no seat served the Coach"))?;
+        parse_prompt(&text).ok_or_else(|| failed("the answer is not a draft"))
     }
 
     fn draft_skill(
@@ -471,6 +505,24 @@ fn parse_environment(text: &str) -> Option<Option<CoachEnvironmentDraft>> {
         }),
         None => None,
     })
+}
+
+/// A prompt draft's answer as the Coach writes it.
+#[derive(Deserialize)]
+struct PromptWire {
+    prompt: Option<String>,
+    rationale: String,
+}
+
+/// A null prompt is a decline; the engine retains its route-only heal.
+fn parse_prompt(text: &str) -> Option<Option<CoachPromptDraft>> {
+    let start = text.find('{')?;
+    let end = text.rfind('}')?;
+    let wire = serde_json::from_str::<PromptWire>(text.get(start..=end)?).ok()?;
+    Some(wire.prompt.map(|prompt| CoachPromptDraft {
+        prompt,
+        rationale: wire.rationale,
+    }))
 }
 
 /// The one JSON object in the answer; `None` when there is none.
