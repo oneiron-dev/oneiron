@@ -195,6 +195,7 @@ impl Vault {
         );
         if let Some(decisions) = config.hosted_decisions.as_deref() {
             let verdict = decisions.classify(
+                self,
                 request,
                 &prompt,
                 AnswerPlane::Hosted(policy),
