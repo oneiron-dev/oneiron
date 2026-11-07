@@ -449,8 +449,9 @@ pub(crate) fn evidence_source_from_row(entity_type: u8, data: &[u8]) -> Result<C
 }
 
 /// The one-row trust answer with NOTE import lookup: a folder-imported NOTE
-/// carries its import MACHINE's source; any other row falls back to
-/// [`evidence_source_from_row`].
+/// carries its import MACHINE's source, and a NOTE an archive import kept
+/// with its source author is `Imported` (FIX 7777); any other row falls
+/// back to [`evidence_source_from_row`].
 pub(crate) fn evidence_source_from_row_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -459,6 +460,9 @@ pub(crate) fn evidence_source_from_row_in_txn(
 ) -> Result<ClaimSource> {
     if entity_type == ENTITY_TYPE_NOTE {
         if let Ok(body) = crate::note::decode_note_body_in_txn(&vault.store, txn, data) {
+            if body.author_ref.imported().is_some() {
+                return Ok(ClaimSource::Imported);
+            }
             if let Some(author) = body.author_ref.id() {
                 if let Some(source) =
                     crate::note::imported_note_source_in_txn(&vault.store, txn, &author)?

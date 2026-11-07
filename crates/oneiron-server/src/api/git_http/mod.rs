@@ -50,9 +50,11 @@
 //! one bounded chunk at a time. Nothing is buffered whole, no size cap and no
 //! rate cap is added here, and a large pack rides through without ever being
 
+mod broker_relay;
 mod gate;
 mod import_relay;
 mod import_source_relay;
+mod mirror_relay;
 mod projection;
 mod routes;
 mod serve;
@@ -65,4 +67,5 @@ pub(super) mod tests_lifetime;
 mod tests_push;
 
 pub(crate) use self::import_relay::external_import_host;
+pub(crate) use self::mirror_relay::install_origin_git_transport;
 pub(crate) use self::routes::git_http_routes;
