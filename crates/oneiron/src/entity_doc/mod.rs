@@ -30,6 +30,7 @@ pub(crate) use promotion_evidence::{
     promotion_evidence_source_in_txn, retain_fresh_claim_citations_in_txn,
     verify_promotion_evidence_in_txn,
 };
+pub(crate) use quote_citation::{source_texts_at_in_txn, span_in_masked_sight};
 mod recovery;
 mod registry;
 mod summary;
@@ -78,6 +79,8 @@ pub use history_erase::TextHistoryErase;
 pub(crate) use history_erase::admit_history_erase_in_txn;
 pub(crate) use lift::lift_entity_text_in_txn;
 pub use metadata::MetadataEdit;
+// A NOTE's meta map keeps its editable fields in this same encoding (FIX 7784).
+pub(crate) use metadata::{decode_metadata_value, encode_value as encode_metadata_value};
 pub use office::{DeckBody, DeckExport, DeckReview, ReevalWake};
 #[cfg(feature = "sync")]
 pub(crate) use pins::PinMerge;

@@ -11,16 +11,17 @@ use crate::code_sandbox::{
 #[cfg(test)]
 use crate::engine_executor::SelfDispatchResponse;
 use crate::engine_executor::{
-    JsCodeModeHost, JsCodeModeOutput, JsCodeModeStepOutcome, JsResultCall, JsResultTarget,
-    RESULT_REPLY_INLINE_BYTES, StepCancellation,
+    JsCodeModeOutput, JsCodeModeStepOutcome, JsResultCall, JsResultTarget, StepCancellation,
 };
 use crate::task_verb::sdk::{AgentVerb, RunVerb};
 use crate::{EntityId, Result};
 use describe::{names_one_target, result_ref, secret_handle};
+use reply::guest_reply;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 mod describe;
+mod reply;
 mod search;
 
 #[derive(Deserialize)]
@@ -265,8 +266,7 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
             } else {
                 admitted(cancel, || state.host.dispatch_self(call))?
             };
-            let body = fit_reply(state.host, cancel, reply_body(&answered.outcome)?)?;
-            Ok(answered.guest_json(body).to_string())
+            guest_reply(state.host, cancel, &answered, state.message_bytes)
         }
     }
 }
@@ -457,52 +457,6 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
     })
 }
 
-/// Bytes `value` takes as JSON, holding none of them.
-fn encoded_len(value: &Value) -> usize {
-    struct Count(usize);
-    impl std::io::Write for Count {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0 = self.0.saturating_add(bytes.len());
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-    let mut count = Count(0);
-    match serde_json::to_writer(&mut count, value) {
-        Ok(()) => count.0,
-        Err(_) => usize::MAX,
-    }
-}
-
-/// A reply as the guest gets it: one whose JSON is past
-/// `RESULT_REPLY_INLINE_BYTES` is stored as a result of the run, and its
-/// card stands under `output` in place of what was stored (the output, or
-/// the whole reply when it has none). No answer is refused for its size; a
-/// host with no result store sends it as it is, for the message bound to
-/// judge.
-fn fit_reply(
-    host: &mut dyn JsCodeModeHost,
-    cancel: &StepCancellation,
-    mut body: Value,
-) -> Result<Value> {
-    if encoded_len(&body) <= RESULT_REPLY_INLINE_BYTES {
-        return Ok(body);
-    }
-    let has_output = body.get("output").is_some();
-    let stored = if has_output { &body["output"] } else { &body };
-    if let Some(card) = admitted(cancel, || host.store_reply(stored))? {
-        if has_output {
-            body["output"] = card;
-        } else {
-            body = json!({ "output": card });
-        }
-    }
-    Ok(body)
-}
-
 #[cfg(test)]
 fn response(response: SelfDispatchResponse) -> Result<String> {
     Ok(response
@@ -642,31 +596,7 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
             json!({"id":value.id.to_hex(),"disposition":value.disposition.as_str()})
         }
         SelfDispatchOutcome::AgentSpawn(value) => {
-            use crate::code_run::{AgentSpawnKind, AgentSpawnOutput, SelfAgentSpawnResult};
-            let spawn = match value {
-                SelfAgentSpawnResult::Queued {
-                    attempt_ref,
-                    launch,
-                    unapplied,
-                } => AgentSpawnOutput::Queued {
-                    kind: AgentSpawnKind::AgentSpawn,
-                    attempt: crate::entity_id::bytes_to_hex_lower(attempt_ref.as_bytes()),
-                    launch: launch.clone(),
-                    unapplied: unapplied.clone(),
-                },
-                SelfAgentSpawnResult::ProposedWiden {
-                    proposal_ref,
-                    unapplied,
-                } => AgentSpawnOutput::ProposedWiden {
-                    kind: AgentSpawnKind::AgentSpawn,
-                    proposal: proposal_ref.clone(),
-                    unapplied: unapplied.clone(),
-                },
-                SelfAgentSpawnResult::TargetErased => AgentSpawnOutput::TargetErased {
-                    kind: AgentSpawnKind::AgentSpawn,
-                },
-            };
-            json!({ "output": spawn })
+            json!({ "output": crate::code_run::AgentSpawnOutput::from(value.clone()) })
         }
         // The bare `ask` and `wait` answer their rows' outputs, as their host
         // doors do. A wait that would stay pending parks instead, so it

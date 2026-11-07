@@ -71,6 +71,7 @@ mod contribution_targets;
 pub(crate) use contribution_targets::Experiment;
 pub use contribution_targets::{CheckedEdge, ContributionTarget};
 mod credit_join;
+mod credit_judge;
 pub(crate) use credit_join::effective_credit_subjects_in_txn;
 pub(crate) use credit_join::erase_credit_adjustments_in_txn;
 pub use credit_join::{CreditAdjustmentReceipt, credit_adjustments};
