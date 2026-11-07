@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1287 facade rows, 4661 declarations.
-Inputs: 1216 of 1287 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1116 of 1287 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1290 facade rows, 4674 declarations.
+Inputs: 1219 of 1290 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1119 of 1290 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -660,6 +660,7 @@ class AgentHealthCard(TypedDict):
     confidence: AgentHealthConfidence
     diagnostics: list[EntityId]
     evidence: list[EntityId]
+    source_rows: list[EntityId] | None
     window_from: int
     window_to: int
     measured: int
@@ -3611,6 +3612,7 @@ class RetrievalRunRecord(TypedDict):
     replay_inputs: NotRequired[RetrievalReplayInputs | None]
     turn: NotRequired[RetrievalTurn | None]
     query_expander_id: NotRequired[str | None]
+    reranker_id: NotRequired[str | None]
     signals: list[RetrievalSignal]
     result_ids: list[list[int]]
     score_breakdown: list[RetrievalScoreBreakdown]
@@ -11131,6 +11133,15 @@ class SlideReviewPolicyRowHolderRoute(TypedDict):
     first: DecisionRung
     ceiling: DecisionRung
 SlideReviewPolicyRow = SlideReviewPolicyRowPrecedence | SlideReviewPolicyRowVault | SlideReviewPolicyRowRoute | SlideReviewPolicyRowHolder | SlideReviewPolicyRowHolderRoute
+class CodeConsentSettlementEligibilityAllPowerHolders(TypedDict):
+    mode: Literal["all_power_holders"]
+class CodeConsentSettlementEligibilityNamed(TypedDict):
+    mode: Literal["named"]
+    holders: list[str]
+CodeConsentSettlementEligibility = CodeConsentSettlementEligibilityAllPowerHolders | CodeConsentSettlementEligibilityNamed
+class CodeConsentSettlementRow(TypedDict):
+    version: int
+    eligible: CodeConsentSettlementEligibility
 class PolicyGrantMapEntry(TypedDict):
     key: PolicyGrantValue
     value: PolicyGrantValue
@@ -11202,6 +11213,7 @@ class PolicyManifest(TypedDict):
     signatures: NotRequired[list[PolicySignature]]
     auto_checker: NotRequired[str | None]
     slide_review_policy: NotRequired[list[SlideReviewPolicyRow] | None]
+    code_consent_settlement: NotRequired[CodeConsentSettlementRow | None]
     scoped_grants: NotRequired[list[PolicyScopedGrantRow] | None]
     teacher_probe: NotRequired[TeacherProbePolicy | None]
     sheet_answer_limits: NotRequired[list[SheetAnswerLimit] | None]
@@ -12769,6 +12781,71 @@ class CodeMutationEntry(TypedDict):
 class CodeMutationLog(TypedDict):
     repo: EntityId
     entries: list[CodeMutationEntry]
+class CodeRepoSecretSeenRefMove(TypedDict):
+    kind: Literal["ref_move"]
+    name: str
+    new_commit: str
+class CodeRepoSecretSeenQuarantine(TypedDict):
+    kind: Literal["quarantine"]
+class CodeRepoSecretSeenSyncLanding(TypedDict):
+    kind: Literal["sync_landing"]
+CodeRepoSecretSeen = CodeRepoSecretSeenRefMove | CodeRepoSecretSeenQuarantine | CodeRepoSecretSeenSyncLanding
+class CodeRepoSecretMark(TypedDict):
+    mark: EntityId
+    operation: EntityId
+    blob: str
+    path: NotRequired[str | None]
+    kind: str
+    seen: CodeRepoSecretSeen
+    custody: NotRequired[EntityId | None]
+    handle: NotRequired[str | None]
+    marked_at: int
+class CodeRepoSecretRemediationLink(TypedDict):
+    state: str
+    proposal: EntityId
+    commit: NotRequired[str | None]
+    paths: list[str]
+    linked_at: int
+class CodeRepoSecretsView(TypedDict):
+    repo: EntityId
+    marks: list[CodeRepoSecretMark]
+    remediations: list[CodeRepoSecretRemediationLink]
+class CodeRepoSecretProposeRequest(TypedDict):
+    repo: EntityId
+    session: EntityId
+    provenance_claim: EntityId
+    op_provenance: CodeOpProvenance
+    catalog: NotRequired[LensCatalog | None]
+CodeRepoSecretRemediationStatus = Literal["proposed", "unresolved", "stale", "clean"]
+class CodeRepoSecretRemediationActionReplaceLiterals(TypedDict):
+    action: Literal["replace_literals"]
+    path: str
+    env_names: list[str]
+class CodeRepoSecretRemediationActionRemoveDotenv(TypedDict):
+    action: Literal["remove_dotenv"]
+    path: str
+class CodeRepoSecretRemediationActionWriteExample(TypedDict):
+    action: Literal["write_example"]
+    path: str
+    names: list[str]
+class CodeRepoSecretRemediationActionIgnoreDotenv(TypedDict):
+    action: Literal["ignore_dotenv"]
+    entries: list[str]
+class CodeRepoSecretRemediationActionDeclareEnvNames(TypedDict):
+    action: Literal["declare_env_names"]
+    env_names: list[str]
+CodeRepoSecretRemediationAction = CodeRepoSecretRemediationActionReplaceLiterals | CodeRepoSecretRemediationActionRemoveDotenv | CodeRepoSecretRemediationActionWriteExample | CodeRepoSecretRemediationActionIgnoreDotenv | CodeRepoSecretRemediationActionDeclareEnvNames
+class CodeRepoSecretUnresolved(TypedDict):
+    path: str
+    reason: str
+    custody: NotRequired[EntityId | None]
+class CodeRepoSecretRemediation(TypedDict):
+    repo: EntityId
+    status: CodeRepoSecretRemediationStatus
+    base_commit: str
+    proposal: NotRequired[EntityId | None]
+    actions: list[CodeRepoSecretRemediationAction]
+    unresolved: list[CodeRepoSecretUnresolved]
 class ForeignCodeRunRequest(TypedDict):
     source: str
     reads: NotRequired[list[str]]
@@ -13343,7 +13420,7 @@ class ExternalImportRequest(TypedDict):
     source: ExternalImportSource
     source_binding: NotRequired[str | None]
     door: ExternalImportDoor
-ExternalImportReceipt = TypedDict("ExternalImportReceipt", {"import": EntityId, "repo": str, "code_repo": EntityId, "source": ExternalImportSource, "imported_ref": str, "base_revision": EntityId, "importer": NotRequired[EntityId | None], "seed_publication": NotRequired[EntityId | None], "receive_provenance": NotRequired[EntityId | None], "publication": NotRequired[EntityId | None]})
+ExternalImportReceipt = TypedDict("ExternalImportReceipt", {"import": EntityId, "repo": str, "code_repo": EntityId, "source": ExternalImportSource, "imported_ref": str, "base_revision": EntityId, "importer": NotRequired[EntityId | None], "seed_publication": NotRequired[EntityId | None], "receive_provenance": NotRequired[EntityId | None], "publication": NotRequired[EntityId | None], "lfs_daemon_residual": bool})
 ExternalImportLookup = TypedDict("ExternalImportLookup", {"repo": str, "code_repo": EntityId, "import": EntityId, "door": ExternalImportDoor})
 ExternalImportPhase = Literal["pending", "fetch_refused", "source_moved", "held_base", "door_refused", "transport_unknown", "received"]
 class ReceivedFileOperation(TypedDict):
@@ -13682,6 +13759,18 @@ class OriginPublicationsRequest(TypedDict):
 class OriginPublicationsView(TypedDict):
     repo: str
     publications: list[OriginPublicationView]
+class RepoCheckoutBindInput(TypedDict):
+    repo: EntityId
+    ref: str
+    checkout: str
+    epoch: int
+    endpoint: NotRequired[str | None]
+class RepoCheckoutBindOutput(TypedDict):
+    repo: EntityId
+    ref: str
+    checkout: str
+    epoch: int
+    remote_url: NotRequired[str | None]
 class CheckoutDoorBindRequest(TypedDict):
     repo: str
     checkout: str
@@ -13862,6 +13951,7 @@ class CodeSnapshotView(TypedDict):
     snapshot: str
     scope_key: str
     files: list[CodeSnapshotFile]
+    capture_receipt: NotRequired[str | None]
 class CodeSnapshotRequest(TypedDict):
     repo: EntityId
     snapshot: str
@@ -14369,18 +14459,6 @@ class RepoMergeQueueEnqueueInput(TypedDict):
     proposals: list[EntityId]
     declaration: NotRequired[EntityId | None]
 RepoMergeQueueEnqueueOutput = RepoQueueEntryView
-class RepoCheckoutBindInput(TypedDict):
-    repo: EntityId
-    ref: str
-    checkout: str
-    epoch: int
-    endpoint: NotRequired[str | None]
-class RepoCheckoutBindOutput(TypedDict):
-    repo: EntityId
-    ref: str
-    checkout: str
-    epoch: int
-    remote_url: NotRequired[str | None]
 class RepoExportInput(TypedDict):
     repo: EntityId
     ref: str
@@ -15663,7 +15741,7 @@ class AssetRef(TypedDict):
     kind: StepAssetKind
     description: str
 StepPreset = Literal["rect", "roundRect", "ellipse", "triangle", "rightArrow"]
-StepSequence = Literal["name", "categories", "values"]
+StepSequence = Literal["name", "categories", "values", "size"]
 class StepCellNumber(TypedDict):
     number: float
 class StepCellText(TypedDict):
@@ -21544,6 +21622,13 @@ class ConsolidationEvidenceLocator(TypedDict):
     byte_range: NotRequired[tuple[int, int] | None]
     content_hash: list[int]
     messages: list[ConsolidationMessageEvidence]
+class ConsolidationDocumentImage(TypedDict):
+    doc: str
+    at: list[int]
+class ConsolidationSourceImage(TypedDict):
+    learned_at: int
+    body_hash: list[int]
+    document: NotRequired[ConsolidationDocumentImage | None]
 class ConsolidationDeliveryOrigin(TypedDict):
     source_ref: str
     delivering_pact: str
@@ -21570,6 +21655,7 @@ class ConsolidationEvidenceSource(TypedDict):
     source_meet: NotRequired[str | None]
     chain: list[ConsolidationEvidenceHop]
     locators: list[ConsolidationEvidenceLocator]
+    current_image: ConsolidationSourceImage
     delivery_history: NotRequired[list[ConsolidationDeliveryOrigin] | None]
 class ConsolidationPromotion(TypedDict):
     job_ref: str
