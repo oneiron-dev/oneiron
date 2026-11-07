@@ -17,8 +17,16 @@ captured preview and current row and preserves a changed mode or row. An
 aborted writer retires nothing. The old post-generation cleanup remains
 idempotent.
 
-Overlay-route resume, public wait cleanup, settled replies, holder records,
-observed-change cursors, consent handling, heal counters and fold receipts
-retain their existing behavior. No new table, timer, cap or setting is added.
+An overlay-route resume stages the generation-bound wait cleanup with its
+replay record in the same segment, after the existing erasure checks. If a
+participant leaves after that segment commits but before the call's final
+admission check, the call still returns `NotInRoom`. Its already committed
+replay and wait cleanup stay together. Leaving the room itself changes
+membership; it does not clear these wait rows. The old post-generation
+cleanup remains idempotent on this route too.
+
+Public wait cleanup, settled replies, holder records, observed-change
+cursors, consent handling, heal counters and fold receipts retain their
+existing behavior. No new table, timer, cap or setting is added.
 The ordinary engine/server update is sufficient; no guest image or protocol
 change is required. This change does not make a closed room restart-durable.
