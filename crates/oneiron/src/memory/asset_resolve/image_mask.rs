@@ -44,7 +44,13 @@ pub(super) fn raster(image: &ImageBytes) -> Projection {
             bytes,
             media_type: media_type.to_owned(),
         }),
-        None if format == image::ImageFormat::Pnm => Projection::Unsupported,
+        None if matches!(
+            format,
+            image::ImageFormat::Pnm | image::ImageFormat::Farbfeld | image::ImageFormat::Dds
+        ) =>
+        {
+            Projection::Unsupported
+        }
         None => Projection::Invalid,
     }
 }
@@ -89,7 +95,9 @@ fn recognized(format: image::ImageFormat) -> Option<image::ImageFormat> {
         | image::ImageFormat::Tiff
         | image::ImageFormat::Bmp
         | image::ImageFormat::Ico
-        | image::ImageFormat::Pnm => Some(format),
+        | image::ImageFormat::Pnm
+        | image::ImageFormat::Farbfeld
+        | image::ImageFormat::Dds => Some(format),
         _ => None,
     }
 }
