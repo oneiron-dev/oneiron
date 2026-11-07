@@ -658,8 +658,8 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCustodyMembersDrainFolder
         | Row::VaultCustodyMembersReenrol
         | Row::VaultMessageStreamsRefused
-        | Row::VaultOutboundCallsRequestErase
-        | Row::VaultOutboundUncertainSendAnswer => owner_proof(auth, server, verb).map(drop),
+        | Row::VaultStepUpPasskeysReset
+        | Row::VaultOutboundCallsRequestErase => owner_proof(auth, server, verb).map(drop),
         Row::VaultSharedProposeDelete
         | Row::VaultSharedProposeTransfer
         | Row::VaultSharedProposeRemoveOwner
