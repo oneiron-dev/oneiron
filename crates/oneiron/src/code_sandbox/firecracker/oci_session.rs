@@ -94,6 +94,7 @@ pub(super) fn start(
             "native VM requires non-root identity and bounded resources",
         ));
     }
+    let mut mounts = super::oci_mounts::prepare(spec)?;
     let image = resolve(spec.image.as_str(), "")?;
     let selected_config = config.for_oci_image(spec.image.as_str())?;
     let config = &selected_config;
@@ -163,7 +164,9 @@ pub(super) fn start(
     let reconnect = oneiron_container::bridge_reconnect_window()
         .map_err(|_| refused("invalid bridge reconnect window"))?;
     let start = serde_json::to_vec(&serde_json::json!({"command": command, "pids": spec.limits.pids,
-        "tmpfs_mib": spec.limits.tmpfs_mib, "reconnect_ms": reconnect.as_millis() as u64, "bridge_token": token})).map_err(|_| refused("native session start"))?;
+        "tmpfs_mib": spec.limits.tmpfs_mib, "reconnect_ms": reconnect.as_millis() as u64, "bridge_token": token,
+        "uid": spec.user.0, "gid": spec.user.1, "mounts_bytes": mounts.bytes, "mounts_digest": mounts.digest
+    })).map_err(|_| refused("native session start"))?;
     stream.write_all(&(start.len() as u32).to_be_bytes())?;
     stream.write_all(&start)?;
     let alive = Arc::new(AtomicBool::new(true));
@@ -179,6 +182,7 @@ pub(super) fn start(
             reconnect,
         )
     });
+    std::io::copy(&mut mounts.file, &mut stream)?;
     let mut ready = [0; 1];
     stream.read_exact(&mut ready)?;
     if ready != [1] {

@@ -42,6 +42,9 @@ pub(crate) fn attempt_read_context(
             }
             about
         }
+        dreamer_consolidation::root_evidence::ROOT_BRIDGE_ATTEMPT_TYPE => {
+            dreamer_consolidation::root_evidence::root_bridge_read_context(input)?
+        }
         dreamer_consolidation::DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE => {
             vec![crate::edit_distance::miner::miner_session_from_input(input).ok()?]
         }

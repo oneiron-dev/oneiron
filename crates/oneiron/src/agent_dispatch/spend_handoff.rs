@@ -53,6 +53,7 @@ struct ScopeSkeleton {
     parent: Option<SpendScopeId>,
     unit: LeaseUnit,
     cap_units: u64,
+    ceiling_units: Option<u64>,
     hard: bool,
     spent_units: u64,
     held_units: u64,
@@ -121,6 +122,7 @@ fn partition(scopes: Vec<SpendScope>) -> Result<Partitioned<FreeTimeSpendRows, S
             parent: scope.parent,
             unit: scope.unit,
             cap_units: scope.cap_units,
+            ceiling_units: scope.ceiling_units,
             hard: scope.hard,
             spent_units: scope.spent_units,
             held_units: scope.held_units,
@@ -215,6 +217,7 @@ fn rejoin_in_txn(
             parent: skeleton.parent,
             unit: skeleton.unit,
             cap_units: skeleton.cap_units,
+            ceiling_units: skeleton.ceiling_units,
             hard: skeleton.hard,
             spent_units: skeleton.spent_units,
             held_units: skeleton.held_units,
@@ -235,7 +238,7 @@ impl HomeTable for FreeTimeSpendRows {
     type Rows = Self;
     type Actor = SpendCompartment;
     const TABLE: &'static SideTableDecl = &side_table::AGENT_DISPATCH_SPEND_SCOPE;
-    const SCHEMA_VERSION: u16 = 4;
+    const SCHEMA_VERSION: u16 = 5;
 
     /// No try still spends under an open scope of a free-time tree: each has
     /// ended, or is a free-time item that never started, which the move
@@ -514,6 +517,7 @@ fn follows(here: &SpendScope, carried: &SpendScope) -> bool {
     here.parent == carried.parent
         && here.unit == carried.unit
         && here.hard == carried.hard
+        && here.ceiling_units == carried.ceiling_units
         && here.opened_at == carried.opened_at
         && here.agent == carried.agent
         && here.payer == carried.payer
