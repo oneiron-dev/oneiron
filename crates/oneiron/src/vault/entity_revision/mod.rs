@@ -3,6 +3,7 @@
 //! born at its first edit or citation, and retains its full operation history.
 
 mod citations;
+pub(crate) use citations::resolve_room_pinned_alias_in_txn;
 mod document_mutation;
 pub(crate) use document_mutation::{
     advance_document_mutation_head_in_txn, document_mutation_head_in_txn,

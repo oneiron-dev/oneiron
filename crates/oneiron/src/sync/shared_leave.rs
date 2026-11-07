@@ -8,8 +8,13 @@
 //! door answers (`Vault::removed_member_notices_signed`), each signed by the
 //! home root. A deletion counts only from a notice this device verified
 //! against the home root it already trusts, or the successor that root
-//! handed on to in a signed handoff the home sends beside the notices
-//! ([`VerifiedLeaveNotice`], FIX 2053).
+//! handed leave-notice verification on to in the signed delegations the
+//! home sends beside the notices, and no authority row
+//! ([`VerifiedLeaveNotice`], FIX 2053, FIX 7932). Where those delegations do
+//! not reach from a root this env trusts to the notice's signer, the notice
+//! is pending ([`LeaveNoticeCheck::Pending`]), confirms nothing and purges
+//! nothing, and nothing more is fetched through the revoked slip: a later
+//! delivery whose delegations reach it judges it again.
 //!
 //! What goes is only what is provably that vault's: the queued window
 //! updates (`q:`, with their `d:` sidecars), the unacknowledged text frames
@@ -19,6 +24,7 @@
 //! runs once they are past the collector's grace (FIX 2413).
 
 use crate::Vault;
+use crate::authority::{LeaveNoticeContinuity, NoticeSignerStanding};
 use crate::error::{Error, Result};
 use crate::federation::{SharedActOutcome, SharedVaultChange, SignedSharedActOutcome};
 use crate::side_table::{self, Raw, SideTable};
@@ -44,28 +50,45 @@ const LEAVE_PURGE_ROWS_PER_PASS: usize = 4096;
 
 /// A home-signed outcome notice (FIX 2053) this device verified against the
 /// home root it already trusts: its signer is a live root in the authority
-/// log this env folded, or the successor a signed handoff from such a root
-/// names, never just the key the notice carries, and it names this env's
-/// authority vault, its local vault id and this member. Only such a notice
-/// confirms a deleted vault.
+/// log this env folded, or the successor signed leave-notice delegations
+/// from such a root hand on to (FIX 7932), never just the key the notice
+/// carries, and it names this env's authority vault, its local vault id and
+/// this member. Only such a notice confirms a deleted vault.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedLeaveNotice {
     outcome: SharedActOutcome,
 }
 
+/// What a home-signed leave notice proves in this env (FIX 2053, FIX 7919,
+/// FIX 7932).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LeaveNoticeCheck {
+    /// It verified: its signer is a root this env trusts, or every link from
+    /// one to it verified.
+    Verified(VerifiedLeaveNotice),
+    /// It names this env's vault and member and its signature holds under
+    /// the key it names, but the delegations beside it do not reach that key
+    /// from a root this env trusts. It proves nothing and confirms nothing.
+    /// The home keeps the notice, and a later delivery whose delegations
+    /// reach it judges it again.
+    Pending,
+    /// It does not verify: it changes nothing.
+    Refused,
+}
+
 impl VerifiedLeaveNotice {
     /// Verifies `signed` in `vault`, the env that holds shared vault
-    /// `vault_id`, as `member`'s own notice. `handoff` is what the home sent
-    /// beside it: the signed rows that hand its root on, a ReRoot or the host
-    /// root's own rotation, and the rows they stand on that this env did not
-    /// fold, parents first. A home that re-rooted since this env last folded
-    /// signs with a key only those rows name. They fold with this env's rows
-    /// in memory as its own log folds, never written (FIX 3797), and only a
-    /// live Owner of that fold signs a notice that verifies; below an image
-    /// this env adopted and has not hydrated, the ReRoot chain alone extends
-    /// its folded roster. No rows the home sends prove that it holds back no
-    /// sibling handoff. `None` when the notice does not verify: such a notice
-    /// changes nothing.
+    /// `vault_id`, as `member`'s own notice. `continuity` is what the home
+    /// sent beside it: the leave-notice delegations on its root chain to the
+    /// key that signed it (FIX 7932). A home that re-rooted since this env
+    /// last folded signs with a key only those delegations name. The notice
+    /// verifies when its signer is a live Owner of this env's own,
+    /// unconflicted fold, or the end of delegations that walk back, each
+    /// signed by its predecessor and naming the one before it, to such an
+    /// Owner ([`Vault::leave_notice_signer_standing`]); nothing is written
+    /// and no roster is built. A gap leaves the notice pending; a link this
+    /// env knows otherwise refuses it. No delegation the home sends proves
+    /// that it holds back no sibling handoff.
     ///
     /// # Errors
     ///
@@ -75,28 +98,30 @@ impl VerifiedLeaveNotice {
         vault_id: u64,
         member: &str,
         signed: &SignedSharedActOutcome,
-        handoff: &[Vec<u8>],
-    ) -> Result<Option<Self>> {
+        continuity: &LeaveNoticeContinuity,
+    ) -> Result<LeaveNoticeCheck> {
         let outcome = &signed.outcome;
         if outcome.vault_id != vault_id || outcome.recipient != member {
-            return Ok(None);
-        }
-        let Some((authority_vault_id, roster)) = vault.roster_through_handoff(handoff)? else {
-            return Ok(None);
-        };
-        if authority_vault_id != signed.authority_vault_id
-            || !crate::authority::roster_has_live_owner(&roster, &signed.signature.public_key)
-        {
-            return Ok(None);
+            return Ok(LeaveNoticeCheck::Refused);
         }
         let transcript =
             crate::federation::shared_act_outcome_transcript(&signed.authority_vault_id, outcome)?;
         if !crate::authority::verify_authority_signature(&signed.signature, &transcript) {
-            return Ok(None);
+            return Ok(LeaveNoticeCheck::Refused);
         }
-        Ok(Some(Self {
-            outcome: outcome.clone(),
-        }))
+        Ok(
+            match vault.leave_notice_signer_standing(
+                &signed.authority_vault_id,
+                &signed.signature.public_key,
+                continuity,
+            )? {
+                NoticeSignerStanding::Trusted => LeaveNoticeCheck::Verified(Self {
+                    outcome: outcome.clone(),
+                }),
+                NoticeSignerStanding::Pending => LeaveNoticeCheck::Pending,
+                NoticeSignerStanding::Refused => LeaveNoticeCheck::Refused,
+            },
+        )
     }
 
     /// The notice the home signed.
@@ -109,12 +134,53 @@ impl VerifiedLeaveNotice {
     /// reads it, or [`SharedLeaveKind::Deleted`] for the vault's deletion.
     #[must_use]
     pub fn kind(&self) -> Option<SharedLeaveKind> {
-        let notice = &self.outcome;
-        if matches!(notice.change, SharedVaultChange::VaultDeleted { .. }) {
-            return Some(SharedLeaveKind::Deleted);
-        }
-        left_change(notice, notice.vault_id, &notice.recipient)
+        leave_kind(&self.outcome)
     }
+}
+
+/// How `notice` ends its recipient's membership: as [`left_change`] reads
+/// it for its own vault and recipient, or [`SharedLeaveKind::Deleted`] for
+/// the vault's deletion. Only a verified notice confirms either.
+fn leave_kind(notice: &SharedActOutcome) -> Option<SharedLeaveKind> {
+    if matches!(notice.change, SharedVaultChange::VaultDeleted { .. }) {
+        return Some(SharedLeaveKind::Deleted);
+    }
+    left_change(notice, notice.vault_id, &notice.recipient)
+}
+
+/// The first of `notices` that verifies in `vault` as `member`'s own notice
+/// ending its membership in shared vault `vault_id`, the vault's deletion
+/// included ([`VerifiedLeaveNotice::verify`] beside `continuity`). With none,
+/// [`LeaveNoticeCheck::Pending`] while any is pending (FIX 7919, FIX 7932);
+/// else [`LeaveNoticeCheck::Refused`]. A notice that ends no membership is
+/// passed over, never kept pending.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn first_verified_leave(
+    vault: &Vault,
+    vault_id: u64,
+    member: &str,
+    notices: &[SignedSharedActOutcome],
+    continuity: &LeaveNoticeContinuity,
+) -> Result<LeaveNoticeCheck> {
+    let mut pending = false;
+    for signed in notices {
+        if leave_kind(&signed.outcome).is_none() {
+            continue;
+        }
+        match VerifiedLeaveNotice::verify(vault, vault_id, member, signed, continuity)? {
+            verified @ LeaveNoticeCheck::Verified(_) => return Ok(verified),
+            LeaveNoticeCheck::Pending => pending = true,
+            LeaveNoticeCheck::Refused => {}
+        }
+    }
+    Ok(if pending {
+        LeaveNoticeCheck::Pending
+    } else {
+        LeaveNoticeCheck::Refused
+    })
 }
 
 /// How `notice` ends `member`'s membership in shared vault `vault_id`, when
@@ -193,6 +259,9 @@ pub fn leave_purge_complete(vault: &Vault) -> Result<bool> {
 ///
 /// `unqueued` counts the valid run-buffer updates the leave arms discarded
 /// without queueing; it enters the window count at first confirm only.
+///
+/// Only a notice proved on evidence that closes reaches here: a pending one
+/// ([`LeaveNoticeCheck::Pending`]) is no [`VerifiedLeaveNotice`] (FIX 7919).
 ///
 /// # Errors
 ///
