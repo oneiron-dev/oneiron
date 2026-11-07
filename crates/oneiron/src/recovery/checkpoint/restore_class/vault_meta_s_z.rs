@@ -265,6 +265,13 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SPAWN_PLANNED_INTENT_ASKER_ERASED, LIVE),
     (&t::STANDING_BLOCK, STANDING_BLOCKS),
     (&t::AFFECT_STATE_COMPOSITE_PRODUCER, CONTENT),
+    // A person's passkeys, open ceremonies and step-ups stand with the live credentials they
+    // protect (FIX 11694).
+    (&t::STEP_UP_CHALLENGE, LIVE),
+    (&t::STEP_UP_PASSKEY, LIVE),
+    (&t::STEP_UP_RECORD, LIVE),
+    (&t::STEP_UP_TOTP, LIVE),
+    (&t::STEP_UP_TOTP_PENDING, LIVE),
     (&t::STORAGE_ABI_VERSION, CONTENT),
     (&t::MESSAGE_STREAM_RECEIPT_BY_REF, CONTENT),
     (&t::SYNC_BORN_WITH_CARRIED, CONTENT),
