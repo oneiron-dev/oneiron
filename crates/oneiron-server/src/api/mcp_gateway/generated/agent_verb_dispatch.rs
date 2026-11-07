@@ -398,6 +398,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.packs.get" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.import" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.sync" => a.spec.clone().ok_or_else(invalid),
+        "vault.skills.proposal.settle" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.receipts" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.convert" => a.spec.clone().ok_or_else(invalid),
         "vault.skills.get" => a.spec.clone().ok_or_else(invalid),
@@ -2371,6 +2372,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.skills.sync" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.skills.proposal.settle" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.skills.receipts" => {
@@ -6130,6 +6134,9 @@ async fn execute_agent_verb_row_on(
         "vault.packs.get" => boxed_mcp_verb_row_vault_packs_get(row).await,
         "vault.skills.import" => boxed_mcp_verb_row_vault_skills_import(row).await,
         "vault.skills.sync" => boxed_mcp_verb_row_vault_skills_sync(row).await,
+        "vault.skills.proposal.settle" => {
+            boxed_mcp_verb_row_vault_skills_proposal_settle(row).await
+        }
         "vault.skills.receipts" => boxed_mcp_verb_row_vault_skills_receipts(row).await,
         "vault.skills.convert" => boxed_mcp_verb_row_vault_skills_convert(row).await,
         "vault.skills.get" => boxed_mcp_verb_row_vault_skills_get(row).await,
@@ -20289,6 +20296,58 @@ async fn mcp_verb_row_vault_skills_sync(row: McpVerbRow<'_>) -> McpVerbRowResult
         server, auth, input,
     ))
     .await;
+    // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+    served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+        listed,
+    ));
+    let output = output.map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_vault_skills_proposal_settle<'a>(
+    row: McpVerbRow<'a>,
+) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_skills_proposal_settle(row))
+}
+async fn mcp_verb_row_vault_skills_proposal_settle(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("vault.skills.proposal.settle", &input)
+        .map_err(mcp_facade_error)?;
+    let input: oneiron::task_verb::sdk::HubSkillProposalSettleRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let (output, listed) =
+        Box::pin(crate::api::facade::host_doors::vault_skills_proposal_settle(server, auth, input))
+            .await;
     // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
     served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
         listed,

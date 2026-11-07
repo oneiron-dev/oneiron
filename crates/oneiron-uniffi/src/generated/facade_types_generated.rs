@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1281 facade rows, 4635 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1233.
+// UniFFI census: 1282 facade rows, 4640 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1234.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -17569,6 +17569,29 @@ pub struct HubSkillSyncReceipt {
     pub approval: Option<ClaimApprovalStatus>,
 }
 
+/// `oneiron::verbs::hub::HubSkillProposalSettleRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HubSkillProposalSettleRequest {
+    #[serde(rename = "entity")]
+    pub entity: String,
+    #[serde(rename = "proposal")]
+    pub proposal: String,
+    #[serde(rename = "accept")]
+    pub accept: bool,
+}
+
+/// `oneiron::verbs::hub::HubSkillProposalSettled`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HubSkillProposalSettled {
+    #[serde(rename = "entity")]
+    pub entity: String,
+    #[serde(rename = "proposal")]
+    pub proposal: String,
+    #[serde(rename = "approval")]
+    pub approval: ClaimApprovalStatus,
+}
+
 /// `oneiron::verbs::skills::SkillConvertRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -33451,6 +33474,28 @@ pub enum PolicyClassifyDecision {
     Skipped(PolicySkipReason),
 }
 
+/// `oneiron::policy_model::planes::HostedLegalBasisKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum HostedLegalBasisKind {
+    #[serde(rename = "law")]
+    Law,
+    #[serde(rename = "provider_terms")]
+    ProviderTerms,
+    #[serde(rename = "capacity")]
+    Capacity,
+}
+
+/// `oneiron::policy_model::planes::HostedLegalBasis`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HostedLegalBasis {
+    #[serde(rename = "kind")]
+    pub kind: HostedLegalBasisKind,
+    #[serde(rename = "subject")]
+    pub subject: String,
+    #[serde(rename = "reference")]
+    pub reference: String,
+}
+
 /// `oneiron::policy_model::verdict::PolicyVerdictCategory`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "category", content = "sub")]
@@ -33472,6 +33517,8 @@ pub enum PolicyVerdictCategory {
         policy_version: String,
         #[serde(rename = "row_ref")]
         row_ref: String,
+        #[serde(rename = "basis")]
+        basis: HostedLegalBasis,
     },
 }
 
@@ -33891,6 +33938,15 @@ pub enum RelayBoundaryDegrade {
     PolicyBindingMovedMidPass,
 }
 
+/// `oneiron::policy_model::planes::HostedLegalRowBound`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HostedLegalRowBound {
+    #[serde(rename = "row_ref")]
+    pub row_ref: String,
+    #[serde(rename = "basis")]
+    pub basis: HostedLegalBasis,
+}
+
 /// `oneiron::policy_model::relay::outcome::RelayResolution`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum RelayResolution {
@@ -33930,6 +33986,8 @@ pub struct HostedRelayDecision {
     pub verdict: Option<PolicyClassifyVerdict>,
     #[serde(rename = "degraded", default, skip_serializing_if = "Option::is_none")]
     pub degraded: Option<RelayBoundaryDegrade>,
+    #[serde(rename = "outage_bounds")]
+    pub outage_bounds: Vec<HostedLegalRowBound>,
     #[serde(
         rename = "resolution",
         default,

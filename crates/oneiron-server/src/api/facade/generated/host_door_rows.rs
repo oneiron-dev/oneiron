@@ -34,6 +34,7 @@
 //! - `vault.weave.admin.item.wrong`
 //! - `vault.step_up.totp.reset`
 //! - `vault.inbox.groups.resolve`
+//! - `vault.skills.proposal.settle`
 //! - `vault.skills.optimize.tradeoff_asks.resolve`
 //! - `vault.packs.sections.propose`
 //! - `vault.packs.sections.list`
@@ -1713,6 +1714,7 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.weave.admin.item.wrong"
                 | "vault.step_up.totp.reset"
                 | "vault.inbox.groups.resolve"
+                | "vault.skills.proposal.settle"
                 | "vault.skills.optimize.tradeoff_asks.resolve"
                 | "vault.packs.sections.propose"
                 | "vault.packs.sections.list"

@@ -2139,6 +2139,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_skills_proposal_settle(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.proposal.settle", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_skills_receipts(
         &self,
         input: serde_json::Value,

@@ -1246,6 +1246,11 @@ export_facade! {
     let output = client.vault_skills_sync(&input)?;
     crate::codec::lift_record("vault.skills.sync", &output)
 };
+"vault.skills.proposal.settle" => fn vault_skills_proposal_settle(&self, input: HubSkillProposalSettleRequest) -> HubSkillProposalSettled = |client| {
+    let input: oneiron::task_verb::sdk::HubSkillProposalSettleRequest = crate::codec::lower_record("vault.skills.proposal.settle", input)?;
+    let output = client.vault_skills_proposal_settle(&input)?;
+    crate::codec::lift_record("vault.skills.proposal.settle", &output)
+};
 "vault.skills.receipts" => fn vault_skills_receipts(&self, input: HubSkillRequest) -> HubSkillReceipts = |client| {
     let input: oneiron::task_verb::sdk::HubSkillRequest = crate::codec::lower_record("vault.skills.receipts", input)?;
     let output = client.vault_skills_receipts(&input)?;

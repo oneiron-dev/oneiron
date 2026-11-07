@@ -4049,6 +4049,22 @@
       "openapi": true
     },
     {
+      "name": "vault.skills.proposal.settle",
+      "description": "The owner accepts the exact package in a pending hub update, or rejects only its proposal without changing the working skill.",
+      "input": "HubSkillProposalSettleRequest",
+      "output": "crate::task_verb::sdk::HubSkillProposalSettled",
+      "call": "crate::task_verb::sdk::hub_skill_proposal_settle_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.proposal.settle\")?, &input)?",
+      "host_door": true,
+      "host_door_precheck": false,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.skills.receipts",
       "description": "Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner.",
       "input": "HubSkillRequest",
