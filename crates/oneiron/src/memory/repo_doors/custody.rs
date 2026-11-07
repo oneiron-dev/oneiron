@@ -481,7 +481,7 @@ impl Memory<'_> {
 /// under this vault's serving root, `<name>.git`, that is the very
 /// directory the name serves. `None` for anything else, an imported working
 /// folder included.
-fn served_repo_name(vault: &crate::Vault, anchor: &RepoRef) -> Option<String> {
+pub(super) fn served_repo_name(vault: &crate::Vault, anchor: &RepoRef) -> Option<String> {
     let RepoRef::LocalFolder { path, .. } = anchor else {
         return None;
     };
