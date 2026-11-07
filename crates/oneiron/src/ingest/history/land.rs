@@ -1,14 +1,17 @@
 //! Landing a decoded conversation as an imported transcript (ARCH-0027).
 //!
-//! Messages group into one-speaker TURNs, each the longest run of one side (up
-//! to [`TURN_MESSAGE_CAP`] messages). Conversation, turn and message ids derive
-//! from the source's own, so a re-run, a crash retry or an appended session
-//! lands the same rows at the same ids. A new message takes the next order its
-//! turn has free, so a later export that regroups a run never collides with
-//! what landed before. A turn whose order space is full continues in the next
-//! turn of its chain, each derived from the run's turn and its place, so every
-//! import of the run walks the same chain. Each turn lands through the witness
-//! program's import door, which runs the same ceiling door and write-door
+//! Messages group into one-speaker TURNs, each the longest run of one source
+//! speaker (up to [`TURN_MESSAGE_CAP`] messages): the owner's prompts land as
+//! the user's, every other speaker's words as a counterparty's (FIX 15412).
+//! Conversation, turn and message ids derive from the source's own, so a
+//! re-run, a crash retry or an appended session lands the same rows at the
+//! same ids. A new message takes the next order its turn has free, so a later
+//! export that regroups a run never collides with what landed before. A turn
+//! whose order space is full, or that another speaker's words were born in,
+//! continues in the next turn of its chain, each derived from the run's turn
+//! and its place, so every import of the run walks the same chain. Each turn
+//! lands through the witness program's import door, which runs the same
+//! ceiling door and write-door
 //! secret scan as any witnessed turn, with the ledger rows of its new messages
 //! in the same transaction. The ledger is read again inside that transaction:
 //! when another import landed one of the turn's messages since the first
@@ -38,7 +41,7 @@ use crate::error::Result;
 use crate::memory::{
     IMPORTED_SOURCE_KEY, ImportedTurnStamp, MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE,
     Memory, MemoryError, MemoryResult, SourceAttribution, WitnessAuthor, WitnessMessage,
-    WitnessTurn, next_witness_message_order,
+    WitnessTurn, next_witness_message_order, stored_witness_turn_author,
 };
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CONVERSATION;
@@ -122,7 +125,11 @@ pub(super) enum Standing {
     Changed(LedgerRow),
 }
 
-/// The conversation's messages with each id once, as one-speaker runs.
+/// The conversation's messages with each id once, as one-speaker runs. A run
+/// holds one source speaker, its side and who the source says said it
+/// (`said_by`): the owner's prompts, a delegating agent's and an unknown
+/// speaker's never share a turn, and a user run and an assistant run stay
+/// apart whatever bucket each lands in (`witness_author`).
 pub(super) fn runs<'c>(
     conversation: &'c HistoryConversation,
     report: &mut HistoryImportReport,
@@ -136,13 +143,31 @@ pub(super) fn runs<'c>(
         }
         report.messages += 1;
         match runs.last_mut() {
-            Some(run) if run[0].role == message.role && run.len() < TURN_MESSAGE_CAP => {
+            Some(run)
+                if run[0].role == message.role
+                    && run[0].said_by == message.said_by
+                    && run.len() < TURN_MESSAGE_CAP =>
+            {
                 run.push(message);
             }
             _ => runs.push(vec![message]),
         }
     }
     runs
+}
+
+/// The bucket an imported message speaks in (FIX 15412). The owner's own
+/// history (ARCH-0027) makes a user-side message the source names no other
+/// speaker for the owner's: `User`. Everything else is words brought in from
+/// outside that neither the owner nor this vault's companion spoke: a user
+/// side the source says was a delegating agent or an unknown speaker, and the
+/// external assistant the export recorded, each `Counterparty`. The source's
+/// own side and `said_by` stay in the provenance.
+fn witness_author(message: &HistoryMessage) -> WitnessAuthor {
+    match (message.role, message.said_by) {
+        (HistoryRole::User, None) => WitnessAuthor::User,
+        (HistoryRole::User, Some(_)) | (HistoryRole::Assistant, _) => WitnessAuthor::Counterparty,
+    }
 }
 
 pub(super) fn standing(
@@ -187,10 +212,7 @@ pub(super) fn imported_message(
 ) -> WitnessMessage {
     WitnessMessage {
         id: id.map(|id| id.to_hex()),
-        author: match message.role {
-            HistoryRole::User => WitnessAuthor::User,
-            HistoryRole::Assistant => WitnessAuthor::Companion,
-        },
+        author: witness_author(message),
         message_type: format!("import.{}", source.source_id()),
         content: message.text.clone(),
         parts: None,
@@ -313,6 +335,8 @@ impl Vault {
     ///
     /// Each message becomes a MESSAGE grouped into one-speaker TURNs under one
     /// CONVERSATION, BM25-indexed at once. The source's speaker is the author:
+    /// the owner's prompts speak as the user, a delegating agent's or an
+    /// unknown speaker's prompts and the export's assistant as a counterparty;
     /// no `AuthoredBy` edge names the importer, and a source system prompt is
     /// never landed. Each MESSAGE occurred when its source says and every row
     /// is learned at `imported_at`. The TURN carries the import stamp, so the
@@ -492,19 +516,26 @@ impl Import<'_> {
     }
 
     /// The turn `count` new messages of `run` land in, and the first order
-    /// free there: the first turn of the run's chain whose order space holds
-    /// them all. A turn not stored yet holds a whole run, so the walk ends.
+    /// free there: the first turn of the run's chain that speaks as the run
+    /// speaks and whose order space holds them all. A turn born of another
+    /// speaker is passed over too, so a revision whose speaker the source now
+    /// knows (an unknown speaker's words, known later as the owner's) never
+    /// lands in a turn of another bucket. A turn not stored yet holds a whole
+    /// run, so the walk ends.
     fn turn_with_room(
         &self,
         txn: &heed::RoTxn<'_>,
         run: &[&HistoryMessage],
         count: u32,
     ) -> MemoryResult<(EntityId, u64)> {
+        let author = witness_author(run[0]);
         let mut place = 0;
         loop {
             let turn_id = self.chain_turn(run, place)?;
             let next_order = next_witness_message_order(&self.vault.store, txn, &turn_id)?;
-            if next_order + u64::from(count) <= u64::from(u32::MAX) + 1 {
+            let speaks = stored_witness_turn_author(&self.vault.store, txn, &turn_id)?
+                .is_none_or(|stored| stored == author);
+            if speaks && next_order + u64::from(count) <= u64::from(u32::MAX) + 1 {
                 return Ok((turn_id, next_order));
             }
             place += 1;

@@ -2,10 +2,12 @@
 //! 2404). The message a connector reply answers, and the reply itself, each
 //! land as one turn of an imported conversation through the witness
 //! program's import door, on the agent's own Memory. The sender's words are
-//! the source's, never the owner's: no turn carries a byline, and the sender
-//! stays named in the message's provenance. Conversation, turn and message
-//! ids derive from the exchange, so a rerun lands the same rows at the same
-//! ids. An inbound witness can also record the native archive version its
+//! the source's, never the owner's: the inbound message speaks as a
+//! counterparty and the reply, the agent's own words, as the companion (FIX
+//! 15412); no turn carries a byline, and the sender stays named in the
+//! message's provenance. Conversation, turn and message ids derive from the
+//! exchange, so a rerun lands the same rows at the same ids. An inbound
+//! witness can also record the native archive version its
 //! source names; that metadata binding stays frozen once recorded. The reply
 //! worker reads the conversation back
 //! through the agent's own read lane, every page of it, as the history its
@@ -46,9 +48,9 @@ const REPLY_SIDE: &str = "reply";
 
 impl Vault {
     /// Witnesses `text`, the message `origin` brought `agent`, as the
-    /// sender's turn of their conversation, and issues `agent` its read
-    /// grant over the conversation once. Returns the conversation, turn and
-    /// message ids it landed at.
+    /// sender's turn of their conversation, spoken by a counterparty (FIX
+    /// 15412), and issues `agent` its read grant over the conversation once.
+    /// Returns the conversation, turn and message ids it landed at.
     ///
     /// # Errors
     /// The witness program refuses the turn, or the vault write fails.
@@ -72,7 +74,10 @@ impl Vault {
     ) -> MemoryResult<ConnectorWitness> {
         let message = WitnessMessage {
             id: None,
-            author: WitnessAuthor::User,
+            // Another human's words, brought in from outside: never the
+            // vault's own user (FIX 15412). The source's own side stays
+            // `import.role`.
+            author: WitnessAuthor::Counterparty,
             message_type: CONNECTOR_MESSAGE_TYPE.to_owned(),
             content: text.to_owned(),
             parts: None,

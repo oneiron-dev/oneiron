@@ -111,9 +111,10 @@ fn frame_in(
 
 /// The words of the MESSAGE `span` cites, `row` as the Dreamer read it in
 /// `txn`: still live, readable, bound to the TURN, its conversation and its
-/// byline, of the TURN's own speaker, visible, final and not words another
-/// speaker said in an import, at the exact revision (and document frontier)
-/// and with the exact attribution the citation read.
+/// byline, of the TURN's own speaker, visible, final and not imported words
+/// the fresh projection withholds (the same test, FIX 15412), at the exact
+/// revision (and document frontier) and with the exact attribution the
+/// citation read.
 fn cited_words_in(
     read: &ScopedRead<'_>,
     txn: &heed::RoTxn<'_>,
@@ -153,7 +154,7 @@ fn cited_words_in(
     if message.author != frame.bucket
         || !message.is_visible
         || !words
-        || (frame.imported && message.not_the_owners)
+        || message.withheld_import_words(frame.imported)
         || swarm_evidence_content_hash(&body) != span.revision
         || frontier != span.frontier
         || attribution_hash(frame.imported, &authors, speaker) != span.attribution
