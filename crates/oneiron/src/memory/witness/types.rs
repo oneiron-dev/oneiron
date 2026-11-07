@@ -144,6 +144,9 @@ pub struct WitnessAssertions {
 /// Receipt for one witnessed turn.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct WitnessReceipt {
+    /// The actual native TURN the witness landed, including a session-local TURN.
+    /// This is identity, not a vault record ref or read authority.
+    pub turn_id: crate::EntityId,
     /// Short-id ref of the TURN (hex fallback if no short id exists).
     pub turn_short_id: String,
     /// Short-id refs of the written MESSAGE entities, input order.
