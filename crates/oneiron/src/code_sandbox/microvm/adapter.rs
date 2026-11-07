@@ -17,7 +17,7 @@ use super::credential::{
 };
 use super::handle::{ExecutionBudget, GuestImage, MicroVmExit, MicroVmHandle};
 use super::output::MicroVmOutputSink;
-use super::overlay::{MAX_OVERLAY_FILE_BYTES, overlay_error};
+use super::overlay::overlay_error;
 use crate::error::CodeError;
 
 /// [`SandboxBoundaryAdapter`] whose guarantees are backed by a microVM.
@@ -287,19 +287,12 @@ impl SandboxBoundaryAdapter for MicroVmSandboxAdapter {
         for _ in relative.components() {
             root.pop();
         }
-        let file = open_base_entry(&root, relative, call.path.as_str())?;
+        let mut file = open_base_entry(&root, relative, call.path.as_str())?;
         let metadata = file.metadata().map_err(|_| {
             Error::Code(CodeError::MicroVmOverlayError {
                 detail: format!("base mount read failed for {}", call.path.as_str()),
             })
         })?;
-        let file_bytes = metadata.len();
-        if file_bytes > MAX_OVERLAY_FILE_BYTES {
-            return Err(overlay_error(format!(
-                "base mount file byte bound {MAX_OVERLAY_FILE_BYTES} exceeded at {} ({file_bytes} bytes)",
-                call.path.as_str()
-            )));
-        }
         if !metadata.is_file() {
             return Err(overlay_error(format!(
                 "base mount entry {} is not a plain file",
@@ -308,29 +301,15 @@ impl SandboxBoundaryAdapter for MicroVmSandboxAdapter {
         }
 
         let mut bytes = Vec::new();
-        file.take(MAX_OVERLAY_FILE_BYTES + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|error| {
-                Error::Code(CodeError::MicroVmOverlayError {
-                    detail: format!(
-                        "base mount read failed for {}: {}",
-                        call.path.as_str(),
-                        error.kind()
-                    ),
-                })
-            })?;
-        let actual_bytes = u64::try_from(bytes.len()).map_err(|_| {
-            overlay_error(format!(
-                "base mount file byte bound {MAX_OVERLAY_FILE_BYTES} exceeded at {}",
-                call.path.as_str()
-            ))
+        file.read_to_end(&mut bytes).map_err(|error| {
+            Error::Code(CodeError::MicroVmOverlayError {
+                detail: format!(
+                    "base mount read failed for {}: {}",
+                    call.path.as_str(),
+                    error.kind()
+                ),
+            })
         })?;
-        if actual_bytes > MAX_OVERLAY_FILE_BYTES {
-            return Err(overlay_error(format!(
-                "base mount file byte bound {MAX_OVERLAY_FILE_BYTES} exceeded at {} ({actual_bytes} bytes)",
-                call.path.as_str()
-            )));
-        }
         Ok(SandboxFileRead {
             path: call.path,
             bytes,
