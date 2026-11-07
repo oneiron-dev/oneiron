@@ -39,8 +39,8 @@ pub(super) fn keep_use_limited_in_txn(
 }
 
 /// The C6 use limit on `record`, if it was kept after a refused privacy
-/// erasure and a standing hold, customer or host order, still keeps it
-/// (WILL-PLAN L01 row 03, FIX 8849): it lasts the whole retention, until the
+/// erasure and a standing customer hold still keeps it (WILL-PLAN L01 row
+/// 03, FIX 8849): it lasts the whole retention, until the
 /// last hold lifts, narrows or lapses. A marker no standing hold backs
 /// restricts nothing.
 pub(crate) fn legal_hold_use_limit_in_txn(
