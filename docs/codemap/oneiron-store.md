@@ -116,8 +116,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/checkout_task.rs` | src | s | 1 enum · 2 fn | CheckoutTaskClass | Checkout task classes and their lease-reclaim policy |
 | `src/checkpoint_host_recipient.rs` | src | s | 1 struct · 1 enum · 3 fn | HostHoldsRecipient, HostHoldsSealing | Host recipient and sealing policy for checkpoint legal-hold members |
 | `src/checkpoint_payload/kept.rs` | src | s | 1 struct · 4 fn | KeptGenerations | What the kept copies of a vault's checkpoints still need of its payload leaves (KS7-5): each compartment's… |
-| `src/checkpoint_payload/loro.rs` | src | s | 5 struct · 2 enum · 1 trait · 10 fn · 1 type · 4 const · 2 mod | Atom, JoinedLoro, LoroActorCodec, OpenedRow, Site, Slice, SplitRow, SplitValue | The one Loro history projection the document families share (KS-7, FIX 6072): a group of Loro rows (a full… |
-| `src/checkpoint_payload/loro/frame.rs` | src | s | 1 struct · 3 const | Frame | A Loro row's content as the shared projection frames it: the framing version, the family, the slice, each… |
+| `src/checkpoint_payload/loro.rs` | src | m | 5 struct · 2 enum · 1 trait · 10 fn · 1 type · 4 const · 2 mod | Atom, JoinedLoro, LoroActorCodec, OpenedRow, Site, Slice, SplitRow, SplitValue | The one Loro history projection the document families share (KS-7, FIX 6072): a group of Loro rows (a full… |
+| `src/checkpoint_payload/loro/frame.rs` | src | s | 1 struct · 4 const | Frame | A Loro row's content as the shared projection frames it: the framing version, the family, the slice, each… |
 | `src/checkpoint_payload/loro/proof.rs` | src | s | 1 fn | — | The typed equality of two Loro histories a join's proof compares (FIX 6072, Engine R1): change by change and… |
 | `src/checkpoint_payload/mod.rs` | src | s | 1 struct · 2 enum · 16 fn · 5 const · 2 mod | CompartmentAccess, PayloadItem, Subtype | Checkpoint payload custody (KS-7, FIX 5688): the ordinary payload a checkpoint copies is sealed one owner at… |
 | `src/claim_lineage.rs` | src | s | 6 fn | — | Claim source lineage, evidence taint, and stored value projections |
@@ -154,11 +154,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/community_graph/mod.rs` | src | s | 4 mod · 6 re-export | — | Pure community graph projection, snapshot codecs and configuration |
 | `src/config/community_graph/refresh.rs` | src | s | 4 fn | — | Refresh policy, affected-set expansion and read-side cache view |
 | `src/config/community_graph/types.rs` | src | s | 9 struct · 3 fn · 1 type · 7 const · 1 re-export | CommunityCacheMeta, CommunityEdge, CommunityGraphInput, CommunityId, CommunityMembership, CommunityProjection, CommunityQueryView, CommunityRefreshReport +1 | Community constants, error, ids, config and shared shells |
-| `src/config/context_spec.rs` | src | s | 1 struct · 2 enum · 8 fn · 9 const | ChatProjection, ContextSpec, MemoryProjection | The `ContextSpec` descriptor, its bounds, normalization, and structural validation |
+| `src/config/context_spec.rs` | src | s | 1 struct · 2 enum · 8 fn · 5 const | ChatProjection, ContextSpec, MemoryProjection | The `ContextSpec` descriptor, its bounds, normalization, and structural validation |
 | `src/config/retrieval_affect.rs` | src | s | 1 struct · 3 fn · 3 const | AffectRetrievalPolicy | Per-vault read-side affect retrieval policy |
 | `src/config/tagging.rs` | src | s | 2 struct · 1 enum · 9 fn · 7 const | TaggingMarkerConfig, TaggingMode, TaggingTraceHistory | Tagging marker configuration and identity validation |
 | `src/connector_key_status.rs` | src | s | 1 enum · 2 fn | ConnectorKeyStatus | Connector-key lifecycle status and its pinned wire strings |
-| `src/consent_bound.rs` | src | m | 7 struct · 5 enum · 49 fn · 4 const | ActionClass, ActionEnvelope, ActorBound, AudienceBound, BoundClass, BoundEnvelope, BoundSubject, ConsentDecision +4 | Consent bound vocabulary, normalization and containment |
+| `src/consent_bound.rs` | src | m | 7 struct · 5 enum · 50 fn · 5 const | ActionClass, ActionEnvelope, ActorBound, AudienceBound, BoundClass, BoundEnvelope, BoundSubject, ConsentDecision +4 | Consent bound vocabulary, normalization and containment |
 | `src/consolidation_evidence.rs` | src | s | 1 fn · 1 const | — | Domain-separated content hashes of consolidation source bytes |
 | `src/consolidation_reader.rs` | src | s | 1 enum · 1 fn · 1 const | ConsolidationReader | The readers that consolidate a claim: the vocabulary the engine's consolidation check and the store layer's… |
 | `src/consolidation_scope.rs` | src | s | 1 enum · 2 fn | DreamerConsolidationScope | Consolidation attempt-table lanes and their stored queue kinds |
@@ -240,7 +240,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/git_wire/execution_context.rs` | src | s | 2 enum · 4 fn | GitExecutionContext, GitExecutionEffect | Typed Git invocation context: repository selector and operation policy travel together |
 | `src/git_wire/execution_scope.rs` | src | s | 1 fn | — | Private Git execution view, derived only from an admitted repository profile |
 | `src/git_wire/failure.rs` | src | s | 1 struct · 1 enum · 9 fn · 1 type | GitWireFailure, GitWireFailureClass | Failure taxonomy and redaction: classified git failures plus the two error-constructor helpers |
-| `src/git_wire/hub_read.rs` | src | s | 4 fn | — | Fixed network-read profile for a private disposable hub object store |
+| `src/git_wire/hub_read.rs` | src | s | 5 fn | — | Fixed read profiles for a private disposable hub object store: the network profile, and the local-only… |
 | `src/git_wire/ids.rs` | src | s | 4 struct · 1 enum · 16 fn | GitOid, GitRefExpectation, GitRefName, GitRefPublication, ObservedGitRef | Validated git identity newtypes: ref names, object ids, observations, expectations, publications |
 | `src/git_wire/import_fetch.rs` | src | s | 1 mod | — | Store-layer modules of core `git_wire::import_fetch`; core re-exports each one at its old path |
 | `src/git_wire/import_fetch/profile.rs` | src | s | 1 struct · 5 fn · 1 const · 3 crate-vis | ImportProcessProfile | The fixed process profile of an outside import's Git legs (FIX 6871) |
@@ -509,8 +509,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/session_overlay/journal.rs` | src | m | 4 struct · 1 enum · 10 fn · 4 crate-vis | JournalEntry, JournalRole, JournalScope, PromotePlan, PublishedEntry | Typed session-overlay journal: entries, promotion plans, and replay |
 | `src/session_overlay/keyspace.rs` | src | m | 1 enum · 1 fn · 13 crate-vis | OverlayKeyspace | Overlay keyspace manifest: the 28 named databases and their mutations |
 | `src/session_overlay/mod.rs` | src | s | 7 mod · 5 re-export | — | In-memory session write-overlay substrate (ARCH-0052, D1) |
-| `src/session_overlay/overlay/held.rs` | src | s | 8 crate-vis | — | What the overlay's readers hold beyond its published state, counted in what the overlay retains (FIX 11083)… |
-| `src/session_overlay/overlay/lifecycle.rs` | src | m | 1 struct · 7 fn · 10 crate-vis | SessionOverlay | Overlay lifecycle state machine, leases, seal/rearm/close |
+| `src/session_overlay/overlay/held.rs` | src | s | 11 crate-vis | — | What the overlay's readers hold beyond its published state, counted in what the overlay retains (FIX 11083)… |
+| `src/session_overlay/overlay/lifecycle.rs` | src | m | 1 struct · 8 fn · 10 crate-vis | SessionOverlay | Overlay lifecycle state machine, leases, seal/rearm/close |
 | `src/session_overlay/overlay/mod.rs` | src | s | 1 fn · 8 mod · 3 re-export · 4 crate-vis | — | Ephemeral in-memory write overlay for one live session (ARCH-0052, D1) |
 | `src/session_overlay/overlay/publication.rs` | src | s | 1 fn | — | Visibility of a segment whose base writer has already committed |
 | `src/session_overlay/overlay/repo_projection.rs` | src | s | 2 fn | — | Room-staged media vectors a later mark makes stale (FIX 7608 S3F, FIX 10407): the room's cached vectors of a… |
@@ -518,7 +518,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/session_overlay/overlay/retire.rs` | src | s | 1 fn | — | Promoted-closure retirement reusing the store's index-key builders |
 | `src/session_overlay/overlay/retire_selected.rs` | src | m | 1 fn | — | Selected-artifact retirement for a natively saved subset (FIX 13687) |
 | `src/session_overlay/overlay/retrieval_erase.rs` | src | m | 1 struct · 1 fn | RecordMetaRows | A room's copies of a deleted or erased record's own retrieval rows (FIX 17382) |
-| `src/session_overlay/overlay/rows.rs` | src | m | 13 fn · 1 crate-vis | — | Row staging, preflight, budget checks, read probes |
+| `src/session_overlay/overlay/rows.rs` | src | m | 14 fn · 2 crate-vis | — | Row staging, preflight, budget checks, read probes |
 | `src/session_overlay/overlay/segment.rs` | src | m | 1 struct · 2 fn · 1 re-export · 3 crate-vis | TxnSegmentGuard | Txn segment install, leases, commit/apply guards |
 | `src/session_overlay/overlay/segment/base_retirement.rs` | src | s | 1 struct · 1 fn · 2 crate-vis | BaseRowRetirementGuard | Canonical reader-ledger writes that supersede rows in a sealed overlay |
 | `src/session_overlay/route.rs` | src | s | 1 struct · 1 enum · 7 fn | RouteTarget, SessionWriteRoute | Session write routing: which store a session write lands in per mode |
@@ -586,7 +586,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/write_envelope/channel_identity/mod.rs` | src | s | 1 fn · 1 mod | — | Channel-identity claim predicates and pinned wire keys |
 | `src/write_envelope/claim_body/codec.rs` | src | m | 2 fn | — | The pinned MessagePack codec for type-0 (CLAIM) bodies: the canonical encoder and the single fail-closed… |
 | `src/write_envelope/claim_body/evidence_refs.rs` | src | s | 2 struct · 1 enum · 3 fn · 1 const · 1 crate-vis | CursorSpan, EvidenceKind, EvidenceRef | Typed document citations a claim's evidence carries (ARCH-0032, FIX 904): the [`EvidenceRef`] vocabulary… |
-| `src/write_envelope/claim_body/lexical_query_hint.rs` | src | s | 1 struct · 4 fn · 4 const | LexicalQueryHintValue | Codec primitives for `core.lexical.query_hint` side records |
+| `src/write_envelope/claim_body/lexical_query_hint.rs` | src | s | 1 struct · 6 fn · 3 const | LexicalQueryHintValue | Codec primitives for `core.lexical.query_hint` side records |
 | `src/write_envelope/claim_body/made_by.rs` | src | s | 1 enum · 3 fn | MadeByClass | The provenance class a stored claim offers to readers |
 | `src/write_envelope/claim_body/mod.rs` | src | m | 4 struct · 1 enum · 5 fn · 10 const · 2 mod · 11 re-export · 1 crate-vis | ClaimBody, ClaimSubject, SessionClaimBundle, SessionClaimBundleClaim, SessionClaimBundleMember | The stored CLAIM body, its MessagePack codec, scope stamps and citations |
 | `src/write_envelope/claim_body/relationship_scope.rs` | src | s | 6 fn · 1 type | — | CLAIM relationship scope sets (ARCH-0022): the relationship key holds everything (`all`), a set of… |

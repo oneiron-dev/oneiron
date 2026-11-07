@@ -171,7 +171,11 @@ fn spawn_git_child(
         command.env("GIT_COMMON_DIR", common);
     }
     if let Some(root) = &process_env.hub_root {
-        super::hub_read::configure(&mut command, root)?;
+        if process_env.hub_local_only {
+            super::hub_read::configure_local(&mut command, root)?;
+        } else {
+            super::hub_read::configure(&mut command, root)?;
+        }
     }
     if let Some(egress) = &process_env.mirror_egress {
         super::mirror_push::configure(&mut command, egress);

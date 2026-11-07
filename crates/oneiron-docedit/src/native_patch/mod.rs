@@ -49,12 +49,14 @@ pub enum ChartFamily {
 }
 
 /// One series sequence: its name, its categories (`c:cat`, or `c:xVal` on a
-/// scatter plot), or its values (`c:val` or `c:yVal`).
+/// scatter plot), its values (`c:val` or `c:yVal`), or its bubble sizes
+/// (`c:bubbleSize`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
     Name,
     Categories,
     Values,
+    Size,
 }
 
 #[derive(Debug, Clone, Copy)]
