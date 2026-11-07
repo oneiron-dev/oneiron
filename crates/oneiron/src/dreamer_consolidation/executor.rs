@@ -12,6 +12,7 @@ mod failure;
 mod merge_resolution;
 mod partition_run;
 mod partition_window;
+mod root_bridge;
 
 use conflicts::{ConflictInput, ResolvedSets};
 pub use decisions::ConsolidationDecisions;
@@ -507,6 +508,9 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             return Err(invalid_consolidation(
                 "executor actor is not the queued Dreamer authority",
             ));
+        }
+        if attempt.status.payload.attempt_type == super::root_evidence::bridge::ATTEMPT {
+            return self.run_root_bridge(attempt, ctx).await;
         }
         if attempt.status.payload.attempt_type == super::nightly_merge::ATTEMPT {
             return self.run_nightly_merge(attempt, ctx).await;
