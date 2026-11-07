@@ -163,11 +163,7 @@ pub fn booking_snippet_links(
     }
     // The trusted host supplies its public-face URL, never the per-vault JSON
     // route. A query hint is added only after validating its exact capability.
-    if !valid_public_page_url(public_page_url, page_token)
-        || mask.event_type.0.trim().is_empty()
-        || mask.event_type.0.len() > 64
-        || visitor_tz.len() > 64
-    {
+    if !valid_public_page_url(public_page_url, page_token) || mask.event_type.0.trim().is_empty() {
         return Err(BookingError::Surface(
             "invalid public-face booking URL or hint".to_owned(),
         ));
@@ -234,9 +230,7 @@ pub fn booking_snippet_selection_from_url(
 /// engine's JSON model route. A query is a hint, never booking authority.
 #[must_use]
 pub fn parse_booking_snippet_query(query: &str) -> Option<BookingSnippetSelection> {
-    if query.len() > 512 {
-        return None;
-    }
+    // A query of any length (ABC row 67): a long event type's hint parses.
     let mut parts = query.split('&');
     let event_type = decode_component(parts.next()?.strip_prefix("event_type=")?)?;
     let start_utc = parts.next()?.strip_prefix("start_utc=")?.parse().ok()?;
@@ -244,8 +238,6 @@ pub fn parse_booking_snippet_query(query: &str) -> Option<BookingSnippetSelectio
     let visitor_tz = decode_component(parts.next()?.strip_prefix("visitor_tz=")?)?;
     if parts.next().is_some()
         || event_type.trim().is_empty()
-        || event_type.len() > 64
-        || visitor_tz.len() > 64
         || start_utc >= end_utc
         || utc_to_wall(start_utc, &visitor_tz).is_err()
     {

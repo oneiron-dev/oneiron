@@ -451,8 +451,15 @@ impl Vault {
         let mut ids = std::collections::BTreeSet::new();
         for hex in &input.scope.entity_ids {
             let holder = EntityId::from_hex(hex)?;
+            // The rows this erase retired with the holder join its scope:
+            // a relayed ask word and its result among them (FIX 7494).
             if input.sweep_queued_at.is_some() {
-                take_staged_sweep_refs_in_txn(self, wtxn, &holder, &mut sweep_extras)?;
+                ids.extend(take_staged_sweep_refs_in_txn(
+                    self,
+                    wtxn,
+                    &holder,
+                    &mut sweep_extras,
+                )?);
             }
             ids.insert(holder);
             ids.extend(

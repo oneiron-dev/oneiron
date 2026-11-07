@@ -124,3 +124,11 @@
     worker; drop closes its handshake so the worker can unwind at a checkpoint.
     Existing synchronous reads and memory-ledger admissions keep their defaults.
     This adds no wall timeout and cannot preempt a single opaque codec unit.
+
+  - Header copies (FIX 12746/12780, narrow slice): `src/parser/mod.rs`
+    admits the version String and binary-marker Vec before copying through
+    the reader's existing `DecodeAdmission`. Both metadata and full-document
+    readers propagate a refusal as `Error::DecodeAdmission`, not an invalid
+    header or an absent marker. Without admission, the same grammar, strict
+    header handling and binary-marker selection remain unchanged. This does
+    not cover all parser allocations or retained-document ownership.

@@ -408,6 +408,7 @@ fn a_whole_history_import_drains_one_round_of_turns_per_wake_pass() -> Result<()
             reserve_units: 100,
             now,
             host_scope: None,
+            destination_bound: None,
         };
         let cancellation = WakeCancellation::new();
         let mut future = std::pin::pin!(driver.run_wake_pass(input, &mut executor, &cancellation));

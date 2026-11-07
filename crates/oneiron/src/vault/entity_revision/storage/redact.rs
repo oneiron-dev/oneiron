@@ -320,6 +320,7 @@ pub(crate) fn redact_claim_value_fields_in_txn(
             &crate::store::legal_hold::HoldActor::owner(actor),
         )?;
         vault.put_claim_value_redaction_in_txn(txn, &id, &ClaimValueRedactionRow(rewritten))?;
+        drop_room_copies(vault, txn, &id);
     }
     let mut receipt = LocalClaimValueRedaction {
         record: id,
@@ -351,6 +352,7 @@ pub(crate) fn redact_claim_value_fields_in_txn(
             &[id],
             &crate::store::legal_hold::HoldActor::owner(actor),
         )?;
+        drop_room_copies(vault, txn, &id);
     }
     // Every rewritten historical row keeps its ordinary family/source-trust
     // admission too; a retained reserved proof is not made into a raw edit.
@@ -482,6 +484,18 @@ pub(crate) fn redact_claim_value_fields_in_txn(
     receipt.changed_history_rows = prepared.changed_rows;
     receipt.bindings = prepared.bindings;
     Ok(receipt)
+}
+
+/// Drops every room's copies of claim `id` the redaction rewrites in base:
+/// its text index rows, vector and phonetic codes, its media vectors and its
+/// revision rows (FIX 19487). A room that staged and promoted the claim keeps
+/// them byte-equal to base's pre-redaction rows, so without this it would
+/// serve the redacted value until it closes. A room with no entity row of
+/// the claim then reads base's redacted rows; a room that stages its own row
+/// of the claim keeps it, as on a delete. It runs in this writer, before it
+/// commits ([`crate::embed::drop_room_media_copies_in_txn`]).
+fn drop_room_copies(vault: &crate::Vault, txn: &heed::RwTxn<'_>, id: &EntityId) {
+    crate::embed::drop_room_media_copies_in_txn(&vault.store, txn, id);
 }
 
 fn check_family(body: &crate::claim::ClaimBody) -> Result<()> {
