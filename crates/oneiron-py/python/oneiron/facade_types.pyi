@@ -579,6 +579,8 @@ class HealthReviewReceipt(TypedDict):
     reviewer_revision: NotRequired[EntityId | None]
     dial: int
     measured: int
+    exact_dial: NotRequired[float | None]
+    exact_measured: NotRequired[float | None]
     diagnostics: list[EntityId]
     evidence: list[EntityId]
     observed_brief: NotRequired[HealthBriefPin | None]
@@ -648,6 +650,8 @@ class AgentHealthCard(TypedDict):
     window_to: int
     measured: int
     dial: int
+    exact_dial: NotRequired[float | None]
+    exact_measured: NotRequired[float | None]
     counter_evidence: list[AgentHealthCounter]
     agent_blocked: bool
     confession: NotRequired[EntityId | None]
