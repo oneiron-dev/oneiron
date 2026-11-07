@@ -4,16 +4,17 @@
 
 use rmpv::Value;
 
-use crate::Result;
+use crate::{ModelId, Result};
 
+use super::super::correction::ExecutorWireRepairs;
 use super::super::replay::PendingCodeStep;
 use super::super::support::{
     bool_value, decode_array, fixed_binary, invalid_code_run_replay, pinned_map, required,
-    u64_value,
+    str_value, u64_value,
 };
 use super::{decode_determinism, encode_determinism, encode_value};
 
-const CODE_RUN_PENDING_STEP_KEYS: [&str; 12] = [
+const CODE_RUN_PENDING_STEP_KEYS: [&str; 14] = [
     "step_seq",
     "bridge_start",
     "guest_calls",
@@ -23,9 +24,19 @@ const CODE_RUN_PENDING_STEP_KEYS: [&str; 12] = [
     "prepared_identity",
     "guest_abi",
     "request_hash",
+    "model",
+    "repairs",
     "determinism",
     "trailing_speech",
     "park_generation",
+];
+
+/// The keys of a pending step's [`ExecutorWireRepairs`].
+const CODE_RUN_PENDING_REPAIRS_KEYS: [&str; 4] = [
+    "trimmed_transport_whitespace",
+    "stripped_code_fence",
+    "stripped_exec_wrapper",
+    "discarded_console_blocks",
 ];
 
 const PENDING_STEP_DIGEST_DOMAIN: &[u8] = b"oneiron:code-run-pending-step:v1";
@@ -46,6 +57,8 @@ pub(super) fn encode_pending_step(step: &PendingCodeStep) -> Value {
                     .map_or(Value::Nil, |identity| Value::Binary(identity.to_vec())),
                 Value::Binary(step.guest_abi.to_vec()),
                 Value::Binary(step.request_hash.to_vec()),
+                Value::from(step.model.as_str()),
+                encode_repairs(step.repairs),
                 encode_determinism(&step.determinism),
                 Value::Boolean(step.trailing_speech),
                 Value::from(step.park_generation),
@@ -85,10 +98,55 @@ pub(super) fn decode_pending_step(value: Option<&Value>) -> Result<Option<Pendin
             required(fields[8], "missing pending request_hash")?,
             "pending request_hash",
         )?,
-        determinism: decode_determinism(required(fields[9], "missing pending determinism")?)?,
-        trailing_speech: bool_value(required(fields[10], "missing pending trailing_speech")?)?,
-        park_generation: u64_value(required(fields[11], "missing pending park_generation")?)?,
+        model: ModelId::new(str_value(required(fields[9], "missing pending model")?)?)
+            .map_err(|_| invalid_code_run_replay("pending model is not a model id"))?,
+        repairs: decode_repairs(required(fields[10], "missing pending repairs")?)?,
+        determinism: decode_determinism(required(fields[11], "missing pending determinism")?)?,
+        trailing_speech: bool_value(required(fields[12], "missing pending trailing_speech")?)?,
+        park_generation: u64_value(required(fields[13], "missing pending park_generation")?)?,
     }))
+}
+
+fn encode_repairs(repairs: ExecutorWireRepairs) -> Value {
+    Value::Map(
+        CODE_RUN_PENDING_REPAIRS_KEYS
+            .iter()
+            .map(|key| Value::from(*key))
+            .zip([
+                Value::Boolean(repairs.trimmed_transport_whitespace),
+                Value::Boolean(repairs.stripped_code_fence),
+                Value::Boolean(repairs.stripped_exec_wrapper),
+                Value::from(repairs.discarded_console_blocks),
+            ])
+            .collect(),
+    )
+}
+
+fn decode_repairs(value: &Value) -> Result<ExecutorWireRepairs> {
+    let fields = pinned_map(
+        value,
+        &CODE_RUN_PENDING_REPAIRS_KEYS,
+        "code-run pending repairs",
+    )?;
+    Ok(ExecutorWireRepairs {
+        trimmed_transport_whitespace: bool_value(required(
+            fields[0],
+            "missing pending trimmed_transport_whitespace",
+        )?)?,
+        stripped_code_fence: bool_value(required(
+            fields[1],
+            "missing pending stripped_code_fence",
+        )?)?,
+        stripped_exec_wrapper: bool_value(required(
+            fields[2],
+            "missing pending stripped_exec_wrapper",
+        )?)?,
+        discarded_console_blocks: u32::try_from(u64_value(required(
+            fields[3],
+            "missing pending discarded_console_blocks",
+        )?)?)
+        .map_err(|_| invalid_code_run_replay("pending discarded_console_blocks overflow"))?,
+    })
 }
 
 /// Checks a record's pending step against its `calls` bridge calls: its rows

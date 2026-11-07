@@ -34,12 +34,18 @@ pub(super) fn grant_allowed_replacement(
     // The prior as the grant left it, read in the grant's own transaction:
     // the handoff's later writes hold it to that revision.
     let mut closed_at = None;
+    let original = std::cell::Cell::new(None);
     match vault.grant_deferred_claim_auto_after(
         &replacement,
         run.now_ms,
         checker,
-        |txn| fence.validate_in_txn(vault, txn),
         |txn| {
+            fence.validate_in_txn(vault, txn)?;
+            original.set(fence.root_close_revision(vault, txn, prior)?);
+            Ok(())
+        },
+        |txn| {
+            fence.record_root_close_in_txn(vault, txn, prior, replacement, original.take())?;
             closed_at = RowRevision::read_in(vault, txn, &prior)?;
             Ok(())
         },
