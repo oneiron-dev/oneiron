@@ -438,9 +438,10 @@ impl Vault {
             )?;
         }
         // A model pack's install, or its replacement by another kind, may
-        // change the pack the vault follows; the change keeps the receipt it
-        // replaced and tells the owner, with its revert (FIX 5367, 5369).
+        // change the pack the vault follows; the version it replaced is kept
+        // for the revert the owner is told of (FIX 5367, 5369, 20192).
         if model_pack_touched {
+            self.keep_replaced_model_pack_in_txn(txn, prior.as_ref(), &receipt)?;
             self.note_active_model_pack_in_txn(
                 txn,
                 model_pack_before,

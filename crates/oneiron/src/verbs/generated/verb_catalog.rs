@@ -14252,7 +14252,7 @@ impl AgentVerb {
                 "Replaces the owner's model pack preference under the owner proof: auto_upgrade follows the latest pack; pinned names a season, pinned_pack one pack, installed and still served. A move of the active pack sends its change notice."
             }
             Self::VaultModelPackRevert => {
-                "Reverts a model pack change, its notice's one tap: pins the pack before it while the change is the vault's last and that pack is installed at its bytes and served; else answers why it cannot run now and changes nothing."
+                "Reverts a model pack change, its notice's one tap: pins the pack before it, installed or kept by a same-name update, while the change is the vault's last and that pack is served at its bytes; else answers why and changes nothing."
             }
             Self::VaultConnectorsWebUsage => {
                 "Reads the web connector's usage rows, newest first: provider, tool, key source, latency, cost and its basis, provider request id and outcome per call, with the summed cost. No query, URL or result text."
