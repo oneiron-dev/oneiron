@@ -1,9 +1,10 @@
 //! Single wake-pass assembly and engine delegation.
 use oneiron::attempt_queue::{AttemptLandingReserve, LANDING_RESERVE_PERCENT};
 use oneiron::dreamer_wake::ClaimAuthoringSelection;
+use oneiron::settings::ReadDestination;
 use oneiron::{
-    BudgetGuard, DreamerConsolidationScope, DreamerWakeDriver, RunWakePass, Vault,
-    WakeCancellation, WakePassDeadline, WakePassReport, WakeTrigger,
+    BudgetGuard, DreamerAttemptExecutor, DreamerConsolidationScope, DreamerWakeDriver, RunWakePass,
+    Vault, WakeCancellation, WakePassDeadline, WakePassReport, WakeTrigger,
 };
 use tokio::sync::watch;
 
@@ -150,6 +151,10 @@ pub(super) async fn run_one_pass<F: PassExecutorFactory>(
         }
     }
     let mut executors = executors.map_err(PassRunError::PreAdmission)?;
+    // Where every leg of this pass sends what it reads (FIX 12735): read
+    // here, once the executors are vended, from the very executors the pass
+    // runs, never from the factory before it vends them.
+    let destination_bound = pass_destination_bound(&executors);
     let input = RunWakePass {
         trigger,
         scope,
@@ -159,6 +164,7 @@ pub(super) async fn run_one_pass<F: PassExecutorFactory>(
         reserve_units: config.reserve_units,
         now: (*now_secs)(),
         host_scope: None,
+        destination_bound,
     };
     let now = input.now;
     let pass = driver.run_wake_pass_concurrent(input, &mut executors, cancel);
@@ -218,6 +224,25 @@ fn prepare_handoff(vault: &Vault) {
     if let Err(error) = oneiron::sync::residence::prepare_home_handoff(vault) {
         tracing::warn!(kind = ?error.kind(), "home handoff not prepared before the pass");
     }
+}
+
+/// The destination bound every one of `executors` states (FIX 12735), met
+/// into one: off this device when any is, toward every machine any names.
+/// `None` when any states none, or none was vended: the pass then lists for
+/// a destination nobody proved.
+fn pass_destination_bound<E: DreamerAttemptExecutor>(executors: &[E]) -> Option<ReadDestination> {
+    let mut bound: Option<ReadDestination> = None;
+    for executor in executors {
+        let stated = executor.destination_bound()?;
+        bound = Some(match bound {
+            Some(mut met) => {
+                met.meet(&stated);
+                met
+            }
+            None => stated,
+        });
+    }
+    bound
 }
 
 /// Whether the host's pause holds (FIX 6909): the pass starts no next unit.
