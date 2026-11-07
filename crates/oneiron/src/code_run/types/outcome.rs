@@ -75,6 +75,8 @@ pub enum SelfStoredReplyKind {
     InferenceDefaults,
     TaskAskSettled,
     TaskAskWorldPrivacy,
+    /// A wait-set reply with no program feedback to release separately.
+    TaskWaitSet,
     /// A direct team start's native receipt, not reply content.
     TeamStartReceipt,
 }

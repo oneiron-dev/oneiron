@@ -412,7 +412,11 @@ impl Vault {
         wake: &AttemptRecord,
         now: u64,
     ) -> Result<()> {
-        let live: Vec<(AttemptId, u32)> = match AttemptQueue::new(self).list_in_txn(txn) {
+        // Only the Dreamer runner's own rows can be agent work: they are read
+        // through the kind index, never the whole ledger (FIX 7870).
+        let live: Vec<(AttemptId, u32)> = match AttemptQueue::new(self)
+            .working_kind_rows_in_txn(txn, DREAMER_RUNNER_ATTEMPT_KIND)
+        {
             Ok(rows) => rows
                 .into_iter()
                 .filter(|record| {
