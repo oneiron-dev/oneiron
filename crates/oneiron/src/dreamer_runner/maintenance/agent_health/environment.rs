@@ -231,6 +231,7 @@ pub(super) fn fold_late(
     if card.outcome != AgentHealthOutcome::Open || !fold(card, sources, coach) {
         return false;
     }
+    card.source_rows = None;
     card.updated_at = now;
     true
 }
