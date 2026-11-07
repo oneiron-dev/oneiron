@@ -38,7 +38,7 @@ impl GeminiAccumulator {
             let count = |key| usage.get(key).and_then(Value::as_u64).unwrap_or(0);
             let text = count("candidatesTokenCount");
             let reasoning = count("thoughtsTokenCount");
-            let mut measured = LlmUsage {
+            self.usage = Some(LlmUsage {
                 input: LlmInputUsage {
                     total: count("promptTokenCount"),
                     cache_read: count("cachedContentTokenCount"),
@@ -51,16 +51,7 @@ impl GeminiAccumulator {
                 },
                 raw_provider: usage.clone(),
                 call_metadata: None,
-            };
-            measured.set_provider_token_measurement(oneiron::llm::ProviderTokenMeasurement {
-                input: usage.get("promptTokenCount").and_then(Value::as_u64),
-                output: usage
-                    .get("candidatesTokenCount")
-                    .and_then(Value::as_u64)
-                    .zip(usage.get("thoughtsTokenCount").and_then(Value::as_u64))
-                    .and_then(|(text, reasoning)| text.checked_add(reasoning)),
             });
-            self.usage = Some(measured);
         }
         // Candidates or a candidate of a shape this decoder cannot walk could
         // hold a tool request, so they fail the decode rather than read as

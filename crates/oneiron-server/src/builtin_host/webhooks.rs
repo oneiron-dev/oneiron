@@ -491,8 +491,7 @@ fn line_events(
         if chat.is_none() && user_id.is_none() {
             continue;
         }
-        let archive = archive_line_event(vault, destination, event_id, event, now)?;
-        let payload_ref = archive.payload_ref();
+        let payload_ref = archive_line_event(vault, destination, event_id, event, now)?;
         // A chat no identity is known to serve (one that routes per sender,
         // or one LINE named no sender in) is recorded for the owner's
         // optional bind offer; the message routes as it does either way.
@@ -506,7 +505,7 @@ fn line_events(
                 event_id,
                 event,
                 unserved,
-                Some(&archive),
+                Some(&payload_ref),
                 now,
             );
         }
@@ -543,13 +542,13 @@ fn archive_line_event(
     event_id: &str,
     event: &Value,
     now: u64,
-) -> oneiron::Result<oneiron::surface_event::ProviderEventArchiveReceipt> {
+) -> oneiron::Result<String> {
     let kept = serde_json::to_vec(&serde_json::json!({
         "destination": destination,
         "event": event,
     }))
     .map_err(|_| oneiron::Error::InvariantViolation("LINE event did not encode"))?;
-    vault.archive_provider_event_with_receipt(LINE_CHANNEL, event_id, &kept, now)
+    vault.archive_provider_event(LINE_CHANNEL, event_id, &kept, now)
 }
 
 /// Records a group or room the bot was seen in for the owner's optional
@@ -562,16 +561,13 @@ fn observe_line_chat(
     event_id: &str,
     event: &Value,
     chat: &LineChat,
-    archive: Option<&oneiron::surface_event::ProviderEventArchiveReceipt>,
+    payload_ref: Option<&str>,
     now: u64,
 ) {
-    let observed = match archive {
-        Some(archive) => {
-            vault.observe_line_chat_from_archive(destination, chat, archive, false, now)
-        }
-        None => archive_line_event(vault, destination, event_id, event, now).and_then(|archive| {
-            vault.observe_line_chat_from_archive(destination, chat, &archive, true, now)
-        }),
+    let observed = match payload_ref {
+        Some(payload_ref) => vault.observe_line_chat(destination, chat, payload_ref, now),
+        None => archive_line_event(vault, destination, event_id, event, now)
+            .and_then(|payload_ref| vault.observe_line_chat(destination, chat, &payload_ref, now)),
     };
     if let Err(err) = observed {
         tracing::warn!(error = %err, "a LINE chat observation was not recorded");

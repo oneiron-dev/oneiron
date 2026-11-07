@@ -58,8 +58,7 @@ pub enum RunEvent {
     Settled {
         lease: String,
         dispatched: bool,
-        /// Normalized token counters and typed provider measurements only;
-        /// raw provider payloads never enter a receipt.
+        /// Provider token counts only; raw provider payloads never enter a receipt.
         #[serde(skip_serializing_if = "Option::is_none")]
         usage: Option<RunTokenUsage>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -127,17 +126,13 @@ pub struct RunStreamUsage {
     pub bound_ms: u64,
 }
 
-/// One answered call's normalized billing counters, which can contain default
-/// zeros. Provider measurement presence is recorded separately. Cache passes
-/// and identity remain on the settlement's `inference_calls`.
+/// Token facts reported by one physical model call: its billing counters.
+/// Its cache passes and identity are on the settlement's `inference_calls`,
+/// never a second copy here.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RunTokenUsage {
     pub input: LlmInputUsage,
     pub output: LlmOutputUsage,
-    /// Parse-time provider measurements, independent of normalized counters
-    /// and budget charges. No complete physical-call or scope coverage implied.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub provider_token_measurement: Option<super::super::ProviderTokenMeasurement>,
 }
 
 /// What a settled call ran past its reservation (FIX 11481), in the
