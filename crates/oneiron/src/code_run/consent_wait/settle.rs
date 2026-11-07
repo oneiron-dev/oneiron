@@ -213,10 +213,13 @@ fn answer_in_txn(
     {
         return Err(Error::ConcurrentWrite("code consent wait target changed"));
     }
+    let remember_asking_lineage =
+        input.choice == CodeConsentChoice::ApproveAndStopAsking && input.remember_asking_lineage;
     if let Some(first) = &row.answer {
         let same = first.choice == input.choice
             && first.word_ref == input.word_ref
-            && first.answerer == answerer;
+            && first.answerer == answerer
+            && first.remember_asking_lineage == remember_asking_lineage;
         return Ok(Answered {
             drive: false,
             already_answered: !same,
@@ -266,22 +269,50 @@ fn answer_in_txn(
                 .ok_or(Error::ConcurrentWrite(
                     "this code consent wait offers no stop asking",
                 ))?;
-            let revision = crate::connector_key::stop_asking_tool_in_txn(
-                vault,
+            let call = row
+                .binding
+                .pending
+                .connector_call()
+                .ok_or(Error::ConcurrentWrite(
+                    "this code consent wait binds no connector call",
+                ))?;
+            let key = crate::connector_key::read_key_for_pack_in_txn(vault, txn, &call.key_ref)?
+                .ok_or(Error::EntityNotFound)?;
+            let remember_context = call.remember_context.ok_or(Error::ConcurrentWrite(
+                "this code consent wait binds no remember context",
+            ))?;
+            if remember_asking_lineage && remember_context.lineage.is_none() {
+                return Err(Error::InvalidConfig(
+                    "asking-lineage remember needs a delegation lineage".to_owned(),
+                ));
+            }
+            let scoped_call = crate::consent::tool_scope::ScopedMcpCallContext {
+                server: call.server.clone(),
+                tool: call.tool.clone(),
+                resolved_endpoint: call.endpoint.clone(),
+                payload_data_class: call.payload_data_class,
+            };
+            let (_, bound) = crate::connector_key::connector_tool_remember_bound_in_txn(
+                &vault.store,
                 txn,
-                owner,
-                offer.slate_ref,
-                offer.slate_revision,
-                &offer.tool,
-            )?;
+                &call.key_ref,
+                &key,
+                &scoped_call,
+                remember_context,
+                remember_asking_lineage,
+            )?
+            .filter(|(settings_act, _)| *settings_act == offer.settings_act)
+            .ok_or(Error::ConcurrentWrite("connector tool setting changed"))?;
+            let remembered = vault.create_standing_grant_in_txn(txn, owner, bound)?;
             (
                 vault.approve_once_in_txn(txn, owner, digest)?,
-                Some((offer.slate_ref, revision)),
+                remembered.grant_ref(),
             )
         }
     };
     row.answer = Some(CodeConsentAnswerStamp {
         choice: input.choice,
+        remember_asking_lineage,
         word_ref: input.word_ref,
         answerer,
         principal_ref: owner.principal_ref_in_txn(vault, txn)?.to_owned(),
@@ -471,7 +502,8 @@ pub(crate) fn settle_code_consent_wait_listing_in_txn(
 /// Settles `row`'s open wait as `settled` for `reasons`, with `reply`, the
 /// reply its parked run is delivered beside `rows`, in the caller's writer:
 /// the settlement, its receipt in the consent Gate family, and the delivery
-/// that wakes the run, in one commit. Every held effect kind settles here.
+/// that wakes the run, in one commit. Every held effect kind settles here,
+/// its reply's origins unknown (FIX 7083).
 pub(super) fn settle_with_reply_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -483,7 +515,7 @@ pub(super) fn settle_with_reply_in_txn(
 ) -> Result<bool> {
     let wait_id = row.binding.wait_id;
     let now = now_ms();
-    crate::code_run::deliver_wait_listing_in_txn(vault, txn, wait_id, reply, rows, now)?;
+    crate::code_run::deliver_wait_listing_in_txn(vault, txn, wait_id, reply, rows, None, now)?;
     let delivered = crate::code_run::settled_wait_reply_in_txn(vault, txn, wait_id)?.ok_or(
         Error::InvariantViolation("a settled code consent wait kept no reply"),
     )?;
@@ -659,6 +691,14 @@ fn view_of(
         result_handle: consumed.map(|consumed| consumed.result_handle.clone()),
         consumed_at_ms: consumed.map(|consumed| consumed.consumed_at_ms),
         consumption_links: ledger.consumed,
+        remember_asking_lineage: row.answer.as_ref().and_then(|answer| {
+            (answer.choice == CodeConsentChoice::ApproveAndStopAsking)
+                .then_some(answer.remember_asking_lineage)
+        }),
+        remembered: row
+            .answer
+            .as_ref()
+            .and_then(|answer| answer.remembered.clone()),
         already_answered,
     }
 }

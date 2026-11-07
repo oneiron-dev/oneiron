@@ -2,19 +2,23 @@
 //! engine stamp's actor and every authorship record's, split out and put
 //! back through the shared projection
 //! ([`crate::store::checkpoint_payload::loro`]). Every other operation of
-//! the NOTE schema names no one: its identity and title, its body text, its
-//! pins and the deletes of its maps. An operation outside that schema, or a
-//! message that is no engine stamp, keeps its whole group under the
-//! vault-wide seal. A stamp or authorship record whose actor did not open
-//! reads as no one, never as an actor some binding of its peer names, and
-//! the record stays (Engine R2).
+//! the NOTE schema names no one: its identity and editable fields in meta,
+//! its body text, its pins in meta's nested pins map and the deletes of its
+//! maps (FIX 7784). An operation outside that schema, or a message that is
+//! no engine stamp, keeps its whole group under the vault-wide seal. A
+//! stamp or authorship record whose actor did not open reads as no one,
+//! never as an actor some binding of its peer names, and the record stays
+//! (Engine R2).
 //!
 //! A live document is its slot's group: its full snapshot, then its pending
-//! updates. A proposal document is a group of its own; one whose fork no one
-//! decided stays under the vault-wide seal, as its fork record goes when its
-//! opener does not open (Engine and lead pick), and so does one that is no
-//! value-only proposal (a switched-away head kept by a run review). A
-//! shallow or state-only snapshot stays there too (Engine R3).
+//! updates. A proposal document is a group of its own, pins and authorship
+//! records included, as a NOTE slot's document splits (a native proposal, or
+//! a switched-away head a run review kept; FIX 6523). The quote a pin of an
+//! erased record carries leaves it on restore, as it leaves the live
+//! document (FIX 18270). One whose fork no one decided stays under the
+//! vault-wide seal unless its fork record split beside it, as that record
+//! goes when its opener does not open (Engine and lead pick). A shallow or
+//! state-only snapshot stays there too (Engine R3).
 
 use ::loro::{
     ContainerID, ContainerType, EncodedBlobMode, JsonMapOp, JsonOp, JsonOpContent, JsonTextOp,
@@ -27,6 +31,7 @@ use super::super::side_keys::HexPair;
 use super::super::{NoteActor, NoteAuthorship, NotePin};
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::ports::is_metadata_field;
 use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::side_table::SideKey;
 use crate::store::checkpoint_payload::loro::{
@@ -50,10 +55,12 @@ const LIVE_ROUND_TRIP: RoundTripPolicy = RoundTripPolicy::HistoryEquivalent;
 const PROPOSAL_ROUND_TRIP: RoundTripPolicy = RoundTripPolicy::HistoryEquivalent;
 
 /// The root containers of a NOTE document.
-const META: &str = "note";
+const META: &str = "meta";
 const BODY: &str = "body";
-const PINS: &str = "pins";
 const AUTHORSHIP: &str = "authorship";
+/// meta's reserved identity key, and its key of the nested pins map.
+const ID: &str = "id";
+const PINS: &str = "pins";
 
 /// The engine stamp of an admitted operation: `oneiron.note/v1 actor=<id>`.
 const STAMP: &str = "oneiron.note/v1 actor=";
@@ -76,10 +83,9 @@ const AUTHORSHIP_UNREAD: &str = "a NOTE authorship record that does not spell ba
 const PIN_UNREAD: &str = "a NOTE pin that does not read";
 /// An operation outside the NOTE document's schema.
 const OUTSIDE_SCHEMA: &str = "a NOTE document operation outside its schema";
-/// A proposal whose fork no one decided: its record goes with its opener.
-const PENDING_PROPOSAL: &str = "a NOTE proposal no one decided, whose fork goes with its opener";
-/// A proposal document that holds pins or authorship: no value-only one.
-const NOT_VALUE_ONLY: &str = "a NOTE proposal document that is no value-only proposal";
+/// A proposal whose fork no one decided, and whose fork record did not
+/// split beside it: their restore could not drop the two together.
+const PENDING_PROPOSAL: &str = "a NOTE proposal no one decided, whose fork record is not beside it";
 
 /// A NOTE document's actor carriers.
 struct NoteActors;
@@ -118,11 +124,19 @@ impl LoroActorCodec for NoteActors {
     ) -> Split<LoroValue> {
         if is_root(container, META, ContainerType::Map) {
             return match (key, value) {
-                ("id" | "title", LoroValue::String(_)) => Ok(SplitValue::kept(value.clone())),
+                (ID, LoroValue::String(_)) => Ok(SplitValue::kept(value.clone())),
+                (PINS, LoroValue::Container(pins))
+                    if pins.container_type() == ContainerType::Map =>
+                {
+                    Ok(SplitValue::kept(value.clone()))
+                }
+                (field, LoroValue::Binary(_)) if field != PINS && is_metadata_field(field) => {
+                    Ok(SplitValue::kept(value.clone()))
+                }
                 _ => Err(OUTSIDE_SCHEMA),
             };
         }
-        if is_root(container, PINS, ContainerType::Map) {
+        if is_pins(container) {
             let LoroValue::String(pin) = value else {
                 return Err(PIN_UNREAD);
             };
@@ -169,7 +183,7 @@ impl LoroActorCodec for NoteActors {
     }
 
     fn keep_op(&self, op: &JsonOp) -> std::result::Result<(), &'static str> {
-        let maps = [META, PINS, AUTHORSHIP];
+        let maps = [META, AUTHORSHIP];
         match &op.content {
             JsonOpContent::Text(JsonTextOp::Insert { .. } | JsonTextOp::Delete { .. })
                 if is_root(&op.container, BODY, ContainerType::Text) =>
@@ -177,9 +191,10 @@ impl LoroActorCodec for NoteActors {
                 Ok(())
             }
             JsonOpContent::Map(JsonMapOp::Delete { .. })
-                if maps
-                    .iter()
-                    .any(|name| is_root(&op.container, name, ContainerType::Map)) =>
+                if is_pins(&op.container)
+                    || maps
+                        .iter()
+                        .any(|name| is_root(&op.container, name, ContainerType::Map)) =>
             {
                 Ok(())
             }
@@ -224,6 +239,19 @@ fn is_root(container: &ContainerID, name: &str, kind: ContainerType) -> bool {
     }
 }
 
+/// Whether `container` is meta's nested pins map. meta takes no other child
+/// container (`split_map_insert`), so every map container a NOTE's history
+/// creates is that one.
+fn is_pins(container: &ContainerID) -> bool {
+    matches!(
+        container,
+        ContainerID::Normal {
+            container_type: ContainerType::Map,
+            ..
+        }
+    )
+}
+
 /// A stored authorship record under `key`, when it reads, names the
 /// operation its key does and spells its own bytes back.
 fn stored_authorship(key: &str, value: &LoroValue) -> Option<NoteAuthorship> {
@@ -250,7 +278,7 @@ fn group_doc(rows: &[&[u8]]) -> Option<LoroDoc> {
 
 /// The NOTE a document names as its own identity.
 fn named_note(doc: &LoroDoc) -> Option<EntityId> {
-    match doc.get_map(META).get("id")? {
+    match doc.get_map(META).get(ID)? {
         ValueOrContainer::Value(LoroValue::String(id)) => hex_id(id.as_str()),
         _ => None,
     }
@@ -321,24 +349,29 @@ fn full_snapshot(bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// One NOTE proposal document, under its NOTE: a decided or unforked full
-/// value-only proposal splits as a group of its own, kept exactly as stored
-/// when its history names no one; a shallow one, an undecided fork's and
-/// one that is no value-only proposal stay under the vault-wide seal, named
-/// with the NOTE.
+/// One NOTE proposal document, under its NOTE: a full proposal splits as a
+/// group of its own, its pins and authorship records included (FIX 6523).
+/// A decided or unforked one is kept exactly as stored when its history
+/// names no one. An undecided fork's always goes through its join, which
+/// drops it with its fork record when the opener did not open (FIX 6523), so
+/// it splits only when `undecided` says that record split beside it. A
+/// shallow one and an undecided one whose record is not beside it stay under
+/// the vault-wide seal, named with the NOTE.
 pub(super) fn capture_proposal(
     out: &mut Captured,
     note: EntityId,
-    undecided: bool,
+    undecided: Option<bool>,
     row: TypedRow<HexPair, Vec<u8>>,
 ) {
     let owner = OwnerRef::entity(&note);
-    let shape = proposal_shape(note, undecided, &row.bytes);
+    let shape = proposal_shape(note, undecided == Some(false), &row.bytes);
     let outcome = shape.and_then(|()| {
         shared::split_loro(&[row.bytes.as_slice()], &NoteActors, PROPOSAL_ROUND_TRIP)
     });
     match outcome.map(|mut split| split.pop()) {
-        Ok(Some(split)) if split.atoms.is_empty() => out.exact(owner, row.at, row.bytes),
+        Ok(Some(split)) if split.atoms.is_empty() && undecided.is_none() => {
+            out.exact(owner, row.at, row.bytes);
+        }
         Ok(Some(split)) => shared::place(out, owner, row.at, split),
         Ok(None) => out.unclassified(row.at, Some(owner), Unresolved::Undecodable),
         Err(reason) => out.unclassified(row.at, Some(owner), reason),
@@ -346,28 +379,25 @@ pub(super) fn capture_proposal(
 }
 
 /// Whether a proposal document is one a split takes: a full history, not an
-/// undecided fork's, `note`'s document, and value-only (no pins, no
-/// authorship), as a proposal's contract holds it.
+/// undecided fork's whose record is not beside it (`apart`), and `note`'s
+/// document, which reads as one, its pins and authorship records included.
 fn proposal_shape(
     note: EntityId,
-    undecided: bool,
+    apart: bool,
     snapshot: &[u8],
 ) -> std::result::Result<(), Unresolved> {
     let doc = group_doc(&[snapshot]).ok_or(Unresolved::Undecodable)?;
     if doc.is_shallow() {
         return Err(Unresolved::ActorSplit(SHALLOW));
     }
-    if undecided {
+    if apart {
         return Err(Unresolved::ActorSplit(PENDING_PROPOSAL));
     }
     if named_note(&doc) != Some(note) {
         return Err(Unresolved::SharedOwners);
     }
     let doc = NoteDocument::from_loro(note, doc).map_err(|_| Unresolved::Undecodable)?;
-    let view = doc.view().map_err(|_| Unresolved::Undecodable)?;
-    if !view.pins.is_empty() || !view.authorship.is_empty() {
-        return Err(Unresolved::ActorSplit(NOT_VALUE_ONLY));
-    }
+    doc.view().map_err(|_| Unresolved::Undecodable)?;
     Ok(())
 }
 
@@ -380,15 +410,15 @@ fn proposal_note(at: &RowLocator) -> Result<EntityId> {
     Ok(key.0.0)
 }
 
-/// Refuses a proposal row unless it is a full value-only document of the
-/// NOTE its key leads with.
+/// Refuses a proposal row unless it is a full document of the NOTE its key
+/// leads with.
 pub(super) fn check_proposal(at: &RowLocator, bytes: &[u8]) -> Result<()> {
     full_snapshot(bytes)?;
     proposal_shape(proposal_note(at)?, false, bytes).map_err(|_| rows::bad_part())
 }
 
 /// A proposal document rebuilt from its content and the actors that
-/// opened: a full value-only document of the NOTE its key leads with.
+/// opened: a full document of the NOTE its key leads with.
 pub(super) fn join_proposal(
     at: &RowLocator,
     content: &[u8],

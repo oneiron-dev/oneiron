@@ -39,7 +39,10 @@ use super::response_owners::{
 use super::spawn_erase::fence_spawn_targets_in_txn;
 use super::wait_holders::{erase_actor_wait_holds_in_txn, wait_holder_runs_in_txn};
 use crate::engine_executor::holds_reply_content;
-use crate::provenance::body::{owned_body_in_txn, release_body_in_txn};
+use crate::ports::{DeletionMarker, TombstoneStoreRead};
+use crate::provenance::body::{
+    owned_bodies_in_txn, owned_body_in_txn, release_body_in_txn, release_owner_bodies_in_txn,
+};
 use crate::side_table::{Erased, SideKey};
 use crate::store::Store;
 use crate::{EntityId, Result, Vault};
@@ -54,9 +57,11 @@ type Occurrence = (EntityId, String, String);
 /// is put back in its erased form, past the side-row wall, the reply bodies
 /// it names are released, and its owner row says Erased; then the wait
 /// replies those runs were delivered take their erased form (FIX 5718 part
-/// 2). A record that does not decode keeps its row as it is, and erasing an
-/// erased one again changes nothing. Nothing retires here: a soft delete
-/// runs this too.
+/// 2). A record that does not decode names no outputs: every body its run
+/// holds is released, and its row keeps none of its bytes, written over
+/// with the erased-unreadable mark, which still decodes as no record, so
+/// nothing replays from it (FIX 6533). Erasing an erased one again changes
+/// nothing. Nothing retires here: a soft delete runs this too.
 ///
 /// # Errors
 ///
@@ -73,8 +78,13 @@ pub(crate) fn erase_actor_responses_in_txn(
     let records = actor_records_in_txn(store, wtxn, actor, &scope)?;
     for (&record_id, &run) in &records {
         if let Some(record) = REPLAY_RECORDS.get_lenient(store, wtxn, &record_id)? {
-            release_reply_outputs_in_txn(store, wtxn, record.run_id, &record.outputs)?;
+            release_reply_outputs_in_txn(store, wtxn, run, &record)?;
             REPLAY_RECORDS.put_erased(store, wtxn, &record_id, Erased::of(record)?)?;
+        } else if unreadable_record_in_txn(store, wtxn, &record_id)? {
+            // Its bodies are held by its owner row's run (a decoded
+            // record's `run_id`), which need not be the replay key.
+            release_owner_bodies_in_txn(store, wtxn, &run)?;
+            REPLAY_RECORDS.put_erased_unreadable(store, wtxn, &record_id)?;
         }
         mark_response_erased_in_txn(store, wtxn, record_id, run)?;
     }
@@ -116,7 +126,7 @@ pub(crate) fn fence_replay_in_txn<'r>(
         return Ok(record);
     }
     let run = owner.map_or(record.run_id, |owner| owner.run);
-    release_reply_outputs_in_txn(&vault.store, wtxn, record.run_id, &record.outputs)?;
+    release_reply_outputs_in_txn(&vault.store, wtxn, run, &record)?;
     erase_replies(record.to_mut())?;
     mark_response_erased_in_txn(&vault.store, wtxn, record.run_id, run)?;
     Ok(record)
@@ -155,8 +165,9 @@ pub(crate) fn response_erased_in_txn(
 /// replies are `actor`'s, and the request, start and fork-answer bodies of
 /// `actor`'s capsules, are released, each with its own marks, and the
 /// instance of each whose last holder this releases retires; one another
-/// holder keeps owes its retirement to that holder's release. An id whose
-/// entity is no actor scans nothing.
+/// holder keeps owes its retirement to that holder's release. A record that
+/// does not decode names no outputs, so every body its run holds goes so
+/// (FIX 6533). An id whose entity is no actor scans nothing.
 ///
 /// # Errors
 ///
@@ -178,9 +189,15 @@ pub(crate) fn retire_actor_responses_in_txn(
         .into_iter()
         .map(|(run, body, path)| (run, path, CodeRunRawOutput::of_ref(body).handle))
         .collect();
-    for (record_id, _) in actor_records_in_txn(store, wtxn, actor, &runs)? {
+    let mut unreadable = Vec::new();
+    for (record_id, run) in actor_records_in_txn(store, wtxn, actor, &runs)? {
         if let Some(record) = REPLAY_RECORDS.get_lenient(store, wtxn, &record_id)? {
-            held.extend(reply_occurrences(record.run_id, &record.outputs));
+            held.extend(reply_occurrences(run, &record));
+            release_unpublished_outputs_in_txn(store, wtxn, run)?;
+        } else if unreadable_record_in_txn(store, wtxn, &record_id)? {
+            // Its bodies are held by its owner row's run (a decoded
+            // record's `run_id`), which need not be the replay key.
+            unreadable.push(run);
         }
     }
     let mut digests: BTreeMap<EntityId, Vec<[u8; 32]>> = BTreeMap::new();
@@ -189,10 +206,31 @@ pub(crate) fn retire_actor_responses_in_txn(
             digests.entry(owner).or_default().push(digest);
         }
     }
+    for run in unreadable {
+        for body in owned_bodies_in_txn(store, wtxn, &run)? {
+            let digest = body.state.held().map(|held| held.blake3);
+            release_body_in_txn(store, wtxn, &run, &body.occurrence)?;
+            if let Some(digest) = digest {
+                digests.entry(run).or_default().push(digest);
+            }
+        }
+    }
     for (owner, released) in digests {
         crate::store::erase_bodies_in_txn(store, wtxn, &owner, &released)?;
     }
     Ok(())
+}
+
+/// Whether run `record`'s replay row is stored but does not decode (FIX
+/// 6533). The erased-unreadable mark an erase already wrote counts too:
+/// erasing it again changes nothing.
+fn unreadable_record_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    record: &EntityId,
+) -> Result<bool> {
+    Ok(REPLAY_RECORDS.contains(store, txn, record)?
+        && REPLAY_RECORDS.get_lenient(store, txn, record)?.is_none())
 }
 
 /// Every replay record whose replies are `actor`'s, by its run id, with the
@@ -241,26 +279,29 @@ fn actor_records_in_txn(
     Ok(records)
 }
 
-/// The occurrences run `owner` holds of those of `outputs` that hold reply
-/// content.
-fn reply_occurrences(owner: EntityId, outputs: &[CodeRunRawOutput]) -> Vec<Occurrence> {
-    outputs
+/// The record's owned reply occurrences. An exact canonical native receipt
+/// keeps its original standing independently of its shared content hash.
+fn reply_occurrences(owner: EntityId, record: &CodeRunReplayRecord) -> Vec<Occurrence> {
+    record
+        .outputs
         .iter()
-        .filter(|output| holds_reply_content(&output.path))
+        .filter(|output| {
+            holds_reply_content(&output.path) && !record.output_is_retained_receipt(output)
+        })
         .map(|output| (owner, output.path.clone(), output.handle.clone()))
         .collect()
 }
 
-/// Releases run `owner`'s occurrence of each of `outputs` that holds reply
-/// content, with that occurrence's own taint and secret marks and no
-/// other's.
+/// Releases the record's reply occurrences with each occurrence's own taint
+/// and secret marks, never another holder's or a retained receipt's.
 fn release_reply_outputs_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     owner: EntityId,
-    outputs: &[CodeRunRawOutput],
+    record: &CodeRunReplayRecord,
 ) -> Result<()> {
-    for (owner, path, handle) in reply_occurrences(owner, outputs) {
+    release_unpublished_outputs_in_txn(store, wtxn, owner)?;
+    for (owner, path, handle) in reply_occurrences(owner, record) {
         release_occurrence_in_txn(store, wtxn, owner, path, handle)?;
     }
     Ok(())
@@ -314,6 +355,8 @@ pub(crate) fn retire_sourced_code_outputs_in_txn(
     let at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     let mut released: BTreeMap<EntityId, BTreeSet<[u8; 32]>> = BTreeMap::new();
     for (id, record) in records {
+        let run = response_owner_in_txn(store, wtxn, &record.run_id)?
+            .map_or(record.run_id, |owner| owner.run);
         let mut paths = BTreeSet::new();
         for output in &record.outputs {
             if !output
@@ -323,16 +366,16 @@ pub(crate) fn retire_sourced_code_outputs_in_txn(
             {
                 continue;
             }
-            let occurrence = ResultOccurrence::owned(record.run_id, &output.path)?;
+            let occurrence = ResultOccurrence::owned(run, &output.path)?;
             crate::ports::stage_stale_mark_in_txn(store, wtxn, &occurrence.id(), at)?;
             if let Some(digest) = release_occurrence_in_txn(
                 store,
                 wtxn,
-                record.run_id,
+                run,
                 output.path.clone(),
                 output.handle.clone(),
             )? {
-                released.entry(record.run_id).or_default().insert(digest);
+                released.entry(run).or_default().insert(digest);
             }
             paths.insert(output.path.clone());
         }
@@ -348,14 +391,24 @@ pub(crate) fn retire_sourced_code_outputs_in_txn(
 
 /// A later replay write cannot republish a retired occurrence's preview or
 /// hold. The marker belongs to the occurrence, not its shared content hash.
+///
+/// FIX 9348: an occurrence can be captured after a source in its frozen
+/// input rows took the hard-delete marker. That erase's writer never saw
+/// it, so it has no stale mark yet. Here it gets that mark, and it retires on the same
+/// path as an occurrence the erase did see. Other outputs, and other
+/// holders of the same bytes, are unchanged.
 fn fence_sourced_outputs_in_txn<'r>(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     mut record: Cow<'r, CodeRunReplayRecord>,
 ) -> Result<Cow<'r, CodeRunReplayRecord>> {
+    let run = response_owner_in_txn(store, wtxn, &record.run_id)?
+        .map_or(record.run_id, |owner| owner.run);
     let mut withdrawn = Vec::new();
+    let mut late = Vec::new();
+    let mut sources = BTreeMap::new();
     for (index, output) in record.outputs.iter().enumerate() {
-        let occurrence = ResultOccurrence::owned(record.run_id, &output.path)?;
+        let occurrence = ResultOccurrence::owned(run, &output.path)?;
         if !crate::ports::body_readable_in_txn(
             store,
             wtxn,
@@ -364,31 +417,62 @@ fn fence_sourced_outputs_in_txn<'r>(
             crate::ports::BodyStale::Withdrawn,
         )? {
             withdrawn.push(index);
+        } else if source_hard_delete_marked_in_txn(store, wtxn, output, &mut sources)? {
+            late.push(occurrence.id());
+            withdrawn.push(index);
         }
     }
     if withdrawn.is_empty() {
         return Ok(record);
     }
+    if !late.is_empty() {
+        let at = crate::ports::recorded_at_in_txn(store, wtxn)?;
+        for occurrence in &late {
+            crate::ports::stage_stale_mark_in_txn(store, wtxn, occurrence, at)?;
+        }
+    }
     let record_mut = record.to_mut();
     let mut released: BTreeMap<EntityId, BTreeSet<[u8; 32]>> = BTreeMap::new();
     for index in withdrawn {
         let output = &mut record_mut.outputs[index];
-        if let Some(digest) = release_occurrence_in_txn(
-            store,
-            wtxn,
-            record_mut.run_id,
-            output.path.clone(),
-            output.handle.clone(),
-        )? {
-            released
-                .entry(record_mut.run_id)
-                .or_default()
-                .insert(digest);
+        if let Some(digest) =
+            release_occurrence_in_txn(store, wtxn, run, output.path.clone(), output.handle.clone())?
+        {
+            released.entry(run).or_default().insert(digest);
         }
         output.preview.text = CODE_RUN_OUTPUT_PREVIEW_ERASED.to_owned();
     }
     retire_released_outputs_in_txn(store, wtxn, released)?;
     Ok(record)
+}
+
+/// Whether a row in `output`'s frozen input rows carries the native
+/// hard-delete marker (FIX 9348). Only that marker counts, and only its
+/// presence is read. It marks the hard delete, not that every purge step
+/// has finished. A soft delete, a missing row and a pending erasure
+/// prove nothing; the pending erasure meets this output in its own writer.
+/// Unknown input rows name no source. `sources` keeps each row's answer
+/// for the rest of the record.
+fn source_hard_delete_marked_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    output: &CodeRunRawOutput,
+    sources: &mut BTreeMap<EntityId, bool>,
+) -> Result<bool> {
+    for row in output.input_rows.iter().flatten() {
+        let erased = match sources.get(row) {
+            Some(&erased) => erased,
+            None => {
+                let erased = store.port_deletion_marked(txn, DeletionMarker::HardDelete, row)?;
+                sources.insert(*row, erased);
+                erased
+            }
+        };
+        if erased {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn retire_released_outputs_in_txn(
@@ -399,6 +483,23 @@ fn retire_released_outputs_in_txn(
     for (owner, digests) in released {
         let digests: Vec<_> = digests.into_iter().collect();
         crate::store::erase_bodies_in_txn(store, wtxn, &owner, &digests)?;
+    }
+    Ok(())
+}
+
+/// Removes byte-free, unpublished occurrences when the run's replies are erased.
+fn release_unpublished_outputs_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    owner: EntityId,
+) -> Result<()> {
+    for body in crate::provenance::body::owned_bodies_in_txn(store, wtxn, &owner)? {
+        if matches!(
+            body.state,
+            crate::store::body_descriptor::BodyState::Incomplete { retained: None }
+        ) {
+            release_body_in_txn(store, wtxn, &owner, &body.occurrence)?;
+        }
     }
     Ok(())
 }

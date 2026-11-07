@@ -26,6 +26,7 @@ impl FacadeApiError {
                     resets_at: Vec::new(),
                     reason_codes: Vec::new(),
                     legal_hold: None,
+                    room_join_hold: None,
                     program_steps: Vec::new(),
                 },
                 narrowing: None,
@@ -108,6 +109,9 @@ impl From<MemoryError> for FacadeApiError {
             // A verb hook asked first: accepted, not run, and the body names
             // the ask a retry with the same invocation waits on.
             MEMORY_CODE_PENDING_ASK => StatusCode::ACCEPTED,
+            // A budget window paced the call and the engine holds it in its
+            // caller's line (FIX 8753): accepted, run on its turn.
+            oneiron::memory::MEMORY_CODE_PACED_HOLD => StatusCode::ACCEPTED,
             // The model the request needs did not answer: not the caller's
             // fault, and not this server's to stand in for.
             MEMORY_CODE_MODEL_UNAVAILABLE => StatusCode::SERVICE_UNAVAILABLE,
@@ -206,6 +210,7 @@ impl From<MemoryError> for FacadeApiError {
                     resets_at: error.resets_at,
                     reason_codes: error.reason_codes,
                     legal_hold: error.legal_hold,
+                    room_join_hold: error.room_join_hold,
                     program_steps: Vec::new(),
                 },
                 narrowing: error.read_receipt,
@@ -221,6 +226,7 @@ impl From<MemoryError> for FacadeApiError {
 impl From<ApiError> for FacadeApiError {
     fn from(error: ApiError) -> Self {
         let legal_hold = error.legal_hold().cloned().map(Box::new);
+        let room_join_hold = error.room_join_hold().cloned().map(Box::new);
         let mut refusal = Self::new(
             error.status(),
             error.code().as_str(),
@@ -228,22 +234,26 @@ impl From<ApiError> for FacadeApiError {
             error.suggestions().to_vec(),
         );
         refusal.body.error.legal_hold = legal_hold;
+        refusal.body.error.room_join_hold = room_join_hold;
         refusal
     }
 }
 
 impl FacadeApiError {
-    /// A hook accepted the call only to ask first, not to run an asynchronous
-    /// job. Chat keeps its own wire code, but carries the same native stop.
-    pub(super) fn is_pending_ask(status: u16, body: &serde_json::Value) -> bool {
+    /// The engine holds the call rather than answering it: a hook accepted
+    /// it only to ask first, or a budget window paced it into its caller's
+    /// line (FIX 8753). Neither is an asynchronous job's answer, and a
+    /// same-id retry reaches the held call again. Chat keeps its own wire
+    /// code, but carries the same native stop.
+    pub(super) fn is_held_call(status: u16, body: &serde_json::Value) -> bool {
         if status != StatusCode::ACCEPTED.as_u16() {
             return false;
         }
-        if body
-            .pointer("/error/code")
-            .and_then(serde_json::Value::as_str)
-            == Some(MEMORY_CODE_PENDING_ASK)
-        {
+        if matches!(
+            body.pointer("/error/code")
+                .and_then(serde_json::Value::as_str),
+            Some(MEMORY_CODE_PENDING_ASK | oneiron::memory::MEMORY_CODE_PACED_HOLD)
+        ) {
             return true;
         }
         body.pointer("/error/hook")
@@ -273,7 +283,7 @@ impl FacadeApiError {
     /// facade refusal, or carries a member this envelope does not, which
     /// then goes again as it was.
     pub(super) fn replayed(status: StatusCode, body: &serde_json::Value) -> Option<Self> {
-        if (status.is_success() && !Self::is_pending_ask(status.as_u16(), body))
+        if (status.is_success() && !Self::is_held_call(status.as_u16(), body))
             || !body
                 .as_object()?
                 .keys()
@@ -301,6 +311,7 @@ impl FacadeApiError {
         replayed.resets_at = replayed_field(error, "resetsAt").unwrap_or_default();
         replayed.reason_codes = replayed_field(error, "reasonCodes").unwrap_or_default();
         replayed.legal_hold = replayed_field(error, "legal_hold").map(Box::new);
+        replayed.room_join_hold = replayed_field(error, "room_join_hold").map(Box::new);
         replayed.program_steps = replayed_field(error, "programSteps").unwrap_or_default();
         refusal.body.narrowing = replayed_field(body, "narrowing").map(Box::new);
         Some(refusal)
@@ -333,6 +344,7 @@ impl FacadeApiError {
         refusal.resets_at = error.resets_at;
         refusal.reason_codes = error.reason_codes;
         refusal.legal_hold = error.legal_hold;
+        refusal.room_join_hold = error.room_join_hold;
         refusal
     }
 }
@@ -350,7 +362,7 @@ impl IntoResponse for FacadeApiError {
 
 /// Every member a facade refusal's `error` states on the wire
 /// ([`FacadeErrorBody`], its wrong-root correction flattened in).
-const REPLAYED_ERROR_FIELDS: [&str; 14] = [
+const REPLAYED_ERROR_FIELDS: [&str; 15] = [
     "code",
     "message",
     "requestId",
@@ -364,6 +376,7 @@ const REPLAYED_ERROR_FIELDS: [&str; 14] = [
     "resetsAt",
     "reasonCodes",
     "legal_hold",
+    "room_join_hold",
     "programSteps",
 ];
 

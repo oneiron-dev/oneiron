@@ -473,9 +473,9 @@ fn outcome_view(outcome: &SelfDispatchOutcome) -> Option<Value> {
             proposal_ref,
             ..
         }) => json!({"kind": "agent_spawn", "state": "proposed_widen", "proposal": proposal_ref}),
-        SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::TargetErased) => {
-            json!({"kind": "agent_spawn", "state": "target_erased"})
-        }
+        SelfDispatchOutcome::AgentSpawn(
+            erased @ (SelfAgentSpawnResult::TargetErased | SelfAgentSpawnResult::AskerErased),
+        ) => json!({"kind": "agent_spawn", "state": erased.erasure()}),
         // The bare `ask` and `wait` answer their rows' outputs.
         SelfDispatchOutcome::TaskAsk(receipt) => json!({"output": receipt}),
         SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::Pending { .. }) => return None,
@@ -510,7 +510,7 @@ fn outcome_view(outcome: &SelfDispatchOutcome) -> Option<Value> {
         SelfDispatchOutcome::Summarize(reply) => json!({"output": reply.output()}),
         SelfDispatchOutcome::Leader(text) => json!({"output": serde_json::from_str::<Value>(text)
             .unwrap_or_else(|_| Value::String(text.clone()))}),
-        SelfDispatchOutcome::Team(answer) => json!({"output": answer}),
+        SelfDispatchOutcome::Team(result) => json!({"output": result.answer}),
         SelfDispatchOutcome::TeamSubmitted(answer) => json!({"output": answer}),
     })
 }

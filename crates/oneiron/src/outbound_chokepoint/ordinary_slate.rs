@@ -115,7 +115,7 @@ impl Vault {
                 .ok_or(IntentLedgerError::InvalidInput(
                     "outbound intent is not pending",
                 ))?;
-            if super::connector_slate::setting_in_txn(self, wtxn, &record)?
+            if super::connector_slate::setting_in_txn(self, wtxn, &record, None, None)?
                 != crate::connector_key::SlateDisposition::AlwaysAsk
             {
                 return Err(IntentLedgerError::InvalidInput(

@@ -1,8 +1,11 @@
 //! Output envelope and path helpers for the routed raw-output store.
 
+mod agent_verb;
 mod reply_evidence;
 mod script_context;
+pub(crate) use agent_verb::{store_agent_verb_write_answer, write_receipt_result_output_path};
 pub(super) use script_context::load_script_context;
+pub(crate) use script_context::mask_known_text;
 
 use super::record::REPLAY_METADATA_SCHEMA_VERSION;
 use super::types::{EngineExecutorResult, JsCodeModeStepOutcome, JsCodeModeStream};
@@ -239,6 +242,9 @@ pub(crate) fn result_handle_json(owner: EntityId, output: &CodeRunRawOutput) -> 
     if let Some(occurrence) = occurrence.as_ref() {
         card["ref"] = json!(format!("occurrence:{}", occurrence.id().to_hex()));
     }
+    if let Some(step_start) = output.producing_step_start {
+        card["producing_step_start"] = json!(step_start);
+    }
     card
 }
 
@@ -270,6 +276,7 @@ impl StreamedOutputs {
         &mut self,
         storage: &ExecutorStorage<'_>,
         exec_run: EntityId,
+        step_seq: Option<u64>,
         stream: JsCodeModeStream<'_>,
         frame: &[u8],
     ) -> Result<()> {
@@ -291,6 +298,12 @@ impl StreamedOutputs {
                 let at = match self.files.iter().position(|(held, _)| held == path) {
                     Some(at) => at,
                     None => {
+                        if let Some(seq) = step_seq {
+                            storage.begin_code_run_output(
+                                exec_run,
+                                &runtime_output_path(seq, self.files.len(), path),
+                            )?;
+                        }
                         self.files
                             .push((path.to_owned(), storage.code_run_output_sink_for(exec_run)?));
                         self.files.len() - 1

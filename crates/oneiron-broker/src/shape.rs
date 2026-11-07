@@ -105,6 +105,33 @@ pub enum Shape {
     /// top-level body `model_id`, `xi-api-key: <key>`. The reply is audio
     /// bytes, streamed.
     ElevenLabsSpeech,
+    /// Google Workspace REST, Sheets v4 (FIX 4862): one spreadsheet's
+    /// metadata, `GET …/v4/spreadsheets/{id}?fields=…` with its one fixed
+    /// field mask, no body, `Authorization: Bearer <OAuth access token>`.
+    /// No model: the call's bound wire model stands.
+    SheetsSpreadsheetGet,
+    /// Sheets v4 values of one or more ranges:
+    /// `GET …/v4/spreadsheets/{id}/values:batchGet?ranges=…`, no body,
+    /// Bearer. The query holds only `ranges`, `valueRenderOption` and
+    /// `majorDimension`, each value percent-encoded.
+    SheetsValuesBatchGet,
+    /// Sheets v4 value writes:
+    /// `POST …/v4/spreadsheets/{id}/values:batchUpdate`, JSON, Bearer.
+    SheetsValuesBatchUpdate,
+    /// Sheets v4 structural requests:
+    /// `POST …/v4/spreadsheets/{id}:batchUpdate`, JSON, Bearer.
+    SheetsBatchUpdate,
+    /// [`Self::AnthropicMessages`] asking for server-sent events (FIX
+    /// 15702): the body's top-level `stream` is exactly `true`, and the
+    /// events are relayed as they come.
+    AnthropicMessagesStream,
+    /// [`Self::OpenAiChat`] asking for server-sent events (FIX 15702): the
+    /// body's top-level `stream` is exactly `true`, and the events are
+    /// relayed as they come.
+    OpenAiChatStream,
+    /// [`Self::OpenAiChatUnversioned`] asking for server-sent events (FIX
+    /// 15702), as [`Self::OpenAiChatStream`].
+    OpenAiChatUnversionedStream,
 }
 
 struct Row {
@@ -115,6 +142,10 @@ struct Row {
     endpoint: &'static [&'static str],
     /// The one query the path ends in, for an endpoint that takes one.
     query: Option<&'static str>,
+    /// The query parameters a path may carry instead, each any number of
+    /// times, for an endpoint whose query is data (FIX 4862). Empty for
+    /// every row that takes no query or only its fixed one.
+    params: &'static [&'static str],
     body: Body,
     model: Selector,
     auth_header: &'static str,
@@ -170,6 +201,7 @@ const fn openai(
         method,
         endpoint,
         query: None,
+        params: &[],
         body,
         model,
         auth_header: "authorization",
@@ -189,10 +221,34 @@ const fn gemini(
         method,
         endpoint,
         query: None,
+        params: &[],
         body,
         model,
         auth_header: "x-goog-api-key",
         auth_prefix: "",
+        streams: false,
+        redirect: None,
+    }
+}
+
+/// A Google Workspace REST row: the user's OAuth access token as Bearer, no
+/// model on the wire, a buffered JSON reply.
+const fn workspace(
+    method: &'static str,
+    endpoint: &'static [&'static str],
+    query: Option<&'static str>,
+    params: &'static [&'static str],
+    body: Body,
+) -> Row {
+    Row {
+        method,
+        endpoint,
+        query,
+        params,
+        body,
+        model: Selector::Binding,
+        auth_header: "authorization",
+        auth_prefix: "Bearer ",
         streams: false,
         redirect: None,
     }
@@ -226,12 +282,28 @@ const ANTHROPIC_MESSAGES: Row = Row {
     method: "POST",
     endpoint: &["v1", "messages"],
     query: None,
+    params: &[],
     body: Body::Json,
     model: Selector::Body,
     auth_header: "x-api-key",
     auth_prefix: "",
     streams: false,
     redirect: None,
+};
+
+const ANTHROPIC_MESSAGES_STREAM: Row = Row {
+    streams: true,
+    ..ANTHROPIC_MESSAGES
+};
+
+const OPENAI_CHAT_STREAM: Row = Row {
+    streams: true,
+    ..OPENAI_CHAT
+};
+
+const OPENAI_CHAT_UNVERSIONED_STREAM: Row = Row {
+    streams: true,
+    ..OPENAI_CHAT_UNVERSIONED
 };
 
 const OPENAI_IMAGES: Row = openai(
@@ -371,6 +443,7 @@ const ANTHROPIC_MODELS: Row = Row {
     method: "GET",
     endpoint: &["v1", "models"],
     query: None,
+    params: &[],
     body: Body::Empty,
     model: Selector::Binding,
     auth_header: "x-api-key",
@@ -383,6 +456,7 @@ const CARTESIA_SPEECH: Row = Row {
     method: "POST",
     endpoint: &["tts", "bytes"],
     query: None,
+    params: &[],
     body: Body::Json,
     model: Selector::BodyModelId,
     auth_header: "x-api-key",
@@ -395,6 +469,7 @@ const ELEVENLABS_SPEECH: Row = Row {
     method: "POST",
     endpoint: &["v1", "text-to-speech", "{id}"],
     query: Some("output_format=pcm_24000"),
+    params: &[],
     body: Body::Json,
     model: Selector::BodyModelId,
     auth_header: "xi-api-key",
@@ -403,10 +478,50 @@ const ELEVENLABS_SPEECH: Row = Row {
     redirect: None,
 };
 
+/// The one field mask a Sheets metadata read asks for: the spreadsheet's id,
+/// link and title, and each sheet's id, title, index, type and grid size.
+const SHEETS_SPREADSHEET_FIELDS: &str = "fields=spreadsheetId,spreadsheetUrl,properties(title,locale,timeZone),sheets(properties(sheetId,title,index,sheetType,gridProperties))";
+
+const SHEETS_SPREADSHEET_GET: Row = workspace(
+    "GET",
+    &["v4", "spreadsheets", "{id}"],
+    Some(SHEETS_SPREADSHEET_FIELDS),
+    &[],
+    Body::Empty,
+);
+
+const SHEETS_VALUES_BATCH_GET: Row = workspace(
+    "GET",
+    &["v4", "spreadsheets", "{id}", "values:batchGet"],
+    None,
+    &["ranges", "valueRenderOption", "majorDimension"],
+    Body::Empty,
+);
+
+const SHEETS_VALUES_BATCH_UPDATE: Row = workspace(
+    "POST",
+    &["v4", "spreadsheets", "{id}", "values:batchUpdate"],
+    None,
+    &[],
+    Body::Json,
+);
+
+const SHEETS_BATCH_UPDATE: Row = workspace(
+    "POST",
+    &["v4", "spreadsheets", "{id}:batchUpdate"],
+    None,
+    &[],
+    Body::Json,
+);
+
 pub(crate) use crate::route_keys::ROUTE_OVERRIDES;
 
 /// The longest model name or provider id a path segment may hold.
 const MAX_NAME: usize = 256;
+
+/// The longest value one query parameter may hold, percent escapes counted
+/// as their three bytes.
+const MAX_QUERY_VALUE: usize = 2048;
 
 impl Shape {
     const fn row(self) -> &'static Row {
@@ -436,6 +551,49 @@ impl Shape {
             Self::AnthropicModels => &ANTHROPIC_MODELS,
             Self::CartesiaSpeech => &CARTESIA_SPEECH,
             Self::ElevenLabsSpeech => &ELEVENLABS_SPEECH,
+            Self::SheetsSpreadsheetGet => &SHEETS_SPREADSHEET_GET,
+            Self::SheetsValuesBatchGet => &SHEETS_VALUES_BATCH_GET,
+            Self::SheetsValuesBatchUpdate => &SHEETS_VALUES_BATCH_UPDATE,
+            Self::SheetsBatchUpdate => &SHEETS_BATCH_UPDATE,
+            Self::AnthropicMessagesStream => &ANTHROPIC_MESSAGES_STREAM,
+            Self::OpenAiChatStream => &OPENAI_CHAT_STREAM,
+            Self::OpenAiChatUnversionedStream => &OPENAI_CHAT_UNVERSIONED_STREAM,
+        }
+    }
+
+    /// Whether the shape relays a provider's server-sent events (FIX
+    /// 15702): its request asks for them with a top-level `stream: true`,
+    /// and each batch of its reply is sent on as soon as it is cleared of
+    /// the key, not gathered first.
+    #[must_use]
+    pub const fn relays_events(self) -> bool {
+        matches!(
+            self,
+            Self::AnthropicMessagesStream
+                | Self::OpenAiChatStream
+                | Self::OpenAiChatUnversionedStream
+        )
+    }
+
+    /// The shape of the same endpoint for a request that asks for
+    /// server-sent events, for a shape that has one.
+    #[must_use]
+    pub const fn with_events(self) -> Option<Self> {
+        match self {
+            Self::AnthropicMessages => Some(Self::AnthropicMessagesStream),
+            Self::OpenAiChat => Some(Self::OpenAiChatStream),
+            Self::OpenAiChatUnversioned => Some(Self::OpenAiChatUnversionedStream),
+            _ => None,
+        }
+    }
+
+    /// The one query a path to this shape may end in, or leave out:
+    /// Anthropic's `beta=true`, which Claude Code sends on Messages (FIX
+    /// 15702).
+    const fn optional_query(self) -> Option<&'static str> {
+        match self {
+            Self::AnthropicMessages | Self::AnthropicMessagesStream => Some("beta=true"),
+            _ => None,
         }
     }
 
@@ -476,7 +634,9 @@ impl Shape {
     /// Accepts a path that ends in the shape's endpoint, in plain form: it
     /// starts with `/`, and has no fragment, percent escape, empty segment or
     /// dot segment, and no query but the endpoint's own, so no parser between
-    /// here and the provider can read it as another path.
+    /// here and the provider can read it as another path. A row whose query
+    /// is data takes only its named parameters, each value plain or
+    /// percent-encoded.
     pub fn check_path(self, path: &str) -> Result<(), Refusal> {
         self.match_path(path).map(drop)
     }
@@ -485,11 +645,22 @@ impl Shape {
     /// that has one.
     fn match_path(self, path: &str) -> Result<Option<&str>, Refusal> {
         let row = self.row();
-        let path = match row.query {
-            Some(query) => path
+        let path = match (row.query, self.optional_query(), row.params) {
+            (Some(query), _, _) => path
                 .strip_suffix(query)
                 .and_then(|path| path.strip_suffix('?')),
-            None => Some(path),
+            // The optional query is taken off whole or not at all: any other
+            // query stays in the path and fails its segments.
+            (None, Some(query), _) => Some(
+                path.strip_suffix(query)
+                    .and_then(|path| path.strip_suffix('?'))
+                    .unwrap_or(path),
+            ),
+            (None, None, []) => Some(path),
+            (None, None, params) => match path.split_once('?') {
+                Some((plain, query)) => plain_query(query, params).then_some(plain),
+                None => Some(path),
+            },
         }
         .ok_or(Refusal::Path)?;
         let segments: Vec<&str> = path
@@ -546,6 +717,13 @@ impl Shape {
             (Body::Form | Body::JsonOrForm, Some(kind)) => form::read_model(kind, body)?,
             _ => return Err(Refusal::Body),
         };
+        // An event-relaying shape carries exactly the request that asks for
+        // events, so its reply is the stream it is framed for.
+        if self.relays_events()
+            && json_member(body, "stream")? != Some(serde_json::Value::Bool(true))
+        {
+            return Err(Refusal::Body);
+        }
         match row.model {
             Selector::Body | Selector::BodyModelId => {
                 named.map(Some).ok_or(Refusal::SelectorMissing)
@@ -604,6 +782,42 @@ fn plain_id(id: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || b"-_".contains(&byte))
 }
 
+/// A data query in plain form: `name=value` pairs joined by `&`, each name
+/// one of `params` and each value [`plain_query_value`], so the provider
+/// reads each value as that parameter's data and nothing else.
+fn plain_query(query: &str, params: &[&str]) -> bool {
+    !query.is_empty()
+        && query.split('&').all(|pair| {
+            pair.split_once('=')
+                .is_some_and(|(name, value)| params.contains(&name) && plain_query_value(value))
+        })
+}
+
+/// A query value in plain form: letters, digits, `-._~` and percent escapes
+/// of two uppercase hex digits, the one spelling a URL parser keeps as it is.
+fn plain_query_value(value: &str) -> bool {
+    if value.is_empty() || value.len() > MAX_QUERY_VALUE {
+        return false;
+    }
+    let mut bytes = value.bytes();
+    while let Some(byte) = bytes.next() {
+        let plain = if byte == b'%' {
+            bytes.next().is_some_and(upper_hex) && bytes.next().is_some_and(upper_hex)
+        } else {
+            byte.is_ascii_alphanumeric() || b"-._~".contains(&byte)
+        };
+        if !plain {
+            return false;
+        }
+    }
+    true
+}
+
+/// One digit of a percent escape: `0-9` or `A-F`.
+fn upper_hex(byte: u8) -> bool {
+    byte.is_ascii_digit() || (b'A'..=b'F').contains(&byte)
+}
+
 /// The top-level `model` string of one JSON object, or `None` when it has
 /// none.
 fn scan_json(body: &[u8]) -> Result<Option<String>, Refusal> {
@@ -620,6 +834,51 @@ fn scan_json_key(body: &[u8], key: &'static str) -> Result<Option<String>, Refus
         .map_err(|_| Refusal::Body)??;
     decoder.end().map_err(|_| Refusal::Body)?;
     Ok(selector)
+}
+
+/// The top-level `key` member of one JSON object, or `None` when it has
+/// none. A repeated key refuses, counted as it is read, an escaped spelling
+/// counting as the key, so the value read is the one every reader of the
+/// bytes reads.
+///
+/// # Errors
+/// [`Refusal::Body`] when the bytes are not one JSON object or repeat `key`.
+pub fn json_member(body: &[u8], key: &'static str) -> Result<Option<serde_json::Value>, Refusal> {
+    let mut decoder = serde_json::Deserializer::from_slice(body);
+    let member = decoder
+        .deserialize_map(MemberVisitor(key))
+        .map_err(|_| Refusal::Body)??;
+    decoder.end().map_err(|_| Refusal::Body)?;
+    Ok(member)
+}
+
+struct MemberVisitor(&'static str);
+
+impl<'de> Visitor<'de> for MemberVisitor {
+    type Value = Result<Option<serde_json::Value>, Refusal>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("one JSON object")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+        let mut member = None;
+        let mut repeated = false;
+        while let Some(key) = map.next_key::<String>()? {
+            if key == self.0 && !repeated {
+                let value = map.next_value::<serde_json::Value>()?;
+                repeated = member.is_some();
+                member = Some(value);
+            } else {
+                map.next_value::<IgnoredAny>()?;
+            }
+        }
+        Ok(if repeated {
+            Err(Refusal::Body)
+        } else {
+            Ok(member)
+        })
+    }
 }
 
 struct SelectorVisitor(&'static str);

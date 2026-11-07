@@ -160,6 +160,28 @@ impl Vault {
         {
             return Err(invalid_authority());
         }
+        // An owner's invitation pairing code (FIX 8745) binds its invitation
+        // to the redeeming key and mints the invitee's slip for it alone.
+        if let Some(invitation) = &pending.invitation {
+            let owner = pending.owner.ok_or_else(invalid_authority)?;
+            if pending.principal.holder_ref.as_deref() != Some(holder_ref)
+                || !crate::policy_model::is_live_vault_owner_in_txn(self, &txn, &owner)?
+            {
+                return Err(invalid_authority());
+            }
+            require_host(&self.authority_fold_readonly_in_txn(&txn)?, issuer)?;
+            let slip =
+                self.redeem_invitation_link_in_txn(&mut txn, issuer, invitation, binding_key)?;
+            PAIRING_PENDING.delete(&self.store, &mut txn, &row_key)?;
+            txn.commit()?;
+            return Ok(PairingRedeemed {
+                slip,
+                machine: None,
+                pin: None,
+                link_owner: None,
+                re_paired: false,
+            });
+        }
         self.validate_pairing_principal_in_txn(&txn, &pending.principal, &pending.scope)?;
         // The holder is known only now when the link left it open.
         self.validate_pairing_facets_in_txn(
@@ -210,7 +232,18 @@ impl Vault {
             trusted_contact: None,
             seat_claim: None,
         };
-        let slip = self.mint_slip_in_txn(&mut txn, issuer, claims)?;
+        // FIX 11713: the owner who made the link is the member who minted
+        // this holder's slip, signed in the same mint; a host-only link
+        // names no person, and none is guessed.
+        let slip = self.mint_slip_action_in_txn(
+            &mut txn,
+            issuer,
+            SlipMintAction {
+                claims,
+                renews: None,
+                minting_member: pending.owner,
+            },
+        )?;
         if let Some(facet) = write_facet {
             PAIRED_WRITE_FACET.put(
                 &self.store,

@@ -68,6 +68,18 @@ impl HeldAuthority {
         )
     }
 
+    /// The same read's row checks in another transaction (FIX 7528): nothing
+    /// held, since what this one holds belongs to its own txn, and the same
+    /// request asked of the rows.
+    pub(super) fn for_another_txn(&self) -> Self {
+        Self(
+            RefCell::default(),
+            None,
+            HeldGrants::fresh(self.2.asked().clone()),
+            ClassVerdicts::default(),
+        )
+    }
+
     /// The row checks of a named read of `id` that asks `id`'s legal non-use
     /// conjunct on its own, after every other gate (FIX 5226): `id` is judged
     /// by every other gate as before, and every other row, each source `id`
@@ -172,6 +184,22 @@ impl ScopedRead<'_> {
     pub(super) fn grant_read_txn(&self) -> Result<heed::RoTxn<'_>> {
         self.persist_grant_clock()?;
         Ok(self.vault.store.env.read_txn()?)
+    }
+
+    /// Runs `read` in one read snapshot of this lane's vault, opened as this
+    /// lane's own reads open theirs: its grant time persisted first, never
+    /// inside the snapshot. A door that judges a row for this lane and
+    /// serves it does both here, in one snapshot (FIX 10782).
+    ///
+    /// # Errors
+    ///
+    /// The grant time's or the snapshot's failure, or `read`'s.
+    pub fn with_grant_read_snapshot<T, E: From<crate::Error>>(
+        &self,
+        read: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<T, E>,
+    ) -> std::result::Result<T, E> {
+        let txn = self.grant_read_txn()?;
+        read(&txn)
     }
 
     /// Whether this read's relationship gate binds in `txn`; see

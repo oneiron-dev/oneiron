@@ -37,10 +37,6 @@ impl fmt::Debug for SyncServerConfig {
             .field("max_messages_per_sec", &self.max_messages_per_sec)
             .field("ephemeral_timeout_ms", &self.ephemeral_timeout_ms)
             .field(
-                "max_ephemeral_payload_bytes",
-                &self.max_ephemeral_payload_bytes,
-            )
-            .field(
                 "max_ephemeral_snapshot_bytes",
                 &self.max_ephemeral_snapshot_bytes,
             )
@@ -53,6 +49,7 @@ impl fmt::Debug for SyncServerConfig {
             .field("skills", &self.skills)
             .field("line", &self.line)
             .field("channel_endpoints", &self.channel_endpoints)
+            .field("apns", &self.apns)
             .field("linear", &self.linear)
             .field("ingress", &self.ingress)
             .field("merge_queue", &self.merge_queue)
@@ -105,10 +102,6 @@ impl fmt::Debug for ServeConfig {
             .field("max_messages_per_sec", &self.max_messages_per_sec)
             .field("ephemeral_timeout_ms", &self.ephemeral_timeout_ms)
             .field(
-                "max_ephemeral_payload_bytes",
-                &self.max_ephemeral_payload_bytes,
-            )
-            .field(
                 "max_ephemeral_snapshot_bytes",
                 &self.max_ephemeral_snapshot_bytes,
             )
@@ -140,6 +133,7 @@ impl fmt::Debug for ServeConfig {
             .field("embedding", &self.embedding)
             .field("line", &self.line)
             .field("channel_endpoints", &self.channel_endpoints)
+            .field("apns", &self.apns)
             .field("linear", &self.linear)
             .field("privacy_posture", &self.privacy_posture)
             .field(

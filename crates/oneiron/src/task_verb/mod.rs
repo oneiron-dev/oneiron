@@ -6,6 +6,7 @@
 mod ask_band;
 mod ask_effect;
 mod ask_facade;
+mod ask_forward;
 mod ask_guest;
 mod ask_limits;
 mod ask_option_link;
@@ -23,6 +24,7 @@ mod ask_world_hold;
 mod attendee_answer;
 mod board_task;
 mod comm_widen;
+mod contribution_pair;
 pub(crate) use board_task::board_task_for_id;
 pub use comm_widen::CommWidenRevokeReceipt;
 mod brief;
@@ -71,8 +73,9 @@ mod highway_types;
 mod lifecycle_facade;
 mod lifecycle_receipt;
 pub(crate) use lifecycle_receipt::{
+    discard_payload_in_txn as discard_lifecycle_receipt_payload_in_txn,
     erase_in_txn as erase_lifecycle_receipts_in_txn, erase_lifecycle_actor_in_txn,
-    settled_receipt_in, task_lifecycle_receipts,
+    lifecycle_field_holds_words, settled_receipt_in, task_lifecycle_receipts,
 };
 mod linear_store;
 mod mirror_edit;
@@ -95,6 +98,7 @@ mod refusal;
 pub(crate) use highway_runner::workflow_try::workflow_done_judge_in_txn;
 mod report_journal;
 pub(crate) use report_journal::{
+    discard_payload_in_txn as discard_report_journal_payload_in_txn,
     erase_in_txn as erase_report_journal_in_txn, erase_report_actor_in_txn,
 };
 pub mod revoke_lands;
@@ -119,6 +123,12 @@ mod training_swap_ask;
 mod verb_kind;
 mod wave_port;
 mod wire_decode;
+pub(crate) use contribution_pair::{
+    CONTRIBUTION_PAIR_QUESTION_TYPE, ask_contribution_pair, coach_owner_conversation_in,
+    contribution_pair_ask_permitted_in, contribution_pair_erase_targets_in_txn,
+    contribution_pair_question_permitted_in, is_contribution_pair_ask_intent,
+    retire_contribution_pair_asks_in,
+};
 pub(crate) use project_tradeoff::{project_tradeoff_routed_in, task_created_at_in};
 pub(crate) use training_offer_ask::{
     OFFER_QUESTION_TYPE, issue_training_offer_asks, offer_question_key, offer_question_text,
@@ -426,6 +436,13 @@ mod ask_outcome_tests;
 mod ask_tests;
 
 pub(crate) use ask_facade::settle_waiting_asks;
+pub use ask_forward::{
+    AskForwardAct, AskForwardHolderProof, AskForwardReceipt, ask_forward_challenge,
+};
+pub(crate) use ask_forward::{
+    AskForwardArrivals, drain_ask_forward_intents, retire_holder_ask_forward_rows_in_txn,
+    settle_held_ask_forward_rows_in_txn,
+};
 pub(crate) use ask_guest::{ask_guest_grant_in, ask_member_task_in};
 pub(crate) use ask_option_link::deliver_ask_change_in_txn;
 pub(crate) use ask_option_link::{

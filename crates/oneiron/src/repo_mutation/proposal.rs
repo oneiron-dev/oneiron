@@ -44,7 +44,10 @@ pub use files::RepoProposedFile;
 pub(super) use files::{native_bundle_queue_only, received_bundle_queue_only};
 pub(super) use guards::require_repo_artifact_in_txn;
 use guards::validate_conflict_in_txn;
-pub use queue_review::{QueueReviewAdmission, RepoProposalCritique, RepoProposalReview};
+pub use queue_review::{
+    ContractReviewEvidence, ContractReviewRequest, ContractReviewSettlement, QueueReviewAdmission,
+    RepoProposalCritique, RepoProposalReview,
+};
 pub(super) use submit::ProposalBase;
 
 /// Durable per-operation code proposal. Key: id16.
@@ -126,6 +129,10 @@ pub struct RepoProposal {
     /// The review its merge stack's admission sealed, if one admitted it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_review: Option<QueueReviewAdmission>,
+    /// The person reviews a removed public name routed it to, each with its
+    /// decision once made (FIX 4365).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub contract_reviews: Vec<ContractReviewRequest>,
     pub status: RepoProposalStatus,
     /// The approved proposal this one resolves the lifted secret handles
     /// of (FIX 2938), when it was minted for exactly that at landing.
@@ -164,7 +171,11 @@ impl RepoProposal {
         vault: &Vault,
         frontier: &crate::code_document::CodeDocumentFrontier,
     ) -> Result<u32> {
-        if super::oplog::repo_mutation_repo_key(&RepoRef::parse(&self.repo)?) != frontier.repo {
+        if vault
+            .resolve_repo_identity(&RepoRef::parse(&self.repo)?)?
+            .as_str()
+            != frontier.repo
+        {
             return Err(invalid("reviewed file belongs to another document"));
         }
         if self.is_file_bundle() {

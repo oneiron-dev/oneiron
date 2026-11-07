@@ -15,13 +15,19 @@
 //! byte outlives the arm. Each write is masked at write under the source
 //! vault's custody (FIX 5718 part 3), so no secret the wall can place
 //! reaches an arm's files.
+//!
+//! Each arm keeps the source its bodies are released to a model against
+//! (FIX 9468): the occurrences it was seeded with clean, whose taint each
+//! model release reads again.
 
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use oneiron::code_run::shadow_runner::{ShadowArmLease, ShadowBodyStore, ShadowSourceHold};
+use oneiron::code_run::shadow_runner::{
+    ShadowArmLease, ShadowBodyStore, ShadowReleaseSource, ShadowSourceHold,
+};
 use oneiron::{EntityId, Result, Vault};
 
 /// The directory under the host's temporary directory that runners keep
@@ -35,17 +41,24 @@ const HELD_LOCK: &str = ".held";
 type Arms = HashMap<ShadowArmLease, Arc<ArmEntry>>;
 
 /// One arm's bodies, while its lease or a reader holds them.
-pub(super) struct ArmEntry {
+pub(crate) struct ArmEntry {
     store: ShadowBodyStore,
     /// The actor whose step the arm runs: its source run's content is this
     /// actor's.
     source_actor: EntityId,
+    /// What each model release of the arm's bodies reads again (FIX 9468).
+    release: ShadowReleaseSource,
 }
 
 impl ArmEntry {
     /// The arm's store.
-    pub(super) const fn store(&self) -> &ShadowBodyStore {
+    pub(crate) const fn store(&self) -> &ShadowBodyStore {
         &self.store
+    }
+
+    /// What each model release of the arm's bodies reads again (FIX 9468).
+    pub(super) const fn release_source(&self) -> &ShadowReleaseSource {
+        &self.release
     }
 }
 
@@ -58,8 +71,9 @@ impl Drop for ArmEntry {
     }
 }
 
-/// One runner's arms.
-pub(super) struct ArmRegistry {
+/// One runner's arms; a contribution pass's forks' scratch stores too (FIX
+/// 3607).
+pub(crate) struct ArmRegistry {
     root: PathBuf,
     /// Held while the registry lives: a later runner's sweep takes it only
     /// once this one is gone.
@@ -71,7 +85,7 @@ impl ArmRegistry {
     /// A runner's arms, in a directory of its own under the host's
     /// temporary directory, once every runner directory there that no live
     /// runner holds is removed.
-    pub(super) fn open() -> Result<Self> {
+    pub(crate) fn open() -> Result<Self> {
         let scratch = std::env::temp_dir().join(ARMS_SCRATCH);
         make_private_dir(&scratch)?;
         sweep(&scratch);
@@ -88,12 +102,14 @@ impl ArmRegistry {
 
     /// A new arm under `lease`, its store made, of a step `source_actor`'s
     /// source run `source_run` is for, each of its reads and publications
-    /// asking `hold`, each of its writes admitted under `vault`'s custody.
-    pub(super) fn open_arm(
+    /// asking `hold`, each of its writes admitted under `vault`'s custody,
+    /// each model release of its bodies reading `release` again (FIX 9468).
+    pub(crate) fn open_arm(
         &self,
         lease: ShadowArmLease,
         (source_actor, source_run): (EntityId, EntityId),
         hold: ShadowSourceHold,
+        release: ShadowReleaseSource,
         vault: &Arc<Vault>,
     ) -> Result<Arc<ArmEntry>> {
         let store = ShadowBodyStore::open(self.root.join(lease.to_hex()))?
@@ -102,6 +118,7 @@ impl ArmRegistry {
         let entry = Arc::new(ArmEntry {
             store,
             source_actor,
+            release,
         });
         self.arms().insert(lease, Arc::clone(&entry));
         Ok(entry)
@@ -132,7 +149,7 @@ impl ArmRegistry {
 
     /// Releases `lease`: its arm's bodies go once no reader holds them.
     /// Whether it held an arm.
-    pub(super) fn release(&self, lease: &ShadowArmLease) -> bool {
+    pub(crate) fn release(&self, lease: &ShadowArmLease) -> bool {
         let released = self.arms().remove(lease);
         released.is_some()
     }

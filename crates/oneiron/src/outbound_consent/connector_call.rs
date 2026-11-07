@@ -106,6 +106,8 @@ pub(super) struct PendingConnectorCall {
     pub(super) attempt_id: AttemptId,
     pub(super) call_seq: u64,
     pub(super) principal_ref: String,
+    /// Scope resolved from the real caller, never the tool's arguments.
+    pub(super) remember_context: Option<crate::connector_key::ConnectorToolRememberContext>,
     /// When the call was first held. Its expiry deadline counts from here,
     /// and no retry moves it.
     pub(super) held_at_ms: u64,
@@ -185,8 +187,9 @@ pub(super) struct PendingConnectorCall {
     #[serde(skip)]
     pub(super) off_record: bool,
     /// A full count-bound budget window paces this call until this engine
-    /// instant, Unix seconds (FIX 8686): it asks no one, does not expire, and
-    /// the settler drives it again from then.
+    /// instant, Unix seconds (FIX 8686): it asks no one, and the settler
+    /// drives it again from then. It still expires at its first hold's
+    /// deadline (FIX 8753).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) paced_until: Option<u64>,
 }
@@ -248,6 +251,14 @@ pub(super) fn connector_call_ref(
             &invocation.call_seq.to_le_bytes(),
         ],
     )?)
+}
+
+impl ConnectorCallInvocation {
+    /// The native row identity for this invocation and its verified caller.
+    /// This derives an identity only; it grants no right to read or send.
+    pub fn call_ref(self, principal: EntityId) -> Result<EntityId, IntentLedgerError> {
+        connector_call_ref(&principal.to_hex(), self)
+    }
 }
 
 pub(super) fn now_ms() -> u64 {

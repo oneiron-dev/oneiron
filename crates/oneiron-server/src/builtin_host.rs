@@ -32,9 +32,9 @@ use crate::server::{HousekeepingAdmission, SyncServer};
 const RECONCILE_EVERY: Duration = Duration::from_secs(30);
 
 /// Installs this host's served transports on its vault (FIX 4435, 2096):
-/// the `[channel_endpoints]` provider APIs and the `[native_mail]` server,
-/// which every served sink on the vault sends through. Call it before any
-/// worker sends; a second install does nothing.
+/// the `[channel_endpoints]` provider APIs, the `[native_mail]` server and
+/// the `[apns]` applications, which every served sink on the vault sends
+/// through. Call it before any worker sends; a second install does nothing.
 pub(crate) fn install_served_transports(server: &SyncServer, models: Option<&ModelsConfig>) {
     // Config validation refused a bad endpoint at load; this only keeps a
     // host that skipped it on the public APIs.
@@ -57,6 +57,27 @@ pub(crate) fn install_served_transports(server: &SyncServer, models: Option<&Mod
     }
     if let (Some(broker), Some(models)) = (server.broker_context(), models) {
         transports = transports.with_broker_model_listing(broker.secret_use_models(models));
+    }
+    // The built-in Google Sheets connector sends through the credential
+    // broker (FIX 4862): serve's own context, else the `[models.broker]`
+    // one, made at the first Sheets call.
+    if let Some(sheets) = server
+        .broker_context()
+        .map(crate::models::BrokerContext::sheets_broker)
+        .or_else(|| crate::models::BrokerContext::sheets_broker_from_config(models))
+    {
+        transports = transports.with_sheets_broker(sheets);
+    }
+    // Config validation refused a bad application at load; this only keeps a
+    // host that skipped it without Apple push.
+    let apns_applications = server.config.apns.applications.clone();
+    if !apns_applications.is_empty() {
+        match transports.clone().with_apns_applications(apns_applications) {
+            Ok(with_apns) => transports = with_apns,
+            Err(error) => {
+                tracing::warn!(%error, "[apns] is invalid; Apple push sends have no applications");
+            }
+        }
     }
     server
         .vault()

@@ -319,6 +319,9 @@ impl Vault {
                     && !input.uncertain
                 {
                     input.resume = resume.seal_in_txn(self, txn, call_ref);
+                    // What the send presented binds with the state a resume
+                    // takes it up from (fix list row 10550).
+                    input.sent = resume.sent.clone();
                 }
                 let withdrawn = if row.settled.is_some() || row.input.is_some() {
                     self.withdraw_call_owner_asks_in_txn(txn, call_ref, &mut row)
@@ -656,12 +659,13 @@ impl Vault {
         // call still goes to its admission, which spends the owner's press
         // on exactly this call if one is waiting and else holds it naming
         // the digest; `never allow` mints nothing to send.
-        let prepared = match self.prepare_connector_tool_call(
+        let prepared = match self.prepare_connector_tool_call_with_context(
             &key_id,
             call,
             descriptor,
             &arguments,
             pending.mutation,
+            pending.remember_context,
         ) {
             Ok(ConnectorToolCallPreparation::Ready(prepared)) => prepared,
             Ok(ConnectorToolCallPreparation::ConsentRequired { candidate }) => candidate,

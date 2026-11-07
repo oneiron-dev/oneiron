@@ -28,7 +28,9 @@ use reqwest::{Method, StatusCode, Url};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::caps::{MAX_REMOTE_REQUEST_BYTES, MAX_REMOTE_RESPONSE_BYTES};
+use crate::caps::MAX_REMOTE_REQUEST_BYTES;
+#[cfg(test)]
+use crate::caps::MAX_REMOTE_RESPONSE_BYTES;
 use crate::error::{bad_request, forbidden, transport_error};
 
 // OF-469: a pinned authority checkpoint, fetched for adoption.
@@ -41,6 +43,7 @@ mod origin;
 mod pairing;
 // FIX 3377: a paired owner device renews its own credential.
 mod renewal;
+mod request;
 mod response;
 // OF-237: the network or an in-process server under one signing path.
 mod wire;
@@ -48,8 +51,8 @@ mod wire;
 use self::origin::{bearer_header, normalize_origin};
 pub(crate) use self::pairing::{pair, parse_credential};
 use self::response::{
-    ReadFailure, describe_send_failure, encode_request, read_capped, read_error_envelope,
-    read_export, serialize_request, serialize_whole, within_ceiling,
+    describe_send_failure, encode_request, read_error_envelope, read_export, read_reply,
+    serialize_request, serialize_whole, within_ceiling,
 };
 use self::wire::Wire;
 
@@ -310,21 +313,32 @@ impl RemoteClient {
         invocation: oneiron::runtime_hooks::InvocationId,
     ) -> Result<R, MemoryError> {
         self.note_receipt_ref(None);
-        let body = serialize_whole(request)?;
-        // A sealed custody change past the ceiling goes to the owner route
-        // that spools it whole, whatever its length (FIX 11454).
-        if verb == custody_submit::CUSTODY_SUBMIT_VERB && body.len() > MAX_REMOTE_REQUEST_BYTES {
-            return self.custody_submit_spooled(body);
-        }
+        let body = if verb == custody_submit::CUSTODY_SUBMIT_VERB {
+            let body = serialize_whole(request)?;
+            // The owner route spools sealed custody changes past the ceiling.
+            if body.len() > MAX_REMOTE_REQUEST_BYTES {
+                return self.custody_submit_spooled(body);
+            }
+            request::RequestBody::Bytes(body)
+        } else if self.off_record_session.is_some()
+            || verb.split('.').any(|part| part == "off_record")
+            || verb == "ai.anonymous_chat"
+            || matches!(self.wire, Wire::InProcess(_))
+        {
+            // Ephemeral inputs and in-process exchanges keep their RAM-only body.
+            request::RequestBody::Bytes(serialize_whole(request)?)
+        } else {
+            request::RequestBody::serialize(request)?
+        };
         let url = self.verb_url(verb)?;
-        let body = within_ceiling(body)?;
+        let body = body.within_ceiling()?;
         let mut headers = self.turn_headers()?;
         headers.insert(
             INVOCATION_HEADER,
             HeaderValue::from_str(&invocation.to_hex())
                 .map_err(|_| transport_error("could not name the invocation"))?,
         );
-        let body = encode_request(body, &mut headers);
+        let body = body.encode(&mut headers)?;
         accept_json(&mut headers);
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         let reply = self.send(Method::POST, url, headers, Some(body), long_running(verb))?;
@@ -374,7 +388,7 @@ impl RemoteClient {
         let mut headers = self.turn_headers()?;
         accept_json(&mut headers);
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        let reply = self.send(Method::POST, url, headers, Some(body), false)?;
+        let reply = self.send(Method::POST, url, headers, Some(body.into()), false)?;
         self.note_reply_receipt(&reply.headers);
         let status = reply.status;
         // A model round trip answers 202 with its queued callback. Any other
@@ -570,26 +584,14 @@ fn long_running(verb: &str) -> bool {
     matches!(verb, "vault.export" | "vault.embedding_spaces.move_check")
 }
 
-/// Decodes a success body read under the ordinary response ceiling; `what`
-/// names the call in a refusal.
+/// Decodes a success body straight from the wire, whatever its length
+/// ([`read_reply`]); `what` names the call in a refusal.
 fn read_json<R: DeserializeOwned, B: Read>(
     body: B,
     status: StatusCode,
     what: &str,
 ) -> Result<R, MemoryError> {
-    let bytes = read_capped(body, MAX_REMOTE_RESPONSE_BYTES).map_err(|failure| match failure {
-        ReadFailure::TooLarge => transport_error(format!(
-            "the server's response exceeded the {MAX_REMOTE_RESPONSE_BYTES}-byte read ceiling"
-        )),
-        ReadFailure::Io(message) => {
-            transport_error(format!("the server's response was truncated: {message}"))
-        }
-    })?;
-    serde_json::from_slice(&bytes).map_err(|error| {
-        transport_error(format!(
-            "the server answered {status} for {what} with a body this call could not decode: {error}"
-        ))
-    })
+    read_reply(body, status, what)
 }
 
 /// The blocking client every facade verb and `pair` share.

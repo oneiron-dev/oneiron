@@ -3,7 +3,8 @@
 use super::base::SyncClient;
 use crate::authority::PeerMachine;
 use crate::batch::export::{
-    StagedVaultImport, VaultImportConfirmation, VaultImportStageReceipt, VaultImportStageStatus,
+    OwedBody, StagedImportBodyWork, StagedVaultImport, VaultImportConfirmation,
+    VaultImportStageReceipt, VaultImportStageStatus,
 };
 use crate::error::SyncProtocolValidation;
 use crate::federation::PactDelivery;
@@ -40,19 +41,23 @@ impl SyncClient {
             return self.import_federated_window_update(window_key, update, role);
         }
         // A tier its caller names proves no connection: the bytes take no
-        // own-device lane (FIX 11709).
-        self.import_own_device_window_update(window_key, update, PeerMachine::Unknown)
+        // own-device lane (FIX 11709). This door answers no frame: a deferred
+        // sealed update it lets in whose pads do not install stays deferred
+        // for a drain that can answer (FIX 10474).
+        self.import_own_device_window_update(window_key, update, PeerMachine::Unknown, None)
     }
 
     /// The own-device import of raw window bytes `from` sent: the machine this
     /// client's connection proved when they came in. Their MESSAGE rows take
     /// the own-device lane while `from` stands here as one of the owner's own
-    /// machines and no federation peer is bound (FIX 11709).
+    /// machines and no federation peer is bound (FIX 11709). `answers` is
+    /// the drain's after it ([`Self::drain_staged_world_updates`]).
     pub(super) fn import_own_device_window_update(
         &mut self,
         window_key: &str,
         update: &[u8],
         from: PeerMachine,
+        answers: Option<&mut Vec<Vec<u8>>>,
     ) -> std::result::Result<(), TransportError> {
         // An update joined from its envelope's parts may pass one frame; the
         // envelope's payload length bounds it (FIX 8247).
@@ -75,21 +80,19 @@ impl SyncClient {
             // (FIX 8863); the drain imports each once its edges resolve.
             self.staged_world_updates
                 .push((window.key.clone(), update.to_vec(), from));
-            let pending_bytes: usize = self
-                .staged_world_updates
-                .iter()
-                .map(|(_, bytes, _)| bytes.len())
-                .sum();
             // An update joined from its envelope's parts may pass the bound
             // alone (FIX 8247): it waits while nothing else does, and beside
-            // others they share the bound.
-            if pending_bytes > MAX_DECODED_PAYLOAD_BYTES && self.staged_world_updates.len() > 1 {
+            // others, sealed ones deferred included (FIX 10474), they share
+            // the bound.
+            if self.staged_world_bytes() > MAX_DECODED_PAYLOAD_BYTES
+                && self.staged_world_count() > 1
+            {
                 self.staged_world_updates.pop();
                 return Err(TransportError::InvalidPayload(
                     "unresolved world updates past the memory bound",
                 ));
             }
-            return self.drain_staged_world_updates();
+            return self.drain_staged_world_updates(answers);
         }
         let own_device = self.own_device_import(from);
         self.import_accepted_window_update_with_evidence(
@@ -99,7 +102,7 @@ impl SyncClient {
             &std::collections::HashMap::new(),
             own_device.as_ref(),
         )?;
-        self.drain_staged_world_updates()
+        self.drain_staged_world_updates(answers)
     }
 
     /// Builds a selector request frame for a selector-capable caller.
@@ -203,9 +206,10 @@ impl SyncClient {
             FederationAdmissionRole::Member => WorkKind::MemberUpdate,
             FederationAdmissionRole::Guest => WorkKind::GuestUpdate,
         };
-        let identity = crate::sync::federation_burst::DeferredWork::new(&peer, &key, kind, update)
-            .map_err(map_federated_admission_err)?;
-        let batch_ref = blake3::Hash::from(identity.id).to_hex().to_string();
+        let (batch_id, _) =
+            crate::sync::federation_burst::DeferredWork::identity(&peer, &key, kind, update)
+                .map_err(map_federated_admission_err)?;
+        let batch_ref = blake3::Hash::from(batch_id).to_hex().to_string();
         match self.vault.federation_burst_disposition(&peer, &batch_ref) {
             Ok(receipt) if receipt.state.is_settled() => return Ok(receipt),
             Ok(_) | Err(crate::Error::EntityNotFound) => {}
@@ -318,9 +322,12 @@ impl SyncClient {
     /// body landing door; successful births release their staged facet stamps.
     ///
     /// Missing bodies and failed or withheld landings keep today's pending-row
-    /// behavior and do not fail confirmation. This door fetches no body over a
-    /// socket. An already-confirmed receipt returns its existing result without
-    /// attempting later body delivery.
+    /// behavior and do not fail confirmation. Each body still owed afterwards
+    /// stays owed under the receipt (FIX 12408): the confirmation keeps the
+    /// admitted content and staged stamps for
+    /// [`Self::deliver_staged_vault_import_bodies`]. This door fetches no body
+    /// over a socket. An already-confirmed receipt returns its existing
+    /// result, delivering any supplied bodies it still owes.
     pub fn confirm_staged_vault_import_with_bodies(
         &mut self,
         staged: StagedVaultImport,
@@ -355,6 +362,11 @@ impl SyncClient {
                 if durable.confirmed_by == Some(confirmation.actor)
                     && durable.confirmed_at_secs == Some(confirmation.confirmed_at_secs)
                 {
+                    // The same confirmation again imports nothing; bodies it
+                    // brings land where the receipt still owes them.
+                    if !bodies.is_empty() {
+                        self.deliver_staged_bodies_locked(&durable, bodies)?;
+                    }
                     return Ok(durable);
                 }
                 return Err(TransportError::InvalidPayload("conflicting confirmation"));
@@ -424,28 +436,36 @@ impl SyncClient {
         // operator installs the missing permit. Leaving the receipt Pending lets a
         // re-stage under the same receipt id re-evaluate once policy relaxes.
         let mut carried = Vec::with_capacity(parts.len());
+        // Each part's by-ref bodies, and every row the parts carry: the
+        // bodies left unlanded stay owed under the receipt (FIX 12408).
+        let mut part_refs = Vec::with_capacity(parts.len());
+        let mut carried_rows = Vec::new();
         for part in &parts {
             let (admission_key, update) = (&part.key, &part.update);
             revalidate_admitted_federated_claims(&self.vault, admission_key, update, durable.role)
                 .map_err(map_federated_admission_err)?;
             revalidate_admitted_facet_stamps(admission_key, update)
                 .map_err(map_federated_admission_err)?;
-            let carried_bodies = if bodies.is_empty() {
-                Vec::new()
-            } else {
-                let admitted = crate::sync::schema::create_window_doc(
-                    "federation-staged-bodies",
-                    admission_key,
-                );
-                admitted.import(update).map_err(|_| {
-                    TransportError::InvalidPayload("admitted body references unreadable")
-                })?;
-                bound_refs(&admitted)
-                    .into_iter()
-                    .filter_map(|body| bodies.get(&body.id).map(|bytes| (body, bytes.as_slice())))
-                    .collect()
-            };
+            let admitted =
+                crate::sync::schema::create_window_doc("federation-staged-bodies", admission_key);
+            admitted.import(update).map_err(|_| {
+                TransportError::InvalidPayload("admitted body references unreadable")
+            })?;
+            crate::sync::loro_support::map_for_each_value_bytes(
+                &admitted.get_map("entities"),
+                |key, _| carried_rows.extend(crate::EntityId::from_hex(key).ok()),
+            );
+            let refs = bound_refs(&admitted);
+            let carried_bodies: Vec<_> = refs
+                .iter()
+                .filter_map(|body| {
+                    bodies
+                        .get(&body.id)
+                        .map(|bytes| (body.clone(), bytes.as_slice()))
+                })
+                .collect();
             carried.push(carried_bodies);
+            part_refs.push(refs);
         }
         let births = staged_births(
             &self.vault,
@@ -466,7 +486,7 @@ impl SyncClient {
             let born = watch_births(&vault, births.births(), || {
                 self.import_accepted_window_update(admission_key.as_str(), &window, update)?;
                 let lane = AssetBodyLane::FederationReceive { role: durable.role };
-                with_manager_peer(&self.manager, lane, |peer| {
+                with_manager_peer(&self.manager, lane, None, |peer| {
                     for (body, bytes) in &carried_bodies {
                         if let Err(error) = land_carried_body(peer, admission_key, body, bytes) {
                             tracing::warn!(
@@ -486,6 +506,25 @@ impl SyncClient {
                 .map_err(map_federated_admission_err)?;
             self.import_released_stamps(admission_key.as_str(), released)?;
         }
+        // Every by-ref body whose row is still absent is owed: a later
+        // delivery under this receipt lands it (FIX 12408).
+        let mut owed = Vec::new();
+        for (part, refs) in parts.iter().zip(&part_refs) {
+            for body in refs {
+                if self
+                    .vault
+                    .get_raw(&body.id)
+                    .map_err(map_federated_admission_err)?
+                    .is_none()
+                {
+                    owed.push(OwedBody {
+                        window: part.key.as_str().to_owned(),
+                        entity: *body.id.as_bytes(),
+                    });
+                }
+            }
+        }
+        let work = StagedImportBodyWork::new(owed, carried_rows);
         let expected_receipt = durable;
         let mut receipt = expected_receipt.clone();
         receipt.status = VaultImportStageStatus::Confirmed;
@@ -495,6 +534,7 @@ impl SyncClient {
             &self.vault,
             &expected_receipt,
             &receipt,
+            Some(&work),
         )
         .map_err(|e| TransportError::Storage(e.to_string()))?
         {
@@ -663,7 +703,7 @@ impl SyncClient {
     /// copies. A failure in between leaves them held, so they never count.
     /// The release is this vault's own update, not the peer's: one the window
     /// refuses drops its stamps, and the peer learns nothing from it.
-    fn import_released_stamps(
+    pub(super) fn import_released_stamps(
         &mut self,
         window_key: &str,
         released: Option<crate::sync::selector::ReleasedStamps>,

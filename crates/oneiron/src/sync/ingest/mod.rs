@@ -9,6 +9,7 @@
 mod birth_watch;
 mod delivery;
 mod entity;
+mod message_writer;
 mod order;
 mod own_device;
 mod peer_import;
@@ -24,8 +25,14 @@ pub(in crate::sync) use self::delivery::{
 #[cfg(test)]
 pub(in crate::sync) use self::entity::ingest_entity_in_savepoint;
 pub(in crate::sync) use self::entity::{
-    EntityStep, IngestCtx, RefusalRetry, Residence, ingest_entity_in_txn, waits_for_sibling_row,
+    EntityStep, IngestCtx, RefusalRetry, Residence, ingest_entity_in_txn, land_source_audience_in,
+    waits_for_sibling_row,
 };
+pub(in crate::sync) use self::message_writer::{
+    MESSAGE_WRITER_MAP, admit_writer_proof_carrier, admit_writer_proof_map, copy_writer_proofs,
+    forget_written_rows, publish_writer_proof,
+};
+pub(crate) use self::message_writer::{forget_message_writer_in_txn, note_message_put_in_txn};
 pub(in crate::sync) use self::order::{authority_parent_order, is_authority_row};
 pub(crate) use self::own_device::VerifiedOwnDeviceLane;
 pub(in crate::sync) use self::own_device::with_own_device_import;
