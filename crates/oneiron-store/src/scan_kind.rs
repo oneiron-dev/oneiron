@@ -365,6 +365,8 @@ pub enum EngineScan {
     SyncPrefixRows,
     /// One source's withdrawn dependents, under its dependent-walk policy.
     DependentWalkRows,
+    /// The executed autoresearch roots one continuation sweep's page reads.
+    ResearchContinuationRoots,
 }
 
 /// Rows one engine scan reads past which it asks whether everything is

@@ -600,6 +600,10 @@ pub enum EngineLimit {
     /// Past it the row asks whether everything is okay and the whole
     /// requested count is served.
     RequestedResultRows,
+    /// Ancestor rows one tournament-start check walks, resumed across calls
+    /// (FIX 9581). Past it the row asks whether everything is okay and the
+    /// check still completes, one hop budget at a time; depth never refuses.
+    TournamentLineageRows,
     /// Embedding vector dimensions one vault opened with, measured once
     /// where its host serves it. Past it the row asks whether everything
     /// is okay and the vault serves as opened.

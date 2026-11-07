@@ -168,6 +168,7 @@ impl EngineLimit {
         Self::SharedMergeEvidenceRows,
         Self::CodebaseManifestFiles,
         Self::RequestedResultRows,
+        Self::TournamentLineageRows,
         Self::EmbeddingDimensions,
         Self::MemoryReasonEvidenceRows,
         Self::MemoryReasonTokens,
@@ -338,6 +339,7 @@ impl EngineLimit {
             Self::SharedMergeEvidenceRows => "limits.shared_merge_evidence_rows",
             Self::CodebaseManifestFiles => "limits.codebase_manifest_files",
             Self::RequestedResultRows => "limits.requested_result_rows",
+            Self::TournamentLineageRows => "limits.tournament_lineage_rows",
             Self::EmbeddingDimensions => "limits.embedding_dimensions",
             Self::MemoryReasonEvidenceRows => "limits.memory_reason_evidence_rows",
             Self::MemoryReasonTokens => "limits.memory_reason_tokens",
@@ -578,6 +580,8 @@ impl EngineLimit {
             // ordinary use. Past it the row asks, and the whole requested
             // count is served.
             Self::RequestedResultRows => 1_048_576,
+            // The per-call hop budget the tournament walk defers past (FIX 9581).
+            Self::TournamentLineageRows => 4_096,
             // Two to the twentieth: far above any width a vault opens with
             // in ordinary use. Past it the row asks, and the vault serves
             // as opened.

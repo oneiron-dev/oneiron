@@ -470,6 +470,7 @@ impl LimitsConfig {
             connector_manifest_entries,
             codebase_manifest_files,
             requested_result_rows,
+            tournament_lineage_rows,
             embedding_dimensions,
             shared_merge_evidence_rows,
             memory_reason_evidence_rows,
@@ -778,6 +779,7 @@ impl LimitsConfig {
             ),
             (EngineLimit::CodebaseManifestFiles, codebase_manifest_files),
             (EngineLimit::RequestedResultRows, requested_result_rows),
+            (EngineLimit::TournamentLineageRows, tournament_lineage_rows),
             (EngineLimit::EmbeddingDimensions, embedding_dimensions),
             (
                 EngineLimit::SharedMergeEvidenceRows,

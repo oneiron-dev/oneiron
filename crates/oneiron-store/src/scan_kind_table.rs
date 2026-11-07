@@ -5,7 +5,7 @@ use crate::scan_kind::EngineScan;
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 140] = [
+    pub const ALL: [Self; 141] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -146,6 +146,7 @@ impl EngineScan {
         Self::ReceiptSourceRows,
         Self::SyncPrefixRows,
         Self::DependentWalkRows,
+        Self::ResearchContinuationRoots,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -300,6 +301,7 @@ impl EngineScan {
             Self::ReceiptSourceRows => "receipt_source_rows",
             Self::SyncPrefixRows => "sync_prefix_rows",
             Self::DependentWalkRows => "dependent_walk_rows",
+            Self::ResearchContinuationRoots => "research_continuation_roots",
         }
     }
 
@@ -444,6 +446,7 @@ impl EngineScan {
             Self::ReceiptSourceRows => 153,
             Self::SyncPrefixRows => 154,
             Self::DependentWalkRows => 155,
+            Self::ResearchContinuationRoots => 156,
             Self::MachineTransitionFrontier => 247,
         }]
     }
