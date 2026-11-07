@@ -48,6 +48,8 @@ pub(super) enum SessionStart {
 
 pub(super) struct OffRecordSessionEntry {
     pub(super) overlay: Arc<SessionOverlay>,
+    #[cfg(unix)]
+    pub(super) live_spill: Arc<crate::store::LiveSpillSources>,
     /// Who entered this instance through a creator's door, set once at entry
     /// and dropped with the entry (WILL-PLAN L13 row 03): RAM only, never on
     /// the record a caller reads, so a name taken again after close starts
@@ -235,6 +237,8 @@ impl OffRecordSessionRegistry {
         }
         let entry = Arc::new(OffRecordSessionEntry {
             overlay,
+            #[cfg(unix)]
+            live_spill: crate::store::LiveSpillSources::new(session_ref),
             creator,
             created_name,
             state: Mutex::new(OffRecordSessionEntryState {
@@ -264,6 +268,16 @@ impl OffRecordSessionRegistry {
 
     pub(super) fn entry(&self, session_ref: &str) -> Result<Option<Arc<OffRecordSessionEntry>>> {
         Ok(self.sessions()?.get(session_ref).cloned())
+    }
+
+    /// Every registered instance with its key, cloned under the registry
+    /// lock, which is then released: managed stop closes each (FIX 13868).
+    pub(super) fn entries(&self) -> Result<Vec<(String, Arc<OffRecordSessionEntry>)>> {
+        Ok(self
+            .sessions()?
+            .iter()
+            .map(|(key, entry)| (key.clone(), Arc::clone(entry)))
+            .collect())
     }
 
     /// The key a call from `actor` names by `session_ref` among the
