@@ -42,6 +42,9 @@ pub fn dreamer_facet_for_job_type(job_type: &str) -> Option<&'static str> {
     };
     match job_type {
         "micro" | "meso" | "macro" => Some("dreamer.consolidation"),
+        crate::dreamer_consolidation::root_evidence::ROOT_BRIDGE_ATTEMPT_TYPE => {
+            Some("dreamer.consolidation")
+        }
         super::super::maintenance::CONSOLIDATION_STRENGTH_FACET => Some("dreamer.consolidation"),
         crate::dreamer_consolidation::DREAMER_GAP_SCAN_ATTEMPT_TYPE => {
             Some("dreamer.consolidation")
@@ -99,6 +102,7 @@ pub fn dreamer_facet_for_job_type(job_type: &str) -> Option<&'static str> {
         coach::COACH_RESEARCH_RUN_FACET => Some(coach::COACH_RESEARCH_RUN_FACET),
         coach::COACH_LEARNING_SWEEP_FACET => Some(coach::COACH_LEARNING_SWEEP_FACET),
         coach::COACH_CONTRIBUTION_CHECK_FACET => Some(coach::COACH_CONTRIBUTION_CHECK_FACET),
+        coach::COACH_TOPOLOGY_AUDIT_FACET => Some(coach::COACH_TOPOLOGY_AUDIT_FACET),
         super::super::maintenance::agent_health::COACH_AGENT_HEALTH_FACET => {
             Some(super::super::maintenance::agent_health::COACH_AGENT_HEALTH_FACET)
         }

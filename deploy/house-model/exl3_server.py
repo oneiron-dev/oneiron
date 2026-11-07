@@ -380,6 +380,11 @@ def load(args):
         ids = tokenizer.encode(spelling, encode_special_tokens=True).flatten().tolist()
         if len(ids) == 1:
             stop_ids.add(int(ids[0]))
+    # The LLGuidance tokenizer every schema filter reuses is built here, at
+    # load, never on the scheduler thread at the first schema call, where its
+    # build (about a second for a 150k vocabulary) stalls every job in flight
+    # once (INF 1).
+    warm_schema_tokenizer(tokenizer)
     # The allocator's peaks start again here: from now on they are serving
     # peaks, and the load's are kept apart (exl3_stats.py).
     memory = exl3_stats.Memory(target, target_cache, generator, cuda_devices(target, draft))
@@ -387,6 +392,26 @@ def load(args):
     print(f"SERVER_READY model={args.model_id} context={args.context} cache_tokens={cache_tokens} "
           f"in_flight={batch} depth={depth} stop_ids={sorted(stop_ids)}", flush=True)
     return Server(args, tokenizer, template, generator, sorted(stop_ids), identity, memory, executor)
+
+
+def warm_schema_tokenizer(tokenizer):
+    """Builds and caches the LLGuidance tokenizer that every LLGuidanceFilter
+    of `tokenizer` reuses (exllamav3's `create_ll_tokenizer` cache). Where
+    llguidance is missing or the build fails, the server starts as before
+    and the first schema call builds or fails it as it always has."""
+    try:
+        from exllamav3.generator.filter.llguidance import create_ll_tokenizer, llguidance_available
+    except ImportError:
+        return
+    if not llguidance_available:
+        return
+    started = time.monotonic()
+    try:
+        create_ll_tokenizer(tokenizer)
+    except Exception as e:
+        print(f"SCHEMA_TOKENIZER_UNBUILT error={type(e).__name__}", flush=True)
+        return
+    print(f"SCHEMA_TOKENIZER_READY seconds={time.monotonic() - started:.2f}", flush=True)
 
 
 def make_sampler(body):

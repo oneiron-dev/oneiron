@@ -97,7 +97,8 @@ side_tables! {
         => crate::drafter::erase_drafter_actor_in_txn;
     /// Private binding proving an SDK-facing detached step (no engine-owned run) belongs to its
     /// actor/subject/step hash. Key: id16(attempt).
-    DREAMER_DETACHED_STEP: VaultMeta b"dreamer.detached_step.v1/" Raw;
+    DREAMER_DETACHED_STEP: VaultMeta b"dreamer.detached_step.v1/" Raw
+        => crate::llm::erase_detached_step_actor_in_txn;
     /// FIX 10766: every milestone claim by the attempt its value names, bound or not; written and
     /// dropped beside the durable index. Key: id16(attempt) + id16(claim).
     DREAMER_MILESTONE_INDEX_ATTEMPT_CLAIM: VaultMeta b"dreamer.milestone_index.v1.a:" Named Engine;

@@ -337,6 +337,8 @@ fn finding(
         actual: count as i64,
         dial: fails as i64,
         measured: count as i64,
+        exact_dial: None,
+        exact_measured: None,
         counter: Vec::new(),
         confession: None,
         blocked: false,

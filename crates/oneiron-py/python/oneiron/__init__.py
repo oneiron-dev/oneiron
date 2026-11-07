@@ -5070,13 +5070,13 @@ class Oneiron:
             """Reads the owner-pinned v2 model manifest, or none when no manifest is configured."""
             return json.loads(_translate(lambda: self._client.vault_models_manifest_read(json.dumps(spec))))
         def replace(self, spec):
-            """Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically clearing resident route overrides."""
+            """Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically retaining resident route overrides that remain admitted."""
             return json.loads(_translate(lambda: self._client.vault_models_manifest_replace(json.dumps(spec))))
     class _VaultModelsOneironerVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def bind(self, spec):
-            """Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and clearing resident route overrides."""
+            """Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and retaining resident route overrides that remain admitted."""
             return json.loads(_translate(lambda: self._client.vault_models_oneironer_bind(json.dumps(spec))))
     class _VaultModelsRoutesVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -6740,7 +6740,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def list(self, spec):
-            """Every live catalogued connector whose name or summary matches the query."""
+            """Every matching live catalogued connector and first-party web interface, distinguished by source."""
             return json.loads(_translate(lambda: self._client.connector_list(json.dumps(spec))))
         def status(self, spec):
             """One catalogued connector by name, removed ones included."""

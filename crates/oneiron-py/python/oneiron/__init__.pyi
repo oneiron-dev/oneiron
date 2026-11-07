@@ -3192,10 +3192,10 @@ class Oneiron:
         def read(self, spec: Facade.EmptyRequest) -> Facade.ModelManifest | None:
             """Reads the owner-pinned v2 model manifest, or none when no manifest is configured."""
         def replace(self, spec: Facade.ModelManifestReplace) -> Facade.ModelManifest:
-            """Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically clearing resident route overrides."""
+            """Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically retaining resident route overrides that remain admitted."""
     class _VaultModelsOneironerVerbs:
         def bind(self, spec: Facade.OneironerBind) -> Facade.ModelManifest:
-            """Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and clearing resident route overrides."""
+            """Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and retaining resident route overrides that remain admitted."""
     class _VaultModelsRoutesVerbs:
         def read(self, spec: Facade.ModelRouteRead) -> Facade.ModelRouteView:
             """Reads one independent model slot route with its manifest pin and effective resident narrowing."""
@@ -4177,7 +4177,7 @@ class Oneiron:
             """Count lines, words and bytes of a visible file at the mounted reference."""
     class _ConnectorVerbs:
         def list(self, spec: Facade.ConnectorListRequest) -> list[Facade.ConnectorEntry]:
-            """Every live catalogued connector whose name or summary matches the query."""
+            """Every matching live catalogued connector and first-party web interface, distinguished by source."""
         def status(self, spec: Facade.ConnectorNameRequest) -> Facade.ConnectorView | None:
             """One catalogued connector by name, removed ones included."""
         def call(self, spec: Facade.ConnectorCallRequest) -> Facade.ActAnswer[Facade.ConnectorCallReply]:
