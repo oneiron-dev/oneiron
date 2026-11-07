@@ -82,7 +82,7 @@ pub use erase::CorruptClaimRepair;
 #[cfg(unix)]
 pub(crate) use legal_hold::clone::HostLegalCaptures;
 #[cfg(unix)]
-pub use legal_hold::clone::{HostLegalChannel, HostLegalConnection};
+pub use legal_hold::clone::{HostLegalChannel, HostLegalConnection, HostLegalConnectionRole};
 pub(crate) use legal_hold::prospective::{
     ProspectiveBatch, prospective_standing_in_txn, seal_prospective_message_in_txn,
 };
