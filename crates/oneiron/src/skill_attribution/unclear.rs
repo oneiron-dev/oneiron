@@ -7,11 +7,12 @@
 //! the judge leaned to, and the judge's own words. Beside the notes stands the
 //! outcome's context, frozen in the write that files them (FIX 7824): who and
 //! what the outcome was about, where it ran, which judge wrote the notes and
-//! the rows that judge read. The Dreamer groups notes only within one context,
-//! and an erase of anything the context names drops the row whole, notes and
-//! all. The clustering that turns recurring notes into a proposed new label is
-//! the Dreamer's, and is not built here; [`unclear_attributions`] is its
-//! inlet.
+//! the rows that judge read. The Coach's clustering
+//! (`dreamer_runner::maintenance::attribution_labels`) groups notes only
+//! within one scope and turns a recurring one into a proposed new label; it
+//! reads the ledger in pages, and keeps no note text of its own. An erase of
+//! anything a context names drops the row whole, notes and all, and the
+//! proposals that quoted them.
 
 use serde::{Deserialize, Serialize};
 
@@ -20,7 +21,6 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::learning::TypeRef;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
-use crate::store::Store;
 
 use super::types::{AttributionLane, AttributionVerdict, UnclearNote, UnclearReason};
 
@@ -191,8 +191,38 @@ impl RawValue for StoredUnclear {
     }
 }
 
-fn row_key(lane: AttributionLane, reference: &str) -> String {
+/// The ledger key of `lane`'s outcome `reference`: the key the Coach's
+/// clustering tables name a note's outcome by.
+pub(crate) fn unclear_key(lane: AttributionLane, reference: &str) -> String {
     format!("{}:{reference}", lane.as_str())
+}
+
+impl StoredUnclear {
+    fn decode(self) -> Result<UnclearAttribution> {
+        let corrupt = || Error::CorruptedIndex(ROW_LABEL);
+        let mut notes = Vec::with_capacity(self.notes.len());
+        for note in self.notes {
+            notes.push(UnclearNote {
+                reason: UnclearReason::parse(&note.reason).ok_or_else(corrupt)?,
+                leaning: note
+                    .leaning
+                    .as_deref()
+                    .map(|label| AttributionVerdict::parse(label).ok_or_else(corrupt))
+                    .transpose()?,
+                confidence: note.confidence,
+                share: note.share,
+                note: note.note,
+            });
+        }
+        Ok(UnclearAttribution {
+            lane: AttributionLane::parse(&self.lane).ok_or_else(corrupt)?,
+            reference: self.reference,
+            evidence_receipts: self.evidence_receipts,
+            notes,
+            context: self.context.decode()?,
+            at: self.at,
+        })
+    }
 }
 
 /// Files `row`, replacing whatever the same outcome held before.
@@ -205,11 +235,16 @@ pub(crate) fn put_unclear_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     row: &UnclearAttribution,
 ) -> Result<()> {
-    let key = row_key(row.lane, &row.reference);
+    let key = unclear_key(row.lane, &row.reference);
     for id in row.context.entities() {
         if crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, &*wtxn, id)?.deleted
         {
             UNCLEAR.delete(&vault.store, wtxn, &key)?;
+            crate::dreamer_runner::maintenance::forget_unclear_notes_in_txn(
+                &vault.store,
+                wtxn,
+                &key,
+            )?;
             return Ok(());
         }
     }
@@ -236,33 +271,37 @@ pub(crate) fn put_unclear_in_txn(
     Ok(())
 }
 
-/// Withdraws the outcome's row: a re-judgment that left nothing unclear.
+/// Withdraws the outcome's row: a re-judgment that left nothing unclear. The
+/// Coach's clustering stops counting its notes in the same write.
 pub(crate) fn delete_unclear_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     lane: AttributionLane,
     reference: &str,
 ) -> Result<()> {
-    UNCLEAR.delete(&vault.store, wtxn, &row_key(lane, reference))?;
-    Ok(())
+    let key = unclear_key(lane, reference);
+    UNCLEAR.delete(&vault.store, wtxn, &key)?;
+    crate::dreamer_runner::maintenance::forget_unclear_notes_in_txn(&vault.store, wtxn, &key)
 }
 
 /// Drops every unclear row whose context names erased `entity` — its actor,
 /// skill, project or a row its judge read — whole, notes and all: a note's
 /// words can quote any of them, so nilling a field would leave the words
 /// (FIX 7824). A row that no longer decodes names nothing a scrub can match,
-/// and goes too. Runs as the table's declared scrub, which an erase and a
-/// checkpoint restore's replay reach, and as a derived-row eraser, which both
-/// delete doors reach.
+/// and goes too. Each dropped row's notes leave the Coach's clustering, and
+/// a label proposal that quoted one goes with them. Runs as the table's
+/// declared scrub, which an erase and a checkpoint restore's replay reach,
+/// and as a derived-row eraser, which both delete doors reach.
 ///
 /// # Errors
 ///
 /// Storage errors.
 pub(crate) fn erase_unclear_source_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut heed::RwTxn<'_>,
     entity: &EntityId,
 ) -> Result<()> {
+    let store = write.store;
     let rows = UNCLEAR_RAW
         .iter_raw_from(store, wtxn, &[])?
         .collect::<Result<Vec<_>>>()?;
@@ -274,11 +313,20 @@ pub(crate) fn erase_unclear_source_in_txn(
                 .map_or(true, |context| context.names(entity)),
             Err(_) => true,
         };
-        if names {
-            UNCLEAR_RAW.delete(store, wtxn, &key)?;
+        if !names {
+            continue;
+        }
+        UNCLEAR_RAW.delete(store, wtxn, &key)?;
+        // A key that is not text names no note the clustering could hold.
+        if let Ok(key) = String::from_utf8(key) {
+            crate::dreamer_runner::maintenance::erase_unclear_note_copies_in_txn(
+                write, wtxn, &key,
+            )?;
         }
     }
-    Ok(())
+    // A filed label proposal quoting a note about `entity` goes even when a
+    // re-judgment took the note out of the ledger first.
+    crate::dreamer_runner::maintenance::erase_label_proposals_naming_in_txn(write, wtxn, entity)
 }
 
 /// [`erase_unclear_source_in_txn`] in the declared scrub's shape.
@@ -291,7 +339,53 @@ pub(crate) fn erase_unclear_entity_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     entity: &EntityId,
 ) -> Result<()> {
-    erase_unclear_source_in_txn(&vault.store, wtxn, entity)
+    erase_unclear_source_in_txn(
+        &crate::secret_custody::CustodyWrite::of(vault),
+        wtxn,
+        entity,
+    )
+}
+
+/// The outcome filed under ledger key `key`, read in `txn`.
+///
+/// # Errors
+///
+/// Storage errors; [`Error::CorruptedIndex`] on an undecodable row.
+pub(crate) fn unclear_row_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &str,
+) -> Result<Option<UnclearAttribution>> {
+    UNCLEAR
+        .get(&vault.store, txn, &key.to_owned())?
+        .map(StoredUnclear::decode)
+        .transpose()
+}
+
+/// At most `limit` outcomes after ledger key `after` (from the start with
+/// none), in key order, each beside its key: the Coach's clustering page.
+///
+/// # Errors
+///
+/// Storage errors; [`Error::CorruptedIndex`] on an undecodable row.
+pub(crate) fn unclear_page_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    after: Option<&str>,
+    limit: usize,
+) -> Result<Vec<(String, UnclearAttribution)>> {
+    let after = after.map(str::to_owned);
+    let start = after
+        .as_ref()
+        .map_or(std::ops::Bound::Unbounded, std::ops::Bound::Excluded);
+    UNCLEAR
+        .iter_range(&vault.store, txn, start, std::ops::Bound::Unbounded)?
+        .take(limit)
+        .map(|row| {
+            let (key, row) = row?;
+            Ok((key, row.decode()?))
+        })
+        .collect()
 }
 
 /// Every outcome the judge left `unclear`, both lanes, in key order — the
@@ -302,31 +396,9 @@ pub(crate) fn erase_unclear_entity_in_txn(
 /// Storage errors; [`Error::CorruptedIndex`] on an undecodable row.
 pub fn unclear_attributions(vault: &Vault) -> Result<Vec<UnclearAttribution>> {
     let rtxn = vault.store.env.read_txn()?;
-    let corrupt = || Error::CorruptedIndex(ROW_LABEL);
-    let mut out = Vec::new();
-    for (_, row) in UNCLEAR.scan(&vault.store, &rtxn)? {
-        let mut notes = Vec::with_capacity(row.notes.len());
-        for note in row.notes {
-            notes.push(UnclearNote {
-                reason: UnclearReason::parse(&note.reason).ok_or_else(corrupt)?,
-                leaning: note
-                    .leaning
-                    .as_deref()
-                    .map(|label| AttributionVerdict::parse(label).ok_or_else(corrupt))
-                    .transpose()?,
-                confidence: note.confidence,
-                share: note.share,
-                note: note.note,
-            });
-        }
-        out.push(UnclearAttribution {
-            lane: AttributionLane::parse(&row.lane).ok_or_else(corrupt)?,
-            reference: row.reference,
-            evidence_receipts: row.evidence_receipts,
-            notes,
-            context: row.context.decode()?,
-            at: row.at,
-        });
-    }
-    Ok(out)
+    UNCLEAR
+        .scan(&vault.store, &rtxn)?
+        .into_iter()
+        .map(|(_, row)| row.decode())
+        .collect()
 }

@@ -113,7 +113,7 @@ mod unclear;
 pub use self::unclear::{UnclearAttribution, UnclearContext, unclear_attributions};
 pub(crate) use self::unclear::{
     delete_unclear_in_txn, erase_unclear_entity_in_txn, erase_unclear_source_in_txn,
-    put_unclear_in_txn,
+    put_unclear_in_txn, unclear_key, unclear_page_in_txn, unclear_row_in_txn,
 };
 
 pub use self::audit::{
