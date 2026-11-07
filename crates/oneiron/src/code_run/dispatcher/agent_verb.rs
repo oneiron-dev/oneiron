@@ -1,12 +1,13 @@
 //! Code mode's verb-table calls: the run's write origin and the receipt a write keeps.
 
+mod connector_wait;
 mod scoped_port;
 mod session_write;
 
 use serde_json::Value;
 
+use self::connector_wait::{connector_call_answer, held_call_ref};
 use crate::EntityId;
-use crate::code_run::ConnectorCallReply;
 use crate::code_run::consent_wait::{self, CodeConsentCallSite};
 use crate::code_run::payload::{
     agent_verb_call_identity as call_identity, decode_self_dispatch_outcome,
@@ -24,7 +25,6 @@ use crate::error::{Error, Result};
 use crate::memory::HostWriteOrigin;
 use crate::memory::read_capture::ReadCapture;
 use crate::runtime_hooks::VerbHookStop;
-use crate::secret_custody::SECRET_USE_CONNECTOR_CALL;
 use crate::task_verb::sdk::AgentVerb;
 use serde::{Deserialize, Serialize};
 
@@ -147,6 +147,10 @@ impl HostSelfDispatcher<'_> {
             Some(capture) => origin.with_read_capture(capture.clone()),
             None => origin,
         };
+        // A skill-library answer's producer witnesses the skill bodies it
+        // carries, which the run's host keeps once its guest reads them (FIX
+        // 3608).
+        let origin = self.with_skill_body_capture(origin, call.verb, site);
         let read_site = site;
         let Some(site) = site.filter(|_| call.verb.writes()) else {
             let answer = self.program_door_call(&**door, &call, &origin, invocation);
@@ -706,48 +710,6 @@ fn worded(outcome: SelfDispatchOutcome, door: &dyn AgentVerbDoor) -> SelfDispatc
         }
         outcome => outcome,
     }
-}
-
-/// `connector.call`'s answer as the run takes it (ONE-2510): a call held for
-/// consent or governance, or a delivery the same send retries, parks the run
-/// on the call's ref as an outbound-effect wait, which the connector settler
-/// answers with the call's settled reply. `self.use`'s `connector.call`
-/// parks the same way on the call its answer holds (OF-560). Any other
-/// answer, and any other verb's, stands.
-fn connector_call_answer(verb: AgentVerb, outcome: SelfDispatchOutcome) -> SelfDispatchOutcome {
-    let wait_id = match &outcome {
-        SelfDispatchOutcome::AgentVerb(answer) => held_call_ref(verb, &answer.output),
-        _ => None,
-    };
-    let Some(wait_id) = wait_id else {
-        return outcome;
-    };
-    SelfDispatchOutcome::DurableWait(SelfDurableWait {
-        wait_id,
-        effect: SelfEffect::AgentVerb,
-        reason: SelfDurableWaitReason::OutboundEffect,
-        prompt: Some(format!("connector_call:{}", wait_id.to_hex())),
-    })
-}
-
-/// The ref of the connector call a verb's answer holds or retries: a
-/// `connector.call` reply's, or the one inside a `self.use` answer whose
-/// operation was `connector.call`.
-fn held_call_ref(verb: AgentVerb, output: &Value) -> Option<EntityId> {
-    let reply = match verb {
-        AgentVerb::ConnectorCall => output.clone(),
-        AgentVerb::SelfUse => {
-            let answer = serde_json::from_value::<SecretUseAnswer>(output.clone()).ok()?;
-            if answer.receipt.operation != SECRET_USE_CONNECTOR_CALL {
-                return None;
-            }
-            answer.result?
-        }
-        _ => return None,
-    };
-    serde_json::from_value::<ConnectorCallReply>(reply)
-        .ok()?
-        .wait_ref()
 }
 
 /// The identity of the verb call a receipt row recorded, if the row is one.

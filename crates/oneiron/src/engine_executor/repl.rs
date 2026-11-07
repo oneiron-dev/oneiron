@@ -154,7 +154,7 @@ impl EngineNativeExecutor<'_> {
                         .map_err(Error::from)?
                 }
             };
-            let request =
+            let (request, console) =
                 self.build_llm_request(config, &record, &wire_prompt.text, continuation.as_ref())?;
             match self.feed_compaction(config, &record, &request)? {
                 Ok(Some(reason)) => {
@@ -211,6 +211,7 @@ impl EngineNativeExecutor<'_> {
                 config,
                 completed_steps,
                 &request,
+                console,
                 &record,
                 &wire_prompt.stamp.resolved_fingerprint,
             );

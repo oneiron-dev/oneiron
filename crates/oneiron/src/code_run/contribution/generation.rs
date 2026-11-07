@@ -4,10 +4,10 @@
 //! lends it to that call alone (FIX 6255): a prompt that does not read is
 //! no fork, paid for nothing, and is never sent as some other prompt.
 
-use super::super::replay_capsule::{CapsuleRequest, ExposureSlot, ReplayRung, StepReplayCapsule};
+use super::super::replay_capsule::{CapsuleRequest, ExposureSlot, ReplayRung};
 use super::super::shadow_runner::{ShadowUnavailable, ShadowUnavailableReason};
 use super::super::storage::{capsule_request, capsule_route_prompt, store_fork_response};
-use super::ancestor::target_slots;
+use super::ancestor::{TargetStep, target_slots};
 use super::execution::freeze_program_step;
 use super::{
     ContributionForkReceipt, ContributionReplayUnavailable, FORK_RECEIPT_PREFIX, ForkRows,
@@ -18,11 +18,10 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::learning::Anchor;
 
 impl Runner<'_> {
-    pub(super) fn prepare(
-        &self,
-        rows: &ForkRows,
-        capsule: std::result::Result<StepReplayCapsule, ContributionReplayUnavailable>,
-    ) -> Outcome<Prepared> {
+    /// A pair's inputs, settled before either fork is paid for: a knowledge
+    /// pair's here, a callable's or a delivery's ([`Self::prepare_caller`],
+    /// FIX 3608) once its anchor is one a pair replays.
+    pub(super) fn prepare(&self, rows: &ForkRows, step: TargetStep) -> Outcome<Prepared> {
         use ContributionReplayUnavailable as Unavailable;
         // An owner verdict's pair is generated here like any other and
         // judged by the owner (FIX 3609); a world outcome is not replayed.
@@ -33,9 +32,10 @@ impl Runner<'_> {
             return Ok(Err(Unavailable::AnchorNotReplayable));
         }
         let target = self.candidate.target;
-        let capsule = match capsule {
-            Ok(capsule) => capsule,
-            Err(reason) => return Ok(Err(reason)),
+        let capsule = match step {
+            TargetStep::Knowledge(Ok(capsule)) => capsule,
+            TargetStep::Knowledge(Err(reason)) => return Ok(Err(reason)),
+            TargetStep::Caller(caller) => return self.prepare_caller(rows, *caller),
         };
         // An erased capsule's content went with its actor (FIX 6144): none of
         // its rung, exposures or request is read, and the pair is unreadable.

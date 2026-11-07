@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use super::super::replay_capsule::StepReplayCapsule;
 use super::super::storage::{fork_rows_in_txn, step_replay_capsules_in_txn};
-use super::ancestor::target_step;
+use super::ancestor::select_target;
 use super::execution::pair_evidence_mode;
 use super::owner::OwnerPair;
 use super::{
@@ -146,7 +146,8 @@ pub(crate) fn matched_contribution_facts_in_txn(
 }
 
 /// The capsule of the step `candidate`'s target check regenerates
-/// ([`super::ancestor`]), as it stands in `txn`.
+/// ([`super::ancestor`]), as it stands in `txn`: for a callable's load or a
+/// delivered body (FIX 3608), the step after its call's.
 fn target_capsule(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -156,7 +157,8 @@ fn target_capsule(
         return Ok(None);
     };
     let capsules = step_replay_capsules_in_txn(vault, txn, attempt)?;
-    Ok(target_step(&capsules, candidate.target).ok())
+    let target = select_target(vault, txn, &capsules, candidate.target)?;
+    Ok(target.regenerated().cloned())
 }
 
 /// Whether `fork` regenerated `capsule`: its request, model, route prompt

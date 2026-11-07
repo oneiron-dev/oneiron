@@ -31,4 +31,23 @@ impl<'a> CodeRunReplayCursor<'a> {
             next: Cell::new(index),
         })
     }
+
+    /// Moves the cursor on to `position`, past rows no call of the arm
+    /// meets: the calls a callable made, once a callable branch leaves its
+    /// load absent (FIX 3608). Positions stay absolute.
+    ///
+    /// # Errors
+    ///
+    /// A position before the cursor's, or past the record's bridge log.
+    pub(crate) fn skip_to(&self, position: u64) -> Result<()> {
+        let index = usize::try_from(position)
+            .map_err(|_| Error::ArithmeticOverflow("code-run replay position"))?;
+        if index < self.next.get() || index > self.record.bridge_calls.len() {
+            return Err(invalid_code_run_replay(
+                "code-run replay skip outside the bridge log",
+            ));
+        }
+        self.next.set(index);
+        Ok(())
+    }
 }

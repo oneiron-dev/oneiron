@@ -94,10 +94,24 @@ impl JsCodeModeHost for SkillHost<'_> {
     }
 }
 
+/// The callable a call's load selected (FIX 3608), as the call ran it: the
+/// entity whose body loaded, its revision as `skill_id@version`, whether it
+/// ran on the first-party tier, and the stored file its call contract names,
+/// by its path and the BLAKE3 of its bytes. A replay reads that file again
+/// and runs it only while its bytes still hash so.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct SelectedCallable {
+    pub(crate) entity: EntityId,
+    pub(crate) revision: String,
+    pub(crate) first_party: bool,
+    pub(crate) reference: String,
+    pub(crate) source_hash: [u8; 32],
+}
+
 /// The step a call runs: its arguments as the host's one prelude line, then
 /// its stored file. JSON serialization safely embeds the arguments as a JS
 /// expression; no host pathname or executable binary ever enters the guest.
-fn callable_script(args: &JsonValue, source: &str) -> Result<String> {
+pub(crate) fn callable_script(args: &JsonValue, source: &str) -> Result<String> {
     Ok(format!(
         "const skillArgs = {};\n{source}",
         serde_json::to_string(args).map_err(|_| invalid("call arguments cannot be encoded"))?
@@ -253,6 +267,7 @@ pub fn execute_callable_skill(
         at,
         &StepCancellation::never(),
         &mut Vec::new(),
+        &mut None,
         None,
     )
 }
@@ -264,12 +279,14 @@ pub fn execute_callable_skill(
 /// with [`crate::error::CodeError::CodeStepCancelled`] and writes no
 /// success witness. `loaded_from` lists, as each is read, the skill whose
 /// contract admits the call and the entity its load chose: the stored
-/// source the answer, or a refusal after that read, is made from. `memory`
-/// is the caller's result share, which the answer check holds its buffers
-/// on (FIX 10149); `None` where the caller has no run share.
+/// source the answer, or a refusal after that read, is made from.
+/// `selected` takes the callable the load chose, its stored file found,
+/// before it runs (FIX 3608). `memory` is the caller's result share, which
+/// the answer check holds its buffers on (FIX 10149); `None` where the
+/// caller has no run share.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the caller lends its existing lease, runtime, host, deterministic step identity, step token, source list and result share"
+    reason = "the caller lends its existing lease, runtime, host, deterministic step identity, step token, source list, selection and result share"
 )]
 pub(crate) fn execute_callable_skill_cancellable(
     vault: &std::sync::Arc<Vault>,
@@ -285,6 +302,7 @@ pub(crate) fn execute_callable_skill_cancellable(
     at: u64,
     parent: &StepCancellation,
     loaded_from: &mut Vec<EntityId>,
+    selected: &mut Option<SelectedCallable>,
     memory: Option<AnswerMemory<'_>>,
 ) -> Result<CallableSkillAnswer> {
     // Validate before appending a manifest entry; failed argument admission
@@ -331,6 +349,13 @@ pub(crate) fn execute_callable_skill_cancellable(
         .ok_or(invalid("call reference is absent from stored skill source"))?;
     let source = std::str::from_utf8(&file.content)
         .map_err(|_| invalid("call reference must contain UTF-8 JavaScript"))?;
+    *selected = Some(SelectedCallable {
+        entity: loaded.entity,
+        revision: format!("{}@{}", loaded.record.skill_id, loaded.record.version),
+        first_party: tier == SandboxGuestTier::FirstPartyDreamer,
+        reference: file.path.clone(),
+        source_hash: *blake3::hash(&file.content).as_bytes(),
+    });
     let script = callable_script(args, source)?;
     // Prepared once (FIX 8276): a TypeScript skill runs as the JavaScript Oxc
     // prints for it. The arguments line is the host's prelude, so a failed

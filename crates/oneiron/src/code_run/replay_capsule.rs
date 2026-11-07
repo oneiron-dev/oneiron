@@ -47,6 +47,11 @@
 //! (`shadow_runner`); a capture that pins no route leaves it `None`, and no
 //! live step is refused for it.
 //!
+//! An engine step's capsule also keeps where its request shows the step
+//! before's console whole ([`ConsoleSlot`], FIX 3608), as the request
+//! builder put it there: a callable's counterfactual renders each branch's
+//! observation into that one message, and into nothing else.
+//!
 //! A saved-workflow step that answered in one call, with no tool round,
 //! binds that answer to its capsule by the digest and length of its text
 //! ([`bind_workflow_step_answer`], FIX 3611). An audit of the step's result
@@ -73,9 +78,9 @@ use crate::{
 pub use crate::team::task_exposure::TaskExposure;
 
 pub use crate::dreamer_runner::step_replay::{
-    CapsuleContent, CapsuleHost, CapsuleRequest, CapsuleRungBinding, ExecutorStepStart,
-    ExposureKind, ExposureSlot, ReplayRoutePin, ReplayRung, StepContextRef, StepReplayCapsule,
-    StoredRungBinding, StoredSpan, route_prompt_digest,
+    CapsuleContent, CapsuleHost, CapsuleRequest, CapsuleRungBinding, ConsoleSlot,
+    ExecutorStepStart, ExposureKind, ExposureSlot, ReplayRoutePin, ReplayRung, StepContextRef,
+    StepReplayCapsule, StoredRungBinding, StoredSpan, route_prompt_digest,
 };
 
 /// The body an [`ExecutorStepStart`] names: the run's replay row as stored
@@ -107,6 +112,9 @@ pub(crate) struct StepCapture<'a> {
     /// The task the request carries, which `exposures` index into.
     pub(crate) task: &'a str,
     pub(crate) exposures: &'a [TaskExposure],
+    /// Where the request shows the step before's console whole, as the
+    /// request builder put it there (FIX 3608); `None` for a workflow step.
+    pub(crate) console: Option<ConsoleSlot>,
     /// Every row the request was read from, or `None` when any is unknown.
     pub(crate) source_rows: Option<Vec<EntityId>>,
     /// An executor step's run state and config; `None` for a workflow step.
@@ -138,6 +146,8 @@ pub(crate) struct CapsuleDraft<'a> {
     pub(crate) messages_digest: [u8; 32],
     /// Each exposure where it sits in the request as sent.
     pub(crate) exposures: Vec<ExposureSlot>,
+    /// The step before's console where it sits in the request as sent.
+    pub(crate) console: Option<ConsoleSlot>,
 }
 
 impl CapsuleDraft<'_> {
@@ -159,6 +169,7 @@ struct Awaiting {
     messages: [u8; 32],
     request_path: String,
     exposures: Vec<ExposureSlot>,
+    console: Option<ConsoleSlot>,
     binding: Option<CapsuleRungBinding>,
     /// The role whose admission sent the call (FIX 6359), as its host noted
     /// it. A capture with none is not finalized.
@@ -193,6 +204,7 @@ pub(crate) struct CapsuleRequestUpdate<'a> {
     pub(crate) request: &'a LlmRequest,
     pub(crate) path: &'a str,
     pub(crate) exposures: &'a [ExposureSlot],
+    pub(crate) console: Option<&'a ConsoleSlot>,
 }
 
 /// Keeps the actual request after the host appended browser handoff evidence.
@@ -232,11 +244,12 @@ pub fn refresh_step_capture_request(
                     entry.key,
                     entry.request_path.clone(),
                     entry.exposures.clone(),
+                    entry.console.clone(),
                 )
             })
             .collect()
     });
-    for (key, path, exposures) in staged {
+    for (key, path, exposures, console) in staged {
         let update = CapsuleRequestUpdate {
             key,
             run,
@@ -245,6 +258,7 @@ pub fn refresh_step_capture_request(
             request,
             path: &path,
             exposures: &exposures,
+            console: console.as_ref(),
         };
         match refresh_staged_request(vault, &update) {
             Ok(Some(bytes)) => AWAITING.with(|awaiting| {
@@ -434,6 +448,7 @@ pub fn capture_workflow_step(
         request,
         task: "",
         exposures: &[],
+        console: None,
         source_rows,
         start: None,
     };
@@ -549,6 +564,10 @@ fn stage(vault: &Vault, capture: &StepCapture<'_>) -> Result<Option<Awaiting>> {
         ),
         messages_digest: messages,
         exposures: slots(capture),
+        console: capture
+            .console
+            .clone()
+            .filter(|console| console.locate(capture.request).is_some()),
         request,
     };
     if put_staged_capsule(vault, &draft)?.is_none() {
@@ -561,6 +580,7 @@ fn stage(vault: &Vault, capture: &StepCapture<'_>) -> Result<Option<Awaiting>> {
         messages,
         request_path: draft.request_path,
         exposures: draft.exposures,
+        console: draft.console,
         binding: None,
         role: None,
         route_pin: None,

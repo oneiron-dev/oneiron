@@ -41497,42 +41497,42 @@ pub fn vault_skills_get(
     memory: &Memory<'_>,
     input: HubSkillRequest,
 ) -> MemoryResult<crate::task_verb::sdk::SkillLibraryView> {
-    crate::task_verb::sdk::skill_library_get_as_owner(
+    memory.witness_skill_bodies(crate::task_verb::sdk::skill_library_get_as_owner(
         memory.vault(),
         &memory.embedded_owner("vault.skills.get")?,
         &input,
-    )
+    ))
 }
 pub fn vault_skills_list(
     memory: &Memory<'_>,
     input: SkillLibraryListRequest,
 ) -> MemoryResult<crate::task_verb::sdk::SkillLibraryPage> {
-    crate::task_verb::sdk::skill_library_list_as_owner(
+    memory.witness_skill_bodies(crate::task_verb::sdk::skill_library_list_as_owner(
         memory.vault(),
         &memory.embedded_owner("vault.skills.list")?,
         &input,
-    )
+    ))
 }
 pub fn vault_skills_archive(
     memory: &Memory<'_>,
     input: HubSkillRequest,
 ) -> MemoryResult<crate::task_verb::sdk::SkillLibraryView> {
-    crate::task_verb::sdk::skill_archive_as_owner(
+    memory.witness_skill_bodies(crate::task_verb::sdk::skill_archive_as_owner(
         memory.vault(),
         &memory.embedded_owner("vault.skills.archive")?,
         &input,
-    )
+    ))
 }
 pub fn vault_skills_restore(
     memory: &Memory<'_>,
     input: SkillLibraryRestoreRequest,
 ) -> MemoryResult<crate::task_verb::sdk::SkillLibraryRestoreReceipt> {
-    crate::task_verb::sdk::skill_restore_as_owner(
+    memory.witness_skill_bodies(crate::task_verb::sdk::skill_restore_as_owner(
         memory.vault(),
         &memory.embedded_owner("vault.skills.restore")?,
         &input,
         None,
-    )
+    ))
 }
 pub fn vault_skills_fork(
     memory: &Memory<'_>,

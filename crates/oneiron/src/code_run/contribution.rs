@@ -23,11 +23,18 @@
 //! The owner's word scores both forks and records the pair in the ask's
 //! settling commit.
 //!
-//! A knowledge exposure is the one unit: a body the host put in the run's
-//! task, tagged where it went. A callable or result-only use, an ancestor
-//! the run read through a verb, an anchor that cannot judge a new output,
-//! and any missing or ambiguous context are unavailable, never "did not
-//! contribute".
+//! A knowledge exposure is one unit: a body the host put in the run's task,
+//! tagged where it went. A callable's load is another (FIX 3608): a
+//! skill the run's program called, judged by running the caller's step
+//! again with that exact load and without it, and regenerating the next
+//! step from each branch's own observation ([`execution`]). A skill body a
+//! call's answer delivered to the run's program after its first step is the
+//! third (FIX 3608): judged the same way, the call answering as recorded,
+//! then as the skill were not found. A result-only use, a body that reached
+//! the run through a stored value or a read with no native witness of its
+//! origin, an ancestor the run read through a verb, an anchor that cannot
+//! judge a new output, and any missing or ambiguous context are
+//! unavailable, never "did not contribute".
 
 mod admission;
 mod ancestor;
@@ -39,11 +46,11 @@ use serde::{Deserialize, Serialize};
 
 pub use self::admission::ForkMismatch;
 pub(crate) use self::admission::matched_contribution_facts_in_txn;
-use self::ancestor::target_step;
+use self::ancestor::select_target;
 pub use self::execution::{
-    ContributionForkExecution, ContributionForkProgram, ExecutedBody, ExecutedFork,
+    CallableBranch, ContributionForkExecution, ContributionForkProgram, ExecutedBody, ExecutedFork,
     ExecutedForkView, ExecutedOutput, ExecutedStepStatus, ForkEvidenceMode, ForkExecutionOutcome,
-    ForkExecutionPin, ForkJudge, ForkScore, execute_contribution_fork,
+    ForkExecutionPin, ForkJudge, ForkScore, execute_callable_branch, execute_contribution_fork,
 };
 use self::execution::{ProgramStep, pair_evidence_mode, retry_pending, scored_in};
 pub use self::owner::OwnerJudgment;
@@ -95,9 +102,10 @@ pub enum ContributionReplayUnavailable {
     /// a fork writer found the capsule's content erased (FIX 6256).
     Erased,
     /// No knowledge exposure of the target in a captured step: the skill's
-    /// body, or the edge's source's, as the host put it in the run's task. A
-    /// callable or result-only use, and an ancestor the run read through a
-    /// verb, is not replayed.
+    /// body, or the edge's source's, as the host put it in the run's task,
+    /// and no call of the skill's load, nor delivery of its body, that a
+    /// step's replay context kept (FIX 3608). A result-only use, and an
+    /// ancestor the run read through a verb, is not replayed.
     NoExposure,
     /// The target reached the run only as site knowledge on a browser
     /// observation (FIX 11436): it is recorded, but it has no byte span in
@@ -122,7 +130,11 @@ pub enum ContributionReplayUnavailable {
     /// step now (FIX 3607), for the shadow runner's own reason, one a retry
     /// may clear (no runtime now, a cancelled run). The pair waits for that
     /// one retry; a reason that holds then, or a lasting one, puts the pair
-    /// in the `Text` mode instead. Never a loss of the program.
+    /// in the `Text` mode instead. Never a loss of the program. A callable's
+    /// or a delivery's pair (FIX 3608) stops here too when a branch of its
+    /// caller's step did not run against the step's recorded calls, or the
+    /// next step's request cannot take a branch's observation, for the
+    /// shadow runner's reason.
     ProgramReplay(ShadowUnavailable),
 }
 
@@ -173,7 +185,9 @@ pub enum ForkTreatment {
     /// The step as captured.
     WithSkill,
     /// The step with the target's exposure removed (the skill's body, or the
-    /// edge's source's), and nothing else changed.
+    /// edge's source's), and nothing else changed; for a callable's load or
+    /// a delivered body (FIX 3608), the next step's request as its caller's
+    /// step makes it once that load or body is absent.
     WithoutSkill,
 }
 
@@ -359,18 +373,18 @@ pub fn run_contribution_forks(
     scorer: &dyn ContributionForkScorer,
     clock: &RetrievalDeadline,
 ) -> Result<std::result::Result<ContributionForks, ContributionReplayUnavailable>> {
-    let (provenance, capsule) = {
+    let (provenance, target) = {
         let txn = vault.store.env.read_txn()?;
         let capsules = attempt_capsules_in_txn(vault, &txn, candidate)?;
-        let capsule = target_step(&capsules, candidate.target);
+        let target = select_target(vault, &txn, &capsules, candidate.target)?;
         let provenance = ForkProvenance::for_candidate_in_txn(
             vault,
             &txn,
             candidate,
             &capsules,
-            capsule.as_ref().ok(),
+            target.regenerated(),
         )?;
-        (provenance, capsule)
+        (provenance, target)
     };
     let Some(provenance) = provenance else {
         return Ok(Err(ContributionReplayUnavailable::Unreadable));
@@ -389,7 +403,7 @@ pub fn run_contribution_forks(
     if let Some(reason) = rows.unavailable.take() {
         return Ok(Err(reason));
     }
-    let outcome = match runner.prepare(&rows, capsule)? {
+    let outcome = match runner.prepare(&rows, target)? {
         Ok(prepared) => runner.run(&prepared, rows)?,
         Err(reason) => Err(reason),
     };

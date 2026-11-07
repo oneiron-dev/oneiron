@@ -11,14 +11,18 @@
 //! ([`executed_evidence`]) after the answer's text, never in its place. A
 //! server with no runtime of the component says so, a reason a retry may
 //! clear: its pairs wait for one retry, then fall back to the `Text` mode.
+//! A callable's pair runs its caller step's two branches the same way, each
+//! on a fresh runtime and in a scratch store of its own (FIX 3608).
 
 use std::sync::{Arc, OnceLock};
 
 use oneiron::code_run::shadow_runner::{
-    PreparedShadowStep, ShadowArmLease, ShadowUnavailable, ShadowUnavailableReason as Reason,
+    PreparedShadowStep, ShadowArmLease, ShadowBodyStore, ShadowUnavailable,
+    ShadowUnavailableReason as Reason,
 };
 use oneiron::code_run::{
-    ContributionForkProgram, ExecutedFork, ExecutedForkView, execute_contribution_fork,
+    CallableBranch, ContributionForkProgram, ExecutedFork, ExecutedForkView,
+    execute_callable_branch, execute_contribution_fork,
 };
 use oneiron::engine_executor::{JsCodeModeRuntime, StepCancellation};
 use oneiron::{Error, LlmResponse, Vault};
@@ -65,6 +69,35 @@ impl ContributionForkProgram for LentProgram<'_> {
         step: &PreparedShadowStep,
         response: &LlmResponse,
     ) -> oneiron::Result<Result<ExecutedFork, ShadowUnavailable>> {
+        self.in_arm(step, |runtime, runtime_pin, store, cancel| {
+            execute_contribution_fork(step, response, runtime, runtime_pin, store, cancel)
+        })
+    }
+
+    fn execute_branch(
+        &self,
+        step: &PreparedShadowStep,
+        branch: &CallableBranch,
+    ) -> oneiron::Result<Result<ExecutedFork, ShadowUnavailable>> {
+        self.in_arm(step, |runtime, runtime_pin, store, cancel| {
+            execute_callable_branch(step, branch, runtime, runtime_pin, store, cancel)
+        })
+    }
+}
+
+impl LentProgram<'_> {
+    /// `run` on a fresh runtime of the checked-in component, its pin and a
+    /// scratch arm store of its own, released once `run` returns.
+    fn in_arm(
+        &self,
+        step: &PreparedShadowStep,
+        run: impl FnOnce(
+            &mut dyn JsCodeModeRuntime,
+            [u8; 32],
+            &ShadowBodyStore,
+            &StepCancellation,
+        ) -> oneiron::Result<Result<ExecutedFork, ShadowUnavailable>>,
+    ) -> oneiron::Result<Result<ExecutedFork, ShadowUnavailable>> {
         let vault = self.server.vault();
         // The scratch store's hold and custody are the server vault's: the
         // pass must run on it.
@@ -86,8 +119,7 @@ impl ContributionForkProgram for LentProgram<'_> {
         let arm = arms.open_arm(lease, source, hold, step.release_source(), vault)?;
         let runtime: &mut dyn JsCodeModeRuntime = &mut *runtime;
         let cancel = StepCancellation::new();
-        let ran =
-            execute_contribution_fork(step, response, runtime, runtime_pin, arm.store(), &cancel);
+        let ran = run(runtime, runtime_pin, arm.store(), &cancel);
         // The fork keeps only what was read back: its scratch bodies go now.
         arms.release(&lease);
         ran
