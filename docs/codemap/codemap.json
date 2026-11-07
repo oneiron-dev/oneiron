@@ -56278,7 +56278,7 @@
      "path": "src/origin/publication/publication_machine.rs",
      "purpose": "State machine: stage, advance, CAS, finish/refuse/finalize T2, availability gate, pin release and orphan sweep",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -56288,7 +56288,7 @@
      "path": "src/origin/publication/publication_protocol.rs",
      "purpose": "Public protocol surface: pin/unpin, publish_origin_ref, reconcile census driver, reads and advertisement…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 9
      }
     },
@@ -56639,7 +56639,7 @@
      "purpose": "Explicit owner-controlled origin epochs",
      "surface": {
       "const": 1,
-      "crate-vis": 20,
+      "crate-vis": 21,
       "enum": 2,
       "fn": 8,
       "struct": 2
@@ -74026,7 +74026,7 @@
      "path": "src/store/checkpoint_payload/retirement.rs",
      "purpose": "What an owner's deletion does to its checkpoint payload leaves (KS7-4, FIX 5688)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -75858,7 +75858,7 @@
      "path": "src/store/legal_hold/use_limit.rs",
      "purpose": "Shared storage-only admission, with legal holds and a recipient's cooperative review restriction kept as…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
