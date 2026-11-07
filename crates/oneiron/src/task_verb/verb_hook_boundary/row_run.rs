@@ -12,7 +12,9 @@ use super::{
     stop_refusal,
 };
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
-use crate::runtime_hooks::verb::{HOOK_RESULT_NOT_RETAINED, VerbAskCredential, VerbHookStorage};
+use crate::runtime_hooks::verb::{
+    HOOK_RESULT_NOT_RETAINED, VerbAskCredential, VerbAskDrainPermit, VerbHookStorage,
+};
 use crate::runtime_hooks::{InvocationId, VerbHookPre, VerbHookStop, VerbResume};
 use crate::task_verb::revoke_lands;
 use crate::task_verb::sdk::{AgentVerb, validate_input};
@@ -108,6 +110,11 @@ fn row_pre_with_saved(
     session: Option<&HookSession>,
     require_saved: bool,
 ) -> MemoryResult<Result<VerbHookPre, VerbHookStop>> {
+    // A call on the handle the plain drain rebuilt carries its permit
+    // (FIX 2183): on whatever thread a nested call of its invocation
+    // reaches this boundary, the thread stands as the drain's own, so
+    // the call runs instead of meeting the drain's hold as a retry.
+    let _drain = memory.drain_permit().map(VerbAskDrainPermit::enter);
     if matches!(verb, "host.compact" | "host.wake" | "host.budget.hit") {
         memory.embedded_owner(verb)?.revalidate(memory.vault())?;
         crate::runtime_hooks::host_doors::admit_trigger(memory.vault(), verb, &args)?;
