@@ -13,7 +13,7 @@ use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::provenance::made_by::{
-    MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess,
+    MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess, MadeByTrigger,
 };
 
 use super::provenance::BlobVersionProvenance;
@@ -134,6 +134,22 @@ pub(super) fn made_by_text(made_by: &MadeBy) -> Result<String> {
 
 pub(super) fn made_by_from_text(text: &str) -> Result<MadeBy> {
     serde_json::from_str(text).map_err(|_| invalid("made_by is not a valid envelope"))
+}
+
+/// Each entity row `made_by` names, read from its typed fields (fix list row
+/// 15416): every input, the process's actor, and a task, ask or skill
+/// trigger. A code-mode run's trigger names its replay record, which is no
+/// row.
+pub(super) fn made_by_rows(made_by: &MadeBy) -> Vec<EntityId> {
+    let mut rows: Vec<EntityId> = made_by.inputs.iter().map(|input| input.row).collect();
+    rows.push(made_by.process.actor);
+    match &made_by.trigger {
+        Some(MadeByTrigger::Task(row) | MadeByTrigger::Ask(row) | MadeByTrigger::Skill(row)) => {
+            rows.push(*row);
+        }
+        Some(MadeByTrigger::Run(_)) | None => {}
+    }
+    rows
 }
 
 fn invalid(message: &'static str) -> Error {

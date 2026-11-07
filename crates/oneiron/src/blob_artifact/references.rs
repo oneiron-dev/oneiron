@@ -50,11 +50,26 @@ pub(crate) fn archive_version_claim_tables() -> [crate::batch::export::LentSideT
 /// a release fence is ever lifted.
 const RELEASE_FENCE: &[u8] = b"blob_artifact:release";
 
-/// The value of `body` when it is a version's `blob.version` ledger claim: it
-/// carries that version's made_by, as the version's own record does (fix list
-/// row 15416: an Owner's copy judges each row it names before the claim goes).
-pub(crate) fn version_claim_value(body: &ClaimBody) -> Option<&Value> {
-    (body.predicate == BLOB_VERSION_CLAIM_PREDICATE).then_some(&body.value)
+/// Each entity row the value of `body` names when it is a version's
+/// `blob.version` ledger claim (fix list row 15416): the rows its made_by
+/// names, read through the version's own made_by codec, as the version's
+/// record names them. `None` for any other claim; `Some(None)` when its
+/// made_by does not read.
+pub(crate) fn version_claim_rows(body: &ClaimBody) -> Option<Option<Vec<EntityId>>> {
+    if body.predicate != BLOB_VERSION_CLAIM_PREDICATE {
+        return None;
+    }
+    let Value::Map(entries) = &body.value else {
+        return Some(None);
+    };
+    Some(
+        entries
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(super::versions::KEY_MADE_BY))
+            .and_then(|(_, value)| value.as_str())
+            .and_then(|text| super::made_by::made_by_from_text(text).ok())
+            .map(|made_by| super::made_by::made_by_rows(&made_by)),
+    )
 }
 
 /// The artifact and content hash `body` names, when it is a `blob.version` claim.

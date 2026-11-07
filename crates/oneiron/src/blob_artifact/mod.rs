@@ -63,7 +63,8 @@ pub use self::body::{
 };
 pub use self::born_from::{BornFromArtifact, BornFromSource};
 pub(crate) use self::born_from::{
-    agent_run_artifacts_with_prefix_in_txn, archive_born_from_table, artifacts_born_from_in_txn,
+    agent_run_artifacts_with_prefix_in_txn, archive_born_from_rows, archive_born_from_table,
+    artifacts_born_from_in_txn,
 };
 pub use self::create::ArtifactCreateRequest;
 pub use self::deck_doors::{
@@ -90,7 +91,7 @@ pub(crate) use self::lifecycle::{release_response_version_in_txn, response_versi
 pub use self::provenance::BlobVersionProvenance;
 pub(crate) use self::references::archive_version_claim_tables;
 pub(crate) use self::references::{
-    artifacts_claiming, claimed_hash_rows_exist, record_version_claim, version_claim_value,
+    artifacts_claiming, claimed_hash_rows_exist, record_version_claim, version_claim_rows,
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::references::{
@@ -106,8 +107,8 @@ pub use self::verbs::{
     NativeOutputRequest, ProposalSettleRequest, ReleasedWait, SlideReviewOutcome,
     SlideReviewSubmit, SlideReviewUnitInput, SlideUnitRefused, UndoneKeep,
 };
-pub(crate) use self::versions::archive_version_tables;
 pub(crate) use self::versions::read_blob_artifact_head_in_txn;
+pub(crate) use self::versions::{archive_version_rows, archive_version_tables};
 // FIX 7227: the queue-check completion writer (token-only, no raw bytes/ids),
 // minted/bound in the merge-queue finish writer; the MQ child names these via
 // this BLOB parent alias, never via the private versions child path.

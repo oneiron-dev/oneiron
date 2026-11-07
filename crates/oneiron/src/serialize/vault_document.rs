@@ -415,22 +415,25 @@ impl<'v> DocumentWriter<'v> {
     /// binary codec the release scan reads a credential in, or one that does
     /// not read back through its table, is held out and named in the
     /// manifest. A long binary value goes beside the document as a file.
-    pub(crate) fn side_row(&mut self, raw: SideRowBytes) -> Result<()> {
+    /// Whether the row went into the document (fix list row 15416: only then
+    /// do the rows it names count as carried).
+    pub(crate) fn side_row(&mut self, raw: SideRowBytes) -> Result<bool> {
         let Some((row, files)) = raw.portable()? else {
             self.side_withheld
                 .push(raw.withheld(ArchiveSideWithheldReason::NotPortable));
-            return Ok(());
+            return Ok(false);
         };
         let value = serde_json::to_value(&row).map_err(|_| encode_failed())?;
         if raw.opaque_credential() || null_document_member("", &value, 2) != value {
             self.side_withheld
                 .push(raw.withheld(ArchiveSideWithheldReason::Credential));
-            return Ok(());
+            return Ok(false);
         }
         for bytes in files {
             self.files.attach(&bytes)?;
         }
-        self.push(ArchiveRecordKind::SideTable, &value)
+        self.push(ArchiveRecordKind::SideTable, &value)?;
+        Ok(true)
     }
 
     /// FIX 3681: the side-row families held out whole, each named once with

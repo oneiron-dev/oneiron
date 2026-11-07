@@ -76,9 +76,10 @@ impl MemberMailPass {
 }
 
 /// What an Owner's copy carries beside its entity rows, judged by its pass
-/// (fix list row 15416): the rows it carries outside them (a custody record,
-/// the session of an epoch floor, the rows a saved output was made from),
-/// each row a carried row was folded from, by that row, and the rows each
+/// (fix list row 15416): the rows it writes outside them (a custody record,
+/// the session of an epoch floor, the rows a saved output was made from, the
+/// rows each side row it serializes names), each row a carried row was
+/// folded from or names beside its lineage, by that row, and the rows each
 /// receipt a row cites was made from, by that row and the receipt's id.
 #[derive(Default)]
 pub(super) struct MailboxLineage {
@@ -88,26 +89,36 @@ pub(super) struct MailboxLineage {
 }
 
 impl MailboxLineage {
-    /// Whether the pass's `judge`, when it has one, carries the row `id`, its
-    /// bytes `raw`: a row the copy carries outside its entity rows.
+    /// The rows `rows`, each one the pass's judge carries, went into the copy
+    /// outside its entity rows: a custody record or an epoch floor's session
+    /// it wrote, or the rows a side row it serialized names.
+    pub(super) fn ships(&mut self, rows: impl IntoIterator<Item = EntityId>) {
+        self.carried.extend(rows);
+    }
+
+    /// Whether the pass's `judge`, when it has one, carries every row `names`
+    /// that the row `row` names beside its own lineage (a version's ledger
+    /// claim's made_by); `None`, names not all known, is carried by no judge.
+    /// They count as carried only once `row` ships ([`Self::outcome`]).
     ///
     /// # Errors
     ///
     /// Storage failures.
-    pub(super) fn carries(
+    pub(super) fn supplements(
         &mut self,
         judge: Option<&mut ExportJudge<'_, '_, '_>>,
-        id: EntityId,
-        raw: Option<&[u8]>,
+        row: EntityId,
+        names: Option<&[EntityId]>,
     ) -> Result<bool> {
         let Some(judge) = judge else {
             return Ok(true);
         };
-        let carried = judge.carries(id, raw)?;
-        if carried {
-            self.carried.insert(id);
+        if !judge.carries_all(names)? {
+            return Ok(false);
         }
-        Ok(carried)
+        self.folded
+            .extend(names.into_iter().flatten().map(|name| (row, *name)));
+        Ok(true)
     }
 
     /// Whether the pass's `judge`, when it has one, carries the row `source`
@@ -250,10 +261,10 @@ impl MailboxLineage {
 
     /// What the copy left out and carries, once its rows are final: the
     /// entity rows the writer carried (`rows`) but the diaries whose read was
-    /// not logged (`unlogged`), each row one of them was folded from, the
-    /// rows each receipt body the writer serialized for one of them
-    /// (`receipts`, by row and receipt id) was made from, and the rows
-    /// carried outside them. Nothing for a pass with no `plan`.
+    /// not logged (`unlogged`), each row one of them was folded from or names
+    /// beside its lineage, the rows each receipt body the writer serialized
+    /// for one of them (`receipts`, by row and receipt id) was made from, and
+    /// the rows written outside them. Nothing for a pass with no `plan`.
     pub(super) fn outcome(
         self,
         plan: Option<MemberMailboxPlan>,

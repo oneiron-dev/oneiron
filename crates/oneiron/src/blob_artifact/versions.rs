@@ -951,3 +951,14 @@ pub(crate) fn blob_artifact_asset_entity_id(
 pub(crate) fn archive_version_tables() -> [crate::batch::export::LentSideTable; 4] {
     [&VERSIONS, &HEAD, &HIGHWATER, &super::store_keys::ASSET_REF]
 }
+
+/// Each entity row a stored version record names, read through its table's
+/// own codec (fix list row 15416): its ledger claim and each row its made_by
+/// names. A head row is a version record in the same codec. `None` when the
+/// record does not read.
+pub(crate) fn archive_version_rows(value: &[u8]) -> Option<Vec<EntityId>> {
+    let version = VERSIONS.decode_value(value).ok()?;
+    let mut rows = super::made_by::made_by_rows(&version.made_by);
+    rows.push(version.claim_id);
+    Some(rows)
+}

@@ -14,7 +14,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::provenance::made_by::MadeByTrigger;
 use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM};
-use crate::side_table::{self, Named, SideTable};
+use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::store::Store;
 use crate::store::record_ref::RecordRef;
 
@@ -201,6 +201,25 @@ fn live_version_claim(
 /// beside each version it reads back from, lent with its own key type and codec.
 pub(crate) fn archive_born_from_table() -> crate::batch::export::LentSideTable {
     &BORN_FROM
+}
+
+/// Each entity row a stored born-from row names, read through its table's own
+/// key type and codec (fix list row 15416): its artifact, and its source when
+/// that is a task, ask or skill row. A code-mode run's replay record and an
+/// agent run's hashed ref are no rows. `None` when the row does not read.
+pub(crate) fn archive_born_from_rows(key: &[u8], value: &[u8]) -> Option<Vec<EntityId>> {
+    let (source, artifact, _) = <([u8; 17], EntityId, u64) as SideKey>::decode_key(key)?;
+    BORN_FROM.decode_value(value).ok()?;
+    let mut rows = vec![artifact];
+    match source[0] {
+        SOURCE_TASK | SOURCE_ASK | SOURCE_SKILL => {
+            let row: [u8; crate::entity_id::ENTITY_ID_LEN] = source[1..].try_into().ok()?;
+            rows.push(EntityId::from_bytes(row).ok()?);
+        }
+        SOURCE_CODE_RUN | SOURCE_AGENT_RUN => {}
+        _ => return None,
+    }
+    Some(rows)
 }
 
 /// The artifacts whose live versions name `source`, in the caller's snapshot.

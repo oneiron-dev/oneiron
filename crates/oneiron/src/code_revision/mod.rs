@@ -24,7 +24,9 @@ mod storage;
 mod tree_codec;
 mod tree_inventory;
 mod types;
-pub(crate) use self::keys::archive_revision_tables;
+pub(crate) use self::keys::{
+    ArchivedRevisionTable, archive_revision_rows, archive_revision_tables,
+};
 pub(crate) use self::promotion::archive_promotion_table;
 pub(crate) use self::proposals::archive_proposal_table;
 // The author is erasable attribution (FIX 6258).
