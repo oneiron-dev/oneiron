@@ -456,6 +456,9 @@ impl Vault {
                 ..MailSyncReport::default()
             },
         };
+        // Header revisions a body superseded and whose delete did not return
+        // go first, whether or not the provider lists them again (FIX 15413).
+        super::header_retire::retire_superseded_headers(self, source_ref);
         let outcome = (|| -> MemoryResult<()> {
             if step.state()?.anchor.is_none() {
                 let anchor = step.wire.current_anchor(&step.wire_source)?;
