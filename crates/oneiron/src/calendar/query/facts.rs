@@ -241,6 +241,23 @@ fn civil_seconds(wall: CalendarWallTimeValue) -> Option<u64> {
     u64::try_from(at.and_utc().timestamp()).ok()
 }
 
+/// Where an occurrence of a civil series starting at `start` (a key on the
+/// UTC carrier) can fall, `length` seconds of civil time long: from its start
+/// where that comes first to its end where that comes last, as
+/// [`CalendarEventFacts::wall_span`] spans a lone civil EVENT (FIX 16568).
+pub(in crate::calendar) fn civil_envelope(start: u64, length: u64) -> TimeRange {
+    TimeRange {
+        start: start.saturating_sub(EASTERNMOST_OFFSET_SECS),
+        end: start
+            .saturating_add(length)
+            .saturating_add(WESTERNMOST_OFFSET_SECS),
+    }
+}
+
+/// How far a civil occurrence's span reaches before and after its start key.
+pub(in crate::calendar) const CIVIL_REACH_SECS: (u64, u64) =
+    (EASTERNMOST_OFFSET_SECS, WESTERNMOST_OFFSET_SECS);
+
 /// The calendar facts one EVENT's admitted claims carry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::calendar) struct CalendarEventFacts {
@@ -319,6 +336,32 @@ impl CalendarEventFacts {
             start: start.saturating_sub(EASTERNMOST_OFFSET_SECS),
             end: last.saturating_add(WESTERNMOST_OFFSET_SECS),
         })
+    }
+
+    /// The civil start (a key on the UTC carrier) and civil length of a
+    /// floating or all-day EVENT, read from its admitted wall time as
+    /// [`Self::wall_span`] reads it, before any zone's reach widens it: the
+    /// first occurrence of a civil series (FIX 16568).
+    pub(in crate::calendar) fn civil_extent(&self) -> Option<(u64, u64)> {
+        let LaneFact::Read(kind) = self.time_kind else {
+            return None;
+        };
+        if !matches!(
+            kind.kind,
+            crate::calendar::claims::CalendarTimeKind::Floating
+                | crate::calendar::claims::CalendarTimeKind::AllDay
+        ) {
+            return None;
+        }
+        let LaneFact::Read((start, end)) = self.wall_time else {
+            return None;
+        };
+        let start = civil_seconds(start)?;
+        let last = match end {
+            Some(end) => civil_seconds(end)?.saturating_sub(1).max(start),
+            None => start,
+        };
+        Some((start, last - start))
     }
 
     pub(in crate::calendar) fn origin(&self) -> Option<CalendarOrigin> {

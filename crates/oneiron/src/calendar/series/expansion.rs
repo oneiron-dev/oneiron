@@ -478,3 +478,47 @@ fn parse_rule(rrule: &str, tz: &str) -> Result<(RRule<Unvalidated>, Option<u64>)
         .ok_or_else(|| invalid_rule(rrule))?;
     Ok((parsed.until(bound), Some(until_utc)))
 }
+
+/// The rule a civil series steps on the UTC carrier (FIX 16568), from its
+/// source text: an `UNTIL` given as a date or a floating time is read on the
+/// carrier (a date at its midnight, so that day's occurrence stands), and an
+/// all-day series drops `BYHOUR`, `BYMINUTE` and `BYSECOND`, which no date
+/// has. Every other part stays as written; a malformed rule stays malformed
+/// for the expansion to refuse.
+#[must_use]
+pub fn civil_rule(rrule: &str, all_day: bool) -> String {
+    let (head, body) = match rrule.split_once(':') {
+        Some((property, body)) if property.eq_ignore_ascii_case(RRULE_PROPERTY) => {
+            (Some(property), body)
+        }
+        _ => (None, rrule),
+    };
+    let parts: Vec<String> = body
+        .split(';')
+        .filter_map(|part| {
+            let Some((name, value)) = part.split_once('=') else {
+                return Some(part.to_owned());
+            };
+            let name_upper = name.trim().to_ascii_uppercase();
+            if all_day && matches!(name_upper.as_str(), "BYHOUR" | "BYMINUTE" | "BYSECOND") {
+                return None;
+            }
+            if name_upper == "UNTIL" {
+                let value = value.trim();
+                let digits = value.as_bytes();
+                let carried = match digits.len() {
+                    8 => format!("{value}T000000Z"),
+                    15 if digits[8] == b'T' => format!("{value}Z"),
+                    _ => value.to_owned(),
+                };
+                return Some(format!("{name}={carried}"));
+            }
+            Some(part.to_owned())
+        })
+        .collect();
+    let body = parts.join(";");
+    match head {
+        Some(property) => format!("{property}:{body}"),
+        None => body,
+    }
+}
