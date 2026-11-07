@@ -53960,6 +53960,8 @@ pub enum LabelReadFailure {
     EmittedText,
     #[serde(rename = "NotEosStop")]
     NotEosStop,
+    #[serde(rename = "TokenCap")]
+    TokenCap,
     #[serde(rename = "MissingLabels")]
     MissingLabels,
     #[serde(rename = "Malformed")]
