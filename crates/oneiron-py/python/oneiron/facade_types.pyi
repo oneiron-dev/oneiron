@@ -15856,6 +15856,7 @@ class DeckProposeRequest(TypedDict):
     run_ref: str
     context: NotRequired[DeckEditContext]
     made_by: NotRequired[MadeBy | None]
+    delta_receipt: NotRequired[str | None]
 class DeckInspection(TypedDict):
     slides: list[DeckSlideInspection]
     ambiguities: list[DeckIdentityAmbiguity]
@@ -16037,6 +16038,7 @@ class NativeOutputRequest(TypedDict):
     report: NotRequired[Any]
     made_by: NotRequired[MadeBy | None]
     read_rows: NotRequired[list[str]]
+    delta_receipt: NotRequired[str | None]
 class VersionReconciliation(TypedDict):
     base_version: int
     kept_head: ArtifactVersionView
@@ -22511,6 +22513,7 @@ class ForkRecord(TypedDict):
     status: ForkStatus
     read_refs: list[str]
     keep: NotRequired[str | None]
+    delta_receipt: NotRequired[str | None]
 class ProposalBundle(TypedDict):
     proposal: str
     author: DocActor
