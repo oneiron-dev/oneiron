@@ -281,6 +281,17 @@ pub(super) fn pin_execution_scope(
     })
 }
 
+/// Drops only the removed attempt's private attenuation. Retry successors
+/// retain their independently copied scope rows.
+pub(crate) fn delete_selection_scope_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    attempt: crate::attempt_queue::AttemptId,
+) -> Result<()> {
+    SELECTION_SCOPE.delete(store, txn, attempt.as_bytes())?;
+    Ok(())
+}
+
 pub(crate) fn inherit_retry_scope_in_txn(
     vault: &crate::Vault,
     txn: &mut heed::RwTxn<'_>,
