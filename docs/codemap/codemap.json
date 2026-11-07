@@ -42457,7 +42457,7 @@
      "path": "src/graph_fs/mod.rs",
      "purpose": "Graph-FS read projection over the vault graph",
      "surface": {
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -42484,6 +42484,19 @@
      "purpose": "Core half of `graph_fs::paging`: its store-layer items live in `oneiron_store::graph_fs::paging` and are…",
      "surface": {
       "crate-vis": 19
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GraphFsLinkRead"
+     ],
+     "path": "src/graph_fs/read_link.rs",
+     "purpose": "Link resolution with the actual scoped point-read receipt",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -94924,7 +94937,7 @@
      "purpose": "Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068)"
     },
     "graph_fs": {
-     "files": 15,
+     "files": 16,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -95850,7 +95863,7 @@
    },
    "over_bar": 197,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6787,
+   "source_files": 6788,
    "test_files": 895
   },
   "oneiron-android": {
