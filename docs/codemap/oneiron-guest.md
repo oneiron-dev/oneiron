@@ -18,7 +18,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib.rs` | src | s | 1 enum · 2 fn · 1 type · 2 re-export | Error | Linux microVM guest agent and an unprivileged protocol conformance adapter |
 | `src/main.rs` | src | s | — | — | Guest PID-1 entry point and explicitly named, unprivileged local test tools |
 | `src/native.rs` | src | s | 1 crate-vis | — | Native OCI session inside a no-NIC microVM |
-| `src/protocol.rs` | src | m | 22 crate-vis | — | Strict, bounded host/guest JSON framing and admission state machine |
+| `src/native/egress.rs` | src | s | 3 crate-vis | — | A guest-local Fetch entry to the VM's existing host-policy relay |
+| `src/protocol.rs` | src | m | 21 crate-vis | — | Strict, bounded host/guest JSON framing and admission state machine |
 | `src/runtime.rs` | src | m | 1 crate-vis | — | Canonical typed Component Model execution with seven non-write imports and the three that stream a proposed… |
 | `src/tests.rs` | test | m | — | — | — |
 | `tests/cli.rs` | test | s | — | — | Native CLI artifact generation and pinning, not microVM boot evidence |
