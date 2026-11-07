@@ -19,7 +19,9 @@ use std::sync::Weak;
 
 use oneiron::attempt_queue::AttemptRecord;
 use oneiron::dreamer_runner::maintenance::coach_diagnostic::{ProducerFixDraft, ProducerTarget};
-use oneiron::dreamer_runner::maintenance::coach_heal::{CoachHealAuthor, CoachPromptDraft};
+use oneiron::dreamer_runner::maintenance::coach_heal::{
+    CoachEnvironmentDraft, CoachHealAuthor, CoachPromptDraft, EnvironmentGrantTarget,
+};
 use oneiron::dreamer_runner::maintenance::coach_learning::coach_improver_skill_id;
 use oneiron::failure_ladder::HealerCase;
 use oneiron::limit_ask::EngineLimit;
@@ -179,6 +181,49 @@ impl SkillOptimizeAuthor for CoachSkillAuthor {
 }
 
 impl CoachHealAuthor for CoachSkillAuthor {
+    fn draft_environment(
+        &self,
+        case: &HealerCase,
+        targets: &[EnvironmentGrantTarget],
+        cause: &HealEvidenceContext,
+    ) -> oneiron::Result<Option<CoachEnvironmentDraft>> {
+        let server = self
+            .server
+            .upgrade()
+            .ok_or_else(|| failed("the server stopped"))?;
+        let models = self.models_for(
+            &server,
+            &format!("coach-environment-repair:{}", case.case_ref),
+        )?;
+        let wording = server.ai.dreamer_wording();
+        let targets = targets
+            .iter()
+            .map(environment_target_data)
+            .collect::<oneiron::Result<Vec<_>>>()?;
+        let data = serde_json::json!({
+            "case": case.case_ref,
+            "agent": case.scope.agent_ref,
+            "checkpoint": case.pre_fail_checkpoint_ref,
+            "diagnosis": case.evidence_ref,
+            "failure_class": case.failure_class,
+            "targets": targets,
+            "untrusted_cause_context": cause.value(),
+        });
+        let text = models
+            .generate(
+                models.coach(),
+                vec![
+                    message(
+                        LlmMessageRole::System,
+                        wording.coach_environment_repair().to_owned(),
+                    ),
+                    message(LlmMessageRole::User, data.to_string()),
+                ],
+            )?
+            .ok_or_else(|| failed("no seat served the Coach"))?;
+        parse_environment(&text).ok_or_else(|| failed("the answer is not a draft"))
+    }
+
     fn draft_prompt(
         &self,
         case: &HealerCase,
@@ -426,6 +471,40 @@ enum DraftWire {
     Decline {
         rationale: String,
     },
+}
+
+/// Native grant terms as data, using the same codec as the engine's term digest.
+fn environment_target_data(target: &EnvironmentGrantTarget) -> oneiron::Result<serde_json::Value> {
+    let body = oneiron::access_grant::encode_access_grant_body(&target.grant)?;
+    let terms: serde_json::Value =
+        rmp_serde::from_slice(&body).map_err(|_| failed("grant terms are not model data"))?;
+    Ok(serde_json::json!({
+        "grant_ref": target.grant_ref.to_hex(),
+        "terms_digest": target.terms_digest,
+        "terms": terms,
+    }))
+}
+
+#[derive(Deserialize)]
+struct EnvironmentWire {
+    grant_ref: Option<String>,
+    change: serde_json::Value,
+    rationale: String,
+}
+
+/// A null target declines; native selection and usability checks stay in the engine.
+fn parse_environment(text: &str) -> Option<Option<CoachEnvironmentDraft>> {
+    let start = text.find('{')?;
+    let end = text.rfind('}')?;
+    let wire = serde_json::from_str::<EnvironmentWire>(text.get(start..=end)?).ok()?;
+    Some(match wire.grant_ref {
+        Some(grant_ref) => Some(CoachEnvironmentDraft {
+            grant_ref: EntityId::from_hex(&grant_ref).ok()?,
+            change: wire.change,
+            rationale: wire.rationale,
+        }),
+        None => None,
+    })
 }
 
 /// A prompt draft's answer as the Coach writes it.
