@@ -6974,7 +6974,7 @@
      "path": "src/batch/builder/claims.rs",
      "purpose": "Claim-candidate builder doors plus the gap-decay op constructor",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 5
      }
     },
@@ -38378,7 +38378,7 @@
      "path": "src/federation/record_scope.rs",
      "purpose": "Birth-facet-bound record-position stamps and scoped read/delete/export doors",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 21,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -38402,6 +38402,16 @@
      "purpose": "Facet rule C (arch-0022:139): an ASSET_TEXT written from source ASSETs is born under their facet, and is…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/record_scope/birth_placement.rs",
+     "purpose": "The birth placement a replicated TASK or SUMMARY carries on a copy to another vault (FIX 3656, Engine ruling…",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -38473,7 +38483,7 @@
      "path": "src/federation/record_scope/stamping.rs",
      "purpose": "The birth-position stamp doors: put, stage, settle and restamp a record's position",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -38559,7 +38569,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/federation/shared_act/execute.rs",
-     "purpose": "Executing a matured delete-the-vault, ownership-transfer or owner-removal act",
+     "purpose": "Executing a matured delete-the-vault or Owner-change act",
      "surface": {
       "crate-vis": 1,
       "fn": 1
@@ -38581,9 +38591,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/federation/shared_act/membership.rs",
-     "purpose": "Membership effects: the Owner handover the two Owner acts apply, and the ordinary member changes an Admin's…",
+     "purpose": "Membership effects: Owner additions and handovers, and the ordinary member changes an Admin's named power…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 5,
       "re-export": 2
      }
@@ -38654,8 +38664,22 @@
       "crate-vis": 4,
       "enum": 2,
       "fn": 6,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AddOwnerPlan"
+     ],
+     "path": "src/federation/shared_act/owner_add.rs",
+     "purpose": "Add a co-owner while retaining every existing Owner",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -43272,7 +43296,7 @@
       "NotificationAction"
      ],
      "path": "src/inbox/actions.rs",
-     "purpose": "FIX 5629, 6505: the taps a delivered notification offers, read when its row is read, from the refs its…",
+     "purpose": "FIX 5629, 6505, 5369: the taps a delivered notification offers, read when its row is read, from the refs its…",
      "surface": {
       "crate-vis": 1,
       "struct": 1
@@ -47018,8 +47042,61 @@
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
       "crate-vis": 13,
-      "mod": 11,
+      "mod": 12,
       "re-export": 31
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AccessSnapshot",
+      "ModelPackChange",
+      "ModelPackReceipt",
+      "ModelPackRoleChoice",
+      "ModelPackSetting",
+      "ModelPackView"
+     ],
+     "path": "src/llm/model_pack.rs",
+     "purpose": "Model packs at inference (FIX 5365-5369, MODEL PACKS = A): the access a host can run now, the pack a vault…",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 20,
+      "re-export": 2,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ModelPackChangeCause",
+      "ModelPackRevert",
+      "ModelPackRevertBlock",
+      "ModelPackRevertRequest"
+     ],
+     "path": "src/llm/model_pack/change.rs",
+     "purpose": "The owner's notice of each change of the pack the vault follows, and its one-tap revert (FIX 5369, MODEL…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 3,
+      "enum": 2,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ModelPackRetirementReport"
+     ],
+     "path": "src/llm/model_pack/retirement.rs",
+     "purpose": "Retirement notices and the retirement-day move (FIX 5368, MODEL PACKS = A: \"Notices go out 60, 30 and 7 days…",
+     "surface": {
+      "const": 1,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -52121,6 +52198,16 @@
      "surface": {
       "fn": 2,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/signal_extraction/attachments.rs",
+     "purpose": "Stored support citations projected with the extraction result's own reader",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -69254,7 +69341,7 @@
       "enum": 2,
       "fn": 13,
       "mod": 1,
-      "re-export": 6,
+      "re-export": 7,
       "struct": 7
      }
     },
@@ -71247,7 +71334,21 @@
      "surface": {
       "crate-vis": 7,
       "mod": 1,
-      "re-export": 22
+      "re-export": 23
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "InstalledModelPack"
+     ],
+     "path": "src/skill_hub/pack_catalog/model_pack.rs",
+     "purpose": "Model packs at the hub door (FIX 5365, MODEL PACKS = A)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "struct": 1
      }
     },
     {
@@ -80316,7 +80417,7 @@
      "path": "src/sync/ingest/mod.rs",
      "purpose": "One ingest entry per replicated container: every entities-map value and every tombstone takes the same…",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "re-export": 1
      }
     },
@@ -80349,6 +80450,16 @@
      "purpose": "Which rows of a window a federation peer's import brought (Docs Q04)",
      "surface": {
       "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/ingest/placement.rs",
+     "purpose": "The birth placements a guest's admitted update carries for its TASK and SUMMARY rows (FIX 3656), landed…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -81785,7 +81896,7 @@
      "path": "src/sync/selector/admission/routing.rs",
      "purpose": "Routing and world-edge planning of admitted rows",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -81795,7 +81906,7 @@
      "path": "src/sync/selector/admission/state.rs",
      "purpose": "Admitted-update state for one federation import",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -81827,6 +81938,16 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/selector/birth_placements.rs",
+     "purpose": "Birth placements on a copy to another vault (FIX 3656, Engine ruling A)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -88090,7 +88211,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1321
+      "fn": 1324
      }
     },
     {
@@ -88548,7 +88669,7 @@
      "surface": {
       "fn": 8,
       "mod": 1,
-      "re-export": 102,
+      "re-export": 103,
       "struct": 33
      }
     },
@@ -88560,6 +88681,16 @@
      "purpose": "Embedded-owner projection of the model-manifest and slot-route doors",
      "surface": {
       "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/verbs/model_pack.rs",
+     "purpose": "Embedded-owner projection of the model pack setting doors (FIX 5367) and the pack change revert (FIX 5369)",
+     "surface": {
+      "fn": 3
      }
     },
     {
@@ -94555,7 +94686,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 73,
+     "files": 75,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94772,7 +94903,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 175,
+     "files": 178,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94807,7 +94938,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 378,
+     "files": 379,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -95234,7 +95365,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 102,
+     "files": 103,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -95311,7 +95442,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 396,
+     "files": 398,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -95458,7 +95589,7 @@
      "purpose": "Verb catalog vocabulary used by core admission and action surfaces"
     },
     "verbs": {
-     "files": 117,
+     "files": 118,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -95523,7 +95654,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6764,
+   "source_files": 6774,
    "test_files": 895
   },
   "oneiron-android": {
@@ -96001,7 +96132,7 @@
       "OwnerHandoverCause"
      ],
      "path": "src/authority/owner_handover.rs",
-     "purpose": "An Owner handover in a shared vault as a signed AUTHORITY_LOG Owner action (ARCH-0043, \"Last-Owner successor…",
+     "purpose": "An Owner addition or handover in a shared vault as a signed AUTHORITY_LOG Owner action (ARCH-0043…",
      "surface": {
       "const": 3,
       "crate-vis": 2,
@@ -110411,7 +110542,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1289
+      "fn": 1292
      }
     },
     {
@@ -112204,7 +112335,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1290
+      "fn": 1293
      }
     },
     {
@@ -117863,7 +117994,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 174
+      "crate-vis": 175
      }
     },
     {
@@ -118194,6 +118325,16 @@
      "purpose": "Typed owner doors over the existing manifest, route and provider seams",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/model_pack_doors.rs",
+     "purpose": "Typed owner doors over the vault's model pack setting (FIX 5367) and the pack change revert (FIX 5369)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -123687,6 +123828,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/commands/mcp_bridge/wake.rs",
+     "purpose": "The bridge's wake pump (OF-385): it polls `oneiron/wakes` for one host instance on its own cadence and hands…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/commands/model_workers.rs",
      "purpose": "—",
      "surface": {
@@ -128018,7 +128169,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/managed/state_serve/carrier_watch.rs",
-     "purpose": "A vault VM's live look at its outbox carrier (FIX 6683, FIX 6684)",
+     "purpose": "Live looks at a vault VM's outbox carrier and a process host's argv recipients (FIX 6683, FIX 6684, FIX 11852)",
      "surface": {
       "crate-vis": 3
      }
@@ -128045,7 +128196,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/managed/state_serve/coordinator.rs",
@@ -129533,7 +129684,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 36,
       "fn": 13,
       "re-export": 1,
       "struct": 1
@@ -130110,7 +130261,7 @@
      "surface": {
       "crate-vis": 5,
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -130124,7 +130275,7 @@
      "purpose": "Every configured model and seat by id: the raw `/v1/llm` routes call whichever model they name, through its…",
      "surface": {
       "crate-vis": 11,
-      "fn": 7,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -133521,7 +133672,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/wake_adapters/delivery.rs",
@@ -134089,7 +134240,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 720,
+     "files": 721,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -134166,7 +134317,7 @@
      "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…"
     },
     "commands": {
-     "files": 70,
+     "files": 71,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -134427,7 +134578,7 @@
     "managed": {
      "files": 112,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Managed serve mode: the vault engine as a supervised child process"
     },
@@ -134581,7 +134732,7 @@
     "wake_adapters": {
      "files": 4,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Host-side, per-config-directory wake delivery (OF-385)"
     },
@@ -134621,9 +134772,9 @@
      "purpose": "The host's precision recalculator (ARCH-0075 xlsx row; FIX 2462, OF-505 = A): LibreOffice Calc headless…"
     }
    },
-   "over_bar": 61,
+   "over_bar": 62,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1736,
+   "source_files": 1738,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -141823,7 +141974,7 @@
      "path": "src/settings.rs",
      "purpose": "Store-layer modules of core `settings`; core re-exports each one at its old path",
      "surface": {
-      "mod": 3
+      "mod": 4
      }
     },
     {
@@ -141838,6 +141989,29 @@
       "const": 2,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ModelPack",
+      "ModelPackAccess",
+      "ModelPackBenchRef",
+      "ModelPackChangelogEntry",
+      "ModelPackError",
+      "ModelPackId",
+      "ModelPackModelRetirement",
+      "ModelPackPreference",
+      "ModelPackVariant"
+     ],
+     "path": "src/settings/model_pack.rs",
+     "purpose": "Model packs (FIX 5365, MODEL PACKS = A): the hub form of a seasonal model stack",
+     "surface": {
+      "const": 3,
+      "enum": 3,
+      "fn": 14,
+      "struct": 6
      }
     },
     {
@@ -144934,7 +145108,7 @@
      "purpose": "Learned numeric setting specifications and shipped seeds"
     },
     "settings": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -145160,7 +145334,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 637,
+   "source_files": 638,
    "test_files": 4
   },
   "oneiron-uniffi": {
@@ -147899,6 +148073,13 @@
       "ModelManifest",
       "ModelManifestReplace",
       "ModelOrder",
+      "ModelPackPreference",
+      "ModelPackReceipt",
+      "ModelPackRevert",
+      "ModelPackRevertBlock",
+      "ModelPackRevertRequest",
+      "ModelPackSetting",
+      "ModelPackView",
       "ModelRegistryRow",
       "ModelRole",
       "ModelRoleInput",
@@ -147912,6 +148093,8 @@
       "ModelRouteView",
       "ModelScoreDiff",
       "ModelSlot",
+      "ModelStackDeprecationStage",
+      "ModelStackDeprecationStatus",
       "ModelStepCheckpoint",
       "ModelStepFailure",
       "ModelStepFailureClass",
@@ -150103,8 +150286,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1149,
-      "struct": 3519
+      "enum": 1152,
+      "struct": 3525
      }
     },
     {
