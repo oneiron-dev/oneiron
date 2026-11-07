@@ -13260,6 +13260,101 @@
       }
     },
     {
+      "name": "tasks.answer.forward.challenge",
+      "description": "The challenge one person signs, through their slip's binding transcript, to relay their own word or seat void on an ask to the node that admitted it.",
+      "input": "crate::task_verb::sdk::TaskAnswerForwardChallengeRequest",
+      "output": "crate::task_verb::sdk::TaskAnswerForwardChallenge",
+      "mcp_served": "[input.handle.group_ref]",
+      "call": "crate::task_verb::sdk::TaskAnswerForwardChallenge::from_bytes(&memory.tasks_answer_forward_challenge(&input.handle, &input.intent_key, &input.act)?)",
+      "scope": "Read",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false,
+      "binding": {
+        "generic": true,
+        "args": [
+          {
+            "name": "handle",
+            "type": "crate::task_verb::TaskAskHandle"
+          },
+          {
+            "name": "intent_key",
+            "type": "String"
+          },
+          {
+            "name": "act",
+            "type": "crate::task_verb::AskForwardAct"
+          }
+        ]
+      }
+    },
+    {
+      "name": "tasks.answer.forward",
+      "description": "Relays one person's own word, or the void of their own seat, on an ask to the node that admitted it; it stays pending until that node's result reads here.",
+      "refs": [
+        "/act/word/provenance_refs/*/claim",
+        "/act/word/provenance_refs/*/turn"
+      ],
+      "refs_check": "crate::task_verb::admit_ask_references",
+      "input": "crate::task_verb::sdk::TaskAnswerForwardRequest",
+      "output": "crate::task_verb::AskForwardReceipt",
+      "mcp_served": "[input.handle.group_ref]",
+      "call": "memory.tasks_answer_forward(&input.handle, &input.intent_key, &input.act, &input.proof)?",
+      "scope": "Write",
+      "task_work": true,
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false,
+      "binding": {
+        "generic": true,
+        "args": [
+          {
+            "name": "handle",
+            "type": "crate::task_verb::TaskAskHandle"
+          },
+          {
+            "name": "intent_key",
+            "type": "String"
+          },
+          {
+            "name": "act",
+            "type": "crate::task_verb::AskForwardAct"
+          },
+          {
+            "name": "proof",
+            "type": "crate::task_verb::AskForwardHolderProof"
+          }
+        ]
+      }
+    },
+    {
+      "name": "tasks.answer.forward.status",
+      "description": "Where one relayed ask word stands, for its own holder: pending until the admitting node's result reads here, then that result.",
+      "input": "crate::task_verb::sdk::TaskAnswerForwardStatusRequest",
+      "output": "crate::task_verb::AskForwardReceipt",
+      "mcp_served": "[input.intent_ref]",
+      "call": "memory.tasks_answer_forward_status(input.intent_ref)?",
+      "scope": "Read",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false,
+      "binding": {
+        "generic": true,
+        "args": [
+          {
+            "name": "intent_ref",
+            "type": "crate::EntityId"
+          }
+        ]
+      }
+    },
+    {
       "name": "tasks.outcomes",
       "description": "Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to.",
       "input": "crate::task_verb::TaskAskHandle",

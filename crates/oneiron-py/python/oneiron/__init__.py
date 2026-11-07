@@ -6487,15 +6487,36 @@ class Oneiron:
         def redo(self, spec):
             """Posts a new TASK and its try from one TASK's current brief, assignee, spec, label and parent through the task highway, under the caller's intent key; the redone TASK, its result and its receipts are never written."""
             return json.loads(_translate(lambda: self._client.tasks_redo(json.dumps(spec))))
-        def answer(self, handle, word):
-            """Admits one person's word on an ask; the word is evidence, never approval."""
-            return json.loads(_translate(lambda: self._client.tasks_answer(json.dumps({"handle": handle, "word": word}))))
+        @property
+        def answer(self) -> "Oneiron._TasksAnswerVerbs":
+            return Oneiron._TasksAnswerVerbs(self._client)
         def outcomes(self, handle):
             """Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to."""
             return json.loads(_translate(lambda: self._client.tasks_outcomes(json.dumps(handle))))
         def refuse(self, spec):
             """Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay."""
             return json.loads(_translate(lambda: self._client.tasks_refuse(json.dumps(spec))))
+    class _TasksAnswerVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, handle, word):
+            """Admits one person's word on an ask; the word is evidence, never approval."""
+            return json.loads(_translate(lambda: self._client.tasks_answer(json.dumps({"handle": handle, "word": word}))))
+        @property
+        def forward(self) -> "Oneiron._TasksAnswerForwardVerbs":
+            return Oneiron._TasksAnswerForwardVerbs(self._client)
+    class _TasksAnswerForwardVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, handle, intent_key, act, proof):
+            """Relays one person's own word, or the void of their own seat, on an ask to the node that admitted it; it stays pending until that node's result reads here."""
+            return json.loads(_translate(lambda: self._client.tasks_answer_forward(json.dumps({"handle": handle, "intent_key": intent_key, "act": act, "proof": proof}))))
+        def challenge(self, handle, intent_key, act):
+            """The challenge one person signs, through their slip's binding transcript, to relay their own word or seat void on an ask to the node that admitted it."""
+            return json.loads(_translate(lambda: self._client.tasks_answer_forward_challenge(json.dumps({"handle": handle, "intent_key": intent_key, "act": act}))))
+        def status(self, intent_ref):
+            """Where one relayed ask word stands, for its own holder: pending until the admitting node's result reads here, then that result."""
+            return json.loads(_translate(lambda: self._client.tasks_answer_forward_status(json.dumps({"intent_ref": intent_ref}))))
     class _AiVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

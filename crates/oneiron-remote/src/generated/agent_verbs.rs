@@ -2612,6 +2612,15 @@ impl OneironClient {
                 "tasks.answer" => remote_agent_verb_output::<oneiron::task_verb::TaskAskAnswer>(
                     client, verb, &input,
                 ),
+                "tasks.answer.forward.challenge" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::TaskAnswerForwardChallenge,
+                >(client, verb, &input),
+                "tasks.answer.forward" => remote_agent_verb_output::<
+                    oneiron::task_verb::AskForwardReceipt,
+                >(client, verb, &input),
+                "tasks.answer.forward.status" => remote_agent_verb_output::<
+                    oneiron::task_verb::AskForwardReceipt,
+                >(client, verb, &input),
                 "tasks.outcomes" => remote_agent_verb_output::<
                     Vec<oneiron::llm::decision::questions::CalibrationPair>,
                 >(client, verb, &input),
@@ -14305,6 +14314,42 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("tasks.answer", value)
+    }
+    pub fn tasks_answer_forward_challenge(
+        &self,
+        input: &oneiron::task_verb::sdk::TaskAnswerForwardChallengeRequest,
+    ) -> Result<oneiron::task_verb::sdk::TaskAnswerForwardChallenge, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("tasks.answer.forward.challenge", value)
+    }
+    pub fn tasks_answer_forward(
+        &self,
+        input: &oneiron::task_verb::sdk::TaskAnswerForwardRequest,
+    ) -> Result<oneiron::task_verb::AskForwardReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("tasks.answer.forward", value)
+    }
+    pub fn tasks_answer_forward_status(
+        &self,
+        input: &oneiron::task_verb::sdk::TaskAnswerForwardStatusRequest,
+    ) -> Result<oneiron::task_verb::AskForwardReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("tasks.answer.forward.status", value)
     }
     pub fn tasks_outcomes(
         &self,

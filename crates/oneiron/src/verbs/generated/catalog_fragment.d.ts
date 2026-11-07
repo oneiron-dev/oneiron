@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1327 code-mode rows (1286 host rows, 41 run rows), 4676 declarations.
-// Replies: 1135 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1330 code-mode rows (1289 host rows, 41 run rows), 4683 declarations.
+// Replies: 1138 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -3166,6 +3166,13 @@ declare namespace Sdk {
   type SelfDurableWait = { wait_id: EntityId; effect: SelfEffect; reason: SelfDurableWaitReason; prompt?: string | null };
   type TaskAskWait = { Pending: { trap_ref: string } } | { Changed: { voided: EntityId[]; generation: number } } | { Ready: TaskAskResult } | { Park: SelfDurableWait } | { WorldPrivacyReady: WorldPrivacyWaitResult };
   type TaskAnswerRequest = { handle: TaskAskHandle; word: TaskAskWord };
+  type AskForwardAct = { word: TaskAskWord } | "void";
+  type TaskAnswerForwardChallengeRequest = { handle: TaskAskHandle; intent_key: string; act: AskForwardAct };
+  type TaskAnswerForwardChallenge = { challenge: string };
+  type AskForwardHolderProof = { token: string; signature: string };
+  type TaskAnswerForwardRequest = { handle: TaskAskHandle; intent_key: string; act: AskForwardAct; proof: AskForwardHolderProof };
+  type AskForwardReceipt = { state: "pending"; intent_ref: EntityId } | { state: "answered"; intent_ref: EntityId; answer: TaskAskAnswer } | { state: "voided"; intent_ref: EntityId; generation: number };
+  type TaskAnswerForwardStatusRequest = { intent_ref: EntityId };
   type OutcomeLabel = { answer: string; fact: string; fact_value_hash: number[]; label: boolean; noise_weight: number; occurred_at: number };
   type CalibrationPair = { prediction: DecisionAnswer; probability: number; outcome: OutcomeLabel };
   type RoomOriginCard = { room: string; thread: string; message: string; at: number };
@@ -5232,7 +5239,15 @@ declare const tasks: {
   /** Accepts one TASK addressed to the caller through the task highway under the caller's intent key; the attempt handle it answers fences the caller's reports. */
   accept(input: Sdk.TaskAccept): Promise<Sdk.TaskCallReceipt | StoredResult>;
   /** Admits one person's word on an ask; the word is evidence, never approval. */
-  answer(input: Sdk.TaskAnswerRequest): Promise<Sdk.TaskAskAnswer | StoredResult>;
+  answer: ((input: Sdk.TaskAnswerRequest) => Promise<Sdk.TaskAskAnswer | StoredResult>) & {
+    /** Relays one person's own word, or the void of their own seat, on an ask to the node that admitted it; it stays pending until that node's result reads here. */
+    forward: ((input: Sdk.TaskAnswerForwardRequest) => Promise<Sdk.AskForwardReceipt | StoredResult>) & {
+      /** The challenge one person signs, through their slip's binding transcript, to relay their own word or seat void on an ask to the node that admitted it. */
+      challenge(input: Sdk.TaskAnswerForwardChallengeRequest): Promise<Sdk.TaskAnswerForwardChallenge | StoredResult>;
+      /** Where one relayed ask word stands, for its own holder: pending until the admitting node's result reads here, then that result. */
+      status(input: Sdk.TaskAnswerForwardStatusRequest): Promise<Sdk.AskForwardReceipt | StoredResult>;
+    };
+  };
   consult: {
     result(input: Sdk.ConsultLandRequest): Promise<Sdk.ConsultLandReply | StoredResult>;
   };
