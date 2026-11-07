@@ -21,7 +21,9 @@ mod admitted;
 mod context;
 mod reads;
 
-pub(crate) use self::admitted::{ShadowSourceAdmission, prepare_admitted_shadow_step_source};
+pub use self::admitted::ShadowSourceAdmission;
+pub(super) use self::admitted::lapsed;
+pub(crate) use self::admitted::prepare_admitted_shadow_step_source;
 use self::context::ArmContext;
 use self::reads::ForeignBody;
 use super::types::{
