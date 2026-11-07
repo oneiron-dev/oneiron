@@ -124,6 +124,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::OUTBOUND_INTENT_ATTEMPT_FORMAT, LIVE),
     (&t::OUTBOUND_INTENT_LEDGER_RECORD, LIVE),
     (&t::OUTBOUND_INTENT_SETTLEMENT, LIVE),
+    (&t::OUTBOUND_INTENT_PARTY, LIVE),
+    (&t::OUTBOUND_INTENT_PARTY_OF, LIVE),
+    (&t::OUTBOUND_INTENT_LATE_RECIPIENT, LIVE),
     // A parked task question stands with the live send and its live custody
     // key (FIX 16029): live state replaces the image's; absent stays absent.
     // Its owner Ask restores as content (DECISION_ASK), so the poller's pass
