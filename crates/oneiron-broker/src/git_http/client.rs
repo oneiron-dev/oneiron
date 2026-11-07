@@ -175,8 +175,11 @@ impl GitReply {
         &self.outcome
     }
 
-    /// The body's next step, each waited for at most the connection's reply
-    /// timeout. Once it has ended, every later call gives the same end.
+    /// The body's next step, waited for as long as the broker relays: the
+    /// broker times the repository by the exchange's idle bound and may
+    /// hold bytes back while it watches them for the credential, so a slow
+    /// trickle never reads as a stall here. The caller cancels by dropping
+    /// the reply. Once it has ended, every later call gives the same end.
     ///
     /// # Errors
     ///
@@ -185,7 +188,10 @@ impl GitReply {
         if let Some(end) = self.ended {
             return Ok(end.map_or(StreamPart::End, StreamPart::Cut));
         }
-        if let Some(chunk) = step(self.idle, read_chunk(&mut self.stream)).await? {
+        let chunk = read_chunk(&mut self.stream)
+            .await
+            .map_err(|_| BrokerError::Lost)?;
+        if let Some(chunk) = chunk {
             return Ok(StreamPart::Chunk(chunk));
         }
         let end = step(self.idle, read_stream_end(&mut self.stream)).await?;

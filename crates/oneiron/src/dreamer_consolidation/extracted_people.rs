@@ -22,8 +22,8 @@ use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use oneiron_model::llm::ScopeResource;
 
 mod bindings;
-pub(crate) use bindings::pin_lineage_origin_in_txn;
 pub(super) use bindings::{MintNamespace, PersonBindings, bind_people, original_try};
+pub(crate) use bindings::{delete_lineage_origin_in_txn, pin_lineage_origin_in_txn};
 
 pub(super) fn mint_extracted_people(
     vault: &Vault,

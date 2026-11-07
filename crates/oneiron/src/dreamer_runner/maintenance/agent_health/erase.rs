@@ -182,7 +182,7 @@ pub(crate) fn erase_sources_in_txn(
         if changed {
             sync_card_membership(store, txn, &key, &old_sources, &card.draft_source_rows())?;
             sync_reviewer_membership(store, txn, &key, &old_reviewers, &card.reviewer_revisions())?;
-            CARDS.put(store, txn, &key, &card)?;
+            super::receipt_index::put_card_in_txn(store, txn, &key, &card)?;
         }
     }
     // FIX 10432: a standing draft that predates `source_rows` names none of
@@ -215,8 +215,20 @@ pub(crate) fn erase_sources_in_txn(
                     &old_reviewers,
                     &card.reviewer_revisions(),
                 )?;
-                CARDS.put(store, txn, &key, &card)?;
+                super::receipt_index::put_card_in_txn(store, txn, &key, &card)?;
             }
+        }
+    }
+    // The numbers' local read-row witness is separate from draft membership.
+    // A remaining subset cannot explain the whole merged observation.
+    for (key, mut card) in CARDS.scan(store, txn)? {
+        if card
+            .source_rows
+            .as_ref()
+            .is_some_and(|rows| rows.contains(id))
+        {
+            card.source_rows = None;
+            CARDS.put(store, txn, &key, &card)?;
         }
     }
     Ok(())

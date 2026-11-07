@@ -33,7 +33,7 @@ use crate::dreamer_plugin_suggest::{
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::skill_hub::pack_catalog::PackSection;
-use crate::skill_hub::{RefFetch, pinned_tracking};
+use crate::skill_hub::pinned_tracking;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::skill_source::HubRef;
 
@@ -527,28 +527,17 @@ impl Memory<'_> {
         let actor = self.write_actor();
         let source = VaultPluginInstallSource { vault };
         let now = vault.now_recorded_at();
-        let disposition =
-            match vault.hub_ref_fetch(&pinned_tracking(input.hub_ref.clone())?, None)? {
-                RefFetch::Git(adapter, _) => run_plugin_suggestion_job(
-                    vault,
-                    &LocalSkillHubPackCatalog { adapter: &adapter },
-                    &source,
-                    &job,
-                    actor,
-                    &EngineSectionBindings,
-                    now,
-                ),
-                RefFetch::Http(adapter, _) => run_plugin_suggestion_job(
-                    vault,
-                    &LocalSkillHubPackCatalog { adapter: &adapter },
-                    &source,
-                    &job,
-                    actor,
-                    &EngineSectionBindings,
-                    now,
-                ),
-            }
-            .map_err(plugin_error)?;
+        let fetch = vault.hub_ref_fetch(&pinned_tracking(input.hub_ref.clone())?, None)?;
+        let disposition = run_plugin_suggestion_job(
+            vault,
+            &LocalSkillHubPackCatalog { adapter: &fetch },
+            &source,
+            &job,
+            actor,
+            &EngineSectionBindings,
+            now,
+        )
+        .map_err(plugin_error)?;
         Ok(match disposition {
             PluginSuggestionDisposition::Disabled => PluginSectionSuggestion {
                 state: PluginSectionSuggestionState::Disabled,
