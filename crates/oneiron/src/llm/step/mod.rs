@@ -92,7 +92,7 @@ pub(crate) use self::response_bodies::{retire_step_claim_in_rows, retire_step_cl
 // FIX 6225: a claim's teardown, a restore and an activation take its pins.
 pub(crate) use self::response_pins::{
     prune_step_response_pins_in_txn, release_step_response_pins_in_txn,
-    retire_erased_step_responses_in_rows,
+    retire_erased_step_responses_in_rows, step_response_version_pinned_in_txn,
 };
 pub(crate) use self::step_state::{
     dreamer_step_state_accepts_masked, erase_step_state_owner_in_txn, owner_gone_in_txn,

@@ -332,6 +332,7 @@ impl Vault {
                 &BTreeSet::new(),
                 &BTreeSet::new(),
             )?;
+            crate::channel_identity_provider::prune_line_chat_archive_pins_in_txn(&vault.store, txn)?;
             // A NOTE that cites a record this restore did not open, or one
             // the source erased since the cut, loses that citation and its
             // quote, history included, as the live erase scrubs it (FIX
