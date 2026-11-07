@@ -119,6 +119,7 @@ impl McpCallEffect {
             | Effect::RepoSymbolsRenew
             | Effect::RepoSymbolsRelease
             | Effect::RepoProposalSubmit
+            | Effect::RepoProposalResolve
             | Effect::RepoMergeQueueEnqueue
             | Effect::RepoCheckoutBind
             | Effect::RepoExport
