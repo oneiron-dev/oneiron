@@ -94,7 +94,8 @@ pub struct ReviewResult {
     pub verdict_claim: EntityId,
     pub triage: CritiqueTriage,
     pub artifacts: Vec<CritiqueArtifact>,
-    /// One receipt per typed question asked; empty when the review replays from its cache.
+    /// One receipt per typed question asked; a replay from the cache gives back the first
+    /// ask's (FIX 9780), and a review cached before they were kept gives none.
     pub receipts: Vec<DecisionReceipt>,
     /// The launched run the stored review is declared for, the first one
     /// declared; `None` when none is recorded.

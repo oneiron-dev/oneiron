@@ -137,7 +137,11 @@ async fn ws_upgrade_handler(
     // admitted from before the upgrade registers; without one it runs as
     // before.
     let hold = crate::embedded::UpgradeHold::take(&extensions);
+    // ABC transport row T25: a message this socket reassembles is bounded by
+    // the server's request floor (`limits.request_body_bytes`), not
+    // tungstenite's implicit 64 MiB; the frame size stays its own bound.
     let mut response = ws
+        .max_message_size(server.socket_message_bytes())
         .max_frame_size(server.config.max_frame_size)
         .write_buffer_size(WS_WRITE_BUFFER_SIZE)
         .max_write_buffer_size(WS_MAX_WRITE_BUFFER_SIZE)

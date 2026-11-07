@@ -15,6 +15,7 @@
 pub mod spawn_need;
 pub mod team_shape;
 pub(crate) use crate::claim::dispatch_input as widen_record;
+pub(crate) mod ballot;
 mod choice_learning;
 mod door_reads;
 pub mod doors;
@@ -64,7 +65,7 @@ pub use receipt::{
 pub(crate) use receipt::{ReceiptScan, team_receipts_in_txn};
 pub use run::{
     SelfTeamCall, TeamCoverageInput, TeamDecisionInput, TeamMemberAnswer, TeamMemberInput,
-    TeamRecordInput, TeamRunAnswer, TeamStartInput,
+    TeamRecordInput, TeamRunAnswer, TeamStartInput, TeamVoteInput,
 };
 pub use run_binding::{
     TeamRunBinding, record_team_start, record_team_start_in_txn, team_run_binding,
