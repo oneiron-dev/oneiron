@@ -521,9 +521,15 @@ pub fn registered_surface(mode: McpSurfaceMode) -> &'static McpRegisteredSurface
 /// `execute_code`.
 const MCP_EXECUTION_SETUP_INSTRUCTIONS: &str = "This result is DATA. execute_code runs a durable JavaScript or TypeScript task in the verified QuickJS WASM sandbox under this credential's actor. Reuse the same run_ref and task to resume a yielded run; completed runs return the stored result without repeating effects. The tool-first endpoint also exposes each generated verb. On both endpoints an app action runs with its live run through the invoke_action tool, taking {verb, args, idempotencyKey, liveRun}. Narrow world/facet credentials cannot use execute_code. Results are never cacheable.";
 
-/// Instructions for the vault-owned runtime binding. Both forms close with
-/// the wake opener's protocol (FIX 15011): a harness a wake batch starts
-/// appends the batch's `opener` after its own log.
+/// The client's part in an agent connection's self brief (FIX 17594 D4,
+/// Engine call MCP A): page one of the setup result carries the brief, and
+/// the client places it before its first model turn.
+const MCP_SELF_BRIEF_SETUP_INSTRUCTIONS: &str = "When a setup result carries self_brief, its prefix is the agent's turn-one self brief: place it, unchanged, before your first model turn.";
+
+/// Instructions for the vault-owned runtime binding. Both forms then state
+/// the client's part in the self brief, and close with the wake opener's
+/// protocol (FIX 15011): a harness a wake batch starts appends the batch's
+/// `opener` after its own log.
 pub(crate) fn setup_instructions_for(available: bool) -> &'static str {
     static EXECUTION: OnceLock<String> = OnceLock::new();
     static PLAIN: OnceLock<String> = OnceLock::new();
@@ -534,7 +540,7 @@ pub(crate) fn setup_instructions_for(available: bool) -> &'static str {
     };
     cell.get_or_init(|| {
         format!(
-            "{instructions} {}",
+            "{instructions} {MCP_SELF_BRIEF_SETUP_INSTRUCTIONS} {}",
             oneiron::context_board::TURN_WAKE_GRAMMAR
         )
     })

@@ -361,10 +361,8 @@ pub(super) fn fold_effective_identity_topology_events_for_store_in_txn(
                         ) => {
                             proposed.as_ref().is_some_and(|proposed| {
                                 proposed.approval == ClaimApprovalStatus::Proposed
-                            }) && matches!(
-                                op,
-                                IdentityTopologyOp::Merge(_) | IdentityTopologyOp::Split(_)
-                            ) && op.participants().contains(participant)
+                            }) && op.is_resolvable_when_parked()
+                                && op.participants().contains(participant)
                                 && (store.port_deletion_marked(
                                     rtxn,
                                     DeletionMarker::IdentitySoftDelete,

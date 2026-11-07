@@ -113,15 +113,25 @@ pub(super) fn admit_put<'a>(
     } = options.replication;
     let hub_sync_imported = options.hub.sync_imported;
     let claim_gate_prechecked = options.decision.prechecked;
-    // A record kept only for a refused privacy erasure takes no change while
-    // an order forbids its use: the refusal is `use_restricted` naming the
-    // order's bound, or absence while that order is secret (OF-470 C6,
-    // WILL-PLAN L01 row 03).
+    // A record a customer hold kept from a privacy erasure, or a cooperative
+    // restriction, takes no named change (OF-470 C6).
     if let Some(refusal) = store.use_restricted_in_txn(wtxn, &id)? {
         return Err(refusal);
     }
     crate::store::base_agent::guard_actor_put(id, entity_type, data, occurred, learned_at)?;
     super::super::super::person_substrate::validate_scope_identity(id)?;
+    // Fix list row 16256: the source-audience key, as the caller's raw bytes
+    // state it, before any normalization reads the body. Only the source
+    // landing's marked row or the owner's own import tier carries it, and
+    // a stored stamp is never dropped or changed.
+    crate::source_audience::admit_obligation_in_txn(
+        store,
+        wtxn,
+        &id,
+        entity_type,
+        data,
+        replicated,
+    )?;
     // Normalize before body comparison, short-id hashing and scope stamping so
     // every index names the bytes actually stored. Malformed policy stays intact
     // and is diagnosed fail-closed by the policy resolver, never defaulted away.

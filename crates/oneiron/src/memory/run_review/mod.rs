@@ -3,10 +3,15 @@
 //! Membership is explicit, never guessed from actor or time. Review binds the
 //! exact members and policy frontier; settlement keeps their inverse handles.
 
+mod actor_erase;
+mod receipts;
 mod revert;
 mod settle;
 mod snapshot;
 mod topology;
+
+pub(crate) use actor_erase::erase_run_review_actor_in_txn;
+pub(crate) use receipts::run_settlement_receipts;
 
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
@@ -216,9 +221,17 @@ struct StoredChange {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum RunInverse {
-    Authored { author: String, fingerprint: String },
+    Authored {
+        author: String,
+        fingerprint: String,
+    },
+    /// The change's author was erased (FIX 4727): no undo names it, and the
+    /// change is one-way.
+    AuthorErased,
     Note(crate::note::RunNoteUndo),
-    Topology { event: String },
+    Topology {
+        event: String,
+    },
 }
 
 const SETTLEMENTS: SideTable<String, StoredRun, Named> =
