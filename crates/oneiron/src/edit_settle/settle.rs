@@ -191,23 +191,6 @@ impl Vault {
                     )?;
                     return Ok((head, ReanchorSummary::default(), record, None));
                 }
-                if let Some(bundle) = &proposal.sheet_answers {
-                    let policy = crate::gate::resolve_policy_manifest(&self.store, &*wtxn)?;
-                    let cap = policy
-                        .sheet_answer_limit(
-                            &artifact_id.to_hex(),
-                            &bundle.sheet,
-                            bundle.max_count_override,
-                        )
-                        .ok_or(Error::Artifact(ArtifactError::InvalidEditManifest(
-                            "typed answer count policy unavailable",
-                        )))?;
-                    if u64::try_from(bundle.answers.len()).unwrap_or(u64::MAX) > cap {
-                        return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
-                            "typed answer count exceeds policy",
-                        )));
-                    }
-                }
                 // A policy revision under this write lock can only make the budget
                 // stricter than the preflight. Re-evaluate before any durable row.
                 let docx_limits = if proposal.format == OfficeFormat::Docx {
@@ -347,6 +330,7 @@ impl Vault {
                         reason: Some("stale_base".to_owned()),
                         sheet_answers: proposal.sheet_answers.clone(),
                         deck: None,
+                        discarded_words: None,
                     };
                     RECORD.put(&self.store, wtxn, &key, &record)?;
                     return Ok((base, ReanchorSummary::default(), record, Some(stranded)));
@@ -501,6 +485,7 @@ impl Vault {
                     reason: None,
                     sheet_answers: proposal.sheet_answers.clone(),
                     deck: checked_deck.map(|checked| Box::new(checked.evidence)),
+                    discarded_words: None,
                 };
                 RECORD.put(&self.store, wtxn, &key, &record)?;
                 if let Some(Some(withdrawal)) = carry {
@@ -568,6 +553,7 @@ impl Vault {
             // The decisions stay on the record; only a Keep's are kept answers.
             sheet_answers: proposal.sheet_answers.clone(),
             deck: None,
+            discarded_words: None,
         };
         RECORD.encode_value(&record)?;
 
