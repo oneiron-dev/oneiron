@@ -157,6 +157,10 @@ side_tables! {
     /// actor, signal and task. Key: id16 actor, signal code byte, id16 task (zeros for none).
     COACH_AGENT_HEALTH_CARD: VaultMeta b"coach:agent_health_card:v1:" Named
         => crate::dreamer_runner::maintenance::agent_health::erase_actor_sources_in_txn;
+    /// Each agent-health card under every reviewer receipt it holds (FIX 10880): the
+    /// `health_review:` digest of each `review_outcomes` receipt. Key: digest32 + id16(actor) +
+    /// u8(signal) + id16(task).
+    COACH_AGENT_HEALTH_CARD_BY_RECEIPT: VaultMeta b"coach:agent_health_card_by_receipt:v1:" Raw;
     /// Each live agent-health card under every reviewer revision it names
     /// (FIX 10434): `reviewer_revisions`. Key: id16(revision) + id16(actor) + u8(signal) +
     /// id16(task).
@@ -288,13 +292,15 @@ side_tables! {
     /// Immutable receipt of the file-mode-review proposal ids that promoted a revision. Key: id16.
     CODE_REVISION_PROMOTION: VaultMeta b"code_revision:promotion:v1:" LegacyCompact;
     /// Stranded/diverged revision proposal awaiting reconciliation with the head. Key: id16.
-    CODE_REVISION_PROPOSAL: VaultMeta b"code_revision:proposal:v1:" Raw;
+    CODE_REVISION_PROPOSAL: VaultMeta b"code_revision:proposal:v1:" Raw
+        => crate::code_revision::erase_proposal_author_in_txn;
     /// The checked Baseline a tested queue revision's parent chain ends at (value = id16),
     /// written when its seal is finalized, so a read finds the root by key, never by walking
     /// the chain (FIX 7390, 7391). Key: id16.
     CODE_REVISION_QUEUE_ROOT: VaultMeta b"code_revision:queue_root:v1:" Raw;
     /// Finalized code-revision row (hand-rolled MessagePack map). Key: id16.
-    CODE_REVISION_RECORD: VaultMeta b"code_revision:record:v1:" Raw;
+    CODE_REVISION_RECORD: VaultMeta b"code_revision:record:v1:" Raw
+        => crate::code_revision::erase_revision_author_in_txn;
     /// Index of revisions belonging to a session, empty marker value. Key: id16 + id16.
     CODE_REVISION_SESSION_INDEX: VaultMeta b"code_revision:session:v1:" Raw;
     /// Node-local executor coverage bound to a minted epoch SUMMARY (fixed 73-byte frame). Key:
@@ -499,6 +505,11 @@ side_tables! {
     /// Lookup index from a normalized connector name to a key id, empty marker value. Key:
     /// string(connector) "\x00" id16.
     CONNECTOR_KEY_CONNECTOR_INDEX: VaultMeta b"connector_key/connector/v1\0" Raw;
+    /// One dispatch batch's normalized input and committed progress (FIX 11058): its effect
+    /// channel and size, the dispatches admitted and refused so far, when the windows that paced
+    /// the rest open again, and its first and latest accounting samples. Key: id16 +
+    /// string(batch_ref).
+    CONNECTOR_KEY_DISPATCH_BATCH: VaultMeta b"connector_key/dispatch_batch/v1\0" Named Engine;
     /// Rotation-generation log entry naming the custody ref a connector key pointed at. Key: id16 +
     /// u32be.
     CONNECTOR_KEY_GENERATION_LOG: VaultMeta b"connector_key/generation/v1\0" Raw;
