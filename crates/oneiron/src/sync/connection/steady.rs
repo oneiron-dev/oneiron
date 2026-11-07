@@ -34,6 +34,9 @@ impl SyncConnection {
         shutdown_rx: &mut tokio::sync::oneshot::Receiver<()>,
     ) -> LoopExit {
         let (mut write, mut read) = ws_stream.split();
+        // A staged import body pass a returned run left settles first
+        // (FIX 12408); its socket closed with that run.
+        client.end_staged_body_pull();
         // Live, bounded and lossy. Partials never enter the durable offline queue.
         let mut presence_rx = self
             .manager
@@ -68,6 +71,9 @@ impl SyncConnection {
         // The committed pad tombstones no postcommit published (FIX 3849): one
         // retry at a time on the same tick, every lane, federation's included.
         let mut tombstone_task: Option<tokio::task::JoinHandle<()>> = None;
+        // One staged import body pass at a time (FIX 12408): its producer's
+        // socket runs off this loop, and its frames are handled here.
+        let mut staged_pump: Option<crate::sync::client::StagedBodyPump> = None;
         // The machine-claim history this machine is owed (FIX 3820): rounds on
         // their own sockets, off this loop, at connect, every retry interval,
         // and once an import or a round lands rows it waits on.
@@ -176,6 +182,32 @@ impl SyncConnection {
                     gate.hold_promotion(key);
                 }
 
+                // A frame from the staged import body pass's producer (FIX
+                // 12408), handled under the host's admission. Its socket
+                // gone, the pass ends.
+                frame = async {
+                    match staged_pump.as_mut() {
+                        Some(pump) => pump.recv().await,
+                        None => std::future::pending().await,
+                    }
+                }, if staged_pump.is_some() && !gate.paused() => {
+                    let admitted = match frame {
+                        Some(frame) => gate.admit().await.map(|batch| (frame, batch)),
+                        None => None,
+                    };
+                    if let Some((frame, _batch)) = admitted {
+                        let out = client.handle_staged_body_frame(&frame);
+                        if let Some(pump) = &staged_pump {
+                            pump.send(out);
+                        }
+                    } else {
+                        if let Some(pump) = staged_pump.take() {
+                            pump.stop().await;
+                        }
+                        client.end_staged_body_pull();
+                    }
+                }
+
                 // Live and lossy: no admission, and none sent while paused.
                 partial = presence_rx.recv(), if !gate.paused() => {
                     match partial {
@@ -207,7 +239,9 @@ impl SyncConnection {
                             let id = match transport::decode_document(&frame[1..]) {
                                 Ok(doc) => {
                                     if client.vault.get_entity_type(&doc.entity).ok().flatten() == Some(crate::registry::ENTITY_TYPE_NOTE) {
-                                        if !matches!(doc.kind, transport::document_sub_tags::NOTE_OPS | transport::document_sub_tags::REQUEST) { continue; }
+                                        // A NOTE's own commands, requests and fork uploads
+                                        // (FIX 12789) go to its authority; its invalidations stay here.
+                                        if !matches!(doc.kind, transport::document_sub_tags::NOTE_OPS | transport::document_sub_tags::REQUEST | transport::document_sub_tags::NOTE_FORK_UPLOAD) { continue; }
                                         if !client.note_session_bound { continue; }
                                     }
                                     doc.entity
@@ -215,6 +249,9 @@ impl SyncConnection {
                                 Err(error) => return LoopExit::Disconnected(error.to_string()),
                             };
                             let withheld = client.frame_withheld(&frame);
+                            // FIX 10872: a marked source's own edit, withheld, leaves
+                            // as its copy lineage's operations under its copy id.
+                            let released = if withheld { client.copy_release_frames(id) } else { Vec::new() };
                             let subscribed = (|| -> crate::error::Result<bool> {
                                 let rtxn = client.vault.store.env.read_txn()?;
                                 Ok(DS_E.contains(&client.vault.store, &rtxn, &HexId(id))? && !withheld)
@@ -222,6 +259,11 @@ impl SyncConnection {
                             match subscribed {
                                 Ok(true) => {
                                     document_buffer.push(frame);
+                                    debounce_deadline.get_or_insert_with(||
+                                        Instant::now() + Duration::from_millis(debounce_ms));
+                                }
+                                Ok(false) if !released.is_empty() => {
+                                    document_buffer.extend(released);
                                     debounce_deadline.get_or_insert_with(||
                                         Instant::now() + Duration::from_millis(debounce_ms));
                                 }
@@ -505,6 +547,32 @@ impl SyncConnection {
                     if let Err(error) = client.replay_deferred_federation_update() {
                         return LoopExit::Disconnected(format!("federation replay: {error}"));
                     }
+                    // The staged import body pass (FIX 12408): its next Want
+                    // goes out, or it ends, or the next one due begins.
+                    let now = std::time::Instant::now();
+                    if staged_pump.is_none() {
+                        match client.begin_staged_body_pull(now) {
+                            Ok(Some(start)) => {
+                                staged_pump = Some(crate::sync::client::StagedBodyPump::spawn(
+                                    std::sync::Arc::clone(self.manager.vault()),
+                                    start,
+                                ));
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                let _ = event_tx.send(SyncEvent::Error(format!(
+                                    "Staged import body pull failed: {error}"
+                                )));
+                            }
+                        }
+                    } else if client.staged_body_pull_done(now) {
+                        if let Some(pump) = staged_pump.take() {
+                            pump.stop().await;
+                        }
+                        client.end_staged_body_pull();
+                    } else if let Some(pump) = &staged_pump {
+                        pump.send(client.poll_staged_body_pull(now));
+                    }
                     // Pinned artifact pointers this device still owes the server,
                     // one part at a time.
                     match client.pull_artifact_publication(&mut publication_cursor, &mut publication_slot) {
@@ -586,6 +654,11 @@ impl SyncConnection {
                 }
             }
         };
+        // The staged import body pass ends with the run (FIX 12408).
+        if let Some(pump) = staged_pump.take() {
+            pump.stop().await;
+        }
+        client.end_staged_body_pull();
         // FIX 12037: the run ends with its residence upkeep ended, so none of
         // its writes lands after it (a reap's export waits on this): the
         // async rounds are aborted, and each task, the blocking tombstone
