@@ -237,7 +237,7 @@ impl Vault {
         match crate::memory::record_member_mail_json_export(
             self,
             &bundle.json,
-            &bundle.thread_roots,
+            bundle.thread_roots,
             &member_mail,
         ) {
             Ok(()) => Ok(bundle.json),

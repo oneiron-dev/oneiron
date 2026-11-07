@@ -61,7 +61,10 @@ pub use doors::{
 pub(crate) use export_mailboxes::{
     CarriedMemberMailboxes, MemberMailboxPlan, tell_member_mailboxes_in_txn,
 };
-pub use export_mailboxes::{MailExportMemberMailSetRequest, MailExportMemberMailSettingView};
+pub use export_mailboxes::{
+    MailExportMemberMailSetRequest, MailExportMemberMailSettingView, MailboxExportNotice,
+    MailboxLeftOutReason,
+};
 pub(crate) use export_requests::erase_export_request_actor_in_txn;
 pub use export_requests::{MailExportRequest, MailExportRequestState, MailExportRequestView};
 pub use importer::{MailSyncBudget, MailSyncReport};

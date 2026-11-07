@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1267 facade rows, 4601 generated types.
+// UniFFI census: 1267 facade rows, 4603 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1219.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -11670,6 +11670,32 @@ pub struct WorldRecipientNotice {
     pub body: String,
 }
 
+/// `oneiron::mail_pack::export_mailboxes::MailboxLeftOutReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum MailboxLeftOutReason {
+    #[serde(rename = "member_mailbox")]
+    MemberMailbox,
+    #[serde(rename = "person_not_told")]
+    PersonNotTold,
+    #[serde(rename = "source_unidentified")]
+    SourceUnidentified,
+}
+
+/// `oneiron::mail_pack::export_mailboxes::MailboxExportNotice`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct MailboxExportNotice {
+    #[serde(
+        rename = "source_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_ref: Option<String>,
+    #[serde(rename = "address", default, skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
+    #[serde(rename = "reason")]
+    pub reason: MailboxLeftOutReason,
+}
+
 /// `oneiron::memory::export::MemoryExport`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct MemoryExport {
@@ -11687,6 +11713,12 @@ pub struct MemoryExport {
     pub holder_requests: Option<Vec<HolderExportRequest>>,
     #[serde(rename = "notices", default, skip_serializing_if = "Option::is_none")]
     pub notices: Option<Vec<WorldRecipientNotice>>,
+    #[serde(
+        rename = "mailbox_notices",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub mailbox_notices: Option<Vec<MailboxExportNotice>>,
 }
 
 /// `oneiron::memory::export::ExportTransfer`.
@@ -11708,6 +11740,12 @@ pub struct ExportTransfer {
     pub holder_requests: Option<Vec<HolderExportRequest>>,
     #[serde(rename = "notices", default, skip_serializing_if = "Option::is_none")]
     pub notices: Option<Vec<WorldRecipientNotice>>,
+    #[serde(
+        rename = "mailbox_notices",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub mailbox_notices: Option<Vec<MailboxExportNotice>>,
 }
 
 /// `oneiron::memory::export::ExportAnswer`.

@@ -16,6 +16,17 @@ struct Exported<'a> {
     /// owner's recipient choice would keep from where it goes, and why.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     notices: Vec<oneiron::share_travel::WorldRecipientNotice>,
+    /// Fix list row 15416: each other member's personal mailbox the export
+    /// left out, and why, beside the world notices.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    mailbox_notices: Vec<oneiron::mail_pack::MailboxExportNotice>,
+}
+
+/// The mailboxes an export to stdout left out, as it reports them on stderr
+/// beside its world notices (fix list row 15416).
+#[derive(Serialize)]
+struct LeftOutMailboxes<'a> {
+    mailbox_notices: &'a [oneiron::mail_pack::MailboxExportNotice],
 }
 
 pub fn export(args: ExportArgs) -> anyhow::Result<()> {
@@ -69,6 +80,12 @@ pub fn export(args: ExportArgs) -> anyhow::Result<()> {
         if !receipt.notices.is_empty() {
             eprintln!("{}", serde_json::to_string_pretty(&receipt.notices)?);
         }
+        if !receipt.mailbox_notices.is_empty() {
+            let left_out = LeftOutMailboxes {
+                mailbox_notices: &receipt.mailbox_notices,
+            };
+            eprintln!("{}", serde_json::to_string_pretty(&left_out)?);
+        }
         return Ok(());
     };
     let mut exported = None;
@@ -85,6 +102,7 @@ pub fn export(args: ExportArgs) -> anyhow::Result<()> {
         format: exported.format,
         bytes: exported.bytes,
         notices: exported.notices,
+        mailbox_notices: exported.mailbox_notices,
     })
 }
 

@@ -71,7 +71,7 @@ pub(crate) use wake::{
 #[cfg(feature = "sync")]
 pub(crate) use walk::derived_travel_in;
 pub(crate) use walk::{
-    ExportAudience, ExportJudge, ExportMet, ReplicationScope, lineage_held_in,
+    ExportAudience, ExportJudge, ExportMet, ExportVerdicts, ReplicationScope, lineage_held_in,
     readable_with_read_in, withheld_by_lineage_in, withheld_from_replication_in,
 };
 
