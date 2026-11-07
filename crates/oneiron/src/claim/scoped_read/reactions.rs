@@ -171,16 +171,18 @@ impl ScopedRead<'_> {
         viewer: EntityId,
     ) -> Result<BTreeMap<EntityId, Vec<ReactionPill>>> {
         let rtxn = self.grant_read_txn()?;
-        let policy = self.live_policy_manifest_in(&rtxn)?;
+        // The lane's own resolved request, as its recall reactions take it
+        // (FIX 3977).
+        let admission = self.reaction_admission_in(&rtxn, None)?;
         let mut readable = Vec::with_capacity(messages.len());
         for message in messages {
-            if self.is_entity_readable_with_policy_in(&rtxn, &policy, message)? {
+            if self.row_admitted_in(&rtxn, &admission, message)? {
                 readable.push(*message);
             }
         }
         self.vault
             .reaction_pills_in(&rtxn, &readable, viewer, |row| {
-                self.is_entity_readable_with_policy_in(&rtxn, &policy, &row.id)
+                self.row_admitted_in(&rtxn, &admission, &row.id)
             })
     }
 
@@ -201,15 +203,14 @@ impl ScopedRead<'_> {
         disclosure: Option<&DisclosureContext>,
     ) -> Result<bool> {
         let rtxn = self.grant_read_txn()?;
-        let policy = self.live_policy_manifest_in(&rtxn)?;
-        Ok(
-            self.is_entity_readable_with_policy_in(&rtxn, &policy, &signal.message)?
-                && self
-                    .at_every_claim_status()?
-                    .is_entity_readable_with_policy_in(&rtxn, &policy, &signal.reaction)?
-                && self.disclosed_in(&rtxn, disclosure, &signal.message)?
-                && self.disclosed_in(&rtxn, disclosure, &signal.reaction)?,
-        )
+        // Each side under its lane's own resolved request (FIX 3977): the
+        // record on this lane, the reaction on its every-status twin, which
+        // keeps the same bound caller filter.
+        let every_status = self.at_every_claim_status()?;
+        let record = self.reaction_admission_in(&rtxn, disclosure)?;
+        let reaction = every_status.reaction_admission_in(&rtxn, disclosure)?;
+        Ok(self.row_admitted_in(&rtxn, &record, &signal.message)?
+            && every_status.row_admitted_in(&rtxn, &reaction, &signal.reaction)?)
     }
 }
 
