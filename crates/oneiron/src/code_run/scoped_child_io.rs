@@ -250,6 +250,9 @@ pub struct ScopedChildProfile {
     pub locality: ModelLocality,
     pub ports: Arc<dyn ScopedChildPorts>,
     pub stop: ScopedChildStop,
+    /// The host's original generation admission and settlement. Without it
+    /// the standard compaction factory cannot represent this profile's calls.
+    pub generation: Option<Arc<dyn super::ScopedChildGeneration>>,
 }
 
 impl ScopedChildProfile {
