@@ -1,5 +1,5 @@
-//! FIX 5629, 6505: the taps a delivered notification offers, read when its
-//! row is read, from the refs its producer already wrote. Nothing here is
+//! FIX 5629, 6505, 4747: the taps a delivered notification offers, read when
+//! its row is read, from the refs its producer already wrote. Nothing here is
 //! stored: there is no action ledger, a settled or stale target offers no
 //! tap, and the door each tap names judges its target again when called.
 
@@ -10,6 +10,7 @@ use super::notification::NotificationKind;
 use crate::claim::{WEAVE_DIGEST_SETTINGS_NOTIFICATION_PRODUCER, WeaveDigestSettingChangeStatus};
 use crate::entity_id::EntityId;
 use crate::memory::Memory;
+use crate::outbound::{UNCERTAIN_SEND_ANSWER_VERB, UNCERTAIN_SEND_NOTIFICATION_PRODUCER};
 use crate::store::conversation_body::{THREAD_NOTICE_PRODUCER, ThreadJoinRequestsRequest};
 
 /// The owner's answer to a proposed digest settings change.
@@ -49,9 +50,10 @@ impl Memory<'_> {
     }
 
     /// The taps `row` offers this caller now: a pending digest settings ask
-    /// is accepted or declined and an applied change undone (FIX 5629), and
-    /// a pending request to join a private thread is approved or denied
-    /// (FIX 6505). Any other row, and a target that no longer reads or has
+    /// is accepted or declined and an applied change undone (FIX 5629), a
+    /// pending request to join a private thread is approved or denied
+    /// (FIX 6505), and a send that may have gone out is sent again or left
+    /// (FIX 4747). Any other row, and a target that no longer reads or has
     /// settled, offers none.
     fn notification_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
         let producer = row.source.producer.as_str();
@@ -64,8 +66,46 @@ impl Memory<'_> {
             NotificationKind::ThreadJoinRequested if producer == THREAD_NOTICE_PRODUCER => {
                 self.thread_join_actions(row)
             }
+            NotificationKind::Ask if producer == UNCERTAIN_SEND_NOTIFICATION_PRODUCER => {
+                self.uncertain_send_actions(row)
+            }
             _ => Vec::new(),
         }
+    }
+
+    /// The producer names the connector-send TASK in `source.result`; the
+    /// ask is a vault owner's, and only an owner's proof answers it. Shown
+    /// while the send still waits for an answer: send it once more, or
+    /// leave it.
+    fn uncertain_send_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
+        let Some(task) = row
+            .source
+            .result
+            .as_deref()
+            .and_then(|task| EntityId::from_hex(task).ok())
+        else {
+            return Vec::new();
+        };
+        let vault = self.vault();
+        let waits = vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::error::Error::from)
+            .and_then(|txn| vault.uncertain_send_awaits_owner_in(&txn, task));
+        if !matches!(waits, Ok(true)) {
+            return Vec::new();
+        }
+        let task_ref = task.to_hex();
+        [true, false]
+            .into_iter()
+            .map(|resend| {
+                NotificationAction::new(
+                    UNCERTAIN_SEND_ANSWER_VERB,
+                    serde_json::json!({ "task_ref": task_ref, "resend": resend }),
+                )
+            })
+            .collect()
     }
 
     /// The producer names the change in `source.result`; the notice is the
