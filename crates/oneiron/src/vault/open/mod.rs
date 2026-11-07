@@ -613,6 +613,7 @@ impl Vault {
             tagging_arm: Default::default(),
             analyzer,
             writer_lease: None,
+            secret_use_t1_operations: Default::default(),
             page_seal_mirror_carry: Default::default(),
             privacy,
             text_index_trusted: std::sync::atomic::AtomicBool::new(text_index_trusted),
@@ -666,13 +667,13 @@ impl Vault {
             xlsx_precision_recalc: Default::default(),
             coach_weave_digest_host: Default::default(),
             origin_mirror_wake: Default::default(),
+            ask_forward_arrivals: Default::default(),
             origin_git_transport: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
             slow_retrieval_stage: Default::default(),
         };
-        // A sealed vault (maximum tier) admits the wrap its seal was
-        // unlocked with, holds its data key and mirrors its wraps before any
-        // caller holds it.
+        // A sealed vault (maximum tier) admits the wrap its seal was unlocked with,
+        // holds its data key and mirrors its wraps before any caller holds it.
         vault.settle_page_seal()?;
         // A published deletion must finish its request-bound topology tear
         // before any caller can apply a new merge or observe this vault.

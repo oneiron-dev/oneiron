@@ -2139,6 +2139,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_skills_proposal_settle(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.proposal.settle", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_skills_receipts(
         &self,
         input: serde_json::Value,
@@ -4230,6 +4239,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_coach_training_runs_cancel(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.coach.training_runs.cancel", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_drafters_list(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.drafters.list", js_json(input))
@@ -5541,6 +5559,12 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_hooks_checks(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.hooks.checks", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_hooks_replay(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.hooks.replay", js_json(input))
@@ -6031,6 +6055,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.code.model_heal_count", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_corrections(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.corrections", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -7522,6 +7555,33 @@ impl NativeClient {
     pub fn tasks_answer(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("tasks.answer", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn tasks_answer_forward_challenge(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("tasks.answer.forward.challenge", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn tasks_answer_forward(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("tasks.answer.forward", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn tasks_answer_forward_status(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("tasks.answer.forward.status", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -11161,6 +11221,33 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.mail.compliance.search", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_files_sources_convert(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.files.sources.convert", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_sync_repo_manifests_conflict_review(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.sync.repo_manifests.conflict.review", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_sync_repo_manifests_conflict_discard(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.sync.repo_manifests.conflict.discard", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

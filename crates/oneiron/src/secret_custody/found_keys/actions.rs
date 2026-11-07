@@ -431,7 +431,9 @@ pub(super) fn card_in_txn(
 ) -> Result<FoundKeyCard> {
     let rec = read_secret_custody_admission_in_txn(&vault.store, txn, &key.custody)?;
     let mut actions = Vec::new();
-    if !key.kept_by_owner() {
+    if key.kept_by_owner() {
+        actions.push(FoundKeyAction::ReEnter);
+    } else {
         let status = rec.as_ref().map(|rec| rec.status);
         if status == Some(SecretCustodyStatus::Active) {
             actions.extend([FoundKeyAction::Rotate, FoundKeyAction::Grant]);
