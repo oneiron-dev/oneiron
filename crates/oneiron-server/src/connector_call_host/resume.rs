@@ -37,11 +37,14 @@
 use std::collections::HashMap;
 
 use oneiron::limit_ask::EngineLimit;
-use oneiron::outbound_consent::{ConnectorResumeProtocol, OpenedConnectorResume};
+use oneiron::outbound_consent::{
+    ConnectorResumeProtocol, OpenedConnectorResume, SentGeneration, SentGenerations,
+};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use super::live_exchange::{AnswerReceipts, Inbox, Worker};
+use super::presenting::Presented;
 use super::reply_read::EventStream;
 use super::stream_pump::Pump;
 use super::*;
@@ -163,6 +166,9 @@ impl Worker {
             generation: self.generation,
             protocol,
             state: sealed,
+            // The send that met the first round stamps what it presented;
+            // a later round's row keeps what it has (fix list row 10550).
+            sent: SentGenerations::Unknown,
         })
     }
 
@@ -272,6 +278,51 @@ pub(crate) fn resume_exchanges(server: &SyncServer, tries: &mut HashMap<EntityId
 }
 
 impl ServedConnectorCallHost {
+    /// What a resumed exchange clears beside the value it presents now
+    /// (fix list row 10550): each presentation it made before that is not
+    /// this one, every one of them covered whole by its record's known-value
+    /// history. The presentation now is kept on the call's row before the
+    /// resumed exchange sends anything, so another restart clears it too.
+    /// An error leaves the round uncertain: nothing is cleared of the value
+    /// now alone.
+    fn presented_before(
+        &self,
+        call_ref: &EntityId,
+        handle: &str,
+        generation: u64,
+        before: Vec<SentGeneration>,
+        presented: &Presented,
+    ) -> Result<Vec<SentGeneration>, &'static str> {
+        // A value released under no record cannot be cleared again later.
+        if presented.kept.is_some() && presented.sent.is_none() {
+            return Err("credential_presentation_unknown");
+        }
+        let history: Vec<SentGeneration> = before
+            .into_iter()
+            .filter(|earlier| {
+                presented
+                    .sent
+                    .as_ref()
+                    .is_none_or(|now| !now.same_value(earlier))
+            })
+            .collect();
+        if !history.is_empty() {
+            self.vault
+                .with_connector_sent_clearer(&history, |_| ())
+                .map_err(|_| "credential_history_not_covered")?;
+        }
+        if let Some(now) = presented.sent
+            && !matches!(
+                self.vault
+                    .record_connector_input_sent(call_ref, handle, generation, now),
+                Ok(true)
+            )
+        {
+            return Err("credential_presentation_not_kept");
+        }
+        Ok(history)
+    }
+
     /// Takes up again the exchange `opened` keeps the state of: its
     /// credential presented again, its session rebuilt, a stream
     /// reattached, and its handle registered again under its call and
@@ -286,8 +337,16 @@ impl ServedConnectorCallHost {
             grant,
             run,
             original,
+            sent,
             ..
         } = opened;
+        // What the exchange presented before: never taken up when not known
+        // (fix list row 10550).
+        let before = match sent {
+            SentGenerations::Unknown => return Err("credential_presentation_unknown"),
+            SentGenerations::CredentialFree => Vec::new(),
+            SentGenerations::Presented(presented) => presented,
+        };
         let ResumeState {
             binding,
             questions,
@@ -321,6 +380,7 @@ impl ServedConnectorCallHost {
             .presenting(route)
             .present_again(&self.vault, Some((&binding.key_ref, binding.tool.as_str())))
             .ok_or("credential_not_presented")?;
+        let history = self.presented_before(&call_ref, &handle, generation, before, &presented)?;
         let live = LiveSession {
             client: self.client.clone(),
             endpoint: binding.endpoint.clone(),
@@ -407,6 +467,7 @@ impl ServedConnectorCallHost {
             generation,
             asked: questions.len(),
             kept: presented.kept,
+            history,
             aliases,
             receipts: AnswerReceipts {
                 vault: Arc::downgrade(&self.vault),
