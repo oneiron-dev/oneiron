@@ -144,10 +144,49 @@ fn request_body(
     Ok(Some((body, body_hold)))
 }
 
+/// What a fetched response is checked against (FIX 13657): the certificates
+/// the DSS embeds, which a verifier reads the response with, and the
+/// configured anchors. An authorized responder known only as an anchor binds,
+/// and so does a response entry for another of these certificates.
+pub(super) struct OcspContext {
+    certs: Vec<verify::EmbeddedCert>,
+    anchors: Vec<verify::EmbeddedCert>,
+}
+
+impl OcspContext {
+    /// Each certificate admitted on `memory`; one that does not decode is
+    /// left out.
+    pub(super) fn admitted(
+        certs_der: &[Vec<u8>],
+        anchors_der: &[Vec<u8>],
+        memory: &MemoryLedger,
+    ) -> Result<Self, SealMemoryRefusal> {
+        Ok(Self {
+            certs: admitted_all(certs_der, memory)?,
+            anchors: admitted_all(anchors_der, memory)?,
+        })
+    }
+}
+
+fn admitted_all(
+    ders: &[Vec<u8>],
+    memory: &MemoryLedger,
+) -> Result<Vec<verify::EmbeddedCert>, SealMemoryRefusal> {
+    memory.admit_len::<verify::EmbeddedCert>(ders.len())?;
+    let mut admitted = Vec::with_capacity(ders.len());
+    for der in ders {
+        if let Some(cert) = verify::EmbeddedCert::admitted(der, memory)? {
+            admitted.push(cert);
+        }
+    }
+    Ok(admitted)
+}
+
 pub(super) async fn fetch_valid_ocsp(
     ctx: &SealContext<'_>,
     cert_der: &[u8],
     issuer_der: &[u8],
+    context: &OcspContext,
     memory: &MemoryLedger,
 ) -> Result<Option<SharedBytes>, SealError> {
     let resource_error = |refusal: SealMemoryRefusal| refusal.seal_error(SealStage::Revocation);
@@ -203,11 +242,17 @@ pub(super) async fn fetch_valid_ocsp(
             Err(FetchError::Memory(refusal)) => return Err(resource_error(refusal)),
             Err(_) => continue,
         };
-        // The key-bound issuer is already present. The existing validator
-        // also admits and checks any delegated responder in the response.
-        let evidence =
-            verify::ocsp_entry_valid(&response.body, &embedded, &[], ctx.clock_ms / 1000, memory)
-                .map_err(resource_error)?;
+        // Checked as a verifier checks it, against the DSS certificates and
+        // the anchors. The existing validator also admits and checks any
+        // delegated responder in the response.
+        let evidence = verify::ocsp_entry_valid(
+            &response.body,
+            &context.certs,
+            &context.anchors,
+            ctx.clock_ms / 1000,
+            memory,
+        )
+        .map_err(resource_error)?;
         if evidence
             .is_some_and(|evidence| !evidence.unknown && evidence.good_targets.contains(&cert_der))
         {
