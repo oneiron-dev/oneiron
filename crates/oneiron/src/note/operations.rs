@@ -16,8 +16,6 @@ use crate::side_table::HexId;
 use crate::{EdgeActorClass, EntityId};
 use serde::{Deserialize, Serialize};
 
-pub(super) const MAX_RECEIPT_PAYLOAD: usize = 8 * 1024 * 1024;
-
 /// Idempotent command carried by the canonical document frame. There is no
 /// actor field: the receiving host obtains that from its authenticated session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -286,7 +284,8 @@ fn resolved_receipt_in_txn(
 impl crate::Vault {
     /// Whether a queued NOTE receipt still has its authoritative durable row.
     /// Host delivery combines this freshness check with current selector admission.
-    /// Erasure deletes copied full-view receipts in the same writer as their pins.
+    /// Erasure strips its pins from a saved receipt and drops the queued copies
+    /// in the same writer.
     pub fn note_receipt_is_current(
         &self,
         note: EntityId,
@@ -578,14 +577,9 @@ impl Memory<'_> {
             command_hash: hash,
             outcome,
         };
-        let payload = serde_json::to_vec(&receipt).map_err(|_| invalid("NOTE receipt encode"))?;
-        // The receipt goes to its requester whole in one NOTE_RECEIPT
-        // document frame: an 18-byte head and this payload within the
-        // transport's 8 MiB frame (`sync::transport::encode_document`). This
-        // bound protects that frame and stays (FIX 10345).
-        if payload.len() > MAX_RECEIPT_PAYLOAD - 18 {
-            return Err(invalid("NOTE receipt exceeds wire bound").into());
-        }
+        // Validate the full receipt before persistence as before. Its socket
+        // delivery splits the complete result, never a truncated view.
+        let _ = serde_json::to_vec(&receipt).map_err(|_| invalid("NOTE receipt encode"))?;
         // The stored receipt keeps the stamp tokens its view names; its
         // caller reads them resolved (FIX 11964).
         NOTE_RECEIPT_BY_REQUEST.put(

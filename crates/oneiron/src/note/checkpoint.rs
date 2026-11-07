@@ -11,11 +11,13 @@
 //! A proposal head's Loro snapshot splits through the shared Loro projection
 //! under its NOTE ([`loro`], FIX 6072): its stamps' and authorship records'
 //! actors out, and the join writing the same history back with every actor
-//! that did not open erased. A shallow one, one that is no value-only
-//! proposal, and one whose fork no one decided and whose fork record did not
-//! split beside it stay under the vault-wide seal, named with the NOTE. The live documents' rows are split by the entity-document
-//! getter through the same NOTE codec, and a NOTE core's author by the
-//! entity-row getter ([`body`]). Nothing calls this until KS7-5, and only
+//! that did not open erased; its pins stay in it, and the restore's
+//! citation erase takes out each one whose record went (FIX 18270). A
+//! shallow one, and one whose fork no one decided and whose fork record did
+//! not split beside it, stay under the vault-wide seal, named with the NOTE.
+//! The live documents' rows are split by the entity-document getter through
+//! the same NOTE codec, and a NOTE core's author by the entity-row getter
+//! ([`body`]). Nothing calls this until KS7-5, and only
 //! once CHECKPOINT_PAYLOADS_ENABLED is on.
 #![allow(
     dead_code,
@@ -44,7 +46,7 @@ use super::proposals::{
     NoteFork, PendingNoteForkErase,
 };
 use super::side_keys::HexPair;
-use super::sync_rows::{NOTE_RECEIPT_BY_REQUEST, SYNC_NC_E};
+use super::sync_rows::{NOTE_FORK_AUTHORITY, NOTE_RECEIPT_BY_REQUEST, SYNC_NC_E};
 use super::title_index;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -161,6 +163,11 @@ fn capture_operation_receipts(
             None => out.unclassified(row.at, None, Unresolved::NoOwner),
         }
     }
+    // Each mark on a fork its authority sent, under the NOTE its key leads
+    // with (FIX 12789).
+    for row in rows::typed_rows(dbs, txn, NOTE_FORK_AUTHORITY, out)? {
+        out.exact(OwnerRef::entity(&row.key.0.0), row.at, row.bytes);
+    }
     for row in rows::typed_rows(dbs, txn, NOTE_RECEIPT_BY_REQUEST, out)? {
         let owner = OwnerRef::entity(&row.key.0.0);
         rows::split_actors(out, owner, NOTE_RECEIPT_BY_REQUEST, row, |receipt| {
@@ -182,6 +189,7 @@ fn owns(at: &RowLocator) -> bool {
         NOTE_PROPOSAL_DOC.decl(),
         SYNC_NC_E.decl(),
         NOTE_RECEIPT_BY_REQUEST.decl(),
+        NOTE_FORK_AUTHORITY.decl(),
     ]
     .into_iter()
     .any(|decl| at.in_table(decl))
@@ -216,6 +224,8 @@ fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
         rows::check_row(SYNC_NC_E, at, value)
     } else if at.in_table(NOTE_RECEIPT_BY_REQUEST.decl()) {
         rows::check_row(NOTE_RECEIPT_BY_REQUEST, at, value)
+    } else if at.in_table(NOTE_FORK_AUTHORITY.decl()) {
+        rows::check_row(NOTE_FORK_AUTHORITY, at, value)
     } else if pins::owns(at) {
         pins::check(at, value)
     } else if title_index::checkpoint::owns(at) {
