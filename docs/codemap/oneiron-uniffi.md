@@ -12,7 +12,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `src/bin/uniffi_bindgen.rs` | src | s | — | — | Local bindgen entry point, behind the `bindgen-cli` feature |
-| `src/codec.rs` | src | L | 12 crate-vis | — | Lift and lower codecs between this crate's UniFFI records and the engine types the shared… |
+| `src/codec.rs` | src | L | 13 crate-vis | — | Lift and lower codecs between this crate's UniFFI records and the engine types the shared… |
 | `src/codec/ai_options.rs` | src | s | — | — | Owned AI-options output lift for opaque model option JSON (FIX 12936) |
 | `src/codec/browser_batch.rs` | src | s | — | — | Owned opaque leaves for the browser batch's complete answer (FIX 12936) |
 | `src/codec/checkpoints.rs` | src | s | — | — | Owned checkpoint output lifts for stored reply JSON (FIX 12936) |
@@ -32,7 +32,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/embedded_engine.rs` | src | m | 6 struct · 1 trait · 13 fn | AppHostCallbacks, EmbeddedEngine, EngineConnection, EngineHeader, EngineLimits, EngineReply, EngineRequest | The embedded engine (OF-237): the full server `oneiron serve` runs, inside the app's own process, over the… |
 | `src/error.rs` | src | s | 1 enum | OneironError | The single exported error type for the UniFFI head-contract surface |
 | `src/generated/facade_generated.rs` | src | generated | — | — | — |
-| `src/generated/facade_types_generated.rs` | src | generated | 3482 struct · 1142 enum | AcceptConnect, AcceptRescopeConnect, AccessFactorPolicy, AccessRequestStatus, AccessStatus, AckPosition, ActAnswerArtifactAskOutcome, ActAnswerConnectorCallReply +4616 | — |
+| `src/generated/facade_types_generated.rs` | src | generated | 3510 struct · 1145 enum | AcceptConnect, AcceptRescopeConnect, AccessFactorPolicy, AccessRequestStatus, AccessStatus, AckPosition, ActAnswerArtifactAskOutcome, ActAnswerConnectorCallReply +4647 | — |
 | `src/host_root.rs` | src | s | 1 struct · 2 fn | HostRootProfile | `Oneiron.open_with_host_root` (FIX 4730): `Oneiron.open`, then this install's own machine profile from the… |
 | `src/lib.rs` | src | m | 1 struct · 12 fn · 1 const · 8 re-export | Oneiron | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound |
 | `src/native_limit_questions.rs` | src | s | 1 struct · 1 fn | NativeLimitQuestion | `Oneiron::native_limit_questions`: the engine `[limits]` rows this client's own vault crossed, served from… |

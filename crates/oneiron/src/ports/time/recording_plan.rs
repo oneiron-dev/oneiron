@@ -137,6 +137,14 @@ impl<'store, 'read, 'env, D: ManifestDbs> RecordingClockProjection<'store, 'read
         }
     }
 
+    pub(in crate::ports) fn store(&self) -> &'store D {
+        self.store
+    }
+
+    pub(in crate::ports) fn snapshot(&self) -> &'read RoTxn<'env> {
+        self.txn
+    }
+
     /// Preserve the native id-floor step before the recording-floor step.
     pub(crate) fn recorded_at(&mut self) -> Result<u64> {
         self.persist_id_floor()?;
