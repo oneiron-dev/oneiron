@@ -91,7 +91,9 @@ async fn serve_with_handles(
     // So is the custody anchor door's credential, on its own pipe when the
     // supervisor hands one: never the environment (FIX 5788, FIX 6517).
     let anchor = host.custody_anchor_credentials(config.backup.custody_anchor_url.as_deref())?;
-    let mut vault_config = config.base_vault_config();
+    let mut vault_config = config
+        .base_vault_config()
+        .with_checkpoint_host_holds_recipient(host.checkpoint_host_holds_recipient());
     // The supervisor delivered this vault's data key at boot (FIX 4531).
     vault_config.privacy.data_key_custody = oneiron::VaultDataKeyCustody::SupervisorDelivered;
     // Our cloud hosts this vault. The owner's "Help improve Oneiron" and
