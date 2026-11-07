@@ -11,6 +11,9 @@ pub(crate) use admission::admit_federated_entity_blob;
 #[cfg(feature = "sync")]
 pub(in crate::sync) mod authority_beside;
 mod authorize;
+// FIX 3656: a TASK's or SUMMARY's birth placement beside it on a copy to
+// another vault.
+mod birth_placements;
 mod born_with;
 mod codec;
 mod document_admission;
@@ -91,6 +94,7 @@ pub(crate) fn keep_carried_born_with(
     born_with::keep_carried(vault, carried)
 }
 pub(in crate::sync) use self::codec::granted_window_doc;
+pub(crate) use self::codec::guest_share_envelope_body_listing;
 pub use self::codec::{
     RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector,
     SyncSelectorWorld, decode_selector_vv_request, decode_sync_selector,

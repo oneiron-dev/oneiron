@@ -37,6 +37,7 @@ pub mod edge {
 mod edge_regeneration;
 pub mod entity_id;
 pub use oneiron_base::error;
+pub use oneiron_base::host_descriptors;
 pub mod host_memory;
 pub mod housekeeping;
 pub(crate) mod identity;
@@ -148,6 +149,7 @@ pub mod consent;
 pub mod consent_graduation;
 pub mod federation;
 pub(crate) mod gate;
+pub use gate::code_consent_settlement;
 pub use gate::policy_manifest_doors;
 pub mod policy_model;
 pub mod receipt;
