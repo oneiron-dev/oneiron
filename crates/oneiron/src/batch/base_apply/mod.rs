@@ -268,6 +268,9 @@ pub(super) fn apply_ops_with_authority_beside(
 ) -> Result<()> {
     // FIX 9398: the batch's deletes drop the rooms' media copies once, as it ends.
     let _room_media_drops = crate::embed::RoomMediaDrops::open(store, wtxn);
+    // A nested apply of this store in this writer is part of its outer batch:
+    // only the outermost seals HOST prospective messages' edges.
+    let prospective = crate::deletion::ProspectiveBatch::open(store);
     let replay = matches!(origin, BaseWriteOrigin::PromoteReplay(_));
     let mut ops = ReplayOps { ops, replay };
     let run_derivations = crate::skill_attribution::run_derivations(&ops.ops, replay);
@@ -612,5 +615,8 @@ pub(super) fn apply_ops_with_authority_beside(
         op_index += 1;
     }
 
+    // A new message a HOST prospective order sealed in this batch takes its
+    // outgoing edge rows, as the batch wrote them, in this writer.
+    prospective.seal_edges_in_txn(wtxn)?;
     tail::apply_tail(store, config, analyzer, wtxn, state, text_index_trusted)
 }
