@@ -220,7 +220,7 @@ impl RoomAudience {
         let parties = vault
             .room_party_entries_under(read, members)
             .map_err(|error| core_engine_error("room contact resolution failed", error))?;
-        let owner = bound_room_owner(vault, auth, members)?;
+        let owner = bound_room_owner(vault, auth, members, &parties)?;
         let reader = owner.or_else(|| own_agent_reader(auth, members, &parties));
         Ok(Self {
             room: live.room(),
@@ -256,14 +256,15 @@ impl RoomAudience {
 
 /// The room member the caller is proven to be the vault owner as, if any.
 /// A bare host credential authenticates the caller but identifies no PERSON
-/// in the room. Only an identified, owner-grade human slip with a live
-/// owner-capable actor binding can exclude its exact holder from the
-/// non-owner meet. The presence flag and PROJECT leader are not identity
-/// evidence.
+/// in the room. An identified, owner-grade human slip excludes its exact
+/// holder when a live owner-capable actor binding or the room's native
+/// live-Owner entry proves it, co-Owners included. The presence flag and
+/// PROJECT leader are not identity evidence.
 fn bound_room_owner(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
     members: &[oneiron::EntityId],
+    parties: &[oneiron::disclosure::RoomPartyEntry],
 ) -> Result<Option<oneiron::EntityId>, ApiError> {
     if !auth.is_owner_grade() || auth.actor_class() != Some("human") {
         return Ok(None);
@@ -281,7 +282,11 @@ fn bound_room_owner(
     let fold = vault
         .authority_fold()
         .map_err(|error| core_engine_error("room owner binding failed", error))?;
-    Ok(oneiron::authority::actor_binding_is_active(&fold, &id, "human").then_some(id))
+    let owner = oneiron::authority::actor_binding_is_active(&fold, &id, "human")
+        || members.iter().zip(parties).any(|(member, entry)| {
+            *member == id && matches!(entry.party, oneiron::disclosure::RoomParty::VaultOwner)
+        });
+    Ok(owner.then_some(id))
 }
 
 /// The room member an agent credential reads as, when it names one of the

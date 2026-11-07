@@ -8,7 +8,7 @@ use std::path::{Component, Path, PathBuf};
 use crate::codebase::CODEBASE_COMMIT_HASH_HEX_LEN;
 use crate::codebase::{CODEBASE_FILE_PATH_MAX_BYTES, RepoRef};
 use crate::error::{Error, Result};
-use crate::git_wire::run_bridged_git_argv;
+use crate::git_wire::{git_path_bytes, git_path_os_str, run_bridged_git_argv};
 
 use super::support::{path_arg, utf8_trimmed};
 use crate::error::CodeError;
@@ -84,7 +84,12 @@ pub(super) fn current_head_commit(repo_root: &Path) -> Result<String> {
     Ok(commit.to_ascii_lowercase())
 }
 
+/// A repo-relative path's text, as a Git path's text is (FIX 21326): a name
+/// outside UTF-8 passes as its canonical escape, which never forms a `.`,
+/// `..`, `.git`, `/` or a backslash, so each check below reads the text as the
+/// bytes.
 pub(super) fn validate_relative_repo_path(path: &str) -> Result<()> {
+    git_path_bytes(path)?;
     if path.is_empty() || path.len() > CODEBASE_FILE_PATH_MAX_BYTES {
         return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "repo mutation path must be non-empty and at most 4096 bytes",
@@ -125,6 +130,12 @@ pub(super) fn validate_relative_repo_path(path: &str) -> Result<()> {
         )));
     }
     Ok(())
+}
+
+/// The file the repo path `path` (a Git path's text) names under `root`: its
+/// own bytes, so a name outside UTF-8 lands as Git holds it (FIX 21326).
+pub(super) fn repo_path_on_disk(root: &Path, path: &str) -> Result<PathBuf> {
+    Ok(root.join(&*git_path_os_str(path)?))
 }
 
 pub(super) fn validate_commit_message(message: &str) -> Result<()> {

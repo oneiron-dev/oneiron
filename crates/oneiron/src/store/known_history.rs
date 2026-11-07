@@ -68,6 +68,9 @@ const INDEX_MISSING: &str = "known_value_index_missing";
 const HISTORY_MISSING: &str = "known_value_history_missing";
 const HISTORY_CORRUPT: &str = "known_value_history_corrupt";
 
+/// The domain of [`Store::known_history_witness_in_txn`]'s digest.
+const KNOWN_HISTORY_WITNESS_CONTEXT: &str = "oneiron known-value history witness v1";
+
 /// The master key's reference: its custody generation. Key: ().
 const INDEX: SideTable<(), u64, Raw> = SideTable::new(&side_table::SECRET_KNOWN_INDEX);
 
@@ -489,6 +492,26 @@ impl Store {
         }))
     }
 
+    /// The history the index holds in `txn`, a snapshot taken under the
+    /// custody read guard ([`Store::custody_snapshot`]), its ids and its
+    /// entries read in that one snapshot (FIX 8966): no value committed
+    /// before it is left out. `None` while the index keys no value or no
+    /// entry is live.
+    ///
+    /// # Errors
+    ///
+    /// Custody lost or damaged under an id, and storage faults.
+    pub(crate) fn known_history_in_snapshot(
+        &self,
+        txn: &RoTxn<'_>,
+    ) -> Result<Option<KnownHistory>> {
+        let Some(ids) = self.known_history_ids_in_txn(txn)? else {
+            return Ok(None);
+        };
+        let history = ids.read_in_snapshot(txn, &OverlayDb::canonical(self.core.raw.vault_meta))?;
+        Ok((!history.holders.is_empty()).then_some(history))
+    }
+
     /// The erase of the custody record `holder`, in `wtxn`, its purge's own
     /// transaction (KS-3): its committed known-value history goes, and one
     /// [`RetireCause::Erase`] intent is staged through the newest slot its
@@ -544,6 +567,32 @@ impl Store {
         holder: &EntityId,
     ) -> Result<bool> {
         HISTORY.contains(self, txn, holder)
+    }
+
+    /// A value-free witness of the history the index holds in `txn` (FIX
+    /// 8966): a digest of the master's reference and each holder's committed
+    /// slots, never an entry or a value. Two reads give one witness while no
+    /// value was learned or erased between them, so a record made under the
+    /// values custody knew can tell when they moved. `None` while the index
+    /// keys no value. Any snapshot reads it: no custody guard is taken.
+    ///
+    /// # Errors
+    ///
+    /// Storage faults.
+    pub(crate) fn known_history_witness_in_txn(&self, txn: &RoTxn<'_>) -> Result<Option<[u8; 32]>> {
+        let Some(index) = INDEX.get(self, txn, &())? else {
+            return Ok(None);
+        };
+        let mut digest = blake3::Hasher::new_derive_key(KNOWN_HISTORY_WITNESS_CONTEXT);
+        digest.update(&index.to_be_bytes());
+        for (holder, refs) in HISTORY.scan(self, txn)? {
+            digest.update(holder.as_bytes());
+            digest.update(&(refs.0.len() as u64).to_be_bytes());
+            for slot in refs.slots() {
+                digest.update(&slot.to_be_bytes());
+            }
+        }
+        Ok(Some(*digest.finalize().as_bytes()))
     }
 
     /// Carries out every staged known-value history retirement (KS-3), an

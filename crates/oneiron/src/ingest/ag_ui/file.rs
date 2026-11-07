@@ -7,6 +7,7 @@ use super::observations::{observations, repair_links, validate_mappings};
 use super::{AgUiAppObservation, AgUiCustomMapping, AgUiRepairLink, AgUiSource};
 use crate::claim::{ClaimReadStatus, ClaimSource, ClaimSubject, ScopedReadReceipt};
 use crate::consent::AuthenticatedOwner;
+use crate::core_write::CoreWriteLaneRef;
 use crate::edge::EdgeActorClass;
 use crate::ingest::admission::imported_candidate;
 use crate::ingest::{
@@ -113,7 +114,7 @@ impl Vault {
         let hash = fingerprint(&file)?;
         let value = serde_json::to_value(&file)
             .map_err(|_| Error::InvalidClaimBody("AG-UI source encoding failed"))?;
-        self.try_with_actor_content_write_txn(actor, |content| {
+        self.try_with_actor_content_write_txn(actor, CoreWriteLaneRef::Unbound, |content| {
             owner.revalidate_in_txn(self, content.read())?;
             if self
                 .visible_project_in_txn(content.read(), project)?
