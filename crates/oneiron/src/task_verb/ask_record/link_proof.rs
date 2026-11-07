@@ -220,3 +220,53 @@ pub(in crate::task_verb) fn verify_settlement(
     key.verify_strict(&settlement_message(result)?, &Signature::from_bytes(&bytes))
         .map_err(|_| invalid())
 }
+
+const FORWARD_RESULT_TRANSCRIPT: &[u8] = b"oneiron.tasks.ask.forward_result_signature.v1\0";
+
+/// The message a relayed intent's result signature covers (FIX 7494).
+fn forward_result_message(body: &[u8]) -> Vec<u8> {
+    let mut message = Vec::with_capacity(FORWARD_RESULT_TRANSCRIPT.len() + body.len());
+    message.extend_from_slice(FORWARD_RESULT_TRANSCRIPT);
+    message.extend_from_slice(body);
+    message
+}
+
+/// Signs a relayed intent's result `body` with the group's issuer key (FIX
+/// 7494). Only the ask's admitting node holds that key, so a node that reads
+/// the result knows that node committed it. It proves where the result was
+/// made, never who gave the word.
+pub(in crate::task_verb) fn sign_forward_result(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    group_id: EntityId,
+    group: &AskGroup,
+    body: &[u8],
+) -> Result<Vec<u8>> {
+    let seed = SIGNERS
+        .get(&vault.store, txn, &group_id)?
+        .ok_or_else(invalid)?;
+    let signer = SigningKey::from_bytes(&seed);
+    if signer.verifying_key().to_bytes() != group.link_verify_key {
+        return Err(invalid());
+    }
+    Ok(signer
+        .sign(&forward_result_message(body))
+        .to_bytes()
+        .to_vec())
+}
+
+/// Checks a relayed intent's result `body` and `signature` against the
+/// group's issuer key (FIX 7494).
+pub(in crate::task_verb) fn verify_forward_result(
+    group: &AskGroup,
+    body: &[u8],
+    signature: &[u8],
+) -> Result<()> {
+    let key = VerifyingKey::from_bytes(&group.link_verify_key).map_err(|_| invalid())?;
+    let bytes: [u8; 64] = signature.try_into().map_err(|_| invalid())?;
+    key.verify_strict(
+        &forward_result_message(body),
+        &Signature::from_bytes(&bytes),
+    )
+    .map_err(|_| invalid())
+}

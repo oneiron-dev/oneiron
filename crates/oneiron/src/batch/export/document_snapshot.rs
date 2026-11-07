@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek, SeekFrom, Write};
 
-use super::snapshot_body::{asset_folded, row_body, row_live_in_txn};
+use super::snapshot_body::{asset_folded, row_body, row_exported_in_txn, row_live_in_txn};
 use super::{
     ArchiveSecretCustody, ExportAdapterDescriptor, ExportCut, ExportDiaryLedger, ExportEdge,
     ExportManifest, ExportScope, ExportSecretsNulledManifest, ExportSnapshotEntityBody,
@@ -82,7 +82,8 @@ impl Vault {
     /// that answers in one frame. [`Self::export_whole_vault_to`] writes it
     /// to a file instead. Live off-record overlay rows, deleted shells,
     /// archive tombstones, credential custody rows and unpublished LFS chunks
-    /// are excluded. No caller can disable nulling.
+    /// are excluded; a record a cleanup archive filed away goes with its
+    /// retained body (FIX 21912). No caller can disable nulling.
     ///
     /// The owner's own archive carries custody secret values unless
     /// `include_secrets` is false (owner ruling 2026-10-17: "all your data is
@@ -119,39 +120,37 @@ impl Vault {
 
     /// The archive of exactly `records` and the graph between them, for a
     /// reader off this device: an export-first removal's export (OF-163),
-    /// in the same shape as a whole-vault archive and re-importable alike.
-    /// No run's results go with it; a run names no world to scope it by.
-    /// Each record's side rows and stored files go with it as they do in the
-    /// whole-vault archive, never past `records`, and no vault-wide row does
-    /// (FIX 3681). Its diary reads are `reader`'s, the owner who receives it.
-    /// `freeze` reads in the archive's own snapshot, before its rows, so
-    /// what it answers (the removal's frozen positions, FIX-LIST 8224) and
-    /// the bytes archived are one state.
-    pub(crate) fn export_records_archive<T>(
+    /// in the same shape as a whole-vault archive and re-importable alike,
+    /// written to `sink` as it is built (FIX 3679): no archive is read back
+    /// whole. No run's results go with it; a run names no world to scope it
+    /// by. Each record's side rows and stored files go with it as they do in
+    /// the whole-vault archive, never past `records`, and no vault-wide row
+    /// does (FIX 3681). Its diary reads are `reader`'s, the owner who
+    /// receives it. `freeze` reads in the archive's own snapshot, before its
+    /// rows, so what it answers (the removal's frozen positions, FIX-LIST
+    /// 8224) and the bytes archived are one state.
+    pub(crate) fn export_records_archive<W: Write + Seek, T>(
         &self,
         records: &BTreeSet<EntityId>,
         reader: WriteActor,
         freeze: impl FnOnce(&heed::RoTxn<'_>) -> Result<T>,
-    ) -> Result<(WholeVaultExport, T)> {
+        sink: W,
+    ) -> Result<(W, WholeVaultExportReceipt, T)> {
         let mut frozen = None;
-        let archive = self.export_in_memory(|vault, spool| {
-            vault
-                .export_archive_snapshot(
-                    CallerLocality::OffDevice,
-                    Some(records),
-                    ExportCut::Archive,
-                    false,
-                    reader,
-                    |rtxn| {
-                        frozen = Some(freeze(rtxn)?);
-                        Ok::<_, Error>(())
-                    },
-                    spool,
-                )
-                .map(|(_, receipt)| receipt)
-        })?;
+        let (sink, receipt) = self.export_archive_snapshot(
+            CallerLocality::OffDevice,
+            Some(records),
+            ExportCut::Archive,
+            false,
+            reader,
+            |rtxn| {
+                frozen = Some(freeze(rtxn)?);
+                Ok::<_, Error>(())
+            },
+            sink,
+        )?;
         let frozen = frozen.ok_or(Error::InvariantViolation("records archive froze nothing"))?;
-        Ok((archive, frozen))
+        Ok((sink, receipt, frozen))
     }
 
     /// "Export to OKF" (OF-222): the vault as an Open Knowledge Format v0.1
@@ -372,8 +371,11 @@ impl Vault {
                 &rtxn,
                 &id,
                 header.entity_type,
-            )? || !row_live_in_txn(&self.store, &rtxn, &id)?
-            {
+            )? || !(if scope == ExportScope::WholeVault {
+                row_exported_in_txn(&self.store, &rtxn, &id)?
+            } else {
+                row_live_in_txn(&self.store, &rtxn, &id)?
+            }) {
                 continue;
             }
             // FIX 1496 S5: an epoch summary stays home when any transitive
@@ -550,31 +552,15 @@ impl Vault {
             None
         };
         // OF-013: the floors travel so an import never numbers an epoch under
-        // one a purge removed. A floor whose session a device-local world
-        // keeps stays here, as the session's own row does.
+        // one a purge removed; a device-local world keeps its own.
         if scope == ExportScope::WholeVault {
-            for (session, epoch, turn_end) in
-                crate::compaction::epoch_floors_in_txn(&self.store, &rtxn)?
-            {
-                if crate::settings::device_only_withholds(
-                    &self.store,
-                    &rtxn,
-                    &device_only,
-                    &session,
-                )
-                .or_else(|error| match error {
-                    Error::CorruptedIndex(_) => Ok(true),
-                    error => Err(error),
-                })? {
-                    continue;
-                }
-                sources.insert(session);
-                writer.epoch_floor(&super::ExportEpochFloor {
-                    session: session.to_hex(),
-                    epoch,
-                    turn_end,
-                })?;
-            }
+            super::epoch_floors::write_epoch_floors_in_txn(
+                &self.store,
+                &rtxn,
+                &device_only,
+                &mut sources,
+                &mut writer,
+            )?;
         }
         // FIX 2768, 3681: each carried record's side rows go with it, in a
         // records archive as in the whole-vault one, read in this snapshot

@@ -30,6 +30,7 @@ use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 
 use crate::admission::{Admission, Permit, WaitTimedOut};
+use crate::api::body_spool::RawSpoolMemory;
 use crate::byte_line::{ByteLine, HeldBytes};
 use crate::config::LimitsConfig;
 use crate::machine::{DiskClaim, DiskFloor};
@@ -527,12 +528,9 @@ pub(super) fn spawn_worker<T: Send + 'static>(
     let (answer, answered) = tokio::sync::oneshot::channel();
     // A thread that cannot start drops `work`, and with it the permit; the
     // caller reads a worker that ended without an answer.
-    if let Err(error) = std::thread::Builder::new()
-        .name("transfer-worker".to_owned())
-        .spawn(move || {
-            let _ = answer.send(work());
-        })
-    {
+    if let Err(error) = crate::engine_thread("transfer-worker".to_owned()).spawn(move || {
+        let _ = answer.send(work());
+    }) {
         tracing::warn!(kind = ?error.kind(), "a transfer worker thread did not start");
     }
     answered
@@ -556,7 +554,7 @@ pub(super) fn feed_body(
 ) -> impl std::future::Future<Output = ()> {
     // Capture before a caller spawns this future on a different task.
     let revocation = crate::http_listener::current_body_revocation();
-    feed_pieces(body, pieces, Some(idle), max_piece, revocation, None)
+    feed_pieces(body, pieces, Some(idle), max_piece, revocation, None, None)
 }
 
 /// [`feed_body`] with no wait of its own on the client: only the listener's
@@ -567,7 +565,7 @@ pub(super) async fn feed_body_untimed(
     pieces: mpsc::Sender<BodyPiece>,
     max_piece: usize,
 ) {
-    feed_pieces(body, pieces, None, max_piece, None, None).await;
+    feed_pieces(body, pieces, None, max_piece, None, None, None).await;
 }
 
 /// Feeds a spool worker, ending its memory wait before enqueueing a failed input.
@@ -577,6 +575,7 @@ pub(super) fn feed_body_stoppable(
     idle: Option<Duration>,
     max_piece: usize,
     stopped: Arc<AtomicBool>,
+    admitted: tokio::sync::oneshot::Receiver<Arc<RawSpoolMemory>>,
 ) -> impl std::future::Future<Output = ()> {
     let revocation = idle.and_then(|_| crate::http_listener::current_body_revocation());
     async move {
@@ -587,6 +586,7 @@ pub(super) fn feed_body_stoppable(
             max_piece,
             revocation,
             Some(stopped.as_ref()),
+            Some(admitted),
         )
         .await;
     }
@@ -599,7 +599,9 @@ async fn feed_pieces(
     max_piece: usize,
     revocation: Option<crate::http_listener::BodyRevocation>,
     stopped: Option<&AtomicBool>,
+    mut admitted: Option<tokio::sync::oneshot::Receiver<Arc<RawSpoolMemory>>>,
 ) {
+    let mut memory = None;
     let mut stream = body.into_data_stream();
     let stop_failed_feed = || {
         if let Some(stopped) = stopped {
@@ -644,11 +646,17 @@ async fn feed_pieces(
         // Copied, never sliced: a slice would keep a hostile giant backing
         // allocation alive for every queued small piece.
         for piece in frame.chunks(max_piece) {
-            if pieces
-                .send(Ok(Some(Bytes::copy_from_slice(piece))))
-                .await
-                .is_err()
-            {
+            if let Some(admitted) = admitted.take() {
+                let Ok(admitted) = admitted.await else {
+                    return;
+                };
+                memory = Some(admitted);
+            }
+            let piece = Bytes::copy_from_slice(piece);
+            if let Some(memory) = memory.as_deref() {
+                memory.materialized(piece.len() as u64);
+            }
+            if pieces.send(Ok(Some(piece))).await.is_err() {
                 stop_failed_feed();
                 return;
             }
@@ -677,6 +685,8 @@ pub(super) struct BodyReader {
     pieces: mpsc::Receiver<BodyPiece>,
     current: Bytes,
     ended: bool,
+    memory: Option<Arc<RawSpoolMemory>>,
+    current_allocation: u64,
 }
 
 impl BodyReader {
@@ -685,6 +695,18 @@ impl BodyReader {
             pieces,
             current: Bytes::new(),
             ended: false,
+            memory: None,
+            current_allocation: 0,
+        }
+    }
+
+    pub(super) fn new_admitted(
+        pieces: mpsc::Receiver<BodyPiece>,
+        memory: Arc<RawSpoolMemory>,
+    ) -> Self {
+        Self {
+            memory: Some(memory),
+            ..Self::new(pieces)
         }
     }
 }
@@ -696,7 +718,10 @@ impl Read for BodyReader {
         }
         while self.current.is_empty() && !self.ended {
             match self.pieces.blocking_recv() {
-                Some(Ok(Some(piece))) => self.current = piece,
+                Some(Ok(Some(piece))) => {
+                    self.current_allocation = piece.len() as u64;
+                    self.current = piece;
+                }
                 Some(Ok(None)) => self.ended = true,
                 Some(Err(error)) => return Err(error),
                 None => {
@@ -709,7 +734,15 @@ impl Read for BodyReader {
         }
         let count = output.len().min(self.current.len());
         output[..count].copy_from_slice(&self.current[..count]);
-        self.current = self.current.slice(count..);
+        if count == self.current.len()
+            && let Some(memory) = self.memory.as_deref()
+        {
+            let allocation = std::mem::take(&mut self.current_allocation);
+            let current = &mut self.current;
+            memory.reclaimed_after(allocation, || *current = current.slice(count..));
+        } else {
+            self.current = self.current.slice(count..);
+        }
         Ok(count)
     }
 }
