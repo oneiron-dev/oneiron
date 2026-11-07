@@ -276,6 +276,8 @@ vaultSkillHubsDefaultGet(input: unknown): unknown
 vaultSkillsRestoredefaults(input: unknown): unknown
 vaultSkillHubsPut(input: unknown): unknown
 vaultSkillHubsGet(input: unknown): unknown
+vaultSkillHubsClawhubSearch(input: unknown): unknown
+vaultSkillHubsClawhubImport(input: unknown): unknown
 vaultSkillHubsPublishersAdmit(input: unknown): unknown
 vaultSkillHubsPublishersRevoke(input: unknown): unknown
 vaultSkillHubsRefsGet(input: unknown): unknown
@@ -458,6 +460,7 @@ vaultFilesSourcesRescan(input: unknown): unknown
 vaultFilesSourcesDetach(input: unknown): unknown
 vaultFilesSourcesList(input: unknown): unknown
 vaultFilesSourcesFiles(input: unknown): unknown
+vaultFilesSourcesExclude(input: unknown): unknown
 vaultResidenceMode(input: unknown): unknown
 vaultResidenceOpen(input: unknown): unknown
 vaultResidenceIndex(input: unknown): unknown
@@ -593,6 +596,7 @@ vaultPolicyOutboundDecide(input: unknown): unknown
 vaultPolicyRelayDecide(input: unknown): unknown
 vaultConsentApproveOnce(input: unknown): unknown
 vaultConnectorsCallsApproveOnce(input: unknown): unknown
+vaultConnectorsRepliesRetryFailed(input: unknown): unknown
 vaultConsentDeny(input: unknown): unknown
 vaultConsentCreateStandingGrant(input: unknown): unknown
 vaultConsentCreateAutoWeaveGrant(input: unknown): unknown
@@ -768,6 +772,9 @@ vaultCodeOriginPublishCancel(input: unknown): unknown
 vaultCodeOriginAuthorityGet(input: unknown): unknown
 vaultCodeOriginAuthoritySet(input: unknown): unknown
 vaultCodeOriginPublications(input: unknown): unknown
+vaultCodeSecretsPurgeRequest(input: unknown): unknown
+vaultCodeSecretsPurgeGet(input: unknown): unknown
+vaultCodeSecretsPurgeExecute(input: unknown): unknown
 vaultCodeCheckoutHolderBind(input: unknown): unknown
 vaultCodeCheckoutBind(input: unknown): unknown
 vaultCodeCheckoutClaim(input: unknown): unknown
@@ -914,6 +921,7 @@ vaultProjectsGoalIntake(input: unknown): unknown
 vaultRoomsJoin(input: unknown): unknown
 vaultRoomsInvite(input: unknown): unknown
 vaultRoomsConsent(input: unknown): unknown
+vaultRoomsLeave(input: unknown): unknown
 vaultRoomsOffer(input: unknown): unknown
 vaultRoomsOfferAnswer(input: unknown): unknown
 vaultRoomsOfferVote(input: unknown): unknown
