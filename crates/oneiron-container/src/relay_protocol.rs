@@ -22,6 +22,7 @@ pub enum RelayRequest {
     Connect { target: SocketAddr },
     Datagram { target: SocketAddr, bytes: Vec<u8> },
     AuthorizeDatagram { target: SocketAddr },
+    Fetch { request: crate::HttpRequest },
     Refusal(crate::LoopbackRefusal),
 }
 /// One reply on the VM's egress channel, tagged with its phase (FIX 6298).

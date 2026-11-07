@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
+use crate::llm::BrokerIsolation;
 use crate::origin::secret_publication::RepoDestinationAudience;
 
 /// What the mirror's branch held when the request was made, read with the
@@ -241,6 +242,13 @@ pub struct OriginPublishRequestView {
     pub refusal: Option<OriginPublishRefusal>,
     pub created_at: u64,
     pub finished_at: Option<u64>,
+    /// How the credential broker its push's exchanges went through is kept
+    /// apart from the daemon (ARCH-0069 `#broker-isolation`; FIX 19083):
+    /// `same_user` shows the unproven badge. Recorded when the push's own
+    /// call settles it on a served host. `None` when no broker carried the
+    /// push: an embedded vault's direct push, or one that never reached it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub broker_isolation: Option<BrokerIsolation>,
 }
 
 /// One item of a review page.

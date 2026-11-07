@@ -155,6 +155,9 @@ fn request(
             relay.authorize_datagram(target).map(|()| Vec::new())
         }
         RelayRequest::Refusal(refusal) => relay.record_refusal(&refusal).map(|()| Vec::new()),
+        RelayRequest::Fetch { request } => relay
+            .fetch(request)
+            .and_then(|response| serde_json::to_vec(&response).map_err(std::io::Error::other)),
         RelayRequest::Datagram { target, bytes } => {
             // The VM acknowledges the guest's send on this reply, so it goes
             // before the relay; when it cannot be written, nothing is
