@@ -28,6 +28,10 @@ pub(super) struct BookedReplies(
 );
 
 impl MediaBackend for BookedReplies {
+    fn supports_mask(&self) -> bool {
+        self.0.supports_mask()
+    }
+
     fn run<'a>(
         &'a self,
         request: MediaRequest,
