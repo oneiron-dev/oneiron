@@ -15918,7 +15918,7 @@
      "purpose": "—",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3,
       "struct": 1
      }
@@ -68548,11 +68548,11 @@
      "purpose": "What travels with a body when it leaves the vault (OF-491)",
      "surface": {
       "const": 1,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 3,
       "mod": 1,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 3
      }
     },
@@ -68621,6 +68621,19 @@
      "surface": {
       "enum": 1,
       "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GuestWindowTravelNote"
+     ],
+     "path": "src/share_travel/guest_window.rs",
+     "purpose": "Prepared guest-window share receipts; never a claim of peer delivery",
+     "surface": {
+      "crate-vis": 2,
       "struct": 1
      }
     },
@@ -80643,7 +80656,7 @@
      "path": "src/sync/selector/born_with.rs",
      "purpose": "Born-with text on a copy to another vault (OF-491)",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 2
      }
     },
@@ -80734,7 +80747,7 @@
      "path": "src/sync/selector/mod.rs",
      "purpose": "Grant-backed closed-subgraph sync selectors",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "re-export": 8
      }
     },
@@ -80823,7 +80836,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/sync/selector/secret_projection/frames.rs",
@@ -93887,7 +93900,7 @@
      "purpose": "Revocable brief read grants"
     },
     "share_travel": {
-     "files": 6,
+     "files": 7,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -94209,9 +94222,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 184,
+   "over_bar": 185,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6658,
+   "source_files": 6659,
    "test_files": 895
   },
   "oneiron-android": {
@@ -145357,6 +145370,7 @@
       "GuestShareEnvelopeBody",
       "GuestSlipMintRequest",
       "GuestSlipMinted",
+      "GuestWindowTravelNote",
       "HandoffAlarmRequest",
       "HandoverInput",
       "HandoverOutput",
@@ -148148,7 +148162,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1140,
-      "struct": 3473
+      "struct": 3474
      }
     },
     {
