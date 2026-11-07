@@ -410,6 +410,27 @@ pub(crate) fn erase_outbound_intent_actor_in_txn(
     Ok(())
 }
 
+/// The person the engine's own frozen send names as its counterparty, as
+/// the comm index resolves that party key in `txn` (FIX 10953): `None` for
+/// a payload that is not the pipeline's JSON, names no counterparty, or
+/// whose party has no person yet. Never fails an admission. FIX 11030 keeps
+/// an unresolved counterparty's party by this, whatever the other
+/// recipients of the same send resolved to.
+pub(crate) fn payload_recipient_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    payload: &[u8],
+) -> Option<EntityId> {
+    let frozen: serde_json::Value = serde_json::from_slice(payload).ok()?;
+    let party = frozen.get(FROZEN_COUNTERPARTY_FIELD)?.as_str()?;
+    vault
+        .store
+        .record_hooks
+        .resolve_party_ref_in_txn(vault, txn, party)
+        .ok()
+        .flatten()
+}
+
 /// The persons the engine's own frozen send names as its recipients, as
 /// the comm index resolves their party keys in `txn` (FIX 10953): its
 /// counterparty, then, for one message to several, each frozen recipient
