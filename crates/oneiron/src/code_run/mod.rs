@@ -159,7 +159,6 @@ pub(crate) use self::result_read::{
 };
 pub use self::storage::ReadWorldUnknown;
 pub(crate) use self::storage::SessionCheckpointBody;
-pub(crate) use self::storage::{retire_replay_bodies_in_rows, settle_evaporated_reader_spend};
 pub use self::storage::step_replay_capsules;
 pub(crate) use self::storage::undecodable_step_capsule_in_txn;
 pub(crate) use self::storage::{
@@ -219,6 +218,7 @@ pub(crate) use self::storage::{
 pub(crate) use self::storage::{
     drop_code_run_result_marks_in_txn, erase_retained_result_marks_in_txn,
 };
+pub(crate) use self::storage::{retire_replay_bodies_in_rows, settle_evaporated_reader_spend};
 // FIX 9180 (coord-b slice d): a replay row's and a step start's parts in
 // checkpoint images, as row-held responses.
 pub(crate) use self::replay_parts::{
