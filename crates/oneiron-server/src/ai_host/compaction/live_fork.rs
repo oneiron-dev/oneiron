@@ -34,7 +34,7 @@ use oneiron::llm::{
 
 use super::self_writer::SelfWriterFrame;
 use super::serve::{Dispatch, Served, admission_refused, request_input_tokens};
-use super::{LiveAdmission, ServedCompactionBackend, output_tokens};
+use super::{CompactionMeter, LiveAdmission, ServedCompactionBackend, output_tokens};
 use crate::ai_host::CHAT_ROLE;
 use crate::models::{AnsweringRung, ModelCallBinding, RoleCall};
 
@@ -227,7 +227,11 @@ impl ServedCompactionBackend {
             Ok(llm) => llm,
             Err(refusal) => return unsent(refusal),
         };
-        let admitted = match self.models.admit_seat_bound(&self.vault, CHAT_ROLE, llm) {
+        let role = match &self.meter {
+            CompactionMeter::Profiled { generation, .. } => generation.live_role(),
+            _ => CHAT_ROLE,
+        };
+        let admitted = match self.models.admit_seat_bound(&self.vault, role, llm) {
             Ok(admitted) => admitted,
             Err(refusal) => return unsent(admission_refused(refusal)),
         };
