@@ -82,6 +82,8 @@ mod vm_host;
 #[cfg(target_os = "linux")]
 mod vm_init;
 #[cfg(target_os = "linux")]
+mod vm_source_control;
+#[cfg(target_os = "linux")]
 mod vm_outbox;
 #[cfg(target_os = "linux")]
 mod vm_schedule;
