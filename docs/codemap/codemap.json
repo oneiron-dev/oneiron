@@ -15163,6 +15163,7 @@
      "path": "src/claim/scoped_read/residence.rs",
      "purpose": "One residence read's admission for the machine at the other end of the connection",
      "surface": {
+      "crate-vis": 1,
       "fn": 5,
       "struct": 1
      }
@@ -62931,7 +62932,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/recovery/checkpoint/payload/automatic.rs",
@@ -78581,7 +78582,7 @@
      "path": "src/sync/documents/mod.rs",
      "purpose": "Per-entity text documents",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "fn": 16,
       "re-export": 2,
       "struct": 2
@@ -79221,7 +79222,7 @@
      "purpose": "Entity document access through the vault's canonical window/selector owner",
      "surface": {
       "crate-vis": 3,
-      "fn": 9
+      "fn": 10
      }
     },
     {
@@ -79561,7 +79562,7 @@
      "path": "src/sync/queue/checkpoint.rs",
      "purpose": "The sync queue's rows in a checkpoint (KS7-3a), read with the queue's own key and value codecs",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -79606,7 +79607,7 @@
      "path": "src/sync/queue/mod.rs",
      "purpose": "Persistent offline queue backed by LMDB",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "struct": 3
      }
     },
@@ -79733,9 +79734,9 @@
      "purpose": "Grant-checked, per-item residence projections over a window document",
      "surface": {
       "const": 2,
-      "crate-vis": 18,
+      "crate-vis": 20,
       "fn": 10,
-      "re-export": 26
+      "re-export": 27
      }
     },
     {
@@ -79747,7 +79748,7 @@
      "path": "src/sync/residence/admission.rs",
      "purpose": "One residence request's admission for the machine at the other end of the connection (OF-534 G6)",
      "surface": {
-      "fn": 10,
+      "fn": 11,
       "struct": 1
      }
     },
@@ -80060,6 +80061,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "CachedItemWorlds"
+     ],
+     "path": "src/sync/residence/cache_worlds.rs",
+     "purpose": "Source-world evidence for the exact bytes of a thin read cache",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ContentWorld"
      ],
      "path": "src/sync/residence/content_world.rs",
@@ -80216,7 +80231,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "WindowDemotion"
@@ -80224,7 +80239,7 @@
      "path": "src/sync/residence/prune.rs",
      "purpose": "Last-touch accounting and pruning for opened-item read caches, and the demotion of a promoted canonical window",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 2,
       "struct": 1
      }
@@ -80574,7 +80589,7 @@
      "path": "src/sync/selector/document_admission.rs",
      "purpose": "Transaction-bound peer document admission from stored ledger truth",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -93899,7 +93914,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 382,
+     "files": 383,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94111,7 +94126,7 @@
    },
    "over_bar": 184,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6649,
+   "source_files": 6650,
    "test_files": 895
   },
   "oneiron-android": {
