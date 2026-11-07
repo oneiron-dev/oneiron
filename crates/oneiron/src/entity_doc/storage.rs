@@ -10,7 +10,7 @@ use crate::ports::{
 use crate::side_table::{self, HexId, Named, SideTable};
 use crate::store::Store;
 use crate::store::row_birth::RowBirth;
-use crate::vault::{LiveEntityRow, entity_revision, live_entity_row_in_txn};
+use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::provenance::made_by::MadeByClass;
 use crate::{EntityId, Vault};
@@ -225,13 +225,7 @@ pub(super) fn persist_scanned(
     ENTITY_DOC_HEAD.put(store, txn, &HexId(*entity), h)?;
     // The stamp tokens its new changes name, for the hold check (FIX 11965).
     super::token_uses::record_token_uses_in_txn(store, txn, entity, doc, before)?;
-    // A commit that moves the live revision advances the vault's document-mutation
-    // head; a birth that restates its record's text moves no content (FIX 2860).
-    let restated = birth && h.birth_frontier == Some(doc.frontier());
-    let moved = entity_revision::capture_entity_document(store, txn, entity, &doc.doc, birth)?;
-    if let Some(revision) = moved.filter(|_| !restated) {
-        entity_revision::advance_document_mutation_head_in_txn(store, txn, entity, revision)?;
-    }
+    history::capture_document_revision_in_txn(store, txn, entity, h, doc, birth)?;
     if let Some(entity_type) = retag {
         crate::tagging::mark_on_publication_in_txn(vault, txn, entity, entity_type)?;
         crate::embed::mark_on_publication_in_txn(vault, txn, entity, entity_type)?;
