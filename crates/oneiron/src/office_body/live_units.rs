@@ -481,7 +481,7 @@ impl Vault {
             return Ok(None);
         };
         Ok(self
-            .export_pptx_body(artifact)
+            .export_pptx_body(artifact, None)
             .ok()
             .map(|export| (pin, export.outcome.bytes)))
     }

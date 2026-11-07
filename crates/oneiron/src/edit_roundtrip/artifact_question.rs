@@ -334,7 +334,7 @@ pub struct ArtifactAskRun {
     /// folder file's head alike. Ids only.
     pub read_rows: Vec<EntityId>,
     /// First selected sheet row not completed when the run yielded at its
-    /// deadline or answer-batch threshold. The suffix has no fabricated
+    /// deadline or at a later intake floor (`deferred_floor`). The suffix has no fabricated
     /// decisions or receipts. Other adapters currently return `None`.
     pub next_sheet_row: Option<u32>,
 }
