@@ -1,10 +1,12 @@
 //! Guarded socket chokepoint with revocation consults on queue and flush.
 
+mod live_person;
+
 use std::sync::Arc;
 use std::task::Poll;
 
 use axum::extract::ws::{CloseFrame, Message as WsMessage, Utf8Bytes};
-use futures_util::{SinkExt, Stream, StreamExt};
+use futures_util::{FutureExt, SinkExt, Stream, StreamExt};
 use oneiron::sync::transport::{
     LinkBytes, MAX_CODEC_INNER_BYTES, TAG_CODEC, TransportError, WireCodecs, decode_codec_frame,
     encode_codec_frame,
@@ -200,6 +202,7 @@ pub(super) struct GuardedTransport<S> {
     /// A managed vault's attested owner this socket serves (FIX 5255). No
     /// token id names him, so every consult asks the vault instead.
     live_owner: Option<crate::auth::CoreAuth>,
+    live_person: Option<live_person::LivePerson>,
     /// Set only while an app-tier frame is draining; sync keeps its owner guard.
     pub(super) app_jti: Option<String>,
     conn_id: u32,
@@ -262,6 +265,7 @@ where
             session_jti,
             vault: None,
             live_owner: None,
+            live_person: None,
             app_jti: None,
             conn_id,
             write_through_threshold,
@@ -294,6 +298,31 @@ where
         self
     }
 
+    /// Tracks an admitted member's lifetime without refusing an invitee.
+    pub(super) fn with_live_person(mut self, holder: Option<oneiron::EntityId>) -> Self {
+        self.live_person = self
+            .vault
+            .as_deref()
+            .zip(holder)
+            .map(|(vault, holder)| live_person::LivePerson::new(vault, holder));
+        self
+    }
+
+    fn person_membership_ended(&self) -> bool {
+        self.vault
+            .as_deref()
+            .zip(self.live_person.as_ref())
+            .is_some_and(|(vault, person)| person.ended(vault))
+    }
+
+    pub(super) async fn recheck_credential(&mut self) -> bool {
+        if self.credential_revoked() {
+            self.close_revoked().await;
+            return false;
+        }
+        true
+    }
+
     /// Records the codecs the peer's hello listed; binary sends after this
     /// wrap frames it decodes.
     pub(super) fn set_peer_codecs(&mut self, codecs: WireCodecs) {
@@ -320,6 +349,7 @@ where
                 .as_deref()
                 .zip(self.live_owner.as_ref())
                 .is_some_and(|(vault, owner)| !owner.credential_is_live(vault))
+            || self.person_membership_ended()
     }
 
     /// Whether the served vault's deletion marker is present, or unreadable:
@@ -344,11 +374,27 @@ where
             self.close_revoked().await;
             return None;
         }
-        let frame = self.socket.as_mut()?.next().await;
-        if self.credential_revoked() {
-            self.close_revoked().await;
-            return None;
-        }
+        let frame = loop {
+            let frame = match self.live_person.as_mut() {
+                Some(person) => tokio::select! {
+                    frame = self.socket.as_mut()?.next() => Some(frame),
+                    changed = person.changed() => {
+                        if changed.is_err() {
+                            return None;
+                        }
+                        None
+                    }
+                },
+                None => Some(self.socket.as_mut()?.next().await),
+            };
+            if self.credential_revoked() {
+                self.close_revoked().await;
+                return None;
+            }
+            if let Some(frame) = frame {
+                break frame;
+            }
+        };
         match frame {
             Some(Ok(WsMessage::Binary(data))) => self
                 .unwrap_inbound(&data)
@@ -364,14 +410,18 @@ where
     async fn close_revoked(&mut self) {
         let reason = if self.vault_deleted() {
             "vault deleted"
+        } else if self.person_membership_ended() {
+            "membership ended"
         } else {
             "credential revoked"
         };
-        self.send_unguarded_close_frame(WsMessage::Close(Some(CloseFrame {
-            code: close_codes::CLOSE_RPC_NO_PRINCIPAL,
-            reason: Utf8Bytes::from_static(reason),
-        })))
-        .await;
+        // A backpressured peer must not delay revocation or carrier shutdown.
+        let _ = self
+            .send_unguarded_close_frame(WsMessage::Close(Some(CloseFrame {
+                code: close_codes::CLOSE_RPC_NO_PRINCIPAL,
+                reason: Utf8Bytes::from_static(reason),
+            })))
+            .now_or_never();
         self.socket.take();
     }
 
@@ -533,9 +583,9 @@ where
                 conn_id = self.conn_id,
                 "credential revoked — closing live session instead of sending"
             );
-            // Nothing is queued at this point, so the graceful close flushes
-            // no application bytes; the peer gets a close frame and no data.
-            self.close().await;
+            // No application bytes are queued; try the close frame without
+            // letting control-frame backpressure delay dropping the socket.
+            self.close_revoked().await;
             return false;
         }
         // Drain owed CONTROL frames to COMPLETION before handing over
@@ -574,9 +624,9 @@ where
                 "credential revoked while control frames drained — closing live session \
                  instead of sending"
             );
-            // The drain left the out-buffer empty, so the graceful close
-            // flushes no application bytes.
-            self.close().await;
+            // The drain left no application bytes queued; close without
+            // letting peer backpressure delay dropping the socket.
+            self.close_revoked().await;
             return false;
         }
         let Some(socket) = self.socket.as_mut() else {

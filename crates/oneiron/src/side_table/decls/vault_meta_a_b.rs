@@ -341,6 +341,9 @@ side_tables! {
     /// Replay library program a solved browser run became, with its two checks' proof. Key: hash32 (site) + id16.
     BROWSER_WORKFLOW: VaultMeta b"browser.workflow.v1\0" Named Authored [accepts: crate::browser_library::browser_workflow_accepts_masked]
         => crate::browser_library::erase_workflow_actor_in_txn;
+    /// Native host allocation selection, balances and original holds. Key: ().
+    BUDGET_HOST_ACCOUNT: VaultMeta b"budget.host.account.v1\0" Named Engine
+        => crate::llm::run_admission::allocation::erase_actor_in_txn;
     /// FIX 7767: one resident's share of the host-paid allocation as the owner set it, and what
     /// its settled calls charged the allocation generation they ran on. Key: id16 (resident).
     BUDGET_RESIDENT_SHARE: VaultMeta b"budget.resident.share.v1\0" Named Engine
