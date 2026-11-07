@@ -52,10 +52,6 @@ pub enum ImportOmissionReason {
     LocalHistoryNotRestored,
     /// Derived cache state is rebuilt from locally admitted inputs.
     LocalProjectionNotRestored,
-    /// A witness MESSAGE needs live witness authorization; an archive supplies none.
-    WitnessAuthorizationNotRestored,
-    /// Attributed NOTE authorship is not conferred on the importing actor.
-    NoteAuthorshipNotRestored,
     /// Device-local routing/binding and owner confidence are not portable authority.
     LocalActorConfigurationNotRestored,
     /// Learning cells are projector-only views, rebuilt from their receipts

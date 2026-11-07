@@ -22,7 +22,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use zeroize::Zeroizing;
 
 use crate::deadline::{CallDeadline, within};
-use crate::frame::{read_call, skip_call, write_reply};
+use crate::frame::{ReadFrame, SkippedFrame, read_frame, skip_frame, write_reply};
 use crate::send::{SendPolicy, Sender, answer};
 use crate::{Failure, Outcome, PROTOCOL_VERSION, ReplyHeader};
 
@@ -168,17 +168,17 @@ pub(crate) async fn serve_channel(
 /// sent.
 fn spawn_call(stream: UnixStream, sender: &Arc<Sender>, permits: &Arc<Semaphore>) {
     let deadline = sender.deadline();
-    let slot = queue(Arc::clone(permits));
+    let mut slot = Box::pin(queue(Arc::clone(permits)));
     let sender = Arc::clone(sender);
     tokio::spawn(async move {
-        match tokio::time::timeout_at(deadline.send_by(), slot).await {
+        match tokio::time::timeout_at(deadline.send_by(), &mut slot).await {
             Ok(Some(permit)) => {
                 handle(stream, &sender, deadline).await;
                 drop(permit);
             }
             // The semaphore is never closed.
             Ok(None) => {}
-            Err(_) => expire(stream, deadline).await,
+            Err(_) => expire(stream, deadline, slot, &sender).await,
         }
     });
 }
@@ -201,19 +201,38 @@ fn queue(
     }
 }
 
-/// Answers a call whose time ran out before it had a slot: its frame is
-/// read with its body passed over and its key wiped, nothing is sent, and it
-/// is answered as timed out, within the frame allowance its deadline keeps
-/// for this. The daemon keeps its reservation, as for any timeout.
-async fn expire(mut stream: UnixStream, deadline: CallDeadline) {
-    let Ok(Ok(call)) = tokio::time::timeout_at(deadline.frame_by(), skip_call(&mut stream)).await
+/// Answers a model call whose time ran out before it had a slot: its frame
+/// is read with its body passed over and its key wiped, nothing is sent,
+/// and it is answered as timed out, within the frame allowance its deadline
+/// keeps for this. The daemon keeps its reservation, as for any timeout. A
+/// git exchange keeps no model deadline: it goes on waiting for its `slot`
+/// by its own idle bound, and is served once it has one.
+async fn expire<F>(
+    mut stream: UnixStream,
+    deadline: CallDeadline,
+    slot: std::pin::Pin<Box<F>>,
+    sender: &Sender,
+) where
+    F: Future<Output = Option<OwnedSemaphorePermit>>,
+{
+    let Ok(Ok(frame)) = tokio::time::timeout_at(deadline.frame_by(), skip_frame(&mut stream)).await
     else {
         return;
     };
-    let timed_out = Outcome::Failed {
-        reason: Failure::Timeout,
-    };
-    let _ = answer(&mut stream, &call, timed_out, deadline).await;
+    match frame {
+        SkippedFrame::Model(call) => {
+            let timed_out = Outcome::Failed {
+                reason: Failure::Timeout,
+            };
+            let _ = answer(&mut stream, &call, timed_out, deadline).await;
+        }
+        SkippedFrame::Git(header) => {
+            if let Ok(Some(permit)) = tokio::time::timeout(header.idle(), slot).await {
+                crate::git_http::serve_git(stream, header, sender).await;
+                drop(permit);
+            }
+        }
+    }
 }
 
 /// The descriptors that came with the channel's next byte, or `None` once
@@ -257,12 +276,29 @@ fn hung_up(stream: &UnixStream) -> bool {
     )
 }
 
+/// Resolves once the daemon closes its end of the call's socket, or writes
+/// past its one call: either way it reads no more of the reply.
+async fn daemon_closed(reading: &mut tokio::net::unix::ReadHalf<'_>) {
+    use tokio::io::AsyncReadExt as _;
+    let mut byte = [0_u8; 1];
+    let _ = reading.read(&mut byte).await;
+}
+
 /// Serves one call within its `deadline`. A frame that cannot be read gets
-/// no reply: the daemon counts the call as lost.
+/// no reply: the daemon counts the call as lost. A git exchange runs on its
+/// own terms from its header on: no call deadline, an idle bound and the
+/// daemon's hang-up (`git_http`).
 async fn handle(mut stream: UnixStream, sender: &Sender, deadline: CallDeadline) {
-    let Ok(Ok(call)) = tokio::time::timeout_at(deadline.frame_by(), read_call(&mut stream)).await
+    let Ok(Ok(frame)) = tokio::time::timeout_at(deadline.frame_by(), read_frame(&mut stream)).await
     else {
         return;
+    };
+    let call = match frame {
+        ReadFrame::Model(call) => call,
+        ReadFrame::Git(header) => {
+            crate::git_http::serve_git(stream, header, sender).await;
+            return;
+        }
     };
     // A daemon that hung up while the call waited has stopped waiting for
     // it, so it is never sent (FIX 8559).
@@ -280,6 +316,24 @@ async fn handle(mut stream: UnixStream, sender: &Sender, deadline: CallDeadline)
         } else {
             call.header.check(&call.body)
         };
+        if call.header.shape.relays_events() {
+            // A relayed event stream ends when the daemon stops reading it,
+            // even while the provider is quiet: its send is dropped, and the
+            // provider's connection with it (FIX 15702).
+            let (mut reading, mut writing) = stream.split();
+            let send = std::pin::pin!(sender.stream(
+                &call.header,
+                checked,
+                call.body,
+                call.whole,
+                &call.secret,
+                &mut writing,
+                deadline,
+            ));
+            let closed = std::pin::pin!(daemon_closed(&mut reading));
+            let _ = futures_util::future::select(send, closed).await;
+            return;
+        }
         sender
             .stream(
                 &call.header,

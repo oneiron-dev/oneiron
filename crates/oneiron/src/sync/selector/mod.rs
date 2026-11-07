@@ -17,6 +17,7 @@ mod document_admission;
 mod epoch_egress;
 pub(in crate::sync) use document_admission::{
     admit_document_read_in_txn, admit_document_write_in_txn, admit_promoted_entity_write_in_txn,
+    cache_worlds_admitted_in_txn,
 };
 #[cfg(feature = "sync")]
 mod edge;
@@ -36,7 +37,7 @@ pub use secret_projection::{
     RepoCopyAliases, RepoSyncAdmission, RepoSyncLandings, admit_repo_sync_frame,
     prepare_repo_sync_frame, prepare_repo_sync_frame_for_home, repo_copy_generation,
     repo_document_copy_id, repo_document_copy_vector, repo_document_lineage_edit,
-    repo_document_source,
+    repo_document_source, repo_sync_frame_as_admitted,
 };
 /// The empty root whose deletes retain a held row write's causal unit.
 pub(crate) const HELD_EDIT_CAUSALITY_MAP: &str = "held_edit_causality";
@@ -68,8 +69,8 @@ pub(in crate::sync) use self::admission::validate_sync_identity_body;
 pub(crate) use self::admission::{AdmittedUpdate, admit_staged_window_update};
 pub use self::admission::{FederationAdmissionRole, admit_federated_window_update};
 pub(in crate::sync) use self::admission::{
-    admit_peer_window_update_as, release_landed_stamps, revalidate_admitted_facet_stamps,
-    revalidate_admitted_federated_claims, staged_births,
+    admit_peer_window_update_as, release_landed_stamps, release_staged_landed_stamps,
+    revalidate_admitted_facet_stamps, revalidate_admitted_federated_claims, staged_births,
 };
 pub use self::authorize::authorize_sync_selector;
 pub(in crate::sync) use self::authorize::authorize_sync_selector_in_txn;
@@ -85,6 +86,7 @@ pub(crate) fn keep_carried_born_with(
     born_with::keep_carried(vault, carried)
 }
 pub(in crate::sync) use self::codec::granted_window_doc;
+pub(crate) use self::codec::guest_share_envelope_body_listing;
 pub use self::codec::{
     RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector,
     SyncSelectorWorld, decode_selector_vv_request, decode_sync_selector,
