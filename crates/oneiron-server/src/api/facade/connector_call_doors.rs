@@ -231,6 +231,15 @@ fn connector_catalog_call_listing_as(
         .map(|invocation| sdk::connector_call_invocation(memory.actor(), invocation))
         .transpose()
         .map_err(MemoryError::from)?;
+    // The built-in Google Sheets connector (FIX 4862) answers before the MCP
+    // driver, over this server's credential broker leg, under the same call
+    // identity: a replayed write is answered from its claim, never sent again.
+    if input.name == oneiron::channel_identity_provider::sheets::SHEETS_CATALOG_NAME {
+        return oneiron::channel_identity_provider::sheets::call_google_sheets(
+            memory, &input, invocation,
+        )
+        .map(|reply| (reply, None));
+    }
     let mut host = ServedConnectorCallHost::new(server).map_err(MemoryError::from)?;
     let (name, tool) = (input.name.clone(), input.tool.clone());
     let (outcome, rows) = server

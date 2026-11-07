@@ -285,6 +285,17 @@ pub(crate) fn validate_machine_history_put(
                 .map_err(|_| invalid_history())?;
             super::transition::verify_machine_claim_transition_event(&event)
                 .map_err(|_| invalid_history())?;
+            // A wide frontier is one atomic signed fact (FIX 8673): past its
+            // threshold row the count of its tips asks whether everything is
+            // okay, once per claim, and refuses nothing.
+            let mut tips = crate::scan_check::ScanCount::start(
+                store,
+                txn,
+                crate::scan_check::EngineScan::MachineTransitionFrontier,
+                event.target.as_bytes(),
+            )?;
+            tips.rows(event.predecessors.len());
+            tips.defer(store);
             if super::transition::machine_claim_transition_event_id(&event)
                 .map_err(|_| invalid_history())?
                 != *id
@@ -454,6 +465,29 @@ pub(crate) fn machine_history_ids_for_target(
     txn: &heed::RoTxn<'_>,
     target: EntityId,
 ) -> Result<Vec<EntityId>> {
+    let mut ids = Vec::new();
+    for_each_machine_history_id_for_target(store, txn, target, |id| ids.push(id))?;
+    Ok(ids)
+}
+
+/// Checks every indexed control id without retaining the ids. Later malformed
+/// rows and scan accounting remain visible just as in the collecting read.
+pub(crate) fn machine_history_present_for_target(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    target: EntityId,
+) -> Result<bool> {
+    let mut present = false;
+    for_each_machine_history_id_for_target(store, txn, target, |_| present = true)?;
+    Ok(present)
+}
+
+fn for_each_machine_history_id_for_target(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    target: EntityId,
+    mut visit: impl FnMut(EntityId),
+) -> Result<()> {
     let prefix = target_prefix(target);
     let mut count = crate::scan_check::ScanCount::start(
         store,
@@ -461,17 +495,16 @@ pub(crate) fn machine_history_ids_for_target(
         crate::store::EngineScan::MachineHistoryTargetRows,
         target.as_bytes(),
     )?;
-    let mut ids = Vec::new();
     for row in store.vault_meta.prefix_iter(txn, &prefix)? {
         count.row();
         let (key, _) = row?;
         let bytes: [u8; 16] = key[prefix.len()..]
             .try_into()
             .map_err(|_| Error::CorruptedIndex("machine history target index"))?;
-        ids.push(EntityId::from_bytes(bytes)?);
+        visit(EntityId::from_bytes(bytes)?);
     }
     count.defer(store);
-    Ok(ids)
+    Ok(())
 }
 
 /// The target a resident machine-history control names, read from its body
