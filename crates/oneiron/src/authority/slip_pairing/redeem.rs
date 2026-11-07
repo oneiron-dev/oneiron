@@ -244,6 +244,7 @@ impl Vault {
                 pin: None,
                 link_owner: None,
                 re_paired: false,
+                mesh: None,
             });
         }
         self.validate_pairing_principal_in_txn(&txn, &pending.principal, &pending.scope)?;

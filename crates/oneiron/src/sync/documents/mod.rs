@@ -661,9 +661,12 @@ impl EntityDocument {
                 &peer,
                 &crate::entity_doc::office::OFFICE_BODY_OWNER,
             )? {
-                return encode_document(self.id, document_sub_tags::UPDATE, &payload)
+                let frame = encode_document(self.id, document_sub_tags::UPDATE, &payload)
                     .into_result()
-                    .map_err(|_| Error::InvariantViolation("document export exceeds wire limit"));
+                    .map_err(|_| Error::InvariantViolation("document export exceeds wire limit"))?;
+                // Its operations are not the served row, so the frame gives no
+                // cache-world evidence: provenance stays unknown.
+                return Ok((frame, None));
             }
             let mut note_head = None;
             let (text, slot) = if self.vault.get_entity_type_in_txn(txn, &self.id)?
