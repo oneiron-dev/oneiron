@@ -73,6 +73,15 @@ fn event_receipt(
             applied_residue,
             forked,
         },
+        StoredIdentityOpAction::ParkedFacet {
+            entity,
+            specs,
+            reassignment,
+        } => IdentityEventAction::ParkedFacet {
+            entity,
+            specs: facet_specs(specs),
+            reassignment_map: reassignment.entries.into_iter().map(Into::into).collect(),
+        },
         StoredIdentityOpAction::AssertDistinct { a, b, claim } => {
             IdentityEventAction::AssertDistinct { a, b, claim }
         }
@@ -146,10 +155,27 @@ fn amendment_op(op: IdentityTopologyOp) -> MemoryResult<IdentityAmendment> {
                 .map(Into::into)
                 .collect(),
         }),
-        IdentityTopologyOp::Facet(_) | IdentityTopologyOp::AssertDistinct(_) => Err(
-            MemoryError::bad_request("only merge and split may be amended"),
-        ),
+        IdentityTopologyOp::Facet(op) => Ok(IdentityAmendment::Facet {
+            entity: op.entity,
+            facets: facet_specs(op.facets),
+            reassignment_map: op
+                .reassignment
+                .entries
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+        }),
+        IdentityTopologyOp::AssertDistinct(_) => Err(MemoryError::bad_request(
+            "only merge, split and facet may be amended",
+        )),
     }
+}
+
+fn facet_specs(specs: Vec<topology::FacetSpec>) -> Vec<IdentityFacetSpec> {
+    specs
+        .into_iter()
+        .map(|spec| IdentityFacetSpec { label: spec.label })
+        .collect()
 }
 
 fn result_in_txn(

@@ -68,7 +68,10 @@ pub(crate) fn poll_remote_tasks(server: &SyncServer) {
     };
     for task in due {
         // The intent id's first bytes name the row in the log.
-        let intent: String = task.intent[..8].iter().map(|byte| format!("{byte:02x}")).collect();
+        let intent: String = task.intent[..8]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
         let recorded = match host.poll_remote_task(&task) {
             Ok(Polled::Running {
                 status,
