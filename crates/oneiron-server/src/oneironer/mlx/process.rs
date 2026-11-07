@@ -116,8 +116,7 @@ impl Session {
     }
 
     fn start(&mut self, name: &str, body: impl FnOnce() + Send + 'static) -> Result<(), Fault> {
-        let thread = std::thread::Builder::new()
-            .name(name.to_owned())
+        let thread = crate::engine_thread(name.to_owned())
             .spawn(body)
             .map_err(|_| Fault::Crash("spawn_failed"))?;
         self.threads.push(thread);
