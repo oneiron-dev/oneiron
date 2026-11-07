@@ -7721,7 +7721,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/batch/ops_pipeline.rs",
@@ -47327,16 +47327,19 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "CallCharge",
       "CallOutcome"
      ],
      "path": "src/llm/run_admission/settle.rs",
      "purpose": "Settling a run's permits: an answer pays its usage or its reservation, a started call that failed pays its…",
      "surface": {
       "crate-vis": 1,
-      "enum": 1
+      "enum": 1,
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -72528,7 +72531,7 @@
      "path": "src/skill_reliability/mod.rs",
      "purpose": "Bayesian skill retrieval over the shared learning.reliability projection",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 10,
       "re-export": 7
      }
     },
@@ -72615,16 +72618,6 @@
      "purpose": "Per-resident version bandit over independently attributed fork receipts",
      "surface": {
       "fn": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/skill_reliability/row_ids.rs",
-     "purpose": "The attempt row behind each attributed outcome (FIX 7288): the row ids a sourced held-out read names beside…",
-     "surface": {
-      "crate-vis": 1
      }
     },
     {
@@ -84643,7 +84636,7 @@
      "path": "src/task_work_line.rs",
      "purpose": "The vault's task-work line: the inherent `Vault` methods that admit task work through the line in…",
      "surface": {
-      "fn": 6
+      "fn": 7
      }
     },
     {
@@ -94662,7 +94655,7 @@
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…"
     },
     "skill_reliability": {
-     "files": 20,
+     "files": 19,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94935,9 +94928,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 187,
+   "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6720,
+   "source_files": 6719,
    "test_files": 895
   },
   "oneiron-android": {
@@ -96573,7 +96566,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "LineCrossing",
@@ -96588,7 +96581,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…",
      "surface": {
       "const": 2,
-      "fn": 20,
+      "fn": 23,
       "struct": 5,
       "trait": 2
      }
@@ -96787,12 +96780,12 @@
     "work_line": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…"
     }
    },
-   "over_bar": 0,
+   "over_bar": 1,
    "purpose": "The base layer of the oneiron engine: modules that name nothing above them",
    "source_files": 34,
    "test_files": 2
@@ -122151,7 +122144,7 @@
      "surface": {
       "enum": 11,
       "fn": 4,
-      "re-export": 20,
+      "re-export": 21,
       "struct": 21
      }
     },
@@ -122267,6 +122260,18 @@
      "surface": {
       "enum": 2,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ModelWorkersArgs"
+     ],
+     "path": "src/cli/model_workers_args.rs",
+     "purpose": "—",
+     "surface": {
+      "struct": 1
      }
     },
     {
@@ -122634,7 +122639,7 @@
       "const": 1,
       "crate-vis": 12,
       "fn": 13,
-      "re-export": 27,
+      "re-export": 28,
       "struct": 1
      }
     },
@@ -122946,6 +122951,16 @@
      "purpose": "Reply forwarding on the bridge's shared socket driver",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/model_workers.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -123907,7 +123922,7 @@
      "path": "src/config/models/mod.rs",
      "purpose": "`[models]`: which model serves each role, at three levels of detail",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 2,
       "fn": 2,
       "mod": 2,
@@ -124028,6 +124043,16 @@
      "surface": {
       "crate-vis": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/config/models/worker_controller.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -129109,7 +129134,7 @@
      "path": "src/models/mod.rs",
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "fn": 1,
       "re-export": 16,
       "struct": 2
@@ -129583,7 +129608,7 @@
      "path": "src/models/worker_host.rs",
      "purpose": "This process's model workers (FIX 8315, DESIGN-V2 §8, INFERENCE R2): one supervisor per configured worker…",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 30
      }
     },
     {
@@ -129594,6 +129619,16 @@
      "purpose": "The worker code this binary carries (DESIGN-V2 R2): the house EXL3 server with every module it imports, the…",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/worker_host/controller.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -133350,7 +133385,7 @@
      "purpose": "Campaign enrollment from saved queries (ARCH-0059, decide-host 1193)"
     },
     "cli": {
-     "files": 17,
+     "files": 18,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -133371,14 +133406,14 @@
      "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…"
     },
     "commands": {
-     "files": 68,
+     "files": 69,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 71,
+     "files": 72,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -133658,7 +133693,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 137,
+     "files": 138,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -133828,7 +133863,7 @@
    },
    "over_bar": 59,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1723,
+   "source_files": 1727,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -140922,8 +140957,8 @@
      "path": "src/session_overlay/overlay/rows.rs",
      "purpose": "Row staging, preflight, budget checks, read probes",
      "surface": {
-      "crate-vis": 1,
-      "fn": 13
+      "crate-vis": 2,
+      "fn": 14
      }
     },
     {
