@@ -179,12 +179,13 @@ impl SummarizeEffort {
     }
 }
 
-/// What one summary is made by: its prompt's version and its effort. Two
-/// summaries of the same members by the same recipe are one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// What one summary is made by: its prompt's version, effort and frozen
+/// words. Two summaries of the same members by the same recipe are one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SummarizeRecipe {
     pub version: u32,
     pub effort: SummarizeEffort,
+    pub prompt: String,
 }
 
 impl SummarizeRecipe {
@@ -192,11 +193,36 @@ impl SummarizeRecipe {
     pub const VERSION: u32 = 1;
 
     #[must_use]
-    pub const fn new(effort: SummarizeEffort) -> Self {
+    pub fn new(effort: SummarizeEffort) -> Self {
         Self {
             version: Self::VERSION,
             effort,
+            prompt: super::reader_fold::default_summarize_prompt(Self::VERSION, effort),
         }
+    }
+
+    /// Freezes the package's optional summary block, or the shipped default
+    /// when the package does not override it. Includes resolve before the
+    /// version, effort and length placeholders are filled.
+    pub fn from_prompt_package(
+        effort: SummarizeEffort,
+        package_root: impl AsRef<std::path::Path>,
+    ) -> std::io::Result<Self> {
+        let package_root = package_root.as_ref();
+        let path = package_root.join(super::reader_fold::SUMMARIZE_PROMPT_RELATIVE_PATH);
+        if !path.try_exists()? {
+            return Ok(Self::new(effort));
+        }
+        let resolved = crate::prompt::resolve_prompt(&path, package_root)?;
+        Ok(Self {
+            version: Self::VERSION,
+            effort,
+            prompt: super::reader_fold::render_summarize_prompt(
+                Self::VERSION,
+                effort,
+                &resolved.text,
+            ),
+        })
     }
 
     /// The recipe's bytes, as its memo key hashes them: its version, its
@@ -244,6 +270,8 @@ pub struct SelfSummarizeCall {
     pub group: Option<Vec<String>>,
     pub defer: bool,
     pub bound: Option<Vec<DelegatedSource>>,
+    /// The recording host's frozen prompt, never decoded from guest input.
+    pub recipe: Option<SummarizeRecipe>,
 }
 
 impl SelfSummarizeCall {

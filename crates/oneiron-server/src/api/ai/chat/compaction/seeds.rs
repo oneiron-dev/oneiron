@@ -7,7 +7,9 @@
 //! and sends no fallback while the seed still stands, so no restart reads a
 //! prefix that did not answer. A reply that never starts, or saves no
 //! receipt, keeps none. Once the reply is saved, its terminal confirms the
-//! seed; one whose early keep failed is kept then.
+//! seed; one whose early keep failed is kept then. A native session stream
+//! (#5514) names no MESSAGE before its terminal: its seed is kept then, on
+//! the receipt that terminal retains.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -25,6 +27,7 @@ use oneiron::{
 };
 
 use super::hex;
+use crate::api::ai::chat::AnswerStream;
 use crate::api::ai::chat::model_call::Recorder;
 use crate::models::RoleCall;
 
@@ -37,8 +40,10 @@ pub(in crate::api::ai::chat) struct PendingSeed {
 /// One reply generation's seed, as its stream's legs share it.
 struct SeedSlot {
     vault: Arc<Vault>,
-    /// The reply's stream: its MESSAGE and generation key the seed.
-    handle: MessageStreamHandle,
+    /// The reply's recorded stream: its MESSAGE and generation key the
+    /// seed. `None` for a native session stream, which names neither
+    /// before its terminal.
+    handle: Option<MessageStreamHandle>,
     seed: Option<ChatBreakpoint>,
     /// `false` once a reused prefix's captured rung gave way to today's
     /// call.
@@ -51,9 +56,13 @@ impl PendingSeed {
     /// `seed`, for the reply `handle` writes; nothing is kept yet.
     pub(super) fn new(
         vault: &Arc<Vault>,
-        handle: MessageStreamHandle,
+        handle: &AnswerStream,
         seed: Option<ChatBreakpoint>,
     ) -> Self {
+        let handle = match handle {
+            AnswerStream::Recorded(handle) => Some(*handle),
+            AnswerStream::Session { .. } => None,
+        };
         Self {
             slot: Arc::new(SeedSlot {
                 vault: Arc::clone(vault),
@@ -82,16 +91,17 @@ impl PendingSeed {
 impl SeedSlot {
     /// Keeps the seed for the reply's generation before its call is sent
     /// (FIX 5028). A keep that fails leaves the reply as before: its
-    /// terminal keeps the seed, and a crash before then keeps none.
+    /// terminal keeps the seed, and a crash before then keeps none. A native
+    /// session stream's seed waits for its terminal.
     fn keep_before_dispatch(&self) {
-        let Some(seed) = &self.seed else {
+        let (Some(seed), Some(handle)) = (&self.seed, self.handle) else {
             return;
         };
         let kept = crate::server::blocking(|| {
             keep_chat_breakpoint(
                 &self.vault,
-                self.handle.message_id(),
-                self.handle.generation(),
+                handle.message_id(),
+                handle.generation(),
                 seed.clone(),
             )
         });
@@ -106,19 +116,20 @@ impl SeedSlot {
 
     /// Drops the kept seed durably; whether none is kept now.
     fn withdraw(&self) -> bool {
-        let Some(seed) = self
-            .seed
-            .as_ref()
-            .filter(|_| self.kept.load(Ordering::Acquire))
-        else {
+        let (Some(seed), Some(handle)) = (
+            self.seed
+                .as_ref()
+                .filter(|_| self.kept.load(Ordering::Acquire)),
+            self.handle,
+        ) else {
             return true;
         };
         let dropped = crate::server::blocking(|| {
             forget_chat_breakpoint(
                 &self.vault,
                 seed.conversation,
-                self.handle.message_id(),
-                self.handle.generation(),
+                handle.message_id(),
+                handle.generation(),
             )
         });
         match dropped {
@@ -339,7 +350,8 @@ fn first_or_today(
 /// 5028), when its own captured call answered it and `saved` is its own
 /// generation's receipt. A seed kept before its call was sent stands
 /// confirmed, or stays gone where an erase took it with its conversation's
-/// words since; one whose early keep failed is kept now. A reply its call
+/// words since; one whose early keep failed is kept now, as is a native
+/// session stream's, on the receipt its terminal retained. A reply its call
 /// did not answer, or that saved no receipt, keeps none. A breakpoint that
 /// is not kept leaves the reply's actions to run as they always did.
 pub(in crate::api::ai::chat) fn keep(
@@ -349,14 +361,15 @@ pub(in crate::api::ai::chat) fn keep(
     let Some(PendingSeed { slot }) = pending else {
         return;
     };
-    let own = saved.is_some_and(|receipt| {
-        receipt.message_id == slot.handle.message_id()
-            && receipt.generation == slot.handle.generation()
+    let own = saved.filter(|receipt| {
+        slot.handle.is_none_or(|handle| {
+            receipt.message_id == handle.message_id() && receipt.generation == handle.generation()
+        })
     });
-    if !own || !slot.live.load(Ordering::Acquire) {
+    let Some(receipt) = own.filter(|_| slot.live.load(Ordering::Acquire)) else {
         slot.withdraw();
         return;
-    }
+    };
     if slot.kept.load(Ordering::Acquire) {
         return;
     }
@@ -364,12 +377,7 @@ pub(in crate::api::ai::chat) fn keep(
         return;
     };
     let kept = crate::server::blocking(|| {
-        keep_chat_breakpoint(
-            &slot.vault,
-            slot.handle.message_id(),
-            slot.handle.generation(),
-            seed,
-        )
+        keep_chat_breakpoint(&slot.vault, receipt.message_id, receipt.generation, seed)
     });
     if let Err(error) = kept {
         tracing::warn!(kind = ?error.kind(), "a chat reply's breakpoint was not kept");
