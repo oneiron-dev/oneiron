@@ -22,6 +22,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.commitments.ledger",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::commitment_doors::CommitmentLedgerRequest,
+                >(),
+            ),
+            (
                 "vault.commitments.instances",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::commitment_doors::CommitmentRefRequest,
@@ -5158,6 +5164,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "ai.streams.release",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::model_stream::ModelStreamRelease,
+                >(),
+            ),
+            (
                 "ai.reply",
                 crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::AiReplyRequest>(
                 ),
@@ -5430,6 +5442,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.questions.pause",
                 crate::code_run::vault_read::request_schema::<crate::receipt::QuestionPauseRequest>(
+                ),
+            ),
+            (
+                "vault.questions.prepare",
+                crate::code_run::vault_read::request_schema::<crate::receipt::QuestionPrepareRequest>(
+                ),
+            ),
+            (
+                "vault.questions.admit",
+                crate::code_run::vault_read::request_schema::<crate::receipt::QuestionAdmitRequest>(
                 ),
             ),
             (
@@ -7374,6 +7396,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
 pub const OPENAPI_ROWS: &[&str] = &[
     "vault.commitments.create",
     "vault.commitments.get",
+    "vault.commitments.ledger",
     "vault.commitments.instances",
     "vault.commitments.proposals",
     "vault.commitments.fulfill",
@@ -8015,6 +8038,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "ai.streams.detach",
     "ai.streams.abort",
     "ai.streams.terminal",
+    "ai.streams.release",
     "ai.reply",
     "vault.receipts.context",
     "vault.receipts.craft_reply_manifest",
@@ -8255,6 +8279,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.commitments.get" => crate::code_run::vault_read::request_schema::<
             crate::memory::commitment_doors::CommitmentView,
+        >(),
+        "vault.commitments.ledger" => crate::code_run::vault_read::request_schema::<
+            crate::memory::commitment_doors::CommitmentLedgerView,
         >(),
         "vault.commitments.instances" => crate::code_run::vault_read::request_schema::<
             Vec<crate::memory::commitment_doors::CommitmentView>,
@@ -10209,6 +10236,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "ai.streams.terminal" => crate::code_run::vault_read::request_schema::<
             crate::llm::model_stream::ModelStreamTerminal,
         >(),
+        "ai.streams.release" => crate::code_run::vault_read::request_schema::<
+            crate::llm::model_stream::ModelStreamReleased,
+        >(),
         "ai.reply" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::AiReply>()
         }
@@ -10982,6 +11012,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.commitments.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.commitments.ledger" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -17522,6 +17559,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "ai.streams.release" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "ai.reply" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -17873,6 +17917,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.questions.pause" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.questions.prepare" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.questions.admit" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19978,6 +20036,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
     match verb {
         "vault.commitments.create" => validate_input_vault_commitments_create(value)?,
         "vault.commitments.get" => validate_input_vault_commitments_get(value)?,
+        "vault.commitments.ledger" => validate_input_vault_commitments_ledger(value)?,
         "vault.commitments.instances" => validate_input_vault_commitments_instances(value)?,
         "vault.commitments.proposals" => validate_input_vault_commitments_proposals(value)?,
         "vault.commitments.fulfill" => validate_input_vault_commitments_fulfill(value)?,
@@ -21216,6 +21275,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "ai.streams.detach" => validate_input_ai_streams_detach(value)?,
         "ai.streams.abort" => validate_input_ai_streams_abort(value)?,
         "ai.streams.terminal" => validate_input_ai_streams_terminal(value)?,
+        "ai.streams.release" => validate_input_ai_streams_release(value)?,
         "ai.reply" => validate_input_ai_reply(value)?,
         "vault.receipts.context" => validate_input_vault_receipts_context(value)?,
         "vault.receipts.craft_reply_manifest" => {
@@ -21269,6 +21329,8 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.questions.create" => validate_input_vault_questions_create(value)?,
         "vault.questions.edit" => validate_input_vault_questions_edit(value)?,
         "vault.questions.pause" => validate_input_vault_questions_pause(value)?,
+        "vault.questions.prepare" => validate_input_vault_questions_prepare(value)?,
+        "vault.questions.admit" => validate_input_vault_questions_admit(value)?,
         "vault.questions.backfill" => validate_input_vault_questions_backfill(value)?,
         "vault.questions.read" => validate_input_vault_questions_read(value)?,
         "vault.questions.outcome_windows" => validate_input_vault_questions_outcome_windows(value)?,
@@ -21697,6 +21759,11 @@ fn validate_input_vault_commitments_create(value: &serde_json::Value) -> MemoryR
 #[inline(never)]
 fn validate_input_vault_commitments_get(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::memory::commitment_doors::CommitmentRefRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_commitments_ledger(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::memory::commitment_doors::CommitmentLedgerRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -26695,6 +26762,11 @@ fn validate_input_ai_streams_terminal(value: &serde_json::Value) -> MemoryResult
     Ok(())
 }
 #[inline(never)]
+fn validate_input_ai_streams_release(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::llm::model_stream::ModelStreamRelease = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_ai_reply(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::task_verb::sdk::AiReplyRequest = decode(value.clone())?;
     Ok(())
@@ -26954,6 +27026,16 @@ fn validate_input_vault_questions_edit(value: &serde_json::Value) -> MemoryResul
 #[inline(never)]
 fn validate_input_vault_questions_pause(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::receipt::QuestionPauseRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_questions_prepare(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::receipt::QuestionPrepareRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_questions_admit(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::receipt::QuestionAdmitRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -28842,6 +28924,7 @@ pub fn invoke(
     crate::task_verb::verb_hook_boundary::row(memory, verb, value, |value| match verb {
         "vault.commitments.create" => invoke_vault_commitments_create(memory, value),
         "vault.commitments.get" => invoke_vault_commitments_get(memory, value),
+        "vault.commitments.ledger" => invoke_vault_commitments_ledger(memory, value),
         "vault.commitments.instances" => invoke_vault_commitments_instances(memory, value),
         "vault.commitments.proposals" => invoke_vault_commitments_proposals(memory, value),
         "vault.commitments.fulfill" => invoke_vault_commitments_fulfill(memory, value),
@@ -30077,6 +30160,7 @@ pub fn invoke(
         "ai.streams.detach" => invoke_ai_streams_detach(memory, value),
         "ai.streams.abort" => invoke_ai_streams_abort(memory, value),
         "ai.streams.terminal" => invoke_ai_streams_terminal(memory, value),
+        "ai.streams.release" => invoke_ai_streams_release(memory, value),
         "ai.reply" => invoke_ai_reply(memory, value),
         "vault.receipts.context" => invoke_vault_receipts_context(memory, value),
         "vault.receipts.craft_reply_manifest" => {
@@ -30130,6 +30214,8 @@ pub fn invoke(
         "vault.questions.create" => invoke_vault_questions_create(memory, value),
         "vault.questions.edit" => invoke_vault_questions_edit(memory, value),
         "vault.questions.pause" => invoke_vault_questions_pause(memory, value),
+        "vault.questions.prepare" => invoke_vault_questions_prepare(memory, value),
+        "vault.questions.admit" => invoke_vault_questions_admit(memory, value),
         "vault.questions.backfill" => invoke_vault_questions_backfill(memory, value),
         "vault.questions.read" => invoke_vault_questions_read(memory, value),
         "vault.questions.outcome_windows" => invoke_vault_questions_outcome_windows(memory, value),
@@ -30540,6 +30626,13 @@ fn invoke_vault_commitments_get(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_commitments_get(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_commitments_ledger(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_commitments_ledger(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_commitments_instances(
@@ -37174,6 +37267,13 @@ fn invoke_ai_streams_terminal(
     encode(ai_streams_terminal(memory, decode(value)?)?)
 }
 #[inline(never)]
+fn invoke_ai_streams_release(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(ai_streams_release(memory, decode(value)?)?)
+}
+#[inline(never)]
 fn invoke_ai_reply(
     memory: &Memory<'_>,
     value: serde_json::Value,
@@ -37529,6 +37629,20 @@ fn invoke_vault_questions_pause(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_questions_pause(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_questions_prepare(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_questions_prepare(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_questions_admit(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_questions_admit(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_questions_backfill(
@@ -40030,6 +40144,12 @@ pub fn vault_commitments_get(
     input: crate::memory::commitment_doors::CommitmentRefRequest,
 ) -> MemoryResult<crate::memory::commitment_doors::CommitmentView> {
     memory.commitments_get_as(&memory.embedded_owner("vault.commitments.get")?, input)
+}
+pub fn vault_commitments_ledger(
+    memory: &Memory<'_>,
+    input: crate::memory::commitment_doors::CommitmentLedgerRequest,
+) -> MemoryResult<crate::memory::commitment_doors::CommitmentLedgerView> {
+    memory.commitments_ledger_as(&memory.embedded_owner("vault.commitments.ledger")?, input)
 }
 pub fn vault_commitments_instances(
     memory: &Memory<'_>,
@@ -47660,6 +47780,12 @@ pub fn ai_streams_terminal(
 ) -> MemoryResult<crate::llm::model_stream::ModelStreamTerminal> {
     crate::task_verb::sdk::host_only(memory, "ai.streams.terminal", &input)
 }
+pub fn ai_streams_release(
+    memory: &Memory<'_>,
+    input: crate::llm::model_stream::ModelStreamRelease,
+) -> MemoryResult<crate::llm::model_stream::ModelStreamReleased> {
+    crate::task_verb::sdk::host_only(memory, "ai.streams.release", &input)
+}
 pub fn ai_reply(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::AiReplyRequest,
@@ -48048,6 +48174,18 @@ pub fn vault_questions_pause(
     input: crate::receipt::QuestionPauseRequest,
 ) -> MemoryResult<crate::receipt::QuestionPaused> {
     crate::task_verb::sdk::host_only(memory, "vault.questions.pause", &input)
+}
+pub fn vault_questions_prepare(
+    memory: &Memory<'_>,
+    input: crate::receipt::QuestionPrepareRequest,
+) -> MemoryResult<crate::receipt::QuestionPrepared> {
+    crate::task_verb::sdk::host_only(memory, "vault.questions.prepare", &input)
+}
+pub fn vault_questions_admit(
+    memory: &Memory<'_>,
+    input: crate::receipt::QuestionAdmitRequest,
+) -> MemoryResult<crate::llm::decision::questions::AnswerRecord> {
+    crate::task_verb::sdk::host_only(memory, "vault.questions.admit", &input)
 }
 pub fn vault_questions_backfill(
     memory: &Memory<'_>,
