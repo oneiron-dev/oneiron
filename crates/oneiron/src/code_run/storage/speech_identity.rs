@@ -137,9 +137,11 @@ impl HostSelfDispatcher<'_> {
 /// dispatchers reused a ref. The optional run id preserves the original
 /// run-ref-only identity for standalone dispatcher and witness APIs that have no
 /// durable executor config.
-const EXECUTOR_SPEECH_CONVERSATION_DOMAIN: &[u8] = b"oneiron:executor-speech-conversation:v1";
+const EXECUTOR_SPEECH_CONVERSATION_DOMAIN: &[u8] =
+    crate::entity_id::derived_domains::EXECUTOR_SPEECH_CONVERSATION;
 
-const EXECUTOR_SPEECH_MESSAGE_DOMAIN: &[u8] = b"oneiron:executor-speech-message:v1";
+const EXECUTOR_SPEECH_MESSAGE_DOMAIN: &[u8] =
+    crate::entity_id::derived_domains::EXECUTOR_SPEECH_MESSAGE;
 /// The legacy standalone conversation identity. Runtime executor paths use
 /// [`canonical_speech_conversation_id_for_run`] with their durable run id.
 #[cfg(test)]

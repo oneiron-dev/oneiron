@@ -385,7 +385,7 @@ impl SyncConnection {
         client.kept_out_peer_copies.clear();
         client.residence_acks.clear();
         client.reset_window_pads();
-        let (ws_stream, response, binding) = self.open_socket(client).await?;
+        let (ws_stream, response, binding) = self.open_socket(client, event_tx).await?;
         self.sync_socket(client, event_tx, ws_stream, &response, binding.as_ref())
             .await
             .map_err(ConnectError::from)
@@ -398,6 +398,7 @@ impl SyncConnection {
     async fn open_socket(
         &self,
         client: &mut SyncClient,
+        event_tx: &mpsc::UnboundedSender<SyncEvent>,
     ) -> Result<
         (
             crate::sync::carrier::SyncSocket,
@@ -462,6 +463,12 @@ impl SyncConnection {
         let (ws_stream, response) = crate::sync::carrier::connect_sync_socket(request, dialer)
             .await
             .map_err(|e| {
+                // A home's refused credential may mean a removed membership:
+                // the host asks the home, and this socket decides nothing
+                // (FIX 12442). A peer's refusal is not the home's.
+                if client.peer_session.is_none() && crate::sync::carrier::upgrade_unauthorized(&e) {
+                    let _ = event_tx.send(SyncEvent::UpgradeUnauthorized);
+                }
                 let message = format!("WS connect failed: {e}");
                 // An HTTP answer is the far end's, a refusal included.
                 if matches!(e, tokio_tungstenite::tungstenite::Error::Http(_)) {

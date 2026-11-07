@@ -148,8 +148,8 @@ pub(super) async fn handle_sync_message(
             // (rule 5, row 19).
             let mut presence = server.presence.lock();
             presence.expire(&server.ephemeral_store);
-            let states = validate_ephemeral_payload(server, &payload)?;
-            if !presence.fit(ephemeral_hub_candidate(server, &payload, &states)?) {
+            let states = validate_ephemeral_payload(&payload)?;
+            if !presence.fit(ephemeral_hub_candidate(server, &payload)?) {
                 tracing::warn!(
                     conn_id,
                     kind = "memory_floor",
