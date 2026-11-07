@@ -312,7 +312,7 @@ pub(crate) fn paced_verb_reply(memory: &Memory<'_>, verb: &str) -> Option<Memory
         )));
     }
     Some(match (row.state, row.outcome) {
-        (PacedState::Ended, Some(SavedOutcome::Ok { result })) => serde_json::from_str(&result)
+        (PacedState::Ended, Some(SavedOutcome::Ok { result, .. })) => serde_json::from_str(&result)
             .map_err(|_| Error::CorruptedIndex("paced verb call outcome").into()),
         (PacedState::Ended, Some(SavedOutcome::Err { code, message, .. })) => {
             Err(MemoryError::new(
@@ -565,13 +565,12 @@ impl Vault {
             return Ok(true);
         };
         let receipt = RefusalReceipt::new(&row.reference, &row.verb, row.actor, class, &args, None);
-        let ran = match self.resume_paced_turn(key, &row, class, args)? {
-            VerbAskResumed::Ran(ran) => ran,
-            VerbAskResumed::Refused(refusal) => Err(refusal.error()),
-        };
+        let (ran, producers) = self
+            .resume_paced_turn(key, &row, class, args)?
+            .into_outcome();
         let now = self.store.clock.now_recorded_at();
         let end = match ran {
-            Ok(value) => TurnEnd::Ended(SavedOutcome::result(&value)?, None),
+            Ok(value) => TurnEnd::Ended(SavedOutcome::result(&value, producers)?, None),
             Err(error) if error.code == MEMORY_CODE_PACED_HOLD => TurnEnd::Back(
                 error
                     .resets_at
@@ -642,7 +641,9 @@ impl Vault {
         };
         let _draining = DrainScope::enter(invocation);
         let _turn = PacedTurnScope::enter(invocation);
-        Ok(check.resume(call, VerbAskDrainPermit::paced(invocation)))
+        let drain =
+            VerbAskDrainPermit::paced(invocation).with_credential_door(call.reference.door.clone());
+        Ok(check.resume(call, drain))
     }
 
     /// Saves how turn `work` left its call, unless the verb's own effect
