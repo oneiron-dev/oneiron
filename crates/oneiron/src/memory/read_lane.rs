@@ -115,7 +115,7 @@ impl Memory<'_> {
                         .vault
                         .credential_read_key_in_txn(&txn, proof, self.actor, owner)?;
                     match key {
-                        Some(key) => key,
+                        Some(key) => self.in_phone_lines(key)?,
                         None => return Ok(None),
                     }
                 }
@@ -226,6 +226,20 @@ impl Memory<'_> {
     /// (FIX 6992): the store keeps one reader per thread, so a read inside a
     /// projection's snapshot never opens a second one.
     fn identity_read_key_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<ScopedReadActorKey> {
+        self.in_phone_lines(self.base_identity_read_key_in_txn(txn)?)
+    }
+
+    fn in_phone_lines(&self, mut key: ScopedReadActorKey) -> MemoryResult<ScopedReadActorKey> {
+        for original in &self.phone_reads {
+            key = key.within_phone_read(original)?;
+        }
+        Ok(key)
+    }
+
+    fn base_identity_read_key_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> MemoryResult<ScopedReadActorKey> {
         verify_actor_binding_in_txn(self.vault, txn, self.actor, self.actor_class)?;
         if let Some(action) = &self.host_action {
             // The host action's guarded owner key (FIX 2222), its action

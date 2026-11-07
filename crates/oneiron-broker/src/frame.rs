@@ -21,6 +21,8 @@
 //! header, its body in chunks, the broker's acknowledgement, then the key,
 //! then a streamed reply.
 
+pub(crate) mod dispatch;
+
 use std::io;
 
 use serde::{Deserialize, Serialize};
@@ -32,7 +34,7 @@ use crate::send::push_wiped;
 use crate::{CallHeader, Failure, Refusal, ReplyHeader};
 
 /// The frame protocol's version.
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// The largest body one segment carries: a buffered reply's, and a call's
 /// sent whole. The server transport's own bound.
@@ -129,7 +131,17 @@ pub(crate) async fn write_call<W: AsyncWrite + Unpin>(
     body: &[u8],
     secret: &[u8],
 ) -> io::Result<()> {
-    write_call_parts(writer, header, body, None, secret).await
+    write_call_parts(writer, header, body, None, secret, false).await
+}
+
+/// Writes an HTTP call that checks the daemon's release before each send.
+pub(crate) async fn write_call_released<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    header: &CallHeader,
+    body: &[u8],
+    secret: &[u8],
+) -> io::Result<()> {
+    write_call_parts(writer, header, body, None, secret, true).await
 }
 
 /// Writes a Responses call: its header, planned create body, the whole turn
@@ -141,8 +153,9 @@ pub(crate) async fn write_call_with_whole<W: AsyncWrite + Unpin>(
     body: &[u8],
     whole: &[u8],
     secret: &[u8],
+    released: bool,
 ) -> io::Result<()> {
-    write_call_parts(writer, header, body, Some(whole), secret).await
+    write_call_parts(writer, header, body, Some(whole), secret, released).await
 }
 
 async fn write_call_parts<W: AsyncWrite + Unpin>(
@@ -151,6 +164,7 @@ async fn write_call_parts<W: AsyncWrite + Unpin>(
     body: &[u8],
     whole: Option<&[u8]>,
     secret: &[u8],
+    released: bool,
 ) -> io::Result<()> {
     let header = serde_json::to_vec(header).map_err(io::Error::other)?;
     write_segment(writer, &header).await?;
@@ -167,6 +181,7 @@ async fn write_call_parts<W: AsyncWrite + Unpin>(
         write_segment(writer, whole).await?;
     }
     write_segment(writer, secret).await?;
+    writer.write_all(&[u8::from(released)]).await?;
     writer.flush().await
 }
 
@@ -177,6 +192,8 @@ pub(crate) struct ReadCall {
     /// The whole Responses turn for a same-socket full retry; absent for HTTP shapes.
     pub(crate) whole: Option<Zeroizing<Vec<u8>>>,
     pub(crate) secret: Zeroizing<Vec<u8>>,
+    /// The broker waits for the daemon before each physical provider send.
+    pub(crate) released: bool,
 }
 
 /// One frame as read from the wire: a model call whole, or a git
@@ -219,11 +236,13 @@ async fn read_call_rest<R: AsyncRead + Unpin>(
     let secret = read_segment(reader, MAX_SECRET)
         .await
         .map_err(|_| Refusal::Frame)?;
+    let released = read_release_mode(reader).await?;
     Ok(ReadCall {
         header,
         body,
         whole,
         secret,
+        released,
     })
 }
 
@@ -260,6 +279,7 @@ pub(crate) async fn skip_frame<R: AsyncRead + Unpin>(
     read_segment(reader, MAX_SECRET)
         .await
         .map_err(|_| Refusal::Frame)?;
+    read_release_mode(reader).await?;
     Ok(SkippedFrame::Model(header))
 }
 
@@ -269,6 +289,14 @@ async fn read_git_header<R: AsyncRead + Unpin>(reader: &mut R) -> Result<GitCall
         .await
         .map_err(|_| Refusal::Frame)?;
     serde_json::from_slice(&header).map_err(|_| Refusal::Frame)
+}
+
+async fn read_release_mode<R: AsyncRead + Unpin>(reader: &mut R) -> Result<bool, Refusal> {
+    match reader.read_u8().await.map_err(|_| Refusal::Frame)? {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(Refusal::Frame),
+    }
 }
 
 /// Reads a call's body: one segment of at most [`MAX_BODY`] bytes, or the

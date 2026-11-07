@@ -113,6 +113,7 @@ pub(crate) use http::{codec_token, encode_request_body, is_cloud_node, mark_clou
 pub(crate) use ladder::ModelCallBinding;
 pub use ladder::{CallDeadline, OfferLadder};
 pub(crate) use media::RungVoices;
+pub(crate) use media::AgentMediaCall;
 pub use media::{MediaRow, MediaRuntime, MediaTicket};
 pub use offer::{OfferEndpoint, ServedOffer};
 pub(crate) use raw::{InjectedRuns, RawInference, funded_run};

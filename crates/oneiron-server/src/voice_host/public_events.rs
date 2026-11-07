@@ -1,6 +1,6 @@
 //! Public event correlation and dequeue fencing, independent of transport.
 use super::speech::{PlayoutGate, TurnSources, notice_rows};
-use super::{PlayoutFrame, VoiceHost};
+use super::{PhoneCallRead, PlayoutFrame, VoiceHost};
 use oneiron::EntityId;
 use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::*;
@@ -228,6 +228,22 @@ impl Journal {
     /// union (FIX 4778). An event the page skips as a stale epoch's lists
     /// nothing.
     pub(super) fn page(&mut self, input: LiveVoiceEventsRequest) -> MemoryResult<ListedPage> {
+        self.page_with(input, None)
+    }
+
+    pub(super) fn phone_page(
+        &mut self,
+        input: LiveVoiceEventsRequest,
+        phone: &PhoneCallRead,
+    ) -> MemoryResult<ListedPage> {
+        self.page_with(input, Some(phone))
+    }
+
+    fn page_with(
+        &mut self,
+        input: LiveVoiceEventsRequest,
+        phone: Option<&PhoneCallRead>,
+    ) -> MemoryResult<ListedPage> {
         if input.after < self.floor || input.after > self.cursor || input.limit == Some(0) {
             return Err(MemoryError::bad_request(
                 "invalid or released voice event cursor",
@@ -249,8 +265,12 @@ impl Journal {
         for (event, guard) in &self.events {
             cursor = event.sequence;
             if guard.as_ref().is_none_or(PlayoutGate::is_current) {
-                rows.extend(self.event_rows(event));
-                events.push(event.clone());
+                let event_rows = self.event_rows(event);
+                if phone.is_none_or(|phone| self.phone_event_is_current(phone, event, &event_rows))
+                {
+                    rows.extend(event_rows);
+                    events.push(event.clone());
+                }
             }
             if events.len() >= limit {
                 break;
@@ -263,5 +283,35 @@ impl Journal {
             events,
         };
         Ok((page, rows))
+    }
+
+    fn phone_event_is_current(
+        &self,
+        phone: &PhoneCallRead,
+        event: &LiveVoiceEvent,
+        rows: &[EntityId],
+    ) -> bool {
+        match &event.event {
+            // These labels have no generation-bound source proof before the
+            // brain starts. Anonymous phone sessions do not admit tool context.
+            LiveVoiceEventKind::GenerationStarted {
+                context_sources, ..
+            } => context_sources.is_empty(),
+            LiveVoiceEventKind::ToolContext { .. } => false,
+            LiveVoiceEventKind::Pcm { .. }
+            | LiveVoiceEventKind::Safeguard { .. }
+            | LiveVoiceEventKind::Notice { .. }
+            | LiveVoiceEventKind::Memories { .. } => event
+                .generation
+                .and_then(|generation| self.epochs.get(&generation))
+                .is_some_and(|epoch| phone.accepts_output_with_sources(epoch.token, rows)),
+            LiveVoiceEventKind::PlayoutEnd
+            | LiveVoiceEventKind::Flush
+            | LiveVoiceEventKind::PlayoutStop { .. }
+            | LiveVoiceEventKind::MediaCancelled
+            | LiveVoiceEventKind::Finished
+            | LiveVoiceEventKind::Error { .. }
+            | LiveVoiceEventKind::SessionEnded => true,
+        }
     }
 }

@@ -48,6 +48,9 @@ pub struct Memory<'v> {
     /// The verified credential this actor presented, when a host bound one:
     /// every read verb then reads under the key that proof builds.
     pub(super) read_proof: Option<crate::authority::VerifiedSlip>,
+    /// Original call-bound read keys. Each identity read conjoins their
+    /// frozen ceilings and must still carry the same verified credential.
+    pub(super) phone_reads: Vec<crate::claim::ScopedReadActorKey>,
     /// The host action this handle's actor is, when a host bound one
     /// (`with_host_action_authority`, FIX 2222): every read verb then reads
     /// under its guarded owner key.
