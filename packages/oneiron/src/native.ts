@@ -37,6 +37,7 @@ export interface NativeClient {
 // BEGIN GENERATED AGENT VERBS
 vaultCommitmentsCreate(input: unknown): unknown
 vaultCommitmentsGet(input: unknown): unknown
+vaultCommitmentsLedger(input: unknown): unknown
 vaultCommitmentsInstances(input: unknown): unknown
 vaultCommitmentsProposals(input: unknown): unknown
 vaultCommitmentsFulfill(input: unknown): unknown
@@ -275,6 +276,8 @@ vaultSkillHubsDefaultGet(input: unknown): unknown
 vaultSkillsRestoredefaults(input: unknown): unknown
 vaultSkillHubsPut(input: unknown): unknown
 vaultSkillHubsGet(input: unknown): unknown
+vaultSkillHubsClawhubSearch(input: unknown): unknown
+vaultSkillHubsClawhubImport(input: unknown): unknown
 vaultSkillHubsPublishersAdmit(input: unknown): unknown
 vaultSkillHubsPublishersRevoke(input: unknown): unknown
 vaultSkillHubsRefsGet(input: unknown): unknown
@@ -457,6 +460,7 @@ vaultFilesSourcesRescan(input: unknown): unknown
 vaultFilesSourcesDetach(input: unknown): unknown
 vaultFilesSourcesList(input: unknown): unknown
 vaultFilesSourcesFiles(input: unknown): unknown
+vaultFilesSourcesExclude(input: unknown): unknown
 vaultResidenceMode(input: unknown): unknown
 vaultResidenceOpen(input: unknown): unknown
 vaultResidenceIndex(input: unknown): unknown
@@ -592,6 +596,7 @@ vaultPolicyOutboundDecide(input: unknown): unknown
 vaultPolicyRelayDecide(input: unknown): unknown
 vaultConsentApproveOnce(input: unknown): unknown
 vaultConnectorsCallsApproveOnce(input: unknown): unknown
+vaultConnectorsRepliesRetryFailed(input: unknown): unknown
 vaultConsentDeny(input: unknown): unknown
 vaultConsentCreateStandingGrant(input: unknown): unknown
 vaultConsentCreateAutoWeaveGrant(input: unknown): unknown
@@ -729,6 +734,8 @@ vaultCodeProposalReview(input: unknown): unknown
 vaultCodeProposalSettle(input: unknown): unknown
 vaultCodeProposalSettlement(input: unknown): unknown
 vaultCodeOplog(input: unknown): unknown
+vaultCodeSecretsGet(input: unknown): unknown
+vaultCodeSecretsPropose(input: unknown): unknown
 executeCode(input: unknown): unknown
 vaultCodeModelHealCount(input: unknown): unknown
 vaultCodeCorrections(input: unknown): unknown
@@ -765,6 +772,7 @@ vaultCodeOriginPublishCancel(input: unknown): unknown
 vaultCodeOriginAuthorityGet(input: unknown): unknown
 vaultCodeOriginAuthoritySet(input: unknown): unknown
 vaultCodeOriginPublications(input: unknown): unknown
+vaultCodeCheckoutHolderBind(input: unknown): unknown
 vaultCodeCheckoutBind(input: unknown): unknown
 vaultCodeCheckoutClaim(input: unknown): unknown
 vaultCodeCheckoutGet(input: unknown): unknown
@@ -910,6 +918,7 @@ vaultProjectsGoalIntake(input: unknown): unknown
 vaultRoomsJoin(input: unknown): unknown
 vaultRoomsInvite(input: unknown): unknown
 vaultRoomsConsent(input: unknown): unknown
+vaultRoomsLeave(input: unknown): unknown
 vaultRoomsOffer(input: unknown): unknown
 vaultRoomsOfferAnswer(input: unknown): unknown
 vaultRoomsOfferVote(input: unknown): unknown
@@ -943,6 +952,9 @@ vaultModelsManifestRead(input: unknown): unknown
 vaultModelsManifestReplace(input: unknown): unknown
 vaultSettingsWebConnector(input: unknown): unknown
 vaultSettingsWebConnectorReplace(input: unknown): unknown
+vaultSettingsModelPack(input: unknown): unknown
+vaultSettingsModelPackReplace(input: unknown): unknown
+vaultModelPackRevert(input: unknown): unknown
 vaultConnectorsWebUsage(input: unknown): unknown
 vaultModelsOneironerBind(input: unknown): unknown
 vaultModelsRoutesRead(input: unknown): unknown
@@ -964,6 +976,7 @@ aiStreamsEvents(input: unknown): unknown
 aiStreamsDetach(input: unknown): unknown
 aiStreamsAbort(input: unknown): unknown
 aiStreamsTerminal(input: unknown): unknown
+aiStreamsRelease(input: unknown): unknown
 aiReply(input: unknown): unknown
 vaultReceiptsContext(input: unknown): unknown
 vaultReceiptsCraftReplyManifest(input: unknown): unknown
@@ -1015,6 +1028,8 @@ vaultGraphAdmit(input: unknown): unknown
 vaultQuestionsCreate(input: unknown): unknown
 vaultQuestionsEdit(input: unknown): unknown
 vaultQuestionsPause(input: unknown): unknown
+vaultQuestionsPrepare(input: unknown): unknown
+vaultQuestionsAdmit(input: unknown): unknown
 vaultQuestionsBackfill(input: unknown): unknown
 vaultQuestionsRead(input: unknown): unknown
 vaultQuestionsOutcomeWindows(input: unknown): unknown
