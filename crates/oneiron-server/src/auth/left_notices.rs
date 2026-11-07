@@ -11,9 +11,11 @@
 //! one this vault minted and the device holds its key, spends the nonce, and
 //! answers only the person's own loss-of-access notices, each signed by this
 //! host's root key (FIX 2053). A host holding no signing key answers none.
-//! Beside the notices rides the signed ReRoot chain from where the person's
-//! env stands to that key, so a device that never folded a re-root still
-//! verifies them. The archive doors sign a one-shot transferred slip's spend
+//! Beside the notices rides their continuity (FIX 7932): the leave-notice
+//! delegations each root signed at its handoff, on the chain from where the
+//! person's env stands to that key, so a device that never folded a re-root
+//! still verifies them, and no authority row rides. The archive doors sign a
+//! one-shot transferred slip's spend
 //! into the authority log with that key (FIX 11862); a host holding none
 //! still answers, and its archive rows alone keep the spend.
 use std::collections::BTreeSet;
@@ -57,18 +59,26 @@ pub(crate) fn left_notice_routes() -> Router<Arc<SyncServer>> {
 }
 
 /// The person's MemberLeft, MemberRemoved and role-losing Owner notices,
-/// and the vault's deletion, each signed by this host's root key.
+/// and the vault's deletion, each signed by this host's root key, and their
+/// continuity.
 #[derive(Debug, Serialize)]
 struct LeftNotices {
     notices: Vec<SignedSharedActOutcome>,
-    /// The signed ReRoot rows, hex, parents first, that hand this host's
-    /// root on from where the person's env stands to the key that signed
-    /// `notices` (FIX 2053): empty when that env already folded them.
-    handoff: Vec<String>,
+    continuity: LeftNoticeContinuity,
+}
+
+/// What the person's env verifies the notices' signer by (FIX 7932): the
+/// authority vault, hex, and the canonical leave-notice delegations, hex,
+/// in chain order, on this host's root chain to the key that signed
+/// `notices`; empty when that env already folded them.
+#[derive(Debug, Serialize)]
+struct LeftNoticeContinuity {
+    authority_vault_id: String,
+    delegations: Vec<String>,
 }
 
 /// Where the person's authority chain stands (FIX 2053): the heads its env
-/// folded, hex, so only the handoff past them rides. A request that names
+/// folded, hex, so only the delegations past them ride. A request that names
 /// none gets the whole chain.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -213,7 +223,7 @@ async fn left_notices(
 ) -> Result<Json<LeftNotices>, EnvelopedApiError> {
     let heads = member_heads(ask)?;
     let (slip, proof, signature) = left_proof(&headers)?;
-    let (notices, handoff) = tokio::task::spawn_blocking(move || {
+    let (notices, continuity) = tokio::task::spawn_blocking(move || {
         with_notice_issuer(&server, |issuer| {
             server.vault().removed_member_notices_signed(
                 issuer,
@@ -227,9 +237,17 @@ async fn left_notices(
     })
     .await
     .map_err(|_| ApiError::unauthorized())??;
-    let handoff = handoff
-        .iter()
-        .map(|row| row.iter().map(|byte| format!("{byte:02x}")).collect())
-        .collect();
-    Ok(Json(LeftNotices { notices, handoff }))
+    let hex = |bytes: &[u8]| -> String { bytes.iter().map(|byte| format!("{byte:02x}")).collect() };
+    let continuity = LeftNoticeContinuity {
+        authority_vault_id: hex(&continuity.authority_vault_id),
+        delegations: continuity
+            .delegations
+            .iter()
+            .map(|delegation| hex(delegation))
+            .collect(),
+    };
+    Ok(Json(LeftNotices {
+        notices,
+        continuity,
+    }))
 }
