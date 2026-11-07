@@ -11362,7 +11362,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BusyInterval"
@@ -11370,6 +11370,7 @@
      "path": "src/calendar/freebusy.rs",
      "purpose": "Busy-only freebusy projection (CAL-09, C5)",
      "surface": {
+      "crate-vis": 1,
       "fn": 3,
       "struct": 1,
       "type": 1
@@ -11975,9 +11976,9 @@
      "path": "src/calendar/query/mod.rs",
      "purpose": "Calendar EVENT query + projection core (CAL-09)",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "mod": 1,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -11988,6 +11989,25 @@
      "purpose": "Windowed occurrences from lane-admitted calendar facts",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CalendarFreebusyPage",
+      "CalendarFreebusyPageRequest",
+      "CalendarOccurrencesPage",
+      "CalendarOccurrencesPageRequest",
+      "CalendarSearchPage",
+      "CalendarSearchPageRequest"
+     ],
+     "path": "src/calendar/query/pages.rs",
+     "purpose": "Deadline-bound, resumable pages of the public calendar queries (FIX 11998, FIX 12164)…",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 3,
+      "struct": 6
      }
     },
     {
@@ -12023,13 +12043,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/calendar/query/service.rs",
      "purpose": "Read/search entry points plus pure projection helpers",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 4
      }
     },
@@ -12051,7 +12071,7 @@
      "path": "src/calendar/query/window.rs",
      "purpose": "Bounded, scoped series occurrences with stable original-instance identities",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2,
       "struct": 2
      }
@@ -92004,7 +92024,7 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 77,
+     "files": 78,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93462,7 +93482,7 @@
    },
    "over_bar": 178,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6596,
+   "source_files": 6597,
    "test_files": 895
   },
   "oneiron-android": {
@@ -125478,7 +125498,7 @@
      "purpose": "The microVM adapter's host half: one Firecracker VM per vault",
      "surface": {
       "enum": 1,
-      "fn": 15,
+      "fn": 16,
       "re-export": 6,
       "struct": 2
      }
@@ -125939,6 +125959,16 @@
      "purpose": "The standalone VM host's acknowledged wake ledger",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_source_control.rs",
+     "purpose": "The root bootstrap's original engine, proved by its kernel pidfd",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -131514,7 +131544,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 107,
+     "files": 108,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -131705,7 +131735,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1674,
+   "source_files": 1675,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -142881,7 +142911,8 @@
       "CalendarEventOutcome",
       "CalendarEventView",
       "CalendarFreebusyIntervalDto",
-      "CalendarFreebusyRequest",
+      "CalendarFreebusyPage",
+      "CalendarFreebusyPageRequest",
       "CalendarIcsFeedConfigureRequest",
       "CalendarIcsFeedRegistration",
       "CalendarIcsFeedRequest",
@@ -142898,7 +142929,8 @@
       "CalendarInviteSurfaceMethod",
       "CalendarMeetingRequest",
       "CalendarOccurrenceView",
-      "CalendarOccurrencesRequest",
+      "CalendarOccurrencesPage",
+      "CalendarOccurrencesPageRequest",
       "CalendarOutcomePolicy",
       "CalendarPassportDirection",
       "CalendarPassportPresence",
@@ -142907,7 +142939,8 @@
       "CalendarPassportValue",
       "CalendarRangeDto",
       "CalendarReadRequest",
-      "CalendarSearchRequest",
+      "CalendarSearchPage",
+      "CalendarSearchPageRequest",
       "CalendarSel",
       "CalendarSyncOutcome",
       "CalibrationPair",
@@ -146041,10 +146074,10 @@
       "ScopedExportRequest",
       "ScopedReadReceipt",
       "ScopedReadResultAssetResolved",
-      "ScopedReadResultCalendarEventViewList",
-      "ScopedReadResultCalendarFreebusyDto",
-      "ScopedReadResultCalendarOccurrenceViewList",
+      "ScopedReadResultCalendarFreebusyPage",
+      "ScopedReadResultCalendarOccurrencesPage",
       "ScopedReadResultCalendarPassportRevisionList",
+      "ScopedReadResultCalendarSearchPage",
       "ScopedReadResultClusterProposal",
       "ScopedReadResultClusterProposalView",
       "ScopedReadResultCoachInspectionView",
@@ -147057,7 +147090,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1138,
-      "struct": 3458
+      "struct": 3461
      }
     },
     {
@@ -148068,15 +148101,17 @@
      "kind": "src",
      "notable": [
       "VmGuestFrame",
-      "VmHostFrame"
+      "VmHostFrame",
+      "VmSourceEngine"
      ],
      "path": "src/lib/vm.rs",
      "purpose": "The vault-VM wire: vsock ports and boot-channel frames",
      "surface": {
-      "const": 43,
+      "const": 44,
       "enum": 2,
       "fn": 4,
-      "re-export": 2
+      "re-export": 2,
+      "struct": 1
      }
     },
     {
