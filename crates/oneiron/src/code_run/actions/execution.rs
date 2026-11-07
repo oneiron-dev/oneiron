@@ -253,7 +253,8 @@ impl ActionRegistry {
         // Reserve the EXISTING replay record before effects. A crash or racing
         // caller sees an incomplete record and fails closed, never re-dispatches.
         let mut record = CodeRunReplayRecord::new(run_id, CodeRunDeterminism::new(frozen, seed));
-        let generation = vault.put_code_run_replay_record_if_generation(&record, None)?;
+        let generation = crate::code_run::storage::ExecutorStorage::Canonical(vault)
+            .put_owned_code_run_replay_record(&record, None, run_id, actor.entity_ref())?;
         let dispatcher = match &leased {
             Some(record) => GatedActorWrite::for_action_attempt(
                 vault,
