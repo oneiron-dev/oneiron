@@ -20778,6 +20778,105 @@ async fn vault_hooks_regen_get(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_hooks_regen_history(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.hooks.regen.history")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.hooks.regen.history", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.hooks.regen.history", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_hooks_regen_history(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_hooks_regen_revert(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.hooks.regen.revert")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.hooks.regen.revert", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.hooks.regen.revert", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_hooks_regen_revert(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_hooks_regen_run(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.hooks.regen.run")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.hooks.regen.run", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.hooks.regen.run", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::vault_hooks_regen_run(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_hooks_regen_adopt(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -20792,6 +20891,40 @@ async fn vault_hooks_regen_adopt(
     let mut hooks = facade_hooks_pre(server, call, "vault.hooks.regen.adopt", value).await?;
     let ran = async {
         let (output, listed) = super::host_doors::vault_hooks_regen_adopt(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_hooks_regen_cancel(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.hooks.regen.cancel")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.hooks.regen.cancel", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.hooks.regen.cancel", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_hooks_regen_cancel(
             server,
             auth,
             facade_door_input(&mut hooks)?,
@@ -38146,6 +38279,50 @@ async fn self_history(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn self_hooks_regen_adopt(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "self.hooks.regen.adopt",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn self_hooks_regen_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "self.hooks.regen.get",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_runs_review(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -45990,12 +46167,44 @@ fn boxed_vault_hooks_regen_get<'a>(
     Box::pin(vault_hooks_regen_get(server, call, input))
 }
 #[inline(never)]
+fn boxed_vault_hooks_regen_history<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_hooks_regen_history(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_hooks_regen_revert<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_hooks_regen_revert(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_hooks_regen_run<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_hooks_regen_run(server, call, input))
+}
+#[inline(never)]
 fn boxed_vault_hooks_regen_adopt<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> FacadeRowFuture<'a> {
     Box::pin(vault_hooks_regen_adopt(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_hooks_regen_cancel<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_hooks_regen_cancel(server, call, input))
 }
 #[inline(never)]
 fn boxed_vault_artifacts_publish_approval<'a>(
@@ -50546,6 +50755,22 @@ fn boxed_self_history<'a>(
     Box::pin(self_history(server, call, input))
 }
 #[inline(never)]
+fn boxed_self_hooks_regen_adopt<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_hooks_regen_adopt(server, call, input))
+}
+#[inline(never)]
+fn boxed_self_hooks_regen_get<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(self_hooks_regen_get(server, call, input))
+}
+#[inline(never)]
 fn boxed_vault_runs_review<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
@@ -52373,7 +52598,11 @@ async fn call_verb_row(
         "vault.hooks.replay" => boxed_vault_hooks_replay(server, call, input).await,
         "vault.hooks.regen.due" => boxed_vault_hooks_regen_due(server, call, input).await,
         "vault.hooks.regen.get" => boxed_vault_hooks_regen_get(server, call, input).await,
+        "vault.hooks.regen.history" => boxed_vault_hooks_regen_history(server, call, input).await,
+        "vault.hooks.regen.revert" => boxed_vault_hooks_regen_revert(server, call, input).await,
+        "vault.hooks.regen.run" => boxed_vault_hooks_regen_run(server, call, input).await,
         "vault.hooks.regen.adopt" => boxed_vault_hooks_regen_adopt(server, call, input).await,
+        "vault.hooks.regen.cancel" => boxed_vault_hooks_regen_cancel(server, call, input).await,
         "vault.artifacts.publish_approval" => {
             boxed_vault_artifacts_publish_approval(server, call, input).await
         }
@@ -53372,6 +53601,8 @@ async fn call_verb_row(
         "self.run.attach" => boxed_self_run_attach(server, call, input).await,
         "self.folds.describe" => boxed_self_folds_describe(server, call, input).await,
         "self.history" => boxed_self_history(server, call, input).await,
+        "self.hooks.regen.adopt" => boxed_self_hooks_regen_adopt(server, call, input).await,
+        "self.hooks.regen.get" => boxed_self_hooks_regen_get(server, call, input).await,
         "vault.runs.review" => boxed_vault_runs_review(server, call, input).await,
         "vault.runs.settle" => boxed_vault_runs_settle(server, call, input).await,
         "vault.runs.settlement" => boxed_vault_runs_settlement(server, call, input).await,

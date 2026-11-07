@@ -3534,9 +3534,33 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.hooks.regen.history",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::hook_regen_doors::HookRegenHistoryRequest,
+                >(),
+            ),
+            (
+                "vault.hooks.regen.revert",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::hook_regen_doors::HookRegenRevertRequest,
+                >(),
+            ),
+            (
+                "vault.hooks.regen.run",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::hook_regen_doors::HookRegenBindingRequest,
+                >(),
+            ),
+            (
                 "vault.hooks.regen.adopt",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::hook_regen_doors::HookRegenAdoptRequest,
+                >(),
+            ),
+            (
+                "vault.hooks.regen.cancel",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::hook_regen_doors::HookRegenCancelRequest,
                 >(),
             ),
             (
@@ -6806,6 +6830,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.hooks.regen.adopt",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::hook_regen_doors::HookRegenAdoptRequest,
+                >(),
+            ),
+            (
+                "self.hooks.regen.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::hook_regen_doors::HookRegenBindingRequest,
+                >(),
+            ),
+            (
                 "vault.runs.review",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::run_review::RunReviewRequest,
@@ -7880,7 +7916,11 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.hooks.checks",
     "vault.hooks.regen.due",
     "vault.hooks.regen.get",
+    "vault.hooks.regen.history",
+    "vault.hooks.regen.revert",
+    "vault.hooks.regen.run",
     "vault.hooks.regen.adopt",
+    "vault.hooks.regen.cancel",
     "vault.artifacts.publish_approval",
     "vault.artifacts.publish",
     "vault.artifacts.repoint",
@@ -8246,6 +8286,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.run.attach",
     "self.folds.describe",
     "self.history",
+    "self.hooks.regen.adopt",
+    "self.hooks.regen.get",
     "vault.runs.review",
     "vault.runs.settle",
     "vault.runs.settlement",
@@ -9715,8 +9757,20 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.hooks.regen.get" => crate::code_run::vault_read::request_schema::<
             Option<crate::memory::hook_regen_doors::HookRegenView>,
         >(),
+        "vault.hooks.regen.history" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::runtime_hooks::HookRegenReceipt>,
+        >(),
+        "vault.hooks.regen.revert" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::PackPutReceipt>()
+        }
+        "vault.hooks.regen.run" => crate::code_run::vault_read::request_schema::<
+            Option<crate::memory::hook_regen_doors::HookRegenView>,
+        >(),
         "vault.hooks.regen.adopt" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::PackPutReceipt>()
+        }
+        "vault.hooks.regen.cancel" => {
+            crate::code_run::vault_read::request_schema::<crate::runtime_hooks::HookRegenCancel>()
         }
         "vault.artifacts.publish_approval" => crate::code_run::vault_read::request_schema::<
             crate::artifact_hosting::door_types::ArtifactPublishApproval,
@@ -10834,6 +10888,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "self.history" => crate::code_run::vault_read::request_schema::<
             crate::engine_executor::history::FoldHistory,
+        >(),
+        "self.hooks.regen.adopt" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::PackPutReceipt>()
+        }
+        "self.hooks.regen.get" => crate::code_run::vault_read::request_schema::<
+            Option<crate::memory::hook_regen_doors::HookRegenView>,
         >(),
         "vault.runs.review" => {
             crate::code_run::vault_read::request_schema::<crate::memory::run_review::RunReview>()
@@ -15591,7 +15651,35 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.hooks.regen.history" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.hooks.regen.revert" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.hooks.regen.run" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.hooks.regen.adopt" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.hooks.regen.cancel" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19578,6 +19666,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "self.hooks.regen.adopt" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.hooks.regen.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.runs.review" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -20972,7 +21074,11 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.hooks.replay" => validate_input_vault_hooks_replay(value)?,
         "vault.hooks.regen.due" => validate_input_vault_hooks_regen_due(value)?,
         "vault.hooks.regen.get" => validate_input_vault_hooks_regen_get(value)?,
+        "vault.hooks.regen.history" => validate_input_vault_hooks_regen_history(value)?,
+        "vault.hooks.regen.revert" => validate_input_vault_hooks_regen_revert(value)?,
+        "vault.hooks.regen.run" => validate_input_vault_hooks_regen_run(value)?,
         "vault.hooks.regen.adopt" => validate_input_vault_hooks_regen_adopt(value)?,
+        "vault.hooks.regen.cancel" => validate_input_vault_hooks_regen_cancel(value)?,
         "vault.artifacts.publish_approval" => {
             validate_input_vault_artifacts_publish_approval(value)?
         }
@@ -21707,6 +21813,8 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.run.attach" => validate_input_self_run_attach(value)?,
         "self.folds.describe" => validate_input_self_folds_describe(value)?,
         "self.history" => validate_input_self_history(value)?,
+        "self.hooks.regen.adopt" => validate_input_self_hooks_regen_adopt(value)?,
+        "self.hooks.regen.get" => validate_input_self_hooks_regen_get(value)?,
         "vault.runs.review" => validate_input_vault_runs_review(value)?,
         "vault.runs.settle" => validate_input_vault_runs_settle(value)?,
         "vault.runs.settlement" => validate_input_vault_runs_settlement(value)?,
@@ -25304,8 +25412,28 @@ fn validate_input_vault_hooks_regen_get(value: &serde_json::Value) -> MemoryResu
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_hooks_regen_history(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::memory::hook_regen_doors::HookRegenHistoryRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_hooks_regen_revert(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::memory::hook_regen_doors::HookRegenRevertRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_hooks_regen_run(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::memory::hook_regen_doors::HookRegenBindingRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_vault_hooks_regen_adopt(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::memory::hook_regen_doors::HookRegenAdoptRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_hooks_regen_cancel(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::memory::hook_regen_doors::HookRegenCancelRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -28430,6 +28558,16 @@ fn validate_input_self_history(value: &serde_json::Value) -> MemoryResult<()> {
     Ok(())
 }
 #[inline(never)]
+fn validate_input_self_hooks_regen_adopt(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::memory::hook_regen_doors::HookRegenAdoptRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_self_hooks_regen_get(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::memory::hook_regen_doors::HookRegenBindingRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_vault_runs_review(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::memory::run_review::RunReviewRequest = decode(value.clone())?;
     Ok(())
@@ -29875,7 +30013,11 @@ pub fn invoke(
         "vault.hooks.replay" => invoke_vault_hooks_replay(memory, value),
         "vault.hooks.regen.due" => invoke_vault_hooks_regen_due(memory, value),
         "vault.hooks.regen.get" => invoke_vault_hooks_regen_get(memory, value),
+        "vault.hooks.regen.history" => invoke_vault_hooks_regen_history(memory, value),
+        "vault.hooks.regen.revert" => invoke_vault_hooks_regen_revert(memory, value),
+        "vault.hooks.regen.run" => invoke_vault_hooks_regen_run(memory, value),
         "vault.hooks.regen.adopt" => invoke_vault_hooks_regen_adopt(memory, value),
+        "vault.hooks.regen.cancel" => invoke_vault_hooks_regen_cancel(memory, value),
         "vault.artifacts.publish_approval" => {
             invoke_vault_artifacts_publish_approval(memory, value)
         }
@@ -30588,6 +30730,8 @@ pub fn invoke(
         "self.run.attach" => invoke_self_run_attach(memory, value),
         "self.folds.describe" => invoke_self_folds_describe(memory, value),
         "self.history" => invoke_self_history(memory, value),
+        "self.hooks.regen.adopt" => invoke_self_hooks_regen_adopt(memory, value),
+        "self.hooks.regen.get" => invoke_self_hooks_regen_get(memory, value),
         "vault.runs.review" => invoke_vault_runs_review(memory, value),
         "vault.runs.settle" => invoke_vault_runs_settle(memory, value),
         "vault.runs.settlement" => invoke_vault_runs_settlement(memory, value),
@@ -35347,11 +35491,39 @@ fn invoke_vault_hooks_regen_get(
     encode(vault_hooks_regen_get(memory, decode(value)?)?)
 }
 #[inline(never)]
+fn invoke_vault_hooks_regen_history(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_hooks_regen_history(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_hooks_regen_revert(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_hooks_regen_revert(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_hooks_regen_run(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_hooks_regen_run(memory, decode(value)?)?)
+}
+#[inline(never)]
 fn invoke_vault_hooks_regen_adopt(
     memory: &Memory<'_>,
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_hooks_regen_adopt(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_hooks_regen_cancel(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_hooks_regen_cancel(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_artifacts_publish_approval(
@@ -39368,6 +39540,20 @@ fn invoke_self_history(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(self_history(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_self_hooks_regen_adopt(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(self_hooks_regen_adopt(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_self_hooks_regen_get(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(self_hooks_regen_get(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_runs_review(
@@ -45634,11 +45820,35 @@ pub fn vault_hooks_regen_get(
 ) -> MemoryResult<Option<crate::memory::hook_regen_doors::HookRegenView>> {
     memory.hooks_regen_record_as(&memory.embedded_owner("vault.hooks.regen.get")?, input)
 }
+pub fn vault_hooks_regen_history(
+    memory: &Memory<'_>,
+    input: crate::memory::hook_regen_doors::HookRegenHistoryRequest,
+) -> MemoryResult<Vec<crate::runtime_hooks::HookRegenReceipt>> {
+    memory.hooks_regen_history_as(&memory.embedded_owner("vault.hooks.regen.history")?, input)
+}
+pub fn vault_hooks_regen_revert(
+    memory: &Memory<'_>,
+    input: crate::memory::hook_regen_doors::HookRegenRevertRequest,
+) -> MemoryResult<crate::task_verb::sdk::PackPutReceipt> {
+    memory.hooks_regen_revert_as(&memory.embedded_owner("vault.hooks.regen.revert")?, input)
+}
+pub fn vault_hooks_regen_run(
+    memory: &Memory<'_>,
+    input: crate::memory::hook_regen_doors::HookRegenBindingRequest,
+) -> MemoryResult<Option<crate::memory::hook_regen_doors::HookRegenView>> {
+    memory.hooks_regen_run_unhosted(&memory.embedded_owner("vault.hooks.regen.run")?, input)
+}
 pub fn vault_hooks_regen_adopt(
     memory: &Memory<'_>,
     input: crate::memory::hook_regen_doors::HookRegenAdoptRequest,
 ) -> MemoryResult<crate::task_verb::sdk::PackPutReceipt> {
     memory.hooks_regen_adopt_as(&memory.embedded_owner("vault.hooks.regen.adopt")?, input)
+}
+pub fn vault_hooks_regen_cancel(
+    memory: &Memory<'_>,
+    input: crate::memory::hook_regen_doors::HookRegenCancelRequest,
+) -> MemoryResult<crate::runtime_hooks::HookRegenCancel> {
+    memory.hooks_regen_cancel_as(&memory.embedded_owner("vault.hooks.regen.cancel")?, input)
 }
 pub fn vault_artifacts_publish_approval(
     memory: &Memory<'_>,
@@ -50479,6 +50689,18 @@ pub fn self_history(
     input: crate::code_run::fold_api::FoldHistoryRequest,
 ) -> MemoryResult<crate::engine_executor::history::FoldHistory> {
     crate::code_run::fold_api::host_required(memory, &input)
+}
+pub fn self_hooks_regen_adopt(
+    memory: &Memory<'_>,
+    input: crate::memory::hook_regen_doors::HookRegenAdoptRequest,
+) -> MemoryResult<crate::task_verb::sdk::PackPutReceipt> {
+    memory.own_hook_regen_adopt(input)
+}
+pub fn self_hooks_regen_get(
+    memory: &Memory<'_>,
+    input: crate::memory::hook_regen_doors::HookRegenBindingRequest,
+) -> MemoryResult<Option<crate::memory::hook_regen_doors::HookRegenView>> {
+    memory.own_hook_regen_record(input)
 }
 pub fn vault_runs_review(
     memory: &Memory<'_>,

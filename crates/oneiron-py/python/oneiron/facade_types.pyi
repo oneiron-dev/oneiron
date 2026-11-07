@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1289 facade rows, 4672 declarations.
-Inputs: 1218 of 1289 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1118 of 1289 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1295 facade rows, 4683 declarations.
+Inputs: 1224 of 1295 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1124 of 1295 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -12227,6 +12227,15 @@ class HookGoldenDiff(TypedDict):
     execution_failed: list[str]
     withheld: list[str]
     missing_history: list[str]
+class HookGoldenFingerprint(TypedDict):
+    cases: dict[str, str]
+    execution_failed: dict[str, str]
+    withheld: list[str]
+    missing_history: list[str]
+class HookGoldenManifest(TypedDict):
+    runs: list[str]
+    last_good: HookGoldenFingerprint
+    candidate: HookGoldenFingerprint
 HookRegenFailurePhase = Literal["intent", "generate", "validate", "golden_replay"]
 class HookRegenFailure(TypedDict):
     phase: HookRegenFailurePhase
@@ -12236,26 +12245,90 @@ class HookRegenOutcomeAutoAdopt(TypedDict):
     candidate: str
     target: HookContractStamp
     diff: HookGoldenDiff
+    golden: HookGoldenManifest
 class HookRegenOutcomeNeedsHumanStamp(TypedDict):
     outcome: Literal["needs_human_stamp"]
     candidate: str
     target: HookContractStamp
     diff: HookGoldenDiff
+    golden: HookGoldenManifest
 class HookRegenOutcomeRolledBack(TypedDict):
     outcome: Literal["rolled_back"]
     failure: HookRegenFailure
+    target: HookContractStamp
 HookRegenOutcome = HookRegenOutcomeAutoAdopt | HookRegenOutcomeNeedsHumanStamp | HookRegenOutcomeRolledBack
+class HookRegenPrior(TypedDict):
+    body: str
+    body_hash: str
+    stamp: HookContractStamp
 class HookRegenRecord(TypedDict):
     body_hash: str
     stamp: HookContractStamp
     intent: NotRequired[str | None]
     pending: NotRequired[HookRegenOutcome | None]
+    previous: NotRequired[HookRegenPrior | None]
+    declined: NotRequired[HookContractStamp | None]
 class HookRegenView(TypedDict):
     record: HookRegenRecord
     candidate_hash: NotRequired[str | None]
+class HookRegenHistoryRequest(TypedDict):
+    binding: EntityId
+    before: NotRequired[int | None]
+    limit: NotRequired[int | None]
+class HookRegenActorEngine(TypedDict):
+    by: Literal["engine"]
+class HookRegenActorOwner(TypedDict):
+    by: Literal["owner"]
+    actor: str
+class HookRegenActorAgent(TypedDict):
+    by: Literal["agent"]
+    agent: str
+HookRegenActor = HookRegenActorEngine | HookRegenActorOwner | HookRegenActorAgent
+HookRegenDecision = Literal["auto_adopt", "needs_human_stamp", "rolled_back"]
+class HookRegenEventDecided(TypedDict):
+    event: Literal["decided"]
+    decision: HookRegenDecision
+    candidate_hash: NotRequired[str | None]
+    target: HookContractStamp
+    diff: NotRequired[HookGoldenDiff | None]
+    golden: NotRequired[HookGoldenManifest | None]
+    failure: NotRequired[HookRegenFailure | None]
+class HookRegenEventAdopted(TypedDict):
+    event: Literal["adopted"]
+    candidate_hash: str
+    target: HookContractStamp
+    stamped: bool
+    rebound: NotRequired[str | None]
+class HookRegenEventCancelled(TypedDict):
+    event: Literal["cancelled"]
+    candidate_hash: NotRequired[str | None]
+    declined: HookContractStamp
+class HookRegenEventReverted(TypedDict):
+    event: Literal["reverted"]
+    from_hash: str
+    to_hash: str
+    declined: HookContractStamp
+    rebound: NotRequired[str | None]
+HookRegenEvent = HookRegenEventDecided | HookRegenEventAdopted | HookRegenEventCancelled | HookRegenEventReverted
+class HookRegenReceipt(TypedDict):
+    sequence: int
+    binding: str
+    recorded_at: int
+    actor: HookRegenActor
+    body_hash: str
+    event: HookRegenEvent
+class HookRegenRevertRequest(TypedDict):
+    binding: EntityId
+    adopted_hash: str
 class HookRegenAdoptRequest(TypedDict):
     binding: EntityId
     candidate_hash: str
+class HookRegenCancelRequest(TypedDict):
+    binding: EntityId
+    candidate_hash: NotRequired[str | None]
+class HookRegenCancel(TypedDict):
+    candidate_hash: NotRequired[str | None]
+    declined: HookContractStamp
 ArtifactPointerChannel = Literal["published", "preview"]
 CodebaseForkHash = list[int]
 class ArtifactExportRefForkHash(TypedDict):
