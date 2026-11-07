@@ -36,8 +36,13 @@ pub(super) async fn facade_invocation_claim(
     // A custody value's body arrives redacted from the outer layer; its claim
     // states the arrival's own digest (FIX 11442).
     let verb = parts.uri.path().trim_start_matches('/').to_owned();
-    let (bytes, redacted) =
-        super::secret_body::read_middleware_body(body, &verb, &mut parts.extensions).await;
+    let (bytes, redacted) = super::secret_body::read_middleware_body(
+        body,
+        &verb,
+        &mut parts.extensions,
+        crate::api::request_floor::request_floor(&server),
+    )
+    .await;
     let digest = match parts
         .extensions
         .get::<super::secret_body::FacadeOriginalDigest>()
