@@ -13,9 +13,11 @@ mod conflicts;
 mod leases;
 mod proposals;
 mod resolutions;
+mod secrets;
 mod types;
 
 pub use conflict_types::*;
+pub use secrets::*;
 pub use types::*;
 
 use std::collections::BTreeSet;
