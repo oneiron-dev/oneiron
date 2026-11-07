@@ -82,8 +82,8 @@ pub(crate) use self::replay_capsule::{
     step_start_content_pieces, step_start_owners_in_txn,
 };
 pub(crate) use self::replay_capsule::{
-    bind_owner_pair_ask_in_txn, close_owner_pair_in_txn, judge_owner_pair_in_txn,
-    owner_pair_in_txn, put_owner_pair,
+    accept_owner_pair_in_txn, bind_owner_pair_ask_in_txn, close_owner_pair_in_txn,
+    judge_owner_pair_in_txn, owner_pair_in_txn, put_owner_pair,
 };
 pub(crate) use self::response_erase::{
     actor_gone, retire_actor_responses_in_txn, retire_sourced_code_outputs_in_txn,
