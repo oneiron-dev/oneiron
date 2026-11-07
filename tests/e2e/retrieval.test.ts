@@ -994,6 +994,7 @@ suite.test(test, "RETRIEVAL-07", "Freshness does not rewrite confidence should w
     expect(beforeSettlement.value.find(row => row.claim_ref === original.id || row.short_ref === original.ref))
       .toMatchObject({ value: fixture.oldValue, lifecycle: "active" });
     const pending = await engine.client.call("vault.writes.critical_confirm.pending", { pending_operation: proposed.receipt_ref });
+    if (pending === null) throw new Error("critical_confirm.pending returned null");
     expect(pending.pending_operation).toBe(proposed.receipt_ref);
     const settled = await engine.client.call("vault.writes.critical_confirm.clear", {
       pending_operation: pending.pending_operation, nonce: pending.nonce, read_frontier_hash: pending.read_frontier_hash,
