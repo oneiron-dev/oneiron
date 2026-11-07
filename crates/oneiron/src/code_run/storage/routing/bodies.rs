@@ -49,12 +49,21 @@ impl ExecutorStorage<'_> {
         path: String,
         spool: BodySink,
         owner: EntityId,
+        receipt: Option<(&mut CodeRunReplayRecord, &mut CodeRunReplayGeneration)>,
     ) -> Result<std::result::Result<CodeRunRawOutput, serde_json::Value>> {
         let published = match self {
             Self::Canonical(vault) => {
-                vault.publish_admitted_code_run_output(path, spool, true, owner)?
+                vault.publish_admitted_code_run_output(path, spool, true, owner, receipt)?
             }
-            Self::Session(binding) => binding.publish_admitted_reply(path, spool, owner)?,
+            Self::Session(binding) => {
+                let published = binding.publish_admitted_reply(path, spool, owner)?;
+                if let ReplyBody::Published(output) = &published
+                    && let Some((receipt, _)) = receipt
+                {
+                    receipt.outputs.push(output.clone());
+                }
+                published
+            }
         };
         Ok(match published {
             ReplyBody::Published(output) => Ok(output),
