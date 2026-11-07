@@ -157,6 +157,7 @@ pub use owner::legal_holds;
 pub(crate) use owner::page_seal_at;
 pub use owner::reminder_route;
 pub use owner::widen_proposals;
+pub use owner::{MeetingTranscriptArgs, meeting_transcript};
 pub use owner::{
     backup, doctor, export, handoff_alarms, import, recover_clock, recover_window, recovery_kit,
     restore, runs, secret_scan, secrets, vault_key, whoami,
