@@ -25,8 +25,10 @@
 //!
 //! A socket's writer relays what the guest writes without a send call. It
 //! is its socket entry's worker, charged with the entry, so before each
-//! relay it takes only the relay's socket ([`WRITER`]), waiting for it while
-//! the floor is full; the guest's next writes wait in its socket meanwhile.
+//! relay it takes only the relay's socket ([`EXCHANGE`]), waiting for it
+//! while the floor is full; the guest's next writes wait in its socket
+//! meanwhile. A stream's DNS relay takes each exchange's socket the same
+//! way: its thread is charged with its connect (FIX 6301).
 
 use super::{Socket, State};
 use crate::{HOST_NET_WORKER_FLOOR, HostNetPermit, floor_saturated, saturated_floor, wire};
@@ -42,9 +44,10 @@ use std::time::Duration;
 /// ends, as (descriptors, workers): the relay's UDP socket, and the worker
 /// that waits on it.
 const SEND: (usize, usize) = (1, 1);
-/// What one of a writer's relays holds, as (descriptors, workers): the
-/// relay's UDP socket. The writer itself is charged with its socket entry.
-const WRITER: (usize, usize) = (1, 0);
+/// What one exchange of an already charged worker holds, as (descriptors,
+/// workers): its transport's one socket. A writer is charged with its socket
+/// entry, a stream's DNS relay with its connect (FIX 6301).
+const EXCHANGE: (usize, usize) = (1, 0);
 /// How long a waiting send or writer sleeps before it looks at the floor
 /// again: a cadence, not a bound.
 const FLOOR_RETRY: Duration = Duration::from_millis(10);
@@ -96,10 +99,11 @@ pub(super) fn send(
     }
 }
 
-/// Room for one of a writer's relays, waited for while the floor is full;
-/// `None` once the session or the socket has ended, or the floor failed.
+/// Room for one exchange of a writer or a stream's DNS relay, waited for
+/// while the floor is full; `None` once the session or the socket has
+/// ended, or the floor failed.
 pub(super) fn reserve(state: &State, socket: &Socket) -> Option<HostNetPermit> {
-    let (fds, workers) = WRITER;
+    let (fds, workers) = EXCHANGE;
     loop {
         match state.relay.host_net_floor().acquire(fds, workers) {
             Ok(permit) => return Some(permit),
