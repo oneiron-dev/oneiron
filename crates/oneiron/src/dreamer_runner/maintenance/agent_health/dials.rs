@@ -25,6 +25,9 @@ pub(super) struct Dials {
     pub(super) wait_share: f64,
     pub(super) wait_secs: u64,
     pub(super) silent_secs: u64,
+    /// The raw `health.silent.minutes` reading `silent_secs` was adapted
+    /// from, kept for the finding's exact dial.
+    pub(super) silent_minutes: f64,
     pub(super) widen_denials: u64,
     pub(super) cost_spike: f64,
     pub(super) ttl_secs: u64,
@@ -165,13 +168,17 @@ fn dials_in(
         }
         Ok(read)
     };
+    // One read of the silent dial: the raw minutes and the adapted seconds
+    // below come from this same value.
+    let silent_minutes = value(&HEALTH_SILENT_MINUTES)?;
     Ok(Dials {
         review: value(&HEALTH_REVIEW)? >= 0.5,
         loop_repeats: value(&HEALTH_LOOP_REPEATS)?.round() as u64,
         check_fails: value(&HEALTH_CHECK_FAILS)?.round() as u64,
         wait_share: value(&HEALTH_WAIT_SHARE)?,
         wait_secs: (value(&HEALTH_WAIT_MINUTES)? * 60.0).round() as u64,
-        silent_secs: (value(&HEALTH_SILENT_MINUTES)? * 60.0).round() as u64,
+        silent_secs: (silent_minutes * 60.0).round() as u64,
+        silent_minutes,
         widen_denials: value(&HEALTH_WIDEN_DENIALS)?.round() as u64,
         cost_spike: value(&HEALTH_COST_SPIKE)?,
         ttl_secs: (value(&HEALTH_ESCALATE_TTL_HOURS)? * 3600.0).round() as u64,
