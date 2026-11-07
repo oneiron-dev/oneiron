@@ -4,6 +4,7 @@
 mod check_evidence;
 mod pending;
 mod self_steps;
+mod wait;
 
 use super::compaction::{FoldJob, KindFolds, RunFrames};
 use super::driver::EngineNativeExecutor;
@@ -171,7 +172,10 @@ impl EngineNativeExecutor<'_> {
                 }
                 let note = asked.clone().flatten();
                 // FIX 4465 C: the live request as its rung sends it sizes and rides the flight.
-                let (live, room) = super::compaction::live_fork::capture(driver, request);
+                // FIX 9463: only with every row it was read from witnessed.
+                let prefix_sources = self.step_source_rows(config, record);
+                let (live, room) =
+                    super::compaction::live_fork::capture(driver, request, prefix_sources);
                 let (epoch, hooks) = match watermark {
                     Some(at) => match self.seal_compaction_window(
                         driver,
@@ -776,7 +780,8 @@ fn step_speech(record: &CodeRunReplayRecord, seq: u64) -> Vec<crate::compaction:
 
 /// What a fold's summary is derived from: every record its request was
 /// sealed with, and for a self-written one each home part its call wore
-/// whole (FIX 4465 B, Engine 10-19), so withdrawing one withdraws the words.
+/// whole (FIX 4465 B, Engine 10-19) and each row its live fork's prefix was
+/// read from (FIX 9463), so withdrawing one withdraws the words.
 fn fold_sources(
     gated: &GatedCompaction,
     execution: Option<&crate::compaction::CompactionExecution>,
@@ -784,7 +789,7 @@ fn fold_sources(
     let mut sources = gated.request().sources.clone();
     for row in execution
         .into_iter()
-        .flat_map(crate::compaction::CompactionExecution::home_dependencies)
+        .flat_map(crate::compaction::CompactionExecution::input_dependencies)
     {
         if !sources.contains(&row) {
             sources.push(row);
