@@ -6241,6 +6241,11 @@ export_facade! {
     let output = client.vault_mail_threads_read(&input)?;
     crate::codec::lift_record("vault.mail.threads.read", &output)
 };
+"vault.mail.attachments.open" => fn vault_mail_attachments_open(&self, input: MailAttachmentOpenRequest) -> MailAttachmentView = |client| {
+    let input: oneiron::mail_pack::MailAttachmentOpenRequest = crate::codec::lower_record("vault.mail.attachments.open", input)?;
+    let output = client.vault_mail_attachments_open(&input)?;
+    crate::codec::lift_record("vault.mail.attachments.open", &output)
+};
 "vault.mail.compliance.search" => fn vault_mail_compliance_search(&self, input: MailComplianceSearchRequest) -> MailComplianceSearchReply = |client| {
     let input: oneiron::mail_pack::MailComplianceSearchRequest = crate::codec::lower_record("vault.mail.compliance.search", input)?;
     let output = client.vault_mail_compliance_search(&input)?;

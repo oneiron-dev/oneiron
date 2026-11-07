@@ -248,6 +248,19 @@ pub const MAIL_TURN: &[u8] = b"oneiron.mail_pack.turn.v1";
 /// (hex), the provider's message id, the revision's content hash.
 pub const MAIL_MESSAGE: &[u8] = b"oneiron.mail_pack.message.v1";
 
+/// An attachment a reader opened, stored once (`mail_pack`). Parts: mail
+/// source id, the provider's message id, the attachment's MIME part id.
+pub const MAIL_ATTACHMENT: &[u8] = b"oneiron.mail_pack.attachment.v1";
+
+/// A pack calendar source's EVENT (`mail_pack`): one per source and
+/// provider UID, so two people's copies of one meeting never share a row.
+/// Parts: calendar source id, the event's UID.
+pub const MAIL_CALENDAR_EVENT: &[u8] = b"oneiron.mail_pack.calendar_event.v1";
+
+/// The archived resource a pack calendar source pulled (`mail_pack`).
+/// Parts: the source's calendar system, the event's UID.
+pub const MAIL_CALENDAR_SOURCE_BLOB: &[u8] = b"oneiron.mail_pack.calendar_source_blob.v1";
+
 /// A NOTE imported from a folder of markdown notes (`note::import`). Parts:
 /// folder, the file's path under it.
 pub const IMPORTED_NOTE: &[u8] = b"oneiron.ingest.notes.note.v1";
@@ -401,7 +414,7 @@ pub const EXECUTOR_CONTINUATION_CHECKPOINT: &[u8] = b"oneiron:executor-continuat
 
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 63] = [
+pub(crate) const ALL: [&[u8]; 66] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -449,6 +462,9 @@ pub(crate) const ALL: [&[u8]; 63] = [
     MAIL_CONVERSATION,
     MAIL_TURN,
     MAIL_MESSAGE,
+    MAIL_ATTACHMENT,
+    MAIL_CALENDAR_EVENT,
+    MAIL_CALENDAR_SOURCE_BLOB,
     IMPORTED_NOTE,
     PROJECT_REVISION,
     DECISION_QUESTION,

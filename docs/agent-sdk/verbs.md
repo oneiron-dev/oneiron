@@ -1254,6 +1254,7 @@ both bindings and their export-census tests in one change.
 - `vault.mail.sources.sync`
 - `vault.mail.inbox`
 - `vault.mail.threads.read`
+- `vault.mail.attachments.open`
 - `vault.mail.compliance.search`
 - `vault.files.sources.convert`
 - `vault.sync.repo_manifests.conflict.review`

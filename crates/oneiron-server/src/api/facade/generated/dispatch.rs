@@ -38801,19 +38801,31 @@ async fn vault_mail_pack_install(
     let auth = call.auth();
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.mail.pack.install")?;
     let value = input?;
-    let (actor, class) = facade_actor(server, auth)?;
-    let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
-        server,
-        call,
-        actor,
-        class,
-        "vault.mail.pack.install",
-        value,
-        &producers,
-    )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    oneiron::task_verb::sdk::validate_input("vault.mail.pack.install", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.mail.pack.install", value).await?;
+    let ran = async {
+        Ok::<_, FacadeApiError>(facade_output(
+            super::host_doors::vault_mail_pack_install(
+                server,
+                auth,
+                facade_door_input(&mut hooks)?,
+            )
+            .await?,
+        )?)
+    }
+    .await;
+    let output = match ran {
+        Ok(output) => output,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
 }
 async fn vault_mail_sources_connect(
     server: &Arc<SyncServer>,
@@ -39065,19 +39077,31 @@ async fn vault_mail_sources_sync(
     let auth = call.auth();
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.mail.sources.sync")?;
     let value = input?;
-    let (actor, class) = facade_actor(server, auth)?;
-    let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
-        server,
-        call,
-        actor,
-        class,
-        "vault.mail.sources.sync",
-        value,
-        &producers,
-    )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    oneiron::task_verb::sdk::validate_input("vault.mail.sources.sync", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.mail.sources.sync", value).await?;
+    let ran = async {
+        Ok::<_, FacadeApiError>(facade_output(
+            super::host_doors::vault_mail_sources_sync(
+                server,
+                auth,
+                facade_door_input(&mut hooks)?,
+            )
+            .await?,
+        )?)
+    }
+    .await;
+    let output = match ran {
+        Ok(output) => output,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
 }
 async fn vault_mail_inbox(
     server: &Arc<SyncServer>,
@@ -39118,6 +39142,28 @@ async fn vault_mail_threads_read(
         actor,
         class,
         "vault.mail.threads.read",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_mail_attachments_open(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.mail.attachments.open",
         value,
         &producers,
     )?;
@@ -50832,6 +50878,14 @@ fn boxed_vault_mail_threads_read<'a>(
     Box::pin(vault_mail_threads_read(server, call, input))
 }
 #[inline(never)]
+fn boxed_vault_mail_attachments_open<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_mail_attachments_open(server, call, input))
+}
+#[inline(never)]
 fn boxed_vault_mail_compliance_search<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
@@ -53459,6 +53513,9 @@ async fn call_verb_row(
         "vault.mail.sources.sync" => boxed_vault_mail_sources_sync(server, call, input).await,
         "vault.mail.inbox" => boxed_vault_mail_inbox(server, call, input).await,
         "vault.mail.threads.read" => boxed_vault_mail_threads_read(server, call, input).await,
+        "vault.mail.attachments.open" => {
+            boxed_vault_mail_attachments_open(server, call, input).await
+        }
         "vault.mail.compliance.search" => {
             boxed_vault_mail_compliance_search(server, call, input).await
         }

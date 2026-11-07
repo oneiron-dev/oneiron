@@ -146,6 +146,8 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultIdentityProposalsResolve
         | Row::VaultIdentityProposalsForPair
         | Row::VaultPacksPreview
+        | Row::VaultMailPackInstall
+        | Row::VaultMailSourcesSync
         | Row::VaultPacksConnectorPrepare
         | Row::VaultPacksConnectorGet
         | Row::VaultPacksConnectorQualify

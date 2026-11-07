@@ -1274,6 +1274,7 @@ pub enum AgentVerb {
     VaultMailSourcesSync,
     VaultMailInbox,
     VaultMailThreadsRead,
+    VaultMailAttachmentsOpen,
     VaultMailComplianceSearch,
     VaultFilesSourcesConvert,
     VaultSyncRepoManifestsConflictReview,
@@ -2589,6 +2590,7 @@ impl AgentVerb {
         Self::VaultMailSourcesSync,
         Self::VaultMailInbox,
         Self::VaultMailThreadsRead,
+        Self::VaultMailAttachmentsOpen,
         Self::VaultMailComplianceSearch,
         Self::VaultFilesSourcesConvert,
         Self::VaultSyncRepoManifestsConflictReview,
@@ -3941,6 +3943,7 @@ impl AgentVerb {
             Self::VaultMailSourcesSync => "vault.mail.sources.sync",
             Self::VaultMailInbox => "vault.mail.inbox",
             Self::VaultMailThreadsRead => "vault.mail.threads.read",
+            Self::VaultMailAttachmentsOpen => "vault.mail.attachments.open",
             Self::VaultMailComplianceSearch => "vault.mail.compliance.search",
             Self::VaultFilesSourcesConvert => "vault.files.sources.convert",
             Self::VaultSyncRepoManifestsConflictReview => {
@@ -5240,6 +5243,7 @@ impl AgentVerb {
                 | Self::VaultMailSourcesSync
                 | Self::VaultMailInbox
                 | Self::VaultMailThreadsRead
+                | Self::VaultMailAttachmentsOpen
                 | Self::VaultMailComplianceSearch
                 | Self::VaultFilesSourcesConvert
                 | Self::VaultSyncRepoManifestsConflictReview
@@ -6584,6 +6588,7 @@ impl AgentVerb {
                 | Self::VaultMailSourcesSync
                 | Self::VaultMailInbox
                 | Self::VaultMailThreadsRead
+                | Self::VaultMailAttachmentsOpen
                 | Self::VaultMailComplianceSearch
                 | Self::VaultFilesSourcesConvert
                 | Self::VaultSyncRepoManifestsConflictReview
@@ -8024,6 +8029,7 @@ impl AgentVerb {
                 | Self::VaultMailSourcesSync
                 | Self::VaultMailInbox
                 | Self::VaultMailThreadsRead
+                | Self::VaultMailAttachmentsOpen
                 | Self::VaultMailComplianceSearch
                 | Self::VaultFilesSourcesConvert
                 | Self::VaultSyncRepoManifestsConflictReview
@@ -8808,6 +8814,7 @@ impl AgentVerb {
                 | Self::VaultMailThreadsUnshare
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailSourcesSync
+                | Self::VaultMailAttachmentsOpen
                 | Self::VaultMailComplianceSearch
                 | Self::VaultFilesSourcesConvert
                 | Self::VaultSyncRepoManifestsConflictDiscard
@@ -10165,6 +10172,7 @@ impl AgentVerb {
             Self::VaultMailSourcesSync => &["spec"],
             Self::VaultMailInbox => &["spec"],
             Self::VaultMailThreadsRead => &["spec"],
+            Self::VaultMailAttachmentsOpen => &["spec"],
             Self::VaultMailComplianceSearch => &["spec"],
             Self::VaultFilesSourcesConvert => &["spec"],
             Self::VaultSyncRepoManifestsConflictReview => &["spec"],
@@ -11481,6 +11489,7 @@ impl AgentVerb {
             Self::VaultMailSourcesSync => &["spec"],
             Self::VaultMailInbox => &["spec"],
             Self::VaultMailThreadsRead => &["spec"],
+            Self::VaultMailAttachmentsOpen => &["spec"],
             Self::VaultMailComplianceSearch => &["spec"],
             Self::VaultFilesSourcesConvert => &["spec"],
             Self::VaultSyncRepoManifestsConflictReview => &["spec"],
@@ -15206,7 +15215,7 @@ impl AgentVerb {
                 "The owner adds a member he drained back to the vault's key custody set at the next revision, by its id or a folder member's absolute folder here; a member already in the set keeps its revision."
             }
             Self::VaultMailPackInstall => {
-                "The vault's owner installs the engine's own Mail & Calendar pack folder; it connects no source and grants nothing."
+                "The vault's owner installs the engine's own Mail & Calendar pack folder, on a served vault under the owner's proof; it connects no source and grants nothing."
             }
             Self::VaultMailSourcesConnect => {
                 "Connects a mailbox, group address or calendar: a personal mailbox or calendar is the caller's own and reads to them alone; an Owner or Admin connects a group address for the members it names."
@@ -15242,13 +15251,16 @@ impl AgentVerb {
                 "Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers."
             }
             Self::VaultMailSourcesSync => {
-                "The vault's owner runs one bounded import step of a Google or Microsoft 365 mailbox source on this device: changes since its anchor, the next newest-first pages under its copy setting, then waiting bodies."
+                "The vault's owner runs one bounded import step of a mail or calendar source, on this device or a served vault: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner."
             }
             Self::VaultMailInbox => {
                 "The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence."
             }
             Self::VaultMailThreadsRead => {
                 "One mail thread's messages, oldest first, to a reader of its source or someone it was shared with."
+            }
+            Self::VaultMailAttachmentsOpen => {
+                "A reader of a mail thread opens one attachment of its message: its fetch waits for the source's next import step, then its bytes are in an artifact that reads only to the thread's readers."
             }
             Self::VaultMailComplianceSearch => {
                 "Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers."

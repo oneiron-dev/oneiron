@@ -225,6 +225,11 @@ pub(super) struct Landing<'v> {
 }
 
 impl<'v> Landing<'v> {
+    /// The actor the landings are written as.
+    pub(super) const fn actor(&self) -> EntityId {
+        self.actor
+    }
+
     pub(super) fn new(
         vault: &'v Vault,
         owner: &'v AuthenticatedOwner,
@@ -269,9 +274,19 @@ impl<'v> Landing<'v> {
             let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
             let prior = OCCURRENCES.get(&vault.store, &txn, &key)?;
             if let Some(prior) = &prior
-                && (prior.content_hashes.contains(&hash)
-                    || matches!(prior.presence, MailPresence::Forgotten { .. }))
+                && matches!(prior.presence, MailPresence::Forgotten { .. })
             {
+                return Ok(LandOutcome::Same);
+            }
+            if let Some(prior) = &prior
+                && prior.content_hashes.contains(&hash)
+            {
+                drop(txn);
+                // The same words with the whole message read: the body stage
+                // and its attachments land on the occurrence, no new revision.
+                if let Some(full) = full {
+                    self.settle_full_in_place(&key, full)?;
+                }
                 return Ok(LandOutcome::Same);
             }
             let turn = prior.as_ref().map_or(
@@ -403,6 +418,7 @@ impl<'v> Landing<'v> {
                 subject: None,
                 received_at: headers.received_at,
                 searched,
+                attachments: Vec::new(),
                 landed_at: self.imported_at,
                 updated_at: self.imported_at,
             });
@@ -437,6 +453,9 @@ impl<'v> Landing<'v> {
                     .clone_from(&headers.rfc_message_id);
             }
             occurrence.searched |= searched;
+            if let Some(full) = full {
+                occurrence.attachments.clone_from(&full.attachments);
+            }
             occurrence.updated_at = self.imported_at;
             let queued = body_queue_key(source, occurrence.received_at, &headers.provider_id);
             if occurrence.stage == MailStage::Headers {
@@ -487,5 +506,42 @@ impl<'v> Landing<'v> {
             }
             Ok(())
         })
+    }
+}
+
+impl Landing<'_> {
+    /// Records that the occurrence `key` was read whole when its words are
+    /// those it landed with already: its stage is the body, it keeps the
+    /// message's attachments, and it leaves the body queue.
+    fn settle_full_in_place(
+        &self,
+        key: &(EntityId, [u8; 32]),
+        full: &MailFull,
+    ) -> MemoryResult<()> {
+        let vault = self.vault;
+        vault.with_write_txn_grouped(|wtxn| {
+            let Some(mut occurrence) = OCCURRENCES.get(&vault.store, wtxn, key)? else {
+                return Ok(());
+            };
+            if occurrence.stage == MailStage::Body && occurrence.attachments == full.attachments {
+                return Ok(());
+            }
+            let first_body = occurrence.stage == MailStage::Headers;
+            occurrence.stage = MailStage::Body;
+            occurrence.attachments.clone_from(&full.attachments);
+            occurrence.updated_at = self.imported_at;
+            BODY_QUEUE.delete(
+                &vault.store,
+                wtxn,
+                &body_queue_key(key.0, occurrence.received_at, &occurrence.provider_id),
+            )?;
+            if first_body {
+                let mut sync = SYNC.get(&vault.store, wtxn, &key.0)?.unwrap_or_default();
+                sync.bodies += 1;
+                SYNC.put(&vault.store, wtxn, &key.0, &sync)?;
+            }
+            OCCURRENCES.put(&vault.store, wtxn, key, &occurrence)
+        })?;
+        Ok(())
     }
 }

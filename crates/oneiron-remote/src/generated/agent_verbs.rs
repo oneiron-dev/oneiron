@@ -3873,6 +3873,9 @@ impl OneironClient {
                 "vault.mail.threads.read" => remote_agent_verb_output::<
                     oneiron::mail_pack::MailThreadView,
                 >(client, verb, &input),
+                "vault.mail.attachments.open" => remote_agent_verb_output::<
+                    oneiron::mail_pack::MailAttachmentView,
+                >(client, verb, &input),
                 "vault.mail.compliance.search" => remote_agent_verb_output::<
                     oneiron::mail_pack::MailComplianceSearchReply,
                 >(client, verb, &input),
@@ -19365,6 +19368,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.mail.threads.read", value)
+    }
+    pub fn vault_mail_attachments_open(
+        &self,
+        input: &oneiron::mail_pack::MailAttachmentOpenRequest,
+    ) -> Result<oneiron::mail_pack::MailAttachmentView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.mail.attachments.open", value)
     }
     pub fn vault_mail_compliance_search(
         &self,

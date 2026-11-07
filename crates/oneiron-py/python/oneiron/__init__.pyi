@@ -3712,9 +3712,11 @@ class Oneiron:
         def compliance(self) -> "Oneiron._VaultMailComplianceVerbs": ...
         def inbox(self, spec: Facade.MailInboxRequest) -> Facade.MailInboxPage:
             """The unified inbox: the messages of every mailbox the caller reads and of threads shared with it, newest first, with sender, subject, labels, stage and provider presence."""
+        @property
+        def attachments(self) -> "Oneiron._VaultMailAttachmentsVerbs": ...
     class _VaultMailPackVerbs:
         def install(self, spec: Facade.EmptyRequest | None = None) -> Facade.PackPutReceipt:
-            """The vault's owner installs the engine's own Mail & Calendar pack folder; it connects no source and grants nothing."""
+            """The vault's owner installs the engine's own Mail & Calendar pack folder, on a served vault under the owner's proof; it connects no source and grants nothing."""
     class _VaultMailSourcesVerbs:
         def connect(self, spec: Facade.MailSourceConnectRequest) -> Facade.MailSourceConnectReceipt:
             """Connects a mailbox, group address or calendar: a personal mailbox or calendar is the caller's own and reads to them alone; an Owner or Admin connects a group address for the members it names."""
@@ -3729,7 +3731,7 @@ class Oneiron:
         def sync_status(self, spec: Facade.MailSourceRef) -> Facade.MailSyncStatusView:
             """Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers."""
         def sync(self, spec: Facade.MailSourceSyncRequest) -> Facade.MailSyncReport:
-            """The vault's owner runs one bounded import step of a Google or Microsoft 365 mailbox source on this device: changes since its anchor, the next newest-first pages under its copy setting, then waiting bodies."""
+            """The vault's owner runs one bounded import step of a mail or calendar source, on this device or a served vault: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner."""
     class _VaultMailSourcesSettingsVerbs:
         def set(self, spec: Facade.MailSourceSettingsRequest) -> Facade.MailSourceView:
             """Sets what a source keeps (mail copy, provider delete rule), a calendar's detail sharing and its sync status: by its own person, or an Owner or Admin for a group address."""
@@ -3752,6 +3754,9 @@ class Oneiron:
             """The compliance log, oldest first: each change to the setting and each search made under it. The Owner and Admins read it."""
         def search(self, spec: Facade.MailComplianceSearchRequest) -> Facade.MailComplianceSearchReply:
             """Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers."""
+    class _VaultMailAttachmentsVerbs:
+        def open(self, spec: Facade.MailAttachmentOpenRequest) -> Facade.MailAttachmentView:
+            """A reader of a mail thread opens one attachment of its message: its fetch waits for the source's next import step, then its bytes are in an artifact that reads only to the thread's readers."""
     class _FeedbackVerbs:
         def preview(self, spec: Facade.FeedbackPreviewRequest) -> Facade.FeedbackSubjectPreview:
             """The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval."""

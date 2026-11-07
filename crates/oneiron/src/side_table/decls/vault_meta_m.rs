@@ -7,10 +7,23 @@ side_tables! {
     /// Conservative marker that a zero-head split has ever been recorded, gating an expensive ledger
     /// fold. Key: ().
     IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN: VaultMeta b"m:identity_topology_zero_head_seen" Raw;
+    /// The attachments readers opened (FIX 12559): each one's fetch, waiting or stored in its
+    /// artifact bound to its thread. Key: id16(source) + blake3 (32) of the provider id and
+    /// part id.
+    MAIL_PACK_ATTACHMENT: VaultMeta b"mail_pack:attachment:v1:" Named;
+    /// The opened-attachment artifacts whose message was erased, owed their own delete after
+    /// that erase commits (FIX 12559). Key: id16(artifact). Value: when it was owed.
+    MAIL_PACK_ATTACHMENT_ERASE: VaultMeta b"mail_pack:attachment_erase:v1:" Named;
     /// The mail messages that landed with their headers only and wait for their bodies, newest
     /// first (FIX 12559). Key: id16(source) + u64be (u64::MAX less the receive time) + blake3
     /// (32) of the provider id.
     MAIL_PACK_BODY_QUEUE: VaultMeta b"mail_pack:body_queue:v1:" Named;
+    /// One resource a pack calendar source's pulls landed: its UID, the listing that last saw
+    /// it and its start (FIX 12559). Key: id16(source) + blake3 (32) of the provider's resource
+    /// id.
+    MAIL_PACK_CALENDAR_RESOURCE: VaultMeta b"mail_pack:calendar_resource:v1:" Named;
+    /// One pack calendar source's pull progress, by the source. Key: id16.
+    MAIL_PACK_CALENDAR_SYNC: VaultMeta b"mail_pack:calendar_sync:v1:" Named;
     /// The org compliance search log (FIX 12560): each change to the setting and each search made
     /// under it, recorded before the search answers. Key: u64be sequence.
     MAIL_PACK_COMPLIANCE_EVENT: VaultMeta b"mail_pack:compliance_event:v1:" Named Authored
