@@ -65,7 +65,7 @@ use self::device_release::{mcp_release_listed, mcp_release_result};
 use self::envelope::mcp_request_id;
 pub(crate) use self::envelope::{
     MCP_CREDENTIAL_HEADER, McpCallContext, McpGatewayError, McpToolCallParams, mcp_gateway,
-    mcp_tool_first_gateway,
+    mcp_method_not_allowed, mcp_tool_first_gateway,
 };
 pub(crate) use self::exec_board_verbs::{
     deliver_run_board_hooks, drop_run_board, execute_mcp_execute_code, execute_run_board_verb,
