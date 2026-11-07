@@ -663,6 +663,9 @@ class Oneiron:
         def weave(self) -> "Oneiron._VaultWeaveVerbs":
             return Oneiron._VaultWeaveVerbs(self._client)
         @property
+        def step_up(self) -> "Oneiron._VaultStepUpVerbs":
+            return Oneiron._VaultStepUpVerbs(self._client)
+        @property
         def inbox(self) -> "Oneiron._VaultInboxVerbs":
             return Oneiron._VaultInboxVerbs(self._client)
         @property
@@ -1811,6 +1814,9 @@ class Oneiron:
         @property
         def item(self) -> "Oneiron._VaultWeaveItemVerbs":
             return Oneiron._VaultWeaveItemVerbs(self._client)
+        @property
+        def admin(self) -> "Oneiron._VaultWeaveAdminVerbs":
+            return Oneiron._VaultWeaveAdminVerbs(self._client)
         def enqueue(self, spec):
             """Admits a generated candidate weave recipe under the owner's proof and queues its pinned execution; poll vault.consolidation.status for completion."""
             return json.loads(_translate(lambda: self._client.vault_weave_enqueue(json.dumps(spec))))
@@ -1877,6 +1883,36 @@ class Oneiron:
         def wrong(self, spec):
             """A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays."""
             return json.loads(_translate(lambda: self._client.vault_weave_item_wrong(json.dumps(spec))))
+    class _VaultWeaveAdminVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def report(self, spec):
+            """A weave Admin's live report of the shared vault, inside the Admin membership grant's Scope, after the person stepped up with a passkey on this credential (MFA-1 A); never an Owner read."""
+            return json.loads(_translate(lambda: self._client.vault_weave_admin_report(json.dumps(spec))))
+        def lens(self, spec):
+            """A weave Admin's live report rendered into its lens on the server's model, under the stepped-up Admin proof; the server holds its frame for the card's events."""
+            return json.loads(_translate(lambda: self._client.vault_weave_admin_lens(json.dumps(spec))))
+        def digest(self, spec):
+            """One of a weave Admin's saved digests, or the newest, under the stepped-up Admin proof and the current read policy."""
+            return json.loads(_translate(lambda: self._client.vault_weave_admin_digest(json.dumps(spec))))
+        @property
+        def link(self) -> "Oneiron._VaultWeaveAdminLinkVerbs":
+            return Oneiron._VaultWeaveAdminLinkVerbs(self._client)
+        @property
+        def item(self) -> "Oneiron._VaultWeaveAdminItemVerbs":
+            return Oneiron._VaultWeaveAdminItemVerbs(self._client)
+    class _VaultWeaveAdminLinkVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def wrong(self, spec):
+            """A weave Admin labels a link its Admin report shows as wrong, under the stepped-up Admin proof, with the grant on the label; the link stays."""
+            return json.loads(_translate(lambda: self._client.vault_weave_admin_link_wrong(json.dumps(spec))))
+    class _VaultWeaveAdminItemVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def wrong(self, spec):
+            """A weave Admin labels a claim, project, budget or sieve audit row its Admin report shows as wrong, under the stepped-up Admin proof; the row stays."""
+            return json.loads(_translate(lambda: self._client.vault_weave_admin_item_wrong(json.dumps(spec))))
     class _VaultWeaveSchedulesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1907,6 +1943,27 @@ class Oneiron:
         def put(self, spec):
             """Tells the Coach the owner's own digest preference: a rhythm, a section to lead with, or keep the settings as they are."""
             return json.loads(_translate(lambda: self._client.vault_weave_digest_feedback_put(json.dumps(spec))))
+    class _VaultStepUpVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def passkeys(self) -> "Oneiron._VaultStepUpPasskeysVerbs":
+            return Oneiron._VaultStepUpPasskeysVerbs(self._client)
+        @property
+        def totp(self) -> "Oneiron._VaultStepUpTotpVerbs":
+            return Oneiron._VaultStepUpTotpVerbs(self._client)
+    class _VaultStepUpPasskeysVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def reset(self, spec):
+            """The vault owner removes every passkey a person enrolled for step-up, and that person's step-ups, so a person who lost each passkey can enroll a first one again; under the owner's own credential."""
+            return json.loads(_translate(lambda: self._client.vault_step_up_passkeys_reset(json.dumps(spec))))
+    class _VaultStepUpTotpVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def reset(self, spec):
+            """The vault owner removes a person's authenticator-app enrollments and their TOTP step-ups; passkeys and passkey step-ups remain unchanged."""
+            return json.loads(_translate(lambda: self._client.vault_step_up_totp_reset(json.dumps(spec))))
     class _VaultInboxVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

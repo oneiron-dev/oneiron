@@ -11,6 +11,7 @@ mod call_meta;
 mod claimed_release;
 mod client_surface;
 mod clock_repair_call;
+mod code_mode_self_brief;
 mod code_mode_verbs;
 mod code_run_resume;
 mod device_release;
@@ -44,15 +45,18 @@ use self::admission::{
     mcp_credential_reads, mcp_scope_covers_entity, mcp_scoped_task_rows, mcp_scoped_tasks_section,
     mcp_validated_call_args,
 };
-pub(crate) use self::board_observations::run_session_reads;
-pub(crate) use self::board_setup::{McpBoardOmissions, execute_mcp_setup, ride_run_carrier};
+pub(crate) use self::board_observations::{mcp_session_reads, run_session_reads};
+pub(crate) use self::board_setup::{
+    McpBoardOmissions, execute_mcp_setup, mcp_brief_pins, ride_run_carrier,
+    run_brief_people_budget, run_brief_pins,
+};
 use self::board_setup::{
     McpBoardState, McpCarrierPolicy, mcp_board_frame_error, mcp_board_verb_error,
     mcp_current_board, mcp_endpoint_result, mcp_page_cursor_error, mcp_preflight_page,
     mcp_resolve_page,
 };
 pub(crate) use self::code_mode_verbs::{
-    ReaderChildDoor, RunGuests, VerdictAsker, count_hook_decisions,
+    ReaderChildDoor, RunGuests, VerdictAsker, code_mode_line, count_hook_decisions,
 };
 pub(crate) use self::code_run_resume::{McpCodeRunContinuations, reenter_ready_mcp_code_runs};
 // L09's resident_pump `run_bound` calls the strict preflight (CUA E4).
