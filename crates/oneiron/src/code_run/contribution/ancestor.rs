@@ -21,7 +21,7 @@ use super::super::replay_capsule::{ExposureSlot, StepReplayCapsule};
 use super::execution::{CallerTarget, caller_target_in_txn};
 use super::{ContributionReplayUnavailable, FIRST_STEP};
 use crate::skill_attribution::ContributionTarget;
-use crate::{Result, Vault};
+use crate::{EntityId, Result, Vault};
 
 /// What a contribution check regenerates.
 pub(super) enum TargetStep {
@@ -46,7 +46,9 @@ impl TargetStep {
 /// steps, read in `txn`: the knowledge step [`target_step`] selects when its
 /// task exposes the target, else the step after a call of the target's
 /// load, or after a call whose answer delivered its body, when a step's
-/// replay context kept one, else the knowledge step's reason.
+/// replay context kept one, else the knowledge step's reason. A context is
+/// read only under `coach`'s own admission to its step (FIX 20607): a step
+/// it is not admitted to is the reason itself.
 ///
 /// # Errors
 ///
@@ -56,15 +58,22 @@ pub(super) fn select_target(
     txn: &heed::RoTxn<'_>,
     capsules: &[StepReplayCapsule],
     target: ContributionTarget,
+    coach: EntityId,
 ) -> Result<TargetStep> {
     let knowledge = target_step(capsules, target);
     let exposed = knowledge
         .as_ref()
         .is_ok_and(|capsule| !target_slots(capsule, target).is_empty());
-    if !exposed && let Some(caller) = caller_target_in_txn(vault, txn, capsules, target)? {
-        return Ok(TargetStep::Caller(Box::new(caller)));
+    if exposed {
+        return Ok(TargetStep::Knowledge(knowledge));
     }
-    Ok(TargetStep::Knowledge(knowledge))
+    Ok(
+        match caller_target_in_txn(vault, txn, capsules, target, coach)? {
+            Ok(Some(caller)) => TargetStep::Caller(Box::new(caller)),
+            Ok(None) => TargetStep::Knowledge(knowledge),
+            Err(reason) => TargetStep::Knowledge(Err(reason)),
+        },
+    )
 }
 
 /// The step `target`'s check regenerates among `capsules`, one run's
