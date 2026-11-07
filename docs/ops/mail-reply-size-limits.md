@@ -59,6 +59,30 @@ limit. Embedded hosts use the default.
    none, the send is refused before `MAIL`. When the server offers `SIZE`,
    `MAIL FROM` declares the message octets (`SIZE=<N>`).
 
+## What a check is bound to
+
+Each check records what it was read from:
+
+- the mailbox source;
+- the custody record that holds the mailbox's credential, and that record's
+  value generation;
+- the submission server (host and port) that the credential names;
+- the host setting it applied, when the server named no limit.
+
+The draft is published, and the press is made, in one write each. That write
+reads the mailbox source and its credential record as they are at that time.
+It uses the check only if the source still names the same credential record,
+the record is still at the same generation, and, for a server that named no
+limit, the host setting is unchanged. The submission server comes from the
+credential's value, so the same record at the same generation names the same
+server. The exact frozen message must then fit the check's limit.
+
+If any of these changed, for example the mailbox was reconnected with
+another credential, the credential was rotated or the setting was changed,
+the write is refused. Nothing is published, asked or approved. Draft again,
+or approve again: each call asks the server again before its write. A press
+never replaces a check that a later press recorded with an older one.
+
 The check at draft runs inside the drafter's own call, with the drafter's own
 handle and the mailbox's own credential. A served vault runs it on the
 server's blocking hop, so it holds no async runtime worker.

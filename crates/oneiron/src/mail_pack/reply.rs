@@ -347,8 +347,8 @@ fn view(
         message_octets: attached.map(|attached| attached.message.octets),
         message_blake3: attached
             .map(|attached| crate::blob_artifact::hash_hex(&attached.message.blake3)),
-        smtp_limit_octets: row.smtp_size.map(|check| check.limit),
-        smtp_limit_read_at: row.smtp_size.map(|check| check.read_at),
+        smtp_limit_octets: row.smtp_size.as_ref().map(|check| check.limit),
+        smtp_limit_read_at: row.smtp_size.as_ref().map(|check| check.read_at),
         plan_ref: row.plan_ref.clone(),
         state: row.state,
         outcome: row.outcome.clone(),
@@ -411,11 +411,14 @@ fn thread_in(
 /// Why the revision `row`, a reply with files that froze `attached`, may
 /// not land, read in `txn`, the writer that would land it (fix list row
 /// 17645): its thread no longer one `actor` reads, its mailbox source no
-/// longer the one `owner` owns that replies as `route`, or the message it
-/// answers gone ([`answered_refusal_in`]). An erase that committed after the
-/// draft was read finds no draft to end yet; this writer sees it, and
-/// nothing that erase would have ended is published. A reply without files
-/// lands as before.
+/// longer the one `owner` owns that replies as `route`, an IMAP reply's size
+/// check no longer bound to that source, its credential and its server as
+/// they stand here, or to this host's setting now
+/// ([`smtp_size_unbound_in`]), or its exact frozen message above that
+/// check's limit, or the message it answers gone ([`answered_refusal_in`]).
+/// An erase that committed after the draft was read finds no draft to end
+/// yet; this writer sees it, and nothing that erase would have ended is
+/// published. A reply without files lands as before.
 fn publication_refusal_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -437,17 +440,71 @@ fn publication_refusal_in(
             "the thread is gone, or no longer read by the drafter; draft it again".to_owned(),
         ));
     }
-    let routed = SOURCES
+    let Some(mailbox) = SOURCES
         .get(&vault.store, txn, &row.source)?
-        .is_some_and(|mailbox| {
-            mailbox.owner == owner && reply_route(&mailbox).is_ok_and(|now| now == route)
-        });
-    if !routed {
+        .filter(|mailbox| {
+            mailbox.owner == owner && reply_route(mailbox).is_ok_and(|now| now == route)
+        })
+    else {
         return Ok(Some(
             "the mailbox changed while the reply was drafted; draft it again".to_owned(),
         ));
+    };
+    // An IMAP reply stands on the size its server named only while that
+    // check is bound to the mailbox as it stands here; then its exact frozen
+    // message must fit it.
+    if let Some(refusal) = smtp_size_unbound_in(
+        vault,
+        txn,
+        row.smtp_size.as_ref(),
+        route == ReplyRoute::Account(ReplyTransport::Smtp),
+        row.source,
+        &mailbox,
+    )? {
+        return Ok(Some(format!("{refusal}; draft it again")));
+    }
+    if let Some(refusal) = row
+        .smtp_size
+        .as_ref()
+        .and_then(|check| check.refusal(attached.message.octets))
+    {
+        return Ok(Some(refusal));
     }
     Ok(answered_refusal_in(vault, txn, row, attached)?)
+}
+
+/// Why `check` is no size an SMTP reply from the mailbox source
+/// `source_ref`, `source` as it stands in `txn`, may stand on in that
+/// writer (fix list row 17645); `None` while it is, and for a reply that
+/// sends by no SMTP rail (`smtp` false) and names no check. An SMTP reply
+/// stands only on a check bound to that source, the credential it names in
+/// `txn` and the server that credential names, and, when its server named no
+/// limit, to this host's setting now ([`SmtpSizeCheck::binds_in`]). A check
+/// on another rail, none on SMTP's, or one no longer bound refuses that
+/// write: the caller asks the server again outside it. The caller judges
+/// the exact frozen message against a check that stands.
+///
+/// # Errors
+///
+/// Storage failures.
+fn smtp_size_unbound_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    check: Option<&SmtpSizeCheck>,
+    smtp: bool,
+    source_ref: EntityId,
+    source: &MailSourceRow,
+) -> Result<Option<&'static str>> {
+    Ok(match (check, smtp) {
+        (None, false) => None,
+        (Some(check), true) => (!check.binds_in(vault, txn, source_ref, source)?).then_some(
+            "the mailbox's submission credential, its server or this host's size setting \
+             changed since the server was asked the size it takes",
+        ),
+        (None, true) | (Some(_), false) => {
+            Some("the mailbox's submission server was not asked the size it takes")
+        }
+    })
 }
 
 /// How a source's replies leave it.
@@ -907,7 +964,7 @@ impl Memory<'_> {
         // under the caller's own read lane, then its copy exported once, so
         // a redraft with the same copies is the same revision (fix list row
         // 17645). The lane judges them again in the writer.
-        let (lane, admitted) = if let Some(rail) = rail {
+        let (lane, admitted) = if let Some(rail) = &rail {
             let lane = self.read_lane(ClaimReadStatus::Recorded)?;
             let (to, listed) = split_recipients(&recipients)?;
             let addresses = frozen_addresses(to, listed)
@@ -987,6 +1044,9 @@ impl Memory<'_> {
                 Some((admitted, answered, dependencies))
             }
         };
+        // The size an IMAP reply's server named, bound to what it was read
+        // from; the writer below takes it only while that still stands.
+        let smtp_size = rail.as_ref().and_then(AttachedRail::smtp_size).cloned();
         let mut frozen = None;
         let (identity, plan_ref, to, frozen_recipients, body_html, message) = match route {
             ReplyRoute::Gmail(identity) => {
@@ -1083,7 +1143,7 @@ impl Memory<'_> {
             drafted_at: prior.as_ref().map_or(now, |prior| prior.drafted_at),
             updated_at: now,
             message,
-            smtp_size: rail.and_then(AttachedRail::smtp_size),
+            smtp_size,
             attached: frozen.as_ref().map(|frozen| frozen.held.clone()),
         };
         vault.try_with_write_txn_grouped(|txn| -> MemoryResult<()> {
@@ -1387,13 +1447,13 @@ impl Vault {
                     })?;
                 let mail_source = self.mail_sync_source(row.source)?.ok_or_else(unknown)?;
                 // An IMAP reply with files asks its submission server again,
-                // before the press, the size it takes now: the size its
-                // draft read is no lasting permission (fix list row 17645).
-                let rechecked = match (transport, row.attached.is_some(), row.smtp_size) {
-                    (ReplyTransport::Smtp, true, Some(_)) => {
-                        Some(check_smtp_size(self, &mail_source, &message.from)?)
-                    }
-                    _ => None,
+                // before every press and outside its writer, the size it
+                // takes now: the size its draft read is no lasting
+                // permission (fix list row 17645).
+                let rechecked = if transport == ReplyTransport::Smtp && row.attached.is_some() {
+                    Some(check_smtp_size(self, &mail_source, &message.from)?)
+                } else {
+                    None
                 };
                 let sink = ReplySink::new(self, mail_source, message.clone(), transport);
                 (
@@ -1410,9 +1470,9 @@ impl Vault {
             }
         };
         // The press stands at the size its server named just now.
-        let row = match rechecked {
+        let row = match &rechecked {
             Some(check) => MailReplyDraftRow {
-                smtp_size: Some(check),
+                smtp_size: Some(check.clone()),
                 ..row
             },
             None => row,
@@ -1426,17 +1486,17 @@ impl Vault {
         };
         let row = self.try_with_write_txn_grouped(|txn| -> MemoryResult<MailReplyDraftRow> {
             // Every press, a retry too, proves the owner again in the writer
-            // that acts, and finds the mailbox still theirs.
-            if owner.revalidate_person_in_txn(self, txn)? != actor
-                || SOURCES
-                    .get(&self.store, txn, &row.source)?
-                    .and_then(|source| source.owner)
-                    != Some(actor)
-            {
+            // that acts, and finds the mailbox still theirs, as it stands in
+            // that writer.
+            let proven = owner.revalidate_person_in_txn(self, txn)? == actor;
+            let Some(mailbox) = SOURCES
+                .get(&self.store, txn, &row.source)?
+                .filter(|source| proven && source.owner == Some(actor))
+            else {
                 return Err(MemoryError::bad_request(
                     "only the mailbox's own person approves its replies",
                 ));
-            }
+            };
             let mut held = DRAFTS.get(&self.store, txn, &id)?.ok_or_else(unknown)?;
             if held.revision != row.revision || held.plan_ref != row.plan_ref {
                 return Err(invalid_state(
@@ -1452,11 +1512,30 @@ impl Vault {
                 ));
             }
             // An IMAP reply with files stands at the size its server named
-            // just now, which its draft keeps for its reviewer (fix list row
+            // for this press, or at one a press that asked later landed
+            // first; an older read never replaces a newer one. Either stands
+            // only while it is bound to the mailbox's credential and its
+            // server as they stand in this writer, and to this host's setting
+            // now; a check no longer bound refuses the press, and the next
+            // press asks again. Its exact frozen message is judged against it
+            // below, and the draft keeps it for its reviewer (fix list row
             // 17645).
-            let rechecked = held.smtp_size != row.smtp_size;
-            held.smtp_size = row.smtp_size;
-            // And it still stands in the writer that presses it.
+            let verdict = match (&held.smtp_size, &rechecked) {
+                (Some(kept), Some(read)) if kept.read_at > read.read_at => Some(kept.clone()),
+                (_, read) => read.clone(),
+            };
+            let smtp = held.attached.is_some() && mailbox.provider == MailProvider::Imap;
+            if let Some(refusal) =
+                smtp_size_unbound_in(self, txn, verdict.as_ref(), smtp, row.source, &mailbox)?
+            {
+                return Err(MemoryError::bad_request(format!(
+                    "{refusal}; approve it again"
+                )));
+            }
+            let verdict_changed = held.smtp_size != verdict;
+            held.smtp_size = verdict;
+            // And it still stands in the writer that presses it, its exact
+            // frozen message within that size.
             if let Some(refusal) = standing_refusal_in(self, txn, &id, &held)? {
                 return Err(MemoryError::bad_request(refusal));
             }
@@ -1468,7 +1547,7 @@ impl Vault {
                 DRAFTS.put(&self.store, txn, &id, &held)?;
                 // The press answers the revision's Ask.
                 clear_reply_ask_in_txn(self, txn, &id, held.revision)?;
-            } else if rechecked {
+            } else if verdict_changed {
                 DRAFTS.put(&self.store, txn, &id, &held)?;
             }
             Ok(held)

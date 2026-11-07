@@ -83,7 +83,7 @@ pub(super) const MAX_GMAIL_RAW_MESSAGE_OCTETS: u64 = 35 * 1024 * 1024;
 pub(super) const MAX_GRAPH_SEND_BODY_BYTES: u64 = 4_000_000;
 
 /// The rail a drafted reply with files sends by (fix list row 17645).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum AttachedRail {
     /// Gmail `users.messages.send`, through a Google mailbox's delegated
     /// identity.
@@ -99,17 +99,17 @@ impl AttachedRail {
     /// The rail revision `row` froze its files for: a Graph or an SMTP
     /// reply's frozen message rides in its row, an SMTP one's with the size
     /// its server named; a Gmail reply's plan is kept beside it.
-    pub(super) const fn of(row: &MailReplyDraftRow) -> Self {
-        match (&row.message, row.smtp_size) {
+    pub(super) fn of(row: &MailReplyDraftRow) -> Self {
+        match (&row.message, &row.smtp_size) {
             (None, _) => Self::Gmail,
-            (Some(_), Some(check)) => Self::Smtp(check),
+            (Some(_), Some(check)) => Self::Smtp(check.clone()),
             (Some(_), None) => Self::Graph,
         }
     }
 
-    /// The size an SMTP reply's submission server named; `None` on any
-    /// other rail.
-    pub(super) const fn smtp_size(self) -> Option<SmtpSizeCheck> {
+    /// The size an SMTP reply's submission server named, with what it was
+    /// read from; `None` on any other rail.
+    pub(super) const fn smtp_size(&self) -> Option<&SmtpSizeCheck> {
         match self {
             Self::Smtp(check) => Some(check),
             Self::Gmail | Self::Graph => None,
@@ -118,7 +118,7 @@ impl AttachedRail {
 
     /// Whether `source` still sends this rail's replies: an active personal
     /// mailbox of the rail's provider.
-    fn sends_from(self, source: &MailSourceRow) -> bool {
+    fn sends_from(&self, source: &MailSourceRow) -> bool {
         source.status == MailSourceStatus::Active
             && source.kind == MailSourceKind::PersonalMailbox
             && match self {
@@ -135,7 +135,7 @@ impl AttachedRail {
     /// while it fits: Gmail counts the message itself, Graph the base64 POST
     /// body it sends as, SMTP the message itself against the size its
     /// server named, else the host's setting.
-    pub(super) fn size_refusal(self, octets: u64) -> Option<String> {
+    pub(super) fn size_refusal(&self, octets: u64) -> Option<String> {
         match self {
             Self::Smtp(check) => check.refusal(octets),
             Self::Gmail => (octets > MAX_GMAIL_RAW_MESSAGE_OCTETS).then(|| {
@@ -501,7 +501,7 @@ impl Memory<'_> {
     pub(super) fn reply_attachments_admitted(
         &self,
         lane: &ScopedRead<'_>,
-        rail: AttachedRail,
+        rail: &AttachedRail,
         requested: &[MailReplyAttachment],
         recipients: &[String],
     ) -> MemoryResult<AdmittedFiles> {
