@@ -44,7 +44,7 @@ pub use outcome::{
     BlockRequest, EnqueuedDreamer, EnqueuedTask, HookOutcome, ProposedClaim, ProposedEdge,
     ProposedNote,
 };
-pub use read::grant_view::hook_evidence_views;
+pub use read::grant_view::{hook_evidence_views, hook_pull_image};
 pub(crate) use regen::note_bound_hook_in_txn;
 pub use regen::{
     HOOK_REGEN_CALL_PURPOSE_NAME, HookContractStamp, HookContractText, HookGoldenDiff,
