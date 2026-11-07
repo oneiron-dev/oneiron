@@ -1345,6 +1345,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.search.temporal" => a.spec.clone().ok_or_else(invalid),
         "vault.search.bm25" => a.spec.clone().ok_or_else(invalid),
         "vault.neighbors" => a.spec.clone().ok_or_else(invalid),
+        "vault.edges.provenance" => a.spec.clone().ok_or_else(invalid),
         "vault.structural.put" => a.spec.clone().ok_or_else(invalid),
         "vault.habits.checkin" => a.spec.clone().ok_or_else(invalid),
         "vault.productivity.create" => a.spec.clone().ok_or_else(invalid),
@@ -4903,6 +4904,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.neighbors" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.edges.provenance" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.structural.put" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -7673,6 +7677,7 @@ async fn execute_agent_verb_row_on(
         "vault.search.temporal" => boxed_mcp_verb_row_vault_search_temporal(row).await,
         "vault.search.bm25" => boxed_mcp_verb_row_vault_search_bm25(row).await,
         "vault.neighbors" => boxed_mcp_verb_row_vault_neighbors(row).await,
+        "vault.edges.provenance" => boxed_mcp_verb_row_vault_edges_provenance(row).await,
         "vault.structural.put" => boxed_mcp_verb_row_vault_structural_put(row).await,
         "vault.habits.checkin" => boxed_mcp_verb_row_vault_habits_checkin(row).await,
         "vault.productivity.create" => boxed_mcp_verb_row_vault_productivity_create(row).await,
@@ -62157,6 +62162,47 @@ async fn mcp_verb_row_vault_neighbors(row: McpVerbRow<'_>) -> McpVerbRowResult {
         serde_json::from_value(input).map_err(|_| invalid())?;
     let output =
         oneiron::task_verb::sdk::vault_neighbors(&memory, input).map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_vault_edges_provenance<'a>(row: McpVerbRow<'a>) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_edges_provenance(row))
+}
+async fn mcp_verb_row_vault_edges_provenance(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let input: oneiron::memory::EdgeProvenanceRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let output = oneiron::task_verb::sdk::vault_edges_provenance(&memory, input)
+        .map_err(mcp_facade_error)?;
     let source = crate::mcp::McpPageSource::complete(1);
     mcp_agent_verb_output(output, source)
 }
