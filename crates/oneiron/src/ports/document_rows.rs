@@ -140,6 +140,14 @@ pub(crate) trait DocumentRowStore: Transactions {
         slot: DocumentSlot,
         row: DocumentRow,
     ) -> Result<Option<Vec<u8>>>;
+    /// The stored bytes of one row, lent by the transaction where the backend
+    /// can lend them. An overlay-owned row keeps its existing owned backing.
+    fn port_document_row_borrowed<'txn>(
+        &self,
+        txn: &'txn Self::Read<'_>,
+        slot: DocumentSlot,
+        row: DocumentRow,
+    ) -> Result<Option<std::borrow::Cow<'txn, [u8]>>>;
     fn port_document_updates(
         &self,
         txn: &Self::Read<'_>,
