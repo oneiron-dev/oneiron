@@ -20,6 +20,7 @@
 //! one read snapshot, under the run's admission and its own read lane.
 
 mod custody;
+mod holder;
 mod host;
 mod proposals;
 mod read_join;
