@@ -1,5 +1,6 @@
 //! Code mode's verb-table calls: the run's write origin and the receipt a write keeps.
 
+mod connector_wait;
 mod consent;
 mod scoped_port;
 mod session_write;
@@ -7,6 +8,7 @@ mod stored_answer;
 
 use serde_json::Value;
 
+use self::connector_wait::connector_call_answer;
 use crate::EntityId;
 use crate::code_run::payload::{
     agent_verb_call_identity as call_identity, decode_self_dispatch_outcome,
@@ -27,7 +29,6 @@ use crate::runtime_hooks::VerbHookStop;
 use crate::task_verb::sdk::AgentVerb;
 use serde::{Deserialize, Serialize};
 
-use self::consent::connector_call_answer;
 use super::{ExecutorCallSite, HostSelfDispatcher};
 
 const AGENT_VERB_RECEIPT_DOMAIN: &[u8] =
@@ -147,6 +148,10 @@ impl HostSelfDispatcher<'_> {
             Some(capture) => origin.with_read_capture(capture.clone()),
             None => origin,
         };
+        // A skill-library answer's producer witnesses the skill bodies it
+        // carries, which the run's host keeps once its guest reads them (FIX
+        // 3608).
+        let origin = self.with_skill_body_capture(origin, call.verb, site);
         let read_site = site;
         let Some(site) = site.filter(|_| call.verb.writes()) else {
             let answer = self.program_door_call(&**door, &call, &origin, invocation);
