@@ -16,7 +16,9 @@
 //!
 //! A capsule keeps its request as pieces its run holds once for the actor
 //! (FIX 4192, [`pieces`]): the config, each message and one sequence node
-//! per message. Its own request body is the manifest that names them.
+//! per message. Its own request body is the manifest that names them. Its
+//! start is kept the same way ([`start_pieces`]): the config, the record's
+//! frame, and each element of each growing array of the record.
 //!
 //! A capsule also names the folds whose accepted summaries each of its
 //! bodies copies (FIX 18924). A read of a body whose folds' words are
@@ -35,10 +37,12 @@ mod restore;
 mod route_prompt;
 mod spawn_erase;
 mod start_parts;
+mod start_pieces;
 
 use serde::{Deserialize, Serialize};
 
 use self::pieces::{PieceScope, held_request_bytes};
+use self::start_pieces::held_start_bytes_in_txn;
 use super::super::contribution::{
     ContributionForkReceipt, ContributionReplayUnavailable, ForkTreatment, OwnerPair,
 };
@@ -76,6 +80,7 @@ pub(crate) use self::start_parts::{
     release_step_start_in_txn, republish_step_start_in_rows, republish_step_start_in_txn,
     settle_start_bodies_in_rows, step_capsule_row, step_start_body_row, step_start_owners_in_txn,
 };
+pub(crate) use self::start_pieces::{start_piece_held_apart_in_txn, step_start_content_pieces};
 
 /// Capsules. Key: id16(attempt) + be64(lease generation) + be64(step).
 const CAPSULES: SideTable<(EntityId, u64, u64), StepReplayCapsule, Named> =
@@ -275,6 +280,10 @@ pub(crate) fn undecodable_step_capsule_in_txn(
 /// `None` when the capsule has no start, holds its content no longer (its
 /// actor was erased), or its body is released, gone, withheld or no longer
 /// its digest, and when its prefix records withdrawn fold words (FIX 18924).
+/// FIX 4192: the whole start is put together from the pieces its manifest
+/// names, each as the capsule's run holds it for the capsule's actor. A
+/// piece whose bytes drifted from its row is no start, as bytes no longer
+/// its digest are; a read that fails stays an error (FIX 4194).
 pub(crate) fn capsule_start_body(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -283,19 +292,17 @@ pub(crate) fn capsule_start_body(
     let Some(capsule) = kept_in_txn(vault, rtxn, &capsule_key(capsule))? else {
         return Ok(None);
     };
-    let Some(start) = &capsule.start else {
+    let (Some(actor), Some(start)) = (capsule.content.actor(), &capsule.start) else {
         return Ok(None);
     };
     if start.erased || words_withdrawn(&vault.store, rtxn, &capsule.fold_words.start)? {
         return Ok(None);
     }
-    let held = match held_body_in_txn(vault, rtxn, capsule.run, &start.path, start.body) {
-        // Bytes that drifted from their row are no start, as bytes no longer
-        // its digest are; a read that fails stays an error (FIX 4194).
-        Err(error) if body_drifted(&error) => return Ok(None),
-        held => held?,
+    let scope = PieceScope {
+        run: capsule.run,
+        actor,
     };
-    let Some(bytes) = held else {
+    let Some(bytes) = held_start_bytes_in_txn(vault, rtxn, scope, start)? else {
         return Ok(None);
     };
     Ok((*blake3::hash(&bytes).as_bytes() == start.digest).then_some(bytes))
