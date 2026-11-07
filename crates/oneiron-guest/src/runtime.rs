@@ -1,12 +1,11 @@
 //! Canonical typed Component Model execution with seven non-write imports and
-//! the three that stream a proposed file to the host.
+//! the three that stream a proposed file to the host. A program's own error
+//! reaches the host in a step-error frame (FIX 9209).
 
 use crate::{
     Error, Result,
     filesystem::{Workspace, validate_files},
-    protocol::{
-        Input, MAX_CHUNK, MAX_COMPONENT, MAX_FILE, MAX_REQUESTS, MAX_SOURCE, Session, Snapshot,
-    },
+    protocol::{Input, MAX_CHUNK, MAX_COMPONENT, MAX_FILE, MAX_SOURCE, Session, Snapshot},
 };
 use oneiron_sandbox_contract::{ShapeError, WorkspacePath, WorkspaceShape};
 use serde::Deserialize;
@@ -28,7 +27,6 @@ struct State<T> {
     session: Session<T>,
     workspace: Workspace,
     limits: StoreLimits,
-    calls: usize,
     poisoned: bool,
     proposed: Proposed,
 }
@@ -53,11 +51,12 @@ struct OpenFile {
 type Reply = std::result::Result<u64, String>;
 
 impl<T> State<T> {
+    /// A host call is refused only once the run is poisoned: no lifetime
+    /// count ends a healthy guest's calls (FIX 8026).
     fn count_call(&mut self) -> wasmtime::Result<()> {
-        if self.poisoned || self.calls >= MAX_REQUESTS - 1 {
-            return Err(wasmtime::Error::msg("guest host-call budget exhausted"));
+        if self.poisoned {
+            return Err(wasmtime::Error::msg("guest host calls are poisoned"));
         }
-        self.calls += 1;
         Ok(())
     }
 
@@ -189,7 +188,6 @@ pub(crate) fn execute<T: Read + Write + 'static>(
             session,
             workspace,
             limits,
-            calls: 0,
             poisoned: false,
             proposed: Proposed {
                 shape,
@@ -262,7 +260,15 @@ fn run<T: Read + Write + 'static>(
     if store.data().poisoned {
         return Err(Error::Protocol("host transport failed"));
     }
-    let output = output.map_err(|_| Error::Runtime("component returned error"))?;
+    let output = match output {
+        Ok(output) => output,
+        Err(message) => {
+            // FIX 9209: the program's own error goes to the host exactly as
+            // the WIT returned it. A send that fails leaves the fixed failure.
+            let _ = store.data_mut().session.step_error(&message);
+            return Err(Error::Runtime("component returned error"));
+        }
+    };
     // Every proposed file is already with the host, frame by frame; one
     // left open is refused with the step.
     if store.data().proposed.open.is_some() {
@@ -422,8 +428,12 @@ fn link_imports<T: Read + Write + 'static>(linker: &mut Linker<State<T>>) -> was
         |mut context: StoreContextMut<'_, State<T>>, (length,): (u32,)| {
             let state = context.data_mut();
             state.count_call()?;
-            state.count_bytes(length as usize)?;
-            let mut bytes = vec![0; length as usize];
+            let length = length as usize;
+            let mut bytes = Vec::new();
+            if bytes.try_reserve_exact(length).is_err() {
+                return Ok((Err(String::from("random unavailable")),));
+            }
+            bytes.resize(length, 0);
             let result = std::fs::File::open("/dev/urandom")
                 .and_then(|mut file| file.read_exact(&mut bytes));
             Ok((result

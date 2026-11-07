@@ -66,6 +66,8 @@ pub(crate) fn put_artifact_document_in_txn(
         generation: 0,
         pending: 0,
         birth_frontier: None,
+        // Born here fresh: no restore rebuilt it (FIX 3553).
+        restored: None,
     };
     storage::persist_scanned(vault, txn, artifact, &mut h, doc, None, |_, _, _, _, _| {
         Ok(false)

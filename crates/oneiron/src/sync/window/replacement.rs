@@ -92,6 +92,7 @@ pub fn prepare_replacement(
         snapshot,
         evidence,
         ReplacementByteBound::NetworkFrame,
+        None,
     )
 }
 
@@ -108,6 +109,68 @@ pub(in crate::sync) enum ReplacementByteBound {
     AuthenticatedSectionLength,
 }
 
+/// The admission door a window's update or snapshot passes, with the staged
+/// world rows that prove its edges.
+type StagedAdmission =
+    fn(&Vault, &LoroDoc, &[u8], &WindowKey, &HashMap<EntityId, (WindowKey, Vec<u8>)>) -> Result<()>;
+
+/// What a replacement `snapshot` of `key` passes before anything of it is
+/// prepared: `bound`, `admit` over a fresh window, and a whole decode that
+/// reaches the snapshot's end. Returns that decode.
+fn admitted_replacement(
+    vault: &Vault,
+    key: &WindowKey,
+    snapshot: &[u8],
+    evidence: &HashMap<EntityId, (WindowKey, Vec<u8>)>,
+    bound: ReplacementByteBound,
+    admit: StagedAdmission,
+) -> Result<LoroDoc> {
+    if bound == ReplacementByteBound::NetworkFrame && snapshot.len() > MAX_WINDOW_PAD_PAYLOAD_BYTES
+    {
+        return Err(rejected());
+    }
+    let meta = LoroDoc::decode_import_blob_meta(snapshot, true).map_err(|_| rejected())?;
+    let base = crate::sync::schema::create_window_doc("replacement", key);
+    // A fault reading this vault's own state is this vault's, never the
+    // peer's rejected snapshot (FIX 5926).
+    admit(vault, &base, snapshot, key, evidence).map_err(|error| {
+        if is_window_admission_read_fault(&error) {
+            error
+        } else {
+            rejected()
+        }
+    })?;
+    // A snapshot decodes into a fresh document whole, with a fresh author peer: the old
+    // window's peer may hold counters the snapshot never saw.
+    let candidate = LoroDoc::from_snapshot(snapshot).map_err(|_| rejected())?;
+    if !candidate.oplog_vv().includes_vv(&meta.partial_end_vv) {
+        return Err(rejected());
+    }
+    Ok(candidate)
+}
+
+/// The admission [`prepare_bounded_replacement`] runs before it prepares
+/// anything, without staging the cutoffs `snapshot` carries: a device runs it
+/// before a sealed replacement's capsule installs (FIX 10474). The same
+/// errors: a rejected snapshot, or a fault reading this vault.
+pub(in crate::sync) fn check_bounded_replacement(
+    vault: &Vault,
+    key: &WindowKey,
+    snapshot: &[u8],
+    evidence: &HashMap<EntityId, (WindowKey, Vec<u8>)>,
+    bound: ReplacementByteBound,
+) -> Result<()> {
+    admitted_replacement(
+        vault,
+        key,
+        snapshot,
+        evidence,
+        bound,
+        super::check_window_update_with_staged_worlds,
+    )
+    .map(drop)
+}
+
 /// [`prepare_replacement`] for a snapshot up to `bound`. Only the length check
 /// differs: the snapshot passes the same admission, and the install keeps the
 /// same bookkeeping.
@@ -119,29 +182,16 @@ pub(in crate::sync) fn prepare_bounded_replacement(
     snapshot: &[u8],
     evidence: &HashMap<EntityId, (WindowKey, Vec<u8>)>,
     bound: ReplacementByteBound,
+    positions: Option<crate::sync::origin_positions::OwnDevicePositionImport>,
 ) -> Result<PreparedReplacement> {
-    if bound == ReplacementByteBound::NetworkFrame && snapshot.len() > MAX_WINDOW_PAD_PAYLOAD_BYTES
-    {
-        return Err(rejected());
-    }
-    let meta = LoroDoc::decode_import_blob_meta(snapshot, true).map_err(|_| rejected())?;
-    let base = crate::sync::schema::create_window_doc("replacement", key);
-    // A fault reading this vault's own state is this vault's, never the
-    // peer's rejected snapshot (FIX 5926).
-    super::validate_window_update_with_staged_worlds(vault, &base, snapshot, key, evidence)
-        .map_err(|error| {
-            if is_window_admission_read_fault(&error) {
-                error
-            } else {
-                rejected()
-            }
-        })?;
-    // A snapshot decodes into a fresh document whole, with a fresh author peer: the old
-    // window's peer may hold counters the snapshot never saw.
-    let candidate = LoroDoc::from_snapshot(snapshot).map_err(|_| rejected())?;
-    if !candidate.oplog_vv().includes_vv(&meta.partial_end_vv) {
-        return Err(rejected());
-    }
+    let candidate = admitted_replacement(
+        vault,
+        key,
+        snapshot,
+        evidence,
+        bound,
+        super::validate_window_update_with_staged_worlds,
+    )?;
 
     // The work happens on a detached copy of the old window: what this prepares there (queued
     // sends, scrubs, pending mirrors) feeds the carry-over and never leaves through the live
@@ -214,6 +264,9 @@ pub(in crate::sync) fn prepare_bounded_replacement(
         apply_tombstone_to_indexed_window_doc(&candidate, &tombstones, &marker.id, &marker.raw)?;
     }
     candidate.commit();
+    // Reverse rematerialization may remove an uninstalled optional root.
+    // Select only this snapshot's still-chosen values before that scrub.
+    let positions = positions.and_then(|positions| positions.select_replacement(&candidate));
     reverse_rematerialize(vault, &candidate, key)?;
     forward_rematerialize(vault, &candidate, materializer, key)?;
 
@@ -238,6 +291,7 @@ pub(in crate::sync) fn prepare_bounded_replacement(
             .filter_map(Result::ok)
             .collect()
     };
+    let _position_bodies = positions.as_ref().map(|_| vault.pin_all_result_bodies());
     vault.with_write_txn_grouped(|wtxn| {
         persist_window_doc_in_txn(vault, wtxn, key, &state, &vv)?;
         // The old generation's pending updates and the queued sends it took in depend on history
@@ -255,12 +309,77 @@ pub(in crate::sync) fn prepare_bounded_replacement(
                 matches!(conflict.map.as_str(), "entities" | "edges") && conflict.key == carrier
             })
         })?;
+        if let Some(positions) = &positions
+            && let Err(error) = positions.finish_in_txn(vault, wtxn, &candidate)
+        {
+            tracing::warn!(window = %key, %error, "optional own-device replacement positions did not settle");
+        }
         write_window_svf_in_txn(vault, wtxn, key)
     })?;
     Ok(PreparedReplacement {
         doc: candidate,
         conflicts,
     })
+}
+
+/// The replacement of a private world's sealed mirror `old` by `snapshot`, a mirror a bundle
+/// section carried that does not merge into it (FIX 17210): a mirror cut history-free whose root
+/// `old` lacks, or one whose operations run concurrent with `old`'s own cut. As a window
+/// replacement does, the candidate is a fresh document built from the snapshot alone, and `old`
+/// contributes what this vault holds that the snapshot does not: steps 1, 2 and 4 above, on the
+/// document alone. A mirror has no queued sends, pending mirrors or markers here, and its caller
+/// lands its rows. Returns the candidate and how many of `old`'s values it could not carry over.
+///
+/// # Errors
+///
+/// A snapshot that does not decode whole; storage failures.
+pub(crate) fn replace_detached_mirror(
+    vault: &Vault,
+    old: &LoroDoc,
+    snapshot: &[u8],
+) -> Result<(LoroDoc, usize)> {
+    let meta = LoroDoc::decode_import_blob_meta(snapshot, true).map_err(|_| rejected())?;
+    let candidate = LoroDoc::from_snapshot(snapshot).map_err(|_| rejected())?;
+    if !candidate.oplog_vv().includes_vv(&meta.partial_end_vv) {
+        return Err(rejected());
+    }
+    let mut hard = hard_tombstones(&candidate);
+    let (mut conflicts, written) = carry_over_unseen_writes(old, &candidate)?;
+    carry_over_hard_deletes(vault, old, &candidate)?;
+    carry_over_mirror_hard_deletes(old, &candidate)?;
+    hard.extend(hard_tombstones(&candidate));
+    conflicts.extend(keep_hard_deletes(&candidate, &hard, &written)?);
+    conflicts.extend(delete_wins(&candidate, &written)?);
+    candidate.commit();
+    conflicts.retain(|conflict| !holds_value(&candidate, conflict));
+    Ok((candidate, conflicts.len()))
+}
+
+/// Every hard delete the mirror `old` holds that `candidate` does not hold
+/// hard, applied to the candidate with the removal of its carriers: a mirror
+/// keeps another machine's hard deletes, which this vault may never have
+/// marked, and no replacement softens or drops one, whatever order the two
+/// copies' writes take (FIX 17210).
+fn carry_over_mirror_hard_deletes(old: &LoroDoc, candidate: &LoroDoc) -> Result<()> {
+    let tombstones = TombstoneIndex::build(&candidate.get_map("tombstones"));
+    let mut hard = Vec::new();
+    for (key, raw) in hard_tombstones(old) {
+        let Ok(id) = EntityId::from_hex(&key) else {
+            continue;
+        };
+        if !tombstones
+            .values_for(&id)
+            .iter()
+            .any(|held| crate::deletion::decode_tombstone_value(held).is_hard())
+        {
+            hard.push((id, raw));
+        }
+    }
+    for (id, raw) in &hard {
+        apply_tombstone_to_indexed_window_doc(candidate, &tombstones, id, raw)?;
+    }
+    candidate.commit();
+    Ok(())
 }
 
 /// A persisted replacement, ready to install.
