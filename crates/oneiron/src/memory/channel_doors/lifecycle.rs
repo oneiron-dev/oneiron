@@ -3,9 +3,13 @@
 //! Its request and view records are local definitions; `memory::channel_doors` re-exports them.
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
 
 use super::*;
 use std::collections::BTreeSet;
+
+use crate::runtime_hooks::verb::{hold_paced_verb_call, paced_turn_again, runs_paced_turn};
+use crate::task_verb::sdk::AgentVerb;
 
 use crate::channel_identity::{
     ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityShape,
@@ -343,12 +347,32 @@ impl Memory<'_> {
         ))
     }
 
+    /// The gated apply of one lifecycle request. A full count-bound window
+    /// that paces it holds the call in its caller's fair line when its host
+    /// can run it again through the door it came in by (FIX 8753, Engine
+    /// 14:34 B): the caller gets `PACED_HOLD`, and the call, `args` as it
+    /// sent them, runs on its turn under the same invocation, so the same
+    /// kept request. A caller whose lifecycle calls of this verb wait joins
+    /// the line behind them. A call no host can run again answers its paced
+    /// receipt as before.
     fn channel_lifecycle_as(
         &self,
         owner: &AuthenticatedOwner,
+        verb: ChannelIdentityLifecycleVerb,
+        args: &JsonValue,
         request_ref: EntityId,
         intent: ChannelIdentityLifecycleIntent,
     ) -> MemoryResult<ChannelIdentityLifecycleReceipt> {
+        let name = lifecycle_agent_verb(verb);
+        let turn = self
+            .invocation()
+            .filter(|invocation| runs_paced_turn(*invocation));
+        if turn.is_none()
+            && let Some(next) = self.vault.paced_verb_line_waits(self.actor(), name)?
+            && let Some(held) = hold_paced_verb_call(self, name, args, next)?
+        {
+            return Err(held);
+        }
         let actor = self.channel_lifecycle_actor(owner)?;
         let id = intent.identity_id();
         // FIX 6424 part 3: the Gate pins this request by its ref, kept
@@ -365,7 +389,18 @@ impl Memory<'_> {
             Some(request_ref),
         )?;
         match applied {
-            LifecycleApplied::Applied(result) => self.channel_lifecycle_receipt(id, result),
+            LifecycleApplied::Applied(result) => {
+                if let Some(until) = result.paced_until {
+                    // Its window paced it again on its turn: back in line.
+                    if turn.is_some() {
+                        return Err(paced_turn_again(until));
+                    }
+                    if let Some(held) = hold_paced_verb_call(self, name, args, until)? {
+                        return Err(held);
+                    }
+                }
+                self.channel_lifecycle_receipt(id, result)
+            }
             LifecycleApplied::Replayed(result, view) => Ok(recorded_receipt(id, result, view)),
         }
     }
@@ -377,6 +412,7 @@ impl Memory<'_> {
     ) -> MemoryResult<ChannelIdentityLifecycleReceipt> {
         let actor = self.channel_owner(owner)?;
         self.channel_binding_readable(input.binding)?;
+        let args = lifecycle_args(&input)?;
         let call = self.channel_lifecycle_call(
             actor,
             ChannelIdentityLifecycleVerb::Provision,
@@ -403,6 +439,8 @@ impl Memory<'_> {
         );
         self.channel_lifecycle_as(
             owner,
+            ChannelIdentityLifecycleVerb::Provision,
+            &args,
             request_ref,
             ChannelIdentityLifecycleIntent::Provision(ProvisionIntent {
                 identity_id,
@@ -430,6 +468,7 @@ impl Memory<'_> {
             ChannelIdentityBindRequest::Existing { identity_ref, .. } => Some(*identity_ref),
             ChannelIdentityBindRequest::Delegated { .. } => None,
         };
+        let args = lifecycle_args(&input)?;
         // A delegated bind's request is given a fresh id for the row it
         // provisions; an existing one's names its row.
         let call = self.channel_lifecycle_call(
@@ -504,6 +543,8 @@ impl Memory<'_> {
         };
         self.channel_lifecycle_as(
             owner,
+            ChannelIdentityLifecycleVerb::Bind,
+            &args,
             request_ref,
             ChannelIdentityLifecycleIntent::Bind(BindIntent {
                 identity_id,
@@ -599,7 +640,8 @@ impl Memory<'_> {
         })?;
         match call {
             DoorCall::Ready { request_ref, .. } => {
-                self.channel_lifecycle_as(owner, request_ref, intent)
+                let args = lifecycle_args(input)?;
+                self.channel_lifecycle_as(owner, verb, &args, request_ref, intent)
             }
             DoorCall::Answered(receipt) => Ok(*receipt),
         }
@@ -657,4 +699,29 @@ fn recorded_receipt(
         approval_digest: result.approval_digest,
         request_ref: result.request_ref,
     }
+}
+
+/// The facade verb a lifecycle verb is called by.
+const fn lifecycle_agent_verb(verb: ChannelIdentityLifecycleVerb) -> &'static str {
+    match verb {
+        ChannelIdentityLifecycleVerb::Provision => {
+            AgentVerb::VaultChannelIdentitiesProvision.as_str()
+        }
+        ChannelIdentityLifecycleVerb::Bind => AgentVerb::VaultChannelIdentitiesBind.as_str(),
+        ChannelIdentityLifecycleVerb::Rotate => AgentVerb::VaultChannelIdentitiesRotate.as_str(),
+        ChannelIdentityLifecycleVerb::Release => AgentVerb::VaultChannelIdentitiesRelease.as_str(),
+        ChannelIdentityLifecycleVerb::RouteInbound => {
+            AgentVerb::VaultChannelIdentitiesRouteInbound.as_str()
+        }
+    }
+}
+
+/// A lifecycle call's input as its caller sent it: the args a held call
+/// runs with on its turn (FIX 8753).
+fn lifecycle_args(input: &impl Serialize) -> MemoryResult<JsonValue> {
+    serde_json::to_value(input).map_err(|_| {
+        MemoryError::from(crate::Error::InvariantViolation(
+            "channel lifecycle args encode",
+        ))
+    })
 }

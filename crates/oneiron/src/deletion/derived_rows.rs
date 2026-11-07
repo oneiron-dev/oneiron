@@ -45,7 +45,7 @@ const ERASERS: &[EntitySideRowEraser] = &[
         )
     },
     // FIX 9929: a public model step's kept request and result.
-    |write, txn, id| crate::llm::erase_submissions_in_txn(write.store, txn, id),
+    |write, txn, id| crate::llm::erase_submissions_in_txn(write, txn, id),
     // FIX 10089: every verdict memo the erased row is a source of.
     |write, txn, id| {
         crate::store::query_memo_lifetime::erase_memos_for_source_in_txn(write.store, txn, id)
@@ -77,6 +77,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     |write, txn, id| {
         crate::llm::decision::questions::erase_question_source_in_txn(write.store, txn, id)
     },
+    // FIX 7824: the unclear attribution notes written about the row, or from it.
+    crate::skill_attribution::erase_unclear_source_in_txn,
     // FIX 10019: an erased export's accepted persona copy.
     crate::persona_snapshot::erase_in_txn,
     // FIX 9598: an erased claim's owed VAD consolidation.
@@ -107,6 +109,9 @@ const ERASERS: &[EntitySideRowEraser] = &[
     |write, txn, id| crate::provenance::erase_actor_stamp_uses_in_txn(write.store, txn, id),
     #[cfg(feature = "sync")]
     |write, txn, id| erase_carried_born_with_in_txn(write.store, txn, id),
+    // FIX 12113: which machine wrote a MESSAGE row: a digest of its bytes.
+    #[cfg(feature = "sync")]
+    |write, txn, id| crate::sync::forget_message_writer_in_txn(write.store, txn, id),
     // FIX 7998: retained federation and maintenance copies of the row.
     #[cfg(feature = "sync")]
     |write, txn, id| erase_retained_copies_in_txn(write.store, txn, id),
