@@ -443,7 +443,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/off_record_doors.rs` | src | m | 11 crate-vis | — | The host doors of the off-record session rows (DOOR-127, e2e PRIVACY-06) |
 | `src/api/facade/off_record_doors/run_reads.rs` | src | s | 4 crate-vis | — | The read and answer doors of a session-bound code run (FIX 4284): `self.off_record.results.list` and… |
 | `src/api/facade/off_record_room_doors.rs` | src | s | 10 crate-vis | — | Typed room off-record verbs over the existing participant handlers |
-| `src/api/facade/origin_doors.rs` | src | m | 21 crate-vis | — | Credential-bound host projections of the typed origin and checkout doors (DOOR-139) |
+| `src/api/facade/origin_doors.rs` | src | m | 24 crate-vis | — | Credential-bound host projections of the typed origin and checkout doors (DOOR-139) |
 | `src/api/facade/origin_publish_doors.rs` | src | s | 7 crate-vis | — | Credential-bound host projections of the exact publish doors (FIX 6866) |
 | `src/api/facade/outbound_call_erase_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's per-call outbound request erase (FIX 11801): `vault.outbound_calls.request.erase` |
 | `src/api/facade/outbox_diverged_doors.rs` | src | m | 8 crate-vis | — | `vault.outbox.diverged.list` and `vault.outbox.diverged.answer` (FIX 11739): a vault VM's outbox carrier… |

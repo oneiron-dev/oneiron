@@ -3435,7 +3435,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/genui/tests.rs` | test | m | — | — | — |
 | `src/genui/tests/failure_integrity.rs` | test | s | — | — | — |
 | `src/genui/voice_offer.rs` | src | m | 1 struct · 3 fn · 1 crate-vis | VoiceGrantOffer | Voice-only disclosure widening is an offer, not an authorization |
-| `src/git_wire/argv.rs` | src | m | 37 crate-vis | — | Core half of `git_wire::argv`: its store-layer items live in `oneiron_store::git_wire::argv` and are… |
+| `src/git_wire/argv.rs` | src | m | 39 crate-vis | — | Core half of `git_wire::argv`: its store-layer items live in `oneiron_store::git_wire::argv` and are… |
 | `src/git_wire/bridge.rs` | src | s | 2 crate-vis | — | Core half of `git_wire::bridge`: its store-layer items live in `oneiron_store::git_wire::bridge` and are… |
 | `src/git_wire/bundle_tree.rs` | src | s | 4 crate-vis | — | Core half of `git_wire::bundle_tree`: its store-layer items live in `oneiron_store::git_wire::bundle_tree`… |
 | `src/git_wire/checkout.rs` | src | s | 2 fn · 5 crate-vis | — | Checkout custody: owned handle directories plus the `CheckoutRepoOps` trait impl |
@@ -3462,6 +3462,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/git_wire/reachable_blobs.rs` | src | m | 1 struct · 7 fn · 1 crate-vis | GitPeeledTip | The small blobs a set of tips reaches through its whole history, read in bounded batches: what a caller… |
 | `src/git_wire/repository_profile.rs` | src | s | 6 crate-vis | — | Core half of `git_wire::repository_profile`: its store-layer items live in… |
 | `src/git_wire/retained_object.rs` | src | s | 4 fn · 1 re-export · 2 crate-vis | — | Core half of `git_wire::retained_object`: its store-layer items live in… |
+| `src/git_wire/secret_purge.rs` | src | s | 1 crate-vis | — | The object collection of the owner's confirmed secret purge (FIX 7608 slice 10): once the purge moved a… |
 | `src/git_wire/tests.rs` | test | XL | — | — | — |
 | `src/git_wire/wire_publish.rs` | src | m | 6 fn · 2 crate-vis | — | Journaled ref publication: the one transactional path and its finishing rules |
 | `src/git_wire/wire_reads.rs` | src | m | 1 struct · 16 fn · 9 crate-vis | GitWire | The `GitWire` handle, its constructors, the process seam, and the read path |
@@ -4094,10 +4095,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/origin_doors/external_import.rs` | src | s | 1 enum · 4 fn | ExternalImportProof | The outside import doors (FIX 6871, G7 PR1): `vault.code.imports.create` and `vault.code.imports.get` |
 | `src/memory/origin_doors/import.rs` | src | s | 1 fn | — | `vault.code.import` (FIX 6869, G4 PR1): the owner's import of one admitted commit of a served repository… |
 | `src/memory/origin_doors/import_types.rs` | src | s | 4 struct · 1 enum · 1 re-export | CodeImportManifestFile, CodeImportManifestView, CodeRepoImportRequest, CodeRepoImportState, CodeRepoImportView | `vault.code.import` wire types (FIX 6869, G4 PR1): the owner names a served repo, its PROJECT, the admitted… |
-| `src/memory/origin_doors/mod.rs` | src | s | 8 re-export | — | Typed origin and checkout doors (DOOR-139): tested-tree export, the origin authority epoch, publication… |
+| `src/memory/origin_doors/mod.rs` | src | s | 9 re-export | — | Typed origin and checkout doors (DOOR-139): tested-tree export, the origin authority epoch, publication… |
 | `src/memory/origin_doors/operations.rs` | src | m | 5 fn · 3 crate-vis | — | Origin doors: authority get and set, checkout door binding, code export and publications |
 | `src/memory/origin_doors/preview.rs` | src | m | 1 enum · 3 fn | CodeExportPreviewProof | The exact export preview doors (FIX 6869, G4 PR3): `vault.code.export.preview` and… |
 | `src/memory/origin_doors/publish.rs` | src | s | 1 enum · 7 fn | OriginPublishProof | The exact publish doors (FIX 6866): request, review, get, approve, execute and cancel one exact-commit… |
+| `src/memory/origin_doors/secret_purge.rs` | src | s | 3 fn | — | The repo secret purge doors (FIX 7608 slice 10, owner ruling SECRETS-IN-REPOS = A)… |
 | `src/memory/origin_doors/setup.rs` | src | s | 7 fn | — | The owner's repository registration and outbound mirror setup, through the same proof and credential-scoped… |
 | `src/memory/origin_doors/types.rs` | src | s | 16 struct · 1 enum | CheckoutDoorBindRequest, CheckoutDoorBinding, CodeExportRequest, CodeExportResult, OriginAuthoritySetRequest, OriginAuthorityView, OriginMirrorCleared, OriginMirrorSetRequest +9 | Origin authority, checkout binding, export, publication, register and mirror records |
 | `src/memory/origin_doors/workbench.rs` | src | m | 3 fn · 4 crate-vis | — | The owner's workbench reads (FIX 6869, G4 PR2): `vault.code.repos.get`, `vault.code.forks.get` and… |
@@ -4565,7 +4567,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/origin/mirror_status.rs` | src | s | 5 crate-vis | — | What every automatic mirror push run shows on its mirror row, and the hold of a run that failed before… |
 | `src/origin/mirror_strategy.rs` | src | s | 2 fn · 1 re-export · 2 crate-vis | — | Core half of `origin::mirror_strategy`: its store-layer items live in… |
 | `src/origin/mirror_wake.rs` | src | s | 5 fn · 7 crate-vis | — | The vault-owned wake of the origin mirror pushes (FIX 6866 part 2; CALLS "FIX 6866 full-auto trigger" and… |
-| `src/origin/mod.rs` | src | s | 17 mod · 5 re-export · 13 crate-vis | — | Vault-as-origin serving plane (ARCH-0068 Phase A) |
+| `src/origin/mod.rs` | src | s | 18 mod · 5 re-export · 13 crate-vis | — | Vault-as-origin serving plane (ARCH-0068 Phase A) |
 | `src/origin/publication/mod.rs` | src | s | 2 re-export · 2 crate-vis | — | The origin publication protocol (ARCH-0068 RA2–RA5, ONE-1910) |
 | `src/origin/publication/publication_codec.rs` | src | s | 1 re-export · 6 crate-vis | — | Core half of `origin::publication::publication_codec`: its store-layer items live in… |
 | `src/origin/publication/publication_journal.rs` | src | m | 21 crate-vis | — | Journal access: repo identity, row scans, visible-ref rows, owner counts plus advance/receipt/validate helpers |
@@ -4601,10 +4603,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/origin/repo_manifest.rs` | src | m | 3 struct · 6 fn · 1 const · 15 crate-vis | RepoManifest, RepoManifestWriter, RepoPortableId | FIX 6870 phase 1 (G5, ARCH-0068 RA2): a repo's portable identity and its manifest |
 | `src/origin/repo_manifest/refresh.rs` | src | s | 5 crate-vis | — | Refresh of a standing manifest's refs (FIX 6870 phase 1, rulings 7-8) |
 | `src/origin/residence.rs` | src | m | 2 struct · 2 enum · 8 fn · 1 const · 21 crate-vis | OriginAuthority, OriginAuthorityLease, OriginHostAuthority, OriginResidence | Explicit owner-controlled origin epochs |
-| `src/origin/secret_manifest.rs` | src | s | 1 struct · 1 fn · 1 const · 3 crate-vis | OriginSecretManifest | The repo secret manifest, read from a repository the vault serves as origin (ARCH-0069 S2; ARCH-0068 RC4 and… |
+| `src/origin/secret_manifest.rs` | src | s | 1 struct · 1 fn · 1 const · 4 crate-vis | OriginSecretManifest | The repo secret manifest, read from a repository the vault serves as origin (ARCH-0069 S2; ARCH-0068 RC4 and… |
 | `src/origin/secret_marks.rs` | src | m | 12 crate-vis | — | A pushed key's mark (FIX 7608, owner ruling SECRETS-IN-REPOS = A): the immutable `repo.secret_mark` facts an… |
 | `src/origin/secret_marks/carry.rs` | src | s | 1 crate-vis | — | The mark a translated sync copy edit's landed bytes carry (FIX 10732, L04 05:5x) |
-| `src/origin/secret_marks/read.rs` | src | m | 26 crate-vis | — | The reader's half of a pushed key's mark (FIX 7608 slice 2a, CALL 8033 option d): the readable… |
+| `src/origin/secret_marks/read.rs` | src | m | 27 crate-vis | — | The reader's half of a pushed key's mark (FIX 7608 slice 2a, CALL 8033 option d): the readable… |
 | `src/origin/secret_projection.rs` | src | m | 32 crate-vis | — | Who reads a marked repo blob's real bytes (FIX 7608 slice 2a, owner ruling SECRETS-IN-REPOS = A, ASK 1) |
 | `src/origin/secret_projection/checkout.rs` | src | s | 3 crate-vis | — | A checkout lease's masked copy (FIX 7608 slice 2b-ii-B2) |
 | `src/origin/secret_projection/checkout_recipient.rs` | src | s | 3 crate-vis | — | The recipient a run's checkout of a masked copy was bound for (FIX 7608 pre-flip, FIX 10271 and 9328) |
@@ -4630,6 +4632,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/origin/secret_projection/selector_release/cache.rs` | src | s | 6 crate-vis | — | The masked copies one pass made, kept for the next (FIX 10599; owner order 30 Oct: speed is in scope): a… |
 | `src/origin/secret_projection/types.rs` | src | s | 1 struct · 1 enum · 9 crate-vis | RepoFileProjectionKind, RepoFileProjectionView | The value-free shapes a projected repo read carries (FIX 7608 slice 2a, CALL P1): the opaque placeholder's… |
 | `src/origin/secret_publication.rs` | src | s | 1 re-export · 4 crate-vis | — | Core half of `origin::secret_publication`: its store-layer items live in… |
+| `src/origin/secret_purge.rs` | src | m | 8 struct · 2 enum · 3 crate-vis | RepoSecretPurgeIdRequest, RepoSecretPurgeKeepRoot, RepoSecretPurgeOutstanding, RepoSecretPurgePlan, RepoSecretPurgeReceipt, RepoSecretPurgeRefMove, RepoSecretPurgeRefOutcome, RepoSecretPurgeRequest +2 | The owner's purge of marked keys from a served repository's history (FIX 7608 slice 10, owner ruling… |
+| `src/origin/secret_purge/execute.rs` | src | m | 1 crate-vis | — | The owner's execute of a frozen purge plan (FIX 7608 slice 10): each ref moves through the origin… |
+| `src/origin/secret_purge/plan.rs` | src | s | 3 crate-vis | — | The purge request (FIX 7608 slice 10): plans one served repository's purge and freezes the plan, moving… |
 | `src/origin/smart_http/advertise.rs` | src | m | 7 crate-vis | — | The publication-gated ref-advertisement rewrite: pkt-line state machine and keep policy |
 | `src/origin/smart_http/advertise_tests.rs` | test | m | — | — | Advertisement gate and stock-client roundtrip tests, plus the LFS attach/detach landing tests and the room… |
 | `src/origin/smart_http/cgi_finish.rs` | src | s | 3 crate-vis | — | CGI response framing, observed-ref narrowing, and the exchange-to-report landing commit |
@@ -7240,7 +7245,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/verbs/free_time_policy.rs` | src | s | 1 fn | — | `vault.free_time.policy.set_as` (FIX 11424): an agent sets or clears one agent's free-time policy under its… |
 | `src/verbs/generated/catalog_fragment_revision.rs` | src | generated | 1 const | — | — |
 | `src/verbs/generated/run_verb_catalog.rs` | src | generated | 1 enum · 4 fn · 1 const | RunVerb | — |
-| `src/verbs/generated/sdk_generated.rs` | src | generated | 1329 fn · 4 const | — | — |
+| `src/verbs/generated/sdk_generated.rs` | src | generated | 1332 fn · 4 const | — | — |
 | `src/verbs/generated/verb_catalog.rs` | src | generated | 1 enum · 17 fn · 1 const | AgentVerb | — |
 | `src/verbs/git_push_grant.rs` | src | s | 7 struct · 3 fn | GitPushGrantMintInput, GitPushGrantMintOutput, GitPushGrantRevokeInput, GitPushGrantRevokeOutput, GitPushGrantView, RepoAnchorBindInput, RepoAnchorBindOutput | The inputs and answers of the owner's `git_push` Grant rows (FIX 6867, G1-PUSH): `vault.repo.git_push.mint`… |
 | `src/verbs/goal_optimize.rs` | src | m | 16 struct · 1 enum · 16 fn | ProjectGoalIntakeCompleteRequest, ProjectGoalIntakeReceipt, ProjectGoalView, SkillOptimizeGoalBindRequest, SkillOptimizeGoalRequest, SkillOptimizeGoalRevision, SkillOptimizeGoalView, SkillOptimizeMeasureRequest +9 | Full witnessed goal intake and explicit optimizer proposal/admission doors |
