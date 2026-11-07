@@ -800,6 +800,8 @@ class Oneiron:
             """Creates an authored commitment series and its due index atomically, without approving a reminder."""
         def get(self, spec: Facade.CommitmentRefRequest) -> Facade.CommitmentView:
             """Reads a commitment with its schedule, birth provenance, separate occurrence and learning times, and lifecycle receipt."""
+        def ledger(self, spec: Facade.CommitmentLedgerRequest) -> Facade.CommitmentLedgerView:
+            """Reads due-sorted open obligations owed by and to one counterparty contact, with their current commitment views."""
         def instances(self, spec: Facade.CommitmentRefRequest) -> list[Facade.CommitmentView]:
             """Lists the materialized occurrences of a commitment series, including closed obligations."""
         def proposals(self, spec: Facade.CommitmentRefRequest) -> list[Facade.CommitmentWakeProposal]:
@@ -3271,6 +3273,8 @@ class Oneiron:
         def create(self, spec: Facade.QuestionCreateRequest) -> Facade.QuestionRecord: ...
         def edit(self, spec: Facade.QuestionEditRequest) -> Facade.QuestionRecord: ...
         def pause(self, spec: Facade.QuestionPauseRequest) -> Facade.QuestionPaused: ...
+        def prepare(self, spec: Facade.QuestionPrepareRequest) -> Facade.QuestionPrepared: ...
+        def admit(self, spec: Facade.QuestionAdmitRequest) -> Facade.AnswerRecord: ...
         def backfill(self, spec: Facade.QuestionBackfillRequest) -> Facade.ScheduledBackfill: ...
         def read(self, spec: Facade.QuestionReadRequest) -> Facade.QuestionRecord | None: ...
         def outcome_windows(self, spec: Facade.QuestionOutcomeWindowsRequest) -> list[Facade.OutcomeWindowClose]:
@@ -4111,17 +4115,19 @@ class Oneiron:
             """Abort the caller's shared model stream with actual usage: subscribers receive the cancelled Done of the parts completed so far, recorded as the one durable terminal."""
         def terminal(self, spec: Facade.ModelStreamTerminalRequest) -> Facade.ModelStreamTerminal:
             """Read the one durable terminal of the caller's model stream by key (its ordered ContentParts, usage and finish reason, or its recorded failure) after any restart, without calling a model."""
+        def release(self, spec: Facade.ModelStreamRelease) -> Facade.ModelStreamReleased:
+            """Explicitly discard this credential's model-stream replay and revoke its handles; the producer and durable terminal stay. Later subscribers get only future events; never-released replay stays unchanged."""
     class _AiVoiceVerbs:
         @property
         def asr(self) -> "Oneiron._AiVoiceAsrVerbs": ...
         def start(self, spec: Facade.LiveVoiceStartRequest) -> Facade.LiveVoiceSession:
             """Opens an owner-bound live media session on the configured voice routes, using the caller credential, room audience and existing budget gates."""
         def audio(self, spec: Facade.LiveVoiceAudioRequest) -> Facade.LiveVoiceProcessed:
-            """Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech retires old output through the shared cancellation path."""
+            """Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech, or words that are not a backchannel, retire old output through the shared cancellation path, and a backchannel starts no reply."""
         def events(self, spec: Facade.LiveVoiceEventsRequest) -> Facade.LiveVoiceEvents:
-            """Reads ordered utterance and epoch events, PCM, flushes, playout stops, safeguard receipts and notices; advancing the cursor releases consumed events."""
+            """Reads ordered utterance and epoch events, PCM, flushes, playout stops, safeguard receipts, notices and heard-playback records; advancing the cursor releases consumed events."""
         def ack(self, spec: Facade.LiveVoiceAckRequest) -> Facade.LiveVoiceProcessed:
-            """Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed."""
+            """Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed, with the samples it played, which the epoch's heard-playback record rests on."""
         def usage(self, spec: Facade.LiveVoiceUsageRequest) -> Facade.LiveVoiceUsage:
             """Observes actual voice-brain run settlements and a terminal boundary after producer teardown, epoch retirement, TTS cancel and client playout acknowledgment."""
         def tool(self, spec: Facade.LiveVoiceToolRequest) -> Facade.ActAnswer[Facade.LiveVoiceToolReply]:

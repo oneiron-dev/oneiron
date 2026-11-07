@@ -503,6 +503,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_commitments_ledger(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.commitments.ledger")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.commitments.ledger", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_commitments_instances(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.commitments.instances")?;
         let output = py
@@ -8645,6 +8652,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn ai_streams_release(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "ai.streams.release")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("ai.streams.release", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn ai_reply(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "ai.reply")?;
         let output = py
@@ -9015,6 +9029,20 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.questions.pause")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.questions.pause", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_questions_prepare(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.questions.prepare")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.questions.prepare", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_questions_admit(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.questions.admit")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.questions.admit", input))
             .map_err(raise)?;
         encode(&output)
     }
