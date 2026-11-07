@@ -11014,7 +11014,7 @@ class GraduationDemoteRequest(TypedDict):
 class PolicyManifestRead(TypedDict):
     manifest_ref: NotRequired[str | None]
 PolicyCriticality = Literal["normal", "critical"]
-PolicySensitivity = Literal["normal", "sensitive"]
+PolicySensitivity = Literal["public", "private", "sensitive", "restricted", "normal"]
 class PolicyAxes(TypedDict):
     criticality: NotRequired[PolicyCriticality | None]
     sensitivity: NotRequired[PolicySensitivity | None]
