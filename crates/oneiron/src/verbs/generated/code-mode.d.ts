@@ -3133,7 +3133,7 @@ declare namespace Sdk {
   type StepAssetKind = "factual" | "illustration";
   type AssetRef = { artifact: string; version: number; hash: Digest; kind: StepAssetKind; description: string };
   type StepPreset = "rect" | "roundRect" | "ellipse" | "triangle" | "rightArrow";
-  type StepSequence = "name" | "categories" | "values";
+  type StepSequence = "name" | "categories" | "values" | "size";
   type StepCell = "missing" | { number: number } | { text: string } | { date: string };
   type DeckStep = { set_text: { target: StepTarget; text: string } } | { replace_run_text: { target: StepTarget; paragraph: number; run: number; expected: string; text: string } } | { set_xfrm: { target: StepTarget; xfrm: StepXfrm } } | { move_in_slide_space: { target: StepTarget; dx: number; dy: number } } | { set_picture: { target: StepTarget; asset: AssetRef } } | { set_notes: { slide: string; expected?: string | null; text: string } } | { add_shape: { slide: string; preset: StepPreset; name: string; offset: number[]; extent: number[] } } | { delete_shape: { target: StepTarget; cascade?: boolean } } | { reparent: { target: StepTarget; parent?: number | null } } | { duplicate_slide: { slide: string; expected: Digest } } | { reorder_slides: { order: number[] } } | { set_table_cell: { slide: string; table: number; row: number; col: number; expected: string; value: string } } | { set_series_values: { chart: string; series: number; sequence: StepSequence; values: StepCell[] } } | { release_media: { slide: string; relationships: string[] } };
   type DeckTransaction = { schema: number; base: Digest; marks?: IdMarks; seed: string; graphics?: GraphicLimits | null; steps: DeckStep[] };
