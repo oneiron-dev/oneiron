@@ -276,6 +276,7 @@ impl StreamedOutputs {
         &mut self,
         storage: &ExecutorStorage<'_>,
         exec_run: EntityId,
+        step_seq: Option<u64>,
         stream: JsCodeModeStream<'_>,
         frame: &[u8],
     ) -> Result<()> {
@@ -297,6 +298,12 @@ impl StreamedOutputs {
                 let at = match self.files.iter().position(|(held, _)| held == path) {
                     Some(at) => at,
                     None => {
+                        if let Some(seq) = step_seq {
+                            storage.begin_code_run_output(
+                                exec_run,
+                                &runtime_output_path(seq, self.files.len(), path),
+                            )?;
+                        }
                         self.files
                             .push((path.to_owned(), storage.code_run_output_sink_for(exec_run)?));
                         self.files.len() - 1
