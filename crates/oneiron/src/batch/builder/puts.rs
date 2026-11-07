@@ -456,12 +456,15 @@ impl BatchBuilder<'_> {
         self
     }
 
-    /// The archive NOTE put (FIX 7777): stages the bytes an
-    /// [`ArchivedNoteAdmission`] carries, and only those. Its one
-    /// constructor, in the NOTE archive import owner, proves them a NOTE body
-    /// whose author is no local actor, so a restored NOTE is imported
-    /// evidence and never this vault's actor's note. The kind registry and
-    /// the immutable birth bytes are checked at apply, as for every NOTE.
+    /// The archive NOTE put (FIX 7777): stages the core an
+    /// [`ArchivedNoteAdmission`] carries, and only that. Its one
+    /// constructor, in the NOTE archive import owner, proves it the core of a
+    /// NOTE body whose author is no local actor, so a restored NOTE is
+    /// imported evidence and never this vault's actor's note. The kind
+    /// registry and the immutable birth bytes are checked at apply, as for
+    /// every NOTE. The transaction that applies the batch births the NOTE's
+    /// document from the admission's markdown after every op, as
+    /// [`Self::put_authored_note`] does (FIX 7783).
     ///
     /// [`ArchivedNoteAdmission`]: crate::note::ArchivedNoteAdmission
     pub(crate) fn put_archived_note(
@@ -476,8 +479,10 @@ impl BatchBuilder<'_> {
             crate::registry::ENTITY_TYPE_NOTE,
             occurred,
             learned_at,
-            admission.body(),
+            admission.core(),
         ));
+        self.note_births
+            .push((*id, admission.markdown().to_owned()));
         self
     }
 

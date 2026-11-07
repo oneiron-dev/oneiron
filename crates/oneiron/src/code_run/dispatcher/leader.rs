@@ -43,6 +43,9 @@ const SPAWN_UNLAUNCHED: &str = "this planned spawn is planned but did not launch
      under the same intent key to launch it";
 const SPAWN_UNQUEUED: &str = "this planned spawn's launch names no queued agent; ask again \
      under a new intent key";
+/// FIX 9183: every erase stores its cause on the intent, so an erased view
+/// without one is a damaged row.
+const SPAWN_ERASED_UNCAUSED: &str = "planned spawn intent erased without its cause";
 
 /// The host's planner (OF-541, OF-389): the skills, seats, executor and
 /// ladders a planned spawn, its type placement and the leader's advice read
@@ -207,8 +210,8 @@ impl HostSelfDispatcher<'_> {
             context,
         };
         // FIX 9180: each seat the plan and its launch resolve is noted as it
-        // resolves; an erased target's answer keeps no ask (its row scrubs
-        // it), whether or not a seat is left to note.
+        // resolves; an erased answer, its asker's or its target's, keeps no
+        // ask (its row scrubs it), whether or not a seat is left to note.
         let capture = &self.spawn_capture;
         let observe = move |seat| capture.observe(seat);
         let dispatcher = AgentDispatcher::new(vault).observing_seats(&observe);
@@ -223,12 +226,14 @@ impl HostSelfDispatcher<'_> {
         let attempt_ref = match view.phase {
             SpawnPhase::Launched => view.root_attempt.ok_or_else(|| refused(SPAWN_UNQUEUED))?,
             SpawnPhase::Planned => return Err(refused(SPAWN_UNLAUNCHED)),
-            // The erase of the target its plan seats is the typed answer: no
-            // other key or launch is asked for (Engine 10-22).
+            // The erase of its asker or of the target its plan seats is the
+            // typed answer: no other key or launch is asked for (Engine
+            // 10-22). FIX 9183: it answers the cause the intent stored.
             SpawnPhase::Erased => {
-                return Ok(SelfDispatchOutcome::AgentSpawn(
-                    SelfAgentSpawnResult::TargetErased,
-                ));
+                let erasure = view
+                    .erasure
+                    .ok_or(Error::CorruptedIndex(SPAWN_ERASED_UNCAUSED))?;
+                return Ok(SelfDispatchOutcome::AgentSpawn(erasure.into()));
             }
             SpawnPhase::Refused => {
                 tracing::warn!(

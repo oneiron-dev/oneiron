@@ -113,6 +113,7 @@ mod audience;
 mod connector_archive_link;
 mod connector_conversation;
 pub use connector_conversation::ConnectorWitness;
+pub(crate) use connector_conversation::connector_witness_row_ids;
 mod connector_witness_grant;
 pub use audience::{
     IMPORT_AUDIENCE_ONLY_ME, IMPORT_AUDIENCE_SOURCE, ImportAudience, ImportAudienceCluster,
