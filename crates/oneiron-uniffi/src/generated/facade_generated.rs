@@ -2431,6 +2431,11 @@ export_facade! {
     let output = client.vault_coach_training_offers_sources(&input)?;
     crate::codec::lift_record("vault.coach.training_offers.sources", &output)
 };
+"vault.coach.training_runs.cancel" => fn vault_coach_training_runs_cancel(&self, input: TrainingRunRef) -> PendingEmbedderBinding = |client| {
+    let input: oneiron::skill_optimize::offer_doors::TrainingRunRef = crate::codec::lower_record("vault.coach.training_runs.cancel", input)?;
+    let output = client.vault_coach_training_runs_cancel(&input)?;
+    crate::codec::lift_record("vault.coach.training_runs.cancel", &output)
+};
 "vault.drafters.list" => fn vault_drafters_list(&self, input: DrafterListRequest) -> Vec<DrafterVersionView> = |client| {
     let input: oneiron::drafter::DrafterListRequest = crate::codec::lower_record("vault.drafters.list", input)?;
     let output = client.vault_drafters_list(&input)?;
@@ -6175,6 +6180,11 @@ export_facade! {
     let input: oneiron::mail_pack::MailComplianceSearchRequest = crate::codec::lower_record("vault.mail.compliance.search", input)?;
     let output = client.vault_mail_compliance_search(&input)?;
     crate::codec::lift_record("vault.mail.compliance.search", &output)
+};
+"vault.files.sources.convert" => fn vault_files_sources_convert(&self, input: FilesSourceConvertRequest) -> FilesSourceAttachAnswer = |client| {
+    let input: oneiron::task_verb::sdk::FilesSourceConvertRequest = crate::codec::lower_record("vault.files.sources.convert", input)?;
+    let output = client.vault_files_sources_convert(&input)?;
+    crate::codec::lift_record("vault.files.sources.convert", &output)
 };
 "connector.answer" => fn connector_answer(&self, input: ConnectorAnswerRequest) -> ConnectorCallReply = |client| {
     let input: oneiron::task_verb::sdk::ConnectorAnswerRequest = crate::codec::lower_record("connector.answer", input)?;
