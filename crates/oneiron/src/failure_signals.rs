@@ -17,6 +17,7 @@ mod delivery;
 mod held;
 mod live;
 pub(crate) mod policy;
+mod status;
 mod verbatim;
 mod witness;
 pub use code_fix::{
@@ -37,6 +38,7 @@ pub use delivery::{
 pub use held::HeldFailureSignalBatchView;
 pub(crate) use held::erase_held_batch_actor_in_txn;
 pub use live::DispatchFailure;
+pub use status::{FailureSignalBatchReceipt, FailureSignalDeliveryStatus, FailureSignalWaiting};
 pub use verbatim::{CODE_FIX_LINE_WORDS, CODE_FIX_SPAN_WORDS};
 pub use witness::Tier1Observation;
 
