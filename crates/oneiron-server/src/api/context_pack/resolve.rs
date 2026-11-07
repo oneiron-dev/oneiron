@@ -141,14 +141,24 @@ fn admit_context_pack(
 }
 
 /// An admitted context pack, assembled for `auth` through the shared
-/// pipeline, as the JSON the route answers.
+/// pipeline, as the JSON the route answers. The answer goes beside the rows
+/// the final response lists it was derived from
+/// (`CoreContextPackResponse::producer_rows`, FIX 1435). A response whose
+/// rows are not all known lists none.
 async fn read_context_pack(
     server: &SyncServer,
     auth: &CoreAuth,
     req: CoreContextPackRequest,
 ) -> Result<NativeReadAnswer, NativeReadError> {
     let (response, _, _) = run_context_pack(server, auth, req, None).await?;
-    Ok(NativeReadAnswer::unlisted(encoded(&response)?))
+    let rows = response
+        .producer_rows()
+        .map_err(|error| core_engine_error("producer ids failed", error))?;
+    let value = encoded(&response)?;
+    Ok(match rows {
+        Some(rows) => NativeReadAnswer::listed(value, rows),
+        None => NativeReadAnswer::unlisted(value),
+    })
 }
 
 /// The shared context-pack pipeline behind `/v1/core/context-pack` and the

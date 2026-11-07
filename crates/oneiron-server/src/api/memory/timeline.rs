@@ -115,7 +115,9 @@ fn admit_memory_timeline(request: &Value) -> Result<(EntityId, View), ApiError> 
     Ok((id, request.view.unwrap_or(View::Summary)))
 }
 
-/// The timeline of `id`, read on `scoped_read` and projected in `view`.
+/// The timeline of `id`, read on `scoped_read` and projected in `view`. The
+/// answer goes beside the rows the final response lists it was derived from
+/// ([`CoreMemoryTimelineResponse::producer_rows`], FIX 1435).
 async fn read_memory_timeline(
     server: &SyncServer,
     scoped_read: oneiron::claim::ScopedRead<'_>,
@@ -149,5 +151,28 @@ async fn read_memory_timeline(
             response.narrowing,
         ));
     }
-    Ok(NativeReadAnswer::unlisted(encoded(&response)?))
+    let rows = response.producer_rows();
+    let value = encoded(&response)?;
+    Ok(match rows {
+        Some(rows) => NativeReadAnswer::listed(value, rows),
+        None => NativeReadAnswer::unlisted(value),
+    })
+}
+
+impl CoreMemoryTimelineResponse {
+    /// The rows this timeline answer was derived from, as its route lists
+    /// them for the release of a drained retry (FIX 1435): its anchor, every
+    /// record it returns, deleted shells among them, and both ends of every
+    /// change it returns. `None` when one of those ids does not parse.
+    fn producer_rows(&self) -> Option<Vec<EntityId>> {
+        let changes = self.records.iter().flat_map(|record| &record.changes);
+        let mut rows = std::iter::once(&self.anchor_id)
+            .chain(self.records.iter().map(|record| &record.id))
+            .chain(changes.flat_map(|change| [&change.before_id, &change.after_id]))
+            .map(|id| EntityId::from_hex(id).ok())
+            .collect::<Option<Vec<_>>>()?;
+        rows.sort_unstable();
+        rows.dedup();
+        Some(rows)
+    }
 }
