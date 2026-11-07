@@ -284,7 +284,7 @@ impl Memory<'_> {
         let now = self.vault.store.clock.now_recorded_at();
         before_txn();
         let (approval, consent_decision_id) = self
-            .with_actor_content_write_txn(|content| content.update_claim(id, |wtxn| {
+            .with_actor_content_write_txn(|content| content.update_claim(id, |wtxn, _lane| {
             // A retraction only restricts: it reads a held history whole.
             let body = self
                 .vault
