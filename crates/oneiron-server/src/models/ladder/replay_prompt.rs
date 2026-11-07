@@ -107,7 +107,7 @@ impl ReplayLadder<'_> {
         let prompt = RungPrompt::Replayed(prompt);
         self.ladder
             .walk_generate(
-                run, request, selector, may_send, deadline, false, None, false, prompt,
+                run, request, selector, may_send, deadline, false, None, prompt,
             )
             .await
             .map(|(response, _)| response)

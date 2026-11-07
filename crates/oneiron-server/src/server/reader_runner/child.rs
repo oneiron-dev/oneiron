@@ -181,25 +181,18 @@ impl Child {
                 0,
             )
         });
-        let caller = job.binding.actor.write_actor().ok().map(|actor| {
-            (
-                actor.entity_ref(),
-                self.session.as_ref().map(|(session, _)| session.clone()),
-            )
-        });
         let scoped_backend = live.as_ref().and_then(|live| {
             self.provider.reader_backend_with_lease(
                 guard.clone(),
                 payer.clone(),
                 Some(live.state()),
-                caller.clone(),
                 job.binding.listed.clone(),
             )
         });
         let per_rung = scoped_backend.is_some();
         let backend = scoped_backend.or_else(|| {
             self.provider
-                .reader_backend(guard.clone(), payer, caller, job.binding.listed.clone())
+                .reader_backend(guard.clone(), payer, job.binding.listed.clone())
         });
         let Some(backend) = backend else {
             return ReaderRunEnd::Failed("reader_meter_unbound".to_owned());

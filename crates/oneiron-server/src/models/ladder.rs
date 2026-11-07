@@ -31,7 +31,6 @@ mod step_attempt;
 mod step_quota;
 // FIX 1743: a stream's probation slot, and its end to its offer's health.
 mod stream_health;
-mod streamed_generation;
 mod worker_lease;
 
 use futures_util::StreamExt;
@@ -1409,33 +1408,6 @@ impl OfferLadder {
         may_fall_back: bool,
         sources: Option<&'a dyn SourceAdmission>,
     ) -> ServedFuture<'a> {
-        self.generate_from_streamed(
-            run,
-            request,
-            selector,
-            may_send,
-            deadline,
-            may_fall_back,
-            sources,
-            false,
-        )
-    }
-
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "one walk takes its call, its gate, its budget, its fallback and its sources"
-    )]
-    fn generate_from_streamed<'a>(
-        &'a self,
-        run: &'a RunAdmission,
-        request: LlmRequest,
-        selector: Option<&'a str>,
-        may_send: &'a (dyn Fn() -> bool + Sync),
-        deadline: CallDeadline,
-        may_fall_back: bool,
-        sources: Option<&'a dyn SourceAdmission>,
-        prefer_stream: bool,
-    ) -> ServedFuture<'a> {
         Box::pin(async move {
             self.walk_generate(
                 run,
@@ -1445,7 +1417,6 @@ impl OfferLadder {
                 deadline,
                 may_fall_back,
                 sources,
-                prefer_stream,
                 RungPrompt::Configured,
             )
             .await
@@ -1466,7 +1437,6 @@ impl OfferLadder {
         deadline: CallDeadline,
         may_fall_back: bool,
         sources: Option<&dyn SourceAdmission>,
-        prefer_stream: bool,
         prompt: RungPrompt<'_>,
     ) -> LlmResult<(LlmResponse, ModelCallBinding)> {
         self.admits(&request)?;
@@ -1496,7 +1466,7 @@ impl OfferLadder {
                     let mut fell_request = request.clone();
                     fell_request.model = fallback.model().clone();
                     let fell = fallback
-                        .generate_from_streamed(
+                        .generate_from(
                             run,
                             fell_request,
                             Some(selector.unwrap_or(self.name.as_str())),
@@ -1504,7 +1474,6 @@ impl OfferLadder {
                             deadline,
                             false,
                             sources,
-                            prefer_stream,
                         )
                         .await;
                     if fell.is_err() {
@@ -1527,15 +1496,7 @@ impl OfferLadder {
                 };
                 sent[index] = true;
                 match self
-                    .send(
-                        call,
-                        index,
-                        may_send,
-                        sources,
-                        prefer_stream,
-                        prompt,
-                        &mut walk,
-                    )
+                    .send(call, index, may_send, sources, prompt, &mut walk)
                     .await?
                 {
                     Sent::Answer(response) => {
@@ -1559,7 +1520,6 @@ impl OfferLadder {
         index: usize,
         may_send: &(dyn Fn() -> bool + Sync),
         sources: Option<&dyn SourceAdmission>,
-        prefer_stream: bool,
         prompt: RungPrompt<'_>,
         walk: &mut Walk,
     ) -> LlmResult<Sent> {
@@ -1595,10 +1555,8 @@ impl OfferLadder {
             if call.deadline.expired() {
                 return Err(CallDeadline::expiry());
             }
-            let stream_reply =
-                prefer_stream && streamed_generation::can_stream(&rung, call.request);
             let (bound, permit) =
-                self.admit(&rung_run, &rung, call.request, call.selector, stream_reply)?;
+                self.admit(&rung_run, &rung, call.request, call.selector, false)?;
             if !may_send() {
                 settle_failed(permit);
                 return Ok(Sent::Stopped);
@@ -1624,13 +1582,7 @@ impl OfferLadder {
             };
             let gate = rung_run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
             let warmth = cache_warmth::Sending::of(&rung, &bound);
-            let sent = async {
-                if stream_reply {
-                    streamed_generation::response(gate.stream(bound, permit.lease())?).await
-                } else {
-                    gate.generate(bound, permit.lease()).await
-                }
-            };
+            let sent = gate.generate(bound, permit.lease());
             let Some(answered) = call
                 .deadline
                 .bound(super::http::holding_chat_replies(

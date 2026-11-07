@@ -14,7 +14,8 @@
 //! verbs are L13's (FIX-LIST).
 use super::super::weave_report::admin::WeaveAdminFrame;
 use super::super::{
-    ScopedRead, ScopedReadActorKey, WeaveLensRender, WeaveLiveLens, WeaveReader, WeaveReport,
+    ScopedRead, ScopedReadActorKey, WeaveItemTarget, WeaveLensRender, WeaveLiveLens, WeaveReader,
+    WeaveReport,
 };
 use super::{
     WeaveDigestFramed, WeaveDigestRequest, WeaveDigestView, WeaveItemCorrectionView,
@@ -251,8 +252,8 @@ impl Memory<'_> {
     ) -> MemoryResult<WeaveItemCorrectionView> {
         let frame = self.weave_admin_frame(admin)?;
         let target = request.target()?;
-        if let Some(entity) = target.entity_id() {
-            self.produced_from([entity]);
+        if !matches!(target, WeaveItemTarget::SieveAudit { .. }) {
+            self.produced_from([target.id()]);
         }
         let filed = self
             .vault()

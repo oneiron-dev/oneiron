@@ -246,8 +246,7 @@ pub use self::offer_switch::{
     seat_model_role, training_offer_switch, undo_training_offer_switch,
 };
 pub(crate) use self::offer_switch::{
-    STOCK_SWITCH_NOTIFICATION_PRODUCER, erase_switch_actor_in_txn, settle_staged_switch_in_txn,
-    training_offer_switch_undo_available_in_txn, undo_staged_switch_in_txn,
+    erase_switch_actor_in_txn, settle_staged_switch_in_txn, undo_staged_switch_in_txn,
 };
 pub use self::offer_training::{
     OfferTrainingHandoff, TrainingChoice, authorize_offer_training, check_offer_training_plan,
