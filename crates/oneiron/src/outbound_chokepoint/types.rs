@@ -10,8 +10,8 @@ use crate::gate::{ApprovalTarget, ExternalEffectGateInput};
 use crate::outbound_consent::tool_call::PreparedToolCall;
 use crate::outbound_intent_ledger::{
     AdmittedApproval, BudgetClass, FrozenOutboundCall, IntentDispatchResult, IntentId,
-    IntentLedgerError, IntentResolution, OutboundSendOutcome, PinnedApproval, derive_intent_id,
-    hash_frozen_payload, keep_pinned_approval_in_txn, keep_press_after_admission,
+    IntentLedgerError, IntentResolution, OutboundSendOutcome, derive_intent_id,
+    hash_frozen_payload, keep_press_after_admission,
 };
 use crate::receipt::ReceiptRecord;
 
@@ -173,26 +173,19 @@ pub(crate) type CoActorKeepPress = Box<
         + Send,
 >;
 
-/// FIX 6424 part 2a: keeps the presses the committed admission of
-/// `intent_id` spent, for its retry: the primary's beside its Pending row,
-/// the co-actor's where its binding keeps it, each in a writer of its own
-/// after that admission committed. A press that does not write is logged and
-/// the admission stands (CALLS `FIX 6424 kept press write failure`).
+/// Keeps the co-actor press the committed admission of `intent_id` spent,
+/// in its existing post-commit writer. A press that does not write is logged
+/// and the admission stands (CALLS `FIX 6424 kept press write failure`).
+/// The primary proof already committed with the Pending row.
 ///
 /// # Errors
 /// None while that call stands; else a keeper's storage failure.
 pub(super) fn keep_spent_presses(
     vault: &Vault,
     intent_id: IntentId,
-    pinned: Option<PinnedApproval>,
     co_actor: Option<(EffectDigest, CoActorKeepPress)>,
 ) -> Result<(), IntentLedgerError> {
     let subject = crate::entity_id::bytes_to_hex_lower(&intent_id);
-    if pinned.is_some() {
-        keep_press_after_admission(vault, &subject, |wtxn| {
-            keep_pinned_approval_in_txn(vault, wtxn, pinned)
-        })?;
-    }
     if let Some((spent, keep)) = co_actor {
         keep_press_after_admission(vault, &subject, |wtxn| keep(vault, wtxn, spent))?;
     }
