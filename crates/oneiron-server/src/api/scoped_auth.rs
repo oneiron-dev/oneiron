@@ -287,7 +287,10 @@ pub(crate) fn mcp_credential_memory<'a>(
 /// for queued work has one, so the host can verify it again. A managed
 /// vault's attested owner, who presents no slip, has his own
 /// ([`attested_owner_instrument`]).
-fn verb_ask_instrument(vault: &oneiron::Vault, auth: &CoreAuth) -> Option<VerbAskInstrument> {
+pub(crate) fn verb_ask_instrument(
+    vault: &oneiron::Vault,
+    auth: &CoreAuth,
+) -> Option<VerbAskInstrument> {
     if auth.invocation_slip().is_none() {
         return attested_owner_instrument(vault, auth);
     }
