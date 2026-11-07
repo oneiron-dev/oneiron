@@ -50,19 +50,49 @@ impl PolicyCriticality {
     }
 }
 
+/// A predicate class's rung on the DEC-0005 content ladder (`public` ·
+/// `private` · `sensitive` · `restricted`), plus `normal`, the ordinary
+/// non-sensitive label the shipped packs carry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum PolicySensitivity {
-    Normal,
+    Public,
+    Private,
     Sensitive,
+    Restricted,
+    Normal,
 }
 
 impl PolicySensitivity {
     pub(super) fn parse(value: &Value) -> Option<Self> {
         match value.as_str()? {
-            "normal" => Some(Self::Normal),
+            "public" => Some(Self::Public),
+            "private" => Some(Self::Private),
             "sensitive" => Some(Self::Sensitive),
+            "restricted" => Some(Self::Restricted),
+            "normal" => Some(Self::Normal),
             _ => None,
         }
+    }
+
+    /// Order for the most-restrictive-wins meet. `public` is an explicit
+    /// opening and `private` an explicit closing, so `normal`, which asserts
+    /// neither, ranks between them. All three rank below `sensitive`;
+    /// `restricted` ranks highest.
+    const fn meet_rank(self) -> u8 {
+        match self {
+            Self::Public => 0,
+            Self::Normal => 1,
+            Self::Private => 2,
+            Self::Sensitive => 3,
+            Self::Restricted => 4,
+        }
+    }
+
+    /// Whether this label is at or above the `sensitive` rung that a
+    /// predicate no pack labels reads, so a new pack carrying it only
+    /// narrows.
+    pub(super) const fn at_least_sensitive(self) -> bool {
+        self.meet_rank() >= Self::Sensitive.meet_rank()
     }
 }
 
@@ -692,10 +722,10 @@ impl Restrict for PolicyCriticality {
 
 impl Restrict for PolicySensitivity {
     fn restrict(self, other: Self) -> Self {
-        if matches!(self, Self::Sensitive) || matches!(other, Self::Sensitive) {
-            Self::Sensitive
+        if other.meet_rank() > self.meet_rank() {
+            other
         } else {
-            Self::Normal
+            self
         }
     }
 }
