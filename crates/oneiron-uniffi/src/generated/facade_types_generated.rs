@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1275 facade rows, 4617 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1227.
+// UniFFI census: 1279 facade rows, 4627 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1231.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -4248,6 +4248,8 @@ pub enum WireTurnProgramWakeOutcome {
 /// `oneiron::memory::witness::types::WitnessReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct WireWitnessReceipt {
+    #[serde(rename = "turn_id")]
+    pub turn_id: String,
     #[serde(rename = "turn_short_id")]
     pub turn_short_id: String,
     #[serde(rename = "message_short_ids")]
@@ -40439,6 +40441,122 @@ pub struct CodeRunModelHealCountView {
     pub healed_turns: u64,
 }
 
+/// `oneiron::memory::code_run_doors::types::CodeRunCorrectionsRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeRunCorrectionsRequest {
+    #[serde(rename = "run_ref")]
+    pub run_ref: String,
+    #[serde(
+        rename = "after_step",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub after_step: Option<u64>,
+    #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+/// `oneiron::code_run::correction::CodeRunCorrectionPolicy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeRunCorrectionPolicy {
+    #[serde(rename = "normalization_passes")]
+    pub normalization_passes: u32,
+    #[serde(rename = "model_repair_retries")]
+    pub model_repair_retries: u32,
+}
+
+/// `oneiron::code_run::correction::ExecutorWireRepairs`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutorWireRepairs {
+    #[serde(rename = "trimmed_transport_whitespace")]
+    pub trimmed_transport_whitespace: bool,
+    #[serde(rename = "stripped_code_fence")]
+    pub stripped_code_fence: bool,
+    #[serde(rename = "stripped_exec_wrapper")]
+    pub stripped_exec_wrapper: bool,
+    #[serde(rename = "discarded_console_blocks")]
+    pub discarded_console_blocks: u32,
+}
+
+/// `oneiron::code_run::correction::CodeRunCorrectionOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum CodeRunCorrectionOutcome {
+    #[serde(rename = "clean")]
+    Clean,
+    #[serde(rename = "normalized")]
+    Normalized,
+    #[serde(rename = "rejected")]
+    Rejected {
+        #[serde(rename = "reason")]
+        reason: String,
+    },
+}
+
+/// `oneiron::code_run::correction::CodeRunCorrectionCheckpoint`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeRunCorrectionCheckpoint {
+    #[serde(rename = "step")]
+    pub step: u64,
+    #[serde(rename = "state_hash")]
+    pub state_hash: String,
+}
+
+/// `oneiron::code_run::correction::CodeRunCorrection`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeRunCorrection {
+    #[serde(rename = "schema")]
+    pub schema: u8,
+    #[serde(rename = "run_id")]
+    pub run_id: String,
+    #[serde(rename = "step")]
+    pub step: u64,
+    #[serde(rename = "attempt")]
+    pub attempt: u64,
+    #[serde(rename = "recorded_at_ms")]
+    pub recorded_at_ms: u64,
+    #[serde(rename = "model_id")]
+    pub model_id: String,
+    #[serde(rename = "repairs")]
+    pub repairs: ExecutorWireRepairs,
+    #[serde(rename = "outcome")]
+    pub outcome: CodeRunCorrectionOutcome,
+    #[serde(rename = "policy")]
+    pub policy: CodeRunCorrectionPolicy,
+    #[serde(rename = "model_repair_retries_used")]
+    pub model_repair_retries_used: u32,
+    #[serde(rename = "exhausted")]
+    pub exhausted: bool,
+    #[serde(
+        rename = "checkpoint",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub checkpoint: Option<CodeRunCorrectionCheckpoint>,
+}
+
+/// `oneiron::memory::code_run_doors::types::CodeRunCorrectionsView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeRunCorrectionsView {
+    #[serde(rename = "run_ref")]
+    pub run_ref: String,
+    #[serde(rename = "policy")]
+    pub policy: CodeRunCorrectionPolicy,
+    #[serde(rename = "records")]
+    pub records: Vec<CodeRunCorrection>,
+    #[serde(
+        rename = "next_after_step",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub next_after_step: Option<u64>,
+}
+
 /// `oneiron::memory::code_run_doors::types::CodeRunTypeDiagnosticsRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -45864,9 +45982,9 @@ pub enum SpawnErasure {
     TargetErased,
 }
 
-/// `oneiron::team::doors::CoordinationPatternView`.
+/// `oneiron::code_run::run_verbs::SpawnPattern`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum CoordinationPatternView {
+pub enum SpawnPattern {
     #[serde(rename = "solo")]
     Solo,
     #[serde(rename = "ceo_decides")]
@@ -45911,7 +46029,7 @@ pub struct PlanObservation {
     #[serde(rename = "width")]
     pub width: u32,
     #[serde(rename = "pattern")]
-    pub pattern: CoordinationPatternView,
+    pub pattern: SpawnPattern,
     #[serde(
         rename = "hard_cap_units",
         default,
@@ -45982,7 +46100,7 @@ pub struct ResolvedTeam {
     #[serde(rename = "type_ref")]
     pub type_ref: TypeStamp,
     #[serde(rename = "pattern")]
-    pub pattern: CoordinationPatternView,
+    pub pattern: SpawnPattern,
     #[serde(rename = "width")]
     pub width: u32,
     #[serde(rename = "model")]
@@ -46009,7 +46127,7 @@ pub struct TeamBindingView {
     #[serde(rename = "team_ref")]
     pub team_ref: String,
     #[serde(rename = "pattern")]
-    pub pattern: CoordinationPatternView,
+    pub pattern: SpawnPattern,
     #[serde(rename = "leader")]
     pub leader: String,
     #[serde(rename = "member_attempt_refs")]
@@ -46030,7 +46148,7 @@ pub struct TeamReceiptView {
     #[serde(rename = "type_ref")]
     pub type_ref: TypeStamp,
     #[serde(rename = "pattern")]
-    pub pattern: CoordinationPatternView,
+    pub pattern: SpawnPattern,
     #[serde(
         rename = "pattern_skill",
         default,
@@ -46277,10 +46395,10 @@ pub struct PlannedSpawnObservation {
     pub issues: Vec<ObservationIssue>,
 }
 
-/// `oneiron::team::doors::spawn::SpawnAskKnob` with `T` = `String`.
+/// `oneiron::code_run::run_verbs::SpawnKnob` with `T` = `String`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "mode")]
-pub enum SpawnAskKnobString {
+pub enum SpawnKnobString {
     #[serde(rename = "seed")]
     Seed {
         #[serde(rename = "value")]
@@ -46295,10 +46413,10 @@ pub enum SpawnAskKnobString {
     },
 }
 
-/// `oneiron::team::doors::spawn::SpawnAskKnob` with `T` = `U32`.
+/// `oneiron::code_run::run_verbs::SpawnKnob` with `T` = `U32`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "mode")]
-pub enum SpawnAskKnobU32 {
+pub enum SpawnKnobU32 {
     #[serde(rename = "seed")]
     Seed {
         #[serde(rename = "value")]
@@ -46313,10 +46431,10 @@ pub enum SpawnAskKnobU32 {
     },
 }
 
-/// `oneiron::team::doors::spawn::SpawnAskKnob` with `T` = `U64`.
+/// `oneiron::code_run::run_verbs::SpawnKnob` with `T` = `U64`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "mode")]
-pub enum SpawnAskKnobU64 {
+pub enum SpawnKnobU64 {
     #[serde(rename = "seed")]
     Seed {
         #[serde(rename = "value")]
@@ -46352,17 +46470,17 @@ pub struct SpawnIntentRequest {
     #[serde(rename = "notes", default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
     #[serde(rename = "model", default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<SpawnAskKnobString>,
+    pub model: Option<SpawnKnobString>,
     #[serde(rename = "width", default, skip_serializing_if = "Option::is_none")]
-    pub width: Option<SpawnAskKnobU32>,
+    pub width: Option<SpawnKnobU32>,
     #[serde(rename = "pattern", default, skip_serializing_if = "Option::is_none")]
-    pub pattern: Option<SpawnAskKnobString>,
+    pub pattern: Option<SpawnKnobString>,
     #[serde(
         rename = "budget_cap_units",
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub budget_cap_units: Option<SpawnAskKnobU64>,
+    pub budget_cap_units: Option<SpawnKnobU64>,
     #[serde(
         rename = "balance_free_prompt",
         default,
@@ -50346,6 +50464,98 @@ pub struct TaskAnswerRequest {
     pub handle: TaskAskHandle,
     #[serde(rename = "word")]
     pub word: TaskAskWord,
+}
+
+/// `oneiron::task_verb::ask_forward::AskForwardAct`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AskForwardAct {
+    #[serde(rename = "word")]
+    Word(TaskAskWord),
+    #[serde(rename = "void")]
+    Void,
+}
+
+/// `oneiron::verbs::answer_forward::TaskAnswerForwardChallengeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAnswerForwardChallengeRequest {
+    #[serde(rename = "handle")]
+    pub handle: TaskAskHandle,
+    #[serde(rename = "intent_key")]
+    pub intent_key: String,
+    #[serde(rename = "act")]
+    pub act: AskForwardAct,
+}
+
+/// `oneiron::verbs::answer_forward::TaskAnswerForwardChallenge`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAnswerForwardChallenge {
+    #[serde(rename = "challenge")]
+    pub challenge: String,
+}
+
+/// `oneiron::task_verb::ask_forward::AskForwardHolderProof`.
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AskForwardHolderProof {
+    #[serde(rename = "token")]
+    pub token: String,
+    #[serde(rename = "signature")]
+    pub signature: String,
+}
+impl std::fmt::Debug for AskForwardHolderProof {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AskForwardHolderProof")
+            .finish_non_exhaustive()
+    }
+}
+
+/// `oneiron::verbs::answer_forward::TaskAnswerForwardRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAnswerForwardRequest {
+    #[serde(rename = "handle")]
+    pub handle: TaskAskHandle,
+    #[serde(rename = "intent_key")]
+    pub intent_key: String,
+    #[serde(rename = "act")]
+    pub act: AskForwardAct,
+    #[serde(rename = "proof")]
+    pub proof: AskForwardHolderProof,
+}
+
+/// `oneiron::task_verb::ask_forward::AskForwardReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state")]
+pub enum AskForwardReceipt {
+    #[serde(rename = "pending")]
+    Pending {
+        #[serde(rename = "intent_ref")]
+        intent_ref: String,
+    },
+    #[serde(rename = "answered")]
+    Answered {
+        #[serde(rename = "intent_ref")]
+        intent_ref: String,
+        #[serde(rename = "answer")]
+        answer: TaskAskAnswer,
+    },
+    #[serde(rename = "voided")]
+    Voided {
+        #[serde(rename = "intent_ref")]
+        intent_ref: String,
+        #[serde(rename = "generation")]
+        generation: u64,
+    },
+}
+
+/// `oneiron::verbs::answer_forward::TaskAnswerForwardStatusRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAnswerForwardStatusRequest {
+    #[serde(rename = "intent_ref")]
+    pub intent_ref: String,
 }
 
 /// `oneiron_store::model_decision::questions::records::OutcomeLabel`.
@@ -74991,59 +75201,6 @@ pub enum SpawnCare {
     Max,
 }
 
-/// `oneiron::code_run::run_verbs::SpawnKnob` with `T` = `String`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(tag = "mode")]
-pub enum SpawnKnobString {
-    #[serde(rename = "seed")]
-    Seed {
-        #[serde(rename = "value")]
-        value: String,
-        #[serde(rename = "weight_runs")]
-        weight_runs: f64,
-    },
-    #[serde(rename = "pin")]
-    Pin {
-        #[serde(rename = "value")]
-        value: String,
-    },
-}
-
-/// `oneiron::code_run::run_verbs::SpawnKnob` with `T` = `U32`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(tag = "mode")]
-pub enum SpawnKnobU32 {
-    #[serde(rename = "seed")]
-    Seed {
-        #[serde(rename = "value")]
-        value: u32,
-        #[serde(rename = "weight_runs")]
-        weight_runs: f64,
-    },
-    #[serde(rename = "pin")]
-    Pin {
-        #[serde(rename = "value")]
-        value: u32,
-    },
-}
-
-/// `oneiron::code_run::run_verbs::SpawnPattern`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum SpawnPattern {
-    #[serde(rename = "solo")]
-    Solo,
-    #[serde(rename = "ceo_decides")]
-    CeoDecides,
-    #[serde(rename = "committee")]
-    Committee,
-    #[serde(rename = "vote")]
-    Vote,
-    #[serde(rename = "market")]
-    Market,
-    #[serde(rename = "rotation")]
-    Rotation,
-}
-
 /// `oneiron::code_run::run_verbs::SpawnKnob` with `T` = `SpawnPattern`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "mode")]
@@ -75059,24 +75216,6 @@ pub enum SpawnKnobSpawnPattern {
     Pin {
         #[serde(rename = "value")]
         value: SpawnPattern,
-    },
-}
-
-/// `oneiron::code_run::run_verbs::SpawnKnob` with `T` = `U64`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(tag = "mode")]
-pub enum SpawnKnobU64 {
-    #[serde(rename = "seed")]
-    Seed {
-        #[serde(rename = "value")]
-        value: u64,
-        #[serde(rename = "weight_runs")]
-        weight_runs: f64,
-    },
-    #[serde(rename = "pin")]
-    Pin {
-        #[serde(rename = "value")]
-        value: u64,
     },
 }
 

@@ -22231,6 +22231,37 @@ async fn vault_code_model_heal_count(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_code_corrections(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.corrections")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.corrections", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.code.corrections", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::vault_code_corrections(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_code_type_diagnostics(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -27011,6 +27042,74 @@ async fn tasks_answer(
         value,
         &producers,
         Some(turn),
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn tasks_answer_forward_challenge(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "tasks.answer.forward.challenge",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn tasks_answer_forward(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let turn = Arc::new(server.admit_task_work(actor).await);
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke_in_turn(
+        server,
+        call,
+        actor,
+        class,
+        "tasks.answer.forward",
+        value,
+        &producers,
+        Some(turn),
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn tasks_answer_forward_status(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "tasks.answer.forward.status",
+        value,
+        &producers,
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
@@ -45922,6 +46021,14 @@ fn boxed_vault_code_model_heal_count<'a>(
     Box::pin(vault_code_model_heal_count(server, call, input))
 }
 #[inline(never)]
+fn boxed_vault_code_corrections<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_code_corrections(server, call, input))
+}
+#[inline(never)]
 fn boxed_vault_code_type_diagnostics<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
@@ -47094,6 +47201,30 @@ fn boxed_tasks_answer<'a>(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> FacadeRowFuture<'a> {
     Box::pin(tasks_answer(server, call, input))
+}
+#[inline(never)]
+fn boxed_tasks_answer_forward_challenge<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(tasks_answer_forward_challenge(server, call, input))
+}
+#[inline(never)]
+fn boxed_tasks_answer_forward<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(tasks_answer_forward(server, call, input))
+}
+#[inline(never)]
+fn boxed_tasks_answer_forward_status<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(tasks_answer_forward_status(server, call, input))
 }
 #[inline(never)]
 fn boxed_tasks_outcomes<'a>(
@@ -51890,6 +52021,7 @@ async fn call_verb_row(
         "vault.code.model_heal_count" => {
             boxed_vault_code_model_heal_count(server, call, input).await
         }
+        "vault.code.corrections" => boxed_vault_code_corrections(server, call, input).await,
         "vault.code.type_diagnostics" => {
             boxed_vault_code_type_diagnostics(server, call, input).await
         }
@@ -52154,6 +52286,13 @@ async fn call_verb_row(
         "ask" => boxed_ask(server, call, input).await,
         "wait" => boxed_wait(server, call, input).await,
         "tasks.answer" => boxed_tasks_answer(server, call, input).await,
+        "tasks.answer.forward.challenge" => {
+            boxed_tasks_answer_forward_challenge(server, call, input).await
+        }
+        "tasks.answer.forward" => boxed_tasks_answer_forward(server, call, input).await,
+        "tasks.answer.forward.status" => {
+            boxed_tasks_answer_forward_status(server, call, input).await
+        }
         "tasks.outcomes" => boxed_tasks_outcomes(server, call, input).await,
         "vault.rooms.list" => boxed_vault_rooms_list(server, call, input).await,
         "vault.rooms.messages" => boxed_vault_rooms_messages(server, call, input).await,
