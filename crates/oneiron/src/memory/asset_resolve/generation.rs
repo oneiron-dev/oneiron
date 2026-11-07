@@ -152,6 +152,7 @@ impl Memory<'_> {
         let weight = EdgeKind::DerivedFrom.default_weight().unwrap_or(1.0);
         self.vault.ensure_text_index_trusted()?;
         let writer = self.write_actor();
+        let lane = self.core_write_lane()?;
         self.vault.try_with_write_txn_grouped(|wtxn| {
             crate::memory::verify_actor_binding_in_txn(
                 self.vault,
@@ -159,7 +160,8 @@ impl Memory<'_> {
                 self.actor,
                 self.actor_class,
             )?;
-            let mut content = crate::federation::ActorContentTxn::new(self.vault, wtxn, writer)?;
+            let mut content =
+                crate::federation::ActorContentTxn::new(self.vault, wtxn, writer, lane.as_ref())?;
             let landed = self.land_asset_rows(
                 &mut content,
                 asset,

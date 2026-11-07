@@ -3,7 +3,8 @@
 //! readiness rather than a provider call: it starts this host's `[browser]`
 //! guest on the browser engine it names, through the engine's sandbox
 //! selector, attaches the driver to a blank page, and closes the session.
-//! The check guest has no egress at all: it visits no site. Its start moves
+//! The check guest has no egress at all: it visits no site. Its sockets and
+//! threads still charge the vault's host floor (FIX 6300). Its start moves
 //! the server's browser readiness, as every browser guest start does.
 //! `native_mail.jmap` connects to the `[native_mail]` server with the stored
 //! credential, as the native mail host does, and reads its domain; it sends
@@ -27,7 +28,7 @@ use oneiron::connector_key::{
 use oneiron_browser::{BrowserGuest, BrowserSession, HandleRetention};
 use oneiron_container::{
     EgressRelay, GuestSeccomp, GuestSpec, HostNetFloor, HttpRequest, HttpResponse, ImageRef,
-    SessionManifest, UnmeteredFloor,
+    SessionManifest,
 };
 use oneiron_vault_contract::BrowserUnavailableReason;
 
@@ -74,6 +75,7 @@ impl PackConnectionVerifier for HostConnectionChecks {
                     guest,
                     self.browser_handles.charge(),
                     &self.browser_readiness,
+                    vault.host_net_floor(),
                 )
             }
             NATIVE_MAIL_JMAP_CHECK => {
@@ -162,11 +164,13 @@ pub(super) fn native_mail_authorization(
 /// Starts one browser session the way a code run does, and closes it. The
 /// evidence is the digest of what the guest's fence proved. Each phase's
 /// outcome moves `readiness` (FIX 7670), and leaves the check's own answer
-/// as it was.
+/// as it was. The session's sockets and threads charge `floor`, the vault's
+/// host floor (FIX 6300).
 fn browser_session_ready(
     guest: &BrowserGuest,
     retention: Box<dyn HandleRetention>,
     readiness: &BrowserReadinessCell,
+    floor: Arc<dyn HostNetFloor>,
 ) -> Result<PackConnectionEvidence, String> {
     let backend = select_backend_for_session(
         SandboxGuestTier::Untrusted,
@@ -184,7 +188,7 @@ fn browser_session_ready(
         seccomp: GuestSeccomp::EngineFence,
         read_only_mounts: Vec::new(),
     };
-    let relay: Arc<dyn EgressRelay> = Arc::new(NoEgress);
+    let relay: Arc<dyn EgressRelay> = Arc::new(NoEgress { floor });
     // The guest's browser takes the CDP messages a run's egress door would
     // hand it (FIX 6815). This check has no egress, so an unreadable egress
     // file costs it nothing: the door's default stands.
@@ -215,8 +219,11 @@ fn browser_session_ready(
     })
 }
 
-/// A readiness check's relay: the guest reaches nothing.
-struct NoEgress;
+/// A readiness check's relay: the guest reaches nothing, and its socket
+/// entries and writers charge `floor` until they are reclaimed (FIX 6300).
+struct NoEgress {
+    floor: Arc<dyn HostNetFloor>,
+}
 
 fn refused() -> io::Error {
     io::Error::new(
@@ -252,9 +259,7 @@ impl EgressRelay for NoEgress {
 
     fn transferred(&self, _target: SocketAddr, _content_hash: [u8; 32], _bytes: u64) {}
 
-    /// One short session whose every relay is refused at once: it is not
-    /// charged to the host floor.
     fn host_net_floor(&self) -> &dyn HostNetFloor {
-        &UnmeteredFloor
+        &*self.floor
     }
 }

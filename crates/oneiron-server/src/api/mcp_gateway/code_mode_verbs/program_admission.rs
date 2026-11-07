@@ -506,7 +506,7 @@ fn connector(
     job_id: oneiron::EntityId,
     auth: crate::auth::CoreAuth,
     connection: &str,
-    ceiling: &[u8; 32],
+    ceiling: &oneiron::runtime_hooks::verb::VerbAskMcpCeiling,
 ) -> Result<McpCallContext, CallerUnavailable> {
     let now = server
         .vault
@@ -521,10 +521,7 @@ fn connector(
     });
     drop(registry);
     let mut actor = resolved.map_err(registration_unavailable)?;
-    if !crate::code_consent_host::ceiling_holds(
-        ceiling,
-        &crate::api::mcp_gateway::verb_hooks::mcp_adapter_ceiling(&actor),
-    ) {
+    if ceiling != &crate::api::mcp_gateway::verb_hooks::mcp_adapter_ceiling(&actor) {
         return Err(CallerUnavailable::ScopeRefused);
     }
     crate::api::mcp_gateway::actor_dispatch::mcp_proof_admits(server, &actor, &auth)
