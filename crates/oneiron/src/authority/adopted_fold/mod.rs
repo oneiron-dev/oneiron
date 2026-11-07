@@ -13,7 +13,10 @@
 //! pin and finishes its heads and sequences over the covered rows.
 //!
 //! The tail it folds is the resumed fold's: ops that leave every earlier
-//! row's fate as it was ([`super::fold_resume::admits_past`]), each on a
+//! row's fate as it was ([`super::fold_resume::admits_past`]), and an actor
+//! revocation or a slip or Grant withdrawal with every covered row in its
+//! causal past, on a clean image this install judges as it was built, whose
+//! whole tail then folds (FIX 11760), each on a
 //! frontier, tail or covered parent, a world key record on stated parents
 //! alone (FIX 4881). A late fork, a tail row on a covered row off the
 //! frontier, folds on the state the image's replay evidence keeps there
@@ -265,6 +268,7 @@ pub(super) fn capture_adopted_checkpoint_tail(
         projected,
         fold,
         final_merged: Some(final_merged),
+        revoke_facts,
     }) = settle_tail(image, &tail, log, confirms)?
     else {
         return Ok(whole());
@@ -335,7 +339,7 @@ pub(super) fn capture_adopted_checkpoint_tail(
         pairs,
         counted_pairs,
         frontier_ancestry,
-        revoke_facts: image.safety.revoke_facts.clone(),
+        revoke_facts,
         retired_keys: image.safety.retired_keys.clone(),
         closed_handoffs: image.safety.closed_handoffs.clone(),
         unsettled: image.safety.unsettled,
@@ -519,9 +523,68 @@ fn tail_folds_past(
                 .sequence_floors
                 .get(hash)
                 .is_none_or(|floor| entry.seq >= *floor)
-            && super::fold_resume::admits_past(&image.aggregate.merged, entry, &mut confirms)
+            && (super::fold_resume::admits_past(&image.aggregate.merged, entry, &mut confirms)
+                || serial_withdrawal(image, tail, log, entry))
     });
     folds_past.then_some(confirms)
+}
+
+/// A withdrawal [`super::fold_resume::admits_past`] leaves to the history
+/// that folds past the image all the same (FIX 11760): an actor revocation,
+/// a slip withdrawal or a Grant's, on a clean image this install judges as
+/// it was built, with every covered row in its causal past. No covered row
+/// is concurrent with it, so it changes no covered row's fate; its tail must
+/// then fold whole, and its actor revocations' facts join the image's
+/// ([`settle::settle_tail`]).
+fn serial_withdrawal(
+    image: &AuthorityCheckpointV2,
+    tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
+    log: AdoptedTail<'_>,
+    entry: &AuthorityLogEntry,
+) -> bool {
+    settle::serial_withdrawal_op(&entry.op)
+        && image.building_pin == log.pin.copied()
+        && image.aggregate.peers == *log.peer_consent_roots
+        && clean_image(image)
+        && covered_past(image, tail, entry)
+}
+
+/// Whether every row `image` covers folded valid, with no issue, missing
+/// parent or unsettled handoff: its states are the whole fold's own.
+fn clean_image(image: &AuthorityCheckpointV2) -> bool {
+    let valid = &image.fold().valid_entries;
+    !image.safety.unsettled
+        && image.safety.issues.is_empty()
+        && image.safety.missing_parents.is_empty()
+        && image.covered.iter().all(|hash| valid.contains(hash))
+}
+
+/// Whether every row `image` covers is in the causal past of the tail row
+/// `entry`: each image frontier row is a parent of it or of a tail row it
+/// descends from. Covered rows close over their ancestors and no covered row
+/// names a frontier row, so reaching every frontier row reaches them all. A
+/// parent neither tail nor covered leaves it unproved.
+fn covered_past(
+    image: &AuthorityCheckpointV2,
+    tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
+    entry: &AuthorityLogEntry,
+) -> bool {
+    let mut seen = BTreeSet::new();
+    let mut reached = BTreeSet::new();
+    let mut stack = entry.parent_hashes.clone();
+    while let Some(at) = stack.pop() {
+        if !seen.insert(at) {
+            continue;
+        }
+        if let Some(row) = tail.get(&at) {
+            stack.extend(row.parent_hashes.iter().copied());
+        } else if image.rows.contains_key(&at) {
+            reached.insert(at);
+        } else {
+            return false;
+        }
+    }
+    image.frontier.iter().all(|leaf| reached.contains(leaf))
 }
 
 /// Whether `entry` is a main-log row, no world's side row.
