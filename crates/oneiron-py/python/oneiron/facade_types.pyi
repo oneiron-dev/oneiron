@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1275 facade rows, 4617 declarations.
+Census: 1275 facade rows, 4618 declarations.
 Inputs: 1204 of 1275 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1104 of 1275 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -9387,6 +9387,7 @@ class RoleSwapReceipt(TypedDict):
     at: int
     role: ModelRole
     previous: NotRequired[ModelBinding | None]
+    previous_swap: NotRequired[EntityId | None]
     binding: ModelBinding
     checkpoint: PinnedCheckpoint
     evaluation: NotRequired[HeldOutResult | None]
@@ -15435,6 +15436,10 @@ class DeckDesignView(TypedDict):
     plans: list[DeckPlanView | None]
     decisions: list[list[DeckDesignDecision]]
     presentation: NotRequired[DeckPresentation]
+class GraphicLimits(TypedDict):
+    svg_bytes: int
+    raster_bytes: int
+    raster_pixels: int
 class DeckEmissionNames(TypedDict):
     text: str
     table: str
@@ -15448,6 +15453,7 @@ class DeckEmissionRequest(TypedDict):
     template: ArtifactVersionRef
     assets: NotRequired[dict[str, ArtifactVersionRef]]
     fonts: NotRequired[list[ArtifactVersionRef]]
+    graphics: NotRequired[GraphicLimits | None]
     names: DeckEmissionNames
     name: str
     run_ref: str
@@ -15673,6 +15679,7 @@ class DeckTransaction(TypedDict):
     base: Digest
     marks: NotRequired[IdMarks]
     seed: str
+    graphics: NotRequired[GraphicLimits | None]
     steps: list[DeckStep]
 DeckRenderSide = Literal["base", "candidate"]
 class DeckRender(TypedDict):
@@ -20800,6 +20807,7 @@ class DeckExportRequest(TypedDict):
     artifact_ref: str
     run_ref: str
     made_by: NotRequired[Any | None]
+    graphics: NotRequired[GraphicLimits | None]
 class DeckExportView(TypedDict):
     frontier: list[int]
     profile: str

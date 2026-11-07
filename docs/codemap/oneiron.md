@@ -635,6 +635,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/export/document_types.rs` | src | m | 21 struct · 1 enum · 8 fn · 1 const · 1 crate-vis | ExportAdapterDescriptor, ExportDerivationEnvelope, ExportDeterminism, ExportEdge, ExportEntity, ExportEpochFloor, ExportLedger, ExportPack +14 | The typed whole-vault document: what the archive's JSONL rows assemble into on import, and what the snapshot… |
 | `src/batch/export/document_validation.rs` | src | m | 1 crate-vis | — | Import-time validation of the serializer's full document, not its claims |
 | `src/batch/export/embedding_setup.rs` | src | m | 5 struct · 4 fn · 11 crate-vis | EmbeddingSetupImport, EmbeddingSetupWithheld, PortableEmbeddingSpace, PortableEvidenceFloors, PortableSlotBindings | The vault's embedding setup in the logical whole-vault exports (OF-370): each declared space's descriptor… |
+| `src/batch/export/epoch_floors.rs` | src | s | 3 crate-vis | — | The epoch floors a whole-vault archive carries (OF-013), one row per lineage (FIX 5029): a SESSION's own… |
 | `src/batch/export/evidence_import.rs` | src | s | 6 crate-vis | — | FIX 7777: the whole-vault import's MESSAGE orchestration |
 | `src/batch/export/export_authority.rs` | src | s | 1 fn · 1 re-export · 2 crate-vis | — | Core half of `batch::export::export_authority`: its store-layer items live in… |
 | `src/batch/export/export_diary.rs` | src | s | 1 const · 5 crate-vis | — | OF-490: a vault export is a read of agent diaries, made through the diary door's [`DiaryReadGate`] with the… |
@@ -1580,7 +1581,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/types/call.rs` | src | s | 1 enum · 2 fn | SelfCall | Guest-authored calls accepted by a first-party code runtime |
 | `src/code_run/types/effect.rs` | src | s | 1 enum · 3 fn | SelfEffect | Host and replay effect labels for first-party calls |
 | `src/code_run/types/host_door.rs` | src | m | 4 struct · 1 enum · 2 trait · 4 fn · 2 const | AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, AgentVerbRefusalWords, RunCall, RunObservation, SelfDispatcher | The host door and its admission vocabulary for run calls |
-| `src/code_run/types/outcome.rs` | src | s | 14 struct · 4 enum · 3 fn | SelfAgentDefinitionPutResult, SelfAgentSpawnResult, SelfContextResult, SelfDeniedResult, SelfDispatchOutcome, SelfDurableWait, SelfDurableWaitReason, SelfFailedResult +10 | Answers and durable waits recorded for first-party calls |
+| `src/code_run/types/outcome.rs` | src | s | 14 struct · 4 enum · 4 fn | SelfAgentDefinitionPutResult, SelfAgentSpawnResult, SelfContextResult, SelfDeniedResult, SelfDispatchOutcome, SelfDurableWait, SelfDurableWaitReason, SelfFailedResult +10 | Answers and durable waits recorded for first-party calls |
 | `src/code_run/types/request.rs` | src | m | 16 struct · 1 enum · 12 fn | SelfAgentDefinitionPutCall, SelfAgentSpawnCall, SelfAgentVerbCall, SelfAskCall, SelfContextCall, SelfFixtureEffectCall, SelfLeaderCall, SelfMemoryPutClaimCall +9 | Values carried by guest calls, without host authority |
 | `src/code_run/types/session_hooks.rs` | src | s | 1 struct · 4 enum | SessionHookDisposition, SessionHookNotKept, SessionHookPhase, SessionHookReceipt, SessionHookState | What each verb hook bound to a read did in an off-record room, as the read's answer says it (WILL L11-01… |
 | `src/code_run/types/session_write.rs` | src | s | 1 struct · 1 trait · 1 fn · 2 crate-vis | SessionWriteAdmission, SessionWriteCeiling | What a run bound to an off-record session writes its room under (WILL L11-01, S01-2a): the answer of its… |
@@ -1737,15 +1738,22 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commitment_wake/wake_fire.rs` | src | s | 2 enum · 1 fn · 4 crate-vis | CommitmentWakeFireOutcome, CommitmentWakeSkip | Atomic fire-once door from the due index to the Dreamer queue |
 | `src/commitment_wake/wake_proposal.rs` | src | m | 2 struct · 1 enum · 1 trait · 2 fn · 2 crate-vis | CommitmentWakeExecutor, CommitmentWakeProposalDraft, CommitmentWakeProposalPlanner, CommitmentWakeProposalSkip | Proposal planner, deterministic claim id, and the wrapper executor |
 | `src/compaction.rs` | src | m | 3 struct · 1 enum · 10 fn · 2 const · 2 mod · 10 re-export · 15 crate-vis | CompactionPacket, CompactionPayloadKind, CompactionSnapshotRef, ValidatedCompactionPacket | DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must… |
-| `src/compaction/conversation.rs` | src | m | 3 struct · 2 enum · 4 fn · 1 re-export · 1 crate-vis | ConversationCompactionUnavailable, ConversationEvidence, ConversationFlight, ConversationFlightOutcome, ConversationTurnSpan | A conversation's self-written compaction (FIX 4465 D): a self agent's chat turn compacts as the agent |
+| `src/compaction/conversation.rs` | src | m | 3 struct · 2 enum · 4 fn · 1 re-export · 3 crate-vis | ConversationCompactionUnavailable, ConversationEvidence, ConversationFlight, ConversationFlightOutcome, ConversationTurnSpan | A conversation's self-written compaction (FIX 4465 D): a self agent's chat turn compacts as the agent |
 | `src/compaction/conversation/log.rs` | src | m | 1 struct · 1 enum · 2 fn · 1 crate-vis | ChatLog, ChatLogLine | `chat_compaction_sources` (FIX 4465 D): a self agent's model-facing chat log, read from the retained ledger… |
+| `src/compaction/conversation/order.rs` | src | s | 2 crate-vis | — | A conversation's turn order within one SESSION (FIX 5029): the numbers a chat window gives its turns, and… |
+| `src/compaction/conversation/standing.rs` | src | s | 3 crate-vis | — | Whether a landed conversation summary stands for a reader now: the one reader a chat log… |
 | `src/compaction/conversation/storage.rs` | src | s | 2 fn · 5 crate-vis | — | A conversation's landed self-written summaries (FIX 4465 D): one durable receipt per SUMMARY, written in its… |
+| `src/compaction/conversation/window.rs` | src | s | 3 crate-vis | — | The window a chat flight may compact, and each turn's pin |
 | `src/compaction/driver/integration.rs` | src | m | 2 fn · 4 crate-vis | — | Transactional epoch integration, typed executor coverage, and swap plans |
 | `src/compaction/driver/integration/conversation.rs` | src | s | 1 crate-vis | — | A conversation's self-written summary lands (FIX 4465 D): its packet is admitted on the door's conversation… |
 | `src/compaction/driver/live_fork.rs` | src | s | 1 crate-vis | — | The one Frontier-tier binding a compaction may wear (FIX 4465 C, Engine 10-19): an agent whose profile names… |
 | `src/compaction/driver/log.rs` | src | s | 2 fn · 2 crate-vis | — | The driver's entries for a host that numbers its own log: an executor run, whose watermark is its own step… |
-| `src/compaction/driver/mod.rs` | src | L | 8 struct · 3 enum · 1 trait · 24 fn · 2 const · 6 crate-vis | CompactionBackend, CompactionBackendRegistry, CompactionDirective, CompactionDriver, CompactionProduct, CompactionRequest, CompactionSignal, CompactionTierClass +4 | RT-05 in-engine compaction backend, margin law, and single-flight driver |
-| `src/compaction/epoch.rs` | src | L | 1 struct · 2 fn · 3 const · 20 crate-vis | EpochSummaryBody | Epoch-summary codec and transactional lineage mint |
+| `src/compaction/driver/mod.rs` | src | m | 7 struct · 3 enum · 1 trait · 23 fn · 2 const · 1 re-export · 2 crate-vis | CompactionBackend, CompactionBackendRegistry, CompactionDirective, CompactionDriver, CompactionProduct, CompactionSignal, CompactionTierClass, CompactionWatermark +3 | RT-05 in-engine compaction backend, margin law, and single-flight driver |
+| `src/compaction/driver/request.rs` | src | m | 1 struct · 1 fn · 7 crate-vis | CompactionRequest | Sealing the one compaction request of an in-flight crossing |
+| `src/compaction/epoch.rs` | src | s | 1 re-export · 10 crate-vis | — | Epoch summaries: the body codec ([`codec`]), each epoch's lineage ([`lineage`]), the transactional mint… |
+| `src/compaction/epoch/codec.rs` | src | s | 1 struct · 2 fn · 3 const · 12 crate-vis | EpochSummaryBody | The epoch-summary body codec: pinned keys, strict encode and decode |
+| `src/compaction/epoch/lineage.rs` | src | s | 9 crate-vis | — | An epoch's lineage: its scope, its durable prior and its boundary |
+| `src/compaction/epoch/mint.rs` | src | m | 10 crate-vis | — | The transactional epoch mint: one SUMMARY, its lineage and its dependencies in one write (FIX 5029: a chat… |
 | `src/compaction/epoch_floor.rs` | src | s | 4 crate-vis | — | Where a removed epoch summary leaves the count (OF-013) |
 | `src/compaction/epoch_intent.rs` | src | s | 6 crate-vis | — | The intent a compaction epoch is born from (ARCH-0035 Rule A; owner 2026-09-17: a summary's birth names the… |
 | `src/compaction/epoch_vector.rs` | src | s | 1 struct · 1 trait · 1 fn · 4 crate-vis | EpochEmbedder, TurnVector | The vectors an off-record room's epoch summary and turns carry (ARCH-0052 K6) |
@@ -1763,7 +1771,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/compaction/tests.rs` | test | L | — | — | DREAM-008 (ONE-1250) compaction handoff admission fixtures |
 | `src/compaction/tests/driver_regressions.rs` | test | m | 1 crate-vis | — | Active-request identity, budget floors, and complete turn spans |
 | `src/compaction/tests/epoch_regressions.rs` | test | m | — | — | Symmetric blank-text refusal and fail-closed durable epoch advancement |
-| `src/compaction/withdrawn.rs` | src | s | 9 crate-vis | — | What a withdrawn epoch summary keeps: its keyframe, without its words |
+| `src/compaction/withdrawn.rs` | src | s | 10 crate-vis | — | What a withdrawn epoch summary keeps: its keyframe, without its words |
 | `src/companion/codec.rs` | src | s | 6 crate-vis | — | Scope/subject task payload codecs |
 | `src/companion/keys.rs` | src | s | 3 const · 8 crate-vis | — | Durable companion task payload keys |
 | `src/companion/mod.rs` | src | s | 5 re-export · 3 crate-vis | — | Companion task queue and PERSON/FACET persona compilation |
@@ -1901,8 +1909,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_board/fanout.rs` | src | s | 2 fn | — | The fan-out launches that wait on an approver, as TASKS lead rows (OF-393): a held launch's pause row with… |
 | `src/context_board/frame.rs` | src | L | 13 struct · 5 enum · 25 fn · 7 const · 4 crate-vis | BoardBlockHeader, BoardBudget, BoardBudgetRequest, BoardBudgetSource, BoardFrame, BoardFrameError, BoardLegend, BoardPart +10 | Board frame — the canonical `<memory surface="board">` envelope over typed sections, plus the adaptive… |
 | `src/context_board/history/claims.rs` | src | s | 6 crate-vis | — | Reserved board claim shape shared by admission and history reconstruction |
+| `src/context_board/history/epoch.rs` | src | s | 1 struct · 1 enum · 1 fn | BoardTurnEpoch, BoardTurnHistory | A past turn's board history with its compaction epoch (FIX 5038) |
 | `src/context_board/history/ledger.rs` | src | m | 10 fn · 1 crate-vis | — | Board turn anchors reference one CRDT frontier; facts remain CLAIM rows |
-| `src/context_board/history/mod.rs` | src | s | 1 re-export · 2 crate-vis | — | Delta-only board claims and exact Loro-frontier reconstruction |
+| `src/context_board/history/mod.rs` | src | s | 2 re-export · 2 crate-vis | — | Delta-only board claims and exact Loro-frontier reconstruction, and the epoch a folded chat turn reads as… |
 | `src/context_board/history/tests.rs` | test | m | — | — | Board acceptance: real claim rows, exact pinned text, no unchanged writes |
 | `src/context_board/history/types.rs` | src | s | 4 struct · 1 enum · 1 fn · 4 crate-vis | BoardHistoryError, BoardSelection, BoardTurn, BoardTurnReceipt, ReconstructedBoard | Typed board history requests and exact-fold results |
 | `src/context_board/hook_pins.rs` | src | s | 2 struct · 8 fn | HookPin, HookShare | Hook blocks on the board (ARCH-0080 §11, OI-1 = A) |
@@ -2044,7 +2053,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/conversation_dag/admission.rs` | src | L | 23 crate-vis | — | Close the legacy ChildOf-only append door after DAG adoption |
 | `src/conversation_dag/branch_scope.rs` | src | s | 2 crate-vis | — | Shared branch ownership and bounded reply-span proof for mint and stored reads |
 | `src/conversation_dag/fixtures.rs` | src | s | 7 crate-vis | — | — |
-| `src/conversation_dag/graph.rs` | src | m | 22 crate-vis | — | Strict transactional graph reads and shared guards |
+| `src/conversation_dag/graph.rs` | src | m | 24 crate-vis | — | Strict transactional graph reads and shared guards |
 | `src/conversation_dag/membership.rs` | src | s | 5 crate-vis | — | Replicated TURN session membership: body carrier and local index reconstruction |
 | `src/conversation_dag/migration.rs` | src | m | 1 fn · 4 crate-vis | — | Idempotent local initialization of received conversation DAGs |
 | `src/conversation_dag/mod.rs` | src | s | 1 mod · 4 re-export · 23 crate-vis | — | Conversation DAG topology, local HEAD state and exact scope resolution |
@@ -2396,7 +2405,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/thing_agent/proposals.rs` | src | s | 9 crate-vis | — | The engine's own record of a thing's agent (FIX 7508): the host parent run of each lease generation, the… |
 | `src/dreamer_consolidation/thing_agent/serve.rs` | src | m | 3 crate-vis | — | The thing pass (FIX 7508): a thing branch's agent, launched, served and collected inside its parent's wake… |
 | `src/dreamer_consolidation/turn_text.rs` | src | m | 25 crate-vis | — | The read-only text of one TURN as a consolidation branch sees it |
-| `src/dreamer_consolidation/turn_text/compaction_span.rs` | src | s | 3 crate-vis | — | `conversation_check_evidence` (FIX 4465 D): the Dreamer's read of the span a conversation's self-written… |
+| `src/dreamer_consolidation/turn_text/compaction_span.rs` | src | s | 4 crate-vis | — | `conversation_check_evidence` (FIX 4465 D): the Dreamer's read of the span a conversation's self-written… |
 | `src/dreamer_consolidation/turn_text/projection.rs` | src | s | 2 crate-vis | — | The exact projection a consolidation branch read of one witnessed TURN (FIX 5755), and a retained citation… |
 | `src/dreamer_consolidation/value_projection.rs` | src | s | 2 crate-vis | — | Data projection between extraction/merge JSON and claim MessagePack values |
 | `src/dreamer_consolidation/wake_plan.rs` | src | m | 2 struct · 27 crate-vis | PreparedConsolidationAttempt, PreparedWake | One frozen read revision and exact preparation of queued consolidation work |
@@ -5069,7 +5078,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/recovery/canonical/source_audiences.rs` | src | m | 1 struct · 4 crate-vis | CanonicalSourceAudience | The source audiences a window carries (Engine A, 6 Nov 03:46), through canonical capture and rebuild |
 | `src/recovery/canonical/validation_work.rs` | src | s | 3 crate-vis | — | Ordered canonical validation groups shared by synchronous and turn-based recovery |
 | `src/recovery/canonical/vocabulary.rs` | src | s | 11 struct · 1 re-export | CanonicalBaseEdge, CanonicalContainerManifest, CanonicalCustodyTransition, CanonicalEntity, CanonicalPinCarrier, CanonicalRoomFact, CanonicalRoomTurn, CanonicalSchemaManifest +3 | CRDT-independent canonical snapshot values and document history vocabulary |
-| `src/recovery/canonical/withdrawn_cutoffs.rs` | src | s | 1 enum · 7 crate-vis | CanonicalCutoff | The withdrawal fences and session epoch floors a window carries (OF-013, FIX 2867), through canonical… |
+| `src/recovery/canonical/withdrawn_cutoffs.rs` | src | s | 1 enum · 7 crate-vis | CanonicalCutoff | The withdrawal fences and epoch floors a window carries (OF-013, FIX 2867), through canonical capture and… |
 | `src/recovery/canonical_tests.rs` | test | XL | — | — | Caller-visible canonical carry-list, bounded ladder and forward-rebuild laws |
 | `src/recovery/checkpoint/admission.rs` | src | m | 1 fn · 2 re-export · 1 crate-vis | — | The engine's half of a cold managed restore (LC FIX 5384/5385; the contract is… |
 | `src/recovery/checkpoint/admission/facts.rs` | src | s | 10 struct · 5 enum · 1 re-export | AddedRecipient, AdmittedRestore, AnchorDisposition, CustodyAdmissionFacts, CustodyPositionFact, CustodyRouteFact, RecipientAdmissionFacts, RecipientRetirementDisposition +7 | What a cold managed restore is asked to do and what it verified (LC FIX 5384/5385): the plan's expected… |
@@ -6700,7 +6709,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/window/tombstones.rs` | src | m | 3 fn · 8 crate-vis | — | Tombstone apply/export/replay plus window rebuild from updates |
 | `src/sync/window/withdrawn.rs` | src | s | 4 crate-vis | — | Withdrawn generations in a window's live map (OF-013, FIX 931) |
 | `src/sync/window_rows.rs` | src | s | 1 crate-vis | — | Window/root row vocabulary, defined in the storage layer |
-| `src/sync/withdrawn_cutoffs.rs` | src | m | 13 crate-vis | — | OF-013: withdrawn-generation cutoffs on the window plane |
+| `src/sync/withdrawn_cutoffs.rs` | src | m | 16 crate-vis | — | OF-013: withdrawn-generation cutoffs on the window plane |
 | `src/tagging/freshness.rs` | src | s | 2 struct · 3 fn · 3 crate-vis | TaggingFreshness, TaggingMoodPartView | Whether a saved tag set still reads its turn as published (FIX 10169) |
 | `src/tagging/held.rs` | src | s | 2 enum · 1 fn · 1 crate-vis | HeldTagsOutcome, UnreadText | An importer completes a turn's marker with tags it already holds: no tagger call |
 | `src/tagging/history.rs` | src | s | 1 struct · 1 fn · 7 crate-vis | TaggingTraceRecord | The trace history: what stays of a turn's tagging once its settled marker has left the job ledger |
