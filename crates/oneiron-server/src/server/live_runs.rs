@@ -28,6 +28,7 @@
 //! An action's planned team writes its start on the run's own seat and
 //! line, as an entry's does, from what the run registered (DOOR-111 S4c-4,
 //! `pattern_action`).
+mod model_request;
 mod pattern_action;
 
 use std::collections::HashMap;
@@ -190,6 +191,9 @@ pub(crate) struct LiveRunEntry {
     definition: AgentDefinition,
     spend_scope: Option<SpendScopeId>,
     attached: Mutex<Option<CodeRunLiveRunBinding>>,
+    /// Minimal request provenance belongs to one exact credential attachment,
+    /// never to a later rebind or a different lease of this run.
+    repo_request: Mutex<Option<(CodeRunLiveRunBinding, oneiron::code_run::RepoRequestWitness)>>,
     /// Public browser calls share one door so a new HTTP request does not
     /// refill a reviewed batch. Dropped with this registered lease.
     browser: OnceLock<Arc<crate::api::RunGuests>>,
@@ -300,6 +304,7 @@ impl LiveRuns {
             definition,
             spend_scope,
             attached: Mutex::new(attached),
+            repo_request: Mutex::new(None),
             browser: OnceLock::new(),
             self_brief: Mutex::new(None),
             serial: Arc::default(),
@@ -425,6 +430,7 @@ impl LiveRuns {
         };
         let handle = handle_text(run, &binding);
         *attached = Some(binding);
+        *lock(&entry.repo_request) = None;
         Ok(Ok(handle))
     }
 
@@ -631,6 +637,8 @@ impl ResolvedLiveRun {
         crate::api::call_receipt::witness_attempt(self.entry.proof.call_attempt_witness());
         Ok(Ok(HeldLiveRun {
             proof: self.entry.proof.clone(),
+            entry: Arc::clone(&self.entry),
+            binding: self.binding.clone(),
             _serial: serial,
         }))
     }
@@ -639,6 +647,8 @@ impl ResolvedLiveRun {
 /// A live run held for one action: its lease proof, under its guard.
 pub(crate) struct HeldLiveRun {
     proof: HostBinding,
+    entry: Arc<LiveRunEntry>,
+    binding: CodeRunLiveRunBinding,
     _serial: OwnedMutexGuard<()>,
 }
 

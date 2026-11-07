@@ -792,6 +792,7 @@ pub enum AgentVerb {
     VaultRepoSymbolsDeclare,
     VaultRepoSymbolsRenew,
     VaultRepoSymbolsRelease,
+    VaultRepoModelGenerate,
     VaultRepoProposalSubmit,
     VaultRepoMergeQueueEnqueue,
     VaultRepoCheckoutBind,
@@ -2096,6 +2097,7 @@ impl AgentVerb {
         Self::VaultRepoSymbolsDeclare,
         Self::VaultRepoSymbolsRenew,
         Self::VaultRepoSymbolsRelease,
+        Self::VaultRepoModelGenerate,
         Self::VaultRepoProposalSubmit,
         Self::VaultRepoMergeQueueEnqueue,
         Self::VaultRepoCheckoutBind,
@@ -3427,6 +3429,7 @@ impl AgentVerb {
             Self::VaultRepoSymbolsDeclare => "vault.repo.symbols.declare",
             Self::VaultRepoSymbolsRenew => "vault.repo.symbols.renew",
             Self::VaultRepoSymbolsRelease => "vault.repo.symbols.release",
+            Self::VaultRepoModelGenerate => "vault.repo.model.generate",
             Self::VaultRepoProposalSubmit => "vault.repo.proposal_submit",
             Self::VaultRepoMergeQueueEnqueue => "vault.repo.merge_queue.enqueue",
             Self::VaultRepoCheckoutBind => "vault.repo.checkout.bind",
@@ -4743,6 +4746,7 @@ impl AgentVerb {
                 | Self::VaultRepoSymbolsDeclare
                 | Self::VaultRepoSymbolsRenew
                 | Self::VaultRepoSymbolsRelease
+                | Self::VaultRepoModelGenerate
                 | Self::VaultRepoProposalSubmit
                 | Self::VaultRepoMergeQueueEnqueue
                 | Self::VaultRepoCheckoutBind
@@ -6076,6 +6080,7 @@ impl AgentVerb {
                 | Self::VaultRepoSymbolsDeclare
                 | Self::VaultRepoSymbolsRenew
                 | Self::VaultRepoSymbolsRelease
+                | Self::VaultRepoModelGenerate
                 | Self::VaultRepoProposalSubmit
                 | Self::VaultRepoMergeQueueEnqueue
                 | Self::VaultRepoCheckoutBind
@@ -6741,6 +6746,7 @@ impl AgentVerb {
                 | Self::VaultRepoSymbolsDeclare
                 | Self::VaultRepoSymbolsRenew
                 | Self::VaultRepoSymbolsRelease
+                | Self::VaultRepoModelGenerate
                 | Self::VaultRepoProposalSubmit
                 | Self::VaultRepoMergeQueueEnqueue
                 | Self::VaultRepoCheckoutBind
@@ -9606,6 +9612,7 @@ impl AgentVerb {
             Self::VaultRepoSymbolsDeclare => &["spec"],
             Self::VaultRepoSymbolsRenew => &["spec"],
             Self::VaultRepoSymbolsRelease => &["spec"],
+            Self::VaultRepoModelGenerate => &["spec"],
             Self::VaultRepoProposalSubmit => &["spec"],
             Self::VaultRepoMergeQueueEnqueue => &["spec"],
             Self::VaultRepoCheckoutBind => &["spec"],
@@ -10911,6 +10918,7 @@ impl AgentVerb {
             Self::VaultRepoSymbolsDeclare => &["spec"],
             Self::VaultRepoSymbolsRenew => &["spec"],
             Self::VaultRepoSymbolsRelease => &["spec"],
+            Self::VaultRepoModelGenerate => &["spec"],
             Self::VaultRepoProposalSubmit => &["spec"],
             Self::VaultRepoMergeQueueEnqueue => &["spec"],
             Self::VaultRepoCheckoutBind => &["spec"],
@@ -13757,6 +13765,9 @@ impl AgentVerb {
                 "Extends the attached run's own symbol declaration by its declared lifetime."
             }
             Self::VaultRepoSymbolsRelease => "Removes the attached run's own symbol declaration.",
+            Self::VaultRepoModelGenerate => {
+                "Serves the supplied request content on the attached live run's registered model seat and spend line. The host retains only the actual served request's provenance on this exact credential attachment for repo proposals; a rebind inherits none."
+            }
             Self::VaultRepoProposalSubmit => {
                 "Keeps one whole-file change against the attached run's own work as an immutable Proposed proposal under the vault's review policy and a host-witnessed provenance; without that witness it holds typed, work kept."
             }

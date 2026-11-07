@@ -66,6 +66,7 @@ pub use self::memory_verbs::SELF_MEMORY_SEARCH_MAX_RESULTS;
 pub(crate) use self::reader_spawn::{
     ReaderChildBinding, delegated_input, delegated_occurrence_input,
 };
+pub use self::repo_sources::RepoRequestWitness;
 
 /// Host-bound dispatcher for one first-party code run.
 ///

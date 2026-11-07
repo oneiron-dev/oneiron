@@ -823,6 +823,7 @@ vaultRepoWorkOpen(input: unknown): unknown
 vaultRepoSymbolsDeclare(input: unknown): unknown
 vaultRepoSymbolsRenew(input: unknown): unknown
 vaultRepoSymbolsRelease(input: unknown): unknown
+vaultRepoModelGenerate(input: unknown): unknown
 vaultRepoProposalSubmit(input: unknown): unknown
 vaultRepoMergeQueueEnqueue(input: unknown): unknown
 vaultRepoCheckoutBind(input: unknown): unknown

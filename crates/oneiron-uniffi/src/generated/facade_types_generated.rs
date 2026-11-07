@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1279 facade rows, 4631 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1231.
+// UniFFI census: 1280 facade rows, 4633 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1232.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -45383,6 +45383,104 @@ pub struct RepoSymbolsReleaseOutput {
     pub task: String,
 }
 
+/// `oneiron_model::llm::protocol::LlmMessageRole`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum LlmMessageRole {
+    #[serde(rename = "system")]
+    System,
+    #[serde(rename = "user")]
+    User,
+    #[serde(rename = "assistant")]
+    Assistant,
+    #[serde(rename = "tool")]
+    Tool,
+}
+
+/// `oneiron_model::llm::protocol::LlmMessage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LlmMessage {
+    #[serde(rename = "role")]
+    pub role: LlmMessageRole,
+    #[serde(rename = "content")]
+    pub content: Vec<ContentPart>,
+}
+
+/// `oneiron_model::llm::protocol::LlmToolSpec`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LlmToolSpec {
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "description")]
+    pub description: String,
+    #[serde(rename = "input_schema")]
+    pub input_schema: crate::WireJson,
+}
+
+/// `oneiron_model::llm::call::ResponseFormat`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "format")]
+pub enum ResponseFormat {
+    #[serde(rename = "text")]
+    Text,
+    #[serde(rename = "json")]
+    Json {
+        #[serde(rename = "schema")]
+        schema: crate::WireJson,
+    },
+}
+
+/// `oneiron::code_run::repo_model::RepoModelGenerateInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RepoModelGenerateInput {
+    #[serde(rename = "messages")]
+    pub messages: Vec<LlmMessage>,
+    #[serde(rename = "tools", default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<LlmToolSpec>>,
+    #[serde(rename = "params", default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<std::collections::HashMap<String, crate::WireJson>>,
+    #[serde(
+        rename = "provider_options",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub provider_options: Option<std::collections::HashMap<String, crate::WireJson>>,
+    #[serde(rename = "response_format")]
+    pub response_format: ResponseFormat,
+}
+
+/// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `RepoModelGenerateInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LiveRunRequestRepoModelGenerateInput {
+    #[serde(rename = "live_run")]
+    pub live_run: String,
+    #[serde(rename = "spec")]
+    pub spec: RepoModelGenerateInput,
+}
+
+/// `oneiron_model::llm::protocol::LlmResponse`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LlmResponse {
+    #[serde(rename = "message")]
+    pub message: LlmMessage,
+    #[serde(rename = "usage")]
+    pub usage: LlmUsage,
+    #[serde(rename = "finish_reason")]
+    pub finish_reason: FinishReason,
+    #[serde(
+        rename = "reply_assertions",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub reply_assertions: Option<ReplyAssertions>,
+    #[serde(
+        rename = "token_scores",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub token_scores: Option<crate::WireJson>,
+}
+
 /// `oneiron::memory::repo_doors::types::RepoProposalSubmitInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -52961,19 +53059,6 @@ pub struct TierPrecedence {
     pub seat: Option<String>,
 }
 
-/// `oneiron_model::llm::call::ResponseFormat`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(tag = "format")]
-pub enum ResponseFormat {
-    #[serde(rename = "text")]
-    Text,
-    #[serde(rename = "json")]
-    Json {
-        #[serde(rename = "schema")]
-        schema: crate::WireJson,
-    },
-}
-
 /// `oneiron_model::llm::call::CallEnvelope`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CallEnvelope {
@@ -52995,39 +53080,6 @@ pub struct CallEnvelope {
         skip_serializing_if = "Option::is_none"
     )]
     pub seat_effort: Option<ReasoningEffort>,
-}
-
-/// `oneiron_model::llm::protocol::LlmMessageRole`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum LlmMessageRole {
-    #[serde(rename = "system")]
-    System,
-    #[serde(rename = "user")]
-    User,
-    #[serde(rename = "assistant")]
-    Assistant,
-    #[serde(rename = "tool")]
-    Tool,
-}
-
-/// `oneiron_model::llm::protocol::LlmMessage`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct LlmMessage {
-    #[serde(rename = "role")]
-    pub role: LlmMessageRole,
-    #[serde(rename = "content")]
-    pub content: Vec<ContentPart>,
-}
-
-/// `oneiron_model::llm::protocol::LlmToolSpec`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct LlmToolSpec {
-    #[serde(rename = "name")]
-    pub name: String,
-    #[serde(rename = "description")]
-    pub description: String,
-    #[serde(rename = "input_schema")]
-    pub input_schema: crate::WireJson,
 }
 
 /// `oneiron_model::llm::protocol::LlmRequest`.
@@ -53081,29 +53133,6 @@ pub struct ModelRoleInvoke {
     pub role: ModelRole,
     #[serde(rename = "input")]
     pub input: ModelRoleInput,
-}
-
-/// `oneiron_model::llm::protocol::LlmResponse`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct LlmResponse {
-    #[serde(rename = "message")]
-    pub message: LlmMessage,
-    #[serde(rename = "usage")]
-    pub usage: LlmUsage,
-    #[serde(rename = "finish_reason")]
-    pub finish_reason: FinishReason,
-    #[serde(
-        rename = "reply_assertions",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub reply_assertions: Option<ReplyAssertions>,
-    #[serde(
-        rename = "token_scores",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub token_scores: Option<crate::WireJson>,
 }
 
 /// `oneiron::memory::extraction::types::NerSpan`.

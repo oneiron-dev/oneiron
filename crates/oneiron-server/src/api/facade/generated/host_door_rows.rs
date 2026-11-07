@@ -86,6 +86,7 @@
 //! - `vault.repo.symbols.declare`
 //! - `vault.repo.symbols.renew`
 //! - `vault.repo.symbols.release`
+//! - `vault.repo.model.generate`
 //! - `vault.repo.proposal_submit`
 //! - `vault.repo.merge_queue.enqueue`
 //! - `vault.repo.checkout.bind`
@@ -1763,6 +1764,7 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.repo.symbols.declare"
                 | "vault.repo.symbols.renew"
                 | "vault.repo.symbols.release"
+                | "vault.repo.model.generate"
                 | "vault.repo.proposal_submit"
                 | "vault.repo.merge_queue.enqueue"
                 | "vault.repo.checkout.bind"

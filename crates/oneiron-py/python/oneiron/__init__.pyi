@@ -2909,6 +2909,8 @@ class Oneiron:
         def merge_queue(self) -> "Oneiron._VaultRepoMergeQueueVerbs": ...
         @property
         def work(self) -> "Oneiron._VaultRepoWorkVerbs": ...
+        @property
+        def model(self) -> "Oneiron._VaultRepoModelVerbs": ...
         def proposal_submit(self, spec: Facade.LiveRunRequest[Facade.RepoProposalSubmitInput]) -> Facade.RepoProposalSubmitOutput:
             """Keeps one whole-file change against the attached run's own work as an immutable Proposed proposal under the vault's review policy and a host-witnessed provenance; without that witness it holds typed, work kept."""
         @property
@@ -2952,6 +2954,9 @@ class Oneiron:
     class _VaultRepoWorkVerbs:
         def open(self, spec: Facade.LiveRunRequest[Facade.RepoWorkOpenInput]) -> Facade.RepoWorkOpenOutput:
             """Opens a fresh private working set of an admitted repo at its queue's green commit for the attached run, readable paths only."""
+    class _VaultRepoModelVerbs:
+        def generate(self, spec: Facade.LiveRunRequest[Facade.RepoModelGenerateInput]) -> Facade.LlmResponse:
+            """Serves the supplied request content on the attached live run's registered model seat and spend line. The host retains only the actual served request's provenance on this exact credential attachment for repo proposals; a rebind inherits none."""
     class _VaultRepoCheckoutVerbs:
         def bind(self, spec: Facade.LiveRunRequest[Facade.RepoCheckoutBindInput]) -> Facade.RepoCheckoutBindOutput:
             """Materializes the attached run's own live checkout lease of an admitted served repo, for its TASK, with its lease-route remote when a door base is named; no lease is minted and no host path is shown."""

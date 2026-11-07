@@ -2451,6 +2451,9 @@ impl OneironClient {
                 "vault.repo.symbols.release" => remote_agent_verb_output::<
                     oneiron::memory::repo_doors::RepoSymbolsReleaseOutput,
                 >(client, verb, &input),
+                "vault.repo.model.generate" => {
+                    remote_agent_verb_output::<oneiron::LlmResponse>(client, verb, &input)
+                }
                 "vault.repo.proposal_submit" => remote_agent_verb_output::<
                     oneiron::memory::repo_doors::RepoProposalSubmitOutput,
                 >(client, verb, &input),
@@ -13654,6 +13657,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.repo.symbols.release", value)
+    }
+    pub fn vault_repo_model_generate(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::RepoModelGenerateInput>,
+    ) -> Result<oneiron::LlmResponse, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.repo.model.generate", value)
     }
     pub fn vault_repo_proposal_submit(
         &self,

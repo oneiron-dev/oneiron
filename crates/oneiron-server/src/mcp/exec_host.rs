@@ -292,6 +292,20 @@ pub trait McpCodeModeProvider: Send + Sync {
     ) -> Option<Arc<dyn LlmBackend>> {
         None
     }
+    /// The native backend with a host observer at each finalized physical
+    /// send, on the same per-rung lease and inherited model list. A provider
+    /// that cannot observe that boundary supplies none; it never substitutes
+    /// a caller's pre-route request as evidence.
+    fn reader_backend_observed(
+        &self,
+        _meter: BudgetGuard,
+        _payer: Option<PayerPerson>,
+        _lease: Option<LiveLeaseState>,
+        _listed: Vec<AgentModel>,
+        _observer: ReaderRequestObserver,
+    ) -> Option<Arc<dyn LlmBackend>> {
+        None
+    }
     /// The meter the host runs a run's own model calls on when the run
     /// spends under no scope (served code mode's shared guard): the reader
     /// children of such a run spend on it too. `None`: the provider has none
@@ -517,6 +531,9 @@ pub(crate) type ModelListBackend =
 pub(crate) type ModelCallBackend =
     Arc<dyn Fn(EntityId, Option<String>) -> Arc<dyn LlmBackend> + Send + Sync>;
 
+/// A host check and observation of the finalized request at its physical send.
+pub type ReaderRequestObserver = Arc<dyn Fn(&oneiron::LlmRequest) -> bool + Send + Sync>;
+
 /// Builds one reader child's backend over the host's model, its calls spent
 /// on the guard it is given and billed to the payer, when one is given.
 pub type ReaderMeter = Arc<
@@ -525,6 +542,7 @@ pub type ReaderMeter = Arc<
             Option<PayerPerson>,
             Option<LiveLeaseState>,
             Vec<AgentModel>,
+            Option<ReaderRequestObserver>,
         ) -> Arc<dyn LlmBackend>
         + Send
         + Sync,

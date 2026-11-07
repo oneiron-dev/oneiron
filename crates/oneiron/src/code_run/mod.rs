@@ -39,6 +39,7 @@ mod replay_capsule;
 mod replay_context;
 mod replay_parts;
 mod repo_calls;
+mod repo_model;
 mod result_read;
 pub(crate) mod run_verb_call;
 mod run_verbs;
@@ -121,7 +122,7 @@ pub(crate) use self::dispatcher::{
 };
 pub use self::dispatcher::{
     GatedActorWrite, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher,
-    SELF_MEMORY_SEARCH_MAX_RESULTS,
+    RepoRequestWitness, SELF_MEMORY_SEARCH_MAX_RESULTS,
 };
 pub(crate) use self::model_call::{
     erase_model_call_actor_as_in_txn, erase_model_call_actor_in_txn,
@@ -150,6 +151,7 @@ pub(crate) use self::replay_context::{
     SelectedFinding, StepContextCapture, StepContextCommit, StepReplayContext, reveals_secret,
 };
 pub use self::repo_calls::RepoRunCall;
+pub use self::repo_model::RepoModelGenerateInput;
 pub use self::result_read::ResultFacet;
 pub(crate) use self::result_read::unmarked_secret;
 pub(crate) use self::result_read::{
