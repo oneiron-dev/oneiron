@@ -5,7 +5,7 @@ use crate::scan_kind::EngineScan;
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 141] = [
+    pub const ALL: [Self; 142] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
