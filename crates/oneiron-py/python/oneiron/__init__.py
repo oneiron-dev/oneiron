@@ -2255,6 +2255,9 @@ class Oneiron:
             """Reads one configured hub as the owner."""
             return json.loads(_translate(lambda: self._client.vault_skill_hubs_get(json.dumps(spec))))
         @property
+        def clawhub(self) -> "Oneiron._VaultSkillHubsClawhubVerbs":
+            return Oneiron._VaultSkillHubsClawhubVerbs(self._client)
+        @property
         def publishers(self) -> "Oneiron._VaultSkillHubsPublishersVerbs":
             return Oneiron._VaultSkillHubsPublishersVerbs(self._client)
         @property
@@ -2266,6 +2269,15 @@ class Oneiron:
         def get(self, spec=None):
             """Reads the first hub identity, configured mirror endpoint and pinned skill-root ref; owner hub and ref setters configure that source."""
             return json.loads(_translate(lambda: self._client.vault_skill_hubs_default_get(json.dumps({} if spec is None else spec))))
+    class _VaultSkillHubsClawhubVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def search(self, spec):
+            """Queries a configured HTTP hub origin as a public ClawHub-compatible API; returned provider locators are not pinned, imported or admitted packages."""
+            return json.loads(_translate(lambda: self._client.vault_skill_hubs_clawhub_search(json.dumps(spec))))
+        def import_(self, spec):
+            """Downloads an owner-selected ClawHub ZIP or pinned public-GitHub subtree and imports the same checked bytes through native publisher, scan and fit doors; provider contentHash is not a native pin."""
+            return json.loads(_translate(lambda: self._client.vault_skill_hubs_clawhub_import(json.dumps(spec))))
     class _VaultSkillHubsPublishersVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2486,6 +2498,9 @@ class Oneiron:
         def calls(self) -> "Oneiron._VaultConnectorsCallsVerbs":
             return Oneiron._VaultConnectorsCallsVerbs(self._client)
         @property
+        def replies(self) -> "Oneiron._VaultConnectorsRepliesVerbs":
+            return Oneiron._VaultConnectorsRepliesVerbs(self._client)
+        @property
         def read_grants(self) -> "Oneiron._VaultConnectorsReadGrantsVerbs":
             return Oneiron._VaultConnectorsReadGrantsVerbs(self._client)
         @property
@@ -2542,6 +2557,12 @@ class Oneiron:
         def approve_once(self, spec):
             """The owner approves once exactly one held connector call, by its call ref and the approve-once digest its current ask names; no standing grant is created and nothing is sent."""
             return json.loads(_translate(lambda: self._client.vault_connectors_calls_approve_once(json.dumps(spec))))
+    class _VaultConnectorsRepliesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def retry_failed(self, spec):
+            """The owner returns one Failed connector reply job (Ambiguous, owner-act Fault) to the queue now as its queued successor; the Failed predecessor row and its kept result stay as history."""
+            return json.loads(_translate(lambda: self._client.vault_connectors_replies_retry_failed(json.dumps(spec))))
     class _VaultConnectorsReadGrantsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3063,6 +3084,9 @@ class Oneiron:
         def files(self, spec):
             """The owner reads one Files source's ledger: each file's path, readiness (text or name only, and why), revision and dates."""
             return json.loads(_translate(lambda: self._client.vault_files_sources_files(json.dumps(spec))))
+        def exclude(self, spec):
+            """The owner replaces a Files source's filters: the include patterns it reads, and the paths the host never opens. Absent keeps today's list; a list, even an empty one, replaces it."""
+            return json.loads(_translate(lambda: self._client.vault_files_sources_exclude(json.dumps(spec))))
         def convert(self, spec):
             """The owner converts an attached notes folder on this host to Files, keeping its existing notes, history and links. The host rescans the folder into its Files world and returns the source and rescan report."""
             return json.loads(_translate(lambda: self._client.vault_files_sources_convert(json.dumps(spec))))
@@ -6812,10 +6836,10 @@ class Oneiron:
             """One catalogued connector by name, removed ones included."""
             return json.loads(_translate(lambda: self._client.connector_status(json.dumps(spec))))
         def call(self, spec):
-            """Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data."""
+            """Calls a connector tool from the selected catalog or builtin source; omitted source keeps implicit name selection. Catalog calls retain the caller's own grant and gate. Replies are foreign data."""
             return json.loads(_translate(lambda: self._client.connector_call(json.dumps(spec))))
         def schema(self, spec):
-            """One catalogued connector tool's approved input schema, as the caller's own grant resolves it."""
+            """One connector tool's input schema for the selected catalog or builtin source; omitted source keeps implicit name selection. Catalog schemas use the caller's own governing grant and approved manifest."""
             return json.loads(_translate(lambda: self._client.connector_schema(json.dumps(spec))))
         def call_status(self, spec):
             """Where one connector.call stands, by the call_ref its held, pending_delivery or awaiting_input reply named: pending, the questions it waits on, or its settled reply. Only its caller and the vault's owner read it."""
