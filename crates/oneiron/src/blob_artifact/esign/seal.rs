@@ -9,8 +9,8 @@ use super::{
         prepare_esign_pdf_with_replayed_audit, replay_esign_audit,
     },
     sealer::{
-        EsignSealInput, EsignSealRequest, EsignSealed, EsignSealer, EsignSealerError, EsignVerdict,
-        SealProfile, SealProfileEvidence, SealVerdict,
+        EsignSealRequest, EsignSealed, EsignSealer, EsignSealerError, EsignVerdict, SealProfile,
+        SealProfileEvidence, SealVerdict,
     },
 };
 use crate::attempt_queue::{AttemptQueue, AttemptRecord};
@@ -39,6 +39,10 @@ pub enum EsignSealError {
     Prepare(#[from] PdfPreparationError),
     #[error(transparent)]
     Sealer(#[from] EsignSealerError),
+    /// The complete native input length was discovered before dispatch.
+    /// Re-admit its full call booking only after the producer unwinds.
+    #[error("the seal call needs a booking for {lent_bytes} lent bytes")]
+    ProducerBooking { lent_bytes: u64 },
     #[error("sealed PDF failed post-seal verification")]
     Verification,
 }
@@ -223,21 +227,24 @@ impl Vault {
             let codec_bytes = self
                 .limit_watch()
                 .bound(EngineLimit::EsignSealStreamCodecBytes);
-            let (mut input, stream_bytes) =
-                EsignSealInput::measured(prepared.bytes, &operation_id, now_ms, codec_bytes)?;
-            self.measure_limit(EngineLimit::SealPreparedStreamBytes, stream_bytes);
             let request = EsignSealRequest {
                 operation_id,
                 profile,
             };
+            let mut producer = super::input_producer::SealInputProducer::new(
+                self,
+                prepared.bytes,
+                &request.operation_id,
+                now_ms,
+                codec_bytes,
+            );
             let sealed = loop {
-                match sealer.seal(&input, &request) {
+                match sealer.seal(&request, &mut producer) {
                     // The CMS needed more than the largest revision held: a
                     // fresh, larger one is written and sealed, and its
                     // signature issued once (FIX 6270).
-                    Err(EsignSealerError::ContentsShort { needed }) => {
-                        let operation_id = &request.operation_id;
-                        if !input.rewrite_larger(operation_id, now_ms, codec_bytes, needed)? {
+                    Err(EsignSealError::Sealer(EsignSealerError::ContentsShort { needed })) => {
+                        if !producer.rewrite_larger(needed)? {
                             return Err(EsignSealerError::ContentsShort { needed }.into());
                         }
                     }

@@ -70,6 +70,10 @@ impl<S: EditSession> EditSession for BatchedSheetSession<'_, S> {
         self.session.recalc_policy()
     }
 
+    fn recalc_resources(&self) -> Option<Resources> {
+        self.session.recalc_resources()
+    }
+
     fn recalc_clock(&self) -> Option<RecalcClock> {
         self.session.recalc_clock()
     }

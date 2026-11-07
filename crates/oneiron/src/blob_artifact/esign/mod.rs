@@ -79,11 +79,14 @@ mod seal;
 pub use seal::{EsignSealError, SealedDocument, SealedItem};
 mod seal_run;
 pub use seal_run::EsignSealRun;
+mod input_producer;
+mod producer_input;
+pub use producer_input::EsignInputBudget;
 mod sealer;
 pub use sealer::{
-    EsignSealInput, EsignSealRequest, EsignSealed, EsignSealer, EsignSealerError,
-    EsignSignatureRevision, EsignVerdict, SealDegrade, SealDegradeReason, SealProfile,
-    SealProfileEvidence, SealVerdict,
+    EsignSealInput, EsignSealProducer, EsignSealRequest, EsignSealed, EsignSealer,
+    EsignSealerError, EsignSignatureRevision, EsignVerdict, SealDegrade, SealDegradeReason,
+    SealProfile, SealProfileEvidence, SealVerdict,
 };
 mod signature_revision;
 pub use signature_revision::SEAL_CONTENTS_LADDER;

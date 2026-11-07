@@ -42,12 +42,24 @@ impl Vault {
             if asked && let Some(read) = &read {
                 crate::llm::decision::questions::record_failed_standing_reask(
                     self,
-                    &standing_reask(wake, read, &[], now),
+                    &standing_reask(wake, read, &[], now, None),
                     error.kind(),
                 );
             }
         }
-        committed
+        // Staging is after the cohort, log and woken prefix committed. A byte
+        // failure never re-asks those paid units or writes a second failed log.
+        committed.and_then(|(proposed, deadline, deferred_floor)| {
+            if let Some(refusal) = deferred_floor {
+                return Err(crate::office_body::machine_memory_refused(refusal));
+            }
+            match (proposed, deadline) {
+                (Some(view), Some(deadline)) => self
+                    .finish_pending_sheet_answers(&wake.artifact, &view.proposal_ref, deadline)
+                    .map(Some),
+                (view, _) => Ok(view),
+            }
+        })
     }
 
     /// The ask a wake makes, and the ref its proposal waits under. Nothing is
@@ -137,7 +149,8 @@ impl Vault {
         {
             return Ok((Reasked::Nothing, reask_ref));
         }
-        let (proposal, units, read_rows) = match &wake.shape {
+        let mut deferred_floor = None;
+        let (proposal, sheet_answers, units, read_rows, next_sheet_row) = match &wake.shape {
             ReaskShape::SheetRows {
                 sheet,
                 answer_col,
@@ -156,6 +169,7 @@ impl Vault {
                 else {
                     return Ok((Reasked::Nothing, reask_ref));
                 };
+                let selected: SheetRowSelection = rows.iter().copied().collect();
                 let run = self.ask_blob_artifact_sheet_rows(
                     &wake.artifact,
                     &SheetRowsAsk {
@@ -174,11 +188,18 @@ impl Vault {
                         answer_col: *answer_col,
                         header_row: reads.header_row,
                         max_count_override: *max_count_override,
-                        only_rows: Some(&rows),
+                        only_rows: Some(&selected),
                     },
                 )?;
+                deferred_floor = run.deferred_floor;
                 let units = crate::llm::decision::questions::artifact_unit_receipts(&run);
-                (run.proposal, units, run.read_rows)
+                (
+                    run.proposal,
+                    run.sheet_answers,
+                    units,
+                    run.read_rows,
+                    run.next_sheet_row,
+                )
             }
             ReaskShape::FolderItems {
                 sheet,
@@ -227,7 +248,13 @@ impl Vault {
                     },
                 )?;
                 let units = crate::llm::decision::questions::artifact_unit_receipts(&run);
-                (run.proposal, units, run.read_rows)
+                (
+                    run.proposal,
+                    run.sheet_answers,
+                    units,
+                    run.read_rows,
+                    run.next_sheet_row,
+                )
             }
             ReaskShape::Paragraphs { author, labels } => {
                 let blocks: Vec<String> = wake
@@ -251,7 +278,13 @@ impl Vault {
                     },
                 )?;
                 let units = crate::llm::decision::questions::artifact_unit_receipts(&run);
-                (run.proposal, units, run.read_rows)
+                (
+                    run.proposal,
+                    run.sheet_answers,
+                    units,
+                    run.read_rows,
+                    run.next_sheet_row,
+                )
             }
             ReaskShape::Slides { author, labels } => {
                 let bytes = self
@@ -332,14 +365,17 @@ impl Vault {
                 })?;
                 // Standing artifact questions never ask slides, so a slide re-ask
                 // logs nowhere; it carries no unit receipts.
-                (run.proposal, Vec::new(), run.read_rows)
+                (run.proposal, None, Vec::new(), run.read_rows, None)
             }
         };
         Ok((
             Reasked::Asked {
                 proposal,
+                sheet_answers,
                 units,
                 read_rows,
+                next_sheet_row,
+                deferred_floor,
             },
             reask_ref,
         ))

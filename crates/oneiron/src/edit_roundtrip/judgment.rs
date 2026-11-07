@@ -8,21 +8,22 @@
 use super::artifact_question::{
     ArtifactAsk, ArtifactAskRun, UnitAbstention, UnitRefusal, answer_cell, cell_text,
 };
-use super::judgment_cells::{named_sheet_cells, verify_sheet_answer_bytes};
+use super::judgment_cells::{named_sheet_cells_until, verify_sheet_answer_bytes};
 use super::{
     AppliedEdit, CellRef, CellValue, EditOp, EditOutcome, EditPlan, EditProposal, EditSession,
-    OfficeDoc, OfficeFormat, RangeRef,
+    OfficeDoc, OfficeFormat, RangeRef, SheetRowSelection,
 };
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::llm::decision::questions::keep_artifact_unit_ask;
 use crate::llm::decision::{DecisionQuestion, EvidenceVersion, TypedDecision};
+use oneiron_docedit::resource::ResourceRefusal;
 use oneiron_docedit::retained_opc::Limits;
 use oneiron_docedit::xlsx_body::{XlsxChange, XlsxValue, project_xlsx, read_xlsx_cells};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroUsize;
 use std::time::Instant;
 
@@ -84,6 +85,59 @@ pub struct SheetAnswerBundle {
     /// exported withdraws the answers it changed (FIX 2115).
     #[serde(default)]
     pub base_live: Option<crate::office_body::LivePin>,
+}
+
+/// Paid sheet decisions before byte staging. The owning caller retains this
+/// work, with its read rows and ask journal, before using the original deadline.
+#[derive(Debug, Clone)]
+pub struct SheetAnswerWork {
+    answers: std::sync::Arc<RetainedSheetAnswers>,
+    pub base_version: u64,
+    pub base_content_hash: [u8; 32],
+    /// The original whole-ask clock, never renewed by staging.
+    pub deadline: Instant,
+    /// First selected row not included in this paid cohort.
+    pub next_sheet_row: Option<u32>,
+}
+
+struct RetainedSheetAnswers {
+    bundle: SheetAnswerBundle,
+    // Declared after the bytes, so the actual answers are freed first.
+    _memory: Option<Box<dyn oneiron_docedit::resource::ResourceAllocation>>,
+}
+
+impl std::fmt::Debug for RetainedSheetAnswers {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RetainedSheetAnswers")
+            .finish_non_exhaustive()
+    }
+}
+
+impl SheetAnswerWork {
+    pub(super) fn new(
+        bundle: SheetAnswerBundle,
+        memory: Option<Box<dyn oneiron_docedit::resource::ResourceAllocation>>,
+        base_version: u64,
+        base_content_hash: [u8; 32],
+        deadline: Instant,
+        next_sheet_row: Option<u32>,
+    ) -> Self {
+        Self {
+            answers: std::sync::Arc::new(RetainedSheetAnswers {
+                bundle,
+                _memory: memory,
+            }),
+            base_version,
+            base_content_hash,
+            deadline,
+            next_sheet_row,
+        }
+    }
+
+    /// The actual paid decisions, shared with their allocation's lifetime.
+    pub fn bundle(&self) -> &SheetAnswerBundle {
+        &self.answers.bundle
+    }
 }
 
 impl SheetAnswerBundle {
@@ -158,7 +212,7 @@ pub struct SheetRowsAsk<'a> {
     pub max_count_override: Option<u64>,
     /// Only these rows of `rows` are asked: a wake asks again only the rows
     /// that changed under a held answer.
-    pub only_rows: Option<&'a BTreeSet<u32>>,
+    pub only_rows: Option<&'a SheetRowSelection>,
 }
 
 impl Vault {
@@ -171,21 +225,28 @@ impl Vault {
         bundle: SheetAnswerBundle,
         run_ref: &str,
     ) -> Result<EditOutcome> {
-        self.propose_sheet_answers_with_resources(
+        let head = self
+            .blob_artifact_head(artifact_id)?
+            .ok_or(Error::EntityNotFound)?;
+        self.propose_sheet_answers_at(
             artifact_id,
             session,
             bundle,
             run_ref,
+            head.version,
+            head.content_hash,
             &crate::office_body::document_resources(),
         )
     }
 
-    fn propose_sheet_answers_with_resources<S: EditSession>(
+    fn propose_sheet_answers_at<S: EditSession>(
         &self,
         artifact_id: &EntityId,
         session: &S,
         bundle: SheetAnswerBundle,
         run_ref: &str,
+        version: u64,
+        frontier: [u8; 32],
         resources: &Resources,
     ) -> Result<EditOutcome> {
         let ops = bundle.ops()?;
@@ -210,17 +271,18 @@ impl Vault {
             batch_size,
             resources,
         };
-        let head = self
-            .blob_artifact_head(artifact_id)?
-            .ok_or(Error::EntityNotFound)?;
         let source = self
-            .read_blob_artifact_version(artifact_id, head.version)?
+            .read_blob_artifact_version(artifact_id, version)?
             .ok_or(Error::EntityNotFound)?;
+        if *blake3::hash(&source).as_bytes() != frontier {
+            return Err(Error::CorruptedIndex("answered workbook base hash"));
+        }
         // Verify the source independently of the edit session, including any
         // caller-supplied before values, before the agent edits a copy.
         verify_sheet_answer_bytes(&bundle, Some(&source), None)?;
-        let outcome = self.propose_blob_artifact_edit(
+        let outcome = self.propose_blob_artifact_edit_at(
             artifact_id,
+            version,
             &session,
             &EditPlan::new(ops.clone()),
             run_ref,
@@ -245,16 +307,15 @@ impl Vault {
     }
 
     /// Ask one typed question of each row of a workbook head, one decide()
-    /// call per row under the run's deadline, and stage the answers as one
-    /// proposal on a copy, held for Keep. A row with no cell to read
+    /// call per row under the run's deadline. The caller retains paid answers
+    /// before staging them on a copy for Keep. A row with no cell to read
     /// abstains without a call; an answer cell holding a formula is refused.
     pub fn ask_blob_artifact_sheet_rows(
         &self,
         artifact: &EntityId,
         request: &SheetRowsAsk<'_>,
     ) -> Result<ArtifactAskRun> {
-        let ask = &request.ask;
-        ask.validate()?;
+        request.ask.validate()?;
         let rows = request.rows;
         let answer_col = request.answer_col;
         if request.sheet.trim().is_empty()
@@ -266,107 +327,207 @@ impl Vault {
         {
             return Err(invalid("invalid sheet ask selection"));
         }
-        // A workbook with a live body is read there at its head, pinned with
-        // it; the answer cell is read on the version the answer lands on
-        // (FIX 11981).
+        let mut selected = request
+            .only_rows
+            .map(|only| only.iter_within(rows.start.row, rows.end.row));
+        let mut all = rows.start.row..=rows.end.row;
+        let mut row_iter = std::iter::from_fn(move || match selected.as_mut() {
+            Some(selected) => selected.next(),
+            None => all.next(),
+        });
+        let mut run = ArtifactAskRun {
+            proposal: None,
+            sheet_answers: None,
+            deferred_floor: None,
+            abstained: Vec::new(),
+            refused: Vec::new(),
+            read_rows: Vec::new(),
+            next_sheet_row: row_iter.next(),
+        };
+        if run.next_sheet_row.is_none() {
+            return Ok(run);
+        }
+        // Traverse within the answer share; staging keeps the whole-ask deadline.
+        let started = Instant::now();
+        let clock = crate::retrieval_depth::RetrievalDeadline::hard(
+            started,
+            request.ask.deadline.saturating_duration_since(started),
+        );
+        let work_until = started + clock.decision_time_left();
+        let ask = ArtifactAsk {
+            deadline: work_until,
+            ..request.ask
+        };
+        let resources = crate::office_body::document_resources_until(Some(work_until));
+        if sheet_ask_checkpoint(&resources, work_until).is_err() {
+            return Ok(run);
+        }
+        // Live reads and byte acquisition retain their existing source pins.
         let live = self.live_head_cells(artifact, request.sheet)?;
+        if sheet_ask_checkpoint(&resources, work_until).is_err() {
+            return Ok(run);
+        }
         let base_live = live.as_ref().map(|(pin, _)| pin.clone());
         let (version, bytes, read_rows) = self.office_head(artifact, OfficeFormat::Xlsx)?;
+        run.read_rows = read_rows;
+        if sheet_ask_checkpoint(&resources, work_until).is_err() {
+            return Ok(run);
+        }
         let frontier = *blake3::hash(&bytes).as_bytes();
-        let in_rows = |row: u32| (rows.start.row..=rows.end.row).contains(&row);
+        let in_rows = |row: u32| {
+            (rows.start.row..=rows.end.row).contains(&row)
+                && request.only_rows.is_none_or(|only| only.contains(&row))
+        };
         let header_row = request.header_row;
-        let cells = named_sheet_cells(&bytes, request.sheet, &|cell: &CellRef| {
-            let read_col = (rows.start.col..=rows.end.col).contains(&cell.col);
-            (read_col && (in_rows(cell.row) || Some(cell.row) == header_row))
-                || (cell.col == answer_col && in_rows(cell.row))
-        })?;
-        let shown = live.as_ref().map_or(&cells, |(_, live)| live);
-        let columns: Vec<u32> = (rows.start.col..=rows.end.col)
-            .filter(|col| *col != answer_col)
-            .collect();
-        let headers: Map<String, Value> = header_row
-            .map(|row| {
-                columns
-                    .iter()
-                    .filter_map(|col| {
-                        let text = shown.get(&CellRef { col: *col, row }).and_then(cell_text)?;
-                        Some((super::address::column_to_letters(*col), Value::String(text)))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        let loaded = match named_sheet_cells_until(
+            &bytes,
+            request.sheet,
+            &|cell: &CellRef| {
+                let read_col = (rows.start.col..=rows.end.col).contains(&cell.col);
+                (read_col && (in_rows(cell.row) || Some(cell.row) == header_row))
+                    || (cell.col == answer_col && in_rows(cell.row))
+            },
+            self.docedit_package_limits()?,
+            &resources,
+            work_until,
+        ) {
+            Ok(cells) => cells,
+            Err(error) if sheet_ask_timed_out(&error) => return Ok(run),
+            Err(error) => return Err(error),
+        };
+        let cells = &loaded.cells;
+        let shown = live.as_ref().map_or(cells, |(_, live)| live);
+        // Index only stored cells, not the rectangle's potentially billions
+        // of absent columns. The same sparse index serves headers and rows.
+        let mut index_memory = resources.allocation();
+        let mut by_row = BTreeMap::new();
+        for (cell, value) in shown {
+            if let Err(refusal) = sheet_ask_checkpoint(&resources, work_until) {
+                if refusal == ResourceRefusal::Deadline {
+                    return Ok(run);
+                }
+                return Err(crate::office_body::machine_memory_refused(refusal));
+            }
+            if cell.col != answer_col
+                && (rows.start.col..=rows.end.col).contains(&cell.col)
+                && (in_rows(cell.row) || Some(cell.row) == header_row)
+            {
+                if let Err(refusal) = index_memory.grow(
+                    oneiron_docedit::resource::bytes_of::<((u32, u32), &CellValue)>(3),
+                    0,
+                ) {
+                    let error = crate::office_body::machine_memory_refused(refusal);
+                    if sheet_ask_timed_out(&error) {
+                        return Ok(run);
+                    }
+                    return Err(error);
+                }
+                by_row.insert((cell.row, cell.col), value);
+                index_memory.materialized(oneiron_docedit::resource::bytes_of::<(
+                    (u32, u32),
+                    &CellValue,
+                )>(by_row.len().saturating_mul(3)));
+            }
+        }
+        let headers = match header_row {
+            Some(row) => match sheet_row_state(&by_row, row, &resources, work_until) {
+                Ok(headers) => headers,
+                Err(ResourceRefusal::Deadline) => return Ok(run),
+                Err(refusal) => return Err(crate::office_body::machine_memory_refused(refusal)),
+            },
+            None => SheetRowState {
+                values: Map::new(),
+                _memory: resources.allocation(),
+            },
+        };
         let sources = [EvidenceVersion {
             id: *artifact,
             body_hash: frontier,
         }];
+        let mut answer_memory = resources.allocation();
+        let mut abstention_memory = resources.allocation();
+        let mut refusal_memory = resources.allocation();
         let mut answers = Vec::new();
-        let mut abstained = Vec::new();
-        let mut refused = Vec::new();
-        for row in rows.start.row..=rows.end.row {
-            if request.only_rows.is_some_and(|only| !only.contains(&row)) {
-                continue;
+        while let Some(row) = run.next_sheet_row {
+            if Instant::now() >= work_until {
+                break;
             }
-            let target = CellRef {
-                col: answer_col,
-                row,
-            };
-            let unit = json!({"sheet": request.sheet, "row": row, "cell": target.to_a1()});
-            let before = cells.get(&target).cloned().unwrap_or(CellValue::Blank);
-            if matches!(before, CellValue::Formula { .. }) {
-                refused.push(UnitRefusal {
-                    unit,
-                    reason: "answer_cell_formula".into(),
-                    judged_live: base_live.clone(),
+            let prepared = (|| -> std::result::Result<(), SheetRowFailure> {
+                sheet_ask_checkpoint(&resources, work_until)?;
+                // Prepare each possible outcome slot before asking a model;
+                // never lose a completed decision to a later vector grow.
+                sheet_outcome_slot(&mut answers, answer_memory.as_mut())?;
+                sheet_outcome_slot(&mut run.abstained, abstention_memory.as_mut())?;
+                sheet_outcome_slot(&mut run.refused, refusal_memory.as_mut())?;
+                let target = CellRef {
+                    col: answer_col,
+                    row,
+                };
+                let unit = json!({"sheet": request.sheet, "row": row, "cell": target.to_a1()});
+                let before = cells.get(&target).cloned().unwrap_or(CellValue::Blank);
+                if matches!(before, CellValue::Formula { .. }) {
+                    run.refused.push(UnitRefusal {
+                        unit,
+                        reason: "answer_cell_formula".into(),
+                        judged_live: base_live.clone(),
+                    });
+                    return Ok(());
+                }
+                let read = sheet_row_state(&by_row, row, &resources, work_until)?;
+                if read.values.is_empty() {
+                    run.abstained.push(UnitAbstention {
+                        unit,
+                        decision: None,
+                        judged_live: base_live.clone(),
+                    });
+                    return Ok(());
+                }
+                let state =
+                    json!({"unit": unit.clone(), "headers": headers.values, "cells": read.values});
+                sheet_ask_checkpoint(&resources, work_until)?;
+                let Some(decision) = ask.decide(&state, &sources, &[])? else {
+                    run.refused.push(UnitRefusal {
+                        unit,
+                        reason: "evidence_budget".into(),
+                        judged_live: base_live.clone(),
+                    });
+                    return Ok(());
+                };
+                let value = answer_cell(&decision.answer)?;
+                if value.is_none() {
+                    keep_artifact_unit_ask(self, &sources[0], &unit, &decision);
+                    run.abstained.push(UnitAbstention {
+                        unit,
+                        decision: Some(decision.clone()),
+                        judged_live: base_live.clone(),
+                    });
+                }
+                answers.push(SheetCellAnswer {
+                    cell: target,
+                    before: Some(before),
+                    value,
+                    decision,
+                    source: None,
+                    judged_version: Some(version),
+                    judged_live: None,
                 });
-                continue;
+                Ok(())
+            })();
+            match prepared {
+                Ok(()) => run.next_sheet_row = row_iter.next(),
+                Err(SheetRowFailure::Resource(ResourceRefusal::Deadline)) => break,
+                Err(SheetRowFailure::Resource(refusal @ ResourceRefusal::MemoryFloor { .. }))
+                    if answers.iter().any(|answer| answer.value.is_some()) =>
+                {
+                    run.deferred_floor = Some(refusal);
+                    break;
+                }
+                Err(SheetRowFailure::Resource(refusal)) => {
+                    return Err(crate::office_body::machine_memory_refused(refusal));
+                }
+                Err(SheetRowFailure::Ask(error)) if sheet_ask_timed_out(&error) => break,
+                Err(SheetRowFailure::Ask(error)) => return Err(error),
             }
-            let read: Map<String, Value> = columns
-                .iter()
-                .filter_map(|col| {
-                    let text = shown.get(&CellRef { col: *col, row }).and_then(cell_text)?;
-                    Some((super::address::column_to_letters(*col), Value::String(text)))
-                })
-                .collect();
-            if read.is_empty() {
-                abstained.push(UnitAbstention {
-                    unit,
-                    decision: None,
-                    judged_live: base_live.clone(),
-                });
-                continue;
-            }
-            let state = json!({
-                "unit": unit.clone(),
-                "headers": headers,
-                "cells": read,
-            });
-            let Some(decision) = ask.decide(&state, &sources, &[])? else {
-                refused.push(UnitRefusal {
-                    unit,
-                    reason: "evidence_budget".into(),
-                    judged_live: base_live.clone(),
-                });
-                continue;
-            };
-            let value = answer_cell(&decision.answer)?;
-            if value.is_none() {
-                // A unit asked of its role holder keeps its ask (FIX 11231).
-                keep_artifact_unit_ask(self, &sources[0], &unit, &decision);
-                abstained.push(UnitAbstention {
-                    unit,
-                    decision: Some(decision.clone()),
-                    judged_live: base_live.clone(),
-                });
-            }
-            answers.push(SheetCellAnswer {
-                cell: target,
-                before: Some(before),
-                value,
-                decision,
-                source: None,
-                judged_version: Some(version),
-                judged_live: None,
-            });
         }
         let bundle = SheetAnswerBundle {
             question: ask.question.clone(),
@@ -391,19 +552,23 @@ impl Vault {
             }),
             base_live,
         };
-        Ok(ArtifactAskRun {
-            proposal: self.stage_sheet_answers(
-                artifact,
+        drop(by_row);
+        drop(index_memory);
+        drop(headers);
+        drop(loaded);
+        drop(live);
+        drop(bytes);
+        if bundle.answers.iter().any(|answer| answer.value.is_some()) {
+            run.sheet_answers = Some(SheetAnswerWork::new(
                 bundle,
-                ask.run_ref,
+                Some(answer_memory),
                 version,
                 frontier,
-                Some(ask.deadline),
-            )?,
-            abstained,
-            refused,
-            read_rows,
-        })
+                request.ask.deadline,
+                run.next_sheet_row,
+            ));
+        }
+        Ok(run)
     }
 
     /// Stage decided answers through the in-process cell writer on the exact
@@ -417,23 +582,26 @@ impl Vault {
         run_ref: &str,
         version: u64,
         frontier: [u8; 32],
-        deadline: Option<Instant>,
+        resources: Resources,
     ) -> Result<Option<EditProposal>> {
         if bundle.answers.iter().all(|answer| answer.value.is_none()) {
             return Ok(None);
         }
-        let resources = crate::office_body::document_resources_until(deadline);
         let session = NativeCellSession {
             limits: self.docedit_package_limits()?,
             resources: resources.clone(),
         };
-        match self
-            .propose_sheet_answers_with_resources(artifact, &session, bundle, run_ref, &resources)?
-        {
+        session
+            .resources
+            .checkpoint()
+            .map_err(crate::office_body::document_refused)?;
+        match self.propose_sheet_answers_at(
+            artifact, &session, bundle, run_ref, version, frontier, &resources,
+        )? {
             EditOutcome::Proposed(proposal) => {
                 if proposal.base_version != Some(version) || proposal.base_content_hash != frontier
                 {
-                    return Err(invalid("the workbook moved while it was asked; ask again"));
+                    return Err(Error::CorruptedIndex("answered proposal base"));
                 }
                 Ok(Some(*proposal))
             }
@@ -461,6 +629,10 @@ struct NativeCellSession {
 }
 
 impl EditSession for NativeCellSession {
+    fn recalc_resources(&self) -> Option<oneiron_docedit::resource::Resources> {
+        Some(self.resources.clone())
+    }
+
     fn apply_edits(&self, doc: &OfficeDoc, plan: &EditPlan) -> Result<AppliedEdit> {
         let failed = || {
             Error::Artifact(ArtifactError::EditRoundtripFailed(
@@ -544,4 +716,94 @@ impl EditSession for NativeCellSession {
 
 fn invalid(message: &str) -> Error {
     Error::InvalidConfig(message.into())
+}
+
+#[derive(Debug, thiserror::Error)]
+enum SheetRowFailure {
+    #[error(transparent)]
+    Resource(#[from] ResourceRefusal),
+    #[error(transparent)]
+    Ask(#[from] Error),
+}
+
+fn sheet_ask_checkpoint(
+    resources: &oneiron_docedit::resource::Resources,
+    deadline: Instant,
+) -> std::result::Result<(), ResourceRefusal> {
+    if Instant::now() >= deadline {
+        return Err(ResourceRefusal::Deadline);
+    }
+    resources.checkpoint()
+}
+
+fn sheet_ask_timed_out(error: &Error) -> bool {
+    matches!(error, Error::Io(error) if error.kind() == std::io::ErrorKind::TimedOut)
+}
+
+/// The map and its allocation scope travel together to the caller. Field
+/// order frees the map before the scope, including without live readings.
+struct SheetRowState {
+    values: Map<String, Value>,
+    _memory: Box<dyn oneiron_docedit::resource::ResourceAllocation>,
+}
+
+fn sheet_row_state(
+    cells: &BTreeMap<(u32, u32), &CellValue>,
+    row: u32,
+    resources: &oneiron_docedit::resource::Resources,
+    deadline: Instant,
+) -> std::result::Result<SheetRowState, ResourceRefusal> {
+    let mut memory = resources.allocation();
+    let mut values = Map::new();
+    let mut live_bytes: u64 = 0;
+    for ((_, col), value) in cells.range((row, 0)..=(row, u32::MAX)) {
+        sheet_ask_checkpoint(resources, deadline)?;
+        fn text_bytes(value: &CellValue) -> (u64, u64) {
+            match value {
+                CellValue::Text(text) | CellValue::Error(text) => {
+                    let bytes = oneiron_docedit::resource::wide(text.len());
+                    (bytes, bytes)
+                }
+                CellValue::Formula { cached, .. } => cached.as_deref().map_or((0, 0), text_bytes),
+                _ => (oneiron_docedit::resource::bytes_of::<CellValue>(1), 0),
+            }
+        }
+        let (bytes, measured) = text_bytes(value);
+        let node = oneiron_docedit::resource::bytes_of::<(String, Value)>(3);
+        memory.grow(bytes.saturating_add(node), measured)?;
+        if let Some(text) = cell_text(value) {
+            let key = super::address::column_to_letters(*col);
+            live_bytes = live_bytes
+                .saturating_add(node)
+                .saturating_add(oneiron_docedit::resource::wide(key.capacity()))
+                .saturating_add(oneiron_docedit::resource::wide(text.capacity()));
+            values.insert(key, Value::String(text));
+        }
+        memory.materialized(live_bytes);
+    }
+    Ok(SheetRowState {
+        values,
+        _memory: memory,
+    })
+}
+
+/// Reserve vector growth before it allocates, then name the resulting
+/// capacity once. Each output vector owns a separate allocation scope.
+fn sheet_outcome_slot<T>(
+    values: &mut Vec<T>,
+    memory: &mut dyn oneiron_docedit::resource::ResourceAllocation,
+) -> std::result::Result<(), ResourceRefusal> {
+    if values.len() == values.capacity() {
+        let capacity = values
+            .len()
+            .saturating_add(1)
+            .max(values.capacity().saturating_mul(2));
+        memory.grow(
+            oneiron_docedit::resource::bytes_of::<T>(capacity - values.capacity()),
+            0,
+        )?;
+        values.reserve_exact(capacity - values.len());
+        memory.materialized(oneiron_docedit::resource::bytes_of::<T>(values.capacity()));
+    }
+    Ok(())
 }
