@@ -329,7 +329,6 @@ struct FileServeConfig {
     max_windows_per_connection: Option<usize>,
     max_messages_per_sec: Option<u32>,
     ephemeral_timeout_ms: Option<i64>,
-    max_ephemeral_payload_bytes: Option<usize>,
     max_ephemeral_snapshot_bytes: Option<usize>,
     max_entity_blob: Option<usize>,
     max_lfs_object_bytes: Option<u64>,
@@ -403,7 +402,6 @@ impl From<FileServeConfig> for PartialServeConfig {
             max_windows_per_connection: value.max_windows_per_connection,
             max_messages_per_sec: value.max_messages_per_sec,
             ephemeral_timeout_ms: value.ephemeral_timeout_ms,
-            max_ephemeral_payload_bytes: value.max_ephemeral_payload_bytes,
             max_ephemeral_snapshot_bytes: value.max_ephemeral_snapshot_bytes,
             max_entity_blob: value.max_entity_blob,
             max_lfs_object_bytes: value.max_lfs_object_bytes,
@@ -483,7 +481,6 @@ struct PartialServeConfig {
     max_windows_per_connection: Option<usize>,
     max_messages_per_sec: Option<u32>,
     ephemeral_timeout_ms: Option<i64>,
-    max_ephemeral_payload_bytes: Option<usize>,
     max_ephemeral_snapshot_bytes: Option<usize>,
     max_entity_blob: Option<usize>,
     max_lfs_object_bytes: Option<u64>,
@@ -593,10 +590,6 @@ impl fmt::Debug for PartialServeConfig {
             .field("max_messages_per_sec", &self.max_messages_per_sec)
             .field("ephemeral_timeout_ms", &self.ephemeral_timeout_ms)
             .field(
-                "max_ephemeral_payload_bytes",
-                &self.max_ephemeral_payload_bytes,
-            )
-            .field(
                 "max_ephemeral_snapshot_bytes",
                 &self.max_ephemeral_snapshot_bytes,
             )
@@ -694,7 +687,6 @@ impl From<&ServeArgs> for PartialServeConfig {
             max_windows_per_connection: value.max_windows_per_connection,
             max_messages_per_sec: value.max_messages_per_sec,
             ephemeral_timeout_ms: value.ephemeral_timeout_ms,
-            max_ephemeral_payload_bytes: value.max_ephemeral_payload_bytes,
             max_ephemeral_snapshot_bytes: value.max_ephemeral_snapshot_bytes,
             max_entity_blob: value.max_entity_blob,
             max_lfs_object_bytes: value.max_lfs_object_bytes,

@@ -354,6 +354,7 @@ fn execute_by_driver(
         reserve_units: 100,
         now: 23,
         host_scope: None,
+        destination_bound: None,
     };
     let cancellation = WakeCancellation::new();
     let mut future = Box::pin(driver.run_wake_pass(input, &mut executor, &cancellation));

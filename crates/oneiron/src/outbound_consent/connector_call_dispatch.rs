@@ -237,5 +237,6 @@ pub(super) fn intent_escalation_code(reason: IntentEscalationReason) -> &'static
         IntentEscalationReason::RemoteTaskFailed => "remote_task_failed",
         IntentEscalationReason::OwnerNotLive => "owner_not_live",
         IntentEscalationReason::GrantNotStanding => "grant_not_standing",
+        IntentEscalationReason::SendExecutorStoodDown => "send_executor_stood_down",
     }
 }
