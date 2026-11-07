@@ -127,6 +127,11 @@ impl Chain<'_> {
             self.used.set(true);
             return Err(ask::used_error());
         }
+        if self.call.verb == "host.turn.generate"
+            && let (Some(token), Some(turn)) = (&self.token, &self.call.turn)
+        {
+            crate::code_run::clear_parked_wait_in_txn(vault, txn, turn.run, token.ask())?;
+        }
         let at = vault.store.clock.now_recorded_at().saturating_mul(1_000);
         for run in &self.runs {
             let mut receipt = self.receipt(run);

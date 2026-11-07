@@ -15,7 +15,7 @@
 //! ([`super::broker_media`]).
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use oneiron::llm::{BrokerIsolation, CacheDigest, SingleRouteBackend};
@@ -360,18 +360,32 @@ impl BrokerBackend {
         header: &CallHeader,
         body: &[u8],
         lease: &BudgetLease,
+        release: oneiron::llm::DispatchRelease<'_>,
     ) -> LlmResult<oneiron_broker::BrokerReply> {
         if !lease.has_dispatch_release() {
-            return call_with_key(&self.client, &self.keys, &self.secret, header, body).await;
+            return call_with_key_released(
+                &self.client,
+                &self.keys,
+                &self.secret,
+                header,
+                body,
+                Some(release),
+                None,
+            )
+            .await;
         }
-        let release = || lease.check_dispatch_release();
+        let gated = || {
+            lease.check_dispatch_release()?;
+            release()?;
+            Ok::<(), LlmError>(())
+        };
         call_with_key_released(
             &self.client,
             &self.keys,
             &self.secret,
             header,
             body,
-            Some(&release),
+            Some(&gated),
             Some(lease),
         )
         .await
@@ -391,6 +405,7 @@ impl BrokerBackend {
         wire_model: &str,
         model: &ModelId,
         execution: Option<&CacheDigest>,
+        mut inference: Option<&mut super::openai::InferenceUsage>,
     ) -> LlmResult<LlmResponse> {
         let (status, headers) = answered(outcome)?;
         let parsed = serde_json::from_slice::<JsonValue>(body);
@@ -400,6 +415,19 @@ impl BrokerBackend {
                 .map(|(name, value)| (name.to_ascii_lowercase(), value))
                 .collect();
             let body = parsed.unwrap_or(JsonValue::Null);
+            if let (Wire::OpenAi(_), Some(inference)) = (&self.wire, inference.as_deref_mut()) {
+                let mut observed = body.clone();
+                // As on the plain transport, an error does not establish
+                // an answering alias; only native carried measurements do.
+                super::openai::carry_sent_reply_evidence(
+                    status,
+                    &mut observed,
+                    Some(wire_model),
+                    None,
+                    execution,
+                );
+                inference.record(&mut observed, true);
+            }
             return Err(match &self.wire {
                 Wire::OpenAi(_) => classify_openai_status(status, &headers, &body),
                 Wire::Anthropic(_) => classify_anthropic_status(status, &headers, &body),
@@ -420,8 +448,16 @@ impl BrokerBackend {
                     answering.as_ref(),
                     execution,
                 );
+                if let Some(inference) = inference.as_deref_mut() {
+                    // A reply that later fails strict parsing still keeps
+                    // the native work its body actually reported.
+                    inference.record(&mut body, true);
+                }
                 let mut answer = parse_openai_chat_response(&body)?;
                 answer.usage.bind_inference_model(model);
+                if let Some(inference) = inference {
+                    inference.finish(None);
+                }
                 Ok(answer)
             }
             Wire::Anthropic(_) => {
@@ -756,13 +792,28 @@ impl LlmBackend for BrokerBackend {
             let execution = serde_json::from_slice::<JsonValue>(&body)
                 .ok()
                 .and_then(|sent| execution_mode(&sent));
-            let reply = self.send(&header, &body, lease).await?;
+            let inference = Mutex::new(None);
+            let observe = matches!(&self.wire, Wire::OpenAi(_));
+            let release = || {
+                if observe {
+                    *inference.lock().unwrap_or_else(PoisonError::into_inner) = Some(
+                        super::openai::InferenceUsage::new(lease, Some(request.model.clone())),
+                    );
+                }
+                Ok(())
+            };
+            let reply = self.send(&header, &body, lease, &release).await?;
+            let mut inference = inference
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take();
             self.answer(
                 reply.outcome,
                 &reply.body,
                 &header.wire_model,
                 &request.model,
                 execution.as_ref(),
+                inference.as_mut(),
             )
         })
     }

@@ -212,21 +212,6 @@ impl OpenAiCompatTransport for OpenAiHttp {
     }
 }
 
-/// The receipts a reply's or a chunk's usage carries (FIX 9417), as
-/// [`carry_chat_evidence`] wrote them.
-fn carried_receipts(body: &JsonValue) -> Vec<InferenceCallReceipt> {
-    body.get("usage")
-        .and_then(|usage| usage.get(INFERENCE_CALLS_KEY))
-        .and_then(JsonValue::as_array)
-        .map(|records| {
-            records
-                .iter()
-                .filter_map(|record| InferenceCallReceipt::deserialize(record).ok())
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 /// Whether the reply itself supplied an inference key, before llama.cpp
 /// evidence is added. Even an empty or invalid native list takes precedence.
 fn has_inference_calls(body: &JsonValue) -> bool {
@@ -235,7 +220,7 @@ fn has_inference_calls(body: &JsonValue) -> bool {
 }
 
 /// Every measured call carried by one physical send (FIX 15015, 9417).
-struct InferenceUsage {
+pub(super) struct InferenceUsage {
     lease: BudgetLease,
     model: Option<ModelId>,
     calls: Vec<ObservedCall>,
@@ -249,7 +234,7 @@ struct ObservedCall {
 }
 
 impl InferenceUsage {
-    fn new(lease: &BudgetLease, model: Option<ModelId>) -> Self {
+    pub(super) fn new(lease: &BudgetLease, model: Option<ModelId>) -> Self {
         Self {
             lease: lease.clone(),
             model,
@@ -262,7 +247,7 @@ impl InferenceUsage {
         }
     }
 
-    fn record(&mut self, body: &mut JsonValue, native: bool) {
+    pub(super) fn record(&mut self, body: &mut JsonValue, native: bool) {
         self.saw_native_key |= native;
         if self.saw_native_key && !native {
             return;
@@ -322,7 +307,7 @@ impl InferenceUsage {
         }
     }
 
-    fn finish(&mut self, worker: Option<&InferenceWorker>) {
+    pub(super) fn finish(&mut self, worker: Option<&InferenceWorker>) {
         for call in &mut self.calls {
             if let Some(receipt) = call.measured.take() {
                 if let Some(worker) = worker {
