@@ -4333,6 +4333,21 @@ class Oneiron:
         def propose(self, spec):
             """Stage one remediation of a repository's current code: marked keys become secret references, committed .env files go, .gitignore and .env.example follow. Owner only. It only proposes."""
             return json.loads(_translate(lambda: self._client.vault_code_secrets_propose(json.dumps(spec))))
+        @property
+        def purge(self) -> "Oneiron._VaultCodeSecretsPurgeVerbs":
+            return Oneiron._VaultCodeSecretsPurgeVerbs(self._client)
+    class _VaultCodeSecretsPurgeVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def request(self, spec):
+            """Plan an owner purge of marked keys from one served repository's history: each ref's move to its masked copy, the purged blobs, dropped signatures, keep roots and what it never reaches. No ref moves."""
+            return json.loads(_translate(lambda: self._client.vault_code_secrets_purge_request(json.dumps(spec))))
+        def get(self, spec):
+            """Read one of the owner's secret purge plans and, once executed, its receipt."""
+            return json.loads(_translate(lambda: self._client.vault_code_secrets_purge_get(json.dumps(spec))))
+        def execute(self, spec):
+            """Confirm one secret purge plan: move each ref to its masked copy through origin publication, release listed change owners, collect unreachable objects and file the receipt. No remote is pushed."""
+            return json.loads(_translate(lambda: self._client.vault_code_secrets_purge_execute(json.dumps(spec))))
     class _VaultCodeWaitsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

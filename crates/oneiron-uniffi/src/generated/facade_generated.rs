@@ -3686,6 +3686,21 @@ export_facade! {
     let output = client.vault_code_origin_publications(&input)?;
     crate::codec::lift_record("vault.code.origin.publications", &output)
 };
+"vault.code.secrets.purge.request" => fn vault_code_secrets_purge_request(&self, input: RepoSecretPurgeRequest) -> RepoSecretPurgePlan = |client| {
+    let input: oneiron::memory::origin_doors::RepoSecretPurgeRequest = crate::codec::lower_record("vault.code.secrets.purge.request", input)?;
+    let output = client.vault_code_secrets_purge_request(&input)?;
+    crate::codec::lift_record("vault.code.secrets.purge.request", &output)
+};
+"vault.code.secrets.purge.get" => fn vault_code_secrets_purge_get(&self, input: RepoSecretPurgeIdRequest) -> RepoSecretPurgeView = |client| {
+    let input: oneiron::memory::origin_doors::RepoSecretPurgeIdRequest = crate::codec::lower_record("vault.code.secrets.purge.get", input)?;
+    let output = client.vault_code_secrets_purge_get(&input)?;
+    crate::codec::lift_record("vault.code.secrets.purge.get", &output)
+};
+"vault.code.secrets.purge.execute" => fn vault_code_secrets_purge_execute(&self, input: RepoSecretPurgeIdRequest) -> RepoSecretPurgeReceipt = |client| {
+    let input: oneiron::memory::origin_doors::RepoSecretPurgeIdRequest = crate::codec::lower_record("vault.code.secrets.purge.execute", input)?;
+    let output = client.vault_code_secrets_purge_execute(&input)?;
+    crate::codec::lift_record("vault.code.secrets.purge.execute", &output)
+};
 "vault.code.checkout.holder.bind" => fn vault_code_checkout_holder_bind(&self, input: RepoCheckoutBindInput) -> RepoCheckoutBindOutput = |client| {
     let input: oneiron::memory::repo_doors::RepoCheckoutBindInput = crate::codec::lower_record("vault.code.checkout.holder.bind", input)?;
     let output = client.vault_code_checkout_holder_bind(&input)?;
