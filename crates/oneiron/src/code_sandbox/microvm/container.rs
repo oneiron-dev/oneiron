@@ -324,10 +324,14 @@ impl MicroVmBackend for ContainerBackend {
             ));
         }
         let (exit, proposals) = result?;
-        self.state(vm)?
-            .get_mut(vm.id())
-            .ok_or_else(|| failed("unknown handle"))?
-            .proposals = Some(proposals);
+        // A failed guest keeps its program error and leaves nothing to
+        // collect (FIX 9209).
+        if exit.status == 0 {
+            self.state(vm)?
+                .get_mut(vm.id())
+                .ok_or_else(|| failed("unknown handle"))?
+                .proposals = Some(proposals);
+        }
         Ok(exit)
     }
     fn collect_overlay_delta(&self, vm: &MicroVmHandle) -> Result<Vec<SandboxProposalWrite>> {

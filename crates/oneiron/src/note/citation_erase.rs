@@ -327,7 +327,9 @@ pub(super) fn remove_erased_pins(
     txn: &heed::RoTxn<'_>,
     doc: &super::document::NoteDocument,
 ) -> Result<bool> {
-    let pins = doc.doc.get_map("pins");
+    let Some(pins) = super::document::pins_map(&doc.doc)? else {
+        return Ok(false);
+    };
     let mut remove = Vec::new();
     let entries: Vec<_> = pins
         .keys()
