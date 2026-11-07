@@ -644,6 +644,7 @@ class AgentHealthCard(TypedDict):
     confidence: AgentHealthConfidence
     diagnostics: list[EntityId]
     evidence: list[EntityId]
+    source_rows: list[EntityId] | None
     window_from: int
     window_to: int
     measured: int
