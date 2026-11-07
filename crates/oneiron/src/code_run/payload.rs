@@ -331,6 +331,7 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
                 .transpose()?,
             observations: observations::decode_observations(entries)?,
             hooks: session_hooks::decode_hooks(entries)?,
+            stored_output: None,
         })),
         "failed" => {
             let code = match map_get(entries, "code")? {

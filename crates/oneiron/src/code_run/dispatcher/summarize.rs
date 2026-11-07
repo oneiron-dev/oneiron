@@ -52,7 +52,9 @@ impl HostSelfDispatcher<'_> {
             return Ok(failed("summarize_invalid_group"));
         }
         let parent_run = site.run_id;
-        let recipe = SummarizeRecipe::new(call.effort.unwrap_or_default());
+        let recipe = call
+            .recipe
+            .unwrap_or_else(|| SummarizeRecipe::new(call.effort.unwrap_or_default()));
         let memo = summary_memo_key(&members, &recipe)?;
         let task = summary_task_id(parent_run, &memo)?;
         if let Some(card) = self.summary_card(parent_run, task, &memo)? {
