@@ -5,10 +5,12 @@
 use super::*;
 
 mod attempt;
+mod batch;
 mod landing;
 mod receipt;
 mod resolve;
 
+pub(in crate::memory) use self::batch::{BatchClaim, BatchRefusal};
 use self::resolve::refuse_typed_claim_family;
 
 impl Memory<'_> {
@@ -61,6 +63,13 @@ impl Memory<'_> {
         skip_exact_hook_replay: bool,
     ) -> MemoryResult<CommitReceipt> {
         refuse_typed_claim_family(input)?;
+        // ABC row 22: every claim door that commits here (claim_upsert,
+        // commit, claim_propose and the scoped admission) measures the claim
+        // whole, never refusing it for its size.
+        let bytes = crate::memory::caps::claim_input_json_bytes(input)?;
+        let _ = self
+            .vault
+            .measure_limit(crate::limit_ask::EngineLimit::ClaimInputJsonBytes, bytes);
         let write = self.resolve_claim_write(input, auto_supersede, in_writer, birth)?;
         before_txn();
 
