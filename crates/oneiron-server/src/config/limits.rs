@@ -271,6 +271,7 @@ impl LimitsConfig {
             header_read_timeout: Duration::from_millis(self.header_read_timeout_ms),
             body_idle_timeout: Duration::from_millis(self.body_idle_timeout_ms),
             queue_wait: self.queue_wait(),
+            max_read_buffer_bytes: None,
         }
     }
 

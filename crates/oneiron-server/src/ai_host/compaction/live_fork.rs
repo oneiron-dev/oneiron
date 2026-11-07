@@ -25,6 +25,7 @@ use oneiron::compaction::{
 use oneiron::llm::{
     CallEnvelope, ContentPart, LlmMessage, LlmMessageRole, LlmRequest, SelfCompactionDefault,
 };
+use oneiron::skill_optimize::union_source_rows;
 
 use super::self_writer::SELF_WRITER_FRAME;
 use super::serve::{Dispatch, Served, admission_refused, request_input_tokens};
@@ -48,20 +49,27 @@ pub(super) enum LiveBind {
 /// says. A forced fork that a route refuses, or a ladder with no rung to
 /// take it now, binds none and says why: no rung is guessed and nothing
 /// falls through to the cheap route. A prefix that leaves the live model no
-/// room for the window is refused, never cut. Under `auto` every such
-/// failure, and a cold prefix, binds none and says nothing: `None`, so the
-/// cheap writer writes the flight as the agent.
+/// room for the window is refused, never cut, and so is one read from rows
+/// its host did not witness whole (`prefix_sources` `None`, FIX 9463): its
+/// summary could not derive from each. Under `auto` every such failure, and
+/// a cold prefix, binds none and says nothing: `None`, so the cheap writer
+/// writes the flight as the agent.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn bind_live_compaction_fork(
     route: &ServedCompactionBackend,
     admission: &dyn LiveAdmission,
     writer: EntityId,
     row: &SelfCompactionDefault,
     live: &LlmRequest,
+    prefix_sources: Option<Vec<EntityId>>,
     summary_token_budget: u64,
     how: LiveBind,
 ) -> Option<Result<LiveCompactionFork, SelfCompactionUnavailable>> {
     let forced = matches!(how, LiveBind::Forced);
     let unbound = |why: SelfCompactionUnavailable| forced.then_some(Err(why));
+    let Some(prefix_sources) = prefix_sources else {
+        return unbound(SelfCompactionUnavailable::LivePrefixUnwitnessed);
+    };
     let Ok(call) = admission.admit_live(live.clone()) else {
         return unbound(SelfCompactionUnavailable::LiveRungUnbound);
     };
@@ -87,7 +95,13 @@ pub(super) fn bind_live_compaction_fork(
     if room == 0 {
         return unbound(SelfCompactionUnavailable::LivePrefixTooLong);
     }
-    Some(Ok(LiveCompactionFork::capture(request, rung, writer, room)))
+    Some(Ok(LiveCompactionFork::capture(
+        request,
+        rung,
+        writer,
+        room,
+        prefix_sources,
+    )))
 }
 
 impl ServedCompactionBackend {
@@ -193,9 +207,14 @@ impl ServedCompactionBackend {
             started,
             call,
             dispatch,
-            // The live prefix's complete input set is not witnessed yet;
-            // only the home can contribute rows to this call (FIX 6999).
-            None,
+            // The captured prefix's witnessed rows and the window's, when
+            // it was read from them; the home adds its own (FIX 9463).
+            union_source_rows([
+                request
+                    .window_read_from_sources
+                    .then_some(request.sources.clone()),
+                Some(fork.prefix_sources().to_vec()),
+            ]),
             request.summary_token_budget,
             |call, room| {
                 let frame = oneiron::count_context_pack_tokens(SELF_WRITER_FRAME) as u64;

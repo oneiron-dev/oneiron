@@ -257,6 +257,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.packs.get", post(facade_route))
         .route("/vault.skills.import", post(facade_route))
         .route("/vault.skills.sync", post(facade_route))
+        .route("/vault.skills.proposal.settle", post(facade_route))
         .route("/vault.skills.receipts", post(facade_route))
         .route("/vault.skills.convert", post(facade_route))
         .route("/vault.skills.get", post(facade_route))
@@ -1359,6 +1360,14 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.mail.threads.read", post(facade_route))
         .route("/vault.mail.compliance.search", post(facade_route))
         .route("/vault.files.sources.convert", post(facade_route))
+        .route(
+            "/vault.sync.repo_manifests.conflict.review",
+            post(facade_route),
+        )
+        .route(
+            "/vault.sync.repo_manifests.conflict.discard",
+            post(facade_route),
+        )
         .route("/connector.answer", post(facade_route))
         .route("/self.browser.open", post(facade_route))
         .route("/self.browser.observe", post(facade_route))
