@@ -163,4 +163,8 @@ pub struct CanonicalSnapshot {
     /// Absent when empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub asset_body_refs: Vec<CanonicalAssetBodyRef>,
+    /// The final rows' source audience bindings and every revision of the
+    /// policies they reach (Engine A), by map key. Absent when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_audiences: Vec<CanonicalSourceAudience>,
 }

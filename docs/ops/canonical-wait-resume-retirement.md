@@ -15,10 +15,11 @@ This removes the crash window between a durable canonical resume and separate
 cleanup. It does not change body publication, consent evidence or replay ownership.
 Hook cleanup and the public wait-delivery clear operation keep their existing behavior.
 
-Session runs still commit through their captured route and clear wait rows only
-after the resume writer returns its generation. Their composed Base reads and
-overlay retirement need a separate atomicity change; this canonical-only slice
-does not claim to fix that case or general session restart durability.
+Session runs still commit through their captured route. The separate
+[Session base wait retirement](session-base-wait-retirement.md) change validates
+composed Base reads and retires the changed replay and wait keys after the base
+commit. Overlay-route runs keep their cleanup after the resume writer returns
+its generation. Neither change provides general session restart durability.
 
 No storage format, operating constant, default, cap or deployment artifact changes.
 An ordinary engine/server update is sufficient.
