@@ -124,6 +124,16 @@ pub struct ServeArgs {
     #[arg(long = "custody-anchor-credentials-fd")]
     pub custody_anchor_credentials_fd: Option<i32>,
 
+    /// Manager-created HOST legal-copy listener, inherited only by a native
+    /// managed process. Paired with the manager's actual kernel UID.
+    #[arg(long = "host-legal-listen-fd", requires_all = ["managed_by_hypnos", "host_legal_uid"])]
+    pub host_legal_listen_fd: Option<i32>,
+
+    /// Kernel UID allowed on that same inherited HOST listener; never a
+    /// tenant identity or an ordinary owner credential.
+    #[arg(long = "host-legal-uid", requires_all = ["managed_by_hypnos", "host_legal_listen_fd"])]
+    pub host_legal_uid: Option<u32>,
+
     /// Managed mode's cold restore start (LC FIX 5384/5385): the vault the
     /// plan on `--restore-input-fd` names is restored into `--data-dir` from
     /// its signed artifact, verified and kept, then served as an ordinary
@@ -619,10 +629,6 @@ pub struct ServeArgs {
     /// Loro ephemeral-store inactivity timeout in milliseconds.
     #[arg(long)]
     pub ephemeral_timeout_ms: Option<i64>,
-
-    /// Maximum Loro-native ephemeral payload bytes accepted from one frame.
-    #[arg(long)]
-    pub max_ephemeral_payload_bytes: Option<usize>,
 
     /// Maximum encoded hub snapshot bytes retained/sent to late joiners.
     #[arg(long)]
