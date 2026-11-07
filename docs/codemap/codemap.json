@@ -17108,7 +17108,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/dispatcher/agent_verb/session_write.rs",
@@ -18854,7 +18854,7 @@
      "path": "src/code_run/storage/session_write.rs",
      "purpose": "One write a run bound to an off-record session stages in its room, kept on its receipt in the same segment…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
