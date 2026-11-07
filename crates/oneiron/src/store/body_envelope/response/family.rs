@@ -14,7 +14,7 @@ use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::self_heal::blocked_reports::blocked_capture_owners_in_txn;
-use crate::side_table;
+use crate::side_table::{self, SideTableDbs};
 use crate::store::{MediaKey, Store, StoreAttemptOperations, StoreVoiceBankResponse};
 
 /// A family of row-held responses (KS-2B1; KS-2B2 adds the host's HTTP
