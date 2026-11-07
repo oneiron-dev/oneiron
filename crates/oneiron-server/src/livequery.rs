@@ -463,6 +463,26 @@ pub(crate) fn machine_handoff_rpc(
     RpcReply::answer_unbound(server, call, request.request_id, result)
 }
 
+/// The refusal of a residence call on a socket this machine serves as a peer
+/// of another machine of its vault while their home is down (FIX 4748): the
+/// residence lane is the home's, and a peer serves state only. Its receipt
+/// is the connection's ([`RpcReply::answer_unbound`]).
+pub(crate) fn peer_refused_rpc(
+    server: &crate::server::SyncServer,
+    request: RpcRequest,
+) -> Result<RpcReply, ProtocolError> {
+    let call = RpcCall::of(&request);
+    RpcReply::answer_unbound(
+        server,
+        call,
+        request.request_id,
+        Err(AppError::forbidden(
+            "a peer serves no residence call while the home is down: they are the home's",
+            ["Ask the home once it answers again."],
+        )),
+    )
+}
+
 #[cfg(test)]
 pub(crate) fn bound_rpc(
     server: &crate::server::SyncServer,

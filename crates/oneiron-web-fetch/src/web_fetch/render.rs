@@ -80,13 +80,57 @@ pub(super) fn renderer_canonical_url(raw: &str) -> RendererResult<Url> {
 /// wire or into a provider request body. Nothing reaches a network boundary
 /// without passing it.
 pub(super) fn renderer_request_url(raw: &str) -> RendererResult<String> {
-    let Some(url) = validated_web_url(raw) else {
-        return Err(RendererError::transport(format!(
+    renderer_request_target(raw).map(String::from)
+}
+
+/// [`renderer_request_url`]'s check, its URL kept parsed.
+pub(super) fn renderer_request_target(raw: &str) -> RendererResult<Url> {
+    validated_web_url(raw).ok_or_else(|| {
+        RendererError::transport(format!(
             "refusing to request a URL that is not credential-free absolute http(s): {}",
             redact_url_credentials(raw)
+        ))
+    })
+}
+
+/// Where a redirect hop goes (FIX 4734): `location`, the raw value of the
+/// hop's `Location`, resolved against `from`, the URL of the response it
+/// came on, and nothing more. It may still carry credentials or another
+/// scheme, so a managed node's guard judges its destination before
+/// [`redirect_target`] decides whether it may be followed. A redirect with
+/// no `Location` is not followed, as before; one whose `Location` does not
+/// resolve is refused, which ends the page's ladder. The `Location` is the
+/// peer's and nothing has vouched for it, so every diagnostic here is
+/// redacted.
+pub(super) fn redirect_destination(from: &Url, location: Option<&[u8]>) -> RendererResult<Url> {
+    let Some(location) = location else {
+        return Err(RendererError::transport(format!(
+            "web fetch GET was redirected with no Location (target {})",
+            redact_url_credentials(from.as_str())
         )));
     };
-    Ok(url.to_string())
+    std::str::from_utf8(location)
+        .ok()
+        .and_then(|text| from.join(text.trim()).ok())
+        .ok_or_else(|| {
+            RendererError::unsafe_redirect(format!(
+                "refusing to follow a redirect whose Location does not resolve: {}",
+                redact_url_credentials(&String::from_utf8_lossy(location))
+            ))
+        })
+}
+
+/// The redirect hop to `destination` as it may be followed: normalized,
+/// credential-free absolute http(s) (FIX 4734). Any other hop is refused
+/// unsent, which ends the page's ladder, so no other rung is sent after the
+/// same target; the diagnostic is redacted.
+pub(super) fn redirect_target(destination: &Url) -> RendererResult<Url> {
+    validated_web_url(destination.as_str()).ok_or_else(|| {
+        RendererError::unsafe_redirect(format!(
+            "refusing to follow a redirect to a URL that is not credential-free absolute http(s): {}",
+            redact_url_credentials(destination.as_str())
+        ))
+    })
 }
 
 /// Renders one `reqwest` failure into a credential-safe rung error, its
