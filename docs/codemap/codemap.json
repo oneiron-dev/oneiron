@@ -108202,9 +108202,26 @@
      "surface": {
       "const": 2,
       "fn": 3,
+      "re-export": 1,
       "struct": 3,
       "trait": 1,
       "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SystemOnePackAnswer",
+      "SystemOnePackPrediction",
+      "SystemOnePackQuestion",
+      "SystemOnePackRequest"
+     ],
+     "path": "src/pack.rs",
+     "purpose": "One native System One request over a shared state and ordered typed questions",
+     "surface": {
+      "fn": 2,
+      "struct": 4
      }
     },
     {
@@ -108217,6 +108234,13 @@
     }
    ],
    "modules": {
+    "pack": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "One native System One request over a shared state and ordered typed questions"
+    },
     "tests": {
      "files": 1,
      "impl_vault": false,
@@ -108227,7 +108251,7 @@
    },
    "over_bar": 0,
    "purpose": "The remote System One protocol adapter; policy and receipts live in `oneiron::llm::decision`",
-   "source_files": 1,
+   "source_files": 2,
    "test_files": 1
   },
   "oneiron-mesh-transport": {
