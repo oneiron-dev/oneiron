@@ -158,6 +158,12 @@ pub struct LoadedWindow {
     /// Observer B for the MESSAGE document map (FIX 853), on a base window
     /// only.
     _observer_message_docs: Option<Subscription>,
+    /// Observer B for the office proposal map (FIX 2691), on a base window
+    /// only.
+    _observer_office_proposals: Option<Subscription>,
+    /// Observer B for the typed body row map (FIX 12470), on a base window
+    /// only.
+    _observer_typed_body_rows: Option<Subscription>,
     /// Observer B for the repo manifest map (FIX 6870), on base and world windows.
     _observer_repo_manifests: Option<Subscription>,
     /// Observer B for the source audience map (Engine A), on base and world
@@ -242,6 +248,12 @@ impl LoadedWindow {
         let observer_message_docs = key.world().is_none().then(|| {
             bridge::register_message_docs_observer(&doc, vault, materializer, key.as_str())
         });
+        let observer_office_proposals = key.world().is_none().then(|| {
+            bridge::register_office_proposals_observer(&doc, vault, materializer, key.as_str())
+        });
+        let observer_typed_body_rows = key.world().is_none().then(|| {
+            bridge::register_typed_body_rows_observer(&doc, vault, materializer, key.as_str())
+        });
         let observer_repo_manifests = Some(bridge::register_repo_manifests_observer(
             &doc,
             vault,
@@ -261,6 +273,8 @@ impl LoadedWindow {
             _observer_room_facts: observer_room_facts,
             _observer_document_pins: observer_document_pins,
             _observer_message_docs: observer_message_docs,
+            _observer_office_proposals: observer_office_proposals,
+            _observer_typed_body_rows: observer_typed_body_rows,
             _observer_repo_manifests: observer_repo_manifests,
             _observer_source_audiences: observer_source_audiences,
             observer_a_state,

@@ -635,9 +635,10 @@ pub use crate::memory::web_acquisition::{
     WEB_FETCH_CONTENT_HASH_DOMAIN, WebFetchError, WebFetchResult,
 };
 pub use crate::vault::{
-    ActorBound, HydratedShortId, IdScanPage, RawEntityPut, ReaderTableShortfall, TextIndexStatus,
-    VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, Vault, VaultDoctorDbManifestReport,
-    VaultDoctorHnswRecordState, VaultDoctorHnswReport, VaultDoctorReport, VaultWriterLease,
+    ActorBound, HydratedShortId, IdScanPage, OpenOptions, RawEntityPut, ReaderTableShortfall,
+    TextIndexStatus, VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, Vault,
+    VaultDoctorDbManifestReport, VaultDoctorHnswRecordState, VaultDoctorHnswReport,
+    VaultDoctorReport, VaultStorageId, VaultWriterLease,
 };
 pub use crate::vault_cleanup::{
     ArchivedEntity, CleanupAcceptOutcome, CleanupCandidate, CleanupDecision, CleanupDigest,

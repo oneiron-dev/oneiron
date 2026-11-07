@@ -131,7 +131,8 @@ pub(crate) use self::index::{
 };
 pub(crate) use self::package::{MAX_HUB_FILE_BYTES, MAX_HUB_PACKAGE_TOTAL_BYTES};
 pub(crate) use self::verdict::{
-    scan_verdict_row_risk, skill_scan_verdict_heads_for_content_hash_in_store,
+    scan_verdict_row_risk, skill_content_anchor_entity_id,
+    skill_scan_verdict_heads_for_content_hash_in_store,
     skill_scan_verdicts_for_content_hash_in_store,
 };
 
@@ -145,8 +146,6 @@ use self::index::{
 };
 #[cfg(test)]
 use self::support::{map_text, map_value};
-#[cfg(test)]
-pub(crate) use self::verdict::skill_content_anchor_entity_id;
 #[cfg(test)]
 use crate::Vault;
 #[cfg(test)]
@@ -172,7 +171,7 @@ use rmpv::Value;
 #[cfg(test)]
 use std::collections::BTreeSet;
 
-pub(crate) use bootstrap::seed_bootstrap_skills;
+pub(crate) use bootstrap::{bootstrap_skill_ids_and_hashes, seed_bootstrap_skills};
 mod archive;
 pub mod osv;
 

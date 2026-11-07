@@ -111,7 +111,7 @@ impl Vault {
             ));
         }
         let at = self.now_recorded_at();
-        self.with_write_txn_grouped(|wtxn| {
+        let landed = self.with_write_txn_grouped(|wtxn| {
             let key = &export.outcome.key;
             if key.projector != PROJECTOR_VERSION
                 || !export_gate(&self.store, wtxn, &key.profile)?.is_open()
@@ -167,7 +167,10 @@ impl Vault {
             )?;
             let reconciliation = VersionReconciliation::of(fork_parent, replaced.as_ref());
             Ok((version, reconciliation))
-        })
+        })?;
+        #[cfg(feature = "sync")]
+        self.notify_typed_body_document(*artifact);
+        Ok(landed)
     }
 
     /// Offer a proposal export (its profile's gate closed) to the artifact as
@@ -240,7 +243,8 @@ impl Vault {
     /// edits made since stay as they are and the next export projects them
     /// over the kept version. A deck bound to another version since, or one
     /// whose state at that frontier is not the exported one, keeps its
-    /// binding, as a Keep left it before.
+    /// binding, as a Keep left it before. Whether the deck was rebound
+    /// (its head moved).
     pub(crate) fn keep_deck_export_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -249,12 +253,12 @@ impl Vault {
         (base_version, base_hash): (Option<u64>, Option<[u8; 32]>),
         version: &BlobArtifactVersion,
         (actor, made_by, at): (WriteActor, Option<&MadeBy>, u64),
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let Some(source) = SOURCES.get(&self.store, wtxn, artifact)? else {
-            return Ok(());
+            return Ok(false);
         };
         if source.kind != OfficeBodyKind::Pptx {
-            return Ok(());
+            return Ok(false);
         }
         let (head, body) = self.deck_head(wtxn, artifact)?;
         let bound = body
@@ -284,6 +288,7 @@ impl Vault {
             })?;
             rebound = Some(rebind_frontier(&rebind.receipt));
         }
+        let did_rebind = rebound.is_some();
         let record = export_record(
             (artifact, version.version, hold.frontier.clone()),
             rebound,
@@ -297,7 +302,8 @@ impl Vault {
             wtxn,
             &version_key(artifact, version.version),
             &record,
-        )
+        )?;
+        Ok(did_rebind)
     }
 }
 
