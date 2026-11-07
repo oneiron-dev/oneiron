@@ -1,15 +1,11 @@
-//! An owner erase that waits (OF-470 C2, C4): the owner's confirmed erase a
-//! host order keeps, and the owner's plain delete that only secret orders
-//! keep (FIX 1465). One row per record, in the one pending-erase family. It
-//! keeps the request's kind, its reason and its generation, so what runs
-//! once nothing holds the record is the erase the owner asked for, and a
-//! newer request replaces an older one instead of being refused. In a shared
-//! vault that erases through its veto window, an explicit lift-and-erase
-//! names its own `erase` act too (FIX 9781). The row names no hold, so it
-//! tells the owner nothing a secret order keeps. A request the owner withdrew
-//! stays as the record of that withdrawal, who and when, and waits no more
-//! (FIX 10401): no read here returns it as waiting, and a new request
-//! replaces it.
+//! An owner-confirmed erase that waits on a shared vault's veto window
+//! (OF-470 C4, FIX 9781). One row per record, in the one pending-erase
+//! family. It keeps the request's kind, its reason, its generation and the
+//! `erase` act it waits out, so what runs once that act clears is the erase
+//! the owner asked for, and a newer request replaces an older one instead of
+//! being refused. A request the owner withdrew stays as the record of that
+//! withdrawal, who and when, and waits no more (FIX 10401): no read here
+//! returns it as waiting, and a new request replaces it.
 
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
@@ -18,7 +14,6 @@ use crate::deletion::DeleteReason;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
-use crate::store::Store;
 
 /// An owner erase that waits. Key: id16 (record).
 const PENDING_ERASES: SideTable<EntityId, PendingErase, Named> =
@@ -31,9 +26,6 @@ pub(crate) enum PendingEraseKind {
     /// The owner's "Lift the hold and erase?" confirm: a hard erase, and an
     /// audience edit erased as a privacy erase leaves it.
     LiftAndErase,
-    /// The owner's plain delete, only secret orders keeping it (FIX 1465):
-    /// it runs under the reason the owner asked for.
-    OwnerDelete,
 }
 
 /// One waiting owner erase.
@@ -211,22 +203,4 @@ pub(super) fn erase_pending_in_txn(
 ) -> Result<()> {
     PENDING_ERASES.delete(dbs, txn, record)?;
     Ok(())
-}
-
-/// A privacy erasure the owner's plain delete queued under secret orders
-/// (FIX 1465): where Oneiron hosts the bytes, the record those orders keep
-/// serves only their purpose while one stands (C6, FIX 8849), as a refused
-/// one's does. Nothing is logged as refused: the owner's act was accepted.
-pub(crate) fn use_limit_pending_privacy_in_txn(
-    store: &Store,
-    txn: &mut RwTxn<'_>,
-    record: EntityId,
-    at: u64,
-) -> Result<()> {
-    if !super::hosts_bytes(store)
-        || super::notice::retaining_holds_in_txn(store, txn, &record)?.is_empty()
-    {
-        return Ok(());
-    }
-    super::keep_use_limited_in_txn(store, txn, record, at)
 }

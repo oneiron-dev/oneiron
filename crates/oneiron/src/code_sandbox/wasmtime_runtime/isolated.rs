@@ -6,9 +6,12 @@ use crate::code_sandbox::{
 
 /// Runs one foreign step through the shared isolated launch. Cancellation
 /// drops its result and proposals before they reach the host collector.
+/// `step.script` is what `prepared` executes: a failed program's own error
+/// is masked by `host` and names its TypeScript position (FIX 9209).
 pub(super) fn run(
     runtime: &mut WasmtimeComponentRuntime,
     step: JsCodeModeStep<'_>,
+    prepared: &PreparedSource<'_>,
     backend: Box<dyn MicroVmBackend>,
     cancel: &StepCancellation,
     host: &mut dyn JsCodeModeHost,
@@ -54,7 +57,8 @@ pub(super) fn run(
         runtime.budget.foreign_budget,
         cancel,
         &mut output,
-    )?;
+    )?
+    .map_err(|failed| failed.into_error(prepared, 0, |body| host.mask_guest_error(body)))?;
     for proposal in outcome.proposals {
         cancel.check()?;
         runtime

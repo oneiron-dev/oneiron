@@ -80,6 +80,10 @@ pub struct Vault {
     /// Live seat prefixes are vault-owned, never process-global.
     pub(crate) model_seats: std::sync::Mutex<crate::llm::seat::SeatPool>,
     pub(crate) message_streams: crate::memory::MessageStreamRuntime,
+    /// Exact HOST live-session orders, independent of a failed capture socket.
+    /// In memory only; never tenant hold state, source bytes or private keys.
+    #[cfg(unix)]
+    pub(crate) host_legal_captures: crate::deletion::HostLegalCaptures,
     /// The rows over live work this vault holds open, and the host's door
     /// for their crossings ([`Vault::set_live_rows`]).
     pub(crate) live_rows: crate::live_rows::LiveRowsCell,
@@ -137,6 +141,12 @@ pub struct Vault {
     retrieval_trace_key: self::retrieval_trace_key::RetrievalTraceKey,
     // Declared after Store: LMDB closes before process ownership is released.
     writer_lease: Option<VaultWriterLease>,
+    /// T1 `self.use` operations the host registered, by operation name: the
+    /// second table beside `SECRET_USE_OPERATIONS` (FIX 2616). Empty until
+    /// the server registers its callbacks; unknown names refuse as unknown.
+    pub(crate) secret_use_t1_operations: std::sync::Mutex<
+        std::collections::HashMap<String, crate::secret_custody::SecretUseT1Operation>,
+    >,
     /// The page-seal mirror read the last settle fused with its file
     /// identity, consumed by the next ready check instead of a second
     /// under-lease mirror read (FIX 12272). Set only by the settle's write
@@ -253,6 +263,12 @@ pub struct Vault {
     /// ([`Vault::install_served_transports`]). In memory only.
     pub(crate) served_transports:
         std::sync::OnceLock<std::sync::Arc<crate::outbound::ServedTransports>>,
+    /// The served host's precision recalculator (LibreOffice headless) for
+    /// the workbooks the native formula engine refuses (FIX 2462), installed
+    /// by [`Vault::install_xlsx_precision_recalc`]. In memory only; with none,
+    /// a refused workbook is marked to recalculate when it is opened.
+    pub(crate) xlsx_precision_recalc:
+        std::sync::Mutex<Option<std::sync::Arc<crate::office_body::XlsxPrecisionRecalc>>>,
     /// A host Coach serving this vault drafts its digest settings steps (FIX
     /// 5609, 6165, 7211; [`Vault::set_coach_weave_digest_host_ready`]): when
     /// its last round completed and its own expected round interval, `None`
@@ -263,6 +279,17 @@ pub struct Vault {
     /// green landing starts a full-auto pass at once. In memory only and
     /// never shared across vaults; each lifecycle tick repairs a missed one.
     pub(crate) origin_mirror_wake: crate::origin::OriginMirrorWake,
+    /// The relayed ask intents that landed for asks this vault admitted and
+    /// wait for their consumption (FIX 7494). In memory only: it drops with
+    /// the vault, and the next open reads the stored intents again.
+    pub(crate) ask_forward_arrivals: std::sync::Mutex<crate::task_verb::AskForwardArrivals>,
+    /// The served host's transport an exact publish's mirror git goes
+    /// through, its credential broker installing the credential (FIX 19083),
+    /// installed once per open vault
+    /// ([`Vault::install_origin_git_transport`]). None on an embedded vault,
+    /// which keeps the direct path. In memory only.
+    pub(crate) origin_git_transport:
+        std::sync::OnceLock<std::sync::Arc<dyn crate::origin::git_transport::OriginGitTransport>>,
     /// The deadline tests' slow retrieval stage, armed per vault.
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) slow_retrieval_stage:

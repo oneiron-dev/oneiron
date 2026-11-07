@@ -60,6 +60,13 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
 /// sealed-content door calls it, and what it packs leaves this machine only
 /// sealed under the world's key. It packs no key pad, which lives in its
 /// world's windows too: pads ride only the sealed pad object.
+///
+/// After the pass, the erased-actor scrubs that every window export and
+/// persist runs (`egress::export_scrubbed_window_snapshot`) run over
+/// the whole mirror (FIX 19525): a room fact, origin claim, section-fit
+/// receipt or birth carrier that names an actor this vault erased is
+/// rewritten or goes, also one a merged bundle section brought for a row not
+/// held here, and the window is pinned history-free first.
 pub(crate) fn reverse_rematerialize_for_sealing(
     vault: &Vault,
     doc: &LoroDoc,
@@ -70,7 +77,17 @@ pub(crate) fn reverse_rematerialize_for_sealing(
     if let Err(error) = super::sealed_membership::drop_departed_carriers(vault, doc, window_key) {
         tracing::warn!(%error, window = %window_key.as_str(), "sealed mirror kept departed rows");
     }
-    reverse_rematerialize_scan(vault, doc, window_key, super::Withhold::Nothing, None, true)
+    let packed =
+        reverse_rematerialize_scan(vault, doc, window_key, super::Withhold::Nothing, None, true)?;
+    // FIX 4227, 4228: a room fact that names an erased actor.
+    crate::sync::room_facts::scrub_room_facts(vault, doc, Some(window_key))?;
+    // FIX 3877: an origin claim carrier that names an erased actor.
+    crate::sync::origin_claims::scrub_origin_claims(vault, doc, Some(window_key))?;
+    // FIX 12769: a section-fit receipt carrier that names an erased actor.
+    crate::sync::origin_claims::scrub_section_fit_receipts(vault, doc, Some(window_key))?;
+    // FIX 6279: a birth carrier whose maker this vault erased.
+    crate::sync::row_birth::actor_erase::scrub_erased_actor_births(vault, doc, Some(window_key))?;
+    Ok(packed)
 }
 
 /// [`reverse_rematerialize`] for only the `rows` a commit just wrote, not the
@@ -474,6 +491,23 @@ fn reverse_rematerialize_scan(
             {
                 wrote_any = true;
             }
+            // Engine A: so do its binding and policy closure.
+            if map_contains_binary(&entities_map, &hex_id)
+                && crate::sync::source_audiences::mirror_record(vault, doc, id)?
+            {
+                wrote_any = true;
+            }
+            if map_contains_binary(&entities_map, &hex_id)
+                && crate::sync::origin_positions::mirror_local_position(vault, doc, window_key, id)?
+            {
+                wrote_any = true;
+            }
+            // FIX 12113: a MESSAGE row's writer proof rides beside its
+            // carrier the same way, when this install wrote the row or the
+            // own-device lane admitted it with that proof.
+            if crate::sync::ingest::publish_writer_proof(vault, doc, id, &raw)? {
+                wrote_any = true;
+            }
             // OF-522: a TURN's room row rides beside its carrier the same
             // way, and is refreshed when only the row changed.
             if window_key.world().is_none()
@@ -749,9 +783,14 @@ pub(super) fn remove_entity_crdt_carriers(
     if delete_edges_touching_entities(edges_map, &HashSet::from([*id]))? {
         removed = true;
     }
-    // The row's birth leaves with its carrier.
+    // The row's birth and optional position data leave with its carrier.
+    if let Some(doc) = loro::ContainerTrait::doc(entities_map) {
+        removed |= crate::sync::row_birth::remove_birth_carrier(&doc, id)?;
+        removed |= crate::sync::origin_positions::remove_carrier(&doc, id)?;
+    }
+    // So does its binding, and each policy no other binding reaches.
     if let Some(doc) = loro::ContainerTrait::doc(entities_map)
-        && crate::sync::row_birth::remove_birth_carrier(&doc, id)?
+        && crate::sync::source_audiences::remove_record(&doc, id)?
     {
         removed = true;
     }
