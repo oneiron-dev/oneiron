@@ -29,6 +29,24 @@ pub struct CanonicalEntityDocument {
     /// fork, pin, receipt or purge: that one is its current value alone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub history: Option<CanonicalEntityDocumentHistory>,
+    /// Where the value was captured (FIX 3553). Absent for a head whose
+    /// incarnation is no id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<CanonicalDocumentOrigin>,
+}
+
+/// The incarnation a value was captured at and that incarnation's version
+/// there, as (peer, counter) pairs in peer order (FIX 3553): the one Loro
+/// value a snapshot carries, and never replayed. A restore names it in the
+/// rebuilt document as the history that document replaces, so a peer that
+/// holds exactly that incarnation adopts it. It names where a value was
+/// captured, never the value: a recovery whose document holds the value is
+/// equivalent to the artifact whatever its origin.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CanonicalDocumentOrigin {
+    pub incarnation: [u8; 16],
+    pub version: Vec<(u64, i32)>,
 }
 
 /// The causal state of a generic EntityDoc, CRDT-independent: the retained
