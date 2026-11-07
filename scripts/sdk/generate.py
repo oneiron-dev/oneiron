@@ -488,7 +488,7 @@ def native_boundary(row, language):
     else:
         name = names[args[0]['name']]
         if language == 'napi':
-            setup = f'let input: serde_json::Value = serde_json::from_str(&{name}).map_err(|error| facade_error(oneiron::memory::MemoryError {{ code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(), message: format!("invalid keyed request: {{error}}"), suggestions: vec!["Use the documented keyed DTO.".to_owned()], successor_short_id: None, gate_denial: None, read_receipt: None, policy_denial: None, wrong_root: None, hook: None, retry_after: None, resets_at: Vec::new(), reason_codes: Vec::new(), legal_hold: None }}))?;'
+            setup = f'let input: serde_json::Value = serde_json::from_str(&{name}).map_err(|error| facade_error(oneiron::memory::MemoryError {{ code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(), message: format!("invalid keyed request: {{error}}"), suggestions: vec!["Use the documented keyed DTO.".to_owned()], successor_short_id: None, gate_denial: None, read_receipt: None, policy_denial: None, wrong_root: None, hook: None, retry_after: None, resets_at: Vec::new(), reason_codes: Vec::new(), legal_hold: None, room_join_hold: None }}))?;'
         else:
             setup = f'let input: serde_json::Value = decode({name}, "{row["name"]}")?;'
         call = f'self.inner.agent_verb("{row["name"]}", input)'
@@ -837,10 +837,18 @@ def mcp_input_dispatch(row):
         # One target per describe (FIX 3256), on the args the pre hooks left,
         # before the self, card-key and TASKS-section paths.
         body += f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n'
-        # describe(self) renders the authenticated run brief, the same door REST takes.
+        # describe(self) renders the connection's own brief (FIX 17594): the
+        # registered actor and the connection its registration resolved, its
+        # stream, connector scope, bound verbs and verified auth, never Core's
+        # session observations or a session the body names. A code-mode
+        # call's dispatch carries its trusted durable run (`McpCodeRun`), and
+        # its describe(self) renders that run's own brief through the run's
+        # installed custody (FIX 17594 D5); neither reads a run from a body
+        # `session_id`. REST keeps the Core-auth door.
         body += ('if input.get("self").and_then(Value::as_bool) == Some(true) {\n'
-                 '    let auth = actor.auth.as_ref().ok_or_else(invalid)?;\n'
-                 '    let (value, listed) = Box::pin(crate::api::context_board::describe_self_for_auth(server, auth, &input)).await.map_err(|_| invalid())?;\n'
+                 '    // A code-mode call names its trusted durable run; a direct call names none.\n'
+                 '    let run = surface.run.as_ref().map(|run| run.run_id);\n'
+                 '    let (value, listed) = Box::pin(crate::api::context_board::describe_self_for_mcp(server, actor, run, &input)).await.map_err(|_| invalid())?;\n'
                  '    // Derived from the rows its card lists, the roster it read among them.\n'
                  '    served.extend(listed);\n'
                  '    let output: oneiron::task_verb::TaskDescription = serde_json::from_value(value).map_err(|_| invalid())?;\n'
@@ -1288,7 +1296,7 @@ export type FacadeHookStop =
   | { status: "hidden"; hook: string };
 /** The server's refusal envelope, `{error, narrowing?}`, as `api/facade.rs` writes it. */
 export interface FacadeErrorEnvelope {
-  error: { code: string; message: string; requestId: string; suggestions: string[]; receiptRef?: string; hook?: FacadeHookStop; retryAfter?: number; resetsAt?: number[]; reasonCodes?: string[]; legal_hold?: Facade.LegalHoldNotice; [field: string]: unknown };
+  error: { code: string; message: string; requestId: string; suggestions: string[]; receiptRef?: string; hook?: FacadeHookStop; retryAfter?: number; resetsAt?: number[]; reasonCodes?: string[]; legal_hold?: Facade.LegalHoldNotice; room_join_hold?: Facade.RoomJoinHold; [field: string]: unknown };
   narrowing?: unknown;
 }
 /**

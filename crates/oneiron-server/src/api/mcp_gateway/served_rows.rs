@@ -10,10 +10,12 @@
 use std::ops::{Deref, DerefMut};
 
 use oneiron::EntityId;
+use oneiron::runtime_hooks::VerbHookStop;
 use oneiron::task_verb::sdk::{ActAnswer, AgentVerb};
 use serde_json::Value;
 
 use super::{McpCallContext, McpGatewayError};
+use crate::server::SyncServer;
 
 /// While this holds, an act whose rows are unknown has run and answers an
 /// off-device caller only that it ran (Engine 10-20 09:04). False answers it
@@ -101,6 +103,67 @@ pub(super) fn unknown_act_answer(
         )
     })?;
     Ok((ran, Some(Vec::new())))
+}
+
+/// The rows the answer of verb `tool` a drain ran is saved beside, for the
+/// caller's retry of the same invocation to be released by (FIX 21054):
+/// the rows its release judges by ([`McpServed::into_rows`]). An act whose
+/// rows are unknown saves none while [`NARROW_UNKNOWN_MCP_ACT_ANSWERS`]
+/// holds. Off this device its retry is then withheld, never released by
+/// the rows its other producers listed.
+#[cfg(feature = "code-sandbox-wasmtime")]
+pub(super) fn saved_answer_rows(tool: &str, served: McpServed) -> Option<Vec<EntityId>> {
+    let act = AgentVerb::from_name(tool).is_some_and(AgentVerb::writes);
+    if NARROW_UNKNOWN_MCP_ACT_ANSWERS && act && served.unknown() {
+        return None;
+    }
+    served.into_rows()
+}
+
+/// The rows a generated row's hook `stop` is released by. A retry that gets
+/// the answer an ask's settlement already ran restores into `served` the
+/// rows that saved answer was derived from (FIX 1435, FIX 21054). An answer
+/// saved with none is released by no listed row, so off this device it is
+/// withheld as a result whose rows are unknown is, never released as an
+/// empty set. Any other stop is released by the rows `served` lists.
+pub(super) fn stop_release_rows<'s>(
+    server: &SyncServer,
+    actor: &McpCallContext,
+    stop: &VerbHookStop,
+    served: &'s mut McpServed,
+) -> Option<&'s [EntityId]> {
+    if !matches!(stop, VerbHookStop::Completed { .. }) {
+        return served.rows();
+    }
+    let saved = actor.invocation.and_then(|invocation| {
+        server
+            .vault
+            .verb_hook_saved_producers(invocation)
+            .inspect_err(|error| tracing::warn!(%error, "a drained call's rows did not read"))
+            .ok()
+            .flatten()
+    })?;
+    served.extend(saved);
+    served.rows()
+}
+
+/// Whether a retry's `Completed` stop carries an answer derived from a row
+/// of `rows` that `actor`'s credential no longer reads, or that was erased
+/// since (FIX 21614). The drain read those rows, not this retry, so the
+/// answer is released only as a claimed invocation's waiter is
+/// ([`crate::api::facade::rows_still_admitted`]); a lapsed one answers only
+/// that the call ran. Any other stop, or rows that are unknown, is not
+/// judged here.
+pub(super) fn drained_rows_lapsed(
+    server: &SyncServer,
+    actor: &McpCallContext,
+    stop: &VerbHookStop,
+    rows: Option<&[EntityId]>,
+) -> bool {
+    matches!(stop, VerbHookStop::Completed { .. })
+        && rows.zip(actor.auth.as_ref()).is_some_and(|(rows, auth)| {
+            !crate::api::facade::rows_still_admitted(&server.vault, auth, rows)
+        })
 }
 
 /// The acts that answer the word that they ran when the off-device

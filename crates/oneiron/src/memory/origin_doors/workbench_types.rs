@@ -119,6 +119,8 @@ pub struct CodeForkView {
     pub documents: Vec<CodeForkDocumentView>,
     pub proposal_refs: Vec<EntityId>,
     pub revision_refs: Vec<EntityId>,
+    /// The TASKs this fork's own operations worked under or served (FIX
+    /// 7536), sorted by id.
     pub task_refs: Vec<EntityId>,
     pub ingress: Option<CodeIngressRef>,
 }

@@ -4,10 +4,12 @@
 mod check_evidence;
 mod pending;
 mod self_steps;
+mod wait;
 
 use super::compaction::{FoldJob, KindFolds, RunFrames};
 use super::driver::EngineNativeExecutor;
 use super::record::completed_step_count;
+use super::self_brief::FoldBoundary;
 use super::store::{
     COMPACTION_OBSERVATION_WINDOW_BYTES, RECOVERABLE_OUTPUT_CHUNK_BYTES, load_context_output,
     load_observation_window, load_script_context, observation_output_path, recoverable_chunk_path,
@@ -44,8 +46,12 @@ impl EngineNativeExecutor<'_> {
         // FIX 4465 B: every paid call of a self-written pass is filed before
         // anything lands, so a landing that is refused keeps its steps too.
         self.file_self_passes(&mut finished);
-        if let Some((_, byline, _)) = seat.swap_seat() {
-            self.land_folds(byline, finished.folds, finished.kind_folds);
+        // FIX 17594 (Engine call B): a fold batch that committed is a brief
+        // boundary, before the epoch the flight may swap in after it.
+        if let Some((_, byline, _)) = seat.swap_seat()
+            && let Some(landed) = self.land_folds(byline, finished.folds, finished.kind_folds)
+        {
+            self.brief_fold_committed(landed);
         }
         let hooks = finished.hooks;
         let epoch_execution = finished.epoch_execution;
@@ -152,6 +158,8 @@ impl EngineNativeExecutor<'_> {
         }
         let used = super::compaction::request_tokens(request);
         let mut refused = None;
+        // A batch of folds by kind landed here, after `request` was built.
+        let mut kind_landed: Option<FoldBoundary> = None;
         let reason = seat.feed(
             used,
             completed,
@@ -164,7 +172,10 @@ impl EngineNativeExecutor<'_> {
                 }
                 let note = asked.clone().flatten();
                 // FIX 4465 C: the live request as its rung sends it sizes and rides the flight.
-                let (live, room) = super::compaction::live_fork::capture(driver, request);
+                // FIX 9463: only with every row it was read from witnessed.
+                let prefix_sources = self.step_source_rows(config, record);
+                let (live, room) =
+                    super::compaction::live_fork::capture(driver, request, prefix_sources);
                 let (epoch, hooks) = match watermark {
                     Some(at) => match self.seal_compaction_window(
                         driver,
@@ -197,12 +208,12 @@ impl EngineNativeExecutor<'_> {
                 if epoch.is_none()
                     && folds.is_empty()
                     && let Some(batch) = kind_folds.take()
-                    && self
-                        .storage
-                        .land_code_run_folds(batch.run_id, batch.records, &[])
-                        .is_err()
                 {
-                    tracing::warn!("a fold batch did not land");
+                    let run = batch.run_id;
+                    match self.storage.land_code_run_folds(run, batch.records, &[]) {
+                        Ok(committed) => kind_landed = FoldBoundary::landed(run, committed),
+                        Err(_) => tracing::warn!("a fold batch did not land"),
+                    }
                 }
                 if asked.is_some() {
                     self.storage
@@ -219,6 +230,11 @@ impl EngineNativeExecutor<'_> {
             },
         );
         self.compaction = Some(seat);
+        // FIX 17594 (Engine call B): the batch is a brief boundary; the run
+        // builds this turn's request again past it before sending it.
+        if let Some(landed) = kind_landed {
+            self.brief_fold_committed(landed);
+        }
         match refused {
             Some(refusal) => Err(refusal),
             None => Ok(reason),
@@ -470,20 +486,19 @@ impl EngineNativeExecutor<'_> {
     /// stamped Generated under the host's `byline`, with the sources its
     /// request was sealed with (Docs Q24), and a self-written one with each
     /// home part it wore too (FIX 4465 B). A batch that cannot be written
-    /// leaves its marks pending for the next pass.
+    /// leaves its marks pending for the next pass. Returns what the batch
+    /// committed, as its brief boundary (FIX 17594): `None` when it wrote no
+    /// fold, or was not written.
     fn land_folds(
         &self,
         byline: crate::WriteActor,
         folds: Vec<(FoldJob, Result<GatedCompaction, String>)>,
         kind_folds: Option<KindFolds>,
-    ) {
-        let Some(run_id) = folds
+    ) -> Option<FoldBoundary> {
+        let run_id = folds
             .first()
             .map(|(job, _)| job.run_id)
-            .or(kind_folds.as_ref().map(|batch| batch.run_id))
-        else {
-            return;
-        };
+            .or(kind_folds.as_ref().map(|batch| batch.run_id))?;
         // The batch's folds by kind land in the same write as its passes.
         let mut landed = kind_folds.map_or_else(Vec::new, |batch| batch.records);
         let mut failed = Vec::new();
@@ -512,12 +527,12 @@ impl EngineNativeExecutor<'_> {
             }
         }
         landed.sort_by_key(|record| record.fold);
-        if self
-            .storage
-            .land_code_run_folds(run_id, landed, &failed)
-            .is_err()
-        {
-            tracing::warn!("a fold batch did not land");
+        match self.storage.land_code_run_folds(run_id, landed, &failed) {
+            Ok(committed) => FoldBoundary::landed(run_id, committed),
+            Err(_) => {
+                tracing::warn!("a fold batch did not land");
+                None
+            }
         }
     }
 
@@ -765,7 +780,8 @@ fn step_speech(record: &CodeRunReplayRecord, seq: u64) -> Vec<crate::compaction:
 
 /// What a fold's summary is derived from: every record its request was
 /// sealed with, and for a self-written one each home part its call wore
-/// whole (FIX 4465 B, Engine 10-19), so withdrawing one withdraws the words.
+/// whole (FIX 4465 B, Engine 10-19) and each row its live fork's prefix was
+/// read from (FIX 9463), so withdrawing one withdraws the words.
 fn fold_sources(
     gated: &GatedCompaction,
     execution: Option<&crate::compaction::CompactionExecution>,
@@ -773,7 +789,7 @@ fn fold_sources(
     let mut sources = gated.request().sources.clone();
     for row in execution
         .into_iter()
-        .flat_map(crate::compaction::CompactionExecution::home_dependencies)
+        .flat_map(crate::compaction::CompactionExecution::input_dependencies)
     {
         if !sources.contains(&row) {
             sources.push(row);

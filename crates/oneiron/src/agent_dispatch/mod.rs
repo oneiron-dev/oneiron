@@ -22,6 +22,7 @@
 
 mod agent_run;
 mod attenuation;
+mod brief;
 pub mod budget_doors;
 mod budget_hold;
 mod codec;
@@ -34,7 +35,7 @@ pub use self::comm::{CommReach, comm_prompt_block};
 mod comm_widen;
 pub(crate) use self::comm_widen::{
     CommWidenDecision, CommWidenQuestion, CommWidenRecipient, CommWidenRequest, CommWidenState,
-    comm_widen_children_in, comm_widen_in, comm_widen_recipient_in_txn,
+    comm_widen_children_in, comm_widen_in, comm_widen_recipient_in_txn, effective_comm_in_txn,
     erase_comm_widen_actor_in_txn, put_comm_widen_in,
 };
 mod context;

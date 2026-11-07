@@ -180,6 +180,10 @@ pub trait DecisionSeat: Send + Sync {
 /// step takes the answer it holds and an irreversible one abstains; with no answer
 /// the call abstains. A request past the seat's capability is not sent: the call
 /// abstains as the provider unavailable, for the caller's next rung.
+/// Explicit cancellation wakes either measurement's local wait. A cancelled
+/// wait without a ready response settles its reservation, not a refund; stopping
+/// this wait does not prove remote work stopped. A ready response keeps its
+/// ordinary usage settlement even when cancellation is also ready.
 #[expect(
     clippy::too_many_arguments,
     reason = "the call's clock and its step's reversibility join the seat's request"
@@ -220,19 +224,21 @@ pub async fn decide_at_remote_seat(
     let first = if fits && deadline.decision_may_start() {
         let first_lease = guard.admit()?.lease;
         providers.push(pin.clone());
-        let first = seat
-            .ask(request.clone(), &first_lease, deadline.decision_time_left())
-            .await;
+        let first = ask_until_cancel(seat, request.clone(), &first_lease, deadline).await;
         match first {
-            Ok(first) => {
+            Some(Ok(first)) => {
                 guard.settle_per_call(&first_lease, &first.usage)?;
                 (!deadline.answer_due()).then_some(first)
             }
-            Err(error) => {
+            Some(Err(error)) => {
                 guard.settle_reserved(&first_lease)?;
                 if deadline.decision_may_start() {
                     return Err(error);
                 }
+                None
+            }
+            None => {
+                guard.settle_reserved(&first_lease)?;
                 None
             }
         }
@@ -265,15 +271,11 @@ pub async fn decide_at_remote_seat(
                         Ok(admission) => {
                             reasoning = Reasoning::Ran(cause);
                             providers.push(pin);
-                            let second = seat
-                                .ask(
-                                    request.clone(),
-                                    &admission.lease,
-                                    deadline.decision_time_left(),
-                                )
-                                .await;
+                            let second =
+                                ask_until_cancel(seat, request.clone(), &admission.lease, deadline)
+                                    .await;
                             match second {
-                                Ok(second) => {
+                                Some(Ok(second)) => {
                                     guard.settle_per_call(&admission.lease, &second.usage)?;
                                     if deadline.answer_due() {
                                         stop = StopCause::Deadline;
@@ -293,7 +295,7 @@ pub async fn decide_at_remote_seat(
                                         probability = Some(second.probability);
                                     }
                                 }
-                                Err(_) => {
+                                Some(Err(_)) => {
                                     guard.settle_reserved(&admission.lease)?;
                                     if deadline.decision_may_start() {
                                         answer = DecisionAnswer::Abstain;
@@ -304,6 +306,11 @@ pub async fn decide_at_remote_seat(
                                         stop = StopCause::Deadline;
                                         reasoning = Reasoning::Cut(cause);
                                     }
+                                }
+                                None => {
+                                    guard.settle_reserved(&admission.lease)?;
+                                    stop = StopCause::Deadline;
+                                    reasoning = Reasoning::Cut(cause);
                                 }
                             }
                         }
@@ -387,6 +394,20 @@ pub async fn decide_at_remote_seat(
         },
         human_ask,
     })
+}
+
+async fn ask_until_cancel(
+    seat: &dyn DecisionSeat,
+    request: SeatRequest,
+    lease: &BudgetLease,
+    deadline: &RetrievalDeadline,
+) -> Option<LlmResult<SeatAnswer>> {
+    let cancel = deadline.work_cancel();
+    tokio::select! {
+        biased;
+        answer = seat.ask(request, lease, deadline.decision_time_left()) => Some(answer),
+        () = cancel.cancelled() => None,
+    }
 }
 
 fn check_answer(request: &SeatRequest, response: &SeatAnswer) -> LlmResult<()> {

@@ -134,7 +134,7 @@ async fn serve(
     let mut quiesce_open = true;
     let mut quiesced: Option<oneshot::Sender<()>> = None;
     let result = loop {
-        if quiet && let Some(reply) = quiesced.take_if(|_| only_prospective(&active)) {
+        if quiet && let Some(reply) = quiesced.take_if(|_| only_kept(&active)) {
             let _ = reply.send(());
         }
         tokio::select! {
@@ -145,12 +145,12 @@ async fn serve(
                 quiesced = asked.ok();
                 if !quiet {
                     quiet = true;
-                    quiet_captures(&vault, &cancelled, &active);
+                    quiet_captures(&cancelled, &active);
                 }
             }
             _ = &mut shutdown, if !quiet => {
                 quiet = true;
-                quiet_captures(&vault, &cancelled, &active);
+                quiet_captures(&cancelled, &active);
             }
             completed = workers.join_next_with_id(), if !workers.is_empty() => {
                 if let Some(completed) = completed {
@@ -187,7 +187,7 @@ async fn serve(
     };
     drop(channel);
     if !quiet {
-        quiet_captures(&vault, &cancelled, &active);
+        quiet_captures(&cancelled, &active);
     }
     // Every writer of this process has stopped: each prospective order
     // drains its last entries and names its next ordinal. A listener error
@@ -217,14 +217,12 @@ async fn serve(
     result
 }
 
-/// The stop trigger: every capture but a prospective order's ends now, and
-/// its socket closes, since one can hold the native source writer the final
-/// drain needs. Prospective connections keep draining.
-fn quiet_captures(vault: &Vault, cancelled: &AtomicBool, active: &Accepted) {
+/// The stop trigger: every capture but a prospective order's or a
+/// live-session capture's ends now, and its socket closes, since one can hold
+/// the native source writer the final drain needs. Prospective connections
+/// keep draining; live-session captures wait for their session's close.
+fn quiet_captures(cancelled: &AtomicBool, active: &Accepted) {
     cancelled.store(true, Ordering::Release);
-    if let Err(error) = vault.stop_live_host_legal_captures() {
-        tracing::warn!(%error, "HOST legal live captures did not stop");
-    }
     for (stream, role) in active.values() {
         if role.close_unless_prospective() {
             let _ = stream.shutdown(Shutdown::Both);
@@ -232,10 +230,10 @@ fn quiet_captures(vault: &Vault, cancelled: &AtomicBool, active: &Accepted) {
     }
 }
 
-/// Whether every connection still running carries a prospective order: a
-/// closed one has not joined yet.
-fn only_prospective(active: &Accepted) -> bool {
-    active.values().all(|(_, role)| role.is_prospective())
+/// Whether every connection still running is one teardown keeps: a closed
+/// one has not joined yet.
+fn only_kept(active: &Accepted) -> bool {
+    active.values().all(|(_, role)| role.is_kept())
 }
 
 fn joined(completed: Result<(Id, oneiron::Result<()>), JoinError>, active: &mut Accepted) {

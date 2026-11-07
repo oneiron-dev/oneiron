@@ -58,6 +58,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     |write, txn, id| crate::drafter::erase_drafters_for_source_in_txn(write.store, txn, id),
     // FIX 10260: a MESSAGE's kept reply assertions.
     |write, txn, id| erase_reply_assertions_in_txn(write.store, txn, id),
+    // FIX 17207: the policies a derived row's carriers brought.
+    |write, txn, id| crate::source_audience::erase_derived_policies_in_txn(write.store, txn, id),
     // FIX 9970: a TURN's unpersisted-wake label.
     |write, txn, id| erase_turn_wake_label_in_txn(write.store, txn, id),
     // FIX 7608 S3F: a derived text's index copy, and the copies derived from it.
@@ -101,6 +103,11 @@ const ERASERS: &[EntitySideRowEraser] = &[
     |write, txn, id| erase_inbox_cards_in_txn(write.store, txn, id),
     // FIX 12559: an imported mail message's occurrence, when one of its rows is erased.
     |write, txn, id| crate::mail_pack::erase_occurrence_rows_in_txn(write.store, txn, id),
+    // FIX 11030: a deleted PERSON's unresolved sends, linked by its party key
+    // while its body still names it.
+    |write, txn, id| {
+        crate::outbound_intent_ledger::link_late_recipients_in_txn(write.store, txn, id)
+    },
     // FIX 11815: an agent hook's proposal, by the binding claim it widens.
     |write, txn, id| {
         crate::store::pack_hook_proposal::erase_hook_proposal_in_txn(write.store, txn, id)
