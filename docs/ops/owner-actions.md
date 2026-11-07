@@ -866,6 +866,22 @@ every one as rejected. Either way one receipt represents the run. Routes: `GET
 
 The SDK verbs `vault.fanout.resume` (approve a held fan-out once, approve and remember it under a cap, or deny it) and `vault.fanout.ack` (acknowledge the width check of one that already went out) take the plan digest you saw from `vault.fanout.launch` and run under the owner's credential, over the facade and MCP.
 
+### Coach case escalations
+
+When the Coach routes a stored failed-attempt case to a person, its `coach.heal`
+proposal can carry `repair.route` with `route: "escalate_with_diagnosis"`, the
+original failing agent's `agent_ref`, and the case's evidence as `diagnosis_ref`.
+This uses the same evidence reference as a Coach skill-repair diagnosis. The
+proposal still carries the case, failed attempt, evidence, checkpoint and Q&A
+thread references; it does not claim a new diagnosis artifact or a Q&A exchange.
+
+The intent is attached only while the durable case and its failed attempt still
+match in the proposal's write transaction. Otherwise the ordinary route-only
+proposal remains, with `repair: null`. This changes no consent or repair execution:
+review and approve or decline it through the ordinary run review. It does not
+apply a fix, resume the failed attempt or change a grant. Person proposals for bare
+blocked reports remain route-only.
+
 ## Settle an open contradiction
 
 When two claims disagree and nothing settled them, the vault keeps a `conflict.open` marker

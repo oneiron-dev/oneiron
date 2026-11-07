@@ -12,12 +12,13 @@ pub(crate) use plan::{MutationAuditProjection, PreparedMutationAudit};
 
 /// A storage service principal, not a user, person, session, or runtime slot.
 /// Used when the mutation door carries no authenticated actor binding, and
-/// the actor a critical-confirm timeout demotion settles as (FIX 1093).
+/// the actor a critical-confirm timeout demotion settles as (FIX 1093). The
+/// one derived-id rule names it (FIX 10043).
 pub(crate) fn storage_service_principal() -> Result<EntityId> {
-    let digest = blake3::hash(b"oneiron:storage-service-principal:v1");
-    let mut bytes = [0; 16];
-    bytes.copy_from_slice(&digest.as_bytes()[..16]);
-    EntityId::from_bytes(bytes)
+    EntityId::derive(
+        crate::entity_id::derived_domains::STORAGE_SERVICE_PRINCIPAL,
+        &[],
+    )
 }
 
 pub(crate) struct MutationAudit<'a> {
