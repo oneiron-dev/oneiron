@@ -1,9 +1,12 @@
 import { afterAll, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { mkdir, copyFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import type { Facade, FacadeInput, FacadeResult, FacadeVerb } from "@oneiron/client";
-import { EngineFixture } from "./support/engine.ts";
+import { EngineFixture, awaitPublic } from "./support/engine.ts";
 import { credentialParts, PublicHttpClient } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
+import { ScriptedProviders, openaiText } from "./support/providers.ts";
 import { BlockedDoor, defineFile } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
@@ -71,7 +74,7 @@ interface Cases {
 type Case = Cases[keyof Cases];
 interface Data { fixture: Roles; cases: (Case | { id: "MEMORY-03" | "MEMORY-06" })[] }
 interface World {
-  engine: EngineFixture; data: Data; refs: Map<string, string>; conversation: string;
+  engine: EngineFixture; providers: ScriptedProviders; data: Data; refs: Map<string, string>; conversation: string;
   scope: Position; occurred: number;
 }
 // Chosen public input ids, not purported existing engine handles. Every one
@@ -146,18 +149,137 @@ async function agent(w: World, role: string) {
   return paired;
 }
 function scenarioName(w: World): string { return w.engine.options.id! }
+const PROJECT_LEADER = "aaaaaaaaaaaaaaaaaaaaaaaaaaaa1709"; // seeded sys.team_lead (system_agent_definitions.v1.json)
+const memoryModels = (providers: ScriptedProviders) => `
+[models.providers.drafter]
+kind = "local-openai-compat"
+base_url = "${providers.urls.drafter}"
+revision = "e2e-v1"
+[models.providers.decider]
+kind = "local-openai-compat"
+base_url = "${providers.urls.decider}"
+revision = "e2e-v1"
+[models.roles.generative_reasoner]
+model = "drafter:project-drafter"
+[models.roles.checker]
+model = "decider:project-decider"
+[models.decisions.big]
+role = "checker"
+version = "e2e-v1"
+wording = "You answer one typed question about the state you are given."
+reply = "json"
+[models.code_mode]
+prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/prompts"))}
+[models.dreamer]
+enabled = false
+`;
+function git(cwd: string, args: string[]): string {
+  const run = Bun.spawnSync(["git", "-c", "user.name=oneiron-e2e", "-c", "user.email=e2e@oneiron.invalid", ...args],
+    { cwd, stdout: "pipe", stderr: "pipe" });
+  if (run.exitCode !== 0) throw new Error(`git ${args[0]} failed: ${run.stderr.toString()}`);
+  return run.stdout.toString().trim();
+}
+/** Imports the repo's project-proposal skill through the default hub, repointed
+ * at a local Git folder at one full commit (#6711), and reads its activation back. */
+async function installProjectProposal(engine: EngineFixture): Promise<void> {
+  // Fixture input inside the engine's own temporary root, as HOOKS-05 does
+  // (hooks.test.ts about lines 1034-1046): never a project repository, never pushed.
+  const dir = resolve(engine.root, "project-proposal-hub");
+  await mkdir(resolve(dir, "skills", "project-proposal"), { recursive: true });
+  await copyFile(resolve(import.meta.dir, "../../skills/project-proposal/SKILL.md"), resolve(dir, "skills", "project-proposal", "SKILL.md"));
+  git(dir, ["init", "-q"]);
+  git(dir, ["add", "skills/project-proposal/SKILL.md"]);
+  git(dir, ["commit", "-q", "-m", "project-proposal"]);
+  const commit = git(dir, ["rev-parse", "HEAD"]);
+  const { hub } = await engine.client.call("vault.skill_hubs.default.get", {});
+  const configured = await engine.client.call("vault.skill_hubs.put", {
+    hub, kind: "local-dir", endpoint: dir, trust_tier: "community", sync_policy: "pinned-commit" });
+  expect(configured.consent.outcome).toBe("approved");
+  await engine.client.call("vault.skill_hubs.refs.set", {
+    hub_ref: { hub_id: hub, ref_string: "skills", pin: { type: "commit", value: commit } }, sync_policy: "pinned-commit" });
+  const hub_ref = { hub_id: hub, ref_string: "skills/project-proposal", pin: { type: "commit" as const, value: commit } };
+  const { entity } = await engine.client.call("vault.skills.import", { hub_ref, publisher: "oneiron-e2e-local" });
+  const latest = async () => (await engine.client.call("vault.skills.receipts", { entity })).imports.at(-1)?.disposition;
+  if (await latest() === "pending_permission") await engine.client.call("vault.skills.permissions.approve", { entity, hub_ref });
+  const disposition = await latest();
+  if (disposition !== "installed" && disposition !== "already_installed") {
+    throw new Error(`project-proposal import not active: ${JSON.stringify(disposition)}`);
+  }
+}
+/** One real project: source turn, typed YES, house-dispatched drafter
+ * propose, owner confirm, and the leader's goal-intake run. */
+async function mintProject(engine: EngineFixture, providers: ScriptedProviders, row: { ref: string; name: string },
+  index: number, occurred: number): Promise<string> {
+  const client = engine.client;
+  const conversation = await client.call("vault.conversations.create", {
+    body: {}, occurred_start: occurred, occurred_end: occurred, learned_at: occurred });
+  const decide = `project-decide-${index}`;
+  providers.enqueue({ id: `project-yes-${index}`, origin: "decider", role: "checker", purpose: "project question",
+    request: { method: "POST", path: "/v1/chat/completions", model: "project-decider" }, barrier: decide,
+    response: openaiText(`project-yes-${index}`, "project-decider", JSON.stringify({ answer: true, probability: 0.9 }),
+      { inputTokens: 256, outputTokens: 16 }) });
+  const witnessed = await client.call("vault.witness", { conversation_ref: conversation.id, occurred_at: occurred,
+    messages: [{ author: "user", message_type: "text", is_visible: true, order: 0,
+      content: `I am starting ${row.name}, a project I will plan, build and review over several weeks of sittings.` }] });
+  const message = (await entity(client, witnessed.message_short_ids[0]!)).id_hex;
+  await providers.awaitBarrier(decide);
+  const card_id = `project-${message}`;
+  const proposal = { card_id, source_message_ref: message,
+    goal: { goal: `Build ${row.name}`, why: `${row.name} is the owner's stated multi-week project.`, axes: ["plan", "build", "review"] },
+    picks: { leader_agent_def_ref: PROJECT_LEADER, board_human_refs: [engine.pairedActor.principalRef],
+      budget_share_bps: 1000, starting_skill_refs: [] } };
+  providers.enqueue({ id: `project-draft-${index}`, origin: "drafter", role: "generative_reasoner", purpose: "house project drafter",
+    request: { method: "POST", path: "/v1/chat/completions", model: "project-drafter" },
+    response: openaiText(`project-draft-${index}`, "project-drafter",
+      `await vault.projects.propose(${JSON.stringify(proposal)});\nfinish(${JSON.stringify(card_id)});`,
+      { inputTokens: 512, outputTokens: 128 }) });
+  providers.releaseBarrier(decide);
+  await awaitPublic(async () => client.call("vault.projects.proposals", { conversation_ref: conversation.id }),
+    cards => cards.some(card => card.card.card_id === card_id && card.state === "proposed"),
+    { label: `house-drafted project card ${card_id}` });
+  const intake = `project-intake-${index}`;
+  providers.enqueue({ id: `project-intake-${index}`, origin: "drafter", role: "generative_reasoner", purpose: "leader goal intake",
+    request: { method: "POST", path: "/v1/chat/completions", model: "project-drafter" }, barrier: intake,
+    response: openaiText(`project-intake-${index}`, "project-drafter", `finish("goal intake waits for the owner");`,
+      { inputTokens: 512, outputTokens: 16 }) });
+  const minted = await client.call("vault.projects.confirm", { card_id, action_id: "mint_project", occurred_at: occurred });
+  expect(minted.card_id).toBe(card_id);
+  await providers.awaitBarrier(intake);
+  providers.releaseBarrier(intake);
+  expect((await entity(client, minted.project_id)).kind).toBe("PROJECT");
+  return minted.project_id;
+}
+async function closeWorld(w: World): Promise<void> {
+  const errors: string[] = [];
+  const text = (error: unknown): string => error instanceof Error ? error.message : String(error);
+  try { await w.engine.close(); } catch (error) { errors.push(text(error)); }
+  try { await w.providers.close(); } catch (error) { errors.push(text(error)); }
+  if (errors.length) throw new Error(`close: ${errors.join("; ")}`);
+}
 async function setup(id: string): Promise<World> {
   const data = await (await loadFixtures()).readJson<Data>("memory-canonical-cases");
-  if (data.fixture.projects.length) throw new BlockedDoor("waits on a deterministic house-dispatched project drafting fixture: project-question YES, dispatched vault.projects.propose, owner vault.projects.confirm; raw structural PROJECT is not a setup door");
-  const engine = await EngineFixture.start({ id, profile });
+  const providers = await ScriptedProviders.start({ id: `memory-projects-${id}`, origins: ["decider", "drafter"], steps: [] });
+  const engine = await EngineFixture.start({ id, profile, serverConfig: memoryModels(providers) });
   const occurred = 1769947200; // Public setup input, never an engine clock override.
+  await installProjectProposal(engine);
+  const projects = new Map<string, string>();
+  for (const [index, row] of data.fixture.projects.entries()) {
+    projects.set(row.ref, await mintProject(engine, providers, row, index, occurred));
+  }
+  // Every later witness stages a project question on its own conversation:
+  // the house answers no, so no further card or project appears.
+  providers.enqueue({ id: "project-no", origin: "decider", role: "checker", purpose: "project question (not a project)",
+    standing: true, request: { method: "POST", path: "/v1/chat/completions", model: "project-decider" },
+    response: openaiText("project-no", "project-decider", JSON.stringify({ answer: false, probability: 0.9 }),
+      { inputTokens: 256, outputTokens: 16 }) });
   const conversation = await engine.client.call("vault.conversations.create", {
     body: {}, occurred_start: occurred, occurred_end: occurred, learned_at: occurred,
   });
   const base = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
-  const w: World = { engine, data, refs: new Map(), conversation: conversation.id,
+  const w: World = { engine, providers, data, refs: new Map(), conversation: conversation.id,
     scope: base, occurred };
   w.refs.set("@base", base.world_id);
+  for (const [ref, id] of projects) w.refs.set(ref, id);
   for (const row of data.fixture.people) await person(w, row.ref, row.name);
   const mask = applied(await engine.client.call("vault.identity.facet", {
     entity: ref(w, "@person-a"), facets: [{ label: "work" }], reassignment_map: [],
@@ -321,7 +443,7 @@ suite.test(test, "MEMORY-01", "Claim lifecycle with historical truth should work
     expect(full.records.find(row => row.id === oldId)?.superseded_by).toContain(newId);
     await w.engine.artifacts.json("lifecycle.json", { original, alternative, review, refusal: refused.body,
       settled, supersession, review2, settled2, retracted, history, timeline: full });
-  } finally { await w.engine.close() }
+  } finally { await closeWorld(w) }
 });
 
 /* ARCH-0003 D18 and four required axes; ARCH-0040 host authorship.
@@ -723,6 +845,7 @@ suite.test(test, "MEMORY-02", "Claim admission rejects malformed scope should wo
   } finally {
     const cleanups: string[] = [];
     try { await w.engine.close(); } catch (error) { cleanups.push(errorText(error)); }
+    try { await w.providers.close(); } catch (error) { cleanups.push(errorText(error)); }
     if (primaryFailed) {
       if (cleanups.length) throw new Error(`${errorText(primary)}; cleanup: ${cleanups.join("; ")}`);
       throw primary;
@@ -837,7 +960,7 @@ suite.test(test, "MEMORY-05", "Bitemporal entity history should work", async () 
       await w.engine.artifacts.json(`history-${row.role.replace(/[^a-z0-9]/gi, "-")}.json`, { row, current, timeline: full });
     }
     await w.engine.artifacts.json("bitemporal-windows.json", windows);
-  } finally { await w.engine.close() }
+  } finally { await closeWorld(w) }
 });
 
 /* ARCH-0067 TASK roles and ARCH-0003 productivity vocabulary.
@@ -965,7 +1088,7 @@ suite.test(test, "MEMORY-07", "Identity merge split and undo should work", async
     expect((await entity(w.engine.client, facetId)).kind).toBe("FACET");
     await w.engine.artifacts.json("identity-topology.json", { mask, merged, bMerged, split, shell, chain,
       undoSplit, undoMerge, distinct, proposal: { status: proposal.status, body: proposal.body }, suggestions, originals });
-  } finally { await w.engine.close() }
+  } finally { await closeWorld(w) }
 });
 
 // ARCH-0022 four explicit axes; ARCH-0004 labelled world partitions;
@@ -1066,5 +1189,5 @@ suite.test(test, "MEMORY-08", "World and project separation should work", async 
     expect((await w.engine.client.call("vault.get", { entity_ref: missing.id! })).value).toBeNull();
     expect((await claims(w)).filter(row => row.predicate === c.claims[0]!.predicate)).toHaveLength(6);
     await w.engine.artifacts.json("world-project-scopes.json", { ids, all, positive: readable, receipts, refusal: rejected.body });
-  } finally { await w.engine.close() }
+  } finally { await closeWorld(w) }
 });
