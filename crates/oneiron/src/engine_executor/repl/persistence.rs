@@ -34,6 +34,10 @@ impl EngineNativeExecutor<'_> {
     /// before it is read, the result carries the consent evidence by
     /// reference, and the commit consumes the settlement once beside it
     /// (DOOR-079 1b). The cleanup after it is never the consumer.
+    ///
+    /// The run's ledger notes the origins its settler froze with the reply it
+    /// is served, at the bridge position of the call parked on the wait (FIX
+    /// 7083). Unknown origins, or no such call, mark the ledger `WaitReply`.
     pub(in crate::engine_executor) fn resume_delivered_wait(
         &mut self,
         record: &mut CodeRunReplayRecord,
@@ -44,17 +48,33 @@ impl EngineNativeExecutor<'_> {
         let Some(delivery) = self.storage.wait_delivery(key)? else {
             return Ok(None);
         };
-        // The reply reaches the run (FIX 6130).
-        let cause = crate::code_run::ReadWorldUnknown::WaitReply;
-        self.gated_write.read_worlds_unknown(record.run_id, cause);
         let seq = completed_step_count(record)?
             .checked_sub(1)
             .ok_or(Error::CorruptedIndex("executor replay wait without a step"))?;
         let consent = code_consent_evidence(&self.storage, record, key, seq, &delivery.reply)?;
         let mut reply: serde_json::Value = serde_json::from_str(&delivery.reply)
             .map_err(|_| Error::CorruptedIndex("code-run wait delivery"))?;
+        let mut origins = delivery.origins;
         if wait.effect == SelfEffect::Summarize {
-            reply = self.storage.delivered_summary_reply(reply)?;
+            (reply, origins) = self.storage.delivered_summary_reply(reply, origins)?;
+        }
+        // The reply reaches the run (FIX 6130) at the position of the call
+        // parked on its wait, with the origins its settler froze (FIX 7083).
+        let parked_at = record
+            .bridge_calls
+            .iter()
+            .rev()
+            .find(|call| crate::code_run::parks_on(&call.outcome, wait.wait_id))
+            .map(|call| call.seq);
+        match parked_at {
+            Some(at) => {
+                self.gated_write
+                    .read_worlds_wait_reply(record.run_id, at, origins.as_ref());
+            }
+            None => {
+                let cause = crate::code_run::ReadWorldUnknown::WaitReply;
+                self.gated_write.read_worlds_unknown(record.run_id, cause);
+            }
         }
         // The rows the reply was derived from, as its settler listed them,
         // join the parked call's own (FIX 5455).
@@ -81,7 +101,19 @@ impl EngineNativeExecutor<'_> {
         let mut sink = self.storage.code_run_output_sink()?;
         write_json(&mut sink, &resumed)?;
         let path = resumed_output_path(seq, wait.wait_id);
-        let output = publish_output(&self.storage, record, path.clone(), sink)?;
+        if record.outputs.iter().any(|output| output.path == path) {
+            return Err(Error::InvalidClaimBody("duplicate executor output path").into());
+        }
+        // The reply's body is finished and pinned here, but its row, marks
+        // and descriptor are published only in the resume commit below, with
+        // the record that lists it (FIX 6592). A refusal there leaves no body
+        // occurrence, consumes nothing and keeps the wait.
+        let input_rows = crate::code_run::resident_tool_answer_rows(record, None);
+        let finished = self
+            .storage
+            .finish_code_run_output(path, sink, input_rows)?;
+        record.outputs.push(finished.output.clone());
+        let output = &finished.output;
         let name = format!("wait{seq}");
         match record.bindings.iter_mut().find(|held| held.name == name) {
             Some(held) => {
@@ -96,7 +128,7 @@ impl EngineNativeExecutor<'_> {
         }
         let generation = self
             .storage
-            .put_code_run_wait_resume_record(record, expected, key, seq, &path)?;
+            .put_code_run_wait_resume_record(record, expected, key, seq, &finished)?;
         if let crate::code_run::ExecutorStorage::Session(_) = &self.storage {
             self.storage.clear_wait(key)?;
         }
