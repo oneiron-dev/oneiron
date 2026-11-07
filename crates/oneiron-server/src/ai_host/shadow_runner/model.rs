@@ -20,14 +20,18 @@
 //! call was sent keeps the call's receipt, usage and evidence, and is typed
 //! unavailable content: never stored raw, and the call is never sent again
 //! (Engine ruling 4).
+//!
+//! An arm prepared under its caller's witness (FIX 9446) asks that witness
+//! again before the route prompt is read from the capture, so neither that
+//! read nor the send after it goes once the caller's admission lapsed.
 
 use std::sync::Arc;
 
 use oneiron::code_run::StoredRungBinding;
 use oneiron::code_run::shadow_runner::{
     PreparedShadowStep, ShadowBodyRef, ShadowBodyStore, ShadowMeterContext, ShadowModelPin,
-    ShadowModelReceipt, ShadowUnavailable, ShadowUnavailableReason as Reason, ShadowUsage,
-    shadow_route_prompt,
+    ShadowModelReceipt, ShadowSourceWitness, ShadowUnavailable, ShadowUnavailableReason as Reason,
+    ShadowUsage, shadow_route_prompt,
 };
 use oneiron::engine_executor::StepCancellation;
 use oneiron::llm::run_admission::{MemoryReceipts, RunEvent, RunReceipt, RunReceiptSink};
@@ -67,6 +71,9 @@ pub(super) struct Gateway<'a> {
     pub(super) vault: &'a Vault,
     pub(super) store: &'a ShadowBodyStore,
     pub(super) cancel: &'a StepCancellation,
+    /// The caller's own admission to the arm's step, when it holds one (FIX
+    /// 9446), asked before the route prompt is read.
+    pub(super) witness: Option<&'a ShadowSourceWitness>,
 }
 
 impl Gateway<'_> {
@@ -234,7 +241,9 @@ impl Gateway<'_> {
     /// The route prompt `binding` names for `prepared`'s captured call, read
     /// from its capsule's body on a blocking worker at the call (FIX 6255):
     /// the custody read guard is never waited on by a runtime thread. Its
-    /// reader's typed unavailable when it does not read.
+    /// reader's typed unavailable when it does not read. Under the caller's
+    /// witness (FIX 9446) the witness is asked first, and the prompt is
+    /// withheld (`SourceWithheld`) once it no longer admits the step.
     async fn route_prompt(
         &self,
         prepared: &PreparedShadowStep,
@@ -242,7 +251,16 @@ impl Gateway<'_> {
     ) -> oneiron::Result<std::result::Result<Option<String>, ShadowUnavailable>> {
         let vault = Arc::clone(self.server.vault());
         let (step, binding) = (*prepared.step(), binding.clone());
-        off_runtime(move || shadow_route_prompt(&vault, &step, &binding)).await
+        let witness = self.witness.cloned();
+        off_runtime(move || {
+            if let Some(witness) = witness
+                && let Err(withheld) = witness.check(&vault, step)?
+            {
+                return Ok(Err(withheld));
+            }
+            shadow_route_prompt(&vault, &step, &binding)
+        })
+        .await
     }
 
     /// The answer `response` a sent call returned, stored at `path` as the
