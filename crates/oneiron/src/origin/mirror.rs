@@ -9,8 +9,12 @@
 //! pushes.
 //!
 //! The token leaves custody only through [`Vault::inject_secret_at_door`]
-//! bound to [`ORIGIN_MIRROR_PUSH_EFFECTOR`], and reaches git only as this
-//! push's `Authorization` header, never config or disk.
+//! bound to [`ORIGIN_MIRROR_PUSH_EFFECTOR`]. On a served host the ref reads
+//! and pushes hand it only to the credential broker, which installs it on
+//! each exchange of the host's mirror relay (`git_transport`, FIX 19083), so
+//! no Git child holds it; on an embedded vault it reaches git only as the
+//! push's `Authorization` header, never config or disk. The Git-LFS upload
+//! after a push still takes it in the daemon (`publish::mirror_lfs`).
 //!
 //! Mirror-main stays read-only. Mirror-side work comes back inbound through
 //! the door as `refs/imported/<source>/<branch>`, which the change index
@@ -484,6 +488,7 @@ impl Vault {
         target: &OriginMirrorTarget,
         trigger: MirrorTrigger,
     ) -> Result<Option<(u64, u64, OriginMirrorReadiness)>> {
+        require_plain_mirror_url(&target.url)?;
         let repo_root = origin_repo_dir(self, &target.repo)?;
         let wire = GitWire::new(self)?;
         let Some(handle) = self.mirror_handle(&wire, repo_id, &repo_root)? else {
@@ -613,7 +618,7 @@ fn require_whole_ref_strategy(repo_name: &str, target: &OriginMirrorTarget) -> R
 }
 
 /// An https URL with a host, and no credential, query, fragment, space or
-/// control byte.
+/// control byte, whose path is plain segments ([`require_plain_mirror_url`]).
 fn validate_mirror_url(url: &str) -> Result<()> {
     let Some(rest) = url.strip_prefix("https://") else {
         return Err(invalid("mirror URL must be https"));
@@ -631,7 +636,80 @@ fn validate_mirror_url(url: &str) -> Result<()> {
             "mirror URL must name a host and a path, with no credential, query or fragment",
         ));
     }
-    Ok(())
+    require_plain_mirror_url(url)
+}
+
+/// The code a mirror URL the credential broker sends to no repository at is
+/// refused under: at setup, and on every run or publish of a mirror set up
+/// before the rule (FIX 20091). A served host's mirror relay names the same
+/// code.
+pub const MIRROR_URL_MALFORMED: &str = "mirror_url_malformed";
+
+/// Refuses a mirror URL the credential broker sends to no repository at: one
+/// [`broker_repository`] does not read as plain, such as a path that is `/`
+/// alone or that holds an empty, `.` or `..` segment once the URL parser has
+/// normalized it (`/%2e` included). A served host's mirror git goes only
+/// through the broker, so one URL rule holds on every host: such a mirror is
+/// refused at setup, and one already set up reports misconfigured under
+/// [`MIRROR_URL_MALFORMED`] on each run and publish, served or embedded,
+/// before any request goes out (FIX 20091).
+///
+/// # Errors
+/// [`Error::Refused`] naming [`MIRROR_URL_MALFORMED`].
+pub(crate) fn require_plain_mirror_url(url: &str) -> Result<()> {
+    if broker_repository(url) {
+        return Ok(());
+    }
+    Err(Error::Refused(format!(
+        "{MIRROR_URL_MALFORMED}: a mirror URL must be a plain https repository: a host with no \
+         credential, no query or fragment, and a path of segments that are neither empty, '.' \
+         nor '..' once normalized, and not '/' alone"
+    )))
+}
+
+/// Whether the credential broker reads `url` as a repository, by its own
+/// rule (oneiron-broker `GitRepository::parse` and `check`), read the same
+/// way here: an `https` origin with a host and no credential that serializes
+/// back to itself, no query or fragment, and a path, as the URL parser
+/// normalizes it and with its trailing slashes trimmed, of non-empty
+/// segments, none `.` or `..`, that joins back onto the origin unchanged.
+fn broker_repository(url: &str) -> bool {
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return false;
+    };
+    if parsed.scheme() != "https"
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.host().is_none()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return false;
+    }
+    let origin = parsed.origin().ascii_serialization();
+    let Ok(base) = reqwest::Url::parse(&origin) else {
+        return false;
+    };
+    if base.scheme() != "https"
+        || !base.username().is_empty()
+        || base.password().is_some()
+        || base.host().is_none()
+        || base.origin().ascii_serialization() != origin
+    {
+        return false;
+    }
+    let path = parsed.path().trim_end_matches('/');
+    let plain = !path.contains(['?', '#'])
+        && path.strip_prefix('/').is_some_and(|segments| {
+            segments
+                .split('/')
+                .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
+        });
+    // The broker joins the path back onto its origin and takes it only when
+    // both come back unchanged.
+    plain
+        && reqwest::Url::parse(&format!("{origin}{path}"))
+            .is_ok_and(|joined| joined.origin() == base.origin() && joined.path() == path)
 }
 
 fn invalid(reason: &str) -> Error {

@@ -104,6 +104,9 @@ impl Vault {
         destination: &OriginPublishDestination,
         apply: &mut dyn FnMut(&str),
     ) -> Result<()> {
+        // A mirror set up before the URL rule reports misconfigured before
+        // its credential leaves custody (FIX 20091).
+        crate::origin::mirror::require_plain_mirror_url(&destination.url)?;
         let user = destination.user.clone();
         self.inject_secret_at_door(
             &destination.secret_ref,
