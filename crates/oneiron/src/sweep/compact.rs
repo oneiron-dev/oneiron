@@ -404,6 +404,9 @@ pub(super) fn compact_window_with(
     crate::workspace_roster::scrub_audience_edits(vault, &doc, None)?;
     // A removed session's epoch floor leaves the window too.
     crate::sync::withdrawn_cutoffs::scrub_removed_epoch_floors(vault, &doc, None)?;
+    // Last of the removals: the source audiences the rows left carried need,
+    // none naming an erased actor; the shallow cut drops the old revisions.
+    crate::sync::source_audiences::refresh_and_scrub(vault, &doc, None)?;
 
     // OF-013: a withdrawn generation's live carrier becomes its keyframe
     // envelope before the shallow export drops the history that held its
