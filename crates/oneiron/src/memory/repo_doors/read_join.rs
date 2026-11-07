@@ -3,10 +3,13 @@
 //! path, and the ASSET or symbol revisions under it, judged in one read
 //! snapshot before the door shows anything.
 //!
-//! - Authority is the run's L02 admission ([`Vault::admit_repo_run_in_txn`]),
-//!   read again in the join's own snapshot under the same lease and
-//!   repository. The ref contract is the run's: the commit the admitted full
-//!   ref names now, never a historical pin.
+//! - Authority is the run's L02 admission
+//!   ([`Vault::admit_repo_run_with_portable_in_txn`]), read again in the
+//!   join's own snapshot under the same lease and repository. A read that
+//!   names a portable repo id is admitted on the anchor the id selects, and
+//!   the join refuses a selection that changed meanwhile. The ref contract
+//!   is the run's: the commit the admitted full ref names now, never a
+//!   historical pin.
 //! - The snapshot belongs to the anchor: it names that anchor, or names none
 //!   as an unregistered capture of the same folder. A capture of another
 //!   registration is not served under this anchor.
@@ -33,6 +36,7 @@ use crate::codebase::{
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
+use crate::origin::RepoPortableId;
 use oneiron_authority::federation::{RepoAccessIntent, RepoAccessRefusal, RepoTarget};
 
 /// What a run's read selects under the snapshot its pin selected (FIX 4300).
@@ -187,13 +191,58 @@ pub(super) struct RepoReadJoin<'v, J> {
     /// The rows the answer stands on: the anchor, the snapshot CODE, then
     /// each member row kept, for the run's replay and its send-time release.
     pub(super) rows: Vec<EntityId>,
+    /// The CODE the read selected: the portable id's anchor, else the
+    /// requested repo.
+    pub(super) selected: EntityId,
+    /// Whether the read's portable id resolved.
+    pub(super) portable_hit: bool,
+}
+
+impl<J> RepoReadJoin<'_, J> {
+    /// This join's selection of `requested` and `portable`, to join the
+    /// same read again.
+    pub(super) fn selection<'a>(
+        &self,
+        requested: &'a RepoTarget,
+        portable: Option<&'a RepoPortableId>,
+    ) -> RepoReadSelection<'a> {
+        RepoReadSelection {
+            requested,
+            portable,
+            selected: self.selected,
+            portable_hit: self.portable_hit,
+        }
+    }
+}
+
+/// The repo a run's read names and the one its admission selected: the
+/// requested act, the portable id that may select another anchor, and the
+/// CODE it resolved to. A join under it refuses a selection that changed.
+#[derive(Clone, Copy)]
+pub(super) struct RepoReadSelection<'a> {
+    requested: &'a RepoTarget,
+    portable: Option<&'a RepoPortableId>,
+    selected: EntityId,
+    portable_hit: bool,
+}
+
+impl<'a> RepoReadSelection<'a> {
+    /// A read of `target`'s own repo, with no portable id.
+    pub(super) fn plain(target: &'a RepoTarget) -> Self {
+        Self {
+            requested: target,
+            portable: None,
+            selected: target.repo,
+            portable_hit: false,
+        }
+    }
 }
 
 /// What a read join pins outside the store, before its snapshot opens: the
 /// act the run was admitted for, the fork its read selects and the commit
 /// the act's full ref names now (FIX 4300).
 pub(super) struct RepoReadPin<'a> {
-    target: &'a RepoTarget,
+    selection: RepoReadSelection<'a>,
     fork_hash: [u8; 32],
     commit: String,
 }
@@ -205,16 +254,35 @@ pub(super) fn file_absent() -> MemoryError {
 
 impl Memory<'_> {
     /// The read join for a run (FIX 4300): admits the run to `target` for a
-    /// read, then joins `member` under the snapshot `snapshot` names.
+    /// read, on the anchor `portable` selects when it names a known repo,
+    /// then joins `member` under the snapshot `snapshot` names.
     pub(super) fn repo_read_join_for_run<M: RepoReadMember>(
         &self,
         binding: &RepoRunBinding,
         target: &RepoTarget,
+        portable: Option<&RepoPortableId>,
         snapshot: &str,
         member: M,
     ) -> MemoryResult<RepoReadJoin<'_, M::Joined>> {
-        let admitted = self.repo_run_admit(binding, target, RepoAccessIntent::Read)?;
-        self.repo_read_join_under(binding, &admitted, target, snapshot, member)
+        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        let (selected, portable_hit, admission) = self.vault.admit_repo_run_with_portable_in_txn(
+            &txn,
+            binding,
+            target.repo,
+            portable,
+            &target.git_ref,
+            &target.paths,
+            RepoAccessIntent::Read,
+        )?;
+        drop(txn);
+        let admitted = admission.map_err(refusal_error)?;
+        let selection = RepoReadSelection {
+            requested: target,
+            portable,
+            selected,
+            portable_hit,
+        };
+        self.repo_read_join_under(binding, &admitted, &selection, snapshot, member)
     }
 
     /// The read join under `admitted`, an admission the caller holds, in a
@@ -224,11 +292,11 @@ impl Memory<'_> {
         &self,
         binding: &RepoRunBinding,
         admitted: &RepoRunAdmitted,
-        target: &RepoTarget,
+        selection: &RepoReadSelection<'_>,
         snapshot: &str,
         member: M,
     ) -> MemoryResult<RepoReadJoin<'_, M::Joined>> {
-        let pin = self.repo_read_pin(admitted, target, snapshot)?;
+        let pin = self.repo_read_pin(admitted, *selection, snapshot)?;
         let lane = self
             .vault
             .scoped_read(binding.reader.clone())
@@ -240,29 +308,30 @@ impl Memory<'_> {
     }
 
     /// The fork `snapshot` selects and the commit the admitted repo's full
-    /// ref in `target` names now, read from the repo's own store. No
+    /// ref in `selection` names now, read from the repo's own store. No
     /// historical pin: a ref the repo does not name is `WrongRef`.
     pub(super) fn repo_read_pin<'a>(
         &self,
         admitted: &RepoRunAdmitted,
-        target: &'a RepoTarget,
+        selection: RepoReadSelection<'a>,
         snapshot: &str,
     ) -> MemoryResult<RepoReadPin<'a>> {
         let fork_hash = parse_fork_hash(snapshot)?;
-        let Some(commit) = repo_ref_pin(self.vault, &admitted.membership.repo_ref, &target.git_ref)
-        else {
+        let git_ref = &selection.requested.git_ref;
+        let Some(commit) = repo_ref_pin(self.vault, &admitted.membership.repo_ref, git_ref) else {
             return Err(refusal_error(RepoAccessRefusal::WrongRef));
         };
         Ok(RepoReadPin {
-            target,
+            selection,
             fork_hash,
             commit: commit.as_str().to_owned(),
         })
     }
 
     /// The read join in the caller's read snapshot `txn` (FIX 4300). It
-    /// admits the run to `pin`'s act again, under the same lease and
-    /// repository as `admitted`, selects the snapshot of the pinned commit
+    /// admits the run to `pin`'s act again, on the same selected anchor and
+    /// under the same lease and repository as `admitted`, selects the
+    /// snapshot of the pinned commit
     /// and folder and `member` under it, and reads every row through `lane`,
     /// the run's own read lane, the scope filter last. Prepare `lane`'s
     /// grant clock and the body pins before `txn` opens.
@@ -275,10 +344,20 @@ impl Memory<'_> {
         pin: &RepoReadPin<'_>,
         member: M,
     ) -> MemoryResult<RepoReadJoin<'_, M::Joined>> {
-        let again = self
-            .vault
-            .admit_repo_run_in_txn(txn, binding, pin.target, RepoAccessIntent::Read)?
-            .map_err(refusal_error)?;
+        let selection = &pin.selection;
+        let (selected, portable_hit, admission) = self.vault.admit_repo_run_with_portable_in_txn(
+            txn,
+            binding,
+            selection.requested.repo,
+            selection.portable,
+            &selection.requested.git_ref,
+            &selection.requested.paths,
+            RepoAccessIntent::Read,
+        )?;
+        if selected != selection.selected || portable_hit != selection.portable_hit {
+            return Err(Error::ConcurrentWrite("the run's repo read selection changed").into());
+        }
+        let again = admission.map_err(refusal_error)?;
         if !again.same_lease(admitted) || again.membership.repo_ref != admitted.membership.repo_ref
         {
             return Err(Error::ConcurrentWrite("the run's repo read admission changed").into());
@@ -331,6 +410,8 @@ impl Memory<'_> {
             commit: pin.commit.clone(),
             joined,
             rows,
+            selected,
+            portable_hit,
         })
     }
 

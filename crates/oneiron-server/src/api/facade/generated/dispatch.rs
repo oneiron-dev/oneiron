@@ -28084,6 +28084,28 @@ async fn vault_rooms_consent(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_rooms_leave(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.rooms.leave",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_rooms_offer(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -48124,6 +48146,14 @@ fn boxed_vault_rooms_consent<'a>(
     Box::pin(vault_rooms_consent(server, call, input))
 }
 #[inline(never)]
+fn boxed_vault_rooms_leave<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_rooms_leave(server, call, input))
+}
+#[inline(never)]
 fn boxed_vault_rooms_offer<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
@@ -53094,6 +53124,7 @@ async fn call_verb_row(
         "vault.rooms.join" => boxed_vault_rooms_join(server, call, input).await,
         "vault.rooms.invite" => boxed_vault_rooms_invite(server, call, input).await,
         "vault.rooms.consent" => boxed_vault_rooms_consent(server, call, input).await,
+        "vault.rooms.leave" => boxed_vault_rooms_leave(server, call, input).await,
         "vault.rooms.offer" => boxed_vault_rooms_offer(server, call, input).await,
         "vault.rooms.offer.answer" => boxed_vault_rooms_offer_answer(server, call, input).await,
         "vault.rooms.offer.vote" => boxed_vault_rooms_offer_vote(server, call, input).await,
