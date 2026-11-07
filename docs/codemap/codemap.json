@@ -417,7 +417,7 @@
      "path": "src/actor_claims/write.rs",
      "purpose": "The `actor.*` write chokepoint, cardinality core, and TASK-lane projector",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 3
      }
     },
@@ -2838,7 +2838,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/attempt_queue/hook_hold.rs",
-     "purpose": "Lease-fenced workflow verb-hook pauses",
+     "purpose": "Lease-fenced verb-hook pauses: a workflow's, whose transcript its checkpoint writer retains in the same…",
      "surface": {
       "crate-vis": 4
      }
@@ -24977,7 +24977,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/contract_oracle/mod.rs",
-     "purpose": "Persisted, deterministic Rust API, schema and command-output contracts",
+     "purpose": "Persisted, deterministic Rust/JavaScript API, schema and command-output contracts",
      "surface": {
       "crate-vis": 1,
       "re-export": 1
@@ -25231,7 +25231,7 @@
      "surface": {
       "crate-vis": 3,
       "fn": 6,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 5
      }
     },
@@ -25243,6 +25243,16 @@
      "purpose": "The erase of a turn action's requester takes the signed instrument its request was admitted on out of each…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation/turn_actions/hook_wait.rs",
+     "purpose": "A turn action whose `host.turn.generate` hook asked first waits for the answer (FIX 1765)",
+     "surface": {
+      "fn": 5
      }
     },
     {
@@ -65756,7 +65766,7 @@
      "purpose": "Verb hooks (ARCH-0080 §3, §5), slice 2: hooks that run inside a call, before and after one logical verb",
      "surface": {
       "crate-vis": 16,
-      "fn": 11,
+      "fn": 13,
       "re-export": 10,
       "struct": 2,
       "type": 1
@@ -74024,6 +74034,29 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "JsPublicNames"
+     ],
+     "path": "src/store/contract_oracle/js_api.rs",
+     "purpose": "Syntactic JS/TS entry exports, separate from the retained code-symbol graph",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/contract_oracle/js_api/commonjs.rs",
+     "purpose": "Direct CommonJS declarations, with lexical shadowing and exports detachment",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -74031,7 +74064,7 @@
      "purpose": "Core half of `store::contract_oracle`: its store-layer items live in `oneiron_store::contract_oracle` and…",
      "surface": {
       "crate-vis": 2,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -93706,10 +93739,10 @@
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
-     "purpose": "Persisted, deterministic Rust API, schema and command-output contracts"
+     "purpose": "Persisted, deterministic Rust/JavaScript API, schema and command-output contracts"
     },
     "conversation": {
-     "files": 28,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -94654,7 +94687,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 388,
+     "files": 390,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94894,7 +94927,7 @@
    },
    "over_bar": 187,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6716,
+   "source_files": 6719,
    "test_files": 895
   },
   "oneiron-android": {
@@ -114589,7 +114622,7 @@
      "path": "src/ai_host/workflows.rs",
      "purpose": "The saved-workflow pump: runs each open workflow's ready step on the generative seat and advances it…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -114679,7 +114712,7 @@
      "path": "src/api/ai/chat/hooks.rs",
      "purpose": "Chat generation and witness hook boundaries",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
