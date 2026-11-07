@@ -36,6 +36,7 @@ use crate::codebase::RepoRef;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::origin::RepoPortableId;
 use crate::ports::EdgeStoreRead;
 use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -108,7 +109,20 @@ impl Vault {
         class: EdgeActorClass,
         repo: EntityId,
     ) -> Result<RepoAdmission> {
-        self.admit_repo_in_txn(txn, actor, class, repo, None)
+        self.admit_repo_in_txn(txn, actor, class, repo, None, None)
+    }
+
+    /// The same membership decision for a requested project. The project
+    /// is selection data: the one admitting Grant must itself name it.
+    pub(crate) fn admit_repo_member_in_project_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        actor: EntityId,
+        class: EdgeActorClass,
+        repo: EntityId,
+        project: EntityId,
+    ) -> Result<RepoAdmission> {
+        self.admit_repo_in_project_in_txn(txn, actor, class, repo, Some(project), None)
     }
 
     /// Admits `actor` to the repo handle `repo` as
@@ -132,6 +146,7 @@ impl Vault {
             actor,
             class,
             repo,
+            None,
             Some((target, RepoAccessIntent::Read)),
         )
     }
@@ -156,6 +171,7 @@ impl Vault {
             actor,
             class,
             repo,
+            None,
             Some((target, RepoAccessIntent::Edit)),
         )
     }
@@ -164,13 +180,34 @@ impl Vault {
     /// membership alone; with one, the first Grant (in id order) whose
     /// bounds admit the target wins, and the refusal is the one that got
     /// furthest across the actor's Grants for this handle, a held Grant's
-    /// [`RepoAccessRefusal::MembershipHeld`] among them.
-    fn admit_repo_in_txn(
+    /// [`RepoAccessRefusal::MembershipHeld`] among them. A supplied portable
+    /// selector resolves to the local handle first; absent or unknown uses
+    /// `repo`. The caller's target must name that same selected handle;
+    /// the selector changes no authority and never repairs a mismatched target.
+    pub(crate) fn admit_repo_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         actor: EntityId,
         class: EdgeActorClass,
         repo: EntityId,
+        portable: Option<&RepoPortableId>,
+        ask: Option<(&RepoTarget, RepoAccessIntent)>,
+    ) -> Result<RepoAdmission> {
+        let resolved = match portable {
+            Some(id) => self.resolve_repo_anchor_by_portable_in_txn(txn, id)?,
+            None => None,
+        };
+        let repo = resolved.unwrap_or(repo);
+        self.admit_repo_in_project_in_txn(txn, actor, class, repo, None, ask)
+    }
+
+    fn admit_repo_in_project_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        actor: EntityId,
+        class: EdgeActorClass,
+        repo: EntityId,
+        project: Option<EntityId>,
         ask: Option<(&RepoTarget, RepoAccessIntent)>,
     ) -> Result<RepoAdmission> {
         let verb = ask.map_or(REPO_READ_VERB, |(_, intent)| intent.verb());
@@ -189,6 +226,7 @@ impl Vault {
                 continue;
             };
             if bounds.repo != repo
+                || project.is_some_and(|project| bounds.project != project)
                 || grant.member_ref != actor
                 || !grant.confers_at(now)
                 || !owners.contains(&standing.delegated_by)
@@ -363,14 +401,15 @@ impl Vault {
     /// owner's agent Grant, in the caller's snapshot `txn`: the shipped
     /// principal rule first ([`principal_standing_or_lapse_in_txn`]), then
     /// the first live Grant, in id order, that alone stands for the actor and
-    /// `verb` ([`AgentGrantStanding::stands_in_txn`]), stands under this
+    /// `verb` ([`AgentGrantStanding::stands_for`]), stands under this
     /// vault's own rule, and carries no repo bounds: a vault setting is no
     /// one repo's. Grants are never unioned and a repo Grant is not this
     /// authority. The Owner's own proof never comes here.
     ///
     /// `Ok(Ok(grant))` names the admitting Grant; `Ok(Err(reason))` is
     /// [`PACT_STANDING_LAPSED`] when a shared vault's pact lapse alone took
-    /// the Grant, else [`QUEUE_REVIEW_POLICY_NOT_GRANTED`].
+    /// the Grant, the membership-held reason when the root holds an otherwise
+    /// standing Grant, else [`QUEUE_REVIEW_POLICY_NOT_GRANTED`].
     ///
     /// # Errors
     /// A store, fold or clock failure; never a refusal.
@@ -381,25 +420,36 @@ impl Vault {
         class: EdgeActorClass,
         verb: &str,
     ) -> Result<std::result::Result<EntityId, &'static str>> {
-        match principal_standing_or_lapse_in_txn(self, txn, actor, class, verb)? {
-            Ok(_) => {}
-            Err(NoStanding::PactStandingLapsed) => return Ok(Err(PACT_STANDING_LAPSED)),
+        let pact_lapsed = match principal_standing_or_lapse_in_txn(self, txn, actor, class, verb)? {
+            Ok(_) => false,
+            Err(NoStanding::PactStandingLapsed) => true,
             Err(NoStanding::NotStanding) => return Ok(Err(QUEUE_REVIEW_POLICY_NOT_GRANTED)),
-        }
+        };
         let now = self.instant_in_txn(txn)?.secs();
         let owners = crate::policy_model::owners_in_txn(self, txn)?;
         let shared = self
             .shared_vault_creation_in_txn(txn)?
             .map(|creation| creation.vault_id);
+        let mut held = false;
         for standing in self.agent_grants_in_txn(txn)? {
-            if standing.grant.repo_bounds.is_none()
-                && standing.stands_in_txn(self, txn, actor, verb, now, &owners)
-                && self.agent_grant_gate_in_txn(txn, &standing, shared)? == GrantGate::Stands
+            if standing.grant.repo_bounds.is_some()
+                || !standing.stands_for(actor, verb, now, &owners)
             {
-                return Ok(Ok(standing.id));
+                continue;
+            }
+            match self.agent_grant_gate_in_txn(txn, &standing, shared)? {
+                GrantGate::Stands => return Ok(Ok(standing.id)),
+                GrantGate::Held => held = true,
+                GrantGate::Refused => {}
             }
         }
-        Ok(Err(QUEUE_REVIEW_POLICY_NOT_GRANTED))
+        Ok(Err(if held {
+            RepoAccessRefusal::MembershipHeld.public_code()
+        } else if pact_lapsed {
+            PACT_STANDING_LAPSED
+        } else {
+            QUEUE_REVIEW_POLICY_NOT_GRANTED
+        }))
     }
 }
 

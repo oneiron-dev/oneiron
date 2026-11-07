@@ -12,16 +12,19 @@
 //! NDJSON and SSE are not `application/json`, and a streamed body has no exact
 //! size, so a stream still flushes each event plain.
 
+mod stream;
+
 use std::io::{Read, Write};
+use std::sync::Arc;
 
 use axum::body::{Body, HttpBody};
-use axum::extract::Request;
+use axum::extract::{Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use oneiron::memory::caps::MAX_REMOTE_REQUEST_BYTES;
 
 use crate::error::{ApiError, ApiErrorDetails};
+use crate::server::SyncServer;
 
 /// The smallest body worth a codec, either way: the /ws codec frame's threshold.
 const MIN_ENCODED_BYTES: usize = oneiron::sync::transport::CODEC_MIN_FRAME_BYTES;
@@ -30,40 +33,38 @@ const REPLY_ZSTD_LEVEL: i32 = oneiron::sync::transport::CODEC_ZSTD_LEVEL;
 /// gzip level for replies to a client that does not take zstd: the fast end.
 const REPLY_GZIP_LEVEL: u32 = 1;
 
-/// Axum's extractor ceiling, which a route with no `DefaultBodyLimit` keeps.
-const AXUM_DEFAULT_BODY_BYTES: usize = 2 * 1024 * 1024;
-/// `api/llm.rs`'s nest ceiling for `/v1/llm/*`.
-const LLM_BODY_BYTES: usize = 64 * 1024 * 1024;
 /// `api/llm.rs`'s `/v1/llm/decision_read` ceiling.
 const LLM_DECISION_READ_BODY_BYTES: usize = 256 * 1024;
-/// `api/llm.rs`'s `/v1/llm/defaults` ceiling.
-const LLM_DEFAULTS_BODY_BYTES: usize = 16 * 1024;
-/// `api/facade.rs`'s `FACADE_MAX_BODY_BYTES`.
-const FACADE_BODY_BYTES: usize = MAX_REMOTE_REQUEST_BYTES;
 /// `api/blob_artifacts.rs`'s `ARTIFACT_BODY_LIMIT`.
 const ARTIFACT_BODY_BYTES: usize = 96 * 1024 * 1024;
+/// `api/facade.rs`'s `ANONYMOUS_CHAT_MAX_BODY_BYTES`: the anonymous-chat SDK
+/// route keeps its own pre-auth bound, not the request floor.
+const ANONYMOUS_CHAT_BODY_BYTES: usize = oneiron::memory::caps::MAX_REMOTE_REQUEST_BYTES;
+/// The anonymous-chat SDK route `api/facade.rs` mounts under that bound.
+const ANONYMOUS_CHAT_FACADE_PATH: &str = "facade/ai.anonymous_chat";
 
 /// The decoded-body ceiling for `path`, equal to the limit its route applies,
 /// or `None` when the path is outside the decoded set and its body passes
-/// untouched.
-fn decoded_body_cap(path: &str) -> Option<usize> {
+/// untouched. `floor` is the API's request floor (`limits.request_body_bytes`,
+/// ABC transport rows T1, T3, T4), the limit of every route here that sets
+/// none of its own.
+fn decoded_body_cap(path: &str, floor: usize) -> Option<usize> {
     if matches!(path, "/mcp" | "/mcp/tool-first") {
-        return Some(AXUM_DEFAULT_BODY_BYTES);
+        return Some(floor);
     }
     if let Some(rest) = path.strip_prefix("/v1/llm/") {
         return Some(match rest {
             "decision_read" => LLM_DECISION_READ_BODY_BYTES,
-            "defaults" => LLM_DEFAULTS_BODY_BYTES,
-            _ => LLM_BODY_BYTES,
+            _ => floor,
         });
     }
     let rest = path.strip_prefix("/v1/core/")?;
-    Some(if rest.starts_with("facade/") {
-        FACADE_BODY_BYTES
-    } else if rest == "artifacts" || rest.starts_with("artifacts/") {
+    Some(if rest == "artifacts" || rest.starts_with("artifacts/") {
         ARTIFACT_BODY_BYTES
+    } else if rest == ANONYMOUS_CHAT_FACADE_PATH {
+        ANONYMOUS_CHAT_BODY_BYTES
     } else {
-        AXUM_DEFAULT_BODY_BYTES
+        floor
     })
 }
 
@@ -84,9 +85,14 @@ impl Codec {
 
 /// The API's body codec, as one layer: decodes the request, runs the route,
 /// and encodes a JSON reply the client can take.
-pub(crate) async fn body_codec(request: Request, next: Next) -> Response {
+pub(crate) async fn body_codec(
+    State(server): State<Arc<SyncServer>>,
+    request: Request,
+    next: Next,
+) -> Response {
     let reply = reply_codec(request.method(), request.headers());
-    let request = match decode_request(request).await {
+    let floor = super::request_floor::request_floor(&server);
+    let request = match decode_request(request, floor).await {
         Ok(request) => request,
         Err(refusal) => return refusal.into_response(),
     };
@@ -97,8 +103,8 @@ pub(crate) async fn body_codec(request: Request, next: Next) -> Response {
     }
 }
 
-async fn decode_request(request: Request) -> Result<Request, ApiError> {
-    let Some(cap) = decoded_body_cap(request.uri().path()) else {
+async fn decode_request(request: Request, floor: usize) -> Result<Request, ApiError> {
+    let Some(cap) = decoded_body_cap(request.uri().path(), floor) else {
         return Ok(request);
     };
     let mut encodings = request
@@ -124,18 +130,25 @@ async fn decode_request(request: Request) -> Result<Request, ApiError> {
             ));
         }
     };
+    let staged = stream::stages(&request);
     let (mut parts, body) = request.into_parts();
-    let raw = axum::body::to_bytes(body, cap)
-        .await
-        .map_err(|_| too_large(cap))?;
-    let decoded = tokio::task::spawn_blocking(move || decode(codec, &raw, cap))
-        .await
-        .map_err(|_| ApiError::internal_server_error("the request body decoder stopped"))??;
+    let (body, length) = if staged {
+        stream::decode_body(body, codec, cap).await?
+    } else {
+        let raw = axum::body::to_bytes(body, cap)
+            .await
+            .map_err(|_| too_large(cap))?;
+        let decoded = tokio::task::spawn_blocking(move || decode(codec, &raw, cap))
+            .await
+            .map_err(|_| ApiError::internal_server_error("the request body decoder stopped"))??;
+        let length = decoded.len() as u64;
+        (Body::from(decoded), length)
+    };
     parts.headers.remove(header::CONTENT_ENCODING);
     parts
         .headers
-        .insert(header::CONTENT_LENGTH, HeaderValue::from(decoded.len()));
-    Ok(Request::from_parts(parts, Body::from(decoded)))
+        .insert(header::CONTENT_LENGTH, HeaderValue::from(length));
+    Ok(Request::from_parts(parts, body))
 }
 
 /// Decodes `raw` and holds at most `cap + 1` bytes of what it decodes to.
@@ -171,8 +184,13 @@ fn decode(codec: Codec, raw: &[u8], cap: usize) -> Result<Vec<u8>, ApiError> {
 /// coding, an unknown or stacked coding, one that does not decode, or one
 /// that decodes past the route's cap comes back as `None`, so the door
 /// classifies the arrival and the route refuses it as it always did.
-pub(crate) fn decode_copy(headers: &HeaderMap, path: &str, raw: &[u8]) -> Option<Vec<u8>> {
-    let cap = decoded_body_cap(path)?;
+pub(crate) fn decode_copy(
+    headers: &HeaderMap,
+    path: &str,
+    raw: &[u8],
+    floor: usize,
+) -> Option<Vec<u8>> {
+    let cap = decoded_body_cap(path, floor)?;
     let mut encodings = headers.get_all(header::CONTENT_ENCODING).into_iter();
     let encoding = encodings.next()?;
     let named = encoding.to_str().unwrap_or("").trim().to_ascii_lowercase();

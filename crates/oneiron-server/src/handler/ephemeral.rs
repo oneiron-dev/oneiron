@@ -110,19 +110,13 @@ fn late_join_frame(conn_id: u32, states: &[EphemeralWireState]) -> Option<Vec<u8
     }
 }
 
+/// Decodes one presence frame and checks its records. The frame has no byte
+/// bound of its own (FIX 161): the socket's message floor bounds it, and the
+/// caller charges the hub it makes to the retained-memory line. Neither its
+/// bytes nor its record count is refused (rule 5).
 pub(super) fn validate_ephemeral_payload(
-    server: &SyncServer,
     payload: &[u8],
 ) -> Result<Vec<EphemeralWireState>, ProtocolError> {
-    if payload.len() > server.config.max_ephemeral_payload_bytes {
-        return Err(ProtocolError::FrameTooLarge {
-            size: payload.len(),
-            max: server.config.max_ephemeral_payload_bytes,
-        });
-    }
-
-    // The frame's byte bound above bounds its records; their count is
-    // never refused (rule 5).
     let states = decode_ephemeral_states(payload)
         .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
 
@@ -146,11 +140,10 @@ pub(super) fn validate_ephemeral_payload(
 
 /// The size of the hub with this frame applied, which the caller charges to
 /// the server's retained-memory line (rule 5: charged, never capped per
-/// hub). Each key's canonical frame stays within one frame's bound.
+/// hub, and no key's canonical frame is capped either, FIX 161).
 pub(super) fn ephemeral_hub_candidate(
     server: &SyncServer,
     payload: &[u8],
-    states: &[EphemeralWireState],
 ) -> Result<usize, ProtocolError> {
     let current_snapshot = server.ephemeral_store.encode_all();
     let candidate = EphemeralStore::new(server.config.ephemeral_timeout_ms);
@@ -164,23 +157,7 @@ pub(super) fn ephemeral_hub_candidate(
         .map_err(|_| ProtocolError::InvalidPayload("invalid ephemeral payload"))?;
     candidate.remove_outdated();
 
-    let candidate_snapshot = candidate.encode_all();
-    let mut seen = HashSet::new();
-    for state in states {
-        if !seen.insert(state.key.as_str()) {
-            continue;
-        }
-
-        let canonical = candidate.encode(&state.key);
-        if canonical.len() > server.config.max_ephemeral_payload_bytes {
-            return Err(ProtocolError::FrameTooLarge {
-                size: canonical.len(),
-                max: server.config.max_ephemeral_payload_bytes,
-            });
-        }
-    }
-
-    Ok(candidate_snapshot.len())
+    Ok(candidate.encode_all().len())
 }
 
 pub(super) fn canonical_ephemeral_frames(
@@ -199,12 +176,6 @@ pub(super) fn canonical_ephemeral_frames(
             .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
         if canonical_states.is_empty() {
             continue;
-        }
-        if canonical.len() > server.config.max_ephemeral_payload_bytes {
-            return Err(ProtocolError::FrameTooLarge {
-                size: canonical.len(),
-                max: server.config.max_ephemeral_payload_bytes,
-            });
         }
         let encoded = protocol::encode_ephemeral(&canonical)
             .into_result()

@@ -53,8 +53,9 @@ impl ShapeGrantBound {
     ///
     /// # Errors
     ///
-    /// The constructors' own refusal: an empty or oversized reference, an
-    /// empty audience or envelope, or too many members or selectors.
+    /// The constructors' own refusal: an empty or oversized reference, or an
+    /// empty audience or envelope. Any number of members or selectors is a
+    /// bound (FIX 10198).
     pub fn bound(&self) -> Result<GrantBound> {
         match self {
             Self::Action {

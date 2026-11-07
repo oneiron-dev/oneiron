@@ -9,8 +9,9 @@
 //! own signed call does there, named by the socket it came on
 //! (`ManagedPersonSession`), never by the signature of the upgrade, and the
 //! door's person check and the engine's roster, role and Grant checks judge
-//! him again. His socket closes on the vault's deletion as every socket
-//! does.
+//! him again. Once admitted as a member, his socket closes when membership
+//! ends, as well as on vault deletion. An invitee may still answer before
+//! first admission.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -95,6 +96,8 @@ pub(in crate::handler) fn person_upgrade(
     let hold = crate::embedded::UpgradeHold::take(extensions);
     Ok(ws
         .protocols([MCP_SUBPROTOCOL])
+        // ABC transport row T25: the request floor bounds a message.
+        .max_message_size(server.socket_message_bytes())
         .max_frame_size(server.config.max_frame_size)
         .write_buffer_size(WS_WRITE_BUFFER_SIZE)
         .max_write_buffer_size(WS_MAX_WRITE_BUFFER_SIZE)
