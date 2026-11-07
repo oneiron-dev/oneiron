@@ -70,9 +70,6 @@ pub const CONTACT_DISCLOSURE_REASON_PRECLEARED: &str = "gate.consent.contact_dis
 /// contact (a quiet bound-use receipt, never an authorization).
 pub const CONTACT_DISCLOSURE_REASON_USED: &str = "gate.consent.contact_disclosure.used";
 
-/// Most contacts one trusted-set pre-clearance names.
-const MAX_PRECLEAR_CONTACTS: usize = 256;
-
 /// The owner's disclosure-mode knob: a singleton row, default auto.
 const DISCLOSURE_OFFER_MODE: SideTable<(), DisclosureOfferMode, Raw> =
     SideTable::new(&side_table::DISCLOSURE_OFFER_MODE);

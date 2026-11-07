@@ -105,7 +105,8 @@ pub(crate) use self::contribution::{
     settle_owner_pair_in_txn,
 };
 pub(crate) use self::dispatcher::{
-    ExecutorCallSite, check_write_gate_against_vault, recorded_verb_call,
+    ExecutorCallSite, agent_attempt_run_ref, check_write_gate_against_vault, recorded_verb_call,
+    write_receipt_may_have_run,
 };
 pub use self::dispatcher::{
     GatedActorWrite, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher,
@@ -238,13 +239,13 @@ pub(crate) use self::wait_rows::{keep_wait_rows, parks_on};
 pub use self::reader::{
     ClaimOutcome, DEFAULT_READER_FOLD_RESERVE_MS, DEFAULT_READER_WINDOW_TOKENS, DelegatedSource,
     ReaderActor, ReaderFindingRef, ReaderJob, ReaderJobKind, ReaderJobRunner, ReaderJobState,
-    ReaderJobWake, ReaderParent, ReaderReportReceipt, ReaderRoute, ReaderRunEnd,
-    ReaderSpawnReceipt, ReaderSpend, RunDeadline, SUMMARY_GROUP_EXCEEDS_WINDOW,
-    SUMMARY_READ_BYTES_PER_TOKEN, SUMMARY_WINDOW_DIVISOR, SelfReaderReportCall,
-    SelfReaderSpawnCall, SelfSummarizeCall, SpawnHostSeat, SpawnParentBinding, SummarizeEffort,
-    SummarizeRecipe, SummarizeReply, TaskWaitFailure, TaskWaitFinding, TaskWaitPolicy, TaskWaitSet,
-    TaskWaitSetCall, TaskWaitSetResult, summary_exceeds_window, summary_exceeds_window_bytes,
-    summary_token_budget,
+    ReaderJobWake, ReaderParent, ReaderQueueCursor, ReaderQueuePage, ReaderReportReceipt,
+    ReaderRoute, ReaderRunEnd, ReaderSpawnReceipt, ReaderSpend, RunDeadline,
+    SUMMARY_GROUP_EXCEEDS_WINDOW, SUMMARY_READ_BYTES_PER_TOKEN, SUMMARY_WINDOW_DIVISOR,
+    SelfReaderReportCall, SelfReaderSpawnCall, SelfSummarizeCall, SpawnHostSeat,
+    SpawnParentBinding, SummarizeEffort, SummarizeRecipe, SummarizeReply, TaskWaitFailure,
+    TaskWaitFinding, TaskWaitPolicy, TaskWaitSet, TaskWaitSetCall, TaskWaitSetResult,
+    summary_exceeds_window, summary_exceeds_window_bytes, summary_token_budget,
 };
 pub(crate) use self::reader::{
     reader_attempt_id, reader_run_id, reader_task_id, reader_wait_id, reduce_task_wait_set,
