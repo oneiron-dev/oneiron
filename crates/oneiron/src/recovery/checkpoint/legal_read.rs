@@ -10,18 +10,23 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
+use std::io::Read;
 
+use super::artifact::SealedBodies;
 use super::payload::{Getter, SelectedPayload, open_selected_payload};
-use super::{CanonicalRows, CheckpointKey, artifact, image};
+use super::{CanonicalRows, CheckpointImage, CheckpointKey, artifact, image};
 use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::DocumentSlot;
 use crate::registry::ENTITY_TYPE_MESSAGE;
 use crate::side_table;
-use crate::store::LiveCustody;
+use crate::store::checkpoint_payload::Subtype;
 use crate::store::checkpoint_payload::rows::{
     OpenedOwnerRows, OwnerRef, RowDb, RowLocator, RowPart, actor_keyed_row,
+};
+use crate::store::{
+    CheckpointCustody, LiveCustody, SealedStream, body_key_in, require_body_instances,
 };
 
 /// The identity an artifact's opening verified, never a request's echo: the
@@ -76,28 +81,39 @@ pub(crate) enum ArtifactRefusal {
     IdentityMismatch,
 }
 
+/// One opened artifact a legal read draws on: its image (the rows naming an
+/// owner that did not open already out), the bodies it carries, the custody
+/// plan the read built and the selected owners' opened compartments.
+pub(crate) struct ArtifactRead<'k> {
+    image: CheckpointImage,
+    bodies: SealedBodies<'k>,
+    custody: CheckpointCustody,
+    payload: Option<SelectedPayload>,
+}
+
 /// Opens the artifact in `file` with `key` through the real opener (vault,
 /// signed commitment, manifest, chunks and image checked, the signer under
 /// the key's trust), checks its verified identity against `expected`, then
-/// reads each of `ids` out of it under a custody plan built from `live`
-/// (`preflight_legal_read_rejected`). Only the selected messages' entity
-/// trees and every actor group open; the rows naming an owner that did not
-/// open are taken out first, as a restore takes them.
+/// builds its custody plan from `live` (`preflight_legal_read_rejected`) and
+/// opens the compartments of `ids` alone: each one's entity tree and the
+/// attachment occurrences it holds, beside every actor group. The rows
+/// naming an owner that did not open are taken out first, as a restore
+/// takes them.
 ///
 /// # Errors
 ///
 /// An artifact that does not open or decode, another vault's, a signer the
 /// key does not trust, an identity other than `expected`
 /// ([`ArtifactRefusal`]), custody of another lineage
-/// (`custody_lineage_mismatch`) or missing, and a compartment or row that
-/// does not read back as sealed.
-pub(crate) fn read_artifact_messages(
+/// (`custody_lineage_mismatch`) or missing, and a compartment that does not
+/// read back as sealed.
+pub(crate) fn open_artifact_read<'k>(
     file: File,
-    key: &CheckpointKey,
+    key: &'k CheckpointKey,
     expected: &VerifiedArtifact,
     live: &LiveCustody,
     ids: &[[u8; 16]],
-) -> std::result::Result<Vec<([u8; 16], ArtifactMessage)>, LegalReadError> {
+) -> std::result::Result<ArtifactRead<'k>, LegalReadError> {
     let opened = artifact::open_artifact_file(file, key)?;
     let verified = VerifiedArtifact {
         vault_id: key.vault_id,
@@ -114,24 +130,114 @@ pub(crate) fn read_artifact_messages(
         .ok_or(Error::CorruptedIndex("checkpoint image vault_meta"))?;
     let mut custody =
         crate::store::preflight_legal_read_rejected(vault_meta, live).map_err(Error::from)?;
-    let entities = ids
-        .iter()
-        .map(|id| EntityId::from_bytes(*id))
-        .collect::<Result<Vec<_>>>()?;
-    let selected: BTreeSet<OwnerRef> = entities.iter().map(OwnerRef::entity).collect();
+    let selected: BTreeSet<[u8; 16]> = ids.iter().copied().collect();
     let payload = open_selected_payload(
         bodies.payload.take(),
         custody.plan_mut(),
         &mut image,
-        &selected,
+        |owner| {
+            matches!(
+                owner.subtype,
+                Subtype::EntityTree | Subtype::AttachmentOccurrence
+            ) && owner.owner32[..16]
+                .try_into()
+                .is_ok_and(|id: [u8; 16]| selected.contains(&id))
+                && (owner.subtype == Subtype::AttachmentOccurrence
+                    || owner.owner32[16..].iter().all(|byte| *byte == 0))
+        },
     )
     .map_err(Error::from)?;
-    let mut messages = Vec::with_capacity(ids.len());
-    for (id, entity) in ids.iter().zip(&entities) {
-        let source = MessageSource::new(&image.databases, payload.as_ref(), entity)?;
-        messages.push((*id, source.message(id, entity)?));
+    Ok(ArtifactRead {
+        image,
+        bodies,
+        custody,
+        payload,
+    })
+}
+
+impl ArtifactRead<'_> {
+    /// Selected message `id` as the artifact holds it.
+    pub(crate) fn message(&self, id: &[u8; 16]) -> Result<ArtifactMessage> {
+        let entity = EntityId::from_bytes(*id)?;
+        MessageSource::new(&self.image.databases, self.payload.as_ref(), &entity)?
+            .message(id, &entity)
     }
-    Ok(messages)
+
+    /// The exact body descriptor row `message` holds for its attachment
+    /// `occurrence`, read from that occurrence's own compartment when it
+    /// opened; none otherwise.
+    pub(crate) fn result_descriptor(
+        &self,
+        message: &EntityId,
+        occurrence: &EntityId,
+    ) -> Result<Option<Vec<u8>>> {
+        let owner = OwnerRef::occurrence(message, occurrence);
+        let Some(payload) = self
+            .payload
+            .as_ref()
+            .filter(|payload| payload.opened(owner))
+        else {
+            return Ok(None);
+        };
+        let key = crate::store::owned_body::BODY.key_bytes(&(*message, *occurrence));
+        let mut parts = BTreeMap::new();
+        for opened in payload.contents(owner, Getter::ProvenanceBody) {
+            owner_parts(opened, &mut parts)?;
+        }
+        Ok(parts.remove(&(RowDb::VaultMeta, key)))
+    }
+
+    /// The result body the artifact carries for the raw-output row at `key`
+    /// with BLAKE3 `digest` and length `len`, read back through its sealed
+    /// chunks and opened under current custody of its instance, each frame
+    /// checked as it is read. None when the artifact carries no such body,
+    /// or custody no longer opens its instance (an erase or release retired
+    /// it): uncaptured, never another source's bytes.
+    pub(crate) fn result_body(
+        &mut self,
+        key: &[u8],
+        digest: [u8; 32],
+        len: u64,
+    ) -> Option<Box<dyn Read + '_>> {
+        let files = self.image.bodies.len();
+        let inline = self.image.inline_bodies.iter().position(|carried| {
+            carried.database == "vault_meta"
+                && carried.key == key
+                && carried.digest == digest
+                && carried.len == len
+                && carried.retired.is_none()
+                && carried.replay.is_none()
+                && !carried.opaque
+        });
+        let found = match inline {
+            Some(index) => Some((files + index, self.image.inline_bodies[index].instance)),
+            None => self
+                .image
+                .bodies
+                .iter()
+                .position(|body| *body == (digest, len))
+                .and_then(|index| {
+                    let file = self.image.sealed_bodies.get(&(index as u64))?;
+                    Some((index, file.instance))
+                }),
+        };
+        let (stream, instance) = found?;
+        let plan = self.custody.plan_mut();
+        let binding = plan.source().cloned()?;
+        // Retired, or with no custody here: the body stays uncaptured.
+        if !require_body_instances(&BTreeSet::from([instance]), plan)
+            .is_ok_and(|retired| retired.is_empty())
+        {
+            return None;
+        }
+        let file_key = body_key_in(&binding, &instance).ok()?;
+        Some(Box::new(SealedStream::plaintext(
+            self.bodies.body(stream),
+            file_key,
+            digest,
+            len,
+        )))
+    }
 }
 
 /// A legal read's failure: a refusal of the artifact, or an error.

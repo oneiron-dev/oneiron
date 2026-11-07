@@ -26,6 +26,7 @@ use crate::ports::{DocumentSlot, DocumentUpdateKey};
 use crate::registry::ENTITY_TYPE_MESSAGE;
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::ManifestDbs;
+use crate::store::owned_body::OwnedBody;
 use crate::store::result_body_reader::{CodeRunResultBodyReader, Source};
 use crate::store::result_body_rows::RAW_OUTPUTS;
 use crate::store::result_manifest::CodeRunRawOutput;
@@ -67,7 +68,7 @@ const REVISION_IDENTITIES: SideTable<[u8; 16], Vec<u8>, Raw> =
     SideTable::new(&side_table::ENTITY_REVISION_IDENTITY);
 
 /// The family label a held result body's stored key is digested under.
-const RESULT_BODY_FAMILY: &str = "code_run:raw_output";
+pub(super) const RESULT_BODY_FAMILY: &str = "code_run:raw_output";
 
 /// One exact stored row of a selected message.
 struct MessageRow {
@@ -352,25 +353,35 @@ fn result_body(
     let message = EntityId::from_bytes(*id)?;
     let output = attachment.output()?;
     let occurrence = attachment.message_occurrence(message)?;
-    let source = &attachment.source;
-    let held =
-        crate::provenance::body::owned_body_in_txn(&vault.store, txn, &message, &occurrence)?
-            .filter(|hold| {
-                hold.state.held().is_some_and(|body| {
-                    body.blake3 == output.raw_blake3 && body.bytes == output.raw_len
-                })
-            })
-            .and_then(|hold| hold.result)
-            .is_some_and(|held| {
-                held.run_id == source.run_id
-                    && held.occurrence == source.occurrence
-                    && held.path == source.path
-            });
-    Ok(Some(if held {
+    let hold =
+        crate::provenance::body::owned_body_in_txn(&vault.store, txn, &message, &occurrence)?;
+    Ok(Some(if holds_output(hold, &output, &attachment) {
         ResultBody::Held(output)
     } else {
         ResultBody::Released
     }))
+}
+
+/// Whether `hold`, the body descriptor a message keeps for its attachment's
+/// occurrence, holds exactly `output` (its digest and length) from the
+/// producer run, occurrence and path `attachment` names.
+pub(super) fn holds_output(
+    hold: Option<OwnedBody>,
+    output: &CodeRunRawOutput,
+    attachment: &MessageResultAttachment,
+) -> bool {
+    let source = &attachment.source;
+    hold.filter(|hold| {
+        hold.state
+            .held()
+            .is_some_and(|body| body.blake3 == output.raw_blake3 && body.bytes == output.raw_len)
+    })
+    .and_then(|hold| hold.result)
+    .is_some_and(|held| {
+        held.run_id == source.run_id
+            && held.occurrence == source.occurrence
+            && held.path == source.path
+    })
 }
 
 /// The result attachment a stored MESSAGE row `row` names, if it names one
