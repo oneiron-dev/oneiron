@@ -133,6 +133,11 @@ impl RecordingJsHost<'_, '_> {
                 });
             }
             call.bound = Some(bound);
+            let effort = call.effort.unwrap_or_default();
+            call.recipe = Some(match self.summary_prompt_package.as_deref() {
+                Some(root) => crate::code_run::SummarizeRecipe::from_prompt_package(effort, root)?,
+                None => crate::code_run::SummarizeRecipe::new(effort),
+            });
         }
         let site = ExecutorCallSite {
             run_id: self.run_id,
