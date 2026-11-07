@@ -11437,6 +11437,10 @@ pub fn mcp_arguments_schema_from_input(
                 "parent_ref".to_owned(),
                 schema.pointer("/properties/parent_ref")?.clone(),
             );
+            properties.insert(
+                "due_at".to_owned(),
+                schema.pointer("/properties/due_at")?.clone(),
+            );
             &["spec"]
         }
         "tasks.wave" => {

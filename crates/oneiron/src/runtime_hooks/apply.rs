@@ -312,8 +312,8 @@ fn land(
         .map_err(refusal_text)
 }
 
-/// Enqueue task: the tasks.create door. `TaskCreateSpec` has no due field, so
-/// `due_at` rides in the spec.
+/// Enqueue task: the tasks.create door. A `due_at` lands as the TASK's own
+/// due time, so the task ticks on `schedule.tick` once it passes (FIX 4749).
 fn enqueue_task(
     vault: &Vault,
     memory: &Memory<'_>,
@@ -321,7 +321,7 @@ fn enqueue_task(
     intent: &HookIntent,
     task: &EnqueuedTask,
 ) -> std::result::Result<Landed, String> {
-    let mut spec_fields = vec![
+    let spec_fields = vec![
         (Value::from("title"), Value::from(task.title.as_str())),
         (Value::from("body"), Value::from(task.body.as_str())),
         (Value::from("hook"), Value::from(intent.binding.to_hex())),
@@ -330,15 +330,15 @@ fn enqueue_task(
             Value::from(super::store::receipt_id(key)),
         ),
     ];
-    if let Some(due_at) = task.due_at {
-        spec_fields.push((Value::from("due_at"), Value::from(due_at)));
-    }
     let mut spec = TaskCreateSpec::new(
         Value::Map(spec_fields),
         Some(task.title.clone()),
         None,
         None,
     );
+    if let Some(due_at) = task.due_at {
+        spec = spec.with_due_at(due_at);
+    }
     if let Some(assignee) = task.assignee.as_deref() {
         spec = spec.with_assignee(assignee_for(vault, assignee)?);
     }

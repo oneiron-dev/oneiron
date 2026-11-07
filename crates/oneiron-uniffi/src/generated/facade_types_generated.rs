@@ -6708,6 +6708,8 @@ pub struct TaskCreateRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub parent_ref: Option<String>,
+    #[serde(rename = "due_at", default, skip_serializing_if = "Option::is_none")]
+    pub due_at: Option<u64>,
 }
 
 /// `oneiron::task_verb::route_receipts::TaskCreateReceipt`.
@@ -18674,6 +18676,10 @@ pub enum FactSource {
     ClaimChangelog,
     #[serde(rename = "settlement")]
     Settlement,
+    #[serde(rename = "schedule")]
+    Schedule,
+    #[serde(rename = "surface_inbound")]
+    SurfaceInbound,
 }
 
 /// `oneiron::runtime_hooks::source::FactKind`.
@@ -18685,6 +18691,10 @@ pub enum FactKind {
     ClaimSuperseded,
     #[serde(rename = "proposal.settled")]
     ProposalSettled,
+    #[serde(rename = "schedule.tick")]
+    ScheduleTick,
+    #[serde(rename = "surface.inbound")]
+    SurfaceInbound,
 }
 
 /// `oneiron::runtime_hooks::replay::HookReplayCase`.

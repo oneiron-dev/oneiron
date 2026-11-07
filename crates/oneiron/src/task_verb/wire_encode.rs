@@ -380,6 +380,11 @@ pub(super) fn encode_task_verb_body(body: TaskVerbBody) -> Vec<u8> {
     if let Some(team) = &body.team {
         entries.push((Value::from("team"), team_stamp_value(team)));
     }
+    // FIX 4749: elided the same way, so a TASK with no due time keeps its
+    // bytes.
+    if let Some(due_at) = body.due_at {
+        entries.push((Value::from("due_at"), Value::from(due_at)));
+    }
     canonical_bytes(&Value::Map(entries))
 }
 

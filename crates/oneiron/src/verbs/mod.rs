@@ -303,6 +303,12 @@ pub struct TaskCreateRequest {
     /// Milestone; absent is a root.
     #[serde(default)]
     pub parent_ref: Option<String>,
+    /// When the TASK falls due, Unix seconds (FIX 4749). A due TASK is a
+    /// watcher: it ticks once on `schedule.tick` after this time, and a hook
+    /// bound to that tick returns Nothing or Enqueue. Only a brief-less
+    /// standard task carries one; absent is no tick.
+    #[serde(default)]
+    pub due_at: Option<u64>,
 }
 
 /// The create spec one `tasks.create` request names, owned by the
@@ -329,6 +335,10 @@ pub fn task_create_spec(
     };
     let spec = match input.ttl {
         Some(ttl) => spec.with_ttl(ttl),
+        None => spec,
+    };
+    let spec = match input.due_at {
+        Some(due_at) => spec.with_due_at(due_at),
         None => spec,
     };
     let spec = match parent_ref {
