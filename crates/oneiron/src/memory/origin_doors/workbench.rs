@@ -23,7 +23,7 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::git_wire::GitWire;
 use crate::memory::merge_queue_doors::MergeQueuePointersView;
 use crate::ports::{EdgeDirection, EdgeStore};
-use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
+use crate::registry::{ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_TASK};
 use crate::store::{code_import_manifest::CodeImportManifest, code_revision_record::CodeRevision};
 
 /// A served repository as the reads resolve it: its anchor, its stored
@@ -217,7 +217,10 @@ impl Memory<'_> {
 
     /// `vault.code.forks.get`: one durable revision fork whose base is a
     /// tested revision of this repository's object store, with the
-    /// documents its received candidate names, if any.
+    /// documents its received candidate names, if any, and the TASKs its own
+    /// operations worked under or served (FIX 7536): the TASK each kept
+    /// receipt's provenance names as its activity or intent, from the same
+    /// receipts the documents are earned from, each one the caller reads.
     pub fn code_fork_get_as(
         &self,
         owner: &AuthenticatedOwner,
@@ -256,6 +259,7 @@ impl Memory<'_> {
             ingress: None,
         };
         let mut candidate_fork = false;
+        let mut tasks = BTreeSet::new();
         for (provenance, row) in self.vault.received_code_ingress_rows(&served.store)? {
             let Some(candidate) = &row.candidate else {
                 continue;
@@ -278,14 +282,17 @@ impl Memory<'_> {
                 view.proposal_refs.push(resolved.proposal_id);
             }
             for file in &resolved.files {
-                let landed = match file.document_operation {
+                let receipt = match file.document_operation {
                     Some(operation) => self
                         .vault
                         .code_file_edit_receipt(operation)?
-                        .filter(|receipt| receipt.session_id == fork.fork_session_id)
-                        .map(|receipt| receipt.after),
+                        .filter(|receipt| receipt.session_id == fork.fork_session_id),
                     None => None,
                 };
+                if let Some(receipt) = &receipt {
+                    tasks.extend(operation_tasks(&receipt.provenance));
+                }
+                let landed = receipt.map(|receipt| receipt.after);
                 let document_id = landed
                     .as_ref()
                     .or(file.base_frontier.as_ref())
@@ -344,6 +351,7 @@ impl Memory<'_> {
                 if !repos.contains(receipt.after.repo.as_str()) {
                     continue;
                 }
+                tasks.extend(operation_tasks(&receipt.provenance));
                 if sequences
                     .get(&receipt.document_id)
                     .is_some_and(|sequence| *sequence >= receipt.sequence)
@@ -368,6 +376,13 @@ impl Memory<'_> {
                 document.metadata_edit = receipt.metadata_edit;
             }
             view.documents = documents.into_values().collect();
+        }
+        for task in tasks {
+            if self.vault.get_entity_type(&task)? == Some(ENTITY_TYPE_TASK)
+                && self.workbench_readable(task)?
+            {
+                view.task_refs.push(task);
+            }
         }
         view.documents.sort_by(|left, right| {
             (&left.path, &left.document_id).cmp(&(&right.path, &right.document_id))
@@ -504,4 +519,14 @@ fn served_name(folder: &str) -> String {
         .and_then(|name| name.to_str())
         .unwrap_or_default();
     name.strip_suffix(".git").unwrap_or(name).to_owned()
+}
+
+/// The entities one operation's provenance names as the work it ran under
+/// or the intent it served; a run's edit names its TASK as its activity.
+fn operation_tasks(
+    provenance: &crate::store::code_document_receipt::CodeOpProvenance,
+) -> impl Iterator<Item = EntityId> {
+    [provenance.activity, provenance.intent]
+        .into_iter()
+        .flatten()
 }
