@@ -579,6 +579,8 @@ impl Vault {
             options.adopted_storage_id(),
         )?;
         crate::batch::sweep_scope_stamps(&store)?;
+        // FIX 12327: rows of a kind no executor serves leave the queue.
+        crate::attempt_queue::drop_unserved_kinds(&store)?;
         let seed_content = matches!(seed_mode, DefaultPolicySeedMode::Required)
             && !crate::store::shared_leave_receipt::has_left(&store)?;
         // ONE-1890: the seeded system-agent roster reconciles on every seeded
@@ -640,6 +642,8 @@ impl Vault {
             confirm_demotion_retries: Default::default(),
             launch_usd_prices: Default::default(),
             message_streams: Default::default(),
+            #[cfg(unix)]
+            host_legal_captures: Default::default(),
             live_rows: Default::default(),
             attempt_activity: Default::default(),
             task_work: crate::work_line::WorkLine::new(
@@ -677,6 +681,7 @@ impl Vault {
             served_transports: Default::default(),
             coach_weave_digest_host: Default::default(),
             origin_mirror_wake: Default::default(),
+            origin_git_transport: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
             slow_retrieval_stage: Default::default(),
         };
@@ -909,6 +914,22 @@ impl Vault {
     #[cfg(feature = "sync")]
     pub(crate) fn notify_typed_body_document(&self, id: crate::EntityId) {
         self.notify_note_document(id);
+    }
+
+    /// Invalidate own devices' copies of `id`'s forks after a committed fork
+    /// change at this authority (FIX 12789): a fork made or uploaded here, a
+    /// decision, a bundle opened. Content-free and best effort, as
+    /// [`Self::notify_note_document`]; a replica's notice stays on it.
+    #[cfg(feature = "sync")]
+    pub(crate) fn notify_note_forks(&self, id: crate::EntityId) {
+        let manager = self
+            .live_window_manager
+            .lock()
+            .ok()
+            .and_then(|manager| manager.upgrade());
+        if let Some(manager) = manager {
+            manager.notify_note_forks(id);
+        }
     }
 
     /// Shallow-compact `id`'s document row during a sweep. Returns whether the
