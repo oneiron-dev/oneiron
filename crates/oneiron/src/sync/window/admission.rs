@@ -116,26 +116,45 @@ fn validate_window_update(
     vault: Option<&crate::Vault>,
     staged: &HashMap<EntityId, (crate::sync::WindowKey, Vec<u8>)>,
 ) -> Result<()> {
-    let cutoffs = check_window_update(doc, update, key, vault, staged)?;
+    let admitted = check_window_update(doc, update, key, vault, staged)?;
     // OF-013: a cutoff another machine of this vault carries is staged before
     // the update reaches the live window, so its entity doors refuse the
     // withdrawn body from the first import on.
     if let Some(vault) = vault {
-        crate::sync::withdrawn_cutoffs::apply_withdrawn_cutoffs(vault, &cutoffs)?;
+        crate::sync::withdrawn_cutoffs::apply_withdrawn_cutoffs(vault, &admitted.cutoffs)?;
+    }
+    // A source-audience policy revision or change receipt naming an actor
+    // erased here, in any part the update carries, its retained history
+    // included (fix list row 17238): the window is pinned history-free
+    // before the update lands, so no export ships that copy again, and its
+    // refresh takes a live copy down.
+    if let (Some(vault), Some(key)) = (vault, key)
+        && admitted.history_free
+    {
+        crate::sync::window::require_history_free_window(vault, key)?;
     }
     Ok(())
 }
 
-/// Every refusal of [`validate_window_update`]; returns the withdrawn
-/// cutoffs and epoch floors `update` carries, for the caller to stage.
-/// Nothing here writes.
+/// What an admitted update asks [`validate_window_update`] to write.
+struct AdmittedWrites {
+    /// The withdrawn cutoffs and epoch floors the update carries (OF-013).
+    cutoffs: Vec<crate::sync::withdrawn_cutoffs::CarriedCutoff>,
+    /// A source-audience carrier in the update names an actor erased here
+    /// (fix list row 17238), so its window is pinned history-free.
+    history_free: bool,
+}
+
+/// Every refusal of [`validate_window_update`]; returns what the caller
+/// writes for `update`: the withdrawn cutoffs and epoch floors it carries,
+/// and whether its window is pinned history-free. Nothing here writes.
 fn check_window_update(
     doc: &LoroDoc,
     update: &[u8],
     key: Option<&crate::sync::WindowKey>,
     vault: Option<&crate::Vault>,
     staged: &HashMap<EntityId, (crate::sync::WindowKey, Vec<u8>)>,
-) -> Result<Vec<crate::sync::withdrawn_cutoffs::CarriedCutoff>> {
+) -> Result<AdmittedWrites> {
     let decode_error = |source| {
         Error::Sync(SyncError::CrdtDecodeError {
             context: "window locality admission",
@@ -575,7 +594,10 @@ fn check_window_update(
             }
         }
     }
-    Ok(cutoffs)
+    Ok(AdmittedWrites {
+        cutoffs,
+        history_free: audiences.names_erased(),
+    })
 }
 
 fn check_edge_residence(
