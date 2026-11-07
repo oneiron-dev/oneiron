@@ -77,6 +77,7 @@ pub(super) enum Step {
     AwaitingInput {
         intent: Option<[u8; 32]>,
         input: ConnectorAwaitingInput,
+        budget_steering: Vec<String>,
     },
     /// A full count-bound budget window paces the call until
     /// `next_eligible_at`, Unix seconds (FIX 8686): unsent and uncharged, it
@@ -388,7 +389,11 @@ impl Vault {
             // call's row, kept for a first call too, holds the round for its
             // caller to poll, and the host keeps it current (FIX 3837).
             // A row that cannot keep them leaves no caller to answer them.
-            Step::AwaitingInput { intent, input } => {
+            Step::AwaitingInput {
+                intent,
+                input,
+                budget_steering,
+            } => {
                 let row = PendingConnectorCall {
                     held_reasons: Vec::new(),
                     input: Some(super::connector_call_input::PendingConnectorInput::kept(
@@ -407,6 +412,7 @@ impl Vault {
                     call_ref: resolved,
                     intent,
                     input,
+                    budget_steering,
                 };
                 host.bind_awaiting_call(&handle, resolved);
                 let resume = host.take_awaiting_resume(&handle, resolved);

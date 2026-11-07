@@ -162,6 +162,7 @@ pub enum ConnectorCallOutcome {
         call_ref: EntityId,
         intent: Option<[u8; 32]>,
         input: ConnectorAwaitingInput,
+        budget_steering: Vec<String>,
     },
 }
 

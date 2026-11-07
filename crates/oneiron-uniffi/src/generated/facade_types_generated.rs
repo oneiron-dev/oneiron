@@ -55282,6 +55282,12 @@ pub enum ConnectorCallReply {
         live_until_ms: u64,
         #[serde(rename = "reasons", default, skip_serializing_if = "Option::is_none")]
         reasons: Option<Vec<String>>,
+        #[serde(
+            rename = "budget_steering",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        budget_steering: Option<Vec<String>>,
     },
 }
 

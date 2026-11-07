@@ -33,6 +33,9 @@ pub(crate) struct OutboundEffectResult {
     pub(crate) gate_reason_codes: Vec<String>,
     pub(crate) gate_receipt_reasons: Vec<String>,
     pub(crate) budget_charge: Option<EffectorBudgetCharge>,
+    /// Newly fired by this call's committed Done, independent of whether
+    /// this execution made a new admission charge or resumed an old one.
+    pub(crate) budget_settlement_events: Vec<crate::connector_key::EffectorBudgetSettlementEvents>,
     /// OF-327 suppression is not a Gate denial or a Gate reason code.
     pub(crate) dedupe_suppressed: bool,
     pub(crate) suppression_receipt: Option<ReceiptRecord>,

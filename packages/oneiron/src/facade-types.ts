@@ -6889,7 +6889,7 @@ export type ConnectorToolResult = { source: string; foreign: boolean; content: u
 /** `oneiron::outbound_consent::connector_call_types::ConnectorQuestion` */
 export type ConnectorQuestion = { key: string; message: string; requested_schema: unknown }
 /** `oneiron::code_run::consent_wait::ConnectorCallReply` */
-export type ConnectorCallReply = { outcome: "delivered"; result?: ConnectorToolResult | null; reasons?: string[]; budget_steering?: string[] } | { outcome: "held"; call_ref: string; decision_ref?: string | null; reasons: string[]; approval_digest?: string | null } | { outcome: "refused"; decision_ref?: string | null; reasons: string[] } | { outcome: "pending_delivery"; call_ref?: string | null; reasons: string[] } | { outcome: "awaiting_input"; handle: string; call_ref: string; source: string; foreign: boolean; questions: ConnectorQuestion[]; live_until_ms: number; reasons?: string[] }
+export type ConnectorCallReply = { outcome: "delivered"; result?: ConnectorToolResult | null; reasons?: string[]; budget_steering?: string[] } | { outcome: "held"; call_ref: string; decision_ref?: string | null; reasons: string[]; approval_digest?: string | null } | { outcome: "refused"; decision_ref?: string | null; reasons: string[] } | { outcome: "pending_delivery"; call_ref?: string | null; reasons: string[] } | { outcome: "awaiting_input"; handle: string; call_ref: string; source: string; foreign: boolean; questions: ConnectorQuestion[]; live_until_ms: number; reasons?: string[]; budget_steering?: string[] }
 /** `oneiron::verbs::live_voice::LiveVoiceToolCallReply` */
 export type LiveVoiceToolCallReply = NarrowedQuestions | ConnectorCallReply
 /** `oneiron::verbs::live_voice::LiveVoiceToolReply` */

@@ -22,7 +22,7 @@ pub use self::remote_task_poll::{
 };
 pub use self::settlement::{
     BudgetReservation, ProviderRetryDirective, ProviderWait, ProviderWaitKind, RemoteTaskHandle,
-    RemoteTaskObservation, ReservationStatus,
+    RemoteTaskObservation, RemoteTaskSettlement, ReservationStatus,
 };
 pub use self::types::{
     BudgetChargeMarker, BudgetClass, FrozenOutboundCall, INTENT_LEDGER_SCHEMA_VERSION,
