@@ -630,10 +630,6 @@ pub struct ServeArgs {
     #[arg(long)]
     pub ephemeral_timeout_ms: Option<i64>,
 
-    /// Maximum Loro-native ephemeral payload bytes accepted from one frame.
-    #[arg(long)]
-    pub max_ephemeral_payload_bytes: Option<usize>,
-
     /// Maximum encoded hub snapshot bytes retained/sent to late joiners.
     #[arg(long)]
     pub max_ephemeral_snapshot_bytes: Option<usize>,
