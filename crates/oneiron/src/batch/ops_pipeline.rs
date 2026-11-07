@@ -490,6 +490,15 @@ pub(crate) fn apply_ops_session(
                     entry.occurred,
                     entry.learned_at,
                 )?;
+                // Fix list row 16256: an overlay never births a
+                // source-audience stamp, and keeps a stored one as base does.
+                crate::source_audience::admit_session_obligation_in_txn(
+                    view,
+                    wtxn,
+                    id,
+                    *entity_type,
+                    data,
+                )?;
                 // The ENTRY's stamps, not the op's: they are the witnessing
                 // write's own and are what promote replays into the right
                 // month window (ARCH-0052 D4).

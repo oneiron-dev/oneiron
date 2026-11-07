@@ -356,4 +356,6 @@ pub(crate) struct ReaderChildDoor {
     /// Where the parent run's caller's rows go: its locality, with the
     /// machine its connection proved (FIX 4937).
     caller: oneiron::settings::ReadDestination,
+    /// The native Read job also holds its own derived spawn seat.
+    nested_readers: bool,
 }

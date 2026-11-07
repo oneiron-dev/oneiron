@@ -227,6 +227,8 @@ pub struct SyncServer {
     /// the same pair seat factories read, so runs created after attach see
     /// the serving embedder without a rebind.
     pub(crate) model_slots: Arc<SharedModelSlots>,
+    /// Custody-backed candidates, beside the incumbent's immutable slot.
+    pub(crate) trained_embedders: super::trained_embedding::TrainedEmbedders,
     /// The nonsecret file/vault facts an open-vault first-run setup must match.
     pub(crate) model_setup: Option<ModelSetupConfig>,
     /// Plain/embedded worker admission and late-worker handles, installed before

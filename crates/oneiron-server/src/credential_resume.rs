@@ -14,13 +14,11 @@
 use std::sync::{Arc, Weak};
 
 use oneiron::claim::CallerLocality;
-use oneiron::memory::MemoryResult;
 use oneiron::runtime_hooks::verb::{
     VerbAskCredentialCheck, VerbAskCredentialRef, VerbAskCredentialSource,
     VerbAskCredentialWitness, VerbAskDoor, VerbAskDrainPermit, VerbAskRefusal, VerbAskResumed,
     VerbAskSavedCall,
 };
-use serde_json::Value;
 
 use crate::api::{FacadeApiError, FacadeCall, McpCallContext, facade_call_verb};
 use crate::auth::CoreAuth;
@@ -48,12 +46,13 @@ impl ServerVerbAskCredentialCheck {
     }
 
     /// Runs `call` again through its door, under its credential as it
-    /// stands now; the refusal when it does not.
+    /// stands now; the refusal when it does not. An MCP door lists the rows
+    /// its answer was derived from beside it (FIX 1435, FIX 21054).
     fn resumed(
         &self,
         call: VerbAskSavedCall,
         drain: VerbAskDrainPermit,
-    ) -> Result<MemoryResult<Value>, VerbAskRefusal> {
+    ) -> Result<VerbAskResumed, VerbAskRefusal> {
         let server = self
             .server
             .upgrade()
@@ -74,9 +73,10 @@ impl ServerVerbAskCredentialCheck {
                     &call.verb,
                     Ok(call.args),
                 ));
-                Ok(ran
-                    .map(|output| output.value)
-                    .map_err(FacadeApiError::into_memory_error))
+                Ok(VerbAskResumed::Ran(
+                    ran.map(|output| output.value)
+                        .map_err(FacadeApiError::into_memory_error),
+                ))
             }
             VerbAskDoor::Mcp {
                 connection,
@@ -136,10 +136,8 @@ impl VerbAskCredentialCheck for ServerVerbAskCredentialCheck {
     }
 
     fn resume(&self, call: VerbAskSavedCall, drain: VerbAskDrainPermit) -> VerbAskResumed {
-        match self.resumed(call, drain) {
-            Ok(ran) => VerbAskResumed::Ran(ran),
-            Err(refusal) => VerbAskResumed::Refused(refusal),
-        }
+        self.resumed(call, drain)
+            .unwrap_or_else(VerbAskResumed::Refused)
     }
 }
 
