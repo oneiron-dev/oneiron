@@ -39,6 +39,8 @@
 //! - `vault.shared.deletion`
 //! - `vault.org_admin.powers`
 //! - `vault.trusted_contacts.concern.deliver`
+//! - `vault.drafters.list_as`
+//! - `vault.drafters.revert_as`
 //! - `vault.roots.requests.cancel`
 //! - `vault.policy.outbound.decide`
 //! - `vault.policy.relay.decide`
@@ -270,6 +272,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultWeaveDigestFeedbackPut,
     VaultWeaveOwnerDigestRender,
     VaultInboxConcernsReview,
+    VaultProactivityDigest,
     VaultInboxLens,
     VaultInboxGroups,
     VaultSkillsBootstrap,
@@ -375,6 +378,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultMembersDelegate,
     VaultMembersAdd,
     VaultMembersInvitationSlip,
+    VaultMembersInvitationCode,
     VaultMembersChange,
     VaultMembersRemove,
     VaultMembersLeave,
@@ -501,6 +505,10 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultCoachTrainingOffersPilotsComplete,
     VaultCoachTrainingOffersPilotsGet,
     VaultCoachTrainingOffersSources,
+    VaultDraftersList,
+    VaultDraftersStatus,
+    VaultDraftersPolicySet,
+    VaultDraftersRevert,
     VaultResearchEvaluateSplit,
     VaultAuthorityHandoffAlarms,
     VaultAuthorityHandoffAlarmsAcknowledge,
@@ -578,6 +586,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultSettingsLearningPut,
     VaultSettingsLearningClear,
     VaultSecretsCodeRunLifts,
+    VaultSecretsCodeRunRoomLifts,
     VaultSecretsRegister,
     VaultSecretsRotate,
     VaultSecretsRewrap,
@@ -826,6 +835,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultWritesCriticalConfirmDecline,
     VaultWritesCriticalConfirmReceipt,
     VaultVectorsPut,
+    VaultIngestAgUiImport,
     VaultRunsStep,
     VaultRunsCheckpoint,
     VaultRunsProgramHoldRelease,
@@ -992,6 +1002,7 @@ impl HostDoorRow {
             "vault.weave.digest_feedback.put" => Self::VaultWeaveDigestFeedbackPut,
             "vault.weave.owner.digest.render" => Self::VaultWeaveOwnerDigestRender,
             "vault.inbox.concerns.review" => Self::VaultInboxConcernsReview,
+            "vault.proactivity.digest" => Self::VaultProactivityDigest,
             "vault.inbox.lens" => Self::VaultInboxLens,
             "vault.inbox.groups" => Self::VaultInboxGroups,
             "vault.skills.bootstrap" => Self::VaultSkillsBootstrap,
@@ -1097,6 +1108,7 @@ impl HostDoorRow {
             "vault.members.delegate" => Self::VaultMembersDelegate,
             "vault.members.add" => Self::VaultMembersAdd,
             "vault.members.invitation_slip" => Self::VaultMembersInvitationSlip,
+            "vault.members.invitation_code" => Self::VaultMembersInvitationCode,
             "vault.members.change" => Self::VaultMembersChange,
             "vault.members.remove" => Self::VaultMembersRemove,
             "vault.members.leave" => Self::VaultMembersLeave,
@@ -1237,6 +1249,10 @@ impl HostDoorRow {
             }
             "vault.coach.training_offers.pilots.get" => Self::VaultCoachTrainingOffersPilotsGet,
             "vault.coach.training_offers.sources" => Self::VaultCoachTrainingOffersSources,
+            "vault.drafters.list" => Self::VaultDraftersList,
+            "vault.drafters.status" => Self::VaultDraftersStatus,
+            "vault.drafters.policy.set" => Self::VaultDraftersPolicySet,
+            "vault.drafters.revert" => Self::VaultDraftersRevert,
             "vault.research.evaluate_split" => Self::VaultResearchEvaluateSplit,
             "vault.authority.handoff_alarms" => Self::VaultAuthorityHandoffAlarms,
             "vault.authority.handoff_alarms.acknowledge" => {
@@ -1316,6 +1332,7 @@ impl HostDoorRow {
             "vault.settings.learning.put" => Self::VaultSettingsLearningPut,
             "vault.settings.learning.clear" => Self::VaultSettingsLearningClear,
             "vault.secrets.code_run_lifts" => Self::VaultSecretsCodeRunLifts,
+            "vault.secrets.code_run_room_lifts" => Self::VaultSecretsCodeRunRoomLifts,
             "vault.secrets.register" => Self::VaultSecretsRegister,
             "vault.secrets.rotate" => Self::VaultSecretsRotate,
             "vault.secrets.rewrap" => Self::VaultSecretsRewrap,
@@ -1572,6 +1589,7 @@ impl HostDoorRow {
             "vault.writes.critical_confirm.decline" => Self::VaultWritesCriticalConfirmDecline,
             "vault.writes.critical_confirm.receipt" => Self::VaultWritesCriticalConfirmReceipt,
             "vault.vectors.put" => Self::VaultVectorsPut,
+            "vault.ingest.ag_ui.import" => Self::VaultIngestAgUiImport,
             "vault.runs.step" => Self::VaultRunsStep,
             "vault.runs.checkpoint" => Self::VaultRunsCheckpoint,
             "vault.runs.program_hold.release" => Self::VaultRunsProgramHoldRelease,

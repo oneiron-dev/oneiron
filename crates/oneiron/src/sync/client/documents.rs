@@ -7,6 +7,17 @@ impl SyncClient {
         &self,
         frame: DocumentFrame<'_>,
     ) -> Result<Vec<Vec<u8>>, TransportError> {
+        if frame.kind == document_sub_tags::PART {
+            let joined = self
+                .document_parts
+                .lock()
+                .map_err(|_| TransportError::Storage("document assembly poisoned".into()))?
+                .accept(frame)?;
+            return match joined {
+                Some(joined) => self.handle_document_frame(joined.frame()),
+                None => Ok(Vec::new()),
+            };
+        }
         match frame.kind {
             document_sub_tags::WAITED_OUT => {
                 transport::decode_document_waited_out(frame.payload)?;
@@ -109,6 +120,44 @@ impl SyncClient {
                         .documents()
                         .accept_note_receipt(frame.entity, &receipt)
                         .map_err(storage)?;
+                    return Ok(Vec::new());
+                }
+                document_sub_tags::NOTE_FORK_RECEIPT => {
+                    let receipt = serde_json::from_slice(frame.payload)
+                        .map_err(|_| TransportError::InvalidPayload("invalid NOTE fork receipt"))?;
+                    self.manager
+                        .documents()
+                        .accept_note_fork_receipt(frame.entity, &receipt)
+                        .map_err(storage)?;
+                    return Ok(Vec::new());
+                }
+                // The authority's pending forks (FIX 12789). A fork this
+                // replica cannot take stays at the authority and never
+                // costs the lane its text.
+                document_sub_tags::NOTE_FORK_STATE | document_sub_tags::NOTE_FORK_SET
+                    if federated.is_none() =>
+                {
+                    let taken = if frame.kind == document_sub_tags::NOTE_FORK_STATE {
+                        crate::note::install_authority_fork(
+                            &self.vault,
+                            frame.entity,
+                            frame.payload,
+                        )
+                    } else {
+                        crate::note::settle_authority_forks(
+                            &self.vault,
+                            frame.entity,
+                            frame.payload,
+                        )
+                    };
+                    match taken {
+                        Ok(()) => self.report_note_document(frame.entity).map_err(storage)?,
+                        Err(error) => tracing::warn!(
+                            %error,
+                            note = %frame.entity.to_hex(),
+                            "a NOTE fork from the authority was not taken"
+                        ),
+                    }
                     return Ok(Vec::new());
                 }
                 document_sub_tags::ACK => return Ok(Vec::new()),

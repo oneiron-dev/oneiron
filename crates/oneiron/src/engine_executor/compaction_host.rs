@@ -304,6 +304,20 @@ impl EngineNativeExecutor<'_> {
                             step: seq,
                             handles,
                             ids: ids.into_iter().collect(),
+                            said: Vec::new(),
+                        });
+                    }
+                    FoldKind::Program => {
+                        let path = script_output_path(seq);
+                        if !record.outputs.iter().any(|output| output.path == path) {
+                            continue;
+                        }
+                        let program = load_script_context(&self.storage, record, &path, None)?;
+                        outputs.push(FoldedOutput {
+                            step: seq,
+                            handles: Vec::new(),
+                            ids: super::compaction::text_ids(&program),
+                            said: step_speech(record, seq),
                         });
                     }
                 }
@@ -381,29 +395,15 @@ impl EngineNativeExecutor<'_> {
         for read in reads {
             handles.push(super::compaction::result_read_affordance(&read)?);
         }
-        let mut pins = super::compaction::window_pins(&window);
+        // The span's failure lines and the agent's own profile pins it holds
+        // are mandatory alike (FIX 9837): a span whose pins do not fit one
+        // summary, or the backend's input, is refused, never kept without them.
+        let pins = super::compaction::window_pins(&window, &driver.memory_profile().verbatim_pins);
         if count_context_pack_tokens(&pins.join("\n")) as u64 > budget {
             return Ok(Err(
-                "its failure lines do not fit one summary; fold a shorter span".to_owned(),
+                "its pinned lines do not fit one summary; fold a shorter span".to_owned(),
             ));
         }
-        super::compaction::add_profile_pins(
-            &mut pins,
-            &window,
-            &driver.memory_profile().verbatim_pins,
-            |pins| {
-                count_context_pack_tokens(&pins.join("\n")) as u64 <= budget
-                    && room.is_none_or(|room| {
-                        crate::compaction::compaction_input_tokens(
-                            mark.from,
-                            &window,
-                            pins,
-                            note.as_deref(),
-                            budget,
-                        ) <= room
-                    })
-            },
-        );
         if let Some(room) = room
             && crate::compaction::compaction_input_tokens(
                 mark.from,
@@ -646,6 +646,19 @@ impl EngineNativeExecutor<'_> {
                     );
                     for output in &fold.outputs {
                         match kind {
+                            FoldKind::Program => {
+                                let turn = CodeRunHistoryTurn {
+                                    code: load_script_context(
+                                        &self.storage,
+                                        record,
+                                        &script_output_path(output.step),
+                                        None,
+                                    )?,
+                                    console: String::new(),
+                                };
+                                unfolded.push_str(&format!("\nt{}:\n", output.step));
+                                unfolded.push_str(&turn.assistant_exec());
+                            }
                             FoldKind::ReplOutput => {
                                 let turn = CodeRunHistoryTurn {
                                     code: String::new(),
@@ -722,6 +735,32 @@ impl EngineNativeExecutor<'_> {
             compaction: self.compaction_report(),
         }
     }
+}
+
+/// Each speech call step `seq` made, in order, by its bridge call: read from
+/// the step's own bridge calls, as its checkpoint records them. No text is
+/// kept; the stub reads it, masked, when it renders. A step whose checkpoint
+/// keeps no range, or a call that did not emit, gives none.
+fn step_speech(record: &CodeRunReplayRecord, seq: u64) -> Vec<crate::compaction::FoldedSpeech> {
+    let Some(range) = record
+        .step_checkpoints
+        .iter()
+        .find(|checkpoint| checkpoint.seq == seq)
+        .and_then(crate::code_run::CodeRunStepCheckpoint::bridge_range)
+    else {
+        return Vec::new();
+    };
+    record
+        .bridge_calls
+        .get(range)
+        .unwrap_or_default()
+        .iter()
+        .filter(|call| call.emitted_speech() && super::compaction::speech_call_text(call).is_some())
+        .map(|call| crate::compaction::FoldedSpeech {
+            verb: call.effect.as_str().to_owned(),
+            call: call.seq,
+        })
+        .collect()
 }
 
 /// What a fold's summary is derived from: every record its request was

@@ -71,7 +71,7 @@ pub fn document_frame_withheld_for(vault: &Vault, peer: PeerMachine, frame: &[u8
     if frame.first() != Some(&crate::sync::transport::TAG_DOCUMENT) {
         return false;
     }
-    let Ok(document) = crate::sync::transport::decode_document(&frame[1..]) else {
+    let Ok(document) = crate::sync::transport::decode_unsplit_document(&frame[1..]) else {
         return true;
     };
     if matches!(
@@ -97,7 +97,23 @@ pub fn document_frame_withheld_for(vault: &Vault, peer: PeerMachine, frame: &[u8
         // A copy stream's frame is judged as the marked source it stands
         // for: that source's worlds and sources (FIX 10872).
         let id = super::copy::judged_id_in_txn(vault, &txn, document.entity)?;
-        text_withheld_for(vault, &txn, id, Withhold::Peer(peer))
+        if text_withheld_for(vault, &txn, id, Withhold::Peer(peer))? {
+            return Ok(true);
+        }
+        // A NOTE fork's state carries the fork's own text: its citations are
+        // judged again here against the worlds kept off this machine now,
+        // however long the frame waited in the queue (FIX 12789).
+        if document.kind == document_sub_tags::NOTE_FORK_STATE {
+            let withheld = Withhold::Peer(peer).worlds_in(vault, &txn)?;
+            return crate::note::fork_state_cites_withheld(
+                vault,
+                &txn,
+                document.entity,
+                document.payload,
+                &withheld,
+            );
+        }
+        Ok(false)
     })()
     .unwrap_or(true)
 }

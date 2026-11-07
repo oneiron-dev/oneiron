@@ -22,6 +22,8 @@ mod schema_guard;
 mod schema_runtime;
 pub use schema::validate_json_schema;
 mod peer_wait;
+// FIX 4816: a durable step's recovery from its saved work.
+mod recovery;
 mod response_bodies;
 // FIX 6225: a step claim holds its oversize response's exact version.
 mod response_pins;
@@ -29,6 +31,8 @@ mod response_pins;
 mod retry;
 mod settled;
 mod step_claim;
+// FIX 4816: the memo index's keys, admission, lookup and deindex.
+mod step_index;
 mod step_only;
 mod step_state;
 // FIX 9929: a public submission's kept copies under body custody.
@@ -41,6 +45,8 @@ mod types;
 // The moved bodies still spell these parent (`llm`) names as `super::X`;
 // one level deeper `super` is this module, so it re-exports them unchanged.
 use super::{BudgetLease, BudgetSettlement, LlmUsage};
+
+pub use self::media_step::{MediaStepOutcome, call_media_as_step};
 
 pub(crate) use self::execute::ExecutedModelWitness;
 pub use self::execute::{call_as_step, call_as_step_checked, call_as_step_with_fallbacks};

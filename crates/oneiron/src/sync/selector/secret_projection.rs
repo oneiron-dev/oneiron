@@ -70,8 +70,8 @@ pub(crate) use documents::settlement::{
     review_repo_copy_edit_in_txn,
 };
 pub(crate) use documents::{
-    IndexCopies, document_copy_in_txn, import_document_copy, stored_item_in_txn,
-    with_copy_generation_in_txn,
+    IndexCopies, document_copy_in_txn, document_text_would_project_in_txn, import_document_copy,
+    stored_item_in_txn, with_copy_generation_in_txn,
 };
 pub use documents::{
     RepoCopyAliases, repo_document_copy_id, repo_document_copy_vector, repo_document_lineage_edit,
@@ -80,7 +80,7 @@ pub use documents::{
 pub(crate) use history::ProjectedHistory;
 pub use release::{
     RepoSyncAdmission, RepoSyncLandings, admit_repo_sync_frame, prepare_repo_sync_frame,
-    prepare_repo_sync_frame_for_home, repo_copy_generation,
+    prepare_repo_sync_frame_for_home, repo_copy_generation, repo_sync_frame_as_admitted,
 };
 pub(crate) use release::{released_item_blob, released_update};
 pub(crate) use rows::InboundRow;

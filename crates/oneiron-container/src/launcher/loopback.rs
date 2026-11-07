@@ -1,13 +1,14 @@
 //! The launcher's half of the guest's virtual loopback (FIX 6680). It
 //! copies each bind's address and each accept's output for the supervisor,
 //! which acts on its copy: no bind, listen or accept on a brokered socket
-//! continues to the kernel, so no kernel INET listener ever exists.
+//! continues to the kernel, so no kernel INET listener ever exists. A
+//! listen takes nothing out of the guest: the supervisor kept a copy of
+//! the socket's guest end when it made the socket (FIX 6788).
 
 use super::{Bridge, address, put_address};
 use crate::{linux, wire};
 use std::io;
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
-use std::os::unix::fs::MetadataExt;
+use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 
 /// The calls this brokers on a brokered socket.
 pub(super) const CALLS: [i64; 4] = [
@@ -40,13 +41,8 @@ pub(super) fn dispatch(
     } else if datagram {
         return linux::respond(fd, n.id, 0, 0, linux::CONTINUE);
     } else if nr == libc::SYS_listen {
-        let guest = guest_end(n.pid, a[0], socket)?;
         let backlog = a[1] as i32;
-        bridge.carry(
-            n.id,
-            wire::Operation::Listen { socket, backlog },
-            Some(guest),
-        )?
+        bridge.call(n.id, wire::Operation::Listen { socket, backlog })?
     } else {
         return accept(fd, bridge, n, socket);
     };
@@ -96,35 +92,4 @@ fn accept(fd: RawFd, bridge: &Bridge, n: linux::Notification, socket: u64) -> io
     } else {
         linux::respond(fd, n.id, 0, finished.errno, 0)
     }
-}
-
-/// The listener's guest end, duplicated out of the calling task's process
-/// (the access process_vm_readv already has): the supervisor reads the
-/// listener's readiness tokens back through it. It must be `socket`.
-fn guest_end(pid: u32, fd: u64, socket: u64) -> io::Result<OwnedFd> {
-    let status = std::fs::read_to_string(format!("/proc/{pid}/status"))?;
-    let process = status
-        .lines()
-        .find_map(|line| line.strip_prefix("Tgid:"))
-        .and_then(|id| id.trim().parse::<i32>().ok())
-        .ok_or_else(|| io::Error::from_raw_os_error(libc::ESRCH))?;
-    // SAFETY: pidfd_open takes two integers and passes no pointer.
-    let pidfd = unsafe { libc::syscall(libc::SYS_pidfd_open, process, 0) };
-    if pidfd < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: a successful pidfd_open returned a new descriptor, owned once.
-    let pidfd = unsafe { OwnedFd::from_raw_fd(pidfd as RawFd) };
-    // SAFETY: pidfd_getfd takes three integers and passes no pointer.
-    let copy = unsafe { libc::syscall(libc::SYS_pidfd_getfd, pidfd.as_raw_fd(), fd as RawFd, 0) };
-    if copy < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: a successful pidfd_getfd returned a new close-on-exec
-    // descriptor, owned once.
-    let copy = std::fs::File::from(unsafe { OwnedFd::from_raw_fd(copy as RawFd) });
-    if copy.metadata()?.ino() != socket {
-        return Err(io::Error::from_raw_os_error(libc::EBADF));
-    }
-    Ok(copy.into())
 }

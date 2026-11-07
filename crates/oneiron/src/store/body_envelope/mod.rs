@@ -33,6 +33,7 @@
 
 mod custody;
 mod frames;
+mod live_spill;
 mod opaque_response;
 mod plan;
 mod reader;
@@ -51,6 +52,7 @@ pub(crate) use self::custody::{
     BodyMint, body_key_in, body_mint_in, custody_unavailable, instance_id, pin_body_custody_in_txn,
 };
 pub(crate) use self::frames::{FileKey, SealedStream, SealingStream};
+pub(crate) use self::live_spill::{FrozenSpill, LiveSpillRetention, LiveSpillSources};
 pub(crate) use self::opaque_response::{
     ResponseOwners, ResponseRead, ResponseScan, is_opaque_erased, opaque_retired_at,
     stamp_opaque_erased,
@@ -69,6 +71,8 @@ pub(crate) use self::response::{
     response_binding_in_txn, response_carrier, response_owed_to_all_in_txn,
     settle_shared_response_in_txn,
 };
+#[cfg(feature = "sync")]
+pub(crate) use self::retention::owed_erase_side_keys_in_txn;
 pub(crate) use self::retention::{
     INLINE_ASSETS, erase_bodies_for_owner_in_txn, erase_bodies_in_txn,
     governed_body_instances_in_txn, note_settled_inline_in_txn, release_body_in_txn,
@@ -76,8 +80,8 @@ pub(crate) use self::retention::{
 };
 pub(crate) use self::rows::{
     BODY_INSTANCES, BODY_KEYS, BodyKeyRow, bind_body_key_in_txn, body_key_row_in_txn,
-    remember_body_instances_in_txn, remembered_body_instance_rows_in_txn,
-    remembered_body_instances_in_txn, retire_body_key_in_txn,
+    journal_restored_body_key_in_txn, remember_body_instances_in_txn,
+    remembered_body_instance_rows_in_txn, remembered_body_instances_in_txn, retire_body_key_in_txn,
 };
 pub(crate) use self::spill::{
     BodySpill, SpilledBody, StagedBodyKey, keep_promoted_body_key_in_txn,

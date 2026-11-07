@@ -61,6 +61,7 @@ mod ruling_integrity;
 mod rulings;
 pub(crate) use ruling_integrity::{
     guard_ruling_overwrite, reject_ruling_delete, validate_ruling_claim,
+    witness_grant_rulings_in_txn,
 };
 mod own_device;
 mod pending_act;
@@ -76,6 +77,8 @@ pub use pending_act::{
 };
 pub(crate) use rulings::RULING_PREDICATE;
 pub use rulings::{AdminRuling, AdminRulingReceipt, fold_admin_rulings};
+#[cfg(all(unix, feature = "sync"))]
+pub(crate) use shared_act::removal_archive_body_keys_in_txn;
 pub use shared_act::{
     DELETED_VAULT_BACKUP_RETENTION_SECS, DeleteVaultPlan, EraseAskKind, EraseAskStatus,
     NOTIFICATION_PRODUCER_ERASE_ASK, OwnerRecoveryAuthorization, REMOVAL_EXPORT_RETAIN_SECS,

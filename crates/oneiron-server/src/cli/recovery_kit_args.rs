@@ -25,6 +25,12 @@ pub enum RecoveryKitCommand {
     /// are written to `--out` as `issue` writes them. No key is minted or
     /// rotated, and the world kit and its escrow wrap stay as they are.
     IssueVaultKey(Box<RecoveryKitIssueArgs>),
+    /// Before loss: enroll the distinct authority key of an already-issued
+    /// recovery-root kit. Does not activate the world kit or publish pieces.
+    EnrollAuthority(Box<RecoveryKitAuthorityArgs>),
+    /// After loss: recover owner authority with a previously enrolled recovery
+    /// kit and an explicitly supplied successor device. Does not restore vault data.
+    RecoverAuthority(Box<RecoveryKitRecoverAuthorityArgs>),
     /// Confirm a kit by re-entering its saved pieces: its root goes live,
     /// and the vault key gets a `world-kit` escrow wrap to it.
     Confirm(Box<RecoveryKitConfirmArgs>),
@@ -196,6 +202,41 @@ pub struct KitPieceArgs {
     /// is read from stdin.
     #[arg(long, value_name = "FILE")]
     pub secret_file: Option<PathBuf>,
+}
+
+/// Enroll a kit's authority key on a stopped vault before the owner's key is lost.
+#[derive(Args, Clone, Debug)]
+pub struct RecoveryKitAuthorityArgs {
+    #[command(flatten)]
+    pub kit: KitPieceArgs,
+
+    /// The holding machine's 32-hex id; this install when omitted.
+    #[arg(long, value_name = "MACHINE")]
+    pub machine: Option<String>,
+
+    #[command(flatten)]
+    pub unlock: VaultUnlockArgs,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+/// Recover authority on a stopped vault; the successor is a target, not a credential.
+#[derive(Args, Clone, Debug)]
+pub struct RecoveryKitRecoverAuthorityArgs {
+    #[command(flatten)]
+    pub kit: KitPieceArgs,
+
+    /// JSON describing the successor's complete native DeviceAuthority envelope.
+    /// Supply its real public key, roles, tier, attestation and transport binding.
+    #[arg(long, value_name = "FILE")]
+    pub new_device: PathBuf,
+
+    #[command(flatten)]
+    pub unlock: VaultUnlockArgs,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
 }
 
 #[derive(Args, Clone, Debug)]

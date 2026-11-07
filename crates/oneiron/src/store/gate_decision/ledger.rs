@@ -203,7 +203,7 @@ impl Store {
             // (checkpoint_custody).
             self.core.key_custody.pin_in_txn(self, wtxn)?;
         }
-        append_gate_decision_row_in_txn(self, wtxn, record, false, at)
+        append_gate_decision_row_in_txn(self, wtxn, record, RowSeal::Custody, at)
     }
 
     /// [`Self::append_gate_decision_in_txn`] for a policy verdict's row (FIX
@@ -223,7 +223,7 @@ impl Store {
         // The first sealed append pins the binding to live exterior custody,
         // as a claim-bound one does.
         self.core.key_custody.pin_in_txn(self, wtxn)?;
-        append_gate_decision_row_in_txn(self, wtxn, record, true, at)
+        append_gate_decision_row_in_txn(self, wtxn, record, RowSeal::Policy, at)
     }
 
     /// Appends a collision-checked logical UUIDv7 successor. A fixed clock can
@@ -328,6 +328,7 @@ impl Store {
             if orcb::is_policy_partition(claim_id) {
                 continue;
             }
+            crate::claim::scrub_saved_weave_loop_reasons_in_txn(self, wtxn, *decision_id)?;
             let id = crate::entity_id::EntityId::from_bytes(*claim_id)
                 .map_err(|_| Error::CorruptedIndex("gate decision claim id"))?;
             if self
@@ -670,16 +671,13 @@ impl Store {
 /// survivors and keep crossing to base through
 /// [`crate::off_record::FloorWrites`], never through here.
 ///
-/// The key/encode functions and both index side writes are shared verbatim, so
-/// a session decision is byte-identical to the base row it would have been —
-/// which is what makes promote a replay rather than a re-derivation.
-/// `policy_sealed` seals a claim-free row under the policy partition (FIX
-/// 7806); any other claim-free row is stored plain.
+/// The key/encode functions and every index side write are shared verbatim;
+/// `seal` says how the row's value is stored.
 fn append_gate_decision_row_in_txn(
     store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     record: &GateDecisionRecord,
-    policy_sealed: bool,
+    seal: RowSeal,
     at: u64,
 ) -> Result<()> {
     // Decode accepts the redacted skeleton (ONE-1637); APPEND never mints
@@ -694,12 +692,12 @@ fn append_gate_decision_row_in_txn(
     let (normalized, owed) = actor_append::prepare_record(store, wtxn, record)?;
     let record = normalized.as_ref();
     vet_gate_decision_record(record)?;
-    let value = if let Some(claim) = record.claim_id {
-        custody::sealed_claim_row_in_txn(store, wtxn, record, &claim)?
-    } else if policy_sealed {
-        custody::sealed_policy_row_in_txn(store, wtxn, record)?
-    } else {
-        encode_gate_decision(record)?
+    let value = match (seal, record.claim_id) {
+        (RowSeal::Room, _) | (RowSeal::Custody, None) => encode_gate_decision(record)?,
+        (RowSeal::Custody | RowSeal::Policy, Some(claim)) => {
+            custody::sealed_claim_row_in_txn(store, wtxn, record, &claim)?
+        }
+        (RowSeal::Policy, None) => custody::sealed_policy_row_in_txn(store, wtxn, record)?,
     };
     LEDGER.put(store, wtxn, &record.decision_id, &value)?;
     super::retention_scope::append_context_in_txn(store, wtxn, record)?;
@@ -729,6 +727,62 @@ fn append_gate_decision_row_in_txn(
         held_scrubs::owe_gate_actor_scrub_in_txn(store, wtxn, &actor, record.decision_id, at)?;
     }
     Ok(())
+}
+
+/// How a ledger row's value is stored.
+#[derive(Clone, Copy)]
+enum RowSeal {
+    /// A claim-bound row sealed in its claim's partition; a claim-free row
+    /// plain.
+    Custody,
+    /// [`Self::Custody`], but a claim-free row sealed under the policy
+    /// partition (FIX 7806).
+    Policy,
+    /// Plain, never sealed: a row an off-record room keeps in its RAM
+    /// overlay, which evaporates with the room, so it mints, binds and pins
+    /// no key (FIX 9967).
+    Room,
+}
+
+/// The write-path decision an off-record room's claim was judged by, and the
+/// retention scope that claim names (FIX 9967), for the room to stage beside
+/// the claim.
+#[derive(Debug, Clone)]
+pub(crate) struct RoomGateDecision {
+    pub(crate) record: GateDecisionRecord,
+    pub(crate) context: super::GateRetentionContext,
+}
+
+/// Stages `decision` through `room`, the room's own session view, in the
+/// transaction and segment that stage its claim: the same row, indexes and
+/// retention scope a base write keeps, under the id it was judged with, so
+/// it commits or aborts with the claim and evaporates with the room. Base
+/// gets no row.
+///
+/// # Errors
+///
+/// A record that names no claim or that the ledger refuses, an id the room
+/// or base already holds, or the room's own refusal (its budget, a closed
+/// segment).
+pub(crate) fn stage_room_gate_decision_in_txn(
+    room: &crate::store::SessionStoreView<'_>,
+    wtxn: &mut RwTxn<'_>,
+    decision: &RoomGateDecision,
+) -> Result<()> {
+    let record = &decision.record;
+    let Some(claim) = record.claim_id else {
+        return Err(Error::InvariantViolation(
+            "a room's gate decision names no claim",
+        ));
+    };
+    append_gate_decision_row_in_txn(room, wtxn, record, RowSeal::Room, record.created_at)?;
+    super::retention_scope::stamp_room_claim_context_in_txn(
+        room,
+        wtxn,
+        record.decision_id,
+        &claim,
+        decision.context,
+    )
 }
 
 pub(in crate::store) fn encode_gate_decision(record: &GateDecisionRecord) -> Result<Vec<u8>> {

@@ -75,6 +75,11 @@ pub(super) fn run_bound(
     let continued = continued_config(vault, &status.attempt, &template)?;
     let continues = continued.is_some();
     let mut config = continued.unwrap_or_else(|| template.clone());
+    // FIX 15011: a run its dispatch started from an event opens with the
+    // wake opener; a continued run goes on from its source's fork.
+    if !continues {
+        config.wake = claimed.wake;
+    }
     // CUA E4 (FIX 7603): a try whose TASK binds a library program runs it
     // strict on this door before its seat is born. One that met its TASK's
     // goal settles the try with no model call; one that handed off names its
@@ -112,17 +117,26 @@ pub(super) fn run_bound(
     let type_ref = &status.input.type_ref;
     let learning = status
         .input
-        .project_ref
-        .zip(status.input.target.agent_definition_ref().ok())
-        .map(|(project, agent)| SeatLearningContext {
-            project,
+        .target
+        .agent_definition_ref()
+        .ok()
+        .map(|agent| SeatLearningContext {
+            project: status.input.project_ref,
             agent,
             type_ref: type_ref.clone(),
+            call_model_pin: status
+                .input
+                .direct_spawn
+                .as_ref()
+                .and_then(|receipt| receipt.ask.model.as_ref())
+                .filter(|model| model.is_pin())
+                .map(|model| model.value().clone()),
         });
     let model_seat = if continues {
         continued_seat(
             vault,
             provider,
+            actor.entity_ref(),
             &config,
             type_ref,
             definition.models.clone(),
@@ -136,6 +150,7 @@ pub(super) fn run_bound(
         task_engine_run_seat(
             vault,
             provider,
+            actor.entity_ref(),
             &config,
             format!("agent-run:{}", run_id.to_hex()),
             type_ref,
@@ -324,6 +339,9 @@ pub(super) fn run_bound(
         // The first step's capsule takes the rung that answered it, on the
         // thread the entry ran its calls on.
         finalize_step_captures(vault);
+        if door.take_media_trap() {
+            return Ok(BoundRun::Trapped);
+        }
         let outcome = outcome?;
         // Every input producer reports at each stop. Any unknown constituent
         // keeps the whole set unknown, and the run goes on (FIX 7020).
@@ -437,10 +455,13 @@ fn continued_config(
 /// own run's receipt, bound to the model, locality and effort its source ran
 /// on, so the fork's config marker holds on every entry. That model must
 /// still be on the agent's list (`listed`, FIX 4472). It is stamped with
-/// the successor's own dispatch stamp (`type_ref`, DOOR-111 S5).
+/// the successor's own dispatch stamp (`type_ref`, DOOR-111 S5), and picked
+/// in the dispatched `agent`'s voice (FIX 4543).
+#[allow(clippy::too_many_arguments)]
 fn continued_seat(
     vault: &Vault,
     provider: &dyn McpCodeModeProvider,
+    agent: EntityId,
     config: &EngineExecutorConfig,
     type_ref: &TaskTypeRef,
     listed: Vec<AgentModel>,
@@ -452,6 +473,7 @@ fn continued_seat(
     task_run_seat(
         vault,
         provider,
+        agent,
         config.run_id,
         type_ref,
         worlds,
@@ -602,6 +624,12 @@ fn enter_run(
     door.bind_attempt(Some(oneiron_contracts::entity_id::bytes_to_hex_lower(
         status.attempt.id.as_bytes(),
     )));
+    door.bind_media_step(crate::server::RunMediaStep::new(
+        vault,
+        &status.attempt,
+        actor,
+        config.run_id,
+    ));
     let entered = enter_engine_native_run(
         vault,
         provider,

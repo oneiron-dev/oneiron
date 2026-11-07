@@ -22,6 +22,8 @@ pub(crate) use secret_lift::{
 mod session_checkpoint;
 pub(crate) use session_checkpoint::SessionCheckpointBody;
 mod session_write;
+// FIX 5426: the caller's view a room write's receipt keeps.
+pub(crate) use self::session_write::{KeptCallerView, kept_caller_view};
 mod spawn_erase;
 mod speech_identity;
 mod type_diagnostics;
@@ -30,8 +32,8 @@ mod wait_holders;
 
 pub(crate) use self::compaction::{CodeRunCompactionCoverage, ExecutorOutputSpan};
 pub(crate) use self::continuation::{
-    StoredRunContinuation, put_run_continuation_row_in_txn, run_continuation_in_txn,
-    seed_continuation_run,
+    StoredRunContinuation, continuation_seed_body_in_txn, publish_continuation_output_in_txn,
+    put_run_continuation_row_in_txn, run_continuation_in_txn, seed_continuation_run,
 };
 pub use self::read_worlds::ReadWorldUnknown;
 pub(crate) use self::read_worlds::{
@@ -49,32 +51,43 @@ pub use self::records::{CodeRunModelHealCount, CodeRunSecretLiftProposal};
 pub(crate) use self::records::{
     StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn, code_run_body_row_key,
     code_run_inline_body_of_row, lift_code_run_file_hold_in_txn,
+    retire_unlanded_inline_body_keys_in_txn,
 };
 pub(crate) use self::replay_bodies::{
     CODE_RUN_OUTPUT_PREVIEW_ERASED, RESPONSE_ERASED, replay_carriage, replay_owners,
     response_erased_error,
 };
+pub(crate) use self::replay_capsule::retire_replay_bodies_in_rows;
 pub use self::replay_capsule::step_replay_capsules;
 pub(crate) use self::replay_capsule::undecodable_step_capsule_in_txn;
 pub(crate) use self::replay_capsule::{
-    ForkProvenance, ForkRows, actor_gone_in_txn, capsule_request, capsule_start_body,
-    erase_capsule_actor_in_txn, erase_contribution_forks_in_txn, finalize_capsule, fork_response,
+    ForkProvenance, ForkRows, actor_gone_in_txn, bind_capsule_answer, capsule_context_body,
+    capsule_request, capsule_route_prompt, capsule_start_body,
+    contribution_pair_erase_candidates_in_txn, erase_capsule_actor_in_txn,
+    erase_contribution_forks_in_txn, finalize_capsule, fork_execution_outputs, fork_response,
     fork_rows, fork_rows_in_txn, put_fork, put_staged_capsule, put_unavailable,
-    step_replay_capsules_in_txn, store_fork_response,
+    refresh_staged_request, route_prompt_at, step_replay_capsules_in_txn, store_fork_execution,
+    store_fork_response,
+};
+pub(crate) use self::replay_capsule::{
+    bind_owner_pair_ask_in_txn, close_owner_pair_in_txn, judge_owner_pair_in_txn,
+    owner_pair_in_txn, put_owner_pair,
 };
 pub(crate) use self::replay_capsule::{
     drop_step_start_in_rows, kept_step_start_in_txn, kept_step_starts_in_txn,
     release_step_start_in_txn, republish_step_start_in_rows, republish_step_start_in_txn,
     settle_start_bodies_in_rows, step_capsule_row, step_start_body_row, step_start_owners_in_txn,
 };
-pub(crate) use self::response_erase::{actor_gone, retire_actor_responses_in_txn};
+pub(crate) use self::response_erase::{
+    actor_gone, retire_actor_responses_in_txn, retire_sourced_code_outputs_in_txn,
+};
 pub(crate) use self::response_owners::stamp_response_owner_in_txn;
 pub(crate) use self::routing::{
     ExecutorStorage, FeedbackRoute, SessionInstanceBind, require_facet_placement_in, unplaceable,
 };
 pub use self::secret_lift::{
-    CodeRunSecretLiftDismiss, CodeRunSecretLiftDismissal, CodeRunSecretLiftProposalView,
-    CodeRunSecretLiftRequest, CodeRunSecretLiftStatus,
+    CodeRunRoomSecretLiftRequest, CodeRunSecretLiftDismiss, CodeRunSecretLiftDismissal,
+    CodeRunSecretLiftProposalView, CodeRunSecretLiftRequest, CodeRunSecretLiftStatus,
 };
 pub(crate) use self::spawn_erase::erase_spawn_targets_in_txn;
 #[cfg(test)]

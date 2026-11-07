@@ -41,6 +41,7 @@ mod container_dirs;
 #[cfg(test)]
 mod ctl_shed_tests;
 mod host;
+mod host_legal;
 mod isolation;
 pub mod key_sync;
 mod ledger;
@@ -87,8 +88,8 @@ mod vm_schedule;
 #[cfg(target_os = "linux")]
 pub use self::vm_host::{
     SleepOutcome, VaultVm, VaultVmConfig, VaultVmInspect, VaultVmRun, VmAnchorHostIo, VmExitWatch,
-    VmRestoreFds, VmRestoreHostIo, VmSnapshotCustody, VmSnapshotCustodyUnavailable,
-    inspect_vault_vm, run_vault_vm,
+    VmImageMeasurement, VmImageReleaseObservation, VmRestoreFds, VmRestoreHostIo,
+    VmSnapshotCustody, VmSnapshotCustodyUnavailable, inspect_vault_vm, run_vault_vm,
 };
 #[cfg(target_os = "linux")]
 pub use self::vm_init::run_vm_init;

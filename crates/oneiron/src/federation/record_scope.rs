@@ -23,6 +23,8 @@ pub(crate) mod asset_text;
 mod delete;
 mod export;
 pub(crate) mod note_world;
+#[cfg(feature = "sync")]
+pub(crate) mod origin_positions;
 mod read;
 // FIX 7608 slice 4: the masked copy a scoped export carries of a marked repo row.
 mod secret_projection;
@@ -31,9 +33,10 @@ mod stamping;
 mod tests;
 
 pub(crate) use self::stamping::{
-    has_stored_position, restrict_stamp_in_txn, room_rows_placed, settle_epoch_birth,
+    has_stored_position, restrict_stamp_in_txn, room_row_placed, settle_epoch_birth,
     settle_source_birth, stage_session_position, stamp_blob_project, stamp_import_audience_birth,
-    stamp_leader_project, stamp_put, stamp_task_birth, stamp_task_fact, unstage_session_position,
+    stamp_leader_project, stamp_put, stamp_queue_check_exhaust_birth, stamp_task_birth,
+    stamp_task_fact, unstage_session_position,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -280,8 +283,9 @@ fn derived_position(
 
 /// A TURN/MESSAGE body never proposes an audience: only
 /// `stamp_leader_project` settles a non-default one, at the record's birth.
-/// A BLOB_ARTIFACT's likewise: only `stamp_blob_project` settles one, in
-/// the transaction that binds the blob to its project.
+/// A BLOB_ARTIFACT's likewise: `stamp_blob_project` settles a project
+/// audience, while `stamp_queue_check_exhaust_birth` settles the placement
+/// captured from a completed check's input. Later puts keep that position.
 /// A SUMMARY body never proposes a world or facet: only `settle_epoch_birth`
 /// settles them. An ASSET body never proposes a sensitivity either: a raise
 /// (a secret-bearing ASSET marked Restricted, OF-560) leaves its stamp at a
@@ -296,11 +300,18 @@ fn settled_at_birth(kind: u8, prior: &Scope, proposed: &Scope) -> bool {
                     ..prior.clone()
                 } == *proposed
         }
-        crate::registry::ENTITY_TYPE_TURN
-        | crate::registry::ENTITY_TYPE_MESSAGE
-        | crate::registry::ENTITY_TYPE_BLOB_ARTIFACT => {
+        crate::registry::ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_MESSAGE => {
             Scope {
                 audience: proposed.audience.clone(),
+                ..prior.clone()
+            } == *proposed
+        }
+        crate::registry::ENTITY_TYPE_BLOB_ARTIFACT => {
+            Scope {
+                worlds: proposed.worlds.clone(),
+                facets: proposed.facets.clone(),
+                audience: proposed.audience.clone(),
+                sensitivity: proposed.sensitivity,
                 ..prior.clone()
             } == *proposed
         }
@@ -345,8 +356,24 @@ fn stored_scope(
     let Some(stamp) = SCOPE_RECORD.get(store, txn, &id)? else {
         return Ok(None);
     };
-    if stamp.version != 2 || stamp.kind != kind {
+    if !stamp_bound_on(store, txn, id, kind, &stamp)? {
         return Ok(None);
+    }
+    let scope = note_world::note_position(store, txn, id, kind, stamp.scope);
+    Ok(Some(scope))
+}
+/// Whether `stamp` is a version-2 birth stamp of `kind` whose birth facet
+/// `id` still holds on `store`'s content. The stamp may come from another
+/// store: a room read binds base's stamp on the room's edges (FIX 5161).
+fn stamp_bound_on(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    stamp: &Stamp,
+) -> Result<bool> {
+    if stamp.version != 2 || stamp.kind != kind {
+        return Ok(false);
     }
     let facet = if kind == crate::registry::ENTITY_TYPE_CLAIM {
         // CLAIM carries its immutable facet in its body; `stamp_put` and the
@@ -382,11 +409,7 @@ fn stored_scope(
     } else {
         Some(crate::claim::substrate_facet_id(id)?)
     };
-    if facet.is_none_or(|facet| stamp.birth_facet != *facet.as_bytes()) {
-        return Ok(None);
-    }
-    let scope = note_world::note_position(store, txn, id, kind, stamp.scope);
-    Ok(Some(scope))
+    Ok(facet.is_some_and(|facet| stamp.birth_facet == *facet.as_bytes()))
 }
 /// The world the stored row `id` of `kind`, with body `data`, sits in: what
 /// every read that checks a world asks. A CLAIM, key pad or key wrap names its own; a
@@ -395,8 +418,9 @@ fn stored_scope(
 /// where `settle_epoch_birth` settled it, whatever its body reads now; an
 /// epoch SUMMARY, in whatever form it is stored (`stored_epoch_in`), sits
 /// where its birth stamp says; a NOTE where its live `InWorld` edges place
-/// it (`note_world`). An ASSET or ASSET_TEXT uses its kind- and birth-facet-bound
-/// singleton stamp, retaining base reality when no such single world is proved.
+/// it (`note_world`). An ASSET, ASSET_TEXT or BLOB_ARTIFACT uses its kind-
+/// and birth-facet-bound singleton stamp, retaining base reality when no such
+/// single world is proved.
 /// Every other record, and any other SUMMARY, is base reality (`Some(None)`).
 /// `None` where the row cannot prove its world (an erased CLAIM, a TASK or epoch
 /// SUMMARY whose stamp is gone or was never settled, a NOTE in no single world),
@@ -432,7 +456,8 @@ pub(crate) fn record_world_in(
         kind,
         crate::registry::ENTITY_TYPE_ASSET | crate::registry::ENTITY_TYPE_ASSET_TEXT
     );
-    if kind != crate::registry::ENTITY_TYPE_TASK && !summary && !asset {
+    let blob = kind == crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
+    if kind != crate::registry::ENTITY_TYPE_TASK && !summary && !asset && !blob {
         return Ok(Some(None));
     }
     let worlds = stored_scope(store, txn, id, kind)?.map(|scope| scope.worlds);
@@ -442,7 +467,7 @@ pub(crate) fn record_world_in(
             .map(|world| Some(world.0).filter(|world| *world != crate::claim::base_world_id())),
         _ => None,
     };
-    if asset {
+    if asset || blob {
         return Ok(Some(stamped.flatten()));
     }
     // An epoch summary is one whatever form its body takes, and a pointer no
@@ -543,46 +568,7 @@ pub(crate) fn validate_edit_birth_scope(
     let stamp = SCOPE_RECORD
         .get(store, txn, &id)?
         .ok_or(Error::InvalidClaimBody("unstamped promoted edit"))?;
-    if stamp.version != 2 || stamp.kind != kind || stored_scope(store, txn, id, kind)?.is_none() {
-        return Err(Error::InvalidClaimBody("record scope restamp refused"));
-    }
-    if kind == crate::registry::ENTITY_TYPE_CLAIM {
-        let body = crate::claim::decode_claim_body(data, true)?;
-        let mut proposed = body.record_scope("read");
-        proposed.verbs = ScopeAxis::Bottom;
-        if proposed != stamp.scope || stamp.birth_facet != *body.scope_facet.as_bytes() {
-            return Err(Error::InvalidClaimBody("record scope restamp refused"));
-        }
-    }
-    if matches!(
-        kind,
-        crate::registry::ENTITY_TYPE_FACET | crate::registry::ENTITY_TYPE_RELATIONSHIP
-    ) {
-        let proposed = match rmpv::decode::read_value(&mut &data[..]) {
-            Ok(rmpv::Value::Map(entries)) => {
-                let bands: Vec<_> = entries
-                    .iter()
-                    .filter(|(key, _)| key.as_str() == Some("sensitivity"))
-                    .collect();
-                match bands.as_slice() {
-                    [] => Sensitivity::Sensitive,
-                    [(_, value)] => match value.as_str() {
-                        Some("public") => Sensitivity::Public,
-                        Some("private") => Sensitivity::Private,
-                        Some("sensitive") => Sensitivity::Sensitive,
-                        Some("restricted") => Sensitivity::Restricted,
-                        _ => return Err(Error::InvalidClaimBody("invalid facet sensitivity")),
-                    },
-                    _ => return Err(Error::InvalidClaimBody("duplicate facet sensitivity")),
-                }
-            }
-            _ => Sensitivity::Sensitive,
-        };
-        if stamp.scope.sensitivity != SensitivityCeiling::AtMost(proposed) {
-            return Err(Error::InvalidClaimBody("record scope restamp refused"));
-        }
-    }
-    Ok(())
+    stamping::body_keeps_stamp(store, txn, id, kind, data, &stamp)
 }
 
 /// Derive only an intrinsic current stamp or a birth-facet-bound persisted stamp.
@@ -608,7 +594,18 @@ pub(crate) fn scope_for_blob(
 ) -> Result<Option<Scope>> {
     let h = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("record header"))?;
     let data = &raw[ENTITY_METADATA_HEADER_LEN..];
-    if h.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+    scope_for_parts(store, txn, id, h.entity_type, data)
+}
+
+/// The scope of the actual row parts admitted by a read in `txn`.
+pub(crate) fn scope_for_parts(
+    store: &(impl ManifestDbs + MachineHistoryScope),
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    data: &[u8],
+) -> Result<Option<Scope>> {
+    if kind == crate::registry::ENTITY_TYPE_CLAIM {
         let Ok(body) = crate::claim::decode_claim_body(data, true) else {
             return Ok(None);
         };
@@ -617,15 +614,15 @@ pub(crate) fn scope_for_blob(
         }
         return Ok(Some(body.record_scope("read")));
     }
-    if carries_birth_stamp(h.entity_type) {
+    if carries_birth_stamp(kind) {
         return Ok(birth_facet(store, txn, id)?.map(|facet| {
-            let birth = default_stamp(h.entity_type, facet);
-            let mut scope = note_world::note_position(store, txn, id, h.entity_type, birth);
+            let birth = default_stamp(kind, facet);
+            let mut scope = note_world::note_position(store, txn, id, kind, birth);
             scope.verbs = singleton("read".to_owned());
             scope
         }));
     }
-    let mut scope = stored_scope(store, txn, id, h.entity_type)?;
+    let mut scope = stored_scope(store, txn, id, kind)?;
     if let Some(scope) = scope.as_mut() {
         scope.verbs = singleton("read".to_owned());
     }

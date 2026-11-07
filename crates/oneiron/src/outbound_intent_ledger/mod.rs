@@ -9,12 +9,16 @@ mod dispatch;
 pub use oneiron_base::unsubscribe_headers as email_headers;
 mod payload;
 mod pinned_approval;
+mod remote_task_poll;
 mod resolution;
 mod settlement;
 mod store;
 mod types;
 
 pub use self::codec::INTENT_LEDGER_VALUE_KEYS;
+pub use self::remote_task_poll::{
+    DueRemoteTask, MIN_REMOTE_TASK_POLL_MS, RemoteTaskCredential, RemoteTaskEnd, RemoteTaskPoll,
+};
 pub use self::dispatch::{derive_intent_id, intent_ledger_records};
 pub use self::settlement::{
     BudgetReservation, ProviderRetryDirective, ProviderWait, ProviderWaitKind, RemoteTaskHandle,
@@ -36,8 +40,8 @@ pub(crate) use self::dispatch::execute_outbound_call;
 use self::dispatch::recover_outbound_intents;
 pub(crate) use self::dispatch::{IntentRecoveryEntry, intent_recovery_entries};
 pub(crate) use self::payload::{
-    LedgerPayloadContext, erase_outbound_intent_actor_in_txn, payload_recipient_in_txn,
-    stored_admission_in_txn,
+    LedgerPayloadContext, admitting_actor_in_txn, erase_outbound_intent_actor_in_txn,
+    payload_recipient_in_txn, stored_admission_in_txn,
 };
 pub(crate) use self::pinned_approval::{
     PinnedApproval, PinnedApprovalFamily, keep_pinned_approval_in_txn, keep_press_after_admission,
@@ -67,6 +71,7 @@ pub(crate) use self::store::pending::{
 #[cfg(test)]
 pub(crate) use self::store::{read_intent_record, replace_intent_record_for_test};
 pub(crate) use self::types::AdmittedApproval;
+pub(crate) use self::types::CallAccounting;
 #[cfg(test)]
 pub(crate) use self::types::OutboundSender;
 

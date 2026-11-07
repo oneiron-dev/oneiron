@@ -14,6 +14,7 @@ use heed::{RoTxn, RwTxn};
 use rmpv::Value;
 
 use super::CodeRevision;
+use super::commit_metadata::{erased_author_cleared, same_revision_content};
 use super::keys::RECORDS;
 use super::proposals::CodeRevisionWriteOutcome;
 use super::storage::{read_code_revision_record_in_txn, write_code_revision_in_txn};
@@ -60,7 +61,7 @@ fn session_body(tested: &QueueTestedRevision) -> Result<Vec<u8>> {
 impl Vault {
     /// Finalizes the revision `seal` carries and attaches it to its source
     /// row, in one writer. A retry that finds the record requires it to be
-    /// exactly this one and only attaches.
+    /// this one, but for an erased author, and only attaches.
     ///
     /// # Errors
     /// A record that fails validation, a source that moved, an identity
@@ -74,15 +75,22 @@ impl Vault {
         super::codec::validate_code_revision_shape(revision)?;
         RECORDS.encode_value(revision)?;
         let mut wtxn = self.store.env.write_txn()?;
+        // An author this vault erased never blocks or re-enters the chain
+        // (FIX 6258): cleared under this writer, before the retry check.
+        let revision = erased_author_cleared(&self.store, &wtxn, revision)?;
+        let revision = &*revision;
         if let Some(existing) =
             read_code_revision_record_in_txn(&self.store, &wtxn, &revision.revision_id)?
         {
-            if existing != *revision {
+            if !same_revision_content(&existing, revision) {
                 return Err(Error::ConcurrentWrite(
                     "a tested queue revision identity holds another record",
                 ));
             }
             seal.attach_in_txn(self, &mut wtxn)?;
+            crate::skill_attribution::note_queue_revision_derivations_in_txn(
+                self, &mut wtxn, revision,
+            );
             wtxn.commit()?;
             return Ok(revision.revision_id);
         }
@@ -99,6 +107,7 @@ impl Vault {
         }
         super::queue_root::put_queue_root_in_txn(&self.store, &mut wtxn, revision)?;
         seal.attach_in_txn(self, &mut wtxn)?;
+        crate::skill_attribution::note_queue_revision_derivations_in_txn(self, &mut wtxn, revision);
         wtxn.commit()?;
         Ok(revision.revision_id)
     }

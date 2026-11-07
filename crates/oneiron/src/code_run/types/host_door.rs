@@ -22,11 +22,17 @@ pub trait SelfDispatcher {
 /// (FIX 2135): frames queued on the run's own board connection, drained once
 /// the answer succeeded. They are no part of the verb's output, and each
 /// keeps the rows it was derived from, never mixed into the answer's own.
+///
+/// A call a run's off-record room served (a forwarded read, a room write)
+/// also names what each verb hook bound to its row did there (FIX 5425,
+/// CALLS-9 `session_hook_meta_shape`), as the room's own search does; empty
+/// for every other call.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentVerbAnswer {
     pub output: serde_json::Value,
     pub rows: Option<Vec<EntityId>>,
     pub observations: Vec<RunObservation>,
+    pub hooks: Vec<SessionHookDisposition>,
 }
 
 impl AgentVerbAnswer {
@@ -38,6 +44,36 @@ impl AgentVerbAnswer {
             output,
             rows,
             observations: Vec::new(),
+            hooks: Vec::new(),
+        }
+    }
+
+    /// This answer, naming what each of `hooks` did in the room that served
+    /// it.
+    #[must_use]
+    pub fn with_hooks(mut self, hooks: Vec<SessionHookDisposition>) -> Self {
+        self.hooks = hooks;
+        self
+    }
+
+    /// The guest's reply to this answer, before its budget envelope: its
+    /// output, framed as every verb's is, with what each verb hook did in the
+    /// room that served it under `hooks`, inside the output when the output
+    /// is an object, else beside it, as the room's search carries its own
+    /// (CALLS-9 `session_hook_meta_shape`). An answer no room hook ran on is
+    /// its output alone.
+    #[must_use]
+    pub fn guest_reply(&self) -> serde_json::Value {
+        if self.hooks.is_empty() {
+            return serde_json::json!({ "output": self.output });
+        }
+        let hooks = serde_json::to_value(&self.hooks).unwrap_or_default();
+        let mut output = self.output.clone();
+        if let Some(fields) = output.as_object_mut() {
+            fields.insert("hooks".to_owned(), hooks);
+            serde_json::json!({ "output": output })
+        } else {
+            serde_json::json!({ "output": output, "hooks": hooks })
         }
     }
 
@@ -175,10 +211,11 @@ pub trait AgentVerbDoor: Send + Sync {
 
     /// Admits one read a run bound to an off-record session serves through
     /// the room's view (WILL L11-01): `vault.get`, `vault.hydrate`,
-    /// `vault.refs.resolve` or `vault.search.bm25`. The answer is the key
-    /// the read reads under: this door's caller, as its credential and
-    /// ceiling bind them now, never a wider key. A door that admits no such
-    /// read refuses it as a session-bound run's verbs were refused before.
+    /// `vault.refs.resolve`, `vault.search.bm25` or `vault.receipts` (FIX
+    /// 7355). The answer is the key the read reads under: this door's
+    /// caller, as its credential and ceiling bind them now, never a wider
+    /// key. A door that admits no such read refuses it as a session-bound
+    /// run's verbs were refused before.
     fn admit_session_read(
         &self,
         _verb: crate::task_verb::sdk::AgentVerb,

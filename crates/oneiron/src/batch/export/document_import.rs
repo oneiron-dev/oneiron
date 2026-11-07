@@ -23,8 +23,9 @@ use crate::edge::EdgeKind;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::registry::{
-    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION,
-    ENTITY_TYPE_EVENT, ENTITY_TYPE_SKILL, ENTITY_TYPE_TURN, ENTITY_TYPE_WORKFLOW,
+    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM,
+    ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_EVENT,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SKILL, ENTITY_TYPE_TURN, ENTITY_TYPE_WORKFLOW,
 };
 use crate::serialize::{ExportBody, ExportBodyFile};
 use crate::temporal::TimeRange;
@@ -66,9 +67,18 @@ impl Vault {
     /// require [`Self::import_whole_vault_archive_with_actor`] and a local Auto grant.
     /// Skills return as candidates;
     /// agent definitions are disabled and proposed until locally reviewed.
+    /// Missing claim-class vocabulary returns through its native setting door,
+    /// without foreign owner stamps; enforcement follows this build's compiled
+    /// equivalence. An exact normalized repeat is unchanged.
     ///
-    /// Same-ID divergent rows are refused, never overwritten. Maintenance rows,
-    /// witness messages, notes, other reserved claims and owned/provenanced edges need
+    /// Witness MESSAGE rows come back as imported evidence (FIX 7777): typed
+    /// `import.archive`, marked `metadata.import.source = "archive"`, with the
+    /// source's type and `AuthoredBy` bylines inert in that metadata and no
+    /// local author edge; the TURN and CONVERSATION they join are stamped
+    /// `import_source = "archive"`.
+    ///
+    /// Same-ID divergent rows are refused, never overwritten. Other maintenance rows,
+    /// notes, other reserved claims and owned/provenanced edges need
     /// their owning import adapter and fail through the existing public doors.
     /// Such a failure aborts the entire transaction, not a partial import.
     /// The manifest explicitly marks hub configuration and foreign skill signals
@@ -191,7 +201,9 @@ impl Vault {
         super::provenance_import::index_mapped_edges(&mut archive)?;
         super::provenance_import::index_provenance(&mut archive)?;
         super::expression_import::index_expressions(&mut archive)?;
+        super::evidence_import::index_message_containers(&mut archive)?;
         let mut pending = 0;
+        let mut inserted_descriptors = 0;
         let mut unchanged_entities = model_imports.unchanged;
         let mut after = None;
         while let Some((id, at)) = archive.next_entity(after.as_ref())? {
@@ -230,6 +242,11 @@ impl Vault {
                 let existing = self.materialized_row_in_txn(&wtxn, &id, existing)?;
                 if matches_row(&row, &existing, &row.body) {
                     validate_existing_source(self, &wtxn, &row, &archive, &at)?;
+                    if row.entity_type == ENTITY_TYPE_MESSAGE {
+                        super::evidence_import::validate_stored_message(
+                            self, &wtxn, &archive, &id,
+                        )?;
+                    }
                     stamp_archived_birth(self, &mut wtxn, &archive, &id)?;
                     unchanged_entities += 1;
                     continue;
@@ -241,11 +258,41 @@ impl Vault {
                     &ExportBody::from_bytes(&body, row.entity_type),
                 ) {
                     validate_existing_source(self, &wtxn, &row, &archive, &at)?;
+                    if row.entity_type == ENTITY_TYPE_MESSAGE {
+                        super::evidence_import::validate_stored_message(
+                            self, &wtxn, &archive, &id,
+                        )?;
+                    }
                     stamp_archived_birth(self, &mut wtxn, &archive, &id)?;
                     unchanged_entities += 1;
                     continue;
                 }
                 return Err(invalid("import ID collides with different entity data"));
+            }
+            if row.entity_type == ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR {
+                let state =
+                    crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, &wtxn, &id)?;
+                if state.deleted
+                    || state.stale
+                    || self.local_hard_delete_marker_exists_in_txn(&wtxn, &id)?
+                {
+                    return Err(invalid("import ID collides with a deleted entity"));
+                }
+                crate::comm::import_claim_class_descriptor_in_txn(
+                    self,
+                    &mut wtxn,
+                    &id,
+                    &row.body.to_bytes_in(&archive.files)?,
+                    TimeRange {
+                        start: row.occurred_start,
+                        end: row.occurred_end,
+                    },
+                    row.learned_at,
+                )?;
+                stamp_archived_birth(self, &mut wtxn, &archive, &id)?;
+                archive.index.put(Tag::Inserted, id.as_bytes(), &[])?;
+                inserted_descriptors += 1;
+                continue;
             }
             self.store.validate_public_entity_type(row.entity_type)?;
             // Only the row's id and what it waits on stay pending, in the
@@ -272,6 +319,15 @@ impl Vault {
                     waits_on.push(facet);
                 }
             }
+            // FIX 7777: a MESSAGE lands after the TURN and CONVERSATION it
+            // joins, which come back stamped imported.
+            if row.entity_type == ENTITY_TYPE_MESSAGE {
+                for container in super::evidence_import::message_dependencies(&archive, &id)? {
+                    if !waits_on.contains(&container) {
+                        waits_on.push(container);
+                    }
+                }
+            }
             archive
                 .index
                 .put(Tag::Pending, id.as_bytes(), &id_list(&waits_on))?;
@@ -279,7 +335,7 @@ impl Vault {
             archive.index.put(Tag::Inserted, id.as_bytes(), &[])?;
             pending += 1;
         }
-        let mut inserted_entities = pending + model_imports.inserted;
+        let mut inserted_entities = pending + model_imports.inserted + inserted_descriptors;
         // Resolve reference dependencies without assuming UUID or export order.
         // A cycle or an unavailable subject fails without a partial commit.
         // Each round queues what waits on no pending id, then restores it.
@@ -339,6 +395,17 @@ impl Vault {
                     continue;
                 }
                 let edge = super::provenance_import::mapped_edge(&edge, &archive.index)?;
+                // FIX 7777: an archived MESSAGE's byline rides inert in its
+                // body; an archive never makes a local author.
+                if let Some(kind) = EdgeKind::try_from_u8(edge.kind)
+                    && super::evidence_import::is_message_byline(
+                        &archive,
+                        &parse_id(&edge.source)?,
+                        kind,
+                    )?
+                {
+                    continue;
+                }
                 if archive
                     .index
                     .contains(Tag::Omitted, parse_id(&edge.source)?.as_bytes())?
@@ -534,6 +601,17 @@ fn insert_ready_row<R: Read + Seek>(
                 vault.put_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
             }
         }
+        // FIX 7777: the witness archive owner writes the row as imported
+        // evidence, with its archived membership; it binds no actor.
+        ENTITY_TYPE_MESSAGE => super::evidence_import::restore_message(
+            vault,
+            wtxn,
+            archive,
+            &id,
+            &body,
+            occurred,
+            row.learned_at,
+        ),
         ENTITY_TYPE_SKILL => {
             let record = crate::write_envelope::skill_record::decode_skill_record(&body)?;
             if at.section != Section::Skill {
@@ -728,9 +806,9 @@ fn put_run_results_in_txn<R: Read + Seek>(
     // occurrences. These outputs rebuild each run's replay record below.
     let mut restored_outputs = BTreeMap::new();
     // The values custody knows, read in this writer and kept no longer
-    // (KS-3): each body's sweep replaces them with their handles.
-    let swept = crate::store::known_value_index::KnownValues::load_in_writer(&vault.store, wtxn)?
-        .map(std::sync::Arc::new);
+    // (KS-3), shared with the write's other passes (FIX 12210, 12229): each
+    // body's sweep replaces them with their handles.
+    let swept = crate::store::known_value_index::KnownValues::shared_in_writer(&vault.store, wtxn)?;
     let mut runs = archive.spool.rows(ArchiveRecordKind::Run);
     while let Some((_, run)) = runs.next_parsed::<ExportRun>(&archive.spool)? {
         let run_id = parse_id(&run.run_id)?;
@@ -1423,7 +1501,8 @@ fn matches_header(row: &ExportEntity, raw: &[u8]) -> bool {
 
 /// The body the import writes; an ASSET's file body is its archive file's
 /// bytes, as they were stored (OF-222). A claim's subject is mapped onto this
-/// vault's MODEL rows through the row index.
+/// vault's MODEL rows through the row index. Claim-class vocabulary is normalized
+/// by its owning adapter without carrying a foreign owner approval.
 fn imported_body(
     row: &ExportEntity,
     index: &ArchiveIndex<'_>,
@@ -1432,6 +1511,11 @@ fn imported_body(
     let bytes = row.body.to_bytes_in(files)?;
     let mapped = |id: EntityId| super::provenance_import::mapped(index, id);
     match row.entity_type {
+        ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR => {
+            let descriptor =
+                crate::comm::imported_claim_class_descriptor(&parse_id(&row.id)?, &bytes)?;
+            crate::comm::encode_claim_class_descriptor(&descriptor)
+        }
         ENTITY_TYPE_CLAIM => {
             let mut body = decode_import_claim(&bytes)?;
             match &mut body.subject {
@@ -1465,6 +1549,20 @@ fn imported_body(
             body.enabled = false;
             body.ceiling = crate::store::agent_record::AgentCeiling::Proposed;
             crate::store::agent_definition_codec::encode_agent_definition(&body)
+        }
+        // FIX 7777: imported evidence, its archived bylines inert inside it.
+        ENTITY_TYPE_MESSAGE => {
+            let bylines = super::evidence_import::archived_targets(
+                index,
+                &parse_id(&row.id)?,
+                EdgeKind::AuthoredBy,
+            )?;
+            crate::memory::archived_message_body(&bytes, &bylines)
+        }
+        ENTITY_TYPE_TURN | ENTITY_TYPE_CONVERSATION
+            if index.contains(Tag::MessageContainer, parse_id(&row.id)?.as_bytes())? =>
+        {
+            crate::memory::archived_container_body(row.entity_type, &bytes)
         }
         _ => Ok(bytes),
     }

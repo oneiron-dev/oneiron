@@ -11,6 +11,7 @@ mod copy;
 mod destination;
 mod entity;
 mod held_copy;
+mod note_fork_upload;
 mod note_requests;
 pub(crate) mod note_state;
 pub use super::selector::secret_projection::RepoCopyEditReview;
@@ -334,6 +335,29 @@ impl DocumentRegistry {
             let _ = self.notices.send(frame);
         }
     }
+
+    /// A fork change of the NOTE `id` (FIX 12789), as an invalidation: each
+    /// owner-lane recipient reads the NOTE's forks again before it sends.
+    pub(crate) fn notify_note_forks(&self, id: EntityId) {
+        if let Ok(frame) = encode_document(id, document_sub_tags::NOTE_FORK_SET, &[]).into_result()
+        {
+            let _ = self.notices.send(frame);
+        }
+    }
+
+    /// The owner lane's frames for the pending forks of the NOTE `id` (FIX
+    /// 12789): each fork's state, then their set, under the owner admission
+    /// the NOTE's text takes for the machine `withhold` names.
+    pub(crate) fn export_owner_note_forks(
+        &self,
+        id: EntityId,
+        withhold: super::window::Withhold<'_>,
+    ) -> Result<Vec<Vec<u8>>> {
+        let txn = self.vault.store.env.read_txn()?;
+        owner_note_admission_for(&self.vault, &txn, id, withhold)?;
+        let withheld = withhold.worlds_in(&self.vault, &txn)?;
+        crate::note::authority_fork_frames_in_txn(&self.vault, &txn, id, &withheld)
+    }
     pub fn resident_count(&self) -> usize {
         self.residents
             .lock()
@@ -523,6 +547,7 @@ impl EntityDocument {
 
     /// Export after the selector has admitted this entity. `admission_key` is the
     /// canonical selector encoding, not peer-controlled claims about prior admission.
+    /// Current record use limits apply here, not to the owner's raw replica export.
     fn export(
         &self,
         admission_key: &[u8],
@@ -544,6 +569,13 @@ impl EntityDocument {
                 == Some(crate::registry::ENTITY_TYPE_NOTE)
             {
                 crate::note::validate_note_export(&self.vault, txn, self.id, scope, &selector)?;
+            }
+            if crate::store::legal_hold::use_limit_in_txn(&self.vault.store, txn, &self.id)?
+                .is_some()
+            {
+                return Err(Error::sync_protocol(
+                    SyncProtocolValidation::DocumentAdmissionDenied,
+                ));
             }
             Ok(())
         })
@@ -649,13 +681,13 @@ impl EntityDocument {
                 Some(head) => note_state::payload(&self.vault, txn, self.id, head, &bytes)?,
                 None => bytes,
             };
-            encode_document(
-                copy.as_ref().map_or(self.id, |copy| copy.key),
-                kind,
-                &payload,
-            )
-            .into_result()
-            .map_err(|_| Error::InvariantViolation("document export exceeds wire limit"))
+            let entity = copy.as_ref().map_or(self.id, |copy| copy.key);
+            let encoded = if note_head.is_some() {
+                crate::sync::transport::encode_unsplit_document(entity, kind, &payload)
+            } else {
+                encode_document(entity, kind, &payload).into_result()
+            };
+            encoded.map_err(|_| Error::InvariantViolation("document export exceeds wire limit"))
         })
     }
 
@@ -732,6 +764,55 @@ fn covers(peer: &VersionVector, floor: &VersionVector) -> bool {
         peer.partial_cmp(floor),
         Some(std::cmp::Ordering::Equal | std::cmp::Ordering::Greater)
     )
+}
+
+/// Whether a TURN's headed message text can leave unchanged under this selector.
+/// This uses the document export's eligibility, read, withhold and copy checks,
+/// without exporting a document or changing its lineage or disclosure floor.
+pub fn turn_member_documents_releasable(
+    vault: &Vault,
+    turn: EntityId,
+    sources: &[(EntityId, [u8; 32])],
+    scope: crate::FederationGrantScope,
+    selector: &super::selector::SyncSelector,
+    withhold: super::window::Withhold<'_>,
+) -> Result<bool> {
+    if sources.iter().all(|(id, _)| *id == turn) {
+        return Ok(true);
+    }
+    let txn = vault.store.env.read_txn()?;
+    let marks =
+        crate::origin::secret_projection::index::RepoIndexMarks::read_scoped_in_txn(vault, &txn)?;
+    for (id, _) in sources {
+        if *id == turn || !crate::entity_doc::has_record_head(&vault.store, &txn, id)? {
+            continue;
+        }
+        let admitted = eligible(vault, &txn, *id)
+            .and_then(|()| destination::admit_document_withhold_in_txn(vault, &txn, *id, withhold))
+            .and_then(|()| {
+                super::selector::admit_document_read_in_txn(vault, &txn, *id, scope, selector)
+            });
+        match admitted {
+            Ok(()) => {}
+            Err(Error::Sync(crate::error::SyncError::SyncProtocolError {
+                context: SyncProtocolValidation::DocumentAdmissionDenied,
+            })) => return Ok(false),
+            Err(other) => return Err(other),
+        }
+        if marks.is_empty() {
+            continue;
+        }
+        let text = entity::document_in(vault, &txn, *id)?
+            .0
+            .get_text("body")
+            .to_string();
+        if super::selector::secret_projection::document_text_would_project_in_txn(
+            vault, &txn, &marks, id, &text,
+        )? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn eligible(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<()> {

@@ -41,6 +41,12 @@ mod decision_read;
 mod declared;
 #[cfg(feature = "mesh")]
 mod discovered;
+// FIX 14975: each trained drafter version evaluated, activated and rolled
+// back, on evaluator incarnations of the vault's own row.
+#[cfg(unix)]
+mod drafter_evaluator;
+mod drafter_serving;
+mod drafter_training;
 mod driven;
 mod exl3_evidence;
 #[cfg(test)]
@@ -74,6 +80,10 @@ mod role_route;
 mod router;
 mod run_backend;
 mod runtime;
+// FIX 15702: a seat's model door, its key read at the custody door per call.
+mod seat_model;
+// FIX 15702 slice 3: each of its calls admitted and settled on the claim's run.
+mod seat_model_admission;
 mod served;
 mod siwc_responses;
 pub(crate) mod soniox;
@@ -116,6 +126,8 @@ pub(crate) use responses_socket::ResponsesContext;
 pub use role_route::{RoleCall, RoleRefusal, RoleRoute};
 pub use router::ModelRouter;
 pub use run_backend::RunBackend;
+pub(crate) use seat_model::{SeatKeyDoor, SeatModelAnswer, SeatModelRefusal, send_seat_model};
+pub(crate) use seat_model_admission::{SeatModelCall, SeatModelMeter};
 pub(crate) use source_admission::{SourceAdmission, SourceOffer};
 pub use status::{
     DeviceDeclarationStatus, DeviceExecutorStatus, DevicePressureStatus, DeviceRowStatus,
@@ -124,7 +136,24 @@ pub use status::{
     TaggerStatus,
 };
 pub use token_ratio::TokenRatios;
-pub(crate) use worker_host::{install_snapshot_runtime, permit_worker_launch};
+pub(crate) use worker_host::{
+    install_snapshot_runtime, permit_worker_launch, session_allocations_for_vault,
+};
+// FIX 14976: each served vault's drafter bindings, served on this process's
+// own managed EXL3 worker.
+pub use drafter_serving::VaultLoadSet;
+pub(crate) use drafter_serving::{drafter_retrain_target, install_drafter_serving};
+// FIX 14974: a drafter training job's place on its target's device work line.
+pub(crate) use drafter_training::DrafterTrainingSlot;
+// FIX 14975: each trained version evaluated, activated and rolled back.
+#[cfg(unix)]
+pub(crate) use drafter_evaluator::start_drafter_evaluations;
+
+/// Off Unix no worker answers the evaluator op (FIX 14975): nothing is
+/// evaluated, and nothing activates.
+#[cfg(not(unix))]
+pub(crate) fn start_drafter_evaluations(_vault: &Arc<oneiron::Vault>) {}
+
 // DESIGN-V2 R2: a committed chat reply reaches the session coordinator; R3:
 // with what a snapshot of it is kept and restored under.
 pub(crate) use worker_host::{
@@ -134,7 +163,7 @@ pub(crate) use worker_host::{
 
 use catalog::{catalog_entry, engine_model_id, locality_rank, model_family};
 use ladder::{LadderRung, SeatScope, Wire};
-use offer::provider_offer;
+use offer::{native_local_offer, provider_offer};
 use output_cap::OutputCap;
 
 /// One filled seat: its ladder, the single model id the engine pins for it,
@@ -148,12 +177,57 @@ pub struct Seat {
     /// Each rung on its own, keyed by its engine model id, so a call the
     /// vault's manifest binds to one rung's model keeps that rung's prompt.
     rungs: BTreeMap<ModelId, Arc<OfferLadder>>,
+    /// The seat's on-device view (I2-LOCAL): each rung a managed worker this
+    /// server supervises serves over its native channel, as that on-device
+    /// offer alone, in ladder order, under an on-device ceiling no owner's
+    /// fallback passes. `None` when no rung has such an offer.
+    on_device: Option<Arc<OfferLadder>>,
+    /// Each rung of the on-device view on its own, keyed as `rungs` is.
+    on_device_rungs: BTreeMap<ModelId, Arc<OfferLadder>>,
 }
 
 impl Seat {
     /// The rung that serves `model`, alone and with its prompt.
     fn rung(&self, model: &ModelId) -> Option<Arc<OfferLadder>> {
         self.rungs.get(model).cloned()
+    }
+
+    /// The rung that serves `model` for a call routed at `route`, alone and
+    /// with its prompt: on device, only its on-device offer (I2-LOCAL).
+    fn rung_at(&self, model: &ModelId, route: ModelLocality) -> Option<Arc<OfferLadder>> {
+        if route == ModelLocality::OnDevice {
+            self.on_device_rungs.get(model).cloned()
+        } else {
+            self.rung(model)
+        }
+    }
+
+    /// This seat with its on-device view over `rungs`: the on-device offers
+    /// of those of its rungs that have one, in ladder order (I2-LOCAL).
+    fn with_on_device_view(
+        mut self,
+        rungs: Vec<LadderRung>,
+        rests: &Arc<OfferCooldowns>,
+        scope: SeatScope,
+    ) -> Self {
+        if rungs.is_empty() {
+            return self;
+        }
+        let scope = SeatScope {
+            locality_ceiling: Some(ModelLocality::OnDevice),
+            ..scope
+        };
+        for rung in &rungs {
+            self.on_device_rungs
+                .entry(rung.model.clone())
+                .or_insert_with(|| {
+                    Arc::new(OfferLadder::pinned(rung.clone(), Arc::clone(rests)).scoped(scope))
+                });
+        }
+        self.on_device = Some(Arc::new(
+            OfferLadder::seat(self.model.clone(), rungs, Arc::clone(rests)).scoped(scope),
+        ));
+        self
     }
 
     /// Each rung's engine model id and the prompt it prepends, in ladder
@@ -195,6 +269,8 @@ pub struct ModelRuntime {
     token_ratios: Option<Arc<TokenRatios>>,
     /// The trainer connectors `[models.training]` names (FIX 7263).
     training: crate::config::models::TrainingSettings,
+    /// Config-bound managed workers whose local weight files the Coach can read.
+    stock_weights: BTreeMap<String, worker_host::StockWeights>,
     /// The vault's model byte budgets its media rungs and mesh routes hold
     /// their bytes on (FIX 9321, FIX 9323).
     budgets: ModelHostBudgets,
@@ -357,11 +433,22 @@ fn build_provider(
         }
         ProviderKind::AnthropicCompat => {
             let http = http::ProviderHttp::new(provider, http::KeyStyle::ApiKeyHeader)?;
+            let engine_models = catalog
+                .iter()
+                .filter_map(|entry| {
+                    entry
+                        .metadata
+                        .get("wire_model")?
+                        .as_str()
+                        .map(|wire| (wire.to_owned(), entry.model.clone()))
+                })
+                .collect();
             Arc::new(AnthropicMessagesBackend::new(
                 AnthropicMessagesConfig::from_catalog(catalog),
                 anthropic::AnthropicHttp {
                     http,
                     cap: output_cap(provider),
+                    engine_models,
                 },
             ))
         }
@@ -464,6 +551,130 @@ fn rung(
     })
 }
 
+/// A provider's on-device alternative (I2-LOCAL): one chat backend over the
+/// native channels of the managed EXL3 workers bound to it and nothing else,
+/// and the id of the worker that serves each wire model.
+#[cfg_attr(not(unix), allow(dead_code))]
+struct NativeLocal {
+    backend: Arc<dyn SingleRouteBackend>,
+    workers: BTreeMap<String, String>,
+}
+
+/// `provider`'s on-device alternative (I2-LOCAL), when managed EXL3 workers
+/// this process launches serve some of its chat models over a native channel
+/// whose peer is checked against the supervised child. Free and paid work
+/// alike (FIX 14889): each offer over it keeps the provider offer's payer,
+/// key custody and rates, so a paid provider's on-device call is charged as
+/// its own-server call is ([`offer::native_local_offer`]). Its backend is the
+/// provider's chat adapter over [`native_exl3::NativeLocalTransport`], for
+/// those models alone, so the request mapping, output cap and response format
+/// are the provider's own; the native channel carries the request body and
+/// no key, since it is checked against the child instead. A key the provider
+/// holds still makes its calls paid. `None` otherwise: the provider's own
+/// backend serves every call, at its own locality, as it always has. A
+/// provider holding a Responses socket keeps its socket and HTTP path, as
+/// its own transport does.
+#[cfg(unix)]
+fn build_native_local(
+    name: &str,
+    provider: &ProviderConfig,
+    config: &ModelsConfig,
+) -> Option<NativeLocal> {
+    let chat = matches!(
+        provider.kind,
+        ProviderKind::OpenaiCompat | ProviderKind::LocalOpenaiCompat
+    );
+    if !chat || provider.responses_socket.is_some() {
+        return None;
+    }
+    let routes = worker_host::native_local_routes(name, provider, &config.workers);
+    let catalog: Vec<LlmCatalogEntry> = referenced_models(config, name)
+        .iter()
+        .filter(|model| routes.contains_key(&model.model))
+        .filter_map(|model| catalog_entry(model, provider).ok())
+        .map(|entry| LlmCatalogEntry {
+            locality: ModelLocality::OnDevice,
+            ..entry
+        })
+        .collect();
+    if catalog.is_empty() {
+        return None;
+    }
+    let engine_models: BTreeMap<String, ModelId> = catalog
+        .iter()
+        .filter_map(|entry| {
+            entry
+                .metadata
+                .get("wire_model")?
+                .as_str()
+                .map(|wire| (wire.to_owned(), entry.model.clone()))
+        })
+        .collect();
+    let workers = routes
+        .iter()
+        .map(|(wire, route)| (wire.clone(), route.worker.spec().worker_id.clone()))
+        .collect();
+    // Every route is a managed EXL3 worker's, so the solo marker goes as it
+    // does on the provider's own transport (INF 1).
+    let solo = provider.kind == ProviderKind::LocalOpenaiCompat;
+    let shaping = native_exl3::NativeShaping::new(
+        output_cap(provider),
+        provider.response_format,
+        engine_models,
+    );
+    let transport = native_exl3::NativeLocalTransport::new(routes, shaping);
+    let adapter = OpenAiCompatConfig::from_catalog(catalog).with_solo_admission(solo);
+    Some(NativeLocal {
+        backend: Arc::new(OpenAiCompatBackend::new(adapter, transport)),
+        workers,
+    })
+}
+
+/// No native channel exists off Unix, so no provider has an on-device
+/// alternative.
+#[cfg(not(unix))]
+fn build_native_local(
+    _name: &str,
+    _provider: &ProviderConfig,
+    _config: &ModelsConfig,
+) -> Option<NativeLocal> {
+    None
+}
+
+/// `model` on `provider` over `native` alone, as a rung at `position`: the
+/// on-device alternative of the rung [`rung`] builds for it (I2-LOCAL), with
+/// the same model id, wire model and prompt. `None` when no supervised native
+/// worker serves its wire model.
+fn native_rung(
+    name: &str,
+    provider: &ProviderConfig,
+    native: &NativeLocal,
+    model: &ModelRef,
+    position: usize,
+    prompt: Option<String>,
+) -> Option<LadderRung> {
+    if !native.workers.contains_key(&model.model) {
+        return None;
+    }
+    let id = engine_model_id(model, provider).ok()?;
+    let offer = match native_local_offer(provider, id.clone(), &model.model, native) {
+        Ok(offer) => offer,
+        Err(error) => {
+            tracing::warn!(provider = %name, %error, "model has no on-device offer");
+            return None;
+        }
+    };
+    Some(LadderRung {
+        provider: name.to_owned(),
+        position,
+        model: id,
+        wire_model: model.model.clone(),
+        prompt,
+        offer,
+        media: None,
+    })
+}
+
 /// Every model some chat-speaking ladder names on `provider`, once each.
 fn referenced_models(config: &ModelsConfig, provider: &str) -> Vec<ModelRef> {
     role_models(config, provider, |role| role != ModelRole::Reranker)
@@ -537,5 +748,7 @@ fn seat_for(
         locality,
         ladder: Arc::new(OfferLadder::seat(model, rungs, rests).scoped(scope)),
         rungs: alone,
+        on_device: None,
+        on_device_rungs: BTreeMap::new(),
     })
 }

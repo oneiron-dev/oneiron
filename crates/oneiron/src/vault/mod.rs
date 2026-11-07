@@ -80,6 +80,10 @@ pub struct Vault {
     /// Live seat prefixes are vault-owned, never process-global.
     pub(crate) model_seats: std::sync::Mutex<crate::llm::seat::SeatPool>,
     pub(crate) message_streams: crate::memory::MessageStreamRuntime,
+    /// Exact HOST live-session orders, independent of a failed capture socket.
+    /// In memory only; never tenant hold state, source bytes or private keys.
+    #[cfg(unix)]
+    pub(crate) host_legal_captures: crate::deletion::HostLegalCaptures,
     /// The rows over live work this vault holds open, and the host's door
     /// for their crossings ([`Vault::set_live_rows`]).
     pub(crate) live_rows: crate::live_rows::LiveRowsCell,
@@ -169,9 +173,10 @@ pub struct Vault {
     /// Volatile revoke work from committed local cloud-registration erases.
     pub(crate) cloud_registration_erase_revokes: crate::secret_custody::EraseRevokes,
     /// SLIM residency controller (ONE-1933 / OF-447). Holds the shed/resume
-    /// state mutex and nothing else: the fixed-order drop transaction and the
-    /// lazy resume hook are `impl Vault` blocks in [`crate::slim`]. It adds no
-    /// outbound callback, no timer handle and no second connection owner.
+    /// state mutex, the live-wait list with its id counter, the outbound-wait
+    /// host callback and the owner shed line: the fixed-order drop transaction
+    /// and the lazy resume hook are `impl Vault` blocks in [`crate::slim`]. It
+    /// adds no timer handle and no second connection owner.
     pub(crate) slim: crate::slim::SlimController,
     /// One in-process idle policy timer per open vault, released on wrapper drop.
     pub(crate) wake_policy_timer_owned: std::sync::atomic::AtomicBool,

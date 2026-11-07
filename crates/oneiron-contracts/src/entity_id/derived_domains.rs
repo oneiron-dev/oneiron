@@ -272,6 +272,13 @@ pub const ASSET_BODY_FILE: &[u8] = b"oneiron/asset-body-file/v1";
 /// bytes) and its length (u64 big-endian).
 pub const ASSET_BODY_HELD: &[u8] = b"oneiron/asset-body-held/v1";
 
+/// The owner one kept removal archive row's files are held under
+/// (`federation::shared_act::removal_file`, FIX 3679): a namespace of its own,
+/// so a release of one row reaches no other row's bodies, another member's
+/// archive of the same receipt included, whatever ids an imported copy names.
+/// Parts: the receipt, then the removed member.
+pub const REMOVAL_ARCHIVE_OWNER: &[u8] = b"oneiron/removal-archive-owner/v1";
+
 /// One mark of a key a retained repository blob holds (`origin::secret_marks`,
 /// FIX 7608). Parts: schema (u16be), operation, store identity, tagged source,
 /// blob OID, tagged path, detector reason, content kind, tagged placement. No
@@ -291,6 +298,11 @@ pub const CLIPBOARD_WORLD: &[u8] = b"oneiron.clipboard.world.v1";
 /// One folder source of a Files world (`note::files`, FIX 6942). Parts: the
 /// source install's MACHINE id, its Files world, the canonical folder.
 pub const FILES_SOURCE: &[u8] = b"oneiron.files.source.v1";
+
+/// The incarnation of a record's lazy sync-text birth (`entity_doc::sync`,
+/// FIX 11795): every machine's lazy birth of one row is one document. Parts:
+/// the record's id.
+pub const SYNC_TEXT_BIRTH_INCARNATION: &[u8] = b"oneiron.sync-text.birth-incarnation.v1";
 
 /// A turn or message VAD annotation claim (`affect::vad_annotation_claim_id`,
 /// FIX 9554). Parts: the annotated row's entity type, its id.
@@ -313,10 +325,17 @@ pub const COMMITMENT_REMINDER_WORDING_BLOB: &[u8] = b"oneiron:commitment-reminde
 /// The target of an owner's origin cut act (`authority::origin_cut_target`,
 /// FIX 15740). Parts: the repository's 32-byte portable id.
 pub const ORIGIN_CUT_TARGET: &[u8] = b"oneiron/origin-cut-target/v1";
+/// The target of the owner's naming of a device key's successor (FIX 11135):
+/// derived from the predecessor's client id and device key.
+pub const DEVICE_SUCCESSION_TARGET: &[u8] = b"oneiron/device-succession-target/v1";
+/// One bounded part of an identity-topology decision too large for one record
+/// (`identity_topology::operation_parts`, FIX 10188). Parts: the decision's
+/// manifest id, the part index as u32 big-endian.
+pub const IDENTITY_TOPOLOGY_OPERATION_PART: &[u8] = b"oneiron/identity-topology/operation-part/v1";
 
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 60] = [
+pub(crate) const ALL: [&[u8]; 61] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -375,6 +394,7 @@ pub(crate) const ALL: [&[u8]; 60] = [
     FOREIGN_WORLD,
     ASSET_BODY_FILE,
     ASSET_BODY_HELD,
+    REMOVAL_ARCHIVE_OWNER,
     REPO_SECRET_MARK,
     VAD_ANNOTATION_CLAIM,
 ];

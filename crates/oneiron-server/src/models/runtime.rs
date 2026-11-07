@@ -5,6 +5,12 @@
 use super::*;
 
 impl ModelRuntime {
+    /// Current verified files for this captured managed model, not evidence
+    /// that a registry backend is loaded or has the same serving revision.
+    pub(crate) fn stock_weights(&self, model: &str) -> Option<serde_json::Value> {
+        self.stock_weights.get(model)?.read()
+    }
+
     /// No `[models]`: no seat, no router.
     #[must_use]
     pub fn unconfigured() -> Self {
@@ -21,6 +27,7 @@ impl ModelRuntime {
             rests: OfferCooldowns::unkept(),
             token_ratios: None,
             training: Default::default(),
+            stock_weights: BTreeMap::new(),
             budgets: ModelHostBudgets::unhosted(),
             responses: ResponsesContext::default(),
         }
@@ -231,6 +238,17 @@ impl ModelRuntime {
                 }
             }
         }
+        // Each provider that built a chat backend, and whose managed EXL3
+        // workers this process supervises, also gets its on-device
+        // alternative (I2-LOCAL): their native channels alone, beside the
+        // provider's own backend, which keeps serving every call it does.
+        let native: BTreeMap<String, NativeLocal> = built
+            .keys()
+            .filter_map(|name| {
+                let local = build_native_local(name, &config.providers[name], config)?;
+                Some((name.clone(), local))
+            })
+            .collect();
         // The reranker's rungs speak `/v1/rerank`, not chat: each provider
         // that serves one gets a rerank client beside its chat backend.
         let mut rerankers = BTreeMap::new();
@@ -293,6 +311,23 @@ impl ModelRuntime {
                 }
             }
         }
+        // Each chat model a supervised worker serves natively, alone by its
+        // own id at its on-device route (I2-LOCAL): no owner's fallback past
+        // the device takes its calls.
+        for (name, local) in &native {
+            let provider = &config.providers[name];
+            for model in referenced_models(config, name) {
+                let Some(rung) = native_rung(name, provider, local, &model, 0, None) else {
+                    continue;
+                };
+                let ladder = OfferLadder::bare(rung, Arc::clone(&rests)).scoped(SeatScope {
+                    wire: Wire::Chat,
+                    locality_ceiling: Some(ModelLocality::OnDevice),
+                    ..SeatScope::default()
+                });
+                router.insert_on_device(ladder.model().clone(), Arc::new(ladder));
+            }
+        }
         let mut seats = BTreeMap::new();
         for (role, ladder) in &config.roles {
             let mut rungs = Vec::new();
@@ -339,6 +374,30 @@ impl ModelRuntime {
                 },
                 stays_on_device: stays,
                 configured: ladder.len(),
+                locality_ceiling: None,
+            };
+            // The on-device alternatives of the seat's chat rungs (I2-LOCAL),
+            // at their configured positions with their prompts: the seat's
+            // on-device view. The reranker speaks no native protocol.
+            let native_rungs: Vec<LadderRung> = if *role == ModelRole::Reranker {
+                Vec::new()
+            } else {
+                ladder
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(position, rung)| {
+                        let name = &rung.model.provider;
+                        let local = native.get(name)?;
+                        native_rung(
+                            name,
+                            &config.providers[name],
+                            local,
+                            &rung.model,
+                            position,
+                            rung.prompt.clone(),
+                        )
+                    })
+                    .collect()
             };
             if let Some(seat) = seat_for(
                 *role,
@@ -347,7 +406,11 @@ impl ModelRuntime {
                 Arc::clone(&rests),
                 scope,
             ) {
+                let seat = seat.with_on_device_view(native_rungs, &rests, scope);
                 router.insert(seat.model.clone(), seat.locality, Arc::clone(&seat.ladder));
+                if let Some(view) = &seat.on_device {
+                    router.insert_on_device(seat.model.clone(), Arc::clone(view));
+                }
                 status.seats.push(SeatStatus::new(
                     *role,
                     Some(&seat.model),
@@ -398,6 +461,7 @@ impl ModelRuntime {
             rests,
             token_ratios,
             training: config.training.clone(),
+            stock_weights: worker_host::stock_weights(&config.workers, &config.providers),
             budgets: budgets.clone(),
             responses,
         }

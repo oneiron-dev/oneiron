@@ -130,7 +130,6 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::LEGAL_HOLD_USE_LIMIT,
     &side_table::LEGAL_HOLD_PENDING_ERASE,
     &side_table::LEGAL_HOLD_HOST_ROW,
-    &side_table::LEGAL_HOLD_HOST_TARGET,
     &side_table::LEGAL_HOLD_HOST_EVENT,
     &side_table::LEGAL_HOLD_HOST_ERASE_LINK,
     // The body collector's queue, and the device's residence choice.
@@ -339,6 +338,10 @@ impl Held {
                 &mut bodies,
             )?;
         }
+        // The kept removal archives' files, owned by their receipts, which
+        // are no kept entity (FIX 3679).
+        #[cfg(unix)]
+        crate::federation::removal_archive_body_keys_in_txn(store, txn, &mut bodies)?;
         Ok(Self {
             bodies,
             gate: store.held_gate_rows_in_txn(txn)?,

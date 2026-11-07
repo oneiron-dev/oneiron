@@ -4,7 +4,7 @@ use super::MergeQueue;
 use super::check_inputs::{QueueCheckFile, QueueCheckTreeSource};
 use crate::code_revision::{CodeTreeInventory, CodeTreeInventoryRuntime};
 use crate::error::Result;
-use crate::git_wire::{GitOid, GitWire, GitWireRepo};
+use crate::git_wire::{GitOid, GitWire, GitWireRepo, git_path_bytes};
 use crate::store::contract_oracle::invalid;
 
 /// Git's mode of a tree entry that is itself a tree.
@@ -48,27 +48,38 @@ impl MergeQueue<'_> {
     /// The bytes one path names in one tree, or `None` when it names no
     /// regular file there.
     pub(super) fn tree_file(&self, tree: &str, path: &str) -> Result<Option<Vec<u8>>> {
-        let wire = GitWire::new(self.vault)?;
-        let mut current = GitOid::parse_hex(tree)?;
-        let mut parts = path.split('/').peekable();
-        while let Some(part) = parts.next() {
-            let Some(entry) = wire.read_tree_entry(&self.repo, &current, part)? else {
-                return Ok(None);
-            };
-            if parts.peek().is_some() {
-                if entry.mode != MODE_TREE {
-                    return Ok(None);
-                }
-                current = entry.oid;
-            } else {
-                if entry.mode & 0o170_000 != 0o100_000 {
-                    return Ok(None);
-                }
-                return Ok(Some(wire.read_object(&self.repo, &entry.oid)?));
-            }
-        }
-        Ok(None)
+        read_tree_file(&GitWire::new(self.vault)?, &self.repo, tree, path)
     }
+}
+
+/// The bytes one path names in one tree of `repo`'s object store, or `None`
+/// when it names no regular file there. The queue's checks and a reviewed
+/// stack's prefix proof (FIX 4360) share this one reader.
+pub(crate) fn read_tree_file(
+    wire: &GitWire<'_>,
+    repo: &GitWireRepo,
+    tree: &str,
+    path: &str,
+) -> Result<Option<Vec<u8>>> {
+    let mut current = GitOid::parse_hex(tree)?;
+    let mut parts = path.split('/').peekable();
+    while let Some(part) = parts.next() {
+        let Some(entry) = wire.read_tree_entry(repo, &current, part)? else {
+            return Ok(None);
+        };
+        if parts.peek().is_some() {
+            if entry.mode != MODE_TREE {
+                return Ok(None);
+            }
+            current = entry.oid;
+        } else {
+            if entry.mode & 0o170_000 != 0o100_000 {
+                return Ok(None);
+            }
+            return Ok(Some(wire.read_object(repo, &entry.oid)?));
+        }
+    }
+    Ok(None)
 }
 
 impl QueueCheckTreeSource for PinnedTree<'_> {
@@ -76,17 +87,17 @@ impl QueueCheckTreeSource for PinnedTree<'_> {
     /// ([`CodeTreeInventory::entries`], FIX 7395): every level counted, in
     /// path order, submodule links left out.
     fn files(&self) -> Result<Vec<QueueCheckFile>> {
-        Ok(
-            CodeTreeInventory::entries(&self.wire, self.repo, &self.tree)?
-                .into_iter()
-                .filter(|(_, (_, mode))| *mode != MODE_GITLINK)
-                .map(|(path, (oid, mode))| QueueCheckFile {
-                    path: path.into_bytes(),
+        CodeTreeInventory::entries(&self.wire, self.repo, &self.tree)?
+            .into_iter()
+            .filter(|(_, (_, mode))| *mode != MODE_GITLINK)
+            .map(|(path, (oid, mode))| {
+                Ok(QueueCheckFile {
+                    path: git_path_bytes(&path)?.into_owned(),
                     mode,
                     oid,
                 })
-                .collect(),
-        )
+            })
+            .collect()
     }
 
     fn blob(&self, oid: &str) -> Result<Vec<u8>> {

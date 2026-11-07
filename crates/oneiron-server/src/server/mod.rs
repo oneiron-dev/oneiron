@@ -40,6 +40,7 @@ pub(crate) mod removal_delivery;
 mod residence_work;
 mod resident_pump;
 mod run_host_door;
+pub(crate) use run_host_door::RunMediaStep;
 mod space_move;
 mod tagging;
 mod wave_door;
@@ -47,6 +48,7 @@ mod web_fetch;
 mod windows;
 
 pub(crate) use self::artifact_previews::ArtifactPreviews;
+pub(crate) use self::board_publisher::ServeBackground;
 pub(crate) use self::browser_seats::{BrowserSeat, BrowserSeats, HandleLine};
 pub(crate) use self::core::BroadcastPayload;
 pub(crate) use self::core::ManagedIssuer;

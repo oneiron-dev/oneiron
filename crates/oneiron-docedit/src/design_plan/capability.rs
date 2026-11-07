@@ -136,11 +136,15 @@ impl Metrics {
             State::Unresolved(_) => return None,
             _ => style.indent.value.unwrap_or(0),
         };
-        let typeface = match style.typeface.value.as_deref() {
-            Some("+mj-lt") => theme.major,
-            Some("+mn-lt") | None => theme.minor,
-            Some(name) => Some(name),
-        };
+        let typeface =
+            style
+                .resolved_typeface
+                .as_deref()
+                .or_else(|| match style.typeface.value.as_deref() {
+                    Some("+mj-lt") => theme.major,
+                    Some("+mn-lt") | None => theme.minor,
+                    Some(name) => Some(name),
+                });
         let bold = style.bold.value.unwrap_or(false);
         let italic = style.italic.value.unwrap_or(false);
         Some(Self {
@@ -203,11 +207,18 @@ impl Metrics {
     /// characters) in `first` width, then `rest`; at least one. A word
     /// wider than the line breaks across lines.
     fn lines_in(&self, text: &str, first: i64, rest: i64) -> i64 {
+        let start = text.trim_start_matches(char::is_whitespace);
+        let leading = &text[..text.len() - start.len()];
+        let body = start.trim_end_matches(char::is_whitespace);
+        let trailing = &start[body.len()..];
+        let ascii_spaces = |run: &str| !run.is_empty() && run.bytes().all(|byte| byte == b' ');
+        let leading = ascii_spaces(leading).then_some((leading, ""));
+        let trailing = ascii_spaces(trailing).then_some((trailing, ""));
         let space = self.advance(" ");
         let mut lines = 1;
         let mut used = 0;
         let mut width = first.max(1);
-        for (word, separator) in words(text) {
+        for (word, separator) in leading.into_iter().chain(words(body)).chain(trailing) {
             let need = self.advance(word);
             let gap = if used == 0 || separator.is_empty() {
                 0

@@ -107,6 +107,8 @@ pub(crate) use self::esign::seal_worker::spawn_admitted as spawn_esign_seal_work
 pub(crate) mod off_record_rooms;
 mod org_admin;
 mod pairing;
+// FIX 12477: the redeem door's per-address failure backoff, held by the server.
+pub(crate) use self::pairing::PairingRedeemBackoff;
 // FIX 922: the kit door to the sealed cloud bundle.
 mod recovery_bundle;
 mod sessions;
@@ -174,13 +176,14 @@ pub(crate) use owner_routes::owner;
 // recorded owner, and takes the owner's media and hook-replay doors; its
 // media spends on its run's line (FIX 6083).
 pub(crate) use self::facade::{
-    ai_media_as_owner, ai_media_for_run, ai_options_for_program, ai_video_as_owner,
-    ai_video_cancel_as_owner, ai_video_cancel_for_run, ai_video_for_agent_run, ai_video_for_run,
-    ai_video_poll_as_owner, ai_video_poll_for_run, vault_hooks_replay_as_owner,
+    ai_image_for_run_step, ai_media_as_owner, ai_media_for_run, ai_options_for_program,
+    ai_video_as_owner, ai_video_cancel_as_owner, ai_video_cancel_for_run, ai_video_for_agent_run,
+    ai_video_for_run, ai_video_poll_as_owner, ai_video_poll_for_run, vault_hooks_replay_as_owner,
 };
 pub(crate) use owner_routes::managed_owner_proof;
 mod packs;
 mod params;
+mod phone_line;
 // ONE-1437: in-process local reactive read contract. No HTTP surface by design
 // (the ONE-1925 client-framework binding and the ONE-1495 cloud carrier are its
 // consumers), so the non-test build sees a contract with no caller — the
@@ -411,7 +414,38 @@ fn require_entity_type(
     expected_type: u8,
     resource: &'static str,
 ) -> Result<(), ApiError> {
-    match server.vault.get_entity_type(id) {
+    require_entity_type_lookup(
+        server.vault.get_entity_type(id),
+        id,
+        expected_type,
+        resource,
+    )
+}
+
+/// [`require_entity_type`] in the route's snapshot `txn`, so the type it
+/// checks is the one the route then admits and serves (FIX 10782).
+fn require_entity_type_in_txn(
+    vault: &oneiron::Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &oneiron::EntityId,
+    expected_type: u8,
+    resource: &'static str,
+) -> Result<(), ApiError> {
+    require_entity_type_lookup(
+        vault.get_entity_type_in_txn(txn, id),
+        id,
+        expected_type,
+        resource,
+    )
+}
+
+fn require_entity_type_lookup(
+    lookup: oneiron::Result<Option<u8>>,
+    id: &oneiron::EntityId,
+    expected_type: u8,
+    resource: &'static str,
+) -> Result<(), ApiError> {
+    match lookup {
         Ok(Some(actual)) if actual == expected_type => Ok(()),
         Ok(Some(_)) => Err(ApiError::bad_request(
             format!("{resource} id does not reference a {resource} entity"),

@@ -1,22 +1,26 @@
 //! An owner request's body, spooled (FIX 8195, FIX 7917, Rule 5). A body is
 //! read only after its route's door admitted the caller, onto an anonymous
 //! file the vault stages, whatever its length: its size never refuses it.
-//! Only a disk that refuses a write for want of room stops it, and the answer
-//! says capacity (`disk_capacity`). The sealed custody change also judges its
+//! A disk write that runs out of room says capacity (`disk_capacity`). Its
+//! fixed raw-spool buffer uses the process's memory line, whose capacity
+//! failure is reported separately. The sealed custody change also judges its
 //! spool against the server's disk floor as it goes (`transfers.disk`, kept
 //! at `limits.disk_reserve_bytes`, FIX 5674) and keeps the transfers' idle
-//! bound on its body; no other route does either.
+//! bound on its body. Widen answers opt into the same transfer policy.
 //!
 //! [`OwnerJsonBody`] is every owner JSON route's body. [`json`] decodes a
 //! spooled document whole while its bulk string members stream to sinks, so
 //! a field of any length never becomes one string in memory.
 
+mod hex;
 mod json;
+mod memory;
 mod owner_json;
 
 use std::fs::File;
 use std::io::{self, BufReader, Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use axum::body::Body;
@@ -25,12 +29,18 @@ use tokio::sync::mpsc;
 
 use crate::api::transfer::{self, BodyReader};
 use crate::error::{ApiError, ApiErrorDetails};
-use crate::machine::{DiskClaim, DiskFloor};
+use crate::machine::{DiskClaim, DiskFloor, MachineMemory, MemoryRefusal};
 use crate::owner::backup::write_budget::{CAPACITY_STATE, Capacity};
 use crate::server::SyncServer;
 
-pub(super) use self::json::{Base64FileSink, BulkMember, JsonInvalid, SinkRefusal, SpooledField};
-pub(super) use self::owner_json::OwnerJsonBody;
+pub(super) use self::hex::{HexFileSink, HexRefusal, SpooledHex};
+pub(super) use self::json::{
+    Base64FileSink, BulkMember, JsonInvalid, SinkRefusal, SpooledField, TextFileSink,
+};
+pub(super) use self::memory::{
+    decode_memory_refused, reader_memory_refused, sealed_decode_memory_refused,
+};
+pub(super) use self::owner_json::{OwnerJsonBody, TransferBody};
 
 /// Bytes the spool reads at a time, and the largest piece the body is fed in.
 const SPOOL_PIECE: usize = 64 * 1024;
@@ -51,33 +61,67 @@ const NO_ROOM_REMEDY: &str = "Free room on the vault's disk, then send the reque
 pub(super) struct BodySpool {
     file: File,
     room: Option<Arc<DiskClaim>>,
+    stopped: Arc<AtomicBool>,
 }
 
 impl BodySpool {
     /// The spool as one JSON document `T`, decoded as it is read; `None`
     /// when it is not one.
-    pub(super) fn json<T: serde::de::DeserializeOwned>(&mut self) -> Option<T> {
-        serde_json::from_reader(BufReader::with_capacity(SPOOL_PIECE, &mut self.file)).ok()
+    pub(super) fn json<T: serde::de::DeserializeOwned>(
+        &mut self,
+    ) -> Result<Option<T>, MemoryRefusal> {
+        let mut memory = self.admit_reader()?;
+        Ok(self.with_reader_admitted(&mut memory, |reader| serde_json::from_reader(reader).ok()))
     }
 
     /// The spool as one JSON object `T`, with each bulk member's string
     /// streamed to its sink as it is read (`json::decode_object`).
-    pub(super) fn object<T: serde::de::DeserializeOwned>(
+    pub(super) fn object_admitted<T: serde::de::DeserializeOwned>(
         &mut self,
         bulk: &mut [BulkMember<'_>],
+        memory: &mut crate::machine::MemoryLease,
     ) -> Result<T, JsonInvalid> {
-        json::decode_object(BufReader::with_capacity(SPOOL_PIECE, &mut self.file), bulk)
+        self.with_reader_admitted(memory, |reader| json::decode_object(reader, bulk))
     }
 
-    /// The spool's bytes from its start, read as they lie on the disk, a
-    /// piece at a time (FIX 12086).
-    pub(super) fn reader(&mut self) -> BufReader<&mut File> {
-        BufReader::with_capacity(SPOOL_PIECE, &mut self.file)
+    /// The declared string members, using reader room admitted with the text sink.
+    pub(super) fn string_object_admitted<const N: usize>(
+        &mut self,
+        bulk: &mut [BulkMember<'_>; N],
+        memory: &mut crate::machine::MemoryLease,
+    ) -> Result<(), JsonInvalid> {
+        let reader = BufReader::with_capacity(SPOOL_PIECE, &mut self.file);
+        memory.materialized(SPOOL_PIECE as u64, reader.capacity() as u64);
+        json::decode_string_object(reader, bulk)
+    }
+
+    /// Reads the spool under an already-admitted buffer lease. The buffer
+    /// is allocated before the callback and drops before its lease can leave.
+    pub(in crate::api) fn with_reader_admitted<R>(
+        &mut self,
+        memory: &mut crate::machine::MemoryLease,
+        read: impl FnOnce(&mut BufReader<&mut File>) -> R,
+    ) -> R {
+        let mut reader = BufReader::with_capacity(SPOOL_PIECE, &mut self.file);
+        memory.materialized(SPOOL_PIECE as u64, reader.capacity() as u64);
+        read(&mut reader)
     }
 
     /// The room the spool holds on the disk floor, kept past the spool.
     pub(super) fn into_room(self) -> Option<Arc<DiskClaim>> {
         self.room
+    }
+}
+
+impl BodySpool {
+    /// The complete spool length, without allocating a reader buffer.
+    pub(in crate::api) fn byte_len(&self) -> io::Result<u64> {
+        self.file.metadata().map(|metadata| metadata.len())
+    }
+
+    /// Reads into caller-owned storage without allocating a reader buffer.
+    pub(in crate::api) fn read_exact_into(&mut self, bytes: &mut [u8]) -> io::Result<()> {
+        self.file.read_exact(bytes)
     }
 }
 
@@ -89,15 +133,20 @@ pub(super) enum Unspooled {
     /// The body failed, stalled past the idle limit or was cancelled, or its
     /// spool could not be written.
     Failed,
+    /// The process memory line could not admit the raw spool's I/O buffer.
+    MemoryRefused(MemoryRefusal),
 }
 
 impl Unspooled {
-    /// The answer an owner route gives: capacity, or a body that did not
-    /// arrive.
+    /// The answer an owner route gives: disk or memory capacity, or a body
+    /// that did not arrive.
     pub(super) fn refusal(self) -> ApiError {
         match self {
             Self::NoRoom => no_room(NO_ROOM, NO_ROOM_REMEDY),
-            Self::Failed => not_whole(),
+            Self::Failed | Self::MemoryRefused(MemoryRefusal::WaitedOut { .. }) => not_whole(),
+            Self::MemoryRefused(MemoryRefusal::Floor { .. }) => ApiError::internal_server_error(
+                "this machine cannot allocate the request body's spool buffer",
+            ),
         }
     }
 }
@@ -113,7 +162,7 @@ pub(super) fn declared_length(headers: &HeaderMap) -> Option<u64> {
 /// How a spool reads its body: the disk floor it is judged against, and the
 /// longest the client may go quiet between frames. Every owner route reads
 /// with neither, so only the listener's own body policy ends a quiet body;
-/// the custody change keeps both ([`Self::custody`]).
+/// the custody change and widen answers keep both ([`Self::custody`]).
 #[derive(Default)]
 pub(super) struct SpoolPolicy {
     floor: Option<DiskFloor>,
@@ -158,19 +207,27 @@ pub(super) async fn spool_then<R: Send + 'static>(
     };
     let vault = Arc::clone(&server.vault);
     let (sender, receiver) = mpsc::channel(2);
+    let stopped = Arc::new(AtomicBool::new(false));
+    let _stop = memory::StopOnDrop(Arc::clone(&stopped));
+    let feed_stopped = Arc::clone(&stopped);
     let mut worker = transfer::spawn_worker(move || -> Result<R, Unspooled> {
         let account = floor.as_ref().zip(room.as_deref());
-        let file = spool_to_end(&vault, BodyReader::new(receiver), account, declared)?;
-        Ok(then(BodySpool { file, room }))
+        let file = spool_to_end(
+            &vault,
+            BodyReader::new(receiver),
+            account,
+            declared,
+            &stopped,
+        )?;
+        Ok(then(BodySpool {
+            file,
+            room,
+            stopped,
+        }))
     });
     // The worker can end at the floor before the client sends its next
     // frame, so its answer is taken without waiting for the body to end.
-    let feed = async move {
-        match idle {
-            Some(idle) => transfer::feed_body(body, sender, idle, SPOOL_PIECE).await,
-            None => transfer::feed_body_untimed(body, sender, SPOOL_PIECE).await,
-        }
-    };
+    let feed = transfer::feed_body_stoppable(body, sender, idle, SPOOL_PIECE, feed_stopped);
     let early = tokio::select! {
         biased;
         joined = &mut worker => Some(joined),
@@ -192,9 +249,14 @@ fn spool_to_end(
     mut body: BodyReader,
     floor: Option<(&DiskFloor, &DiskClaim)>,
     declared: Option<u64>,
+    stopped: &AtomicBool,
 ) -> Result<File, Unspooled> {
     let mut file = vault.archive_spool_file().map_err(create_failed)?;
+    let mut memory = MachineMemory::process()
+        .lease_untimed(SPOOL_PIECE as u64, &|| stopped.load(Ordering::Relaxed))
+        .map_err(Unspooled::MemoryRefused)?;
     let mut piece = vec![0; SPOOL_PIECE];
+    memory.materialized(SPOOL_PIECE as u64, piece.capacity() as u64);
     let mut read = 0u64;
     let mut looked_at: Option<u64> = None;
     loop {

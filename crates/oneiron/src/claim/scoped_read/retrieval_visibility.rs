@@ -13,7 +13,7 @@ pub(crate) struct RetrievalVisibility<'read, 'vault> {
     /// One relationship authority for every node the walk checks in `txn`,
     /// so the grants and relationship claims load once per walk, not once
     /// per node (FIX 11648).
-    held: HeldAuthority<'vault>,
+    held: HeldAuthority,
 }
 
 impl<'vault> ScopedRead<'vault> {
@@ -54,7 +54,7 @@ impl<'vault> ScopedRead<'vault> {
         policy: &PolicyManifestResolution,
         filter: &ResolvedRetrievalFilter,
         id: &EntityId,
-        authority: &HeldAuthority<'vault>,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
         // Audience, NOTE privacy, relationship grants, credential scope and
         // type/scalar ceilings all live in the shared row predicate; graph
@@ -97,7 +97,7 @@ impl<'vault> ScopedRead<'vault> {
         txn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
         turn: &EntityId,
-        authority: &HeldAuthority<'vault>,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
         let floor = self.actor_retrieval_floor(policy)?;
         let floor_authority = authority.for_peer();
@@ -112,11 +112,19 @@ impl<'vault> ScopedRead<'vault> {
         };
         for part in parts {
             let message = part?.target;
-            let Some(row) = self.entity_record_in(txn, &message)? else {
-                continue;
+            let (row, placed) = match self.entity_record_loaded_in(txn, &message)? {
+                super::admission::LoadedRecord::Placed(row) => (row, true),
+                super::admission::LoadedRecord::Unplaced(row) => (row, false),
+                super::admission::LoadedRecord::Absent => continue,
             };
             if row.entity_type != crate::registry::ENTITY_TYPE_MESSAGE || row.body.is_empty() {
                 continue;
+            }
+            // A message this room read cannot place still holds its words in
+            // the turn: the turn is refused, as a refused message refuses it
+            // (FIX 5161, review P1 #5926).
+            if !placed {
+                return Ok(false);
             }
             if !self.is_entity_readable_held_in(txn, policy, &message, &floor, &floor_authority)? {
                 return Ok(false);
