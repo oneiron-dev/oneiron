@@ -7629,7 +7629,7 @@
      "path": "src/batch/export/snapshot_body.rs",
      "purpose": "FIX 3677: a live row's body as the whole-vault snapshot reads it",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -60973,7 +60973,7 @@
      "path": "src/ports/safe_read.rs",
      "purpose": "Integrity reads compose ports without opening a transaction",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 2
      }
     },
