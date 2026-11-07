@@ -7,16 +7,18 @@ use super::codec::invalid_companion;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
     ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject, PointRead, ReadRow, ScopedRead,
-    ScopedReadReceipt, decode_claim_body,
+    ScopedReadReceipt, ScopedReadResult, decode_claim_body,
 };
 use crate::error::{Error, Result};
 use crate::federation::{ScopeId, Sensitivity};
 use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON};
 use crate::serialize::msgpack_value_from_json;
+use crate::vault::entity_revision::{ReadMode, RevisionRef, revision_for_mode_in_txn};
 use crate::{EdgeKind, EntityId, TimeRange, Vault};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Identity changes are ordinary lifecycle-managed claims on the PERSON.
 pub const PERSONA_CHANGE_PREDICATE: &str = "persona.change";
@@ -34,6 +36,46 @@ pub struct PersonaMadeBy {
     pub inputs: Vec<EntityId>,
     pub process: String,
     pub at: u64,
+    /// The exact revision of each input this was derived from, as its writer
+    /// read it ([`ScopedRead::persona_input_bases`]). An input with no entry
+    /// records no basis; a change written before bases existed carries none,
+    /// and its wire form is unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bases: Vec<PersonaInputBasis>,
+}
+
+/// One derivation input at the exact revision its writer read: the input's
+/// live revision in the entity revision ledger, which retains it when the
+/// input is replaced, so a reader can still read it with
+/// `PointRead::id(input).at(ReadMode::Pinned(revision))`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PersonaInputBasis {
+    #[serde(
+        serialize_with = "serialize_input",
+        deserialize_with = "deserialize_input"
+    )]
+    pub input: EntityId,
+    #[serde(
+        serialize_with = "serialize_revision",
+        deserialize_with = "deserialize_revision"
+    )]
+    pub revision: RevisionRef,
+}
+
+/// A replayed change whose recorded basis for one input is not the basis this
+/// replay applied it over. Advisory only: the change still applied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PersonaReplayConflict {
+    /// The `persona.change` claim.
+    pub change: EntityId,
+    pub input: EntityId,
+    /// The revision the change recorded for `input`.
+    pub recorded: RevisionRef,
+    /// The revision of `input` this replay applied the change over. `None`:
+    /// this reader reads no revision of it now, or `input` is a change of this
+    /// PERSON that the replay did not apply before this one.
+    pub current: Option<RevisionRef>,
 }
 
 fn serialize_inputs<S: serde::Serializer>(
@@ -52,6 +94,34 @@ fn deserialize_inputs<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> std::result::Result<Vec<EntityId>, D::Error> {
     Vec::<ScopeId>::deserialize(deserializer).map(|ids| ids.into_iter().map(|id| id.0).collect())
+}
+
+fn serialize_input<S: serde::Serializer>(
+    input: &EntityId,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    ScopeId(*input).serialize(serializer)
+}
+
+fn deserialize_input<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<EntityId, D::Error> {
+    ScopeId::deserialize(deserializer).map(|id| id.0)
+}
+
+fn serialize_revision<S: serde::Serializer>(
+    revision: &RevisionRef,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    serializer.serialize_str(&revision.to_hex())
+}
+
+fn deserialize_revision<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<RevisionRef, D::Error> {
+    let text = String::deserialize(deserializer)?;
+    RevisionRef::from_hex(&text)
+        .map_err(|_| serde::de::Error::custom("persona input basis is not a revision reference"))
 }
 
 /// An object merge patch. Null removes a field; objects merge recursively.
@@ -89,6 +159,10 @@ pub struct CompiledPersona {
     /// Every scoped read the projection made, folded: the changes and scenario
     /// facts this reader could not see are counted here, never silently lost.
     pub receipt: ScopedReadReceipt,
+    /// Advisory, in replay order: each recorded input basis of an applied
+    /// change that differs from the basis this replay applied it over. Every
+    /// change applied regardless; a change with no recorded basis reports none.
+    pub replay_conflicts: Vec<PersonaReplayConflict>,
 }
 
 use crate::serialize::person_identity::object;
@@ -101,6 +175,17 @@ impl PersonaChange {
         if self.made_by.process.trim().is_empty() || self.made_by.inputs.is_empty() {
             return Err(invalid_companion(
                 "persona change requires made_by inputs and process",
+            ));
+        }
+        let mut based = BTreeSet::new();
+        if !self
+            .made_by
+            .bases
+            .iter()
+            .all(|basis| self.made_by.inputs.contains(&basis.input) && based.insert(basis.input))
+        {
+            return Err(invalid_companion(
+                "persona change bases must name distinct made_by inputs",
             ));
         }
         to_value(&ChangeWire {
@@ -289,23 +374,83 @@ fn merge_patch(target: &mut JsonValue, patch: &JsonValue) {
     }
 }
 
+/// An admitted row and its live revision, read in one snapshot.
+type RowWithRevision = (ReadRow, Option<RevisionRef>);
+
 impl ScopedRead<'_> {
+    /// Reads `reads` through this lane and names, in the same snapshot, the
+    /// live revision of each row it admits: the basis a persona input records
+    /// and the basis a replay applies a change over.
+    fn read_live_bases(
+        &self,
+        reads: &[PointRead<'_>],
+    ) -> Result<ScopedReadResult<Vec<Option<RowWithRevision>>>> {
+        let store = self.store_read();
+        self.read_projected(reads, None, |txn, rows| {
+            rows.into_iter()
+                .map(|row| {
+                    row.map(|row| -> Result<RowWithRevision> {
+                        let revision =
+                            revision_for_mode_in_txn(&store, txn, &row.id, ReadMode::Live)?;
+                        Ok((row, revision))
+                    })
+                    .transpose()
+                })
+                .collect::<Result<Vec<_>>>()
+        })
+    }
+
+    /// The live revision of each input this reader reads now, for a change
+    /// derived from them to record as [`PersonaMadeBy::bases`]. An input this
+    /// reader cannot read, or one with no ledger revision, gets no basis: none
+    /// is invented. The receipt counts the inputs withheld from this reader.
+    pub fn persona_input_bases(
+        &self,
+        inputs: &[EntityId],
+    ) -> Result<ScopedReadResult<Vec<PersonaInputBasis>>> {
+        let reads: Vec<_> = inputs.iter().copied().map(PointRead::id).collect();
+        Ok(self.read_live_bases(&reads)?.map(|rows| {
+            let mut bases: Vec<PersonaInputBasis> = Vec::new();
+            for (row, revision) in rows.into_iter().flatten() {
+                if let Some(revision) = revision
+                    && !bases.iter().any(|basis| basis.input == row.id)
+                {
+                    bases.push(PersonaInputBasis {
+                        input: row.id,
+                        revision,
+                    });
+                }
+            }
+            bases
+        }))
+    }
+
     /// Replays approved identity changes on the current PERSON baseline. Pending, retracted,
     /// superseded, scoped-away and unauthorized changes cannot enter the result.
     /// The optional scenario is applied last and must belong to this PERSON.
+    ///
+    /// Each applied change's recorded input bases are checked against the
+    /// basis this replay applies it over: the PERSON's revision read with its
+    /// baseline, a change of this PERSON's revision once the replay applied
+    /// it, and any other input's live revision as this lane reads it. A
+    /// difference is reported in `replay_conflicts`; it never skips or refuses
+    /// the change.
     pub fn compile_persona(
         &self,
         person: &EntityId,
         scenario: Option<EntityId>,
     ) -> Result<CompiledPersona> {
-        let baseline = self.read(&[PointRead::id(*person)], None)?.single();
+        let baseline = self.read_live_bases(&[PointRead::id(*person)])?.single();
         let mut receipt = baseline.receipt;
-        let Some(ReadRow {
-            entity_type: kind,
-            learned_at: baseline_at,
-            body: Some(data),
-            ..
-        }) = baseline.value
+        let Some((
+            ReadRow {
+                entity_type: kind,
+                learned_at: baseline_at,
+                body: Some(data),
+                ..
+            },
+            person_revision,
+        )) = baseline.value
         else {
             return Err(Error::EntityNotFound);
         };
@@ -313,6 +458,10 @@ impl ScopedRead<'_> {
             return Err(Error::InvalidEntityType(kind));
         }
         let mut value = validated_persona_baseline(&data)?;
+        // Every input's live revision as this lane read it, the PERSON's with
+        // its baseline. Changes of this PERSON answer from `applied` instead.
+        let mut read_bases = BTreeMap::from([(*person, person_revision)]);
+        let mut person_changes: BTreeSet<EntityId> = BTreeSet::new();
         let mut changes = Vec::new();
         let claims: Vec<_> = self
             .vault()
@@ -320,9 +469,10 @@ impl ScopedRead<'_> {
             .into_iter()
             .map(PointRead::id)
             .collect();
-        let claims = self.read(&claims, None)?;
+        let claims = self.read_live_bases(&claims)?;
         receipt.restrict_with(&claims.receipt);
-        for row in claims.value.into_iter().flatten() {
+        for (row, revision) in claims.value.into_iter().flatten() {
+            read_bases.insert(row.id, revision);
             let ReadRow {
                 id,
                 body: Some(data),
@@ -332,6 +482,11 @@ impl ScopedRead<'_> {
                 continue;
             };
             let body = decode_claim_body(&data, true)?;
+            if body.predicate == PERSONA_CHANGE_PREDICATE
+                && body.subject == ClaimSubject::Entity(*person)
+            {
+                person_changes.insert(id);
+            }
             let producer_facet = crate::claim::session_claim_producer(&body)
                 .map(crate::claim::substrate_facet_id)
                 .transpose()?;
@@ -350,25 +505,72 @@ impl ScopedRead<'_> {
                 continue;
             }
             let change = PersonaChange::from_claim_value(&body.value)?;
-            changes.push((change.made_by.at, id, change));
+            changes.push((change.made_by.at, id, revision, change));
         }
-        changes.sort_by_key(|(at, id, _)| (*at, *id));
+        changes.sort_by_key(|(at, id, ..)| (*at, *id));
+        // Recorded inputs no read above reached pass the same lane; one this
+        // reader cannot read has no current basis, and the receipt counts it.
+        let unread: BTreeSet<EntityId> = changes
+            .iter()
+            .flat_map(|(.., change)| change.made_by.bases.iter().map(|basis| basis.input))
+            .filter(|input| !read_bases.contains_key(input))
+            .collect();
+        if !unread.is_empty() {
+            let reads: Vec<_> = unread.iter().copied().map(PointRead::id).collect();
+            let rows = self.read_live_bases(&reads)?;
+            receipt.restrict_with(&rows.receipt);
+            for (input, row) in unread.into_iter().zip(rows.value) {
+                read_bases.insert(input, row.and_then(|(_, revision)| revision));
+            }
+        }
         let mut inputs = vec![*person];
+        let mut bases: Vec<PersonaInputBasis> = person_revision
+            .map(|revision| PersonaInputBasis {
+                input: *person,
+                revision,
+            })
+            .into_iter()
+            .collect();
+        let mut applied: BTreeMap<EntityId, Option<RevisionRef>> = BTreeMap::new();
+        let mut replay_conflicts = Vec::new();
         let mut at = baseline_at;
-        for (changed_at, id, change) in changes {
+        for (changed_at, id, revision, change) in changes {
+            for recorded in &change.made_by.bases {
+                let current = if person_changes.contains(&recorded.input) {
+                    applied.get(&recorded.input).copied().flatten()
+                } else {
+                    read_bases.get(&recorded.input).copied().flatten()
+                };
+                if current != Some(recorded.revision) {
+                    replay_conflicts.push(PersonaReplayConflict {
+                        change: id,
+                        input: recorded.input,
+                        recorded: recorded.revision,
+                        current,
+                    });
+                }
+            }
             merge_patch(&mut value, &change.patch);
             inputs.push(id);
+            bases.extend(revision.map(|revision| PersonaInputBasis {
+                input: id,
+                revision,
+            }));
+            applied.insert(id, revision);
             at = at.max(changed_at);
         }
         if let Some(facet) = scenario {
-            let parts = self.read(&[PointRead::id(facet)], None)?.single();
+            let parts = self.read_live_bases(&[PointRead::id(facet)])?.single();
             receipt.restrict_with(&parts.receipt);
-            let Some(ReadRow {
-                entity_type: kind,
-                learned_at,
-                body: Some(data),
-                ..
-            }) = parts.value
+            let Some((
+                ReadRow {
+                    entity_type: kind,
+                    learned_at,
+                    body: Some(data),
+                    ..
+                },
+                facet_revision,
+            )) = parts.value
             else {
                 return Err(Error::EntityNotFound);
             };
@@ -393,6 +595,10 @@ impl ScopedRead<'_> {
             object(&mask.patch)?;
             merge_patch(&mut value, &mask.patch);
             inputs.push(facet);
+            bases.extend(facet_revision.map(|revision| PersonaInputBasis {
+                input: facet,
+                revision,
+            }));
             at = at.max(learned_at);
         }
         Ok(CompiledPersona {
@@ -403,8 +609,10 @@ impl ScopedRead<'_> {
                 inputs,
                 process: "persona.merge-patch.v1".to_owned(),
                 at,
+                bases,
             },
             receipt,
+            replay_conflicts,
         })
     }
 }

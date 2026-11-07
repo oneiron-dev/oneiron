@@ -102,3 +102,75 @@ Post-loss CLI and HTTP recovery remain separate from these pre-loss enrollment
 surfaces. The public Rust operations do not themselves claim those surfaces are
 implemented, nor do they change kit confirmation, piece-count options, kit
 replacement or ordinary key revocation.
+
+## Post-loss CLI recovery
+
+On a stopped copy of the vault, open its data with the existing unlock inputs and
+recover authority with a kit whose distinct authority key was enrolled before loss:
+
+```sh
+oneiron recovery-kit recover-authority --config serve.toml \
+  --piece /private/kit/piece-1.txt --piece /private/kit/piece-2.txt \
+  --new-device /private/successor-device.json
+```
+
+`--new-device` is a JSON file, not stdin. It supplies every native successor field:
+
+- `key`: an object with `suite` (`ed25519` or `p256`) and hex `public_key`.
+  Ed25519 uses 32 bytes; P-256 uses canonical compressed SEC1 bytes.
+- `transport_key_binding`: the actual 32-byte binding, in hex.
+- `attestation`: an object with the actual `kind` and hex `evidence`.
+- `tier`: `software`, `hardware` or `cloud_custodial`.
+- `roles`: the native role-bit integer, with no inferred owner or admin role.
+
+No field defaults to the lost host's key, a minted attestation, an empty binding
+or an assumed tier. Supply the real successor public key and its truthful device
+envelope. The file contains no signing seed or private key; custody of the
+successor's private key remains the caller's responsibility. Its envelope is a
+recovery target, not a credential or proof of possession for enrollment.
+
+The command does not call the local-owner or host-predecessor door. It restores
+kit material for the vault's actual authority identity, then calls the core
+counted recovery operation. Only the previously enrolled, still-standing recovery
+key authenticates it. Native successor, posture, role, freshness, frontier and
+signature checks still apply. The JSON receipt contains the committed entry hash,
+its authority vault id and its signer sequence. No kit material is printed.
+
+This command needs an existing openable vault copy. It neither restores missing
+vault data nor grants authority merely because world keys or a sealed bundle
+were restored. Kit confirmation, piece-count options, kit replacement and
+ordinary key revocation are unchanged. Its kit and data-unlock readers use the
+same exact kept-piece and stdin rules as pre-loss enrollment.
+
+## Post-loss HTTP recovery
+
+On a non-hosted, non-managed open vault, `POST /v1/recovery/owner-authority`
+takes one JSON object:
+
+- `target`: the consuming vault's actual authority vault id, as 64 hex digits.
+  It is not a mirror id, data-key id or machine id.
+- `new_device`: the same fully explicit successor envelope as `--new-device`.
+- `kit`: an object with recovery-code `pieces` and an optional `passphrase`.
+
+The recovered, previously enrolled kit key authenticates this operation through
+the core counted consume. No owner credential, lost-machine profile, mine proof
+or host signing secret substitutes for that key. `new_device` is only the target,
+not a bearer credential. The target id must match the same open vault's authority
+fold before kit codes are parsed; the core also binds the actual vault identity
+and counts the recovery in its own write transaction. The response is the same
+committed recovery receipt as the command.
+
+The shared existing kit posture guard rejects hosted and managed installs before
+reading the secret body. The body streams through the existing transient-reader
+ports, not a disk spool, and syntax errors never echo input. Request kit material
+is wiped on drop, including target or device refusals. Existing listener body
+policy remains; the endpoint adds no body-length cap, timeout or proof of
+possession requirement. Do not put kit material in headers, URLs or logs.
+
+The recipient distinction is Engine call 2026-11-05 10:50 JST, confirmed by L02 at
+10:42:56 JST, based on CROSS-ARCH-0019 (`vault-20-unlock` and
+`world-privacy-kit`): the recovery kit is the credential on a new machine. Asking
+for the lost machine's profile proof would make recovery impossible. The owner
+may overturn that call. The existing proved-install and world-recipient kit
+transport rules remain unchanged for transfers between live machines, and the
+pre-loss owner-authenticated HTTP enrollment keeps those rules.

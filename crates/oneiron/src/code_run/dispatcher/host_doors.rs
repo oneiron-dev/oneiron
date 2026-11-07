@@ -4,9 +4,8 @@
 use super::HostSelfDispatcher;
 use crate::EntityId;
 use crate::code_run::{
-    AgentSpawnInput, AgentSpawnKind, AgentSpawnOutput, LeaderSplitInput, LeaderSplitOutput,
-    ReportBlockedInput, ReportBlockedOutput, SelfAgentSpawnResult, SelfDispatchOutcome,
-    TaskRefuseInput, TaskRefuseOutput,
+    AgentSpawnInput, AgentSpawnOutput, LeaderSplitInput, LeaderSplitOutput, ReportBlockedInput,
+    ReportBlockedOutput, SelfDispatchOutcome, TaskRefuseInput, TaskRefuseOutput,
 };
 use crate::memory::{MEMORY_CODE_INTERNAL, MemoryError, MemoryResult};
 
@@ -52,29 +51,7 @@ impl<'a> HostSelfDispatcher<'a> {
         // The call holds its leased run's tool witness open (FIX 8521).
         let _tool = self.activity_tool();
         match self.dispatch_agents_spawn(input.into_call()?)? {
-            SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::Queued {
-                attempt_ref,
-                launch,
-                unapplied,
-            }) => Ok(AgentSpawnOutput::Queued {
-                kind: AgentSpawnKind::AgentSpawn,
-                attempt: crate::entity_id::bytes_to_hex_lower(attempt_ref.as_bytes()),
-                launch,
-                unapplied,
-            }),
-            SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::ProposedWiden {
-                proposal_ref,
-                unapplied,
-            }) => Ok(AgentSpawnOutput::ProposedWiden {
-                kind: AgentSpawnKind::AgentSpawn,
-                proposal: proposal_ref,
-                unapplied,
-            }),
-            SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::TargetErased) => {
-                Ok(AgentSpawnOutput::TargetErased {
-                    kind: AgentSpawnKind::AgentSpawn,
-                })
-            }
+            SelfDispatchOutcome::AgentSpawn(spawn) => Ok(spawn.into()),
             SelfDispatchOutcome::Failed(failed) => {
                 Err(MemoryError::new(&failed.error, &failed.error, &[]))
             }
@@ -95,9 +72,13 @@ impl<'a> HostSelfDispatcher<'a> {
             .map(crate::skill_attribution::enter_run_writes);
         // The call holds its leased run's tool witness open (FIX 8521).
         let _tool = self.activity_tool();
-        match self.dispatch_memory_supersede_claim(input.into_call()?)? {
+        // The claims it names resolve under the actor's own read (FIX 1214).
+        match self.dispatch_memory_supersede_claim(input.into_call()?, None)? {
             SelfDispatchOutcome::MemoryWrite(written) => {
                 Ok(crate::code_run::MemoryWriteOutput { id: written.id })
+            }
+            SelfDispatchOutcome::Failed(failed) => {
+                Err(MemoryError::new(&failed.error, &failed.error, &[]))
             }
             _ => Err(host_result_mismatch()),
         }

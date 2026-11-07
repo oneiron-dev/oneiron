@@ -83,7 +83,7 @@ impl IdempotencyStore {
         &self,
         store_key: &str,
         request_target: &str,
-        request_body: &[u8],
+        request_digest: &[u8],
     ) -> Result<IdempotencyLookup, IdempotencyStoreError> {
         let Some(raw) = self
             .vault
@@ -123,7 +123,7 @@ impl IdempotencyStore {
         if stored.erased {
             return Ok(IdempotencyLookup::Erased);
         }
-        if stored.request_body != request_body
+        if stored.request_digest != request_digest
             || stored
                 .request_target
                 .as_deref()
@@ -295,12 +295,13 @@ impl CachedHttpResponse {
 
 impl CachedHttpResponse {
     /// The entry this response is kept as: its time, the request it
-    /// answers, and its owners' stamps, the caller's among them.
+    /// answers (its target and body digest), and its owners' stamps, the
+    /// caller's among them.
     fn into_stored(
         self,
         created_at_secs: u64,
         request_target: String,
-        request_body: Vec<u8>,
+        request_digest: Vec<u8>,
         stamp: caller::EntryStamp,
     ) -> StoredIdempotencyEntry {
         let mut headers = Vec::with_capacity(self.headers.len());
@@ -309,7 +310,7 @@ impl CachedHttpResponse {
         }
         StoredIdempotencyEntry {
             created_at_secs,
-            request_body,
+            request_digest,
             status: self.status.as_u16(),
             headers,
             response_body: self.body,

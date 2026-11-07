@@ -368,16 +368,40 @@ impl Vault {
             .register_structural_kind_in_family(type_byte, short_id_prefix, family, pack)
     }
 
-    /// Allocates and persists the lowest free compiled-pack family slot.
-    /// A full family spills into pack overflow without losing its identity.
+    /// Allocates and persists the lowest free compiled-pack family slot for
+    /// the kind `identity` names, under `identity.pack`. A full family
+    /// spills into its zone's overflow range; when that is full too, the
+    /// kind interns through PackByteMap under `identity` (ARCH-0058
+    /// `#fail-soft`): name-bearing, its instances written by name, never a
+    /// count-full refusal. Interning mints no execution grant or trust.
+    ///
+    /// # Errors
+    /// A malformed identity or registration, a collision with a static or
+    /// registered kind, a prefix or name collision, or a store failure.
     pub fn allocate_structural_kind(
         &self,
         family: crate::registry::TypeByteFamily,
         short_id_prefix: impl Into<String>,
-        pack: impl Into<String>,
-    ) -> Result<StructuralKindRegistration> {
-        self.store
-            .allocate_structural_kind(family, short_id_prefix, pack)
+        identity: &crate::registry::pack_byte_map::PackKindIdentity,
+    ) -> Result<crate::registry::pack_byte_map::StructuralKindAllocation> {
+        use crate::registry::pack_byte_map::StructuralKindAllocation;
+        identity.validate()?;
+        if let Some(registration) =
+            self.store
+                .allocate_structural_kind(family, short_id_prefix, identity.pack.clone())?
+        {
+            return Ok(StructuralKindAllocation::Compiled(registration));
+        }
+        let installed = self.with_write_txn_grouped(|txn| {
+            self.install_pack_kinds_in_txn(txn, std::slice::from_ref(identity))
+        })?;
+        installed
+            .into_iter()
+            .next()
+            .map(StructuralKindAllocation::Pack)
+            .ok_or(crate::Error::InvariantViolation(
+                "a pack kind install answers its one kind",
+            ))
     }
 
     /// Returns the dynamic StructuralKind registration for `type_byte`, if
