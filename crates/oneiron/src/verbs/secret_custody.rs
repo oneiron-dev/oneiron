@@ -50,8 +50,8 @@ const DEFAULT_MANIFEST_REF: &str = "refs/heads/main";
 #[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SecretRegisterRequest {
-    /// The secret's custody name: 1 to 255 bytes, unique among live
-    /// records.
+    /// The secret's custody name: 1 to 488 bytes (what its name-index key
+    /// holds), unique among live records.
     pub name: String,
     /// `custody-portable`, `custody-device-bound` or `cross-vault`.
     pub class: String,
@@ -580,10 +580,12 @@ fn custody_plan(holder: Option<&str>, recipients: &[String]) -> MemoryResult<Cus
     })
 }
 
-/// A name the custody index can key: 1 to 255 bytes.
+/// A name the custody index can key: 1 to [`SECRET_NAME_MAX_BYTES`] bytes.
 fn secret_name(name: &str) -> MemoryResult<&str> {
     if name.is_empty() || name.len() > SECRET_NAME_MAX_BYTES {
-        return Err(MemoryError::bad_request("name must be 1 to 255 bytes"));
+        return Err(MemoryError::bad_request(format!(
+            "name must be 1 to {SECRET_NAME_MAX_BYTES} bytes"
+        )));
     }
     Ok(name)
 }

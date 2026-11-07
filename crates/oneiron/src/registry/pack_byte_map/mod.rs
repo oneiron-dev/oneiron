@@ -12,7 +12,7 @@ mod types;
 
 pub use types::{
     PackByteMapSnapshot, PackInstanceEnvelope, PackInstanceOrigin, PackKindIdentity,
-    PackKindRegistration,
+    PackKindRegistration, StructuralKindAllocation,
 };
 
 #[cfg(test)]

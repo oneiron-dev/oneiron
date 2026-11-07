@@ -62,7 +62,7 @@ let manifest = done.manifest(); // name, media type, size and BLAKE3 of each out
 | `xlsx.mark_full_calc` | `workbook` | `limits` | `written` | `workbook` | `mark_full_calc` |
 | `xlsx.recalc` | `workbook` | `clock` (now_ms, utc_offset_minutes, seed), optional `location` (directory, file_name), `limits` | `recalculated`: engine, version, formula count | `workbook` | the host's `RecalcPort`; `FormualizerEngine::recalculate_xlsx` |
 | `deck.read` | `deck` | `limits` | `deck`: editability, id marks, slides, shapes (id, kind, slide-space position, extent, text, fingerprint), ambiguities | none | `Package::open`, `DeckView::read` |
-| `deck.transaction` | `deck`, `assets[].input` | `transaction` (deck transaction schema 1), `assets` (artifact, version, media, origin, provenance, rights), `limits` | `deck_transaction`: the report (candidate hash, part diff, step effects, marks, handoff hash) | `deck` | `run_transaction` |
+| `deck.transaction` | `deck`, `assets[].input` | `transaction` (deck transaction schema 2), `assets` (artifact, version, media, origin, provenance, rights), `limits` | `deck_transaction`: the report (candidate hash, part diff, step effects, marks, handoff hash) | `deck` | `run_transaction` |
 | `deck.create` | `brief.input`, `template`, `fonts`, `assets.*.input` | `brief` (version, optional kept hash), `assets` keyed by brief asset id, `names`, `limits` | `deck_ask` (pages no layout could hold) or `deck_created` (hash, slides, write set, omitted, fit-unverified units) | `deck` | `compile_with_fonts`, `emit` |
 | `pptx.comments` | `deck` | `edits` (author, thread and comment GUIDs, time, and an add with its slide or shape target, a reply, or a resolve), optional `slide_creation_ids`, `seed`, `limits` (comments) | `pptx_comments`: touched parts, the slide creation IDs minted, each new thread's anchor | `deck` | `pptx_comments::comment_patch` |
 | `pptx.comments.inspect` | `deck` | `limits` (comments) | `pptx_comments_inspected`: slides (number, part, id, creation ID, fingerprint, shapes with creation GUID, fingerprint and slide-space position), signature parts, threads with an unknown anchor | none | `pptx_comments::inspect_pptx`, `unknown_anchor_threads` |
@@ -206,13 +206,41 @@ unchanged.
 - **Generated-image deck assets:** their adapter receipts stay engine-side.
 - **The Office oracle:** live Word, Excel and PowerPoint runs are Phase 2.
 
+## Bubble-size sequence writes
+
+`deck.transaction` schema 2 accepts `set_series_values` with `sequence: "size"`
+for a bubble series' existing workbook-backed `c:bubbleSize` range. The write uses
+that range's existing length, updates its workbook cells and every overlapping
+cache together, and re-imports before landing. The other sequence names remain
+`name`, `categories` and `values`. Literal, external, formula-backed, shared or
+length-changing ranges keep the native writer's existing refusals. Live exports
+still use the full rewrite when a size sequence is added or removed, is literal,
+grows beyond its existing range, or the checked native write refuses. This does
+not add a stock-chart seeder or change stock-placeholder read/skip behavior.
+
 ## Versioning
 
 The crate serves exactly one contract schema. Changing an op's args or reply means a new schema
 number, and there is no compatibility path. Two nested grammars carry their own versions: the
-deck transaction (`schema: 1`, `crates/oneiron-docedit/src/edit/transaction.rs`) and the stemma
+deck transaction (`schema: 2`, `crates/oneiron-docedit/src/edit/transaction.rs`) and the stemma
 tracked-change transaction (`crates/oneiron-docedit/vendor/stemma-engine`).
 
 Source: `crates/oneiron-docedit/src/contract/mod.rs` (the types and the op table) and
 `contract/run.rs` (the handlers and the refusal mapping). The recalculation port is
 `crates/oneiron-xlsx-formula/src/contract_port.rs`.
+
+
+### Native live deck export graphic settings (FIX 10653)
+
+`vault.artifacts.body.deck.export` accepts optional `graphics`, with the existing
+`svg_bytes`, `raster_bytes` and `raster_pixels` fields. The request passes the same
+`GraphicLimits` to the native export profile. The projector resolves the existing
+default once when the field is absent, then uses that value for both newly compiled
+live pictures and replaced picture payloads. This does not re-admit held media or
+unchanged retained pictures. The default-only internal export caller passes `None`.
+
+Explicit settings are part of the export key; even an explicit default is distinct
+from an omitted setting. With no setting, the old serialized profile/key fields,
+order and hash remain unchanged. Numeric defaults, profile-name gates, asset and
+package admission, actor/rights/secret checks, and land/propose/rebind ordering are
+unchanged. The generated SDK carries the optional request field.

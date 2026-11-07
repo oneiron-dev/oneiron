@@ -83,7 +83,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/live/convert/chart.rs` | src | m | 2 crate-vis | — | A chart payload settled into the form its export writes (OF-510): the plots Change Chart Type lays out… |
 | `src/live/convert/chart/special.rs` | src | m | 7 crate-vis | — | A chart's stock, surface and of-pie settlement (OF-510, FIX 3493 D9c): each stock plot's prices bound to its… |
 | `src/live/deck_export.rs` | src | m | 7 struct · 1 enum · 7 fn · 1 const · 2 re-export | ExportKey, ExportOutcome, ExportProfile, Gate, HeldAssets, OracleReceipt, RoundtripReport, StepOutcome | The deterministic export projector and the eight-step gate (ARCH-0077, "Export is a deterministic projection") |
-| `src/live/deck_export/chart.rs` | src | s | 3 crate-vis | — | A chart at export, by series identity: a bound chart's changed data written over its retained chart part… |
+| `src/live/deck_export/chart.rs` | src | m | 3 crate-vis | — | A chart at export, by series identity: a bound chart's changed data written over its retained chart part… |
 | `src/live/deck_export/evidence.rs` | src | s | 3 fn | — | — |
 | `src/live/deck_export/payload.rs` | src | m | 5 crate-vis | — | — |
 | `src/live/deck_export/projector.rs` | src | m | 1 fn | — | — |
@@ -176,9 +176,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/retained_opc/xml/retained.rs` | src | m | 4 crate-vis | — | One authoritative parse |
 | `src/worksheet_preserve.rs` | src | m | 1 struct · 1 fn | Preservation | FIX9820 PART: restore wholly-missing worksheet root foreign groups and SML ext records |
 | `src/xlfn.rs` | src | s | 2 fn | — | Excel's storage qualifiers for post-2007 worksheet functions |
-| `src/xlsx_body.rs` | src | m | 10 re-export | — | SpreadsheetML workbook read and projection seam |
+| `src/xlsx_body.rs` | src | m | 11 re-export | — | SpreadsheetML workbook read and projection seam |
 | `src/xlsx_body/attachments.rs` | src | m | 5 crate-vis | — | Drawing, note, table and slicer changes after an axis edit |
 | `src/xlsx_body/axis.rs` | src | s | 4 crate-vis | — | Shared-formula expansion and worksheet axis changes |
+| `src/xlsx_body/cached.rs` | src | m | 1 struct · 1 fn | CachedValuesWritten | A recalculated copy's formula values, written into the original workbook (FIX 2462) |
 | `src/xlsx_body/conditional.rs` | src | s | 1 struct · 2 enum · 4 fn · 1 crate-vis | XlsxConditionalFormat, XlsxConditionalOperator, XlsxConditionalRule | Conditional formats a body adds to a worksheet (FIX 3468): a rule over a range, and the differential format… |
 | `src/xlsx_body/coordinates.rs` | src | m | 1 crate-vis | — | Coordinate XML rewrites after an axis edit |
 | `src/xlsx_body/header.rs` | src | s | 1 fn · 1 crate-vis | — | Renaming a worksheet table's column through its header cell (FIX 6399) |

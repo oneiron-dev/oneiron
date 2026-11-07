@@ -61,6 +61,10 @@ pub struct ConsentRegistryRow {
     pub created_at: u64,
     /// The one-tap revoke command the host interprets.
     pub revoke_action: ConsentRevokeAction,
+    /// A revoked witness-read grant's owner re-grant command and its exact
+    /// arguments; absent on every other row. This is a projection, not authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub regrant_action: Option<ConsentRegrantAction>,
     /// Where a scoped catastrophe bypass grant applies; `None` for an
     /// ordinary standing grant.
     pub bypass: Option<super::bypass::BypassExtent>,
@@ -127,6 +131,20 @@ pub struct ConsentRevokeAction {
     pub grant_ref: String,
 }
 
+/// A pre-filled owner re-grant of a revoked connector witness-read grant.
+/// Invoking it still runs the command's full owner-proof grant flow.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+pub struct ConsentRegrantAction {
+    /// Pinned command name.
+    pub command: String,
+    /// The stored agent principal, in the grant command's input shape.
+    pub agent: String,
+    /// The stored conversation, in the grant command's input shape.
+    pub conversation: String,
+}
+
 /// Pinned one-tap revoke command for a consent registry row.
 pub const CONSENT_REVOKE_COMMAND: &str = "vault.consent.revoke";
 
@@ -158,6 +176,7 @@ impl ConsentRegistryRow {
                 command: CONSENT_REVOKE_COMMAND.to_owned(),
                 grant_ref: grant_ref.clone(),
             },
+            regrant_action: None,
             grant_ref,
             bypass: row.bypass,
             delegation: None,
@@ -184,6 +203,7 @@ impl ConsentRegistryRow {
                 command: CONTACT_CLEARANCE_REVOKE_COMMAND.to_owned(),
                 grant_ref: grant_ref.clone(),
             },
+            regrant_action: None,
             grant_ref,
             bypass: None,
             delegation: None,
@@ -221,6 +241,7 @@ impl ConsentRegistryRow {
                 command: SUPPORT_GRANT_REVOKE_COMMAND.to_owned(),
                 grant_ref: grant_ref.clone(),
             },
+            regrant_action: None,
             grant_ref,
             bypass: None,
             delegation: Some(ConsentRegistryDelegation {
@@ -302,6 +323,7 @@ impl ConsentRegistryRow {
                 command: crate::federation::AGENT_GRANT_REVOKE_COMMAND.to_owned(),
                 grant_ref: grant_ref.clone(),
             },
+            regrant_action: None,
             grant_ref,
             bypass: None,
             delegation: None,

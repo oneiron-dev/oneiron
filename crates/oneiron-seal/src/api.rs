@@ -107,6 +107,10 @@ pub enum BackendError {
     Rejected { code: BackendRejectCode },
     #[error("seal backend returned malformed signature bytes")]
     MalformedSignature,
+    /// The backend's retained memory could not be reserved.
+    #[cfg(feature = "native")]
+    #[error("seal backend memory: {0}")]
+    Memory(crate::memory::SealMemoryRefusal),
 }
 
 /// Signing backend seam. Carries signing identity and a prehashed signing
@@ -194,9 +198,10 @@ pub enum SealWarning {
 
 mod report;
 pub use report::{
-    Anomaly, ByteRangeEvidence, Coverage, ModificationLevel, Modifications, RevisionKind,
-    RevisionReport, SignatureKind, SignatureReport, SignedRangeDigest, VerifyCheck,
-    VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode, VerifyReport, VerifyVerdict,
+    Anomaly, ByteRangeEvidence, Coverage, ModificationLevel, Modifications, RevisionCoverage,
+    RevisionKind, RevisionReport, SignatureKind, SignatureReport, SignedRangeDigest,
+    UncoveredByteRange, VerifyCheck, VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode,
+    VerifyReport, VerifyVerdict,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
