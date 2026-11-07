@@ -580,13 +580,20 @@ impl Vault {
                             Some(carrier),
                             owner_export,
                         )?;
-                        Ok(match admitted {
-                            Some(barred) if lineage.folds(judge.as_mut(), id, Some(carrier))? => {
-                                barred_carried.extend(barred);
-                                false
-                            }
-                            Some(_) | None => true,
-                        })
+                        let Some(barred) = admitted else {
+                            return Ok(true);
+                        };
+                        // An OKF copy writes no carrier, so its fold counts
+                        // nothing as carried (fix list row 15416).
+                        let folded = if cut == ExportCut::Archive {
+                            lineage.folds(judge.as_mut(), id, Some(carrier))?
+                        } else {
+                            lineage.folds_unwritten(judge.as_mut(), Some(carrier))?
+                        };
+                        if folded {
+                            barred_carried.extend(barred);
+                        }
+                        Ok(!folded)
                     },
                 )?;
                 sources.extend(carriers);
