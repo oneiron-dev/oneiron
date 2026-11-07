@@ -103,9 +103,9 @@ use oneiron_store::ports::manual_clock;
 pub use records::*;
 pub(crate) use regeneration::{dependency_sources_in, remove_dependency_rows_for_dependent_in_txn};
 pub(crate) use time::ID_FLOOR;
-pub(crate) use time::{PreparedRecordingClock, RecordingClockProjection};
 pub(crate) use time::{
     CLOCK_FLOOR, authorization_floor_in_txn, job_recorded_at_in_txn, observe_clock_floor_in_txn,
     persist_id_floor_in_txn, recorded_at_in_txn,
 };
 pub use time::{Clock, IdGen, StoreClock};
+pub(crate) use time::{PreparedRecordingClock, RecordingClockProjection};
