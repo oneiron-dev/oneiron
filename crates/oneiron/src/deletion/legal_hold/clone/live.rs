@@ -41,6 +41,8 @@ struct Registry {
 pub(crate) struct HostLegalCaptures {
     registry: Mutex<Registry>,
     stopped: AtomicBool,
+    /// Live prospective-capture connections (FIX 13866).
+    pub(super) prospective: super::outbox::ProspectiveAttempts,
 }
 
 struct LiveOrder {
@@ -440,6 +442,7 @@ impl HostLegalCaptures {
 
     fn stop(&self) -> Result<()> {
         self.stopped.store(true, Ordering::Release);
+        self.prospective.cancel(None);
         let orders: Vec<_> = self
             .registry
             .lock()
@@ -486,6 +489,9 @@ impl super::HostLegalConnection {
             .into());
         }
         vault.host_legal_captures.release(vault, &release)?;
+        // The same generation's prospective capture ends with it: standing
+        // and outbox destroyed, never standing again (FIX 13867).
+        super::outbox::release(vault, (release.order, release.generation))?;
         let digest = release.digest()?;
         self.stream.write_all(
             &FrameHeader {
@@ -541,6 +547,8 @@ impl Vault {
     /// Managed teardown calls this before shutting down ALL accepted sockets
     /// and joining ALL workers. Stop is not legal release or key destruction.
     pub fn stop_pending_host_legal_captures(&self) -> Result<()> {
+        // A prospective worker waiting for new messages wakes to see stop.
+        self.store.host_legal_prospective.bump();
         self.host_legal_captures.stop()
     }
 }

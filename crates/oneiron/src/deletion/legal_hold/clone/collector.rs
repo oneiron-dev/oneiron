@@ -3,16 +3,15 @@
 use std::io::{self, Read, Write};
 
 use getrandom::SysRng;
-use oneiron_crypto::legal_clone::{
-    self, CaptureBinding, ContentBinding, ContentSource, SourceComponent,
-};
-use oneiron_crypto::{Envelope, HybridPublicKey, MAX_PLAINTEXT_LEN};
+use oneiron_crypto::HybridPublicKey;
+use oneiron_crypto::legal_clone::{self, CaptureBinding, SourceComponent};
 use oneiron_vault_contract::host_legal::{
-    CaptureAck, CaptureDescriptor, CaptureExtent, CaptureRequest, CaptureSource, CaptureSummary,
-    FrameHeader, FrameKind,
+    CaptureAck, CaptureExtent, CaptureRequest, CaptureSource, CaptureSummary, FrameHeader,
+    FrameKind,
 };
 use zeroize::Zeroizing;
 
+use crate::deletion::legal_hold::prospective::{crypto_error, seal_frames};
 use crate::error::{Error, Result};
 
 pub(super) struct Collector<'stream> {
@@ -25,6 +24,18 @@ pub(super) struct Collector<'stream> {
     descriptors: blake3::Hasher,
     components: u64,
     plaintext_bytes: u64,
+}
+
+/// What a completion summary counts beyond the stream's own components.
+#[derive(Default)]
+pub(super) struct SummaryCounts {
+    pub(super) decisions: u64,
+    pub(super) live_sessions: u64,
+    pub(super) live_bodies: u64,
+    pub(super) messages: u64,
+    pub(super) batch_first_ordinal: u64,
+    pub(super) batch_entries: u64,
+    pub(super) missed_messages: Vec<[u8; 16]>,
 }
 
 impl<'stream> Collector<'stream> {
@@ -57,6 +68,7 @@ impl<'stream> Collector<'stream> {
         Ok(collector)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn component(
         &mut self,
         component: SourceComponent,
@@ -69,69 +81,47 @@ impl<'stream> Collector<'stream> {
         input: &mut dyn Read,
         check: impl Fn() -> Result<()>,
     ) -> Result<()> {
-        check()?;
-        let source_key_digest = source_key_digest(family, key);
-        let chunk_count = plaintext_len.div_ceil(MAX_PLAINTEXT_LEN as u64).max(1);
-        let content_source = match &source {
-            CaptureSource::GateDecision(decision) => ContentSource::GateDecision(*decision),
-            CaptureSource::LiveSession(target) => ContentSource::LiveSession {
-                session_ref_digest: legal_clone::live_session_ref_digest(&target.session_ref),
-                instance: target.instance,
-            },
-            CaptureSource::Message(message) => ContentSource::Message(*message),
-        };
-        let descriptor = CaptureDescriptor {
-            component: component as u8,
+        let (public, binding, member) = (self.public, self.binding, self.components);
+        let (stream, transcript) = (&mut *self.stream, &mut self.transcript);
+        let encoded = seal_frames(
+            public,
+            &binding,
+            member,
+            component,
             source,
-            source_key: key.to_vec(),
-            source_key_digest,
+            family,
+            key,
             revision,
-            plaintext_fingerprint: fingerprint,
             plaintext_len,
-            chunk_count,
-        };
-        let encoded = Zeroizing::new(serde_json::to_vec(&descriptor).map_err(io::Error::other)?);
+            fingerprint,
+            input,
+            &check,
+            &mut |kind, member, part, payload| {
+                write_frame(stream, transcript, kind, member, part, payload)
+            },
+        )?;
         self.descriptors.update(&encoded);
-        let sealed = legal_clone::seal_descriptor(
-            self.public,
-            &self.binding,
-            self.components,
-            &encoded,
-            &mut SysRng,
-        )
-        .map_err(crypto_error)?;
-        self.envelope(FrameKind::Descriptor, self.components, 0, sealed)?;
-        let mut actual = blake3::Hasher::new();
-        let mut remaining = plaintext_len;
-        for chunk_index in 0..chunk_count {
-            check()?;
-            let len = remaining.min(MAX_PLAINTEXT_LEN as u64) as usize;
-            let mut bytes = Zeroizing::new(vec![0; len]);
-            input.read_exact(&mut bytes)?;
-            actual.update(&bytes);
-            let binding = ContentBinding {
-                capture: self.binding,
-                member_ordinal: self.components,
-                component,
-                source: content_source,
-                source_key_digest,
-                revision,
-                plaintext_fingerprint: fingerprint,
-                chunk_index,
-                chunk_count,
-            };
-            let sealed = legal_clone::seal_content(self.public, &binding, &bytes, &mut SysRng)
-                .map_err(crypto_error)?;
-            self.envelope(FrameKind::Content, self.components, chunk_index, sealed)?;
-            remaining -= len as u64;
-        }
-        let mut extra = [0];
-        if input.read(&mut extra)? != 0 || actual.finalize().as_bytes() != &fingerprint {
-            return Err(
-                io::Error::new(io::ErrorKind::InvalidData, "legal source content changed").into(),
-            );
-        }
+        self.count(plaintext_len)
+    }
+
+    /// One component a prospective order's outbox already holds as its exact
+    /// frames, sealed when its message landed. Its descriptor digest stands
+    /// in the batch's descriptor hash.
+    pub(super) fn stored_component(
+        &mut self,
+        frames: &[u8],
+        descriptor_digest: &[u8; 32],
+        plaintext_len: u64,
+        check: impl Fn() -> Result<()>,
+    ) -> Result<()> {
         check()?;
+        self.stream.write_all(frames)?;
+        self.transcript.update(frames);
+        self.descriptors.update(descriptor_digest);
+        self.count(plaintext_len)
+    }
+
+    fn count(&mut self, plaintext_len: u64) -> Result<()> {
         self.plaintext_bytes = self
             .plaintext_bytes
             .checked_add(plaintext_len)
@@ -146,11 +136,33 @@ impl<'stream> Collector<'stream> {
     /// This acknowledges the exact declared source extent, not an inferred
     /// whole order. The source owner must not wipe an uncaptured extent.
     pub(super) fn finish(
-        mut self,
+        self,
         decisions: u64,
         live_sessions: u64,
         live_bodies: u64,
         messages: u64,
+        extent: CaptureExtent,
+        check: impl Fn() -> Result<()>,
+    ) -> Result<()> {
+        self.finish_counted(
+            SummaryCounts {
+                decisions,
+                live_sessions,
+                live_bodies,
+                messages,
+                ..SummaryCounts::default()
+            },
+            extent,
+            check,
+        )
+    }
+
+    /// The summary, Ready and the exact acknowledgement for `counts`. A
+    /// prospective batch names its exact ordinal range, so its
+    /// acknowledgement covers that batch alone.
+    pub(super) fn finish_counted(
+        mut self,
+        counts: SummaryCounts,
         extent: CaptureExtent,
         check: impl Fn() -> Result<()>,
     ) -> Result<()> {
@@ -161,10 +173,13 @@ impl<'stream> Collector<'stream> {
             source_vault: self.binding.source_vault,
             generation: self.binding.generation,
             ends_at: self.request.ends_at,
-            decisions,
-            live_sessions,
-            live_bodies,
-            messages,
+            decisions: counts.decisions,
+            live_sessions: counts.live_sessions,
+            live_bodies: counts.live_bodies,
+            messages: counts.messages,
+            batch_first_ordinal: counts.batch_first_ordinal,
+            batch_entries: counts.batch_entries,
+            missed_messages: counts.missed_messages,
             extent,
             components: self.components,
             plaintext_bytes: self.plaintext_bytes,
@@ -173,7 +188,7 @@ impl<'stream> Collector<'stream> {
         let encoded = Zeroizing::new(serde_json::to_vec(&summary).map_err(io::Error::other)?);
         let sealed = legal_clone::seal_summary(self.public, &self.binding, &encoded, &mut SysRng)
             .map_err(crypto_error)?;
-        self.envelope(FrameKind::Summary, 0, 0, sealed)?;
+        self.frame(FrameKind::Summary, 0, 0, &sealed.to_bytes())?;
         let digest = *self.transcript.finalize().as_bytes();
         self.stream.write_all(
             &FrameHeader {
@@ -198,42 +213,36 @@ impl<'stream> Collector<'stream> {
         Ok(())
     }
 
-    fn envelope(
-        &mut self,
-        kind: FrameKind,
-        member: u64,
-        part: u64,
-        sealed: Envelope,
-    ) -> Result<()> {
-        self.frame(kind, member, part, &sealed.to_bytes())
-    }
-
     fn frame(&mut self, kind: FrameKind, member: u64, part: u64, payload: &[u8]) -> Result<()> {
-        let header = FrameHeader {
+        write_frame(
+            &mut *self.stream,
+            &mut self.transcript,
             kind,
             member,
             part,
-            len: payload.len() as u64,
-        }
-        .bytes();
-        self.stream.write_all(&header)?;
-        self.stream.write_all(payload)?;
-        self.transcript.update(&header);
-        self.transcript.update(payload);
-        Ok(())
+            payload,
+        )
     }
 }
 
-fn source_key_digest(family: &str, key: &[u8]) -> [u8; 32] {
-    let mut hash = blake3::Hasher::new();
-    hash.update(b"oneiron.legal-clone.source-key.v1");
-    hash.update(&(family.len() as u64).to_be_bytes());
-    hash.update(family.as_bytes());
-    hash.update(&(key.len() as u64).to_be_bytes());
-    hash.update(key);
-    *hash.finalize().as_bytes()
-}
-
-fn crypto_error(_error: oneiron_crypto::Error) -> io::Error {
-    io::Error::other("legal clone encryption")
+fn write_frame(
+    stream: &mut std::os::unix::net::UnixStream,
+    transcript: &mut blake3::Hasher,
+    kind: FrameKind,
+    member: u64,
+    part: u64,
+    payload: &[u8],
+) -> Result<()> {
+    let header = FrameHeader {
+        kind,
+        member,
+        part,
+        len: payload.len() as u64,
+    }
+    .bytes();
+    stream.write_all(&header)?;
+    stream.write_all(payload)?;
+    transcript.update(&header);
+    transcript.update(payload);
+    Ok(())
 }
