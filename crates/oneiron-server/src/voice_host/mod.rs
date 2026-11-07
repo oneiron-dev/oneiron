@@ -39,7 +39,7 @@ pub use brain::{ChatBrain, ChatBrainBindings};
 pub(crate) use entry_barrier::{EntryWake, EntryWakes, entry_wake, next_entry_wake};
 pub use media_bridge::{VoiceMediaBindings, VoiceMediaIn};
 pub use phone::PhoneCallRead;
-pub(crate) use public::{LiveVoiceSessions, start_public};
+pub(crate) use public::{LiveVoiceSessions, PublicSession, start_public};
 pub use serve_bindings::{VoiceServeBindings, VoiceServeConnection};
 pub use speech::{PlayoutFrame, TurnSources, VoiceBrainOut, VoicePlayout};
 pub use wire::VoiceWireBindings;

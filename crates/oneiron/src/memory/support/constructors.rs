@@ -34,6 +34,7 @@ impl Vault {
             owner_surface: crate::authority::ActSurface::ThisInstall,
             host_slip_issuer: None,
             invocation: None,
+            drain_permit: None,
             hook_ask: None,
             invocation_slip: None,
             transport_invocation: false,
@@ -90,6 +91,7 @@ impl Vault {
             owner_surface: crate::authority::ActSurface::ThisInstall,
             host_slip_issuer: None,
             invocation: None,
+            drain_permit: None,
             hook_ask: None,
             invocation_slip: None,
             transport_invocation: false,
@@ -155,6 +157,7 @@ impl<'v> Memory<'v> {
                 host_slip_issuer: None,
                 // The same logical verb, run inside the turn.
                 invocation: self.invocation,
+                drain_permit: self.drain_permit.clone(),
                 hook_ask: self.hook_ask,
                 invocation_slip: self.invocation_slip.clone(),
                 transport_invocation: self.transport_invocation,

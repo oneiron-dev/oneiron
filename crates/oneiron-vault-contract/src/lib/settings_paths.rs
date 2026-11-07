@@ -82,10 +82,12 @@ pub const OWNER_PATHS: &[&str] = &[
     "models.dreamer.resident_prompt_file",
     "models.dreamer.task_prompt_file",
     "models.dreamer.person_about_prompt_file",
+    "models.dreamer.compaction_check_prompt_file",
     "models.code_mode.prompt_package",
     "models.code_mode.check.microsoft_tsc",
     "models.decision_read.recipe",
     "models.voice.extraction_prompt_file",
+    "models.dreamer.wording.coach_session_distill_prompt_file",
     "models.dreamer.wording.coach_heal_route_prompt_file",
     "models.dreamer.wording.coach_health_draft_prompt_file",
 ];

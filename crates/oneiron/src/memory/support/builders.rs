@@ -123,6 +123,24 @@ impl Memory<'_> {
         self
     }
 
+    /// Binds the verb-ask drain's permit on the handle the drain rebuilt
+    /// for its one call (FIX 2183), beside its invocation: the row
+    /// boundary enters it on whichever thread a nested call of that
+    /// invocation reaches it. Only the drain holds a permit to bind.
+    #[must_use]
+    pub(crate) fn with_drain_permit(
+        mut self,
+        permit: crate::runtime_hooks::verb::VerbAskDrainPermit,
+    ) -> Self {
+        self.drain_permit = Some(permit);
+        self
+    }
+
+    /// The drain permit a drain bound on this surface, if any.
+    pub(crate) fn drain_permit(&self) -> Option<&crate::runtime_hooks::verb::VerbAskDrainPermit> {
+        self.drain_permit.as_ref()
+    }
+
     /// Binds the ask handle of the hook pause a transport's call names as
     /// the one it resumes (`x-oneiron-hook-ask`, MCP `_meta.hook_ask`; L13
     /// PR-D, FIX 4283), beside its invocation. It grants nothing: a pause

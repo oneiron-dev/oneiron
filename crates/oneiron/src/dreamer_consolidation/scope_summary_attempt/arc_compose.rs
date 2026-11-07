@@ -4,7 +4,10 @@
 //! reply is `{lines: [{text, turn_refs}], keep, open_turns}`, each line
 //! citing the TURNs it came from by their `T` labels (P7a's checked lines).
 //!
-//! The model decides where a line and the claims disagree: a reply naming
+//! The host may lend a typed line-versus-claim verdict before a narrative
+//! call. Its advisory openings must still fit the original call; otherwise
+//! the narrative reader runs unchanged, including on typed read failures.
+//! The narrative model can always ask for more: a reply naming
 //! `open_turns` writes nothing. The engine opens those turns through their
 //! handles ([`super::arc_turns`]) and composes again with their words, and
 //! again while a reply names turns not yet open: each round opens more, so
@@ -33,6 +36,7 @@ use crate::model_step_error::DurableStepError;
 use crate::scope_summary::{ArcPendingCause, ComposedSummary, ScopeSummaryPlan};
 use oneiron_model::llm::LlmResponse;
 use std::collections::BTreeSet;
+use std::ops::ControlFlow;
 
 /// The identity an Arc's composition is known by.
 const ARC_DOMAIN: &str = "oneiron:arc-summary-composition:v1";
@@ -103,7 +107,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             && self.arc_work_open(ctx, plan, evidence, instruction, window)?
         {
             return self
-                .compose_arc_work(attempt, ctx, plan, evidence, instruction, (window, none))
+                .compose_arc_work(attempt, ctx, plan, evidence, instruction, (window, none, 0))
                 .await;
         }
         let step_ctx = DurableStepContext {
@@ -119,6 +123,12 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         let mut charges = StepChargeTally::default();
         let mut opened = view.opened.clone();
         let mut words = String::new();
+        let mut calls = 0_u32;
+        let limit = ctx
+            .vault
+            .dreamer_recipe_policy()
+            .ok()
+            .map(|policy| policy.arc_child_calls_per_wake);
         let lines = loop {
             let user = match arc_input(plan, view, &words) {
                 Ok(user) => user,
@@ -137,13 +147,52 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                             plan,
                             evidence,
                             instruction,
-                            (window, charges),
+                            (window, charges, calls),
                         )
                         .await;
                 }
             }
             if ctx.deadline.expired() {
                 return Ok(charges.checkpoint());
+            }
+            let candidates: Vec<_> = view
+                .labels
+                .labelled(super::super::call_labels::LabelKind::Turn)
+                .map(|(_, turn)| turn)
+                .filter(|turn| covers.contains(turn) && !opened.contains(turn))
+                .collect();
+            let ask = match self
+                .arc_open_turns(
+                    ctx,
+                    &step_ctx,
+                    evidence,
+                    &user,
+                    &view.labels,
+                    &candidates,
+                    &mut calls,
+                    limit,
+                    &mut charges,
+                )
+                .await?
+            {
+                ControlFlow::Continue(ask) => ask,
+                ControlFlow::Break(exit) => return Ok(exit),
+            };
+            if !ask.is_empty()
+                && let Ok(Opened::Turns(turns)) = open_turns(ctx.vault, evidence, view, &ask)
+            {
+                let expanded = format!("{words}{}", opened_text(&turns));
+                let fits = arc_input(plan, view, &expanded).is_ok_and(|next| {
+                    self.session_window(ctx.vault).is_none_or(|window| {
+                        framed_tokens(instruction, &next, &schema)
+                            .is_ok_and(|tokens| tokens <= window)
+                    })
+                });
+                if fits {
+                    words = expanded;
+                    opened.extend(ask);
+                    continue;
+                }
             }
             let mut request = match self.summary_request(
                 ctx.vault,

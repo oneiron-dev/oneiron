@@ -1,6 +1,7 @@
 //! Credential-bound public sessions. HTTP and held-socket RPC use the same
 //! typed facade rows. No UDS listener, hello or wire DTO is a public API.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::future::Future;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use oneiron::memory::{MemoryError, MemoryResult};
@@ -48,6 +49,8 @@ pub(crate) struct PublicSession {
     pub(super) shutdown: ManagedShutdown,
     /// Its admission, released while it idles on a host that freezes.
     hold: Arc<SessionHold>,
+    /// Calls already followed, including ones whose result was attached.
+    tool_calls: Mutex<HashSet<String>>,
 }
 
 pub(super) enum Command {
@@ -156,6 +159,44 @@ impl LiveVoiceSessions {
 }
 
 impl PublicSession {
+    /// Owns one observer per call alongside the host's existing session tasks.
+    pub(crate) fn follow_tool(
+        &self,
+        server: &Arc<SyncServer>,
+        call_ref: String,
+        work: impl Future<Output = ()> + Send + 'static,
+    ) -> MemoryResult<()> {
+        let mut tasks = server.live_voice.tasks.lock().map_err(|_| unavailable())?;
+        if tasks.closing || self.shutdown.is_triggered() || self.commands.is_closed() {
+            return Ok(());
+        }
+        let mut calls = self.tool_calls.lock().map_err(|_| unavailable())?;
+        if !calls.insert(call_ref) {
+            return Ok(());
+        }
+        let task = tokio::spawn(work);
+        tasks.running.retain(|(_, ended)| !ended.is_finished());
+        tasks.running.push((self.shutdown.clone(), task));
+        Ok(())
+    }
+
+    /// A status read may consume its settled row. Its blocking worker keeps
+    /// this fresh admission through completion, never across a pending call.
+    pub(crate) fn tool_poll_admission(&self, server: &SyncServer) -> Option<Box<dyn Send>> {
+        if self.shutdown.is_triggered() || self.commands.is_closed() {
+            None
+        } else {
+            server.live_voice.admission()
+        }
+    }
+
+    pub(crate) async fn closed(&self) {
+        tokio::select! {
+            () = self.shutdown.triggered() => {},
+            () = self.commands.closed() => {},
+        }
+    }
+
     pub(crate) fn require_tool_context(&self) -> MemoryResult<()> {
         let journal = self.journal.lock().map_err(|_| unavailable())?;
         if !self.owner_only || journal.ended || journal.epochs.values().any(|epoch| !epoch.finished)
@@ -306,6 +347,7 @@ async fn start_public_with(
         journal: Arc::clone(&journal),
         shutdown: shutdown.clone(),
         hold: Arc::clone(&hold),
+        tool_calls: Mutex::new(HashSet::new()),
     });
     server
         .live_voice

@@ -584,7 +584,7 @@ impl<'a> HostSelfDispatcher<'a> {
     ) -> Result<std::result::Result<CallableSkillLease, SelfDispatchOutcome>> {
         let effect = call.effect();
         self.storage.answered(|| {
-            self.enforce_off_record_effect_policy(effect)?;
+            self.enforce_off_record_effect_policy(call)?;
             if let Some(refused) = self.reader_child_refusal(effect) {
                 return Ok(Err(refused));
             }
