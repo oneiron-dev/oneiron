@@ -5278,7 +5278,7 @@ export type ExternalImportDoor = "raw" | { checkout: { checkout: string; epoch: 
 /** `oneiron::repo_mutation::external_import::types::ExternalImportRequest` */
 export type ExternalImportRequest = { repo: string; code_repo: EntityId; base_revision: EntityId; imported_ref?: string | null; source: ExternalImportSource; source_binding?: string | null; door: ExternalImportDoor }
 /** `oneiron::repo_mutation::external_import::types::ExternalImportReceipt` */
-export type ExternalImportReceipt = { import: EntityId; repo: string; code_repo: EntityId; source: ExternalImportSource; imported_ref: string; base_revision: EntityId; importer?: EntityId | null; seed_publication?: EntityId | null; receive_provenance?: EntityId | null; publication?: EntityId | null }
+export type ExternalImportReceipt = { import: EntityId; repo: string; code_repo: EntityId; source: ExternalImportSource; imported_ref: string; base_revision: EntityId; importer?: EntityId | null; seed_publication?: EntityId | null; receive_provenance?: EntityId | null; publication?: EntityId | null; lfs_daemon_residual: boolean }
 /** `oneiron::repo_mutation::external_import::types::ExternalImportLookup` */
 export type ExternalImportLookup = { repo: string; code_repo: EntityId; import: EntityId; door: ExternalImportDoor }
 /** `oneiron::repo_mutation::external_import::types::ExternalImportPhase` */
