@@ -211,7 +211,7 @@ export type IdentitySettled = { ask: string; entity: string }
 /** `oneiron::dreamer_runner::maintenance::identity::IdentityEffect` */
 export type IdentityEffect = "send" | "pay" | "invite" | "share"
 /** `oneiron::dreamer_runner::maintenance::identity::IdentityActNowRequest` */
-export type IdentityActNowRequest = { name: string; conversation?: string | null; effect: IdentityEffect; prompt: string; someone_new: string }
+export type IdentityActNowRequest = { name: string; conversation?: string | null; effect: IdentityEffect; prompt: string; someone_new: string; provisional?: string | null }
 /** `oneiron::dreamer_runner::maintenance::identity::IdentityActNow` */
 export type IdentityActNow = { state: "settled"; entity: string } | { state: "unknown" } | { state: "deciding"; ask: string } | { state: "needs_person"; ask: string; card: unknown }
 /** `oneiron::verbs::InboxListRequest` */
@@ -2793,7 +2793,7 @@ export type SharedRemoveOwnerRequest = { vault_id: string; target: string; succe
 /** `oneiron::verbs::shared::SharedActRequest` */
 export type SharedActRequest = { act_id: string }
 /** `oneiron::federation::shared_act::SharedVaultChange` */
-export type SharedVaultChange = { vault_deleted: { backup_retain_until: number } } | { ownership_transferred: { from: string; to: string; from_keeps?: FederationGrantRole | null } } | { owner_removed: { target: string; successor?: string | null; target_keeps?: FederationGrantRole | null } } | { member_added: { member: string; role: FederationGrantRole } } | { member_invited: { invitation: string; member: string; role: FederationGrantRole; expires_at: number } } | { invitation_accepted: { invitation: string; member: string; role: FederationGrantRole } } | { invitation_declined: { invitation: string; member: string } } | { invitation_withdrawn: { invitation: string; member: string } } | { member_role_changed: { member: string; from: FederationGrantRole; to: FederationGrantRole } } | { member_removed: { member: string } } | { member_left: { member: string } } | { owner_recovered: { from: string; to: string } } | { record_erased: { record: string; redaction?: string | null } }
+export type SharedVaultChange = { vault_deleted: { backup_retain_until: number } } | { owner_added: { owner: string } } | { ownership_transferred: { from: string; to: string; from_keeps?: FederationGrantRole | null } } | { owner_removed: { target: string; successor?: string | null; target_keeps?: FederationGrantRole | null } } | { member_added: { member: string; role: FederationGrantRole } } | { member_invited: { invitation: string; member: string; role: FederationGrantRole; expires_at: number } } | { invitation_accepted: { invitation: string; member: string; role: FederationGrantRole } } | { invitation_declined: { invitation: string; member: string } } | { invitation_withdrawn: { invitation: string; member: string } } | { member_role_changed: { member: string; from: FederationGrantRole; to: FederationGrantRole } } | { member_removed: { member: string } } | { member_left: { member: string } } | { owner_recovered: { from: string; to: string } } | { record_erased: { record: string; redaction?: string | null } }
 /** `oneiron_store::batch::export::archive_types::ExportDiaryRead` */
 export type ExportDiaryRead = { agent: string; diaries: number; reason: string }
 /** `oneiron::federation::shared_act::SharedActExport` */
