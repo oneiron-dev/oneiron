@@ -2204,7 +2204,7 @@ declare namespace Sdk {
   type GraduationDemoteRequest = { scope: GraduationScope; reason: GraduationDemotionReason };
   type PolicyManifestRead = { manifest_ref?: string | null };
   type PolicyCriticality = "normal" | "critical";
-  type PolicySensitivity = "normal" | "sensitive";
+  type PolicySensitivity = "public" | "private" | "sensitive" | "restricted" | "normal";
   type PolicyAxes = { criticality?: PolicyCriticality | null; sensitivity?: PolicySensitivity | null };
   type PolicyRule = { prefix: string; exact?: boolean; axes: PolicyAxes };
   type PolicyCeiling = "auto" | "proposed";
