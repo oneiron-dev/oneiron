@@ -36,8 +36,10 @@ use crate::{EdgeActorClass, EntityId, Result, Vault};
 
 use super::block::HookTurnTarget;
 pub(crate) use ask::VERB_HOOK_INTENT;
-pub use ask::{HOOK_RESULT_NOT_RETAINED, VerbHookWaitStatus};
+pub use ask::{HOOK_OUTCOME_UNCERTAIN, HOOK_RESULT_NOT_RETAINED, VerbHookWaitStatus};
 pub use call_scope::VerbCallScope;
+pub(super) use chain::admit_verb_outcome;
+pub(super) use chain::projection::merge_withheld;
 pub use credential::{
     VerbAskCredential, VerbAskCredentialCheck, VerbAskCredentialRef, VerbAskCredentialSource,
     VerbAskCredentialWitness, VerbAskDoor, VerbAskDrainPermit, VerbAskDrainScope,
