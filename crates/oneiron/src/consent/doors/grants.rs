@@ -102,6 +102,9 @@ impl Vault {
             wtxn,
             &grant_ref,
         )?;
+        // Nor may an open widening filed over the predecessor revoke it
+        // (FIX 9740).
+        super::super::widen::forget_widen_predecessor_in_txn(self, wtxn, &grant_ref)?;
         // Re-minting an identical bound is the owner re-affirming it; the row
         // is idempotent, and the receipt is still written so the act is
         // audit-visible.

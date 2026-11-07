@@ -18,8 +18,12 @@ use std::io::Cursor;
 
 mod contact_verdict_index;
 mod offers;
+mod predecessor;
 mod row_reuse;
 mod streamed;
+
+pub(super) use predecessor::forget_widen_predecessor_in_txn;
+use predecessor::predecessors_at_filing;
 
 /// Parked authority-widening request, keyed by its own hex64 reference.
 const WIDEN_PROPOSALS: SideTable<String, StoredProposal, LegacyJson> =
@@ -82,6 +86,11 @@ struct StoredProposal {
     /// lineage nor any fork of it may settle it (FIX 5064).
     #[serde(default)]
     opener_lineage: Vec<[u8; 32]>,
+    /// The owner's active grants the proposed bound strictly contained when
+    /// it was filed, less any minted again since: the accept that mints the
+    /// wider grant revokes those still standing so, in the same writer
+    /// (FIX 9740).
+    predecessors: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -409,6 +418,11 @@ impl Vault {
             if let Some(row) = WIDEN_PROPOSALS.get(&self.store, &*txn, &reference)? {
                 return Ok(validate_row(row, &reference)?.proposal);
             }
+            // The grants this widening replaces, as they stand at filing.
+            let predecessors = match decode_delta(&canonical_delta)? {
+                WidenDelta::Bound(bound) => predecessors_at_filing(self, txn, &bound, &owner_ref)?,
+                WidenDelta::ContactDisclosure(_) => Vec::new(),
+            };
             let proposal = WidenProposal {
                 proposal_ref: reference,
                 canonical_delta,
@@ -444,6 +458,7 @@ impl Vault {
                 resolved: false,
                 settlement: None,
                 opener_lineage,
+                predecessors,
             };
             WIDEN_PROPOSALS.put(&self.store, txn, &row.proposal.proposal_ref, &row)?;
             Ok(proposal)
