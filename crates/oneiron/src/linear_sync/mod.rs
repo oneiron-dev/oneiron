@@ -100,9 +100,9 @@ pub use self::facade_types::{
     LinearProvenancePage, LinearProvenanceRequest,
 };
 pub(crate) use self::mirror_event::{
-    EventDirection, erase_mirror_control_actor_in_txn, erase_mirror_event_actor_in_txn, event_in,
-    forget_mirror_control_in, mirror_opted_out_in, put_event_in, record_outbound, request_digest,
-    task_edit_key,
+    EventDirection, discard_task_event_payload_in_txn, erase_mirror_control_actor_in_txn,
+    erase_mirror_event_actor_in_txn, event_in, forget_mirror_control_in, mirror_opted_out_in,
+    put_event_in, record_outbound, request_digest, task_edit_key,
 };
 pub use self::mirror_event::{LinearMirrorEvent, LinearMirrorRecord};
 pub use self::model::{

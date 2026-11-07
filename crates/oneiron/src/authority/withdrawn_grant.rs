@@ -143,7 +143,8 @@ impl crate::Vault {
     /// (FIX 7135): the `SlipGrantRevoke` a guest revoke also logs, signed by
     /// `issuer` as the host that carried the change, never as an owner act.
     /// The authority audit lists it as that Grant's revoke beside its signed
-    /// mint, and every replica's fold withdraws any slip minted under it.
+    /// mint, links it to the same writer's actual membership `receipt`, and
+    /// every replica's fold withdraws any slip minted under it.
     /// An issuer that is no live host of this vault's roster signs nothing
     /// and refuses nothing: `false`, and the change lands with the Grant
     /// named in its pending carrier-signed record (FIX 12335).
@@ -155,6 +156,7 @@ impl crate::Vault {
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,
         grant: EntityId,
+        receipt: &str,
     ) -> Result<bool> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         if super::slip_vault::require_host(&fold, issuer).is_err() {
@@ -163,7 +165,10 @@ impl crate::Vault {
         self.append_slip_op_in_txn(
             txn,
             issuer,
-            AuthorityOp::SlipGrantRevoke { grant_ref: grant },
+            AuthorityOp::SlipGrantRevoke {
+                grant_ref: grant,
+                membership_receipt: Some(receipt.to_owned()),
+            },
         )?;
         Ok(true)
     }
