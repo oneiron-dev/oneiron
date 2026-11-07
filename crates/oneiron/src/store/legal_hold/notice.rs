@@ -9,45 +9,11 @@
 use heed::RoTxn;
 
 use super::{USE_LIMITS, holds_on_in_txn};
-use crate::deletion::{
-    LEGAL_HOLD_REFUSAL, LEGAL_HOLD_SELF_HOSTED_NOTE, LegalHold, LegalHoldKind, LegalHoldTarget,
-};
+use crate::deletion::{LEGAL_HOLD_REFUSAL, LegalHold, LegalHoldTarget};
 use crate::entity_id::EntityId;
-use crate::error::{
-    Error, LegalHoldBound, LegalHoldBoundKind, LegalHoldNotice, LegalHoldState, Result,
-};
+use crate::error::{Error, Result};
 use crate::side_table::SideTableDbs;
 use crate::store::Store;
-
-/// The notice naming the law bound of the standing host orders in `holds`
-/// the owner may see at `now`: the one that ends last, since it keeps the
-/// bytes longest. `None` when there is none: only customer holds, or only
-/// orders whose silence runs.
-pub(crate) fn law_notice(
-    holds: &[LegalHold],
-    now: u64,
-    state: LegalHoldState,
-) -> Option<LegalHoldNotice> {
-    let order = holds
-        .iter()
-        .filter(|hold| {
-            hold.kind == LegalHoldKind::HostOrder && hold.stands() && hold.owner_may_see(now)
-        })
-        .max_by_key(|hold| hold.ends_at)?;
-    Some(LegalHoldNotice {
-        state,
-        bound: LegalHoldBound {
-            kind: LegalHoldBoundKind::Law,
-            order_ref: order.matter_ref.clone(),
-            legal_basis_ref: order.legal_basis_ref.clone(),
-            jurisdiction: order.jurisdiction.clone(),
-            issuing_authority_ref: order.issuing_authority_ref.clone(),
-            ends_at: order.ends_at,
-        },
-        works_self_hosted: true,
-        self_hosted_note: LEGAL_HOLD_SELF_HOSTED_NOTE.to_owned(),
-    })
-}
 
 /// The refusal a destroying path meets on what standing customer holds keep:
 /// the named refusal. Only customer holds keep records in the vault, so no
