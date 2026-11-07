@@ -72,9 +72,13 @@ impl<'a> HostSelfDispatcher<'a> {
             .map(crate::skill_attribution::enter_run_writes);
         // The call holds its leased run's tool witness open (FIX 8521).
         let _tool = self.activity_tool();
-        match self.dispatch_memory_supersede_claim(input.into_call()?)? {
+        // The claims it names resolve under the actor's own read (FIX 1214).
+        match self.dispatch_memory_supersede_claim(input.into_call()?, None)? {
             SelfDispatchOutcome::MemoryWrite(written) => {
                 Ok(crate::code_run::MemoryWriteOutput { id: written.id })
+            }
+            SelfDispatchOutcome::Failed(failed) => {
+                Err(MemoryError::new(&failed.error, &failed.error, &[]))
             }
             _ => Err(host_result_mismatch()),
         }
