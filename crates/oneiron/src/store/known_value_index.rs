@@ -44,6 +44,7 @@ mod run;
 mod writer_index;
 
 use std::cmp::Reverse;
+use std::collections::BTreeSet;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -222,7 +223,7 @@ pub(crate) struct KnownSpan<'k> {
     pub(crate) handle: &'k str,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum ValueOrigin {
     Custody(EntityId),
     Person,
@@ -426,6 +427,51 @@ impl KnownValues {
         spans
     }
 
+    /// Each custody record a known value in `data` is held by, past those
+    /// `keep` exempts (FIX 8966): every value at every offset, overlapping
+    /// or not, and each holder of the same bytes, in the bytes as they are
+    /// and in each spelling [`spans`](Self::spans) reads. What a release of
+    /// `data` shows, never which value wins a place: a grant judged by these
+    /// holders covers every value the bytes carry.
+    pub(crate) fn holders_except(
+        &self,
+        data: &[u8],
+        keep: impl Fn(&[u8]) -> bool,
+    ) -> BTreeSet<EntityId> {
+        let mut holders = BTreeSet::new();
+        let mut read = |bytes: &[u8]| {
+            let mut scan = RollingScan::new(&self.keys.rolling, &self.rolling, bytes);
+            for at in 0..bytes.len() {
+                let hits = scan.hits(at);
+                if hits == 0 {
+                    continue;
+                }
+                let rest = &bytes[at..];
+                self.each_in(rest, hits, |known| {
+                    if let ValueOrigin::Custody(custody) = known.origin
+                        && !keep(&rest[..known.len])
+                    {
+                        holders.insert(custody);
+                    }
+                });
+            }
+        };
+        read(data);
+        for view in [forms::percent_view(data), forms::json_view(data)]
+            .into_iter()
+            .flatten()
+        {
+            read(&view.bytes);
+        }
+        if let Some(view) = forms::form_view(data) {
+            read(&view.bytes);
+        }
+        for (_, view) in forms::base64_views(data, self.reach()) {
+            read(&view.bytes);
+        }
+        holders
+    }
+
     /// The known value `data` is, whole.
     /// Exact raw whole-value identity, without exposing its keyed fingerprint.
     pub(crate) fn is_exact_value(&self, data: &[u8]) -> bool {
@@ -609,6 +655,35 @@ impl KnownValues {
         })
     }
 
+    /// Hands `found` every known value `rest` starts with whose first
+    /// window's length `hits` names, each holder of the same bytes
+    /// included: [`Self::longest_in`]'s candidates, all of them.
+    fn each_in<'s>(&'s self, rest: &[u8], hits: u32, mut found: impl FnMut(&'s Known)) {
+        let mut hasher = blake3::Hasher::new_keyed(&self.keys.tag);
+        let mut hashed = 0;
+        for (lane, &window) in self.windows.iter().enumerate() {
+            if window > rest.len() {
+                break;
+            }
+            if hits & (1 << lane) == 0 {
+                continue;
+            }
+            hasher.update(&rest[hashed..window]);
+            hashed = window;
+            let Some(bucket) = self.bucket(&tag_of(&hasher.finalize())) else {
+                continue;
+            };
+            for known in bucket {
+                if known.len.min(TAG_WINDOW) == window
+                    && known.len <= rest.len()
+                    && self.keys.fingerprint(&rest[..known.len]) == known.fingerprint
+                {
+                    found(known);
+                }
+            }
+        }
+    }
+
     /// `data` with each known value replaced by its handle's text, as far
     /// as `limit`: a value that starts before it is replaced whole. Returns
     /// the bytes and where in `data` they end.
@@ -696,10 +771,14 @@ impl Vault {
         Ok(Some(KnownSource { ids, handles }))
     }
 
-    /// Runs `read` with the values custody knows now (FIX 8966): one pass of
-    /// [`Self::known_source`], its matcher built for this read alone under
-    /// the custody read guard and wiped when `read` returns; `None` when
-    /// custody knows no value. Call it outside any write transaction.
+    /// Runs `read` with the values custody knows now (FIX 8966): a matcher
+    /// built from one snapshot taken under the custody read guard, its ids
+    /// and entries read together, so no value committed before it is left
+    /// out; the guard is held and the snapshot is dropped before `read`
+    /// runs, and the matcher is wiped when it returns. `None` when custody
+    /// knows no value. Call it outside any write transaction. A read whose
+    /// own bytes come from a snapshot it opens takes
+    /// [`Self::with_known_snapshot`] instead.
     ///
     /// # Errors
     /// The pass's own, or `read`'s.
@@ -707,10 +786,49 @@ impl Vault {
         &self,
         read: impl FnOnce(Option<&KnownValues>) -> Result<T>,
     ) -> Result<T> {
-        match self.known_source()? {
-            Some(source) => source.pass(read)?,
-            None => read(None),
-        }
+        let snapshot = self.store.custody_snapshot()?;
+        let known = {
+            let txn: &RoTxn<'_> = &snapshot;
+            self.known_values_in_snapshot(txn)?
+        };
+        let (guard, txn) = snapshot.into_parts();
+        drop(txn);
+        let result = read(known.as_ref());
+        drop(known);
+        drop(guard);
+        result
+    }
+
+    /// [`Self::with_known_values`], with `read` given the very snapshot the
+    /// matcher was built from (FIX 8966): bytes read in it and the values
+    /// matched against them are one state, so no value committed before the
+    /// read's bytes is missing from its matcher. Keep `read` short; the
+    /// snapshot is held until it returns.
+    ///
+    /// # Errors
+    /// The pass's own, or `read`'s.
+    pub(crate) fn with_known_snapshot<T>(
+        &self,
+        read: impl FnOnce(Option<&KnownValues>, &RoTxn<'_>) -> Result<T>,
+    ) -> Result<T> {
+        let snapshot = self.store.custody_snapshot()?;
+        let txn: &RoTxn<'_> = &snapshot;
+        let known = self.known_values_in_snapshot(txn)?;
+        read(known.as_ref(), txn)
+    }
+
+    /// The matcher of the history `txn` holds, a snapshot taken under the
+    /// custody read guard: each holder with a handle, as a pass reads them.
+    fn known_values_in_snapshot(&self, txn: &RoTxn<'_>) -> Result<Option<KnownValues>> {
+        let Some(history) = self.store.known_history_in_snapshot(txn)? else {
+            return Ok(None);
+        };
+        KnownValues::of(&history, |holder| {
+            Ok(self
+                .store
+                .port_short_id_reference(txn, holder)?
+                .map(|(handle, _)| handle))
+        })
     }
 }
 
