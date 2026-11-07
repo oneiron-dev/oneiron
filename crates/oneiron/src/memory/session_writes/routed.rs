@@ -7,8 +7,9 @@
 //! ([`PreparedSessionWrite::stage_in_txn`]), or a route the one-shot doors
 //! mint for one call ([`PreparedSessionWrite::stage`]).
 //!
-//! A claim's subject resolves in the room's view the run's door opened for
-//! its caller, when it opened one; every other ref resolves as the vault
+//! A claim's subject resolves in a view of the room: the one the run's door
+//! opened for its caller, when it opened one, else one taken for the write.
+//! It needs no read key (FIX 5302). Every other ref resolves as the vault
 //! resolves it. Nothing here asks where a caller or the vault runs.
 //!
 //! Each write stages its birth beside its row, and a NOTE its document's
@@ -16,6 +17,7 @@
 //! here, before the segment opens, and kept whether or not the room reads
 //! them as TURNs (Engine 10-22: no new refusal).
 
+use super::super::session_reads::resolve_room_write_subject;
 use super::super::support::{id_from_optional_hex, json_to_rmpv, requested_approval};
 use super::super::{
     AllRelationships, ClaimInput, ClaimRelationships, CommitReceipt, EntityRefReceipt,
@@ -31,9 +33,14 @@ use crate::note::{NoteBody, encode_note_body};
 use crate::off_record::{OffRecordSession, RoomRowAttachments};
 use crate::provenance::birth::room::SuppliedEvidence;
 use crate::session_overlay::{JournalEntry, SessionWriteRoute};
+use crate::store::RoomGateDecision;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
 use oneiron_contracts::affect::Vad;
+
+/// One claim candidate's rows in a room: its ops, the rows the room must
+/// read for them, and the decision its gate judged (FIX 9967).
+type SessionClaimRows = (Vec<BatchOp>, Vec<EntityId>, Option<RoomGateDecision>);
 
 /// A room write's receipt, which names the room's short id for its row once
 /// the row is staged.
@@ -58,7 +65,8 @@ impl SessionReceipt for CommitReceipt {
 
 /// One room write, prepared to stage: the room's shell read for it, its row,
 /// the rows it needs the room to read, its ops, what stages beside the row
-/// (its birth, a NOTE's document birth), and the receipt it answers.
+/// (its birth, a NOTE's document birth, a claim's gate decision), and the
+/// receipt it answers.
 pub(crate) struct PreparedSessionWrite<R> {
     conversation: EntityId,
     row: EntityId,
@@ -217,7 +225,9 @@ impl Memory<'_> {
     /// through `session`'s room its writer holds: its checks, its gate (an
     /// `auto` request the gate refuses asked again as `proposed`) and its
     /// rows. Its subject resolves in `reader`, the room's view a run's door
-    /// opened for its caller, when it opened one.
+    /// opened for its caller, when it opened one. Else it resolves in a view
+    /// of the room taken here, so a caller with no read key keeps the room's
+    /// aliases (FIX 5302).
     ///
     /// # Errors
     ///
@@ -264,7 +274,8 @@ impl Memory<'_> {
             annotations.insert("sensitivity".into(), band.into());
         }
         let scope = serde_json::Value::Object(annotations);
-        super::super::caps::check_claim_input(&ClaimInput {
+        // ABC row 22: the claim is measured whole, never refused for size.
+        let bytes = super::super::caps::claim_input_json_bytes(&ClaimInput {
             id: input.id.clone(),
             predicate: input.predicate.clone(),
             subject_ref: input.subject_ref.clone(),
@@ -283,13 +294,21 @@ impl Memory<'_> {
             salience: input.salience,
             confidence_details: None,
         })?;
+        let _ = self
+            .vault
+            .measure_limit(crate::limit_ask::EngineLimit::ClaimInputJsonBytes, bytes);
         self.verified_actor_class()?;
         let id = id_from_optional_hex(self.vault, input.id.as_deref())?;
-        // A run's door opened the room's view for its caller: the subject
-        // is a row that view names, the room's own alias included.
+        // The subject is a row a view of the room names, the room's own
+        // alias included: the view a run's door opened for its caller, else
+        // one taken here for a caller with no read key (FIX 5302). Either
+        // answers only an id and admits no read.
         let subject = match reader {
             Some(reader) => reader.write_subject(&input.subject_ref)?,
-            None => self.resolve_ref(&input.subject_ref)?,
+            None => {
+                let view = session.read_view()?;
+                resolve_room_write_subject(self.vault, &view, &input.subject_ref)?
+            }
         };
         let source = self.claim_source(&input.source)?;
         let now = self.vault.store.clock.now_recorded_at();
@@ -314,7 +333,7 @@ impl Memory<'_> {
             candidate = candidate.with_world(world);
         }
         candidate = candidate.with_relationships(relationship);
-        let rows = |approval: ClaimApprovalStatus| -> crate::Result<(Vec<BatchOp>, Vec<EntityId>)> {
+        let rows = |approval: ClaimApprovalStatus| -> crate::Result<SessionClaimRows> {
             let envelope = self.claim_envelope(source, "vault.claims.upsert", approval)?;
             self.session_claim_rows(
                 session,
@@ -326,7 +345,9 @@ impl Memory<'_> {
             )
         };
         let requested = requested_approval(source, Some(&scope));
-        let (approval, (ops, needs)) = match rows(requested) {
+        // Only the candidate that stages keeps its decision: an Auto one the
+        // gate refused leaves none (FIX 9967).
+        let (approval, (ops, needs, decision)) = match rows(requested) {
             Ok(rows) => (requested, rows),
             Err(refused)
                 if requested == ClaimApprovalStatus::Auto
@@ -348,7 +369,8 @@ impl Memory<'_> {
             learned_at,
             needs,
             ops,
-            attachments: RoomRowAttachments::claim(&envelope, "vault.claims.upsert", evidence, now),
+            attachments: RoomRowAttachments::claim(&envelope, "vault.claims.upsert", evidence, now)
+                .with_gate_decision(decision),
             receipt: CommitReceipt {
                 claim_short_id: String::new(),
                 approval: approval.as_str().to_owned(),
@@ -385,12 +407,13 @@ impl Memory<'_> {
             .supplied_evidence(refs)
     }
 
-    /// One claim candidate's rows in `session`'s room, after its gate
-    /// (`OffRecordSession::session_gate_check`): the CLAIM row `id` base
-    /// would store for a new row, at the vault's default facet unless the
-    /// candidate stamps one, and its `claim_of` edge to an entity subject,
-    /// which the room must read. As `OffRecordSession::stage_session_claim`
-    /// builds them before it stages them.
+    /// One claim candidate's rows in `session`'s room, and the decision its
+    /// gate judged (`OffRecordSession::session_gate_decision`, FIX 9967): the
+    /// CLAIM row `id` base would store for a new row, at the vault's default
+    /// facet unless the candidate stamps one, and its `claim_of` edge to an
+    /// entity subject, which the room must read. As
+    /// `OffRecordSession::stage_session_claim` builds them before it stages
+    /// them.
     fn session_claim_rows(
         &self,
         session: &OffRecordSession<'_>,
@@ -399,10 +422,10 @@ impl Memory<'_> {
         envelope: &WriteEnvelope,
         occurred: TimeRange,
         learned_at: u64,
-    ) -> crate::Result<(Vec<BatchOp>, Vec<EntityId>)> {
+    ) -> crate::Result<SessionClaimRows> {
         crate::batch::reject_family_owned_candidate(&candidate)?;
         let body = candidate.into_claim_body(envelope, self.vault.default_facet()?)?;
-        session.session_gate_check(id, &body, envelope)?;
+        let decision = session.session_gate_decision(id, &body, envelope)?;
         let data = crate::claim::encode_claim_body(&body)?;
         let mut ops = vec![BatchOp::Put {
             id,
@@ -426,6 +449,6 @@ impl Memory<'_> {
                 vad: Vad::NEUTRAL,
             });
         }
-        Ok((ops, needs))
+        Ok((ops, needs, decision))
     }
 }

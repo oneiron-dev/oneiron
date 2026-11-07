@@ -2,6 +2,9 @@
 use super::retry_after::{PROVIDER_RETRY_AFTER_FIELD, provider_retry_after_secs};
 use crate::Vault;
 use crate::outbound::capability::OutboundVerbContract;
+use crate::outbound::connector_task::{
+    SEND_EXECUTOR_FENCE_FIELD, SEND_EXECUTOR_STOOD_DOWN, send_executor_fence_permits_send,
+};
 use crate::outbound::dispatch_types::{
     OutboundDispatchRequest, OutboundExecutionOutcome, OutboundExecutionOutcomeKind,
     OutboundExecutionRequest, OutboundExecutionSink,
@@ -103,6 +106,19 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
         {
             return invalid_frozen_call();
         }
+        // FIX 4747, the fence before the bytes: a connector-send TASK's send
+        // goes only while this machine still holds the exact send executor
+        // lease its attempt took. A stale executor stands down here, at the
+        // last point every send kind passes, and its sink is never called.
+        if let Some(fence) = self.request.send_executor_fence.as_ref()
+            && !send_executor_fence_permits_send(self.vault, fence)
+        {
+            self.execution = Some(
+                OutboundExecutionOutcome::failed(SEND_EXECUTOR_STOOD_DOWN)
+                    .with_receipt_field(SEND_EXECUTOR_FENCE_FIELD, SEND_EXECUTOR_STOOD_DOWN),
+            );
+            return transport_not_started();
+        }
         let mut execution = self.sink.execute(&execution_request);
         // Only the pipeline may author the normalized re-arm authority, even
         // when the adapter's raw `retry_after` is missing or malformed.
@@ -117,16 +133,7 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
             OutboundExecutionOutcomeKind::Failed if execution.delivery_may_have_occurred => {
                 crate::outbound_intent_ledger::OutboundSendOutcome::Ambiguous
             }
-            OutboundExecutionOutcomeKind::Failed => {
-                crate::outbound_intent_ledger::OutboundSendOutcome::Failed(
-                    crate::outbound_intent_ledger::OutboundSendFailure {
-                        kind:
-                            crate::outbound_intent_ledger::OutboundFailureKind::TransportNotStarted,
-                        code: None,
-                        secret: None,
-                    },
-                )
-            }
+            OutboundExecutionOutcomeKind::Failed => transport_not_started(),
         };
         self.execution = Some(execution);
         outcome
@@ -177,6 +184,16 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
                 .sink
                 .known_non_delivery(&self.request.intent_ref, call.idempotency_key())
     }
+}
+/// A definite non-delivery: no byte of this call left for its provider.
+fn transport_not_started() -> crate::outbound_intent_ledger::OutboundSendOutcome {
+    crate::outbound_intent_ledger::OutboundSendOutcome::Failed(
+        crate::outbound_intent_ledger::OutboundSendFailure {
+            kind: crate::outbound_intent_ledger::OutboundFailureKind::TransportNotStarted,
+            code: None,
+            secret: None,
+        },
+    )
 }
 /// A frozen call the dispatch transport cannot honor verbatim.
 fn invalid_frozen_call() -> crate::outbound_intent_ledger::OutboundSendOutcome {

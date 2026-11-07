@@ -32,13 +32,13 @@ use super::types::{
     ENGINE_EXECUTOR_FALLBACK_NAME, ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorConfig,
     EngineExecutorOutcome, EngineExecutorResult, EngineExecutorStatus, JsCodeModeStep,
 };
-use super::wire::{HealedExecutorReply, heal_executor_text};
+use super::wire::HealedExecutorReply;
 use super::{compaction, types};
 use crate::code_run::{
-    CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunBridgeCall, CodeRunHistoryTurn, CodeRunRawOutput,
-    CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunResultBinding, CodeRunStepCheckpoint,
-    ReaderFoldReceipt, SelfDurableWait, SelfDurableWaitReason, SelfEffect, StepContextCapture,
-    WaitKey,
+    CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunBridgeCall, CodeRunCorrectionDraft,
+    CodeRunHistoryTurn, CodeRunRawOutput, CodeRunReplayGeneration, CodeRunReplayRecord,
+    CodeRunResultBinding, CodeRunStepCheckpoint, ReaderFoldReceipt, SelfDurableWait,
+    SelfDurableWaitReason, SelfEffect, StepContextCapture, WaitKey,
 };
 use crate::code_sandbox::source::{PreparedSource, TranspiledSource, prepare_source};
 use crate::compaction::output::{OutputAffordance, OutputRef, OutputTier, OutputWorkingContext};
@@ -154,7 +154,7 @@ impl EngineNativeExecutor<'_> {
                         .map_err(Error::from)?
                 }
             };
-            let request =
+            let mut request =
                 self.build_llm_request(config, &record, &wire_prompt.text, continuation.as_ref())?;
             match self.feed_compaction(config, &record, &request)? {
                 Ok(Some(reason)) => {
@@ -199,6 +199,16 @@ impl EngineNativeExecutor<'_> {
                     }
                 }
             }
+            // FIX 17594 (map §2.2): folds by kind the feed landed after this
+            // request was built are a brief boundary. With a brief port bound,
+            // the request is built and counted again before it is hashed,
+            // captured or sent.
+            let refreshed = self.refresh_brief_request(&mut request, completed_steps, |this| {
+                this.build_llm_request(config, &record, &wire_prompt.text, continuation.as_ref())
+            })?;
+            if let Some(status) = refreshed {
+                return Ok(self.outcome(status, steps_run, record));
+            }
             // Rule 5 (FIX 4197): the first step past the `[limits]
             // executor_run_steps` row asks whether everything is okay, once
             // per run however often it re-enters, and the run keeps going.
@@ -221,6 +231,9 @@ impl EngineNativeExecutor<'_> {
                     .generate_sourced(request, self.lease, sources)
                     .await
             }?;
+            // FIX 17594 (Engine call C): the backend answered a request that
+            // carried the run's brief, so the host's prefix is delivered.
+            self.brief_delivered();
             let execution_text = self.post_turn_hooks(turn, &response)?;
             // Only the post-hook execution view is healed below, as its text:
             // no copy of the reply is made for it (FIX 448). The raw provider
@@ -239,18 +252,27 @@ impl EngineNativeExecutor<'_> {
             )?;
             // ONE-1929: the ONE normalization seam. Only `code` is executed,
             // staged, hashed, or replayed; the reply's own console bytes are
-            // already gone, and `trailing_speak` belongs to ONE-1686.
-            if response.finish_reason != crate::FinishReason::Stop {
-                return Err(Error::InvalidClaimBody(
-                    "executor LLM response did not finish cleanly",
-                )
-                .into());
-            }
+            // already gone, and `trailing_speak` belongs to ONE-1686. A reply
+            // the seam refuses keeps its correction record before its error
+            // returns (FIX 4412).
             let HealedExecutorReply {
                 code: script,
                 trailing_speak,
                 repairs,
-            } = heal_executor_text(&execution_text)?;
+            } = self.heal_reply_or_record_rejection(
+                config,
+                completed_steps,
+                &response,
+                &execution_text,
+            )?;
+            // The accepted reply's correction record commits with the step's
+            // checkpoint, on every path that commits one (FIX 4411).
+            let correction = CodeRunCorrectionDraft::accepted(
+                config.run_id,
+                completed_steps,
+                &config.model,
+                repairs,
+            );
             record_script_output(
                 &self.storage,
                 &mut record,
@@ -261,7 +283,17 @@ impl EngineNativeExecutor<'_> {
             // runs as the JavaScript Oxc prints for it, kept beside the
             // program with its map and Oxc pin; JavaScript runs as written.
             let prepared = prepare_source(&script);
-            record_prepared_source(&self.storage, &mut record, completed_steps, &prepared)?;
+            // Feedback mode checks the program as its author wrote it, on
+            // its own thread, while the program runs: nothing waits on the
+            // check or is refused for it (FIX 8277). It starts once the
+            // program is, so every way out of the step from here, a failure
+            // before the program runs included, leaves its feedback, its
+            // preparation note included (FIX 9046).
+            let mut checking = self.start_step_check(&record, completed_steps, &prepared);
+            self.kept(
+                &checking,
+                record_prepared_source(&self.storage, &mut record, completed_steps, &prepared),
+            )?;
             let bridge_start = record.bridge_calls.len();
             // ONE-1314: the DURABLE history is the load-bearing half of the
             // lineage seam. An outbound effect parks its step, so a run that
@@ -271,19 +303,31 @@ impl EngineNativeExecutor<'_> {
             // dispatch; the dispatcher owns the history-to-lineage mapping.
             self.gated_write
                 .observe_bridge_history(&record.bridge_calls);
-            self.gated_write.observe_consumed_code_replies(&record)?;
-            let recoverable = self.observation_refs(&record)?;
-            let mut host = RecordingJsHost::new(
-                self.gated_write,
-                config.run_id,
-                bridge_start as u64,
-                config.determinism,
-                self.legibility,
-            )
-            .with_recoverable_outputs(&self.storage, &record, recoverable)?
-            .with_skill_executor(&config.model)
-            .with_result_share(&self.result_share)
-            .with_callable_checks(CallableChecks::new(self.code_check, completed_steps));
+            self.kept(
+                &checking,
+                self.gated_write.observe_consumed_code_replies(&record),
+            )?;
+            let recoverable = self.kept(&checking, self.observation_refs(&record))?;
+            let mut host = self
+                .kept(
+                    &checking,
+                    RecordingJsHost::new(
+                        self.gated_write,
+                        config.run_id,
+                        bridge_start as u64,
+                        config.determinism,
+                        self.legibility,
+                    )
+                    .with_recoverable_outputs(
+                        &self.storage,
+                        &record,
+                        recoverable,
+                    ),
+                )?
+                .with_file_output_step(completed_steps)
+                .with_skill_executor(&config.model)
+                .with_result_share(&self.result_share)
+                .with_callable_checks(CallableChecks::new(self.code_check, completed_steps));
             let step = JsCodeModeStep {
                 run_id: config.run_id,
                 seq: completed_steps,
@@ -291,11 +335,6 @@ impl EngineNativeExecutor<'_> {
                 boundary,
                 determinism: config.determinism,
             };
-            // Feedback mode checks the program as its author wrote it, on
-            // its own thread, while the program runs: nothing waits on the
-            // check or is refused for it (FIX 8277). Every way out of the
-            // step leaves its feedback, its preparation note included.
-            let mut checking = self.start_step_check(&record, completed_steps, &prepared);
             let step_outcome = self
                 .runtime
                 .run_prepared_step_cancellable(step, &prepared, &mut host, cancel);
@@ -329,7 +368,7 @@ impl EngineNativeExecutor<'_> {
                             callable_rows,
                             durable_wait,
                             format!("Runtime error after host bridge calls: {err}"),
-                            repairs.healed(),
+                            &correction,
                             config,
                         )?
                         && !cancelled
@@ -375,7 +414,7 @@ impl EngineNativeExecutor<'_> {
                     callable_rows,
                     durable_wait,
                     format!("Host bridge call failed: {failure}"),
-                    repairs.healed(),
+                    &correction,
                     config,
                 )? {
                     checking.ended(Some(&status));
@@ -421,7 +460,7 @@ impl EngineNativeExecutor<'_> {
                             format!(
                                 "Runtime output recording failed after host bridge calls: {err}"
                             ),
-                            repairs.healed(),
+                            &correction,
                             config,
                         )?
                     {
@@ -576,8 +615,9 @@ impl EngineNativeExecutor<'_> {
             // transaction. A generation conflict, tally error, or failed
             // commit advances neither; a durable append has already counted.
             // The fold receipts the step's stores computed land in it too,
-            // beside the bindings they describe, and so does the seal of the
-            // code consent wait the step parks on (DOOR-079 1b).
+            // beside the bindings they describe, and so do the reply's
+            // correction record (FIX 4411) and the seal of the code consent
+            // wait the step parks on (DOOR-079 1b).
             let parked = parked_wait(&record, terminal_status.as_ref(), bridge_start);
             // A flaky commit converts to success on one identical retry
             // (FIX 1443): a first commit that actually landed fails the
@@ -587,7 +627,7 @@ impl EngineNativeExecutor<'_> {
                 .put_code_run_replay_record_with_receipts_if_generation(
                     &record,
                     expected_generation,
-                    repairs.healed().then_some(&config.model),
+                    &correction,
                     &host.receipts,
                     parked.as_ref(),
                     &context,
@@ -600,7 +640,7 @@ impl EngineNativeExecutor<'_> {
                         .put_code_run_replay_record_with_receipts_if_generation(
                             &record,
                             expected_generation,
-                            repairs.healed().then_some(&config.model),
+                            &correction,
                             &host.receipts,
                             parked.as_ref(),
                             &context,
