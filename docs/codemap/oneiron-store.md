@@ -177,7 +177,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/core_write/dag.rs` | src | s | 3 struct · 1 enum · 1 fn | CoreDagAddressMode, CoreDagQuoteInput, DagRecordAppendInput, DagRecordAppendReceipt | The `vault.conversations.records.append` row's input and receipt types (OF-181) and the append door's input… |
 | `src/core_write/mod.rs` | src | s | 1 mod · 4 re-export | — | Core entity writes as typed rows (OF-181): the rows' inputs and receipts, and the shape every write stages… |
 | `src/core_write/shape.rs` | src | m | 2 struct · 2 enum · 14 fn · 5 const | AnnouncementAuthority, CoreWriteRefusal, CoreWriteTextField, CoreWriteTimes | The shape every core entity write shares: its id, its interval, its announcement-normalized body and its… |
-| `src/critic_lens.rs` | src | s | 2 struct · 9 fn · 7 const | CriticLens, LensCatalog | Critic lens catalogue vocabulary, seed catalogue and pure shape checks |
+| `src/critic_lens.rs` | src | s | 2 struct · 9 fn · 6 const | CriticLens, LensCatalog | Critic lens catalogue vocabulary, seed catalogue and pure shape checks |
 | `src/critical_confirm_record.rs` | src | s | 5 const | — | The critical-confirm pending record: its reason codes, its deadline, and the deterministic binding the… |
 | `src/critical_confirm_retry.rs` | src | s | 2 struct · 3 fn · 1 type · 2 const | ConfirmDemotionRetries, ConfirmDemotionRetry | The expiry walk's backoff state for a timeout demotion that keeps failing (FIX 12079): a row whose demotion… |
 | `src/custody_retirement_status.rs` | src | s | 1 const | — | Completion marker for acknowledged custody retirement |
