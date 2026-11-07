@@ -1,6 +1,6 @@
 //! Exact optional position operations of one successful own-device import.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Weak};
 
@@ -12,7 +12,6 @@ use crate::authority::PeerMachine;
 use crate::error::Result;
 use crate::federation::record_scope::origin_positions::{self as facts, OriginPosition};
 use crate::ports::EntityStoreRead;
-use crate::sync::asset_body::session::LocalBodyLand;
 use crate::sync::client::OwnDeviceImport;
 use crate::sync::loro_support::map_for_each_value_bytes;
 use crate::sync::manager::WindowManager;
@@ -175,15 +174,11 @@ impl OwnDevicePositionImport {
                     && std::iter::once(&position.row)
                         .chain(position.sources.iter())
                         .all(|row| row.birth_digest.is_some())
-                    && std::iter::once(&position.row)
-                        .chain(position.sources.iter())
-                        .any(|row| row.file_reference.is_some())
             })
         });
         (!self.values.is_empty()).then(|| DeferredPositions {
             incoming: self,
             window: identity,
-            ready: BTreeSet::new(),
         })
     }
 
@@ -243,11 +238,11 @@ impl OwnDevicePositionImport {
 
 /// Selected facts of one completed live import, owned only by its socket's
 /// body session. A weak window handle never holds up replacement or eviction.
-/// Neither a remote Receipt nor a replay can construct a local-land effect.
+/// Later native facts can settle these exact successful-import witnesses;
+/// no replay or later update supplies their original connection proof.
 pub(in crate::sync) struct DeferredPositions {
     incoming: OwnDevicePositionImport,
     window: Weak<LoadedWindow>,
-    ready: BTreeSet<String>,
 }
 
 impl DeferredPositions {
@@ -267,22 +262,8 @@ impl DeferredPositions {
         self.incoming.values.is_empty()
     }
 
-    pub(in crate::sync) fn body_landed(&mut self, landed: &LocalBodyLand) -> Result<()> {
-        let reference = landed.reference()?;
-        for (key, sent) in &self.incoming.values {
-            if OriginPosition::decode(sent).is_some_and(|position| {
-                std::iter::once(&position.row)
-                    .chain(position.sources.iter())
-                    .any(|row| row.file_reference.as_deref() == Some(reference.as_slice()))
-            }) {
-                self.ready.insert(key.clone());
-            }
-        }
-        Ok(())
-    }
-
-    /// Retry through existing housekeeping after a related local body landed.
-    /// A later native caption materialization need not coincide with that event.
+    /// Retry through existing housekeeping after native rows, births or bodies
+    /// can have landed. The writer still checks all current facts in one txn.
     pub(in crate::sync) fn retry(&mut self, manager: &WindowManager) -> Result<()> {
         let Some(current) = manager
             .window(&self.incoming.window)
@@ -295,18 +276,13 @@ impl DeferredPositions {
             OriginPosition::decode(sent)
                 .is_some_and(|position| holds_carrier(&current.doc, key, &position))
         });
-        self.ready
-            .retain(|key| self.incoming.values.contains_key(key));
-        if self.ready.is_empty() {
+        if self.incoming.values.is_empty() {
             return Ok(());
         }
         let vault = manager.vault();
         let _bodies = vault.pin_all_result_bodies();
         let settled = vault.with_write_txn_grouped(|txn| {
             let positions = self.incoming.values.iter().filter_map(|(key, sent)| {
-                if !self.ready.contains(key) {
-                    return None;
-                }
                 let position = OriginPosition::decode(sent)?;
                 holds_carrier(&current.doc, key, &position).then_some(position)
             });
@@ -315,7 +291,6 @@ impl DeferredPositions {
         for id in settled {
             let key = id.to_hex();
             self.incoming.values.remove(&key);
-            self.ready.remove(&key);
         }
         Ok(())
     }
