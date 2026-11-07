@@ -83,6 +83,9 @@ pub use erase::CorruptClaimRepair;
 pub(crate) use legal_hold::clone::HostLegalCaptures;
 #[cfg(unix)]
 pub use legal_hold::clone::{HostLegalChannel, HostLegalConnection};
+pub(crate) use legal_hold::prospective::{
+    prospective_standing_in_txn, seal_prospective_message_in_txn,
+};
 pub use legal_hold::{
     ERASE_COMPLETION_PENDING, ErasePendingReason, EraseWithdrawal, HostOrderHold,
     LEGAL_HOLD_DEFERRAL, LEGAL_HOLD_LOG_RETENTION_MONTHS, LEGAL_HOLD_REFUSAL,
