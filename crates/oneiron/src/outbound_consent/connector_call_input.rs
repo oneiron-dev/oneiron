@@ -58,6 +58,13 @@ pub(super) struct PendingConnectorInput {
     /// The round's sealed resume state, once the host kept it (FIX 9157).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) resume: Option<ConnectorInputResume>,
+    /// Each credential presentation the exchange made, its first send's and
+    /// each resume's (fix list row 10550): what a resumed worker clears the
+    /// connector's words of. Unknown until the first round's resume state
+    /// binds it, and on a row kept before; an unknown exchange is never
+    /// resumed.
+    #[serde(default)]
+    pub(super) sent: super::connector_call_sent::SentGenerations,
 }
 
 impl PendingConnectorInput {
@@ -72,6 +79,7 @@ impl PendingConnectorInput {
             uncertain: false,
             owner_consent: None,
             resume: None,
+            sent: super::connector_call_sent::SentGenerations::Unknown,
         }
     }
 

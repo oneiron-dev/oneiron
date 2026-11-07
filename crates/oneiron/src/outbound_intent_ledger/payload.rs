@@ -316,6 +316,9 @@ pub(crate) fn erase_outbound_intent_actor_in_txn(
     actor: &EntityId,
 ) -> crate::Result<()> {
     let mut erased = Vec::new();
+    // FIX 11030: the sends whose party had no PERSON when admitted, linked
+    // to this person when it was deleted, are its sends too.
+    let linked = super::late_recipient::late_recipient_intents_in(vault, &*wtxn, actor)?;
     for row in ledger_rows(vault, &*wtxn).map_err(erase_error)? {
         let (key, raw) = row?;
         let Ok(record) = super::codec::decode_record(&key, &raw) else {
@@ -325,7 +328,10 @@ pub(crate) fn erase_outbound_intent_actor_in_txn(
             continue;
         };
         let named = stored.named();
-        if named.actor == Some(*actor) || named.recipient == Some(*actor) {
+        if named.actor == Some(*actor)
+            || named.recipient == Some(*actor)
+            || linked.contains(&record.id)
+        {
             let custody_ref = match stored {
                 StoredPayload::Sealed { custody_ref, .. } => Some(custody_ref),
                 _ => None,
@@ -390,6 +396,7 @@ fn stop_for_erase(record: &mut IntentLedgerRecord, reason: IntentEscalationReaso
 impl ErasedForm for IntentLedgerRecord {
     fn into_erased(mut self) -> crate::Result<Self> {
         self.payload = envelope(KIND_ERASED, Named::default(), &[]);
+        self.pinned_approval = None;
         stop_for_erase(&mut self, IntentEscalationReason::ActorErased);
         Ok(self)
     }

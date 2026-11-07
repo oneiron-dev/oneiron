@@ -112,6 +112,7 @@ use crate::store::attempt_id::AttemptId;
 
 use oneiron_store::vault_cleanup::cleanup_types;
 mod codec_receipts;
+mod entity_rows;
 mod erase;
 mod marks;
 mod owner_doors;

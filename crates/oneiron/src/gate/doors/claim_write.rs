@@ -86,6 +86,7 @@ pub(crate) fn check_claim_policy_for_write(
         operation_effect_body,
         false,
         None,
+        false,
     )
 }
 
@@ -116,6 +117,7 @@ pub(crate) fn check_claim_policy_for_write_with_preflight_decision(
         false,
         false,
         None,
+        false,
     )
 }
 
@@ -141,6 +143,7 @@ pub(crate) fn check_claim_policy_for_write_with_record(
         false,
         false,
         None,
+        false,
     )
 }
 
@@ -179,7 +182,57 @@ pub(crate) fn check_claim_policy_for_write_with_record_with_reader(
         false,
         false,
         Some(reader),
+        false,
     )
+}
+
+/// [`check_claim_policy_for_write`] for a claim an off-record room stages
+/// (FIX 9967): the same judgment under base policy, which keeps the decision
+/// it judged for the room to stage beside the claim, in the claim's own
+/// overlay segment. It appends nothing, records no metric and touches no key
+/// custody, whatever `mode` says of recording. The decision, with the
+/// retention scope its claim names, is the caller's only once the check
+/// passes; `None` when no policy verdict was reached.
+pub(crate) fn capture_claim_policy_for_write(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    write: ClaimGateWrite<'_>,
+    policy: &PolicyManifestResolution,
+    mode: GateWriteMode,
+) -> Result<Option<crate::store::RoomGateDecision>> {
+    // The scope a base write stamps beside its decision, as it does.
+    let context = crate::gate::GateRetentionContext {
+        world: Some(write.body.world.unwrap_or_else(crate::claim::base_world_id)),
+        project: Some(write.body.scope_project),
+        sub_project: None,
+        thread: None,
+    };
+    let mut captured = None;
+    check_claim_policy_for_write_with_record_inner(
+        store,
+        wtxn,
+        id,
+        write,
+        policy,
+        GateWriteMode {
+            record_decision: false,
+            ..mode
+        },
+        &mut captured,
+        None,
+        // A room stages a persisted candidate.
+        false,
+        false,
+        None,
+        true,
+    )?;
+    Ok(captured.map(
+        |recorded: RecordedClaimGateDecision| crate::store::RoomGateDecision {
+            record: recorded.into_record(),
+            context,
+        },
+    ))
 }
 
 /// The isolation class of a Dreamer candidate's predicate: a prefix a trusted
@@ -219,6 +272,7 @@ fn check_claim_policy_for_write_with_record_inner(
     operation_effect_body: bool,
     skip_precommit: bool,
     reader: Option<&crate::claim::ScopedRead<'_>>,
+    capture_decision: bool,
 ) -> Result<()> {
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     let ClaimGateWrite {
@@ -619,6 +673,41 @@ fn check_claim_policy_for_write_with_record_inner(
                 crate::self_heal::tripwires::normal_baseline_token(&body.predicate),
             );
         }
+        // FIX 8752: a batch apply skips the checker its preflight already
+        // asked, so policy alone answers Allow here. A checker hold that
+        // preflight recorded for this same candidate stays the verdict: the
+        // write lands held, and the writer below binds that receipt's pending
+        // row instead of dropping the hold. A fresh Deny or Pending stands.
+        if decision.outcome() == GateOutcome::Allow
+            && let Some(preflight_id) = preflight_decision_id
+        {
+            let preflight = store.gate_decision_in_txn(&*wtxn, preflight_id)?.ok_or(
+                Error::InvariantViolation("preflight gate decision missing during apply"),
+            )?;
+            let checker_hold = [
+                GateReasonCode::PendingChecker,
+                GateReasonCode::PendingCheckerUnavailable,
+            ]
+            .into_iter()
+            .find(|reason| {
+                preflight.outcome == GateOutcome::Pending.as_str()
+                    && preflight.reason_codes.as_slice() == [reason.as_str()]
+            });
+            if let Some(reason) = checker_hold {
+                let mut held = decision_record.clone();
+                held.outcome.clone_from(&preflight.outcome);
+                held.reason_codes.clone_from(&preflight.reason_codes);
+                held.receipt_reasons.clone_from(&preflight.receipt_reasons);
+                held.grant_ref.clone_from(&preflight.grant_ref);
+                if !gate_decision_matches_pending_candidate(&preflight, &held) {
+                    return Err(Error::InvariantViolation(
+                        "preflight gate decision does not match pending candidate",
+                    ));
+                }
+                decision = GateDecision::pending(vec![reason]);
+                decision_record = held;
+            }
+        }
         if mode.record_decision {
             // A structural streak follows durable append order, including
             // ordinary receipts created within the same clock millisecond.
@@ -642,6 +731,14 @@ fn check_claim_policy_for_write_with_record_inner(
                 recorded.record_metrics(&store.diagnostics.gate);
             }
             *recorded_decision = Some(recorded);
+        } else if capture_decision {
+            // An off-record room's claim (FIX 9967): the decision as judged,
+            // for the room to stage beside its claim. Nothing is appended,
+            // no metric is recorded and no key custody is touched here.
+            *recorded_decision = Some(RecordedClaimGateDecision {
+                record: decision_record.clone(),
+                decision: decision.clone(),
+            });
         }
 
         if mode.persist_pending_consent
@@ -684,6 +781,13 @@ fn check_claim_policy_for_write_with_record_inner(
                 },
                 dreamer_run_id: pending_consent_dreamer_run_id(envelope, body),
                 predicate: Some(body.predicate.clone()),
+                // The confirm's deadline is the policy's lifetime now,
+                // frozen with it (FIX 8760).
+                expires_at: attach_critical_confirm.then(|| {
+                    pending_decision
+                        .created_at
+                        .saturating_add(policy.critical_confirm_lifetime_seconds())
+                }),
             };
             store.put_pending_gate_consent_in_txn(wtxn, &pending)?;
             // A fresh local confirm on this revision is the item the claim's

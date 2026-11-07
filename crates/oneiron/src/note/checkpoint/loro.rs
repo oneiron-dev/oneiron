@@ -2,12 +2,13 @@
 //! engine stamp's actor and every authorship record's, split out and put
 //! back through the shared projection
 //! ([`crate::store::checkpoint_payload::loro`]). Every other operation of
-//! the NOTE schema names no one: its identity and title, its body text, its
-//! pins and the deletes of its maps. An operation outside that schema, or a
-//! message that is no engine stamp, keeps its whole group under the
-//! vault-wide seal. A stamp or authorship record whose actor did not open
-//! reads as no one, never as an actor some binding of its peer names, and
-//! the record stays (Engine R2).
+//! the NOTE schema names no one: its identity and editable fields in meta,
+//! its body text, its pins in meta's nested pins map and the deletes of its
+//! maps (FIX 7784). An operation outside that schema, or a message that is
+//! no engine stamp, keeps its whole group under the vault-wide seal. A
+//! stamp or authorship record whose actor did not open reads as no one,
+//! never as an actor some binding of its peer names, and the record stays
+//! (Engine R2).
 //!
 //! A live document is its slot's group: its full snapshot, then its pending
 //! updates. A proposal document is a group of its own, pins and authorship
@@ -30,6 +31,7 @@ use super::super::side_keys::HexPair;
 use super::super::{NoteActor, NoteAuthorship, NotePin};
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::ports::is_metadata_field;
 use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::side_table::SideKey;
 use crate::store::checkpoint_payload::loro::{
@@ -53,10 +55,12 @@ const LIVE_ROUND_TRIP: RoundTripPolicy = RoundTripPolicy::HistoryEquivalent;
 const PROPOSAL_ROUND_TRIP: RoundTripPolicy = RoundTripPolicy::HistoryEquivalent;
 
 /// The root containers of a NOTE document.
-const META: &str = "note";
+const META: &str = "meta";
 const BODY: &str = "body";
-const PINS: &str = "pins";
 const AUTHORSHIP: &str = "authorship";
+/// meta's reserved identity key, and its key of the nested pins map.
+const ID: &str = "id";
+const PINS: &str = "pins";
 
 /// The engine stamp of an admitted operation: `oneiron.note/v1 actor=<id>`.
 const STAMP: &str = "oneiron.note/v1 actor=";
@@ -120,11 +124,19 @@ impl LoroActorCodec for NoteActors {
     ) -> Split<LoroValue> {
         if is_root(container, META, ContainerType::Map) {
             return match (key, value) {
-                ("id" | "title", LoroValue::String(_)) => Ok(SplitValue::kept(value.clone())),
+                (ID, LoroValue::String(_)) => Ok(SplitValue::kept(value.clone())),
+                (PINS, LoroValue::Container(pins))
+                    if pins.container_type() == ContainerType::Map =>
+                {
+                    Ok(SplitValue::kept(value.clone()))
+                }
+                (field, LoroValue::Binary(_)) if field != PINS && is_metadata_field(field) => {
+                    Ok(SplitValue::kept(value.clone()))
+                }
                 _ => Err(OUTSIDE_SCHEMA),
             };
         }
-        if is_root(container, PINS, ContainerType::Map) {
+        if is_pins(container) {
             let LoroValue::String(pin) = value else {
                 return Err(PIN_UNREAD);
             };
@@ -171,7 +183,7 @@ impl LoroActorCodec for NoteActors {
     }
 
     fn keep_op(&self, op: &JsonOp) -> std::result::Result<(), &'static str> {
-        let maps = [META, PINS, AUTHORSHIP];
+        let maps = [META, AUTHORSHIP];
         match &op.content {
             JsonOpContent::Text(JsonTextOp::Insert { .. } | JsonTextOp::Delete { .. })
                 if is_root(&op.container, BODY, ContainerType::Text) =>
@@ -179,9 +191,10 @@ impl LoroActorCodec for NoteActors {
                 Ok(())
             }
             JsonOpContent::Map(JsonMapOp::Delete { .. })
-                if maps
-                    .iter()
-                    .any(|name| is_root(&op.container, name, ContainerType::Map)) =>
+                if is_pins(&op.container)
+                    || maps
+                        .iter()
+                        .any(|name| is_root(&op.container, name, ContainerType::Map)) =>
             {
                 Ok(())
             }
@@ -226,6 +239,19 @@ fn is_root(container: &ContainerID, name: &str, kind: ContainerType) -> bool {
     }
 }
 
+/// Whether `container` is meta's nested pins map. meta takes no other child
+/// container (`split_map_insert`), so every map container a NOTE's history
+/// creates is that one.
+fn is_pins(container: &ContainerID) -> bool {
+    matches!(
+        container,
+        ContainerID::Normal {
+            container_type: ContainerType::Map,
+            ..
+        }
+    )
+}
+
 /// A stored authorship record under `key`, when it reads, names the
 /// operation its key does and spells its own bytes back.
 fn stored_authorship(key: &str, value: &LoroValue) -> Option<NoteAuthorship> {
@@ -252,7 +278,7 @@ fn group_doc(rows: &[&[u8]]) -> Option<LoroDoc> {
 
 /// The NOTE a document names as its own identity.
 fn named_note(doc: &LoroDoc) -> Option<EntityId> {
-    match doc.get_map(META).get("id")? {
+    match doc.get_map(META).get(ID)? {
         ValueOrContainer::Value(LoroValue::String(id)) => hex_id(id.as_str()),
         _ => None,
     }

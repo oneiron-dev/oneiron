@@ -29,6 +29,8 @@ use std::sync::Arc;
 mod question_answers;
 mod question_outcomes;
 mod saved_lane;
+mod standing_admit;
+pub(crate) use standing_admit::{vault_questions_admit, vault_questions_prepare};
 
 pub(crate) use self::question_answers::vault_questions_answers;
 pub(crate) use self::question_outcomes::{

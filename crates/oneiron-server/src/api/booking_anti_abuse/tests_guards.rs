@@ -3,7 +3,7 @@
 use axum::extract::State;
 
 use super::tests_support::tests::*;
-use super::{BookingHttpDisposition, enforce_slot_list};
+use super::{BookingCaller, BookingHttpDisposition, enforce_slot_list};
 
 #[cfg(test)]
 pub(crate) mod tests {
@@ -21,23 +21,38 @@ pub(crate) mod tests {
         listing.submitted_at_millis = 0;
         listing.email_hash = None;
 
-        let first = enforce_slot_list(State(server.clone()), listing.clone(), false)
-            .await
-            .expect("ordinary slot list");
+        let first = enforce_slot_list(
+            State(server.clone()),
+            listing.clone(),
+            false,
+            BookingCaller::Anonymous,
+        )
+        .await
+        .expect("ordinary slot list");
         assert_eq!(first, BookingHttpDisposition::Continue);
         assert_ne!(first, BookingHttpDisposition::SilentOk);
 
         for _ in 0..119 {
             assert_eq!(
-                enforce_slot_list(State(server.clone()), listing.clone(), false)
-                    .await
-                    .expect("slot-list quota"),
+                enforce_slot_list(
+                    State(server.clone()),
+                    listing.clone(),
+                    false,
+                    BookingCaller::Anonymous,
+                )
+                .await
+                .expect("slot-list quota"),
                 BookingHttpDisposition::Continue
             );
         }
-        let exhausted = enforce_slot_list(State(server.clone()), listing, false)
-            .await
-            .expect("slot-list exhaustion");
+        let exhausted = enforce_slot_list(
+            State(server.clone()),
+            listing,
+            false,
+            BookingCaller::Anonymous,
+        )
+        .await
+        .expect("slot-list exhaustion");
         assert!(
             matches!(exhausted, BookingHttpDisposition::RetryAfter { .. }),
             "an ordinary listing consumes the endpoint quota: {exhausted:?}"
