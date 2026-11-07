@@ -497,7 +497,9 @@ impl Bridge {
             .and_then(Value::as_str)
             .map(str::to_owned);
         let reply = self.post(body, until, deadline, tool);
-        let id = message.get("id").cloned()?;
+        let id = message.get_mut("id").map(Value::take);
+        drop(message);
+        let id = id?;
         Some(match reply.and_then(|reply| reply.answer_to(&id)) {
             Ok(answer) => {
                 if let Some(key) = key {

@@ -7,6 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct ContractSpec {
     /// Crate name -> root source file relative to the materialized tree.
     pub rust_crates: BTreeMap<String, String>,
+    /// Public JS/TS entry name -> source file relative to the materialized tree.
+    pub js_modules: BTreeMap<String, String>,
     /// Contract name -> JSON schema file relative to the materialized tree.
     pub schemas: BTreeMap<String, String>,
     /// Host check identifiers. Hosts run their own bounded, sandboxed commands.

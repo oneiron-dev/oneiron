@@ -22,6 +22,12 @@ pub struct WaitDelivery {
     /// its settler listed none: the reply then adds no row to its run's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_rows: Option<Vec<EntityId>>,
+    /// The origins of the reply as its settler served it (FIX 7083): the
+    /// worlds and row scopes the settler froze in the writer that made the
+    /// reply. `None` when they are unknown. An empty value is a proof that
+    /// the reply has no origin. A copy of the delivery keeps them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origins: Option<crate::code_run::ResultOrigins>,
     /// Whether an erase of its holder's actor took the reply (FIX 5718):
     /// its text is gone, and when it came and its rows stay.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -29,8 +35,8 @@ pub struct WaitDelivery {
 }
 
 /// A delivery's erased form (FIX 5718): when it came and the rows its reply
-/// was derived from stay, its reply goes. An erase writes it past the
-/// side-row wall.
+/// was derived from stay, and its origins too (FIX 7083); its reply goes. An
+/// erase writes it past the side-row wall.
 impl ErasedForm for WaitDelivery {
     fn into_erased(self) -> Result<Self> {
         Ok(Self {
