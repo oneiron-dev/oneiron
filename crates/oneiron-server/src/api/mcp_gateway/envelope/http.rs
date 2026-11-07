@@ -1,8 +1,22 @@
-//! The MCP gateway's HTTP side: its routes, its connection stamp and each POST's JSON-RPC reply.
-//! `mcp_gateway` and `mcp_tool_first_gateway` are its call surface.
+//! The MCP gateway's Streamable HTTP side: its routes, its connection stamp and each POST's reply.
+//! `mcp_gateway`, `mcp_tool_first_gateway` and `mcp_method_not_allowed` are its call surface.
 //! The envelope root defines `McpCallContext` and `McpGatewayError`, the records forwarded here.
 
 use super::*;
+use axum::http::StatusCode;
+use axum::http::header::{ALLOW, ORIGIN};
+
+/// The header a POST after `initialize` names its MCP protocol version in.
+const MCP_PROTOCOL_VERSION_HEADER: &str = "mcp-protocol-version";
+
+/// The methods an MCP endpoint serves, as its 405's `Allow` header states
+/// them.
+const MCP_ALLOWED_METHODS: &str = "POST";
+
+/// The HTTP status a notification or response this server cannot accept
+/// answers with. The transport asks for an HTTP error status and names 400
+/// as one; which one is an engine call (CALLS, FIX 4902).
+const MCP_REFUSED_MESSAGE_STATUS: StatusCode = StatusCode::BAD_REQUEST;
 
 /// The PRIMARY endpoint: the truthful `setup_oneiron` catalog. `execute_code`
 /// is not registered in this release; direct requests receive its typed
@@ -54,6 +68,26 @@ pub(crate) async fn mcp_tool_first_gateway(
         body,
     )))
     .await
+}
+
+/// `GET` and `DELETE` on an MCP endpoint: 405 Method Not Allowed, with
+/// `Allow: POST`. An engine call (CALLS, FIX 4902): this server opens no
+/// server-initiated SSE stream, which the transport lets a GET answer 405
+/// for, and holds no session (it mints no `Mcp-Session-Id`), so a DELETE
+/// has none to end. A present `Origin` this server does not admit is
+/// refused first, as on a POST.
+pub(crate) async fn mcp_method_not_allowed(
+    headers: HeaderMap,
+    State(server): State<Arc<SyncServer>>,
+) -> Response {
+    if let Some(refused) = mcp_origin_refusal(&server, &headers, &[]) {
+        return refused;
+    }
+    let mut response = StatusCode::METHOD_NOT_ALLOWED.into_response();
+    response
+        .headers_mut()
+        .insert(ALLOW, HeaderValue::from_static(MCP_ALLOWED_METHODS));
+    response
 }
 
 /// A reply no `tools/call` receipt covers is its connection's (FIX 811): a
@@ -150,6 +184,244 @@ pub(super) fn mcp_connection_refusal(
     mcp_http_reply(mcp_envelope(id, refused), Some(&stamp))
 }
 
+/// An envelope refused before any method ran, as its connection's reply,
+/// under the HTTP status the transport answers it with.
+fn mcp_status_refusal(
+    status: StatusCode,
+    server: &SyncServer,
+    headers: &HeaderMap,
+    method: &str,
+    body: &[u8],
+    id: Value,
+    error: McpGatewayError,
+) -> Response {
+    let mut response = mcp_connection_refusal(server, headers, method, body, id, error);
+    *response.status_mut() = status;
+    response
+}
+
+/// The refusal of a request whose `Origin` this server does not admit (MCP
+/// Streamable HTTP: a present, invalid `Origin` answers 403 Forbidden,
+/// against DNS rebinding; canon ARCH-0028 "Origin-validated"). An engine
+/// call (CALLS, FIX 4902): an origin is admitted when `allowed_origins`
+/// names it exactly, when it is this host's own public origin
+/// (`oauth_resource_indicator`), or when its host is a loopback name or
+/// address, which a rebinding page never carries. A request with no
+/// `Origin`, as every client outside a browser sends, is not judged.
+fn mcp_origin_refusal(server: &SyncServer, headers: &HeaderMap, body: &[u8]) -> Option<Response> {
+    let origin = headers.get(ORIGIN)?;
+    let listed = crate::web_client::parse_allowed_origins(&server.config.allowed_origins)
+        .is_ok_and(|allowed| allowed.contains(origin));
+    let own = crate::builtin_host::public_origin(server.config.oauth_resource_indicator.as_deref())
+        .is_some_and(|own| origin.as_bytes() == own.as_bytes());
+    if listed || own || origin.to_str().is_ok_and(loopback_origin) {
+        return None;
+    }
+    let error = McpGatewayError::new(
+        -32600,
+        "origin_not_allowed",
+        format!(
+            "Origin {} is not one this server admits",
+            String::from_utf8_lossy(origin.as_bytes())
+        ),
+    )
+    .with_field("Origin");
+    Some(mcp_status_refusal(
+        StatusCode::FORBIDDEN,
+        server,
+        headers,
+        "mcp",
+        body,
+        Value::Null,
+        error,
+    ))
+}
+
+/// Whether `origin` (`scheme://host[:port]`) names a loopback host:
+/// `localhost`, `127.0.0.1` or `[::1]`.
+fn loopback_origin(origin: &str) -> bool {
+    let Some((scheme, rest)) = origin.split_once("://") else {
+        return false;
+    };
+    if !matches!(scheme, "http" | "https") {
+        return false;
+    }
+    let host = match rest.strip_prefix('[') {
+        Some(bracketed) => bracketed.split_once(']').map(|(host, _)| host),
+        None => Some(rest.split(':').next().unwrap_or(rest)),
+    };
+    host.is_some_and(|host| {
+        host.eq_ignore_ascii_case("localhost") || host == "127.0.0.1" || host == "::1"
+    })
+}
+
+/// The refusal of a POST whose `MCP-Protocol-Version` header names a
+/// version this server does not speak, which the transport answers with
+/// 400. `None` when it names one of [`MCP_PROTOCOL_VERSIONS`], or names
+/// none: the transport then assumes `2025-03-26`, which this server serves
+/// as it serves every version it speaks.
+fn mcp_protocol_header_refusal(headers: &HeaderMap) -> Option<McpGatewayError> {
+    let named = headers.get(MCP_PROTOCOL_VERSION_HEADER)?;
+    if named
+        .to_str()
+        .is_ok_and(|version| MCP_PROTOCOL_VERSIONS.contains(&version))
+    {
+        return None;
+    }
+    Some(
+        McpGatewayError::new(
+            -32600,
+            "unsupported_protocol_version",
+            format!(
+                "MCP-Protocol-Version {} is not one this server speaks; it speaks {}",
+                String::from_utf8_lossy(named.as_bytes()),
+                MCP_PROTOCOL_VERSIONS.join(", ")
+            ),
+        )
+        .with_field("MCP-Protocol-Version"),
+    )
+}
+
+/// What MCP Streamable HTTP answers for a POSTed message before any request
+/// runs: a version header this server does not speak is refused with 400
+/// (`initialize` is not judged by it), and a notification or a response is
+/// accepted with 202 or refused with an HTTP error status, never answered as
+/// a request is. `None` for a request, which is answered as before.
+async fn mcp_transport_answer(
+    mode: McpSurfaceMode,
+    headers: &HeaderMap,
+    locality: CallerLocality,
+    connection: &Extensions,
+    server: &Arc<SyncServer>,
+    body: &[u8],
+    raw: &Value,
+) -> Option<Response> {
+    let method = raw.get("method").and_then(Value::as_str);
+    if method != Some("initialize")
+        && let Some(error) = mcp_protocol_header_refusal(headers)
+    {
+        return Some(mcp_status_refusal(
+            StatusCode::BAD_REQUEST,
+            server,
+            headers,
+            method.unwrap_or("mcp"),
+            body,
+            raw.get("id").cloned().unwrap_or(Value::Null),
+            error,
+        ));
+    }
+    if !mcp_is_notification_or_response(raw) {
+        return None;
+    }
+    Some(mcp_accept_message(mode, headers, locality, connection, server, body, raw).await)
+}
+
+/// Whether a POSTed body is a JSON-RPC notification (a `method` and no `id`
+/// member) or a response (an `id`, a `result` or an `error`, and no
+/// `method`). Neither is answered as a request is. A request, a batch and
+/// any other body are not.
+fn mcp_is_notification_or_response(raw: &Value) -> bool {
+    let Some(message) = raw.as_object() else {
+        return false;
+    };
+    match message.get("method") {
+        Some(Value::String(_)) => !message.contains_key("id"),
+        Some(_) => false,
+        None => {
+            message.contains_key("id")
+                && (message.contains_key("result") || message.contains_key("error"))
+        }
+    }
+}
+
+/// Whether this server accepts a notification of `method`. An engine call
+/// (CALLS, FIX 4902): every `notifications/*` is accepted and ignored,
+/// `initialized`, `cancelled`, `progress` and `roots/list_changed` among
+/// them, since the endpoint holds no session, cancels no call it is
+/// running, and asks for no roots. A message with no `id` that names any
+/// other method is a request no reply can answer, so it is refused.
+fn mcp_notification_accepted(method: &str) -> bool {
+    method.starts_with("notifications/")
+}
+
+/// One POSTed notification or response (MCP Streamable HTTP): accepted, it
+/// answers 202 Accepted with no body, under its connection's receipt; else
+/// [`MCP_REFUSED_MESSAGE_STATUS`] with the JSON-RPC error and no id. Its
+/// caller is required, as for every method, and is resolved as a
+/// handshake's is.
+async fn mcp_accept_message(
+    mode: McpSurfaceMode,
+    headers: &HeaderMap,
+    locality: CallerLocality,
+    connection: &Extensions,
+    server: &Arc<SyncServer>,
+    body: &[u8],
+    raw: &Value,
+) -> Response {
+    let method = raw.get("method").and_then(Value::as_str);
+    let label = method.unwrap_or("mcp");
+    let refusal = if raw.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
+        Some(
+            McpGatewayError::new(-32600, "invalid_request", "jsonrpc must be \"2.0\"")
+                .with_field("jsonrpc"),
+        )
+    } else if let Some(method) = method
+        && !mcp_notification_accepted(method)
+    {
+        Some(
+            McpGatewayError::new(
+                -32600,
+                "invalid_request",
+                format!(
+                    "{method} is a request and needs an id; only a notifications/* method omits one"
+                ),
+            )
+            .with_field("id"),
+        )
+    } else {
+        None
+    };
+    let caller = match refusal {
+        Some(error) => Err(error),
+        None => resolve_handshake_caller(
+            mode,
+            &mcp_request_id(&Value::Null),
+            headers,
+            connection,
+            locality,
+            server,
+        )
+        .await
+        .map(drop),
+    };
+    if let Err(error) = caller {
+        return mcp_status_refusal(
+            MCP_REFUSED_MESSAGE_STATUS,
+            server,
+            headers,
+            label,
+            body,
+            Value::Null,
+            error,
+        );
+    }
+    let anonymous = crate::api::call_receipt::in_anonymous_session(server, headers, None);
+    let stamp = crate::api::call_receipt::record(
+        server,
+        anonymous,
+        crate::api::call_receipt::connection_call(
+            oneiron::receipt::CallTransport::Mcp,
+            label.to_owned(),
+            oneiron::receipt::CallOutcome::Ok,
+            oneiron::receipt::call_bytes_digest(body),
+            None,
+        ),
+    );
+    let mut response = StatusCode::ACCEPTED.into_response();
+    stamp.stamp_header(&mut response);
+    response
+}
+
 pub(super) async fn mcp_endpoint(
     mode: McpSurfaceMode,
     headers: HeaderMap,
@@ -158,6 +430,11 @@ pub(super) async fn mcp_endpoint(
     server: Arc<SyncServer>,
     body: Bytes,
 ) -> Response {
+    // A present Origin this server does not admit is refused before the
+    // body is read (FIX 4902).
+    if let Some(refused) = mcp_origin_refusal(&server, &headers, &body) {
+        return refused;
+    }
     let raw: Value = match serde_json::from_slice(&body) {
         Ok(raw) => raw,
         Err(error) => {
@@ -171,6 +448,22 @@ pub(super) async fn mcp_endpoint(
             );
         }
     };
+    // The version header and a notification or response are answered
+    // before any request runs (FIX 4902); that answer's future on the heap
+    // (FIX 12072).
+    if let Some(answered) = Box::pin(mcp_transport_answer(
+        mode,
+        &headers,
+        locality,
+        &connection,
+        &server,
+        &body,
+        &raw,
+    ))
+    .await
+    {
+        return answered;
+    }
     let id = raw.get("id").cloned().unwrap_or(Value::Null);
     let request = match serde_json::from_value::<McpJsonRpcRequest>(raw) {
         Ok(request) => request,

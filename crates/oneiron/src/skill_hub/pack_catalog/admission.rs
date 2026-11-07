@@ -417,12 +417,34 @@ impl Vault {
             PACK_PREDICATE.put(&self.store, txn, predicate, &source.manifest.name)?;
         }
         PACK_CANDIDATE.delete(&self.store, txn, &candidate_key(&source))?;
+        // A model pack on either side of the install may change the pack the
+        // vault follows: a model pack installed, or one replaced by a pack
+        // of another kind under the same name (review #6390).
+        let model_pack_touched = receipt.kind == PackKind::Model
+            || prior
+                .as_ref()
+                .is_some_and(|old| old.kind == PackKind::Model);
+        let model_pack_before = if model_pack_touched {
+            self.model_pack_in_effect_in_txn(txn)?
+        } else {
+            None
+        };
         PACK_INSTALL.put(&self.store, txn, &source.manifest.name, &receipt)?;
         if model_catalog {
             self.activate_installed_model_catalog_in_txn(
                 txn,
                 prior_catalog.as_ref(),
                 prior_source,
+            )?;
+        }
+        // A model pack's install, or its replacement by another kind, may
+        // change the pack the vault follows; the change keeps the receipt it
+        // replaced and tells the owner, with its revert (FIX 5367, 5369).
+        if model_pack_touched {
+            self.note_active_model_pack_in_txn(
+                txn,
+                model_pack_before,
+                crate::llm::model_pack::ModelPackChangeCause::Install,
             )?;
         }
         if let Some(old) = prior
