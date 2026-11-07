@@ -20959,6 +20959,18 @@ pub struct AuthorityAuditRow {
     pub subject_ref: Option<String>,
     #[serde(rename = "grant_ref", default, skip_serializing_if = "Option::is_none")]
     pub grant_ref: Option<String>,
+    #[serde(
+        rename = "receipt_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub receipt_ref: Option<String>,
+    #[serde(
+        rename = "affected_grants",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub affected_grants: Option<Vec<String>>,
     #[serde(rename = "claim_ref", default, skip_serializing_if = "Option::is_none")]
     pub claim_ref: Option<String>,
     #[serde(

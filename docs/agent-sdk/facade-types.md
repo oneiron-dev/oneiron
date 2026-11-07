@@ -2656,7 +2656,7 @@ export type AuthorityAuditEventKind = "grant" | "revoke" | "confirm" | "other"
 /** `oneiron::receipt::authority_audit::AuthorityAuditQuery` */
 export type AuthorityAuditQuery = { after?: EntityId | null; limit?: number | null; kinds?: AuthorityAuditEventKind[] }
 /** `oneiron::receipt::authority_audit::AuthorityAuditRow` */
-export type AuthorityAuditRow = { entry_ref: EntityId; entry_hash: string; event_kind: AuthorityAuditEventKind; source_op: string; detail?: string | null; occurred_start: number; occurred_end: number; learned_at: number; advisory_ts: number; signer_key: string; cosigner_keys?: string[]; seq: number; vault_ref?: string | null; subject_ref?: string | null; grant_ref?: string | null; claim_ref?: string | null; holder_ref?: string | null; parent_ref?: string | null; peer_vault_ref?: string | null; epoch?: number | null; expires_at?: number | null; fold_valid: boolean; issue_codes?: string[] }
+export type AuthorityAuditRow = { entry_ref: EntityId; entry_hash: string; event_kind: AuthorityAuditEventKind; source_op: string; detail?: string | null; occurred_start: number; occurred_end: number; learned_at: number; advisory_ts: number; signer_key: string; cosigner_keys?: string[]; seq: number; vault_ref?: string | null; subject_ref?: string | null; grant_ref?: string | null; receipt_ref?: string | null; affected_grants?: string[]; claim_ref?: string | null; holder_ref?: string | null; parent_ref?: string | null; peer_vault_ref?: string | null; epoch?: number | null; expires_at?: number | null; fold_valid: boolean; issue_codes?: string[] }
 /** `oneiron::receipt::authority_audit::AuthorityAuditOrder` */
 export type AuthorityAuditOrder = "entry_ref_ascending"
 /** `oneiron::receipt::authority_audit::ColdAuthorityAuditRow` */

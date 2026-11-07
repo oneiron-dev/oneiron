@@ -300,7 +300,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/known_value_index/forms.rs` | src | m | 1 struct · 11 fn · 1 const | View | A known value spelled another way in incoming bytes (FIX 2725): standard or URL-safe base64, padded or not… |
 | `src/known_value_index/rolling.rs` | src | s | 3 struct · 11 fn | RollingKey, RollingScan, RollingSets | The keyed rolling prefilter (FIX 12209): each entry keeps a 2-byte keyed rolling value of its first window… |
 | `src/l2_evidence.rs` | src | s | 2 struct · 4 fn | L2BaseCache, L2BaseSummary | Bounded, vault-owned cache of score-free context evidence |
-| `src/lib.rs` | src | s | 221 mod | — | The store layer of the oneiron engine |
+| `src/lib.rs` | src | s | 222 mod | — | The store layer of the oneiron engine |
 | `src/live_speaker_calls.rs` | src | s | 1 struct · 3 fn | LiveSpeakers | Per-room live voice-call registration index |
 | `src/local_queue_budget.rs` | src | s | 1 fn | — | Byte accounting for bounded device-local queues, separate from verdict/rate policy |
 | `src/long_interval.rs` | src | s | 1 const | — | The occurrence span past which a stored record is a long interval |
@@ -318,7 +318,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/model_decision/catalogue.rs` | src | m | 1 struct · 1 fn · 51 const | QuestionFamily | The engine's registered typed-question families, in one place |
 | `src/model_decision/codec.rs` | src | s | 7 fn · 3 mod | — | Canonical entity references for typed-decision wire records |
 | `src/model_decision/mod.rs` | src | s | 3 mod · 9 re-export | — | Model-independent typed decision vocabulary and pure policy values |
-| `src/model_decision/policy.rs` | src | s | 7 struct · 2 enum · 11 fn · 1 const | BandMode, DecisionBandEnforceRequest, DecisionBandLearnRequest, DecisionBandPolicy, DecisionBandReadRequest, LearnedBand, PersonThreshold, Reversibility +1 | Question- and reversibility-scoped escalation bands; learning starts in shadow |
+| `src/model_decision/policy.rs` | src | s | 7 struct · 2 enum · 11 fn · 1 re-export | BandMode, DecisionBandEnforceRequest, DecisionBandLearnRequest, DecisionBandPolicy, DecisionBandReadRequest, LearnedBand, PersonThreshold, Reversibility +1 | Question- and reversibility-scoped escalation bands; learning starts in shadow |
 | `src/model_decision/provider.rs` | src | s | 3 struct · 7 fn · 3 const | PairedAnswer, ProviderCapability, ProviderDecision | Provider answer values, capabilities, and score-level rules |
 | `src/model_decision/questions/mod.rs` | src | s | 2 re-export | — | Graph-question recipe and outcome vocabulary |
 | `src/model_decision/questions/recipe.rs` | src | s | 2 struct | GraphQuestionInput, GraphQuestionRef | Graph-question identities and explicit evidence joins |
@@ -539,6 +539,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/snapshot_key.rs` | src | s | 1 struct · 4 fn · 3 const | WrappedSnapshotKey | Wrapped inference-snapshot data keys and their byte grammar |
 | `src/snapshot_lifecycle.rs` | src | s | 2 struct · 1 trait · 2 fn · 1 type · 4 re-export | Gate, SnapshotAdmission, SnapshotRuntime | A vault's inference snapshot lifecycle (DESIGN-V2 §7 "On vault lock", V2-R3): the admission generation and… |
 | `src/snapshot_lock_result.rs` | src | s | 3 struct · 1 const | SnapshotLockReceipt, SnapshotRelease, SnapshotWorkerAbort | Results of releasing inference snapshot state before a vault lock |
+| `src/source_audience_obligation.rs` | src | s | 1 enum · 3 fn · 1 const | SourceAudienceObligation | The source-audience obligation (fix list row 16256): one engine-owned key in a bound row's own MessagePack… |
 | `src/store_clock.rs` | src | m | 2 struct · 2 trait · 20 fn · 1 const · 1 mod | Clock, IdGen, LeaseRenewal, StoreClock | Per-store clock and id source |
 | `src/store_clock/lease_journal.rs` | src | s | 1 struct · 4 fn · 1 crate-vis | LeaseJournal | The authorization clock's lease journal (FIX 12023 W0, review #4484 P1-B; L02 11-04 13:53 = A) |
 | `src/store_clock/tests.rs` | test | s | — | — | The store clock's reads, observed through what a caller gets back |
@@ -571,7 +572,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/window_key.rs` | src | s | 1 struct · 15 fn · 1 crate-vis | WindowKey | Monthly CRDT window keys and their timestamp conversion |
 | `src/window_protocol.rs` | src | s | 2 enum · 1 fn · 2 const | FederationAdmissionRole, ImportTier | Window payload bounds and local commit origin values |
 | `src/window_rows.rs` | src | s | 5 struct · 1 enum · 2 const | CarrierRemoval, HexSeqKey, WindowEntityHexKey, WindowEntityKey, WindowUpdateKey, WindowUpdateSeq | Typed `sync_state` tables for the window/root plane rows: one window's persisted CRDT snapshot, state… |
-| `src/witness_message_body.rs` | src | m | 2 struct · 2 enum · 6 fn · 5 const | StoredMessagePart, WitnessMessageBodyAuthor, WitnessMessageEnvelope, WitnessMetadataMeasure | Canonical MESSAGE body vocabulary, encoding, and structural validation |
+| `src/witness_message_body.rs` | src | m | 2 struct · 2 enum · 8 fn · 5 const | StoredMessagePart, WitnessMessageBodyAuthor, WitnessMessageEnvelope, WitnessMetadataMeasure | Canonical MESSAGE body vocabulary, encoding, and structural validation |
 | `src/workflow_definition.rs` | src | s | 1 struct · 6 fn | WorkflowDefinition | A saved ordered agent composition (`WORKFLOW` entities): its value, wire codec and put admission |
 | `src/world_pad_codec.rs` | src | s | 1 struct · 1 enum · 17 fn | PadBody, WorldKeyPad | The world-key pad row codec (KS-5, FIX 5686): a pad, a pad row's deterministic id, and a pad row body in its… |
 | `src/world_registration_keys.rs` | src | s | 2 const | — | Storage keys for foreign-world registration and stale markers |
@@ -612,11 +613,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/write_envelope/identity_reputation.rs` | src | m | 3 struct · 4 enum · 16 fn · 17 const | EmailReputationWebhookSignal, IdentityAttestationTier, IdentityReputation, IdentityReputationSignal, IdentityReputationStatus, IdentitySendRateClamp, IdentityWarmupStage | Sender reputation values, wire predicates, and pure claim validation |
 | `src/write_envelope/learning_predicate.rs` | src | s | 1 fn · 5 const · 1 re-export | — | The measured-state claim family and its namespace classifier |
 | `src/write_envelope/person_identity.rs` | src | s | 3 fn | — | Identity-bearing facet classification and canonical PERSON body maps |
-| `src/write_envelope/profile_snapshot/codec.rs` | src | s | 11 fn · 1 re-export | — | Canonical MessagePack encode/decode and field validation helpers |
+| `src/write_envelope/profile_snapshot/codec.rs` | src | s | 1 enum · 12 fn · 1 re-export | PsychProfileBodyEnvelope | Canonical MessagePack encode/decode and field validation helpers |
 | `src/write_envelope/profile_snapshot/codec/source_pages.rs` | src | s | 1 const · 4 crate-vis | — | The paged source frames of a PSYCH_PROFILE body (FIX 10054, Rule 5): a size bound is a codec frame, never a… |
 | `src/write_envelope/profile_snapshot/keys.rs` | src | s | 1 struct · 1 fn | PsychProfileKey | Stable Person x Facet x World addressing and entity-id derivation |
 | `src/write_envelope/profile_snapshot/mod.rs` | src | s | 3 mod · 5 re-export | — | Profile snapshot records, addressing and canonical MessagePack codec |
-| `src/write_envelope/profile_snapshot/record.rs` | src | s | 3 struct · 3 enum · 6 fn · 18 const · 2 crate-vis | PsychProfile, PsychProfileConfidence, PsychProfileSnapshotStatus, PsychProfileSource, PsychProfileStaleReason, PsychProfileState | Snapshot record types, projections, and constructors/validators |
+| `src/write_envelope/profile_snapshot/record.rs` | src | m | 4 struct · 6 enum · 8 fn · 19 const · 2 crate-vis | PsychProfile, PsychProfileByteRange, PsychProfileConfidence, PsychProfileSnapshotStatus, PsychProfileSource, PsychProfileSourceWords, PsychProfileSpanText, PsychProfileStaleReason +2 | Snapshot record types, projections, and constructors/validators |
 | `src/write_envelope/provenance/actor_stamp.rs` | src | s | 1 struct | ActorStamp | Opaque actor stamp identity |
 | `src/write_envelope/provenance/actor_substrate.rs` | src | s | 6 fn · 1 const | — | Actor-class validation and model substrate codec |
 | `src/write_envelope/provenance/codec.rs` | src | m | 1 struct · 5 fn | EdgeProvenanceClaimBody | Edge-provenance value record and its fail-closed MessagePack gate |
