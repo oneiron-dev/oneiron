@@ -314,7 +314,9 @@ pub use host_action::HostActionAuthority;
 pub use host_re_root::{HostReRoot, RetiredSlip};
 pub use ingest_observation::*;
 pub use invocation_slip::InvocationSlipBinding;
-pub use local_host_root::{LocalHostRootContext, LocalHostRootValidated, RetainedHostRootReplace};
+pub use local_host_root::{
+    HostIssuerSeedSlot, LocalHostRootContext, LocalHostRootValidated, RetainedHostRootReplace,
+};
 pub use local_open::LocalOpenProfile;
 pub use log_budget::{
     AUTHORITY_LOG_SIGNER_COUNT_ADVISORY, AuthorityLogCheck, MAX_AUTHORITY_ROWS_PER_SIGNER,
