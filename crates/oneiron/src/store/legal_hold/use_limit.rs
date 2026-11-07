@@ -90,6 +90,21 @@ pub(crate) fn cooperative_restriction_active_in_txn(
         .is_some())
 }
 
+/// The same record-retention facts as `held_in_txn`, read from a
+/// checkpoint custody plan's captured rows.
+pub(crate) fn rows_keep_record(rows: &[(Vec<u8>, Vec<u8>)], id: &[u8; 16]) -> Result<bool> {
+    if super::rows_hold_claim(rows, id) {
+        return Ok(true);
+    }
+    let mut prefix = COOPERATIVE_RESTRICTIONS.decl().prefix.to_vec();
+    prefix.extend_from_slice(id);
+    if let Some((_, value)) = rows.iter().find(|(key, _)| key.starts_with(&prefix)) {
+        COOPERATIVE_RESTRICTIONS.decode_value(value)?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 /// Private vocabulary: boolean read/egress consumers need only presence.
 /// The legal-hold-specific public getter retains its own typed query.
 pub(crate) enum RecordUseLimit {
