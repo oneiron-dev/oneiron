@@ -438,7 +438,7 @@ pub fn decode_key(value: &Value) -> Result<AuthorityKey> {
     }
 }
 
-fn decode_signature(value: &Value) -> Result<AuthoritySignature> {
+pub(super) fn decode_signature(value: &Value) -> Result<AuthoritySignature> {
     let entries = map_entries(value)?;
     validate_keys(entries, &SIGNATURE_KEYS)?;
     let suite = required(entries, KEY_SUITE)?
