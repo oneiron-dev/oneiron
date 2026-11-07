@@ -328,8 +328,8 @@ side_tables! {
     WEAVE_LIVE: VaultMeta b"weave:live:v1:" Raw;
     /// Weave digest schedule of one reader. Key: reader kind byte + id16.
     WEAVE_DIGEST_SCHEDULE: VaultMeta b"weave:schedule:v1:" Raw;
-    /// One immutable wrong-item label filed from a live weave report. Key: family byte
-    /// (0 entity, 1 gate decision) + native id16 + id16 (label receipt id).
+    /// One immutable wrong-item label (a claim, project or budget row) filed from a live weave
+    /// report. Key: id16 (item id) + id16 (label receipt id).
     WEAVE_WRONG_ITEM_LABEL: VaultMeta b"weave:wrong-item:v1:" Named;
     /// One immutable wrong-link label filed from a live weave report. Key: edge ref (33 bytes) +
     /// id16 (label receipt id).

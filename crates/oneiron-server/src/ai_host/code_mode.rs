@@ -25,7 +25,6 @@ use oneiron::engine_executor::{
 use oneiron::llm::BudgetDenied;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::PayerPerson;
-use oneiron::off_record::OffRecordMode;
 use oneiron::{
     BudgetGuard, BudgetLease, EntityId, LlmBackend, LlmCapability, LlmError, LlmGenerateFuture,
     LlmRequest, LlmStreamResult, ModelId, ModelLocality, ModelTierRef, Vault,
@@ -129,11 +128,7 @@ pub(super) async fn bind(
         let backend = Arc::clone(&backend);
         Arc::new(move |principal, session| {
             Arc::new(CodeModeBackend {
-                caller: Some(CodeModeCaller {
-                    principal,
-                    session,
-                    session_bound: false,
-                }),
+                caller: Some(CodeModeCaller { principal, session }),
                 ..backend.as_ref().clone()
             }) as Arc<dyn LlmBackend>
         })
@@ -167,7 +162,6 @@ pub(super) async fn bind(
             move |guard: BudgetGuard,
                   payer: Option<PayerPerson>,
                   lease: Option<LiveLeaseState>,
-                  caller: Option<(EntityId, Option<String>)>,
                   listed: Vec<AgentModel>| {
                 Arc::new(CodeModeBackend {
                     vault: Arc::clone(&vault),
@@ -177,11 +171,7 @@ pub(super) async fn bind(
                     planned: None,
                     lease,
                     browser: Arc::clone(&browser),
-                    caller: caller.map(|(principal, session)| CodeModeCaller {
-                        principal,
-                        session_bound: session.is_some(),
-                        session,
-                    }),
+                    caller: None,
                     listed,
                 }) as Arc<dyn LlmBackend>
             },
@@ -468,26 +458,6 @@ struct CodeModeBackend {
 struct CodeModeCaller {
     principal: EntityId,
     session: Option<String>,
-    /// Only the reader runner supplies a session its dispatcher already bound.
-    session_bound: bool,
-}
-
-impl CodeModeCaller {
-    fn keeps_no_record(&self, vault: &Vault) -> bool {
-        if self.session_bound {
-            let Some(session_ref) = self.session.as_deref() else {
-                return true;
-            };
-            return !matches!(
-                vault
-                    .off_record_session_vault()
-                    .bind(session_ref)
-                    .and_then(|session| session.mode()),
-                Ok(OffRecordMode::OnRecord)
-            );
-        }
-        vault.model_call_keeps_no_record_for(self.session.as_deref(), Some(self.principal))
-    }
 }
 
 /// The run each code-mode call is admitted under, one run per call so the
@@ -616,10 +586,12 @@ impl CodeModeBackend {
                     staged_len,
                 );
             }
-            let no_record_at_arrival = self
-                .caller
-                .as_ref()
-                .is_some_and(|caller| caller.keeps_no_record(&self.vault));
+            let no_record_at_arrival = self.caller.as_ref().is_some_and(|caller| {
+                self.vault.model_call_keeps_no_record_for(
+                    caller.session.as_deref(),
+                    Some(caller.principal),
+                )
+            });
             let record_request = self.caller.as_ref().map(|_| call.request.clone());
             let run = self
                 .models
@@ -637,13 +609,13 @@ impl CodeModeBackend {
             };
             let answered = if seat_bound {
                 call.ladder
-                    .generate_exact_recorded_streamed_while(&run, call.request, None, &may_send)
+                    .generate_exact_recorded_while(&run, call.request, None, &may_send)
                     .await
             } else if let Some(planned) = &self.planned {
                 // FIX 2310: the model that answered, marked when it is not
                 // the child's pick.
                 call.ladder
-                    .generate_recorded_streamed_while(&run, call.request, None, &may_send)
+                    .generate_recorded_while(&run, call.request, None, &may_send)
                     .await
                     .map(|(response, binding)| {
                         planned.answered(&run, binding.rung.model.clone());
@@ -651,7 +623,7 @@ impl CodeModeBackend {
                     })
             } else {
                 call.ladder
-                    .generate_recorded_streamed_while(&run, call.request, None, &may_send)
+                    .generate_recorded_while(&run, call.request, None, &may_send)
                     .await
             };
             if let Some(live) = &live {
@@ -662,7 +634,11 @@ impl CodeModeBackend {
             }
             answered.map(|(response, binding)| {
                 if let (Some(caller), Some(request)) = (&self.caller, &record_request) {
-                    let no_record = no_record_at_arrival || caller.keeps_no_record(&self.vault);
+                    let no_record = no_record_at_arrival
+                        || self.vault.model_call_keeps_no_record_for(
+                            caller.session.as_deref(),
+                            Some(caller.principal),
+                        );
                     let evidence_run = run.clone().initiated_by(Some(caller.principal));
                     crate::api::record_raw_response(
                         &self.vault,

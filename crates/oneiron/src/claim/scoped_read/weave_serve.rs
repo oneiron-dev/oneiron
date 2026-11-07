@@ -16,7 +16,6 @@ use crate::lens::{
 };
 use crate::memory::{ClaimView, Memory};
 use crate::provenance::EdgeRef;
-use crate::store::GateDecisionId;
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
 use serde::{Deserialize, Serialize};
 
@@ -135,7 +134,7 @@ impl WeaveLinkCorrectionView {
 }
 
 /// `vault.weave.item.wrong`'s input: one claim, project, budget or sieve
-/// audit or loop decision row, as the reader's report serves it (`item` is its `item` tag; an
+/// audit row, as the reader's report serves it (`item` is its `item` tag; an
 /// audit's `item_ref` is its `attempt_ref`). A budget names the project it
 /// shows under; no other item does.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -150,38 +149,20 @@ pub struct WeaveWrongItemRequest {
 impl WeaveWrongItemRequest {
     /// The input a lens row's wrong control sends for `target`.
     pub(super) fn of(target: WeaveItemTarget) -> Self {
-        let (item, item_ref, project) = match target {
-            WeaveItemTarget::Claim(id) => ("claim", id.to_hex(), None),
-            WeaveItemTarget::Project(id) => ("project", id.to_hex(), None),
-            WeaveItemTarget::Budget { project, budget } => {
-                ("budget", budget.to_hex(), Some(project))
-            }
-            WeaveItemTarget::SieveAudit { attempt } => ("sieve_audit", attempt.to_hex(), None),
-            WeaveItemTarget::LoopDecision { decision } => {
-                ("loop_decision", decision.to_hex(), None)
-            }
+        let (item, id, project) = match target {
+            WeaveItemTarget::Claim(id) => ("claim", id, None),
+            WeaveItemTarget::Project(id) => ("project", id, None),
+            WeaveItemTarget::Budget { project, budget } => ("budget", budget, Some(project)),
+            WeaveItemTarget::SieveAudit { attempt } => ("sieve_audit", attempt, None),
         };
         Self {
             item: item.to_owned(),
-            item_ref,
+            item_ref: id.to_hex(),
             project_ref: project.map(|project| project.to_hex()),
         }
     }
 
     fn target(&self) -> MemoryResult<WeaveItemTarget> {
-        if self.item == "loop_decision" {
-            if self.project_ref.is_some() {
-                return Err(MemoryError::bad_request(
-                    "only a weave budget item names a project_ref",
-                ));
-            }
-            let decision = uuid::Uuid::parse_str(&self.item_ref).map_err(|_| {
-                MemoryError::bad_request("a weave loop item names a gate decision id")
-            })?;
-            return Ok(WeaveItemTarget::LoopDecision {
-                decision: GateDecisionId::from_bytes(decision.into_bytes()),
-            });
-        }
         let entity = |hex: &str| {
             EntityId::from_hex(hex)
                 .map_err(|_| MemoryError::bad_request("a weave item names entity ids"))
@@ -202,7 +183,7 @@ impl WeaveWrongItemRequest {
                 "only a weave budget item names a project_ref",
             )),
             _ => Err(MemoryError::bad_request(
-                "a wrong weave item is a claim, project, budget, sieve audit or loop decision",
+                "a wrong weave item is a claim, project, budget or sieve audit",
             )),
         }
     }
@@ -296,7 +277,7 @@ pub enum WeaveItemView {
     },
     /// One loop decision (OF-499 A2), its refs as hex: its outcome and kind
     /// exactly as stored, its family, each reason, and whether it is an
-    /// erasure skeleton. Its wrong control names this decision, not its claim.
+    /// erasure skeleton. It carries no wrong control (FIX 7598).
     LoopDecision {
         decision_ref: String,
         created_at: u64,
@@ -722,8 +703,8 @@ impl Memory<'_> {
         let target = request.target()?;
         // The label is filed on the row the reader's own report shows. An
         // audit is a side-table row; its records passed that report's floor.
-        if let Some(entity) = target.entity_id() {
-            self.produced_from([entity]);
+        if !matches!(target, WeaveItemTarget::SieveAudit { .. }) {
+            self.produced_from([target.id()]);
         }
         let filed = read.report_wrong_item(proof, reader, target)?;
         Ok(WeaveItemCorrectionView::from_correction(&filed))

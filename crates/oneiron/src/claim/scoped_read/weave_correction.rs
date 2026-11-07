@@ -1,5 +1,5 @@
 //! Authenticated wrong labels emitted by the live weave report: one on a
-//! link, and one on a claim, project, budget, sieve audit or loop decision item.
+//! link, and one on a claim, project, budget or sieve audit item.
 use super::{ScopedRead, WeaveItem, WeaveReader, WeaveSectionKind, WeaveSectionSpec};
 use crate::EntityId;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -9,21 +9,19 @@ use crate::error::{Error, Result};
 use crate::provenance::{EDGE_REF_LEN, EdgeRef};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::side_table::{self, Named, SideTable};
-use crate::store::GateDecisionId;
 use serde::{Deserialize, Serialize};
 
 // A weave Admin's wrong labels, filed under its proof (OF-499 A3).
 mod admin;
-mod item_key;
-pub(super) use item_key::WeaveItemKey;
 
 /// Wrong-link labels, keyed by the link's edge ref, then the label's receipt id.
 const LABELS: SideTable<([u8; EDGE_REF_LEN], EntityId), StoredCorrection, Named> =
     SideTable::new(&side_table::WEAVE_WRONG_LINK_LABEL);
 
-/// Wrong-item labels, keyed by the item's native family and id, then the
-/// label's receipt id. Entity and gate-decision ids never alias.
-const ITEM_LABELS: SideTable<(WeaveItemKey, EntityId), StoredItemCorrection, Named> =
+/// Wrong-item labels, keyed by the item's id (a claim, project or budget id,
+/// unique across the three, or a sieve audit's attempt id), then the label's
+/// receipt id.
+const ITEM_LABELS: SideTable<(EntityId, EntityId), StoredItemCorrection, Named> =
     SideTable::new(&side_table::WEAVE_WRONG_ITEM_LABEL);
 
 /// The report sections that read claims by predicate: every one but the
@@ -76,13 +74,13 @@ pub enum WeaveItemTarget {
     Project(EntityId),
     Budget { project: EntityId, budget: EntityId },
     SieveAudit { attempt: EntityId },
-    LoopDecision { decision: GateDecisionId },
 }
 
 impl WeaveItemTarget {
     /// The target a report row is, when it takes a wrong-item label. A link
     /// takes a wrong-link label; a health card settles through the concern
-    /// door; a resident's dream progress takes none.
+    /// door; a resident's dream progress takes none, and neither does a loop
+    /// decision yet.
     #[must_use]
     pub fn of(item: &WeaveItem) -> Option<Self> {
         match item {
@@ -101,35 +99,27 @@ impl WeaveItemTarget {
             WeaveItem::Link { .. }
             | WeaveItem::DreamProgress { .. }
             | WeaveItem::AgentHealth { .. } => None,
-            WeaveItem::LoopDecision { decision_id, .. } => Some(Self::LoopDecision {
-                decision: *decision_id,
-            }),
+            // A loop decision is a gate decision, not an entity: it takes no
+            // wrong label until a decision-target key is agreed (FIX 7598),
+            // and its claim never stands in for it.
+            WeaveItem::LoopDecision { .. } => None,
         }
     }
 
-    /// The entity this item names, if it is an entity rather than a gate
-    /// decision. A sieve audit's attempt is a side-table key, not a source row.
+    /// The id its labels key on.
     #[must_use]
-    pub fn entity_id(self) -> Option<EntityId> {
-        match self {
-            Self::Claim(id) | Self::Project(id) | Self::Budget { budget: id, .. } => Some(id),
-            Self::SieveAudit { .. } | Self::LoopDecision { .. } => None,
-        }
-    }
-
-    pub(super) fn key(self) -> WeaveItemKey {
+    pub fn id(self) -> EntityId {
         match self {
             Self::Claim(id)
             | Self::Project(id)
             | Self::Budget { budget: id, .. }
-            | Self::SieveAudit { attempt: id } => WeaveItemKey::Entity(id),
-            Self::LoopDecision { decision } => WeaveItemKey::LoopDecision(decision),
+            | Self::SieveAudit { attempt: id } => id,
         }
     }
 }
 
-/// An immutable negative training label for one report item, including a
-/// gate decision. The receipt id distinguishes independent taps.
+/// An immutable negative training label for one claim, project or budget
+/// item. The receipt id distinguishes independent taps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WeaveItemCorrection {
     pub id: EntityId,
@@ -175,7 +165,7 @@ pub(super) fn erase_weave_labels_in_txn(
         }
     }
     for key in ITEM_LABELS.scan_keys(store, txn, &[])? {
-        let goes = key.0 == WeaveItemKey::Entity(*gone)
+        let goes = key.0 == *gone
             || match ITEM_LABELS.get_lenient(store, txn, &key)? {
                 None => true,
                 Some(label) => {
@@ -193,17 +183,6 @@ pub(super) fn erase_weave_labels_in_txn(
             ITEM_LABELS.delete(store, txn, &key)?;
         }
     }
-    Ok(())
-}
-
-/// A physically retired gate decision leaves no feedback label naming it.
-/// The native family-qualified prefix also reaches undecodable label payloads.
-pub(crate) fn erase_weave_decision_labels_in_txn(
-    store: &crate::store::Store,
-    txn: &mut heed::RwTxn<'_>,
-    decision: GateDecisionId,
-) -> Result<()> {
-    ITEM_LABELS.delete_from(store, txn, &WeaveItemKey::LoopDecision(decision).bytes())?;
     Ok(())
 }
 
@@ -294,7 +273,7 @@ impl ScopedRead<'_> {
             |txn, actor| {
                 Ok(self
                     .vault
-                    .weave_item_correction_labels_in_txn(txn, item.key())?
+                    .weave_item_correction_labels_in_txn(txn, item.id())?
                     .iter()
                     .filter(|label| label.actor == actor && label.admin_grant.is_none())
                     .count())
@@ -310,7 +289,7 @@ impl ScopedRead<'_> {
                 ITEM_LABELS.put(
                     &self.vault.store,
                     txn,
-                    &(item.key(), correction.id),
+                    &(item.id(), correction.id),
                     &StoredItemCorrection {
                         id: correction.id,
                         item,
@@ -478,7 +457,6 @@ impl ScopedRead<'_> {
             WeaveItemTarget::Project(_) => (WeaveSectionKind::Projects, Vec::new()),
             WeaveItemTarget::Budget { .. } => (WeaveSectionKind::Budgets, Vec::new()),
             WeaveItemTarget::SieveAudit { .. } => (WeaveSectionKind::SieveScore, Vec::new()),
-            WeaveItemTarget::LoopDecision { .. } => (WeaveSectionKind::Admissions, Vec::new()),
         };
         let recipe = [WeaveSectionSpec {
             kind,
@@ -527,12 +505,12 @@ impl crate::Vault {
     pub(crate) fn weave_item_correction_labels_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
-        item: WeaveItemKey,
+        item: EntityId,
     ) -> Result<Vec<WeaveItemCorrection>> {
         let mut labels = Vec::new();
-        for row in ITEM_LABELS.iter_from(&self.store, txn, &item.bytes())? {
+        for row in ITEM_LABELS.iter_from(&self.store, txn, item.as_bytes())? {
             let ((id, receipt_id), stored) = row?;
-            if id != item || stored.item.key() != item || receipt_id != stored.id {
+            if id != item || stored.item.id() != item || receipt_id != stored.id {
                 return Err(Error::CorruptedIndex("weave correction item"));
             }
             labels.push(WeaveItemCorrection {
@@ -546,6 +524,7 @@ impl crate::Vault {
         Ok(labels)
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;

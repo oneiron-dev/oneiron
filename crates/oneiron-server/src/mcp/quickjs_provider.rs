@@ -152,7 +152,6 @@ fn injected_meter(
         move |meter: BudgetGuard,
               payer: Option<PayerPerson>,
               _lease: Option<LiveLeaseState>,
-              _caller: Option<(EntityId, Option<String>)>,
               _listed: Vec<AgentModel>| {
             Arc::new(InjectedRuns::funded(
                 Arc::clone(&backend),
@@ -515,19 +514,17 @@ impl McpCodeModeProvider for McpQuickJsProvider {
         &self,
         meter: BudgetGuard,
         payer: Option<PayerPerson>,
-        caller: Option<(EntityId, Option<String>)>,
         listed: Vec<AgentModel>,
     ) -> Option<Arc<dyn LlmBackend>> {
         self.reader_meter
             .as_ref()
-            .map(|build| build(meter, payer, None, caller, listed))
+            .map(|build| build(meter, payer, None, listed))
     }
     fn reader_backend_with_lease(
         &self,
         meter: BudgetGuard,
         payer: Option<PayerPerson>,
         lease: Option<LiveLeaseState>,
-        caller: Option<(EntityId, Option<String>)>,
         listed: Vec<AgentModel>,
     ) -> Option<Arc<dyn LlmBackend>> {
         if self.injected.is_some() {
@@ -535,7 +532,7 @@ impl McpCodeModeProvider for McpQuickJsProvider {
         }
         self.reader_meter
             .as_ref()
-            .map(|build| build(meter, payer, lease, caller, listed))
+            .map(|build| build(meter, payer, lease, listed))
     }
     fn host_meter(&self) -> Option<BudgetGuard> {
         self.host_meter.clone()
