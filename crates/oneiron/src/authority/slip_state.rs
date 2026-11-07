@@ -62,7 +62,7 @@ impl SlipAuthorityState {
                 self.revoked.insert(*slip_id);
                 self.explicit_revoked.insert(*slip_id);
             }
-            AuthorityOp::SlipGrantRevoke { grant_ref } => {
+            AuthorityOp::SlipGrantRevoke { grant_ref, .. } => {
                 self.revoke_grant(grant_ref.to_hex());
             }
             AuthorityOp::SlipConsume { slip_id } => {

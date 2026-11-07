@@ -4,9 +4,18 @@
 //! door, so a session's children evaporate with its room. Only their spend
 //! scopes are base rows, as the parent's own scope is: units and ids, no
 //! content.
+//!
+//! A done summary's reply, and a wait set's reply whose every served input
+//! is a ready finding, carry the frozen origins of those findings to the
+//! parent parked on them, read in the transaction that settles the reply
+//! (FIX 7083). Any other reply has unknown origins.
 
+mod close;
+mod findings;
+pub(crate) use self::close::settle_evaporated_reader_spend;
 mod read;
 mod scoped;
+mod txn;
 
 use std::collections::BTreeMap;
 use std::ops::Bound;
@@ -15,15 +24,15 @@ use heed::{RoTxn, RwTxn};
 
 use super::reader_folds::{MEMOS, SummaryMemo};
 use super::records::REPLAY_RECORDS;
-use super::wait_delivery::deliver_wait_in_txn;
+use super::wait_delivery::deliver_wait_listing_in_txn;
 use crate::agent_dispatch::{AgentDispatcher, ChildSpend, SpendScope, SpendScopeId, SpendState};
 use crate::attempt_queue::{AttemptId, BorrowedAttemptLease};
 use crate::code_run::CodeRunRawOutput;
 use crate::code_run::{
-    ClaimOutcome, DelegatedSource, ExecutorStorage, ReaderActor, ReaderFindingRef, ReaderJob,
-    ReaderJobKind, ReaderJobState, ReaderParent, ReaderQueueCursor, ReaderQueuePage, ReaderRoute,
-    ReaderRunEnd, SpawnHostSeat, SpawnParentBinding, TaskWaitSet, TaskWaitSetResult,
-    reader_job_cutoff, reduce_task_wait_set,
+    ClaimOutcome, DelegatedSource, ExecutorStorage, OriginsUnion, ReaderActor, ReaderFindingRef,
+    ReaderJob, ReaderJobKind, ReaderJobState, ReaderParent, ReaderQueueCursor, ReaderQueuePage,
+    ReaderRoute, ReaderRunEnd, ResultOrigins, SpawnHostSeat, SpawnParentBinding, TaskWaitSet,
+    TaskWaitSetResult, reader_job_cutoff, reduce_task_wait_set,
 };
 use crate::side_table::{
     self, CodecError, Raw, RawValue, RoutedDbs, SideCodec, SideKey, SideTable,
@@ -57,9 +66,6 @@ const INDEX: SideTable<Vec<u8>, Vec<u8>, Raw> = SideTable::new(&side_table::CODE
 const DUE_SET: &[u8] = b"s";
 /// A `d` row's value: the id after its due time is a child's task.
 const DUE_JOB: &[u8] = b"j";
-
-/// The one name a summary job's run binds its text to.
-const SUMMARY_RESULT_NAME: &str = "summary";
 
 macro_rules! json_row {
     ($row:ty, $what:literal) => {
@@ -196,9 +202,10 @@ pub(crate) struct ReaderTxn<'t, 'e> {
     /// transaction; `None` on a session's route.
     vault: Option<&'t Vault>,
     /// The wait sets this transaction settled on a session's route, each
-    /// delivered along it once the transaction commits: its id, its reply
-    /// and when it settled.
-    settled: Vec<(EntityId, serde_json::Value, u64)>,
+    /// delivered along it once the transaction commits: its id, its reply,
+    /// the origins frozen with the reply here (FIX 7083) and when it
+    /// settled.
+    settled: Vec<(EntityId, serde_json::Value, Option<ResultOrigins>, u64)>,
 }
 
 impl ReaderTxn<'_, '_> {
@@ -361,9 +368,10 @@ impl ReaderTxn<'_, '_> {
 
     /// A summary job settled: its memo row once it is done, then its reply
     /// to the call parked on its task, a card of its text or why it was not
-    /// made. The call made again later is the memo's hit.
+    /// made. The call made again later is the memo's hit. A done reply
+    /// carries its finding's frozen origins (FIX 7083); any other has none.
     fn settle_summary(&mut self, job: &ReaderJob, memo: [u8; 32], now_ms: u64) -> Result<()> {
-        let reply = match (&job.state, &job.finding) {
+        let (reply, origins) = match (&job.state, &job.finding) {
             (ReaderJobState::Done, Some(found)) => {
                 let reference = found.reference()?;
                 self.put_row(
@@ -376,26 +384,33 @@ impl ReaderTxn<'_, '_> {
                         handle: found.handle.clone(),
                     },
                 )?;
-                serde_json::json!({
+                let reply = serde_json::json!({
                     "task": job.task.to_hex(),
                     "state": job.state.word(),
                     "ref": reference,
                     "handle": found.handle,
                     "bytes": found.bytes,
-                })
+                });
+                (reply, found.origins.clone())
             }
             (ReaderJobState::Partial { reason } | ReaderJobState::Failed { reason }, _) => {
-                serde_json::json!({
+                let reply = serde_json::json!({
                     "task": job.task.to_hex(),
                     "state": "failed",
                     "reason": reason,
-                })
+                });
+                (reply, None)
             }
             _ => {
-                serde_json::json!({"task": job.task.to_hex(), "state": "failed", "reason": "no_finding"})
+                let reply = serde_json::json!({
+                    "task": job.task.to_hex(),
+                    "state": "failed",
+                    "reason": "no_finding",
+                });
+                (reply, None)
             }
         };
-        self.deliver_reply(job.task, reply, now_ms)
+        self.deliver_reply(job.task, reply, origins, now_ms)
     }
 
     /// Deletes only this task's occurrence index and first-reporter content alias.
@@ -454,40 +469,48 @@ impl ReaderTxn<'_, '_> {
             reply.program_steps = super::type_diagnostics::runs_program_steps_in_txn(
                 &self.read, &*self.txn, &settled,
             );
-            self.deliver_settled_task_wait(set.id, &reply, now_ms)?;
+            let origins = wait_set_reply_origins(&reply, &jobs);
+            self.deliver_settled_task_wait(set.id, &reply, origins, now_ms)?;
             return Ok(result);
         }
         Ok(result)
     }
 
     /// The settled reduction of wait set `wait`, as the reply of the wait a
-    /// parent parked on it: in this transaction on the canonical vault, so a
-    /// resident parent's trap wakes in the commit that settles it; along the
-    /// session's route once this transaction commits otherwise.
+    /// parent parked on it, with `origins`: in this transaction on the
+    /// canonical vault, so a resident parent's trap wakes in the commit that
+    /// settles it; along the session's route once this transaction commits
+    /// otherwise.
     fn deliver_settled_task_wait(
         &mut self,
         wait: EntityId,
         result: &TaskWaitSetResult,
+        origins: Option<ResultOrigins>,
         now_ms: u64,
     ) -> Result<()> {
         let reply = serde_json::to_value(result)
             .map_err(|_| Error::InvariantViolation("a wait set reduction is plain data"))?;
-        self.deliver_reply(wait, reply, now_ms)
+        self.deliver_reply(wait, reply, origins, now_ms)
     }
 
-    /// `reply` as the reply of wait `wait`: in this transaction on the
-    /// canonical vault, along the session's route once it commits otherwise.
+    /// `reply` as the reply of wait `wait`, settled with `origins`, the
+    /// origins frozen with it in this transaction (FIX 7083): in this
+    /// transaction on the canonical vault, along the session's route once it
+    /// commits otherwise. The delivery after the commit carries them as
+    /// frozen here and reads no ledger again.
     fn deliver_reply(
         &mut self,
         wait: EntityId,
         reply: serde_json::Value,
+        origins: Option<ResultOrigins>,
         now_ms: u64,
     ) -> Result<()> {
         match self.vault {
             Some(vault) => {
-                deliver_wait_in_txn(vault, self.txn, wait, &reply, now_ms)?;
+                let origins = origins.as_ref();
+                deliver_wait_listing_in_txn(vault, self.txn, wait, &reply, None, origins, now_ms)?;
             }
-            None => self.settled.push((wait, reply, now_ms)),
+            None => self.settled.push((wait, reply, origins, now_ms)),
         }
         Ok(())
     }
@@ -517,6 +540,31 @@ impl ReaderTxn<'_, '_> {
         };
         self.settle(job, state, finding, now_ms)
     }
+}
+
+/// The origins of a wait set's reply `reply` (FIX 7083): the union of the
+/// frozen origins of its ready children's findings, as `jobs`, the rows its
+/// reduction read, hold them. `None` unless those findings are every input
+/// the reply serves: one ready finding at least, each with its origins, and
+/// no partial or failed child's reason and no type feedback beside them.
+/// Those inputs carry no origins, so a reply with them stays unknown.
+fn wait_set_reply_origins(
+    reply: &TaskWaitSetResult,
+    jobs: &[(EntityId, Option<ReaderJob>)],
+) -> Option<ResultOrigins> {
+    if reply.ready.is_empty()
+        || !reply.partial.is_empty()
+        || !reply.failed.is_empty()
+        || !reply.program_steps.is_empty()
+    {
+        return None;
+    }
+    let mut union = OriginsUnion::default();
+    for ready in &reply.ready {
+        let (_, job) = jobs.iter().find(|(task, _)| *task == ready.task)?;
+        union.add(job.as_ref()?.finding.as_ref()?.origins.as_ref()?);
+    }
+    Some(union.finish())
 }
 
 /// A spawn's new child, before its parent row admits it.
@@ -562,71 +610,6 @@ pub(crate) enum WaitSetOutcome {
 }
 
 impl ExecutorStorage<'_> {
-    /// One transaction of the run's reader rows on its route: a canonical
-    /// run's in one vault write transaction, a session-bound run's in its
-    /// room's routed one, answered as its participant stands. Nothing the
-    /// closure holds outlives the transaction, as the vault's grouped write
-    /// door requires.
-    pub(crate) fn reader_txn<T>(
-        &self,
-        f: impl FnOnce(&mut ReaderTxn<'_, '_>) -> Result<T>,
-    ) -> Result<T> {
-        match self {
-            Self::Canonical(vault) => {
-                let vault: &Vault = vault;
-                vault.with_write_txn_grouped(|txn| {
-                    f(&mut ReaderTxn {
-                        txn,
-                        read: RoutedDbs::Base(vault),
-                        write: RoutedDbs::Base(vault),
-                        spend: SpendBook::new(vault),
-                        staged: BTreeMap::new(),
-                        vault: Some(vault),
-                        settled: Vec::new(),
-                    })
-                })
-            }
-            Self::Session(binding) => {
-                let spend = binding.session.spend_book();
-                let (answer, settled) = binding.answered(|| {
-                    binding
-                        .session
-                        .routed_side_txn(&binding.route, |txn, read, write| {
-                            let mut tx = ReaderTxn {
-                                txn,
-                                read,
-                                write,
-                                spend,
-                                staged: BTreeMap::new(),
-                                vault: None,
-                                settled: Vec::new(),
-                            };
-                            let answer = f(&mut tx)?;
-                            Ok((answer, tx.settled))
-                        })
-                })?;
-                for (wait, reply, now_ms) in settled {
-                    self.deliver_wait(wait, &reply, None, now_ms)?;
-                }
-                Ok(answer)
-            }
-        }
-    }
-
-    /// One read of the run's reader rows through its route's view.
-    pub(super) fn reader_read<T>(
-        &self,
-        f: impl FnOnce(&RoTxn<'_>, RoutedDbs<'_>) -> Result<T>,
-    ) -> Result<T> {
-        match self {
-            Self::Canonical(vault) => {
-                let txn = vault.store.env.read_txn()?;
-                f(&txn, RoutedDbs::Base(vault))
-            }
-            Self::Session(binding) => binding.answered(|| binding.session.routed_side_read(f)),
-        }
-    }
-
     /// The base spend scopes the run's children spend under.
     pub(crate) fn spend_book(&self) -> SpendBook<'_> {
         match self {
@@ -649,53 +632,6 @@ impl ExecutorStorage<'_> {
                 participant: self.participant(),
             });
         }
-    }
-
-    /// The card of the summary `owner` committed at `path` under `handle`,
-    /// made by job `task`: read as a child's finding is, with the task that
-    /// made it. `None` once that record no longer holds it.
-    pub(crate) fn summary_output_card(
-        &self,
-        owner: EntityId,
-        path: &str,
-        handle: &str,
-        task: EntityId,
-    ) -> Result<Option<serde_json::Value>> {
-        let Some(output) = self.get_code_run_replay_record(&owner)?.and_then(|record| {
-            record
-                .outputs
-                .into_iter()
-                .find(|output| output.path == path && output.handle == handle)
-        }) else {
-            return Ok(None);
-        };
-        let mut card = crate::code_run::result_card(self, owner, &output, None)?;
-        card["task"] = serde_json::json!(task.to_hex());
-        Ok(Some(card))
-    }
-
-    /// The reply a parked `summarize` comes back with: a done summary's
-    /// card, as the same call made again answers its memo hit, in place of
-    /// the `{task, state, ref}` its settle delivered. A summary settled
-    /// short, or one whose text is gone, keeps the delivered reply.
-    pub(crate) fn delivered_summary_reply(
-        &self,
-        reply: serde_json::Value,
-    ) -> Result<serde_json::Value> {
-        let task = reply
-            .get("task")
-            .and_then(serde_json::Value::as_str)
-            .filter(|_| reply.get("state").and_then(serde_json::Value::as_str) == Some("done"))
-            .and_then(|task| EntityId::from_hex(task).ok());
-        let Some(task) = task else {
-            return Ok(reply);
-        };
-        let Some(found) = self.reader_job(task)?.and_then(|job| job.finding) else {
-            return Ok(reply);
-        };
-        Ok(self
-            .summary_output_card(found.owner, &found.path, &found.handle, task)?
-            .unwrap_or(reply))
     }
 
     /// Queues one child of `new.parent_run`, its parent row made from `seat`
@@ -1026,48 +962,6 @@ impl ExecutorStorage<'_> {
         })
     }
 
-    /// A child's finding report, fenced by its generation: it replaces the
-    /// child's latest finding, and the same finding again is a replay. A
-    /// settled child, or one claimed again since, keeps what it has; a
-    /// scoped child whose borrowed parent lease is gone settles at `now_ms`
-    /// with what it had committed before, and this finding does not land.
-    pub(crate) fn report_reader_finding(
-        &self,
-        task: EntityId,
-        generation: u32,
-        finding: &ReaderFindingRef,
-        now_ms: u64,
-    ) -> Result<ReportOutcome> {
-        self.reader_txn(|tx| {
-            let Some(mut job) = tx.job(task)? else {
-                return Ok(ReportOutcome::Settled);
-            };
-            if job.state != ReaderJobState::Active || job.generation != generation {
-                return Ok(ReportOutcome::Settled);
-            }
-            if !tx.scoped_parent_lease_holds(&job)? {
-                tx.settle_lease_lost(job, now_ms)?;
-                return Ok(ReportOutcome::Settled);
-            }
-            if job.finding.as_ref() == Some(finding) {
-                return Ok(ReportOutcome::Replay);
-            }
-            let parent_run = job.binding.parent_run;
-            if let Some(previous) = job.finding.take() {
-                tx.drop_finding_row(parent_run, &previous, task)?;
-            }
-            let reference = finding.reference()?;
-            tx.put_index(&finding_key(parent_run, &reference), task.as_bytes())?;
-            let key = finding_key(parent_run, &finding.handle);
-            if tx.index(&key)?.is_none() {
-                tx.put_index(&key, task.as_bytes())?;
-            }
-            job.finding = Some(finding.clone());
-            tx.put_job(&job)?;
-            Ok(ReportOutcome::Kept)
-        })
-    }
-
     /// One call of a wait set: written at its first call with its child and
     /// due rows, then reduced. Its first done reduction answers every later
     /// call; the same key over other children or another policy is refused.
@@ -1259,90 +1153,6 @@ impl ExecutorStorage<'_> {
             });
         }
         Ok(SummaryRead::Members(read))
-    }
-
-    /// Stores `text` as summary job `task`'s finding while it is live at
-    /// `generation`: a stored value of the job's own run (a record with no
-    /// executor, its one name `summary`), marked with its members' taint,
-    /// then reported as the job's finding. Its replay save stamps the
-    /// spawning actor's response ownership in the same transaction. The
-    /// run's end settles it.
-    pub(crate) fn store_summary_job_text(
-        &self,
-        task: EntityId,
-        generation: u32,
-        text: &str,
-    ) -> Result<std::result::Result<(), String>> {
-        let Some((job, members)) = self.live_summary(task, generation)? else {
-            return Ok(Err("reader_task_settled".to_owned()));
-        };
-        let held = self.get_code_run_replay_record(&job.run)?;
-        let expected = held
-            .as_ref()
-            .map(crate::code_run::CodeRunReplayRecord::generation)
-            .transpose()?;
-        let mut record = held.unwrap_or_else(|| {
-            crate::code_run::CodeRunReplayRecord::new(
-                job.run,
-                crate::code_run::CodeRunDeterminism::new(
-                    0,
-                    [0; crate::code_run::CODE_RUN_RNG_SEED_LEN],
-                ),
-            )
-        });
-        let ordinal = record.outputs.len();
-        let mut sink = self.code_run_output_sink()?;
-        sink.write(text.as_bytes())?;
-        // The path names the digest the body is published under (FIX 5399b).
-        sink.finalize_sweep()?;
-        let path = crate::engine_executor::store_result_output_path(&sink.digest()?, ordinal);
-        let output = self.publish_code_run_output(path, sink, true, job.run)?;
-        let mut from = Vec::with_capacity(members.len());
-        for member in &members {
-            if let Some(held) = self.recorded(member.owner, &member.path, &member.handle)? {
-                from.push((member.owner, held));
-            }
-        }
-        self.inherit_code_run_result_marks(job.run, &output, &from)?;
-        if !record.outputs.iter().any(|held| held.path == output.path) {
-            record.outputs.push(output.clone());
-        }
-        let binding = crate::code_run::CodeRunResultBinding::new(
-            SUMMARY_RESULT_NAME,
-            output.handle.clone(),
-            output.path.clone(),
-        );
-        match record
-            .bindings
-            .iter_mut()
-            .find(|held| held.name == binding.name)
-        {
-            Some(held) => *held = binding,
-            None => record.bindings.push(binding),
-        }
-        self.put_owned_code_run_replay_record(
-            &record,
-            expected,
-            job.run,
-            job.binding.actor.entity,
-        )?;
-        let rows = members.iter().try_fold(Vec::new(), |mut all, member| {
-            all.extend(member.rows.clone()?);
-            Some(all)
-        });
-        let finding = ReaderFindingRef {
-            owner: job.run,
-            path: output.path,
-            handle: output.handle,
-            bytes: output.raw_len,
-            rows,
-        };
-        let reported =
-            self.report_reader_finding(task, generation, &finding, crate::unix_millis_now())?;
-        Ok(match reported {
-            ReportOutcome::Kept | ReportOutcome::Replay => Ok(()),
-            ReportOutcome::Settled => Err("reader_task_settled".to_owned()),
-        })
     }
 }
 
