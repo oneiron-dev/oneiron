@@ -92,8 +92,6 @@ impl EnvConfig {
             lookup_parse(&mut lookup, "ONEIRON_MAX_WINDOWS_PER_CONNECTION")?;
         values.max_messages_per_sec = lookup_parse(&mut lookup, "ONEIRON_MAX_MESSAGES_PER_SEC")?;
         values.ephemeral_timeout_ms = lookup_parse(&mut lookup, "ONEIRON_EPHEMERAL_TIMEOUT_MS")?;
-        values.max_ephemeral_payload_bytes =
-            lookup_parse(&mut lookup, "ONEIRON_MAX_EPHEMERAL_PAYLOAD_BYTES")?;
         values.max_ephemeral_snapshot_bytes =
             lookup_parse(&mut lookup, "ONEIRON_MAX_EPHEMERAL_SNAPSHOT_BYTES")?;
         values.max_entity_blob = lookup_parse(&mut lookup, "ONEIRON_MAX_ENTITY_BLOB")?;
@@ -245,9 +243,6 @@ impl PartialServeConfig {
         }
         if let Some(value) = self.ephemeral_timeout_ms {
             resolved.ephemeral_timeout_ms = value;
-        }
-        if let Some(value) = self.max_ephemeral_payload_bytes {
-            resolved.max_ephemeral_payload_bytes = value;
         }
         if let Some(value) = self.max_ephemeral_snapshot_bytes {
             resolved.max_ephemeral_snapshot_bytes = value;
