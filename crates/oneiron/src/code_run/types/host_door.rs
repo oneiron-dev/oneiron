@@ -281,6 +281,21 @@ pub trait AgentVerbDoor: Send + Sync {
     /// own. A door that states no receipt ignores it.
     fn replay_row_receipt(&self, _receipt: &str) {}
 
+    /// A cached answer an action call's replay returns for `verb` (FIX
+    /// 8158), released again for this door's caller as it stands now. A
+    /// door that judges release refuses one derived from a row its caller
+    /// no longer reads, or one erased since (`Error::EntityNotFound`), and
+    /// withholds what its caller's destination may not hold; nothing runs
+    /// again. A door with no release judgment of its own returns it as it
+    /// was.
+    fn replay_action_answer(
+        &self,
+        _verb: &str,
+        answer: AgentVerbAnswer,
+    ) -> crate::Result<AgentVerbAnswer> {
+        Ok(answer)
+    }
+
     /// The run recorded the write's replay row for the answer this door
     /// just gave (FIX 10633): a door that keeps what its answer holds
     /// until then releases it now. A door that keeps nothing ignores it.
