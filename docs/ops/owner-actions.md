@@ -577,6 +577,19 @@ oneiron api raw POST /v1/owner/secrets/found/not-a-secret --data '{"handle": "sc
 Each answer writes its receipt. Not a secret works only for a key found in a record's body or in a
 file. A key in a claim or a text field keeps its handle.
 
+To re-enter a kept value after marking a key **Not a secret** or **Kept as text**, use the
+`re_enter` action on its card. Include settled keys in the listing with `pending=false`:
+
+```sh
+oneiron api raw GET '/v1/owner/secrets/found?pending=false'
+oneiron api raw POST /v1/owner/secrets/found/re-enter \
+  --data '{"handle": "sc12", "value_base64": "..."}'
+```
+
+This seals the supplied value in its existing custody record and returns the standing ruling
+and receipt unchanged. It does not rotate the key or undo the owner's choice. Use the rotate
+door to re-enter or reissue a key that is still active.
+
 ## Bind a secret so an agent can use it
 
 An agent can hand a secret to a trusted operation, such as Slack's `auth.test`, with
