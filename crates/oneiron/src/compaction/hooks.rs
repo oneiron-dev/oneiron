@@ -294,10 +294,6 @@ pub fn check_host_compact_rewrite(args: &Value, rewritten: &Value) -> Result<(),
         .get("window")
         .and_then(Value::as_array)
         .ok_or("a compaction window holds messages")?;
-    let ceiling = args
-        .get("token_ceiling")
-        .and_then(Value::as_u64)
-        .ok_or("a compaction token ceiling is an integer")?;
     let contains = |pin: &str| {
         window.iter().any(|message| {
             message
@@ -306,10 +302,35 @@ pub fn check_host_compact_rewrite(args: &Value, rewritten: &Value) -> Result<(),
                 .is_some_and(|content| content.contains(pin))
         })
     };
+    check_host_compact_rewrite_with(args, rewritten, &contains)
+}
+
+/// Replay-side host.compact rewrite check over a saved window that holds
+/// withheld placeholders instead of text: the window and ceiling presence,
+/// the immutable fields and the append-only keep list still apply, but pin
+/// membership in the window cannot run on placeholders and is skipped — the
+/// live chain admits against the restored window, which replay cannot
+/// rebuild.
+pub fn check_host_compact_rewrite_unverified_window(
+    args: &Value,
+    rewritten: &Value,
+) -> Result<(), String> {
+    check_host_compact_rewrite_with(args, rewritten, &|_| true)
+}
+
+fn check_host_compact_rewrite_with(
+    args: &Value,
+    rewritten: &Value,
+    contains: &dyn Fn(&str) -> bool,
+) -> Result<(), String> {
+    let ceiling = args
+        .get("token_ceiling")
+        .and_then(Value::as_u64)
+        .ok_or("a compaction token ceiling is an integer")?;
     let fits = |pins: &[String]| {
         crate::tokenizer::count_context_pack_tokens(&pins.join("\n")) as u64 <= ceiling
     };
-    added_pins(args, rewritten, &contains, &fits).map(|_| ())
+    added_pins(args, rewritten, contains, &fits).map(|_| ())
 }
 
 /// A host's explicit compaction uses the same sealed request, cheap backend,
