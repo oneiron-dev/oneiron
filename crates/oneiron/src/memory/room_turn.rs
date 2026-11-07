@@ -254,6 +254,7 @@ impl<'v> Memory<'v> {
                 owner_surface: crate::authority::ActSurface::ThisInstall,
                 host_slip_issuer: None,
                 invocation: self.invocation,
+                drain_permit: self.drain_permit.clone(),
                 hook_ask: self.hook_ask,
                 invocation_slip: self.invocation_slip.clone(),
                 transport_invocation: self.transport_invocation,

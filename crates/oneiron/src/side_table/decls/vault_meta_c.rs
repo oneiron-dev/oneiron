@@ -339,6 +339,12 @@ side_tables! {
     /// `owner_pair` or `unavailable`).
     CODE_RUN_CONTRIBUTION_FORK: VaultMeta b"code_run:contribution_fork:v1:" Named Engine
         => crate::code_run::erase_contribution_forks_in_txn;
+    /// One model response a live code-mode REPL normalized at one step (FIX 4411, 4412): the
+    /// configured model id, the four packaging repairs, the outcome (clean, normalized, or
+    /// rejected with the executor's stable reason), the repair policy and, for a committed step,
+    /// its checkpoint. Ids, counts, flags and engine text only, never response text. Key:
+    /// id16(run) + be64(step) + be64(attempt).
+    CODE_RUN_CORRECTION: VaultMeta b"code_run:correction:v1:" Named Engine;
     /// Which executor run's fold a fold-words dependent stands for: the dependency walk reaches
     /// it when a record the fold's summary came from is withdrawn (fixed 24-byte frame: id16(run)
     /// + fold u64 BE). Key: id16(dependent).

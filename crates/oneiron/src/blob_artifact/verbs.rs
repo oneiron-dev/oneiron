@@ -471,8 +471,10 @@ impl Memory<'_> {
         )
     }
 
-    /// A person's settle is the owner's consent; an agent's rides a standing
-    /// grant on the brief it names.
+    /// A person's settle asks as the owner; an agent's rides a standing
+    /// grant on the brief it names. The settle writer verifies the person is
+    /// the vault's owner, and holds anyone else to a standing grant on the
+    /// brief (FIX 9620).
     fn artifact_consent(&self, brief_ref: Option<String>) -> MemoryResult<SettleConsent> {
         if self.actor_class() == EdgeActorClass::Human {
             return Ok(SettleConsent::OwnerConsent { brief_ref });

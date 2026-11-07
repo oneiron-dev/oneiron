@@ -31,14 +31,17 @@ Unknown or malformed stored formats remain errors, not silent gaps or
 permission to copy another family. Ordinary claim keys stay in native custody;
 only the opened source bytes are re-encrypted to the independent host key.
 
-The collector takes the native custody guard before its source writer snapshot.
-Only after it holds that writer and rechecks stop and the actual order term does
-it send `Accepted`. This pins that source snapshot; it is not a complete clone
-or independent legal-order authority. The collector keeps both guards until
+The collector takes the native custody guard before its LMDB read snapshot.
+Only after it holds that snapshot and rechecks stop and the actual order term
+does it send `Accepted`. This pins that source snapshot; it is not a complete
+clone or independent legal-order authority. The collector keeps both until
 the same host acknowledges the exact request and ciphertext transcript after
-durable publication. The source transaction writes nothing and
-aborts after the acknowledgement. Stop and the actual order term are checked
-throughout capture. Managed shutdown must close every accepted socket, then
+durable publication, then ends the snapshot. It holds no writer, so the
+user's writes and erases commit while a capture streams; an erase's key
+destruction takes the custody guard's write half after its commit, so it waits
+for the capture and the snapshot never loses a key it reads. An archived
+vault refuses every writer, so a capture there is no longer refused for want
+of one. Stop and the actual order term are checked throughout capture. Managed shutdown must close every accepted socket, then
 join its blocking worker before closing the vault.
 
 ## Encrypted stream and host obligations
@@ -159,7 +162,19 @@ missing id, or an id whose row is not a MESSAGE, fails the capture before its
 summary, so no acknowledgement can claim it. For each message, in id order, the
 stream carries its exact entity row (component 8), then its document head and
 every stored row and update of that document slot (component 9), then every
-stored outgoing edge row (component 10), all copied as stored. When the
+stored outgoing edge row (component 10), then its revision ledger (component
+12), all copied as stored. The ledger is the history that keeps a message's
+earlier full stored rows when its row was replaced: the history document
+(family `entity_revision:doc`, key `entity_revision:doc:` + id16), the
+revision state (`entity_revision:state`, `entity_revision:state:` + id16),
+each retained frontier (`entity_revision:frontier`,
+`entity_revision:frontier:` + id16 + revision16, in key order), then each of
+those frontiers' reverse identity rows whose value is the message id
+(`entity_revision:identity`, `entity_revision:identity:` + revision16), ids
+as raw bytes. A row the vault does not hold is absent, not an error. A message
+replaced while it had a record head keeps its text history in that head's
+document instead, which component 9 already carries. Edges keep no history:
+an edge row removed since lives on only in an earlier backup. When the
 message's result attachment names a body that the message still holds (its own
 body occurrence, that exact digest and length, from the producer run,
 occurrence and path the attachment names), that body's exact bytes follow as
@@ -175,11 +190,96 @@ a read-surface rule and does not apply to the clone, which is sealed to the
 order's recipient.
 
 The collector pins every result body, then takes the custody read guard before
-its source writer, as a gate capture does, and holds all three until the exact
-HOST acknowledgement; the source transaction writes nothing and aborts. Assets
+its LMDB read snapshot, as a gate capture does, and holds all three until the
+exact HOST acknowledgement. Assets
 and model-call records are not part of this extent, and messages stored after
 the request are never included: only an explicit prospective scope may add
 them.
+
+## Message capture from one backup artifact
+
+An order can choose ONE of the vault's own backup artifacts and exact
+MESSAGE ids (`CaptureScope::ArtifactMessages`, scope tag 6). This covers a
+still-live message whose rows a later edit changed: the live capture already
+carries the earlier rows its revision ledger keeps (component 12), but an
+edge row removed since lives on only in an earlier backup.
+
+The request names the artifact by `vault_id`, `checkpoint_id` (the BLAKE3 of
+its image), `commitment_digest` (the BLAKE3 of its signed commitment),
+`file_len` and `file_blake3` (the whole file). Right after the request frame
+and its flush, the HOST sends exactly one byte, `ARTIFACT_FILE_MARKER`
+(`0x41`), carrying exactly one SCM_RIGHTS descriptor: the artifact's file,
+opened read-only, which the HOST keeps open until the exact acknowledgement.
+The descriptor shares the HOST's file offset, so from the hand-over to that
+acknowledgement the HOST neither reads nor seeks it; the source reads it from
+the start. The source reads the request with exact reads, so nothing reads
+past it, then
+receives that byte with its descriptor close-on-exec. Another byte, a
+truncated control message, another control message, or any count but one
+descriptor refuses, and every descriptor received is closed.
+
+Before `Accepted`, the source refuses any of these:
+- a vault id other than its own;
+- a file that is not regular, or whose length or BLAKE3 is not the request's;
+- an artifact the real opener refuses: another vault's, a broken signed
+  commitment, manifest, chunk or image, or a signer the vault's device trust
+  does not admit;
+- a verified checkpoint id or commitment digest other than the request's;
+- a key custody of another lineage (`custody_lineage_mismatch`, the image's
+  binding is not the live vault's) or a missing key;
+- a vault key this process does not hold: the capture never unlocks,
+  provisions or writes a key.
+
+It holds the custody read guard from the live custody read to the exact
+acknowledgement. The custody plan is the live vault's, as a restore preflight
+builds it. Beside that, every payload-compartment retirement the live vault
+committed counts as carried out, so an owner erased or purged since the cut
+never opens. Only the selected messages' entity trees, the attachment
+occurrences they hold and every actor group open. The image's rows that link
+to an owner that did not open are taken out first, as a restore takes them
+out. Nothing is restored, forked or written, and no other owner's rows are
+streamed.
+
+For each selected message, in id order, the stream carries what the artifact
+holds in the Messages extent's order and families: its entity row (8), its
+document head, slot rows and updates (9), its outgoing edge rows (10, an
+`authored_by` row put back from its author's opened group) and its revision
+ledger rows (12). The entity row, head, slot rows, edge rows and ledger rows
+are the artifact's exact stored bytes. A document's snapshot and updates are
+the join of its split history: the same history, not always the same bytes.
+Its state vector and shallow-since rows are derived, so no artifact holds
+them. Every component carries the BLAKE3 of the artifact's entity row as its
+revision. The extent is `ArtifactMessages`.
+
+A message is read only when the artifact's payload holds its entity tree's
+compartment and live custody opens it. A row the image keeps whole proves
+nothing about an erase since the cut, so an artifact with no compartments (an
+archived vault's checkpoint) yields every id missed. A selected id with no
+readable MESSAGE row is in `missed_messages`: its compartment did not open,
+the payload holds none for it, or its row is absent or not a MESSAGE.
+`messages` counts the captured messages, so captured and missed are exactly
+the selection, and a capture with misses is partial, never a whole
+fulfilment.
+
+After its ledger, a message's result body follows as component 11 (family
+`code_run:raw_output`, key the stored raw-output key of its handle), as the
+live capture sends it. It follows only when:
+- the artifact's row names a result attachment;
+- the message's own attachment occurrence there (its compartment, opened)
+  holds exactly that output, from the producer run, occurrence and path the
+  attachment names;
+- the artifact carries that body, inline in its raw-output row or as a file
+  of that digest and length;
+- current custody still opens its instance.
+
+The body is read back through its sealed chunks, each frame checked. A
+captured message whose row names a result attachment is in
+`absent_result_bodies` when its occurrence there did not open or does not
+hold that output, the artifact does not carry the body, or current custody
+no longer opens its instance. That body stays uncaptured, never filled from
+the live vault or another source. A message whose row names no attachment is
+not listed. A descriptor that does not decode, or a carried stream that fails
+its checks, aborts the capture before its summary.
 
 ## Prospective message capture
 
@@ -191,29 +291,55 @@ MESSAGE row of the vault. Off-record overlay writes never reach it.
 The request's connection stands the order durably under `legal_hold:host:`
 (its capture binding, term, public recipient key and next ordinal), so it is
 carried with the host-order family and host-sealed in checkpoints, never in an
-owner image or export. A released generation is recorded and never stands
-again. While the order stands and before its `ends_at`, the shared base put
+owner image or export. Once the standing commits and the connection is
+attached, the engine answers with one `Standing` frame (kind 8) carrying the
+exact request digest, before any batch; from then on managed stop's trigger
+leaves the connection open for the final drain. A released generation is
+recorded and never stands again. While the order stands and before its `ends_at`, the shared base put
 seam seals each new MESSAGE row, exactly as staged, to the order's public key
 inside the same writer, and keeps the ciphertext in the order's outbox. The
-message and its sealed copy commit or roll back together. The engine cannot
-open the outbox. A seal that fails keeps the user's write and records the
-message as missed; it is never reported as captured.
+message and its sealed copy commit or roll back together. At the end of that
+same base batch, still in its writer, each outgoing edge row the batch wrote for
+the message (its turn, conversation, author, parent and reply links) is sealed
+the same way as its own entry (component 10), under the revision the row
+carried. The engine cannot open the outbox. A seal that fails keeps the user's
+write and records the message as missed; it is never reported as captured.
 
 The connection drains the outbox in batches of at most
 `PROSPECTIVE_BATCH_ENTRIES` entries. Each batch is its own stream: Accepted,
 the stored Descriptor and Content frames, then a summary with extent
 `prospective_messages`, the batch's first ordinal and entry count, the sealed
-message count and the missed message ids, then Ready and the exact
+message row count and the missed message ids, then Ready and the exact
 acknowledgement. Its `descriptors_hash` is BLAKE3 over each component's
 descriptor digest in stream order. Only that acknowledgement deletes that
 batch's ordinals; one acknowledgement never covers another batch or the order.
 The worker takes the LMDB writer briefly as a barrier before each read, so a
 wake from a writer that has not yet committed is never read early.
 
+Managed stop does not end a prospective connection or a live-session
+capture's connection at its trigger: every other legal capture ends and joins
+at the start of teardown, while those are kept. Once every admitted write has
+ended, managed stop closes every off-record session as an explicit close does,
+before the final drain: a session a live order covers has its written spill
+captured for that order before its bodies go, or, when that order's HOST has
+no working attempt and so no retry can come, that order's capture ends
+interrupted and is never reported as captured, and the close goes on. After every writer of the process has stopped and
+before the vault closes, the final drain runs: each attached prospective
+connection drains its outbox to empty under the writer barrier and sends one
+last batch, possibly empty, whose summary carries `final_next_ordinal`, the
+order's next ordinal. No entry at or after it exists and this process writes
+none; the batch's range ends there. It is a per-process statement, not the
+order's release or end: the standing stays for a later start. A HOST that is
+not connected is not waited for, and its order's outbox stays in the vault. A
+connected HOST that does not answer holds the drain only to the connection's
+existing term deadline or the supervisor's kill; its entries stay unacknowledged
+and durable.
+
 The user's own erase, scrub, compaction or prune of a captured message is
 never gated: the outbox entry is clone custody, not vault data. Release of the
 order generation, or its term end, destroys the standing and its whole outbox
 in one write; the maintenance pass ends lapsed orders that have no live
-connection. A batch carries the MESSAGE row only, not its document or edge
-rows; the HOST may follow with an exact `Messages` capture while the message
-exists. Later edits are not prospective captures.
+connection. A message has no document rows at birth, so a batch carries none;
+edges a later batch adds, and edges a sync landing brings after the message,
+are later edits, not prospective captures. The HOST may follow with an exact
+`Messages` capture while the message exists.

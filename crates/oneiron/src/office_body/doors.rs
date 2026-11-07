@@ -620,7 +620,13 @@ impl Vault {
         let (bytes, recalc, recalc_failure) =
             match self.project_body(artifact, &head, "preview", at, zone)? {
                 Some((bytes, _, recalc, recalc_failure, _)) => (bytes, recalc, recalc_failure),
-                None => recalc_xlsx(&self.body_source(artifact, &head)?, limits, at, zone)?,
+                None => recalc_xlsx(
+                    &self.body_source(artifact, &head)?,
+                    limits,
+                    at,
+                    zone,
+                    self.xlsx_precision_recalc().as_deref(),
+                )?,
             };
         let mut book = read_xlsx_cells(&bytes, limits, &crate::office_body::document_resources())
             .map_err(|error| {

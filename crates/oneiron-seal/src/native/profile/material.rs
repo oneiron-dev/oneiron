@@ -186,7 +186,7 @@ pub(super) fn key_bound_issuer<'a>(
     };
     for cand_der in chain.iter().chain(anchors.iter()) {
         if let Some(cand) = verify::EmbeddedCert::admitted(cand_der, memory)?
-            && verify::issued_by(&cert, &cand)
+            && verify::issued_by(&cert, &cand, memory)?
         {
             return Ok(Some(cand_der.as_slice()));
         }
@@ -265,13 +265,109 @@ pub(super) async fn gather_validation_material(
     }
     let empty_chain: &[Vec<u8>] = &[];
     let tsa_chain = token.map_or(empty_chain, |t| t.tsa_chain_ders.as_slice());
+    let Some((ocsps_der, crls_der)) = gather_revocation(
+        ctx,
+        &[signer_chain_ders.as_slice(), tsa_chain],
+        &[],
+        &[certs_der.as_slice()],
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(DssMaterial {
+        certs_der,
+        ocsps_der,
+        crls_der,
+    }))
+}
+
+/// Whether the selected archival token's certificates already have DSS
+/// material. Configured anchors need no embedded certificate or revocation.
+pub(super) fn timestamp_material_present(
+    ctx: &SealContext<'_>,
+    material: &DssMaterial,
+    token: &tsp::ValidatedToken,
+) -> bool {
+    token.tsa_chain_ders.iter().all(|cert| {
+        material.certs_der.contains(cert) || ctx.config.trust_anchors_der.contains(cert)
+    })
+}
+
+/// Extend complete material for the actual archival token. Already covered
+/// certificates keep their original evidence; only missing certificates fetch
+/// revocation material, with issuers resolved against the token's full chain.
+pub(super) async fn include_timestamp_material(
+    ctx: &SealContext<'_>,
+    material: &mut DssMaterial,
+    token: &tsp::ValidatedToken,
+) -> Result<bool, SealError> {
+    let Some((ocsps, crls)) = gather_revocation(
+        ctx,
+        &[token.tsa_chain_ders.as_slice()],
+        &material.certs_der,
+        &[
+            material.certs_der.as_slice(),
+            token.tsa_chain_ders.as_slice(),
+        ],
+    )
+    .await?
+    else {
+        return Ok(false);
+    };
+    for cert in token.tsa_chain_ders.iter() {
+        if material.certs_der.contains(cert) || ctx.config.trust_anchors_der.contains(cert) {
+            continue;
+        }
+        ctx.limits
+            .memory
+            .admit::<u8>(cert.len())
+            .map_err(|refusal| refusal.seal_error(SealStage::Revocation))?;
+        pdf::admitted::push(ctx.limits, &mut material.certs_der, cert.clone())
+            .map_err(|refusal| refusal.seal_error(SealStage::Revocation))?;
+    }
+    merge_evidence(ctx, &mut material.ocsps_der, ocsps)?;
+    merge_evidence(ctx, &mut material.crls_der, crls)?;
+    Ok(true)
+}
+
+fn merge_evidence(
+    ctx: &SealContext<'_>,
+    existing: &mut Vec<SharedBytes>,
+    additional: Vec<SharedBytes>,
+) -> Result<(), SealError> {
+    for evidence in additional {
+        if !existing.iter().any(|prior| prior[..] == evidence[..]) {
+            pdf::admitted::push(ctx.limits, existing, evidence)
+                .map_err(|refusal| refusal.seal_error(SealStage::Revocation))?;
+        }
+    }
+    Ok(())
+}
+
+/// The original CRL-first/OCSP fallback for each uncovered non-anchor.
+async fn gather_revocation(
+    ctx: &SealContext<'_>,
+    chains: &[&[Vec<u8>]],
+    already_covered: &[Vec<u8>],
+    dss_cert_chains: &[&[Vec<u8>]],
+) -> Result<Option<(Vec<SharedBytes>, Vec<SharedBytes>)>, SealError> {
+    let memory = ctx
+        .limits
+        .memory
+        .ledger()
+        .map_err(|refusal| refusal.seal_error(SealStage::Revocation))?;
     let mut crls_der = Vec::new();
     let mut ocsps_der = Vec::new();
     let mut covered = 0usize;
     let mut need = 0usize;
-    for chain in [signer_chain_ders.as_slice(), tsa_chain] {
+    // Admitted once, when a certificate first falls to OCSP (FIX 13657).
+    let mut ocsp_context = None;
+    for &chain in chains {
         for cert in chain {
-            if ctx.config.trust_anchors_der.iter().any(|a| a == cert) {
+            if ctx.config.trust_anchors_der.iter().any(|a| a == cert)
+                || already_covered.contains(cert)
+            {
                 continue; // anchors ride anchor trust: no evidence owed
             }
             need += 1;
@@ -293,11 +389,25 @@ pub(super) async fn gather_validation_material(
                         break;
                     }
                 }
+                if !crl_covered && ocsp_context.is_none() {
+                    ocsp_context = Some(
+                        ocsp::OcspContext::admitted_chains(
+                            dss_cert_chains,
+                            &ctx.config.trust_anchors_der,
+                            &memory,
+                        )
+                        .map_err(|refusal| refusal.seal_error(SealStage::Revocation))?,
+                    );
+                }
                 if !crl_covered
-                    && let Some(ocsp) = ocsp::fetch_valid_ocsp(ctx, cert, issuer, &memory).await?
+                    && let Some(context) = &ocsp_context
+                    && let Some(ocsp) =
+                        ocsp::fetch_valid_ocsp(ctx, cert, issuer, context, &memory).await?
                 {
                     if ocsps_der.is_empty() {
-                        let slots = signer_chain_ders.len().saturating_add(tsa_chain.len());
+                        let slots = chains
+                            .iter()
+                            .fold(0usize, |n, chain| n.saturating_add(chain.len()));
                         memory
                             .admit_len::<SharedBytes>(slots)
                             .map_err(|refusal| refusal.seal_error(SealStage::Revocation))?;
@@ -312,9 +422,5 @@ pub(super) async fn gather_validation_material(
     if covered < need {
         return Ok(None);
     }
-    Ok(Some(DssMaterial {
-        certs_der,
-        ocsps_der,
-        crls_der,
-    }))
+    Ok(Some((ocsps_der, crls_der)))
 }

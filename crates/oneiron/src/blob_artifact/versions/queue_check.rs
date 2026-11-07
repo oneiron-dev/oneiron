@@ -105,6 +105,8 @@ pub(crate) fn append_queue_check_output_in_txn(
         Some(&made_by),
         false,
         true,
+        None,
+        crate::core_write::CoreWriteLaneRef::Unbound,
     )?;
 
     crate::federation::record_scope::stamp_queue_check_exhaust_birth(&vault.store, txn, token)?;
