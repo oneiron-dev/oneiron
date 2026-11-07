@@ -4,23 +4,11 @@ use serde::{Deserialize, Serialize};
 
 use oneiron_contracts::error::{ArtifactError, Error, RecordError, Result};
 
-/// Most layer names one projection may name.
-pub const CONTEXT_SPEC_MAX_LAYERS: usize = 32;
-
-/// Most memory domains one scoped projection may name.
-pub const CONTEXT_SPEC_MAX_DOMAINS: usize = 32;
-
 /// Byte cap on a layer name or memory domain token.
 pub const CONTEXT_SPEC_MAX_LABEL_BYTES: usize = 256;
 
 /// Byte cap on free-form descriptor text (briefing, annotation, instructions).
 pub const CONTEXT_SPEC_MAX_TEXT_BYTES: usize = 8192;
-
-/// Hard ceiling on a scoped memory projection's `limit`.
-pub const CONTEXT_SPEC_MAX_MEMORY_LIMIT: usize = 256;
-
-/// Hard ceiling on a recent-chat projection's `last_n`.
-pub const CONTEXT_SPEC_MAX_CHAT_LAST_N: usize = 256;
 
 /// Sections a `MemoryProjection::Default` resolves to at a root dispatch.
 pub const CONTEXT_SPEC_DEFAULT_MEMORY_LIMIT: usize = 32;
@@ -137,12 +125,10 @@ pub fn normalize_context_spec(spec: ContextSpec) -> ContextSpec {
 }
 
 /// Structural validation of one descriptor, independent of any parent.
+/// No count of layers, domains or items refuses a descriptor: the work it
+/// names is resolved under the dispatch's own deadline and resources
+/// (FIX 9765).
 pub fn validate_context_spec(spec: &ContextSpec) -> Result<()> {
-    if spec.layers.len() > CONTEXT_SPEC_MAX_LAYERS {
-        return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
-            "context spec names too many layers",
-        )));
-    }
     for layer in &spec.layers {
         validate_label(
             layer,
@@ -157,11 +143,6 @@ pub fn validate_context_spec(spec: &ContextSpec) -> Result<()> {
                     "scoped memory projection must name at least one domain",
                 )));
             }
-            if domains.len() > CONTEXT_SPEC_MAX_DOMAINS {
-                return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
-                    "scoped memory projection names too many domains",
-                )));
-            }
             for domain in domains {
                 validate_label(
                     domain,
@@ -173,9 +154,9 @@ pub fn validate_context_spec(spec: &ContextSpec) -> Result<()> {
                     )));
                 }
             }
-            if *limit == 0 || *limit > CONTEXT_SPEC_MAX_MEMORY_LIMIT {
+            if *limit == 0 {
                 return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
-                    "scoped memory projection limit is out of range",
+                    "scoped memory projection limit must be at least one",
                 )));
             }
         }
@@ -183,9 +164,9 @@ pub fn validate_context_spec(spec: &ContextSpec) -> Result<()> {
     match &spec.chat {
         ChatProjection::Default | ChatProjection::Exclude => {}
         ChatProjection::Recent { last_n } => {
-            if *last_n == 0 || *last_n > CONTEXT_SPEC_MAX_CHAT_LAST_N {
+            if *last_n == 0 {
                 return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
-                    "recent chat projection last_n is out of range",
+                    "recent chat projection last_n must be at least one",
                 )));
             }
         }

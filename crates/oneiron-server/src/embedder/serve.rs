@@ -34,14 +34,18 @@
 //! shared endpoint still tells a CPU's vectors from a GPU's.
 //!
 //! A request's bearer key is checked from its headers before any of its body
-//! is read. A body must declare its length, and is read only once that fits a
-//! budget, which it holds until its request's work ends: small bodies
-//! (queries, a vault's document batches) and large ones each have their own,
-//! so a recall never waits behind an upload. Any number of inputs is
-//! embedded in batches of [`MAX_INPUTS`] ([`batches`]): each batch takes room
-//! for its rows and their encoding in the `embedder_answer_bytes` row of
-//! `[limits]` before the model makes it, and keeps it until its rows are
-//! handed on; the endpoint does not start when the row cannot hold its
+//! is read. A body is read only under room in a budget, which it holds until
+//! its request's work ends: small bodies (queries, a vault's document
+//! batches) and large ones each have their own, so a recall that declares its
+//! length never waits behind an upload. A body that declares its length
+//! reserves all of it before any of it is read; one that declares none is
+//! read a piece at a time on the large budget, its room growing ahead of what
+//! has arrived ([`body`], FIX 149). No size refuses a body: one larger than
+//! the whole large budget takes all of it and runs alone. Any number of
+//! inputs is embedded in batches of [`MAX_INPUTS`] ([`batches`]): each batch
+//! takes room for its rows and their encoding in the `embedder_answer_bytes`
+//! row of `[limits]` before the model makes it, and keeps it until its rows
+//! are handed on; the endpoint does not start when the row cannot hold its
 //! model's largest batch. Past the `embedder_requests` row, past a full budget or answer
 //! row, and past the few requests the model works on at once, a request with
 //! the key waits its turn in order, each wait up to the queue deadline; it is
@@ -71,11 +75,12 @@ use super::local::evidence::RunProfile;
 use super::local::model_manager::ModelManager;
 use super::local::{Embedded, LocalEmbedder, Priority, Side};
 use crate::admission::Admission;
-use crate::byte_line::{ByteLine, HeldBytes};
+use crate::byte_line::ByteLine;
 use crate::config::{EmbedderConfig, EmbedderProvider};
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 
 mod batches;
+mod body;
 mod budget;
 use budget::answer_bytes;
 #[cfg(test)]
@@ -85,24 +90,26 @@ use budget::encoding_bytes;
 /// request with more is embedded batch by batch, never refused for its count
 /// ([`batches`], FIX 9487).
 const MAX_INPUTS: usize = 2_048;
-/// Request bodies above this are refused before they are read.
-const MAX_BODY_BYTES: usize = 32 * 1024 * 1024;
-/// A body of at most this many bytes draws on [`SMALL_BODIES_BYTES`]: a
-/// recall's query, or a vault's batch of documents (its client sends at most
-/// 32 KiB of text a request).
+/// A body that declares at most this many bytes draws on
+/// [`SMALL_BODIES_BYTES`]: a recall's query, or a vault's batch of documents
+/// (its client sends at most 32 KiB of text a request). A larger body, or
+/// one that declares no length, draws on [`LARGE_BODIES_BYTES`].
 const SMALL_BODY_BYTES: usize = 256 * 1024;
 /// What small bodies may hold at once, read or being read, until their
 /// requests' work ends. Their own budget, so a query never waits behind a
 /// large upload.
 const SMALL_BODIES_BYTES: usize = 16 * 1024 * 1024;
-/// What larger bodies may hold at once: two of the largest.
-const LARGE_BODIES_BYTES: usize = 2 * MAX_BODY_BYTES;
+/// What larger bodies may hold at once, read or being read, until their
+/// requests' work ends. A body larger than all of it is not refused: it takes
+/// the whole budget and waits until it can run alone, and the row asks.
+const LARGE_BODIES_BYTES: usize = 64 * 1024 * 1024;
 /// The pieces an answer streams out in, each copied, so what the transport
 /// holds of an answer is a few pieces, never the whole of it.
 const ANSWER_PIECE: usize = 64 * 1024;
-/// How long a body has to arrive once its bytes are reserved. One that is
+/// How long a body has to arrive, counting the time it is read with its room
+/// reserved, not the time it waits for more room ([`body`]). One that is
 /// still arriving then is refused, and its reservation returned: a stalled
-/// upload holds a budget for this long at most.
+/// upload holds a budget for this long of reading at most.
 const BODY_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 /// Bulk requests the model works on at once. It runs one forward at a time
 /// anyway; two keep it busy while the next request is tokenised, and the rest
@@ -161,15 +168,15 @@ pub(crate) async fn run(config: EmbedderConfig, listen: Listen) -> anyhow::Resul
         &listen.limits,
     )?);
     let questions = Arc::clone(&served.questions);
-    crate::http_listener::serve(
-        listener,
-        routes(served),
-        listen.limits.connections(),
-        questions,
-        async {
-            let _ = tokio::signal::ctrl_c().await;
-        },
-    )
+    // One read hands a body at most its piece, the room it reserves before
+    // it reads ([`body`], FIX 149).
+    let connections = crate::http_listener::ConnectionLimits {
+        max_read_buffer_bytes: Some(body::BODY_PIECE_BYTES),
+        ..listen.limits.connections()
+    };
+    crate::http_listener::serve(listener, routes(served), connections, questions, async {
+        let _ = tokio::signal::ctrl_c().await;
+    })
     .await;
     Ok(())
 }
@@ -446,80 +453,17 @@ struct Usage {
     total_tokens: usize,
 }
 
-/// Reads a request's body once the bytes it declares fit its budget, which
-/// the returned permit holds. A body must declare its length: what it may
-/// take is known before any of it is read, and a short one never waits on
-/// the large budget. The key was checked before this ([`require_key`]).
-async fn read_body(
-    served: &Served,
-    request: Request,
-) -> Result<(HeldBytes, axum::body::Bytes), Response> {
-    let declared = request
-        .headers()
-        .get(header::CONTENT_LENGTH)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse::<u64>().ok());
-    let bytes = match declared {
-        None => {
-            return Err(refuse(
-                StatusCode::LENGTH_REQUIRED,
-                "invalid_request_error",
-                "a request body must declare its Content-Length",
-            ));
-        }
-        Some(declared) if declared > MAX_BODY_BYTES as u64 => {
-            return Err(refuse(
-                StatusCode::PAYLOAD_TOO_LARGE,
-                "invalid_request_error",
-                &format!("a request body is at most {MAX_BODY_BYTES} bytes"),
-            ));
-        }
-        Some(declared) => declared as usize,
-    };
-    let budget = if bytes <= SMALL_BODY_BYTES {
-        &served.small_bodies
-    } else {
-        &served.large_bodies
-    };
-    let Some(held) = budget.reserve(bytes, served.wait, &served.questions).await else {
-        return Err(refuse(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "server_error",
-            "the request waited past its deadline for room for its body; nothing was read; retry",
-        ));
-    };
-    match tokio::time::timeout(
-        BODY_READ_TIMEOUT,
-        axum::body::to_bytes(request.into_body(), bytes),
-    )
-    .await
-    {
-        Ok(Ok(body)) => Ok((held, body)),
-        Ok(Err(_)) => Err(refuse(
-            StatusCode::BAD_REQUEST,
-            "invalid_request_error",
-            "the body ended before its declared length",
-        )),
-        Err(_) => Err(refuse(
-            StatusCode::REQUEST_TIMEOUT,
-            "invalid_request_error",
-            &format!(
-                "the body did not arrive within {} s",
-                BODY_READ_TIMEOUT.as_secs()
-            ),
-        )),
-    }
-}
-
 async fn embeddings(State(served): State<Arc<Served>>, request: Request) -> Response {
     let Ok(held) = served.requests.admit(()).await else {
         return waited_out();
     };
-    let (body_held, body) = match read_body(&served, request).await {
+    let (body_held, body) = match body::read_body(&served, request).await {
         Ok(read) => read,
         Err(refused) => return refused,
     };
-    let request: EmbeddingsRequest = match serde_json::from_slice(&body) {
+    // Decoding takes the body's pieces, so its bytes go before admission;
+    // the parsed request owns its texts.
+    let request: EmbeddingsRequest = match body.decode() {
         Ok(request) => request,
         Err(_) => {
             return refuse(
@@ -529,8 +473,6 @@ async fn embeddings(State(served): State<Arc<Served>>, request: Request) -> Resp
             );
         }
     };
-    // The parsed request owns its texts; the bytes go before admission.
-    drop(body);
     if !served.names.contains(&request.model) {
         return refuse(
             StatusCode::NOT_FOUND,
