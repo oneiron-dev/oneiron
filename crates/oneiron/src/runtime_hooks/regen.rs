@@ -574,66 +574,97 @@ impl Vault {
         candidate_hash: &str,
         stamped: bool,
     ) -> Result<PackInstallDisposition> {
-        let (_, row) = self
-            .pack_hook_bindings()?
-            .into_iter()
-            .find(|(id, _)| *id == binding)
-            .ok_or(Error::EntityNotFound)?;
-        let record = self.hook_regen_record(binding)?;
-        let (candidate, _) = pending_candidate(record.as_ref(), candidate_hash, stamped)?;
-        let source = self
-            .get_pack_source(&row.source)?
-            .ok_or(Error::EntityNotFound)?;
-        let body_path = format!("hooks/{}/body.js", row.hook);
-        let files = source
-            .files()
-            .iter()
-            .map(|file| {
-                if file.path == body_path {
-                    HubFile::new(file.path.clone(), candidate.as_bytes().to_vec())
-                } else {
-                    file.clone()
-                }
-            })
-            .collect();
-        let prepared = self.prepare_owner_pack_put(files)?;
-        let disposition = self.with_write_txn_grouped(|txn| {
-            let (_, current) = self
-                .pack_hook_bindings_in_txn(txn)?
-                .into_iter()
-                .find(|(id, _)| *id == binding)
-                .ok_or(Error::EntityNotFound)?;
-            let record = REGEN.get(&self.store, txn, &binding)?;
-            let (_, target) = pending_candidate(record.as_ref(), candidate_hash, stamped)?;
-            let disposition = self.put_owner_pack_prepared_in_txn(txn, owner, &prepared)?;
-            // A Candidate or Blocked put keeps the pending decision and the
-            // native proposal records, without advancing the last good body.
-            if !matches!(disposition, PackInstallDisposition::Installed(_)) {
-                return Ok(disposition);
-            }
-            // The new body binds under a new id; resolve it in this writer,
-            // before any other regen decision or pack install can intervene.
-            let rebound = self
-                .pack_hook_bindings_in_txn(txn)?
-                .into_iter()
-                .find(|(_, bound)| {
-                    bound.pack == current.pack
-                        && bound.hook == current.hook
-                        && bound.body_hash == candidate_hash
-                })
-                .map(|(id, _)| id)
-                .filter(|id| *id != binding);
-            let adopted = HookRegenRecord {
-                body_hash: candidate_hash.to_owned(),
-                stamp: target,
-                intent: record.and_then(|record| record.intent),
-                pending: None,
+        let disposition = loop {
+            let (candidate, body_path, base, source) = {
+                let txn = self.store.env.read_txn()?;
+                let (_, row) = self
+                    .pack_hook_bindings_in_txn(&txn)?
+                    .into_iter()
+                    .find(|(id, _)| *id == binding)
+                    .ok_or(Error::EntityNotFound)?;
+                let record = REGEN.get(&self.store, &txn, &binding)?;
+                let (candidate, _) = pending_candidate(record.as_ref(), candidate_hash, stamped)?;
+                let body_path = format!("hooks/{}/body.js", row.hook);
+                let installed = self.installed_pack_in_txn(&txn, &row.pack)?;
+                let installed_source = match &installed {
+                    Some(receipt) => Some(
+                        self.pack_source_in_txn(&txn, &EntityId::from_hex(&receipt.source_id)?)?
+                            .ok_or(Error::EntityNotFound)?,
+                    ),
+                    None => None,
+                };
+                let source = match installed_source {
+                    Some(source) if source.files().iter().any(|file| file.path == body_path) => {
+                        source
+                    }
+                    _ => self
+                        .pack_source_in_txn(&txn, &row.source)?
+                        .ok_or(Error::EntityNotFound)?,
+                };
+                let base = installed.map(|receipt| receipt.content_hash);
+                (candidate, body_path, base, source)
             };
-            for id in std::iter::once(binding).chain(rebound) {
-                REGEN.put(self, txn, &id, &adopted)?;
+            let files = source
+                .files()
+                .iter()
+                .map(|file| {
+                    if file.path == body_path {
+                        HubFile::new(file.path.clone(), candidate.as_bytes().to_vec())
+                    } else {
+                        file.clone()
+                    }
+                })
+                .collect();
+            // Preparation includes advisory lookup, so it holds no storage transaction.
+            let prepared = self.prepare_owner_pack_put(files)?;
+            let attempt = self.with_write_txn_grouped(|txn| {
+                let (_, current) = self
+                    .pack_hook_bindings_in_txn(txn)?
+                    .into_iter()
+                    .find(|(id, _)| *id == binding)
+                    .ok_or(Error::EntityNotFound)?;
+                let record = REGEN.get(&self.store, txn, &binding)?;
+                let (_, target) = pending_candidate(record.as_ref(), candidate_hash, stamped)?;
+                if self
+                    .installed_pack_in_txn(txn, &current.pack)?
+                    .map(|receipt| receipt.content_hash)
+                    != base
+                {
+                    return Ok(None);
+                }
+                let disposition = self.put_owner_pack_prepared_in_txn(txn, owner, &prepared)?;
+                // A Candidate or Blocked put keeps the pending decision and the
+                // native proposal records, without advancing the last good body.
+                if !matches!(disposition, PackInstallDisposition::Installed(_)) {
+                    return Ok(Some(disposition));
+                }
+                // The new body binds under a new id; resolve it in this writer,
+                // before any other regen decision or pack install can intervene.
+                let rebound = self
+                    .pack_hook_bindings_in_txn(txn)?
+                    .into_iter()
+                    .find(|(_, bound)| {
+                        bound.pack == current.pack
+                            && bound.hook == current.hook
+                            && bound.body_hash == candidate_hash
+                    })
+                    .map(|(id, _)| id)
+                    .filter(|id| *id != binding);
+                let adopted = HookRegenRecord {
+                    body_hash: candidate_hash.to_owned(),
+                    stamp: target,
+                    intent: record.and_then(|record| record.intent),
+                    pending: None,
+                };
+                for id in std::iter::once(binding).chain(rebound) {
+                    REGEN.put(self, txn, &id, &adopted)?;
+                }
+                Ok(Some(disposition))
+            })?;
+            if let Some(disposition) = attempt {
+                break disposition;
             }
-            Ok(disposition)
-        })?;
+        };
         if matches!(disposition, PackInstallDisposition::Installed(_)) {
             self.verb_hook_bindings_changed();
         }
