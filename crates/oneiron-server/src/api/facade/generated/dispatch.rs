@@ -20551,6 +20551,37 @@ async fn host_budget_hit(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_hooks_checks(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.hooks.checks")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.hooks.checks", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.hooks.checks", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::vault_hooks_checks(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_hooks_replay(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -38689,6 +38720,40 @@ async fn vault_mail_compliance_search(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_files_sources_convert(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.files.sources.convert")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.files.sources.convert", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.files.sources.convert", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_files_sources_convert(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn connector_answer(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -45386,6 +45451,14 @@ fn boxed_host_budget_hit<'a>(
     Box::pin(host_budget_hit(server, call, input))
 }
 #[inline(never)]
+fn boxed_vault_hooks_checks<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_hooks_checks(server, call, input))
+}
+#[inline(never)]
 fn boxed_vault_hooks_replay<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
@@ -50150,6 +50223,14 @@ fn boxed_vault_mail_compliance_search<'a>(
     Box::pin(vault_mail_compliance_search(server, call, input))
 }
 #[inline(never)]
+fn boxed_vault_files_sources_convert<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_files_sources_convert(server, call, input))
+}
+#[inline(never)]
 fn boxed_connector_answer<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
@@ -51674,6 +51755,7 @@ async fn call_verb_row(
         "host.compact" => boxed_host_compact(server, call, input).await,
         "host.wake" => boxed_host_wake(server, call, input).await,
         "host.budget.hit" => boxed_host_budget_hit(server, call, input).await,
+        "vault.hooks.checks" => boxed_vault_hooks_checks(server, call, input).await,
         "vault.hooks.replay" => boxed_vault_hooks_replay(server, call, input).await,
         "vault.hooks.regen.due" => boxed_vault_hooks_regen_due(server, call, input).await,
         "vault.hooks.regen.get" => boxed_vault_hooks_regen_get(server, call, input).await,
@@ -52718,6 +52800,9 @@ async fn call_verb_row(
         "vault.mail.threads.read" => boxed_vault_mail_threads_read(server, call, input).await,
         "vault.mail.compliance.search" => {
             boxed_vault_mail_compliance_search(server, call, input).await
+        }
+        "vault.files.sources.convert" => {
+            boxed_vault_files_sources_convert(server, call, input).await
         }
         "connector.answer" => boxed_connector_answer(server, call, input).await,
         "self.browser.open" => boxed_self_browser_open(server, call, input).await,

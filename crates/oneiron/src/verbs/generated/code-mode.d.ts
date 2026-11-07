@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1324 code-mode rows (1283 host rows, 41 run rows), 4667 declarations.
-// Replies: 1132 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1326 code-mode rows (1285 host rows, 41 run rows), 4674 declarations.
+// Replies: 1134 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -1346,7 +1346,7 @@ declare namespace Sdk {
   type PackSetupVerifyRequest = { pack: string; source?: string | null; connection: string };
   type AuthorityAuditEventKind = "grant" | "revoke" | "confirm" | "other";
   type AuthorityAuditQuery = { after?: EntityId | null; limit?: number | null; kinds?: AuthorityAuditEventKind[] };
-  type AuthorityAuditRow = { entry_ref: EntityId; entry_hash: string; event_kind: AuthorityAuditEventKind; source_op: string; detail?: string | null; occurred_start: number; occurred_end: number; learned_at: number; advisory_ts: number; signer_key: string; cosigner_keys?: string[]; seq: number; vault_ref?: string | null; subject_ref?: string | null; grant_ref?: string | null; claim_ref?: string | null; holder_ref?: string | null; parent_ref?: string | null; peer_vault_ref?: string | null; epoch?: number | null; expires_at?: number | null; fold_valid: boolean; issue_codes?: string[] };
+  type AuthorityAuditRow = { entry_ref: EntityId; entry_hash: string; event_kind: AuthorityAuditEventKind; source_op: string; detail?: string | null; occurred_start: number; occurred_end: number; learned_at: number; advisory_ts: number; signer_key: string; cosigner_keys?: string[]; seq: number; vault_ref?: string | null; subject_ref?: string | null; grant_ref?: string | null; receipt_ref?: string | null; affected_grants?: string[]; claim_ref?: string | null; holder_ref?: string | null; parent_ref?: string | null; peer_vault_ref?: string | null; epoch?: number | null; expires_at?: number | null; fold_valid: boolean; issue_codes?: string[] };
   type AuthorityAuditOrder = "entry_ref_ascending";
   type ColdAuthorityAuditRow = { entry_ref: EntityId; entry_hash: string; checkpoint: string; signer_key: string; seq: number; parents: string[]; fold_valid: boolean; issue_codes?: string[] };
   type PendingMembershipExecutionRow = { receipt: string; vault_id: string; act?: string | null; cause: string; person: string; member: string; executed_at: number; withdrawn_grants: string[]; handover: boolean };
@@ -1495,7 +1495,9 @@ declare namespace Sdk {
   type RetainedWorkQueue = "federation_burst" | "maintenance_ingest" | "facet_stamp";
   type RetainedWorkWaitSetRequest = { queue: RetainedWorkQueue; secs?: number | null };
   type ConnectWindow = { pact: string; epoch: number; source_vault: string; recipient_vault: string; world_ref: EntityId; facets: EntityId[]; bands: SelectorRange[]; window_key: string; update: number[] };
-  type ConnectDelivery = { body: ConnectWindow; signature: string };
+  type BornWithField = "prompt" | "why" | "keep" | "intent_prompt";
+  type GuestWindowTravelNote = { content_hash: string; travelled: Record<string, BornWithField[]>; receipt_owed: boolean };
+  type ConnectDelivery = { body: ConnectWindow; signature: string; travel_receipt?: GuestWindowTravelNote | null };
   type FederationBurstDisposition = { outcome: "allow" } | { outcome: "isolate-and-propose"; bundle_ref: string; replay_ref: string } | { outcome: "defer"; replay_ref: string };
   type FederationBurstWorkState = "pending" | "imported" | "rejected" | "expired" | "stale_authority" | "erased";
   type FederationBurstReceipt = { batch_ref: string; principal: EntityId; grant: EntityId; window_key: string; disposition: FederationBurstDisposition; state: FederationBurstWorkState; baseline: FederationBurstBaselineState };
@@ -1571,7 +1573,7 @@ declare namespace Sdk {
   type FederationGrantScope = { Vault: { vault_id: number } } | { Ask: { ask_ref: EntityId } } | { Connect: { peer_vault_id: AuthorityVaultId } };
   type GuestShareEnvelopeBody = { scope: FederationGrantScope; member_ref: EntityId; selector: number[]; window_key: string; update: number[] };
   type GuestShareEnvelope = { body: GuestShareEnvelopeBody; signature: number[] };
-  type GuestDocumentEnvelope = { context: GuestDocumentContext; envelope: GuestShareEnvelope; signer: string; signature: number[] };
+  type GuestDocumentEnvelope = { context: GuestDocumentContext; envelope: GuestShareEnvelope; signer: string; signature: number[]; travel_receipt?: GuestWindowTravelNote | null };
   type GuestRevokeRequest = { grant_ref: EntityId; peer?: string | null };
   type GuestPactStanding = "unpacted" | "active" | "suspended" | "promoted" | "disconnected" | "dissolved";
   type NotRecallable = boolean;
@@ -2170,12 +2172,13 @@ declare namespace Sdk {
   type ConsentDomain = "disclosure" | "action";
   type ConsentGrantStatus = "active" | "revoked";
   type ConsentRevokeAction = { command: string; grant_ref: string };
+  type ConsentRegrantAction = { command: string; agent: string; conversation: string };
   type BypassScope = { project: EntityId } | { thread: EntityId };
   type BypassExtent = { scope: BypassScope; floor_version: number };
   type ConsentRegistryDelegation = { purpose: string; ticket_ref?: string | null; approved_by: string; wall_expires_at: number; status: SupportGrantStatus; comm: CommReach };
   type RepoAccessBounds = { repo: EntityId; project: EntityId; refs: string[]; readable?: string[]; editable?: string[] };
   type ConsentRegistryAgentGrant = { agent: EntityId; delegated_by: EntityId; expires_at?: number | null; repo_bounds?: RepoAccessBounds | null; confers: boolean };
-  type ConsentRegistryRow = { grant_ref: string; domain: ConsentDomain; subject: string; class: string; selectors: string[]; scope?: Scope | null; status: ConsentGrantStatus; created_at: number; revoke_action: ConsentRevokeAction; bypass?: BypassExtent | null; delegation?: ConsentRegistryDelegation | null; agent_grant?: ConsentRegistryAgentGrant | null };
+  type ConsentRegistryRow = { grant_ref: string; domain: ConsentDomain; subject: string; class: string; selectors: string[]; scope?: Scope | null; status: ConsentGrantStatus; created_at: number; revoke_action: ConsentRevokeAction; regrant_action?: ConsentRegrantAction | null; bypass?: BypassExtent | null; delegation?: ConsentRegistryDelegation | null; agent_grant?: ConsentRegistryAgentGrant | null };
   type ConsentRegistry = { rows: ConsentRegistryRow[] };
   type HeldFailureSignalBatchView = { batch_id: string; endpoint: string; send_ref: string; content_ref: string; content: string; content_digest: string; approval_digest: string; count_rows: number; signal_count: number; code_fix_records: number; training_permitted: boolean; created_at: number; custody_stage: string };
   type RevokeGrantRequest = { grant: string };
@@ -2382,7 +2385,6 @@ declare namespace Sdk {
   type LensProposalState = "proposed" | "active";
   type LensListRow = { lens_ref: string; pack_name: string; skill_id: string; pack_content_hash: string; compiled_hash: string; kit_version: number; apps_contract_version: number; proposed_by: string; proposed_at: number; state: LensProposalState; mounted: boolean; compiled?: GeneratedLens | null };
   type LensListPage = { rows: LensListRow[]; next_after?: string | null };
-  type BornWithField = "prompt" | "why" | "keep" | "intent_prompt";
   type TravelChoice = { born_with?: BornWithField[] };
   type LensPackExportRequest = { lens_ref: string; travel?: TravelChoice | null };
   type LensPackExportReceipt = { lens_ref: string; prompt_ref: string; skill_id: string; content_hash: string; travelled: BornWithField[] };
@@ -2456,6 +2458,9 @@ declare namespace Sdk {
   type HostBudgetHitRequest = { seat: string; policy: BudgetExhaustionPolicy };
   type HostBudgetAccounting = { line: SpendScope; root: SpendScope; spend: SpendRead };
   type HostBudgetHitResult = { seat: string; policy: BudgetExhaustionPolicy; accounting: HostBudgetAccounting };
+  type HookCheckReason = "cycle" | "depth";
+  type LineageLink = { binding: string; run_key: string; entity: string; position: string };
+  type HookCheck = { binding: string; run_key: string; reason: HookCheckReason; chain: LineageLink[]; raised_at: number };
   type HooksReplayRequest = { binding: string; since?: string | null; limit?: number | null; cursor?: string | null };
   type HooksReplayPage = { rows: HookReplayRow[]; next_cursor?: string | null; done: boolean; effective_limit: number; limit_clamped?: boolean };
   type HookRegenBindingRequest = { binding: EntityId };
@@ -2581,10 +2586,11 @@ declare namespace Sdk {
   type ForeignCodeOutput = { path: string; bytes: number[] };
   type ForeignCodeSource = "generated";
   type ForeignCodeApproval = "proposed";
-  type CodeFileEdit = { path: string; start: number; end: number; expected: string; replacement: string; new_path?: string | null };
+  type SandboxProposalText = string;
+  type SandboxFileEdit = { path: string; start: number; end: number; expected: SandboxProposalText; replacement: SandboxProposalText; new_path?: string | null };
   type ConfidenceDetails = { band: ConfidenceBand; basis: VerdictBasis };
   type ClaimInput = { id?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; source: string; world_ref?: string | null; relationship_ref?: string[] | null; scope?: unknown | null; valid_from?: number | null; valid_to?: number | null; occurred_at?: number | null; learned_at?: number | null; salience?: number | null; confidence_details?: ConfidenceDetails | null };
-  type ForeignCodeEffect = { kind: "file_write"; path: string; bytes: number[] } | { kind: "file_edit"; path: string; base_content_hash: string; edit: CodeFileEdit } | { kind: "file_delete"; path: string } | { kind: "file_rename"; from: string; to: string } | { kind: "directory_opaque"; path: string } | { kind: "claim_candidate"; claim: ClaimInput };
+  type ForeignCodeEffect = { kind: "file_write"; path: string; bytes: number[] } | { kind: "file_edit"; path: string; base_content_hash: string; edit: SandboxFileEdit } | { kind: "file_delete"; path: string } | { kind: "file_rename"; from: string; to: string } | { kind: "directory_opaque"; path: string } | { kind: "claim_candidate"; claim: ClaimInput };
   type ForeignCodeProposal = { proposal_ref: string; receipt_ref: string; actor_ref: string; source: ForeignCodeSource; approval: ForeignCodeApproval; effect: ForeignCodeEffect };
   type ForeignCodeIsolation = { backend: string; runtime: string; image: string; argv_digest: string; network: string; generation: string; fence_proven: boolean };
   type ForeignCodeRunResult = { run_id: string; actor_ref: string; tier: ForeignCodeTier; linked_imports: string[]; reads: ForeignCodeRead[]; done: boolean; observation: string; outputs: ForeignCodeOutput[]; proposals: ForeignCodeProposal[]; isolation: ForeignCodeIsolation; receipt_ref: string; program_steps?: ProgramStepFeedbackRelease[] };
@@ -4527,6 +4533,7 @@ declare namespace Sdk {
   type MailComplianceSearchRequest = { query: string; purpose: string; limit?: number | null };
   type MailComplianceHit = { source_ref: string; thread_ref: string; message_ref: string; score: number; text?: string | null };
   type MailComplianceSearchReply = { log_sequence: number; hits: MailComplianceHit[] };
+  type FilesSourceConvertRequest = { path: string; exclude?: string[] | null };
   type TabSwitchCause = "opened" | "closed";
   type TabSwitch = { tab: string; url: string; title: string; from: string; why: TabSwitchCause };
   type DemonstrationId = string;
@@ -6429,6 +6436,8 @@ declare const vault: Sdk.VaultHost & {
     sources: {
       /** The owner attaches a folder of this host to its Files world, opting in on the first one: a world read on this install only, with no sealed copy. Its files land and its first rescan runs; the host's rescans keep it current. */
       attach(input: Sdk.FilesSourceAttachRequest): Promise<Sdk.FilesSourceAttachAnswer | StoredResult>;
+      /** The owner converts an attached notes folder on this host to Files, keeping its existing notes, history and links. The host rescans the folder into its Files world and returns the source and rescan report. */
+      convert(input: Sdk.FilesSourceConvertRequest): Promise<Sdk.FilesSourceAttachAnswer | StoredResult>;
       /** The owner detaches a Files source: no rescan reads its folder again and its ledger goes; the notes it landed stay. */
       detach(input: Sdk.FilesSourceDetachRequest): Promise<Sdk.FilesSourceDetachAnswer | StoredResult>;
       /** The owner reads one Files source's ledger: each file's path, readiness (text or name only, and why), revision and dates. */
@@ -6498,6 +6507,8 @@ declare const vault: Sdk.VaultHost & {
     checkin(input: Sdk.HabitCheckinInput): Promise<Sdk.EntityRefReceipt | StoredResult>;
   };
   hooks: {
+    /** The owner reads saved hook cycle and depth checks, including their causal lineage. Reads no hook arguments, body or result values and changes nothing; keeps the native list's oldest-key order and 1000-row limit. */
+    checks(input: Sdk.EmptyRequest): Promise<Sdk.HookCheck[] | StoredResult>;
     regen: {
       /** Adopt, as the authenticated owner and as their stamp, the regen candidate pending on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. Answers the pack put receipt; only an installed put advances the record. */
       adopt(input: Sdk.HookRegenAdoptRequest): Promise<Sdk.PackPutReceipt | StoredResult>;

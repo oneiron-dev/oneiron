@@ -5541,6 +5541,12 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_hooks_checks(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.hooks.checks", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_hooks_replay(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.hooks.replay", js_json(input))
@@ -11161,6 +11167,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.mail.compliance.search", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_files_sources_convert(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.files.sources.convert", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

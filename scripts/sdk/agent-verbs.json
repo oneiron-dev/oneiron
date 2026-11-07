@@ -9883,6 +9883,22 @@
       "openapi": true
     },
     {
+      "name": "vault.hooks.checks",
+      "description": "The owner reads saved hook cycle and depth checks, including their causal lineage. Reads no hook arguments, body or result values and changes nothing; keeps the native list's oldest-key order and 1000-row limit.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::runtime_hooks::HookCheck>",
+      "call": "memory.vault().hook_checks_as_owner(&memory.embedded_owner(\"vault.hooks.checks\")?).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_precheck": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.hooks.replay",
       "description": "The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands, 256 entries a page; next_cursor continues to the rest.",
       "input": "crate::task_verb::sdk::HooksReplayRequest",
@@ -21225,6 +21241,22 @@
       },
       "mcp_scope": "unrestricted",
       "section": false
+    },
+    {
+      "name": "vault.files.sources.convert",
+      "description": "The owner converts an attached notes folder on this host to Files, keeping its existing notes, history and links. The host rescans the folder into its Files world and returns the source and rescan report.",
+      "input": "crate::task_verb::sdk::FilesSourceConvertRequest",
+      "output": "crate::task_verb::sdk::FilesSourceAttachAnswer",
+      "call": "crate::task_verb::sdk::convert_files_source_embedded(memory, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "host_door_precheck": true
     }
   ]
 }
