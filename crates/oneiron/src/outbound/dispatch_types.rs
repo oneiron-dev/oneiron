@@ -635,6 +635,18 @@ pub trait OutboundExecutionSink {
     fn known_non_delivery(&self, _intent_ref: &str, _idempotency_key: Option<&str>) -> bool {
         false
     }
+
+    /// What the provider's own record says became of the call `request`
+    /// names, the exact request [`Self::execute`] would get, when the ledger
+    /// holds it uncertain (FIX 8814 follow-up). A sink answers `Delivered`
+    /// or `NotDelivered` only on its provider's proof; by default it cannot
+    /// ask, and answers `Unknown`.
+    fn read_back_delivery(
+        &self,
+        _request: &OutboundExecutionRequest<'_>,
+    ) -> crate::outbound_intent_ledger::DeliveryReadBack {
+        crate::outbound_intent_ledger::DeliveryReadBack::Unknown
+    }
 }
 
 pub use crate::store::outbound_outcome::OutboundDispatchOutcome;
