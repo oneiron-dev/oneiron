@@ -9,7 +9,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::store::code_snapshot::entity_id_from_hash_material;
-use crate::store::{BodyMint, StagedAssetBody, Store};
+use crate::store::{BodyMint, StagedAssetBody, StagedHold, Store};
 use crate::temporal::TimeRange;
 use crate::write_envelope::claim_body::ClaimSubject;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
@@ -271,12 +271,16 @@ impl Vault {
     where
         E: From<Error>,
     {
-        let (version, fork_base) = self.with_write_txn_grouped(|wtxn| {
+        // A landing version past the inline size goes to its body file under
+        // an instance minted before the writer opens (FIX 20812).
+        let mint = self.asset_body_mint([bytes.len() as u64])?;
+        let (version, fork_base, _hold) = self.with_write_txn_grouped(|wtxn| {
             self.decide_blob_artifact_append_in_txn(
                 wtxn,
                 artifact_id,
                 fork_parent,
                 bytes,
+                mint.as_ref(),
                 provenance,
                 made_by,
                 actor,
@@ -450,38 +454,66 @@ impl Vault {
         bind_version_made_by(actor, provenance, made_by, at)
     }
 
-    /// The trusted Keep path: the retained envelope was bound to its
-    /// producer when the proposal was authenticated, so it lands validated
-    /// but unchanged. The keeper's write authority stays out of the producer
-    /// receipt: no rebind to the approver (blind review of #4554).
+    /// Keep's append of a waiting native output. With the producer's
+    /// envelope it is the trusted Keep path: the retained envelope was bound
+    /// to its producer when the proposal was authenticated, so it lands
+    /// validated but unchanged, and the keeper's write authority stays out of
+    /// the producer receipt (blind review of #4554). With none it is settle's
+    /// append. `bytes` past the asset plane's inline size go to their body
+    /// file under `mint`, taken before `wtxn` opened (FIX 20812). The hold
+    /// comes back beside the version: keep it until `wtxn` has committed.
     #[expect(clippy::too_many_arguments)]
-    pub(crate) fn append_blob_artifact_version_kept_in_txn(
+    pub(crate) fn append_kept_output_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         artifact_id: &EntityId,
         fork_parent: Option<u64>,
         bytes: &[u8],
         provenance: &BlobVersionProvenance,
-        made_by: &MadeBy,
+        made_by: Option<&MadeBy>,
+        mint: Option<&BodyMint>,
         actor: WriteActor,
         occurred: TimeRange,
         learned_at: u64,
-    ) -> Result<BlobArtifactVersion> {
-        self.append_blob_artifact_version_body_in_txn(
+    ) -> Result<(BlobArtifactVersion, Option<StagedHold>)> {
+        let staged = self.stage_version_slice_in_txn(wtxn, bytes, mint)?;
+        let body = staged
+            .as_ref()
+            .map_or(VersionBody::Bytes(bytes), VersionBody::Staged);
+        let version = self.append_blob_artifact_version_body_in_txn(
             wtxn,
             artifact_id,
-            VersionBody::Bytes(bytes),
+            body,
             provenance,
             actor,
             occurred,
             learned_at,
             fork_parent,
             None,
-            Some(made_by),
-            true,
+            made_by,
+            made_by.is_some(),
             false,
             crate::core_write::CoreWriteLaneRef::Unbound,
-        )
+        )?;
+        Ok((version, staged.map(StagedAssetBody::into_hold)))
+    }
+
+    /// `bytes` staged to their body file in `wtxn` under `mint`, taken before
+    /// `wtxn` opened, so a version past the asset plane's inline size puts its
+    /// ASSET as a file manifest, not as one value holding the bytes
+    /// (FIX 20812). `None` with no mint: the slice is put as it is.
+    fn stage_version_slice_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        bytes: &[u8],
+        mint: Option<&BodyMint>,
+    ) -> Result<Option<StagedAssetBody>> {
+        match mint {
+            Some(mint) => self
+                .stage_blob_body_in_txn(wtxn, &mut std::io::Cursor::new(bytes), Some(mint))
+                .map(Some),
+            None => Ok(None),
+        }
     }
 
     /// Transaction-composable body of [`Vault::append_blob_artifact_version`].

@@ -674,7 +674,10 @@ impl Vault {
         let provenance = BlobVersionProvenance::AgentRun {
             run_ref: row.proposal_ref.clone(),
         };
-        let (version, record, reconciliation) = self.with_write_txn_grouped(|wtxn| {
+        // A kept version past the inline size goes to its body file under an
+        // instance minted before the writer opens (FIX 20812).
+        let mint = self.asset_body_mint([row.new_bytes.len() as u64])?;
+        let (version, record, reconciliation, _hold) = self.with_write_txn_grouped(|wtxn| {
             let grant_ref = self.authorize_settle_in_txn(wtxn, consent, actor)?;
             if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
                 return Err(already_settled(&existing));
@@ -690,31 +693,18 @@ impl Vault {
             let fork_parent = row.base_version.filter(|base| {
                 row.explicit_fork || head.as_ref().is_some_and(|head| head.version != *base)
             });
-            let version = match &row.made_by {
-                Some(made_by) => self.append_blob_artifact_version_kept_in_txn(
-                    wtxn,
-                    artifact_id,
-                    fork_parent,
-                    &row.new_bytes,
-                    &provenance,
-                    made_by,
-                    actor,
-                    occurred,
-                    learned_at,
-                )?,
-                None => self.append_blob_artifact_version_with_engine_and_parent_in_txn(
-                    wtxn,
-                    artifact_id,
-                    &row.new_bytes,
-                    &provenance,
-                    None,
-                    actor,
-                    occurred,
-                    learned_at,
-                    fork_parent,
-                    None,
-                )?,
-            };
+            let (version, hold) = self.append_kept_output_in_txn(
+                wtxn,
+                artifact_id,
+                fork_parent,
+                &row.new_bytes,
+                &provenance,
+                row.made_by.as_ref(),
+                mint.as_ref(),
+                actor,
+                occurred,
+                learned_at,
+            )?;
             if let Some(hold) = &row.deck {
                 self.keep_deck_export_in_txn(
                     wtxn,
@@ -740,7 +730,7 @@ impl Vault {
                 LINK.put(&self.store, wtxn, &key, &stamp.to_owned())?;
             }
             let reconciliation = VersionReconciliation::of(fork_parent, head.as_ref());
-            Ok((version, record, reconciliation))
+            Ok((version, record, reconciliation, hold))
         })?;
         Ok(SettleSelectOutcome {
             stranded_proposal: None,
