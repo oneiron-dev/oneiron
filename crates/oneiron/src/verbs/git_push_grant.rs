@@ -219,7 +219,10 @@ pub struct RepoAnchorBindOutput {
 
 /// `vault.repo.anchor.bind` under the owner's proof: binds the served repo,
 /// or registers the external local repository, as its CODE anchor in the
-/// PROJECT he names (FIX 4299). A repeat changes nothing.
+/// PROJECT he names (FIX 4299). A repeat changes nothing. The repo's
+/// portable id is minted in the same writer; after it commits, a
+/// best-effort manifest refresh keeps that identity available without
+/// changing this door's answer.
 ///
 /// # Errors
 /// A request that names both or neither of `repo` and `local_folder`, or
