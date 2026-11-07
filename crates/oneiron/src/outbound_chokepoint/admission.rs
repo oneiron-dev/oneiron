@@ -514,7 +514,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         wtxn.commit().map_err(Error::from)?;
         return Ok(gate_rejection(intent_id, decision_id, decision));
     }
-    let (budget_accounting, budget_charge, exhausted) = charge_once(
+    let (budget_accounting, mut budget_charge, exhausted) = charge_once(
         vault,
         &mut wtxn,
         &mut governance,
@@ -671,6 +671,9 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         payload_context.recipient,
     )?;
     reserve_budget_in_txn(vault, &mut wtxn, &pending.id, reserved, spend_basis)?;
+    if let Some(charge) = budget_charge.as_mut() {
+        charge.refresh_read_in_txn(&vault.store, &wtxn, vault.store.clock.now_recorded_at())?;
+    }
     // The wait's admission commits with the spend, the decision and the
     // Pending row, or not at all.
     if let Some((wait_id, _)) = code_wait {
