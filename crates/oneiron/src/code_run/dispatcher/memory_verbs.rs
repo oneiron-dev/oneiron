@@ -282,6 +282,8 @@ impl HostSelfDispatcher<'_> {
         &self,
         call: SelfMemoryWriteFixtureCall,
     ) -> Result<SelfDispatchOutcome> {
+        // A position-narrowed slip places no row in core (FIX 10666).
+        self.refuse_narrowed_program_write()?;
         let admission = self.code_emission_admission()?;
         let candidate = match admission
             .as_ref()
@@ -327,6 +329,8 @@ impl HostSelfDispatcher<'_> {
         call: SelfMemoryPutClaimCall,
         read_as: Option<ScopedReadActorKey>,
     ) -> Result<SelfDispatchOutcome> {
+        // A position-narrowed slip places no row in core (FIX 10666).
+        self.refuse_narrowed_program_write()?;
         let admission = self.code_emission_admission()?;
         let candidate = match admission
             .as_ref()
@@ -434,6 +438,8 @@ impl HostSelfDispatcher<'_> {
         call: SelfMemorySupersedeClaimCall,
         read_as: Option<ScopedReadActorKey>,
     ) -> Result<SelfDispatchOutcome> {
+        // A position-narrowed slip places no row in core (FIX 10666).
+        self.refuse_narrowed_program_write()?;
         // Both claims it names resolve for its writer (OF-063, FIX 1214).
         if let Some(refused) = self.refused_write_reference(
             SelfEffect::MemorySupersedeClaim,
@@ -519,6 +525,8 @@ impl HostSelfDispatcher<'_> {
         read_as: Option<ScopedReadActorKey>,
     ) -> Result<SelfDispatchOutcome> {
         ensure_public_memory_edge_kind(call.kind)?;
+        // A position-narrowed slip places no row in core (FIX 10666).
+        self.refuse_narrowed_program_write()?;
         // Both ends it names resolve for its writer (OF-063, FIX 1214).
         if let Some(refused) = self.refused_write_reference(
             SelfEffect::MemoryPutEdge,

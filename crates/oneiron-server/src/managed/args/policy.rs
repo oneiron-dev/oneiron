@@ -114,6 +114,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         ArgvUse::Read,
     ),
     (
+        "checkpoint-host-holds-recipient-fd",
+        |args| args.checkpoint_host_holds_recipient_fd.is_some(),
+        ArgvUse::Read,
+    ),
+    (
         "host-legal-listen-fd",
         |args| args.host_legal_listen_fd.is_some(),
         ArgvUse::Read,
