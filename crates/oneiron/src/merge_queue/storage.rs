@@ -5,6 +5,7 @@ use super::{BatchState, MergeBatch, MergeQueue, MergeQueuePointers, RepoQueueOrd
 use crate::{
     error::{Error, Result},
     git_wire::lock_repository,
+    repo_mutation::proposal::ContractReviewEvidence,
     side_table::{self, Named, SideTable},
     store::contract_oracle::{ContractOracle, WorkspaceGraph, invalid},
 };
@@ -133,6 +134,16 @@ impl MergeQueue<'_> {
         Ok(record)
     }
     pub(super) fn save(&self, state: &QueueRecord, batches: &[&MergeBatch]) -> Result<()> {
+        self.save_with_review(state, batches, None)
+    }
+    /// [`Self::save`] that also routes `review`, the removed-name person
+    /// review a saved verdict slot holds, in the same writer (FIX 4365).
+    pub(super) fn save_with_review(
+        &self,
+        state: &QueueRecord,
+        batches: &[&MergeBatch],
+        review: Option<&ContractReviewEvidence>,
+    ) -> Result<()> {
         check_row_size(&QUEUE_STATE.encode_value(state)?)?;
         let mut txn = self.vault.store.env.write_txn()?;
         QUEUE_STATE.put(&self.vault.store, &mut txn, &self.queue_key(), state)?;
@@ -146,6 +157,10 @@ impl MergeQueue<'_> {
                 batch,
             )?;
             put_batch_index(&self.vault.store, &mut txn, &repo_hex, batch)?;
+        }
+        if let Some(evidence) = review {
+            self.vault
+                .route_contract_review_in_txn(&mut txn, evidence)?;
         }
         txn.commit()?;
         // The queue driver wakes on a committed queue write (FIX 6868), on
