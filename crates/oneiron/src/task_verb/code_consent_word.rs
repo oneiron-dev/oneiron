@@ -84,8 +84,8 @@ fn choice_label(choice: CodeConsentChoice, row: &CodeConsentWaitRow) -> String {
     }
 }
 
-/// The ask a wait's question carries: to its frozen owners, offering the wait's
-/// choices, holding with no deadline of its own. A held connector call's
+/// The ask a wait's question carries: to its frozen owners and holders,
+/// offering the wait's choices, holding with no deadline of its own. A held connector call's
 /// own expiry ends its wait; a held browser act waits for its answer.
 /// Silence never approves.
 fn ask_spec(row: &CodeConsentWaitRow) -> MemoryResult<TaskAskSpec> {
@@ -100,8 +100,12 @@ fn ask_spec(row: &CodeConsentWaitRow) -> MemoryResult<TaskAskSpec> {
             ))
         })
         .collect::<MemoryResult<BTreeMap<_, _>>>()?;
+    let mut people = question.owners.clone();
+    if let Some(settlement) = &row.binding.holder_settlement {
+        people.extend(&settlement.holders);
+    }
     let mut spec = TaskAskSpec::shorthand(
-        Some(TaskAskTarget::People(question.owners.clone())),
+        Some(TaskAskTarget::People(people)),
         what,
         None,
         TaskAskDefault::Hold,
@@ -132,8 +136,8 @@ pub(super) fn reserved_ask_in(
 }
 
 /// Refuses a word on a code consent ask unless it is an asked, still-live
-/// owner's own Human word naming one of the wait's choices, on the node that admitted
-/// the ask; any other ask passes untouched. Runs in shared word admission,
+/// owner's or frozen holder's own Human word naming one of the wait's choices,
+/// on the node that admitted the ask; any other ask passes untouched. Runs in shared word admission,
 /// before the word is recorded.
 pub(super) fn guard_word(
     vault: &Vault,
@@ -153,8 +157,14 @@ pub(super) fn guard_word(
     let offered = offered_choices(&row.binding);
     if row.ask != Some(id)
         || source != TaskAskSource::Human
-        || !row.binding.question.owners.contains(&actor)
-        || !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)?
+        || !((row.binding.question.owners.contains(&actor)
+            && crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)?)
+            || (row
+                .binding
+                .holder_settlement
+                .as_ref()
+                .is_some_and(|settlement| settlement.holders.contains(&actor))
+                && crate::consent::person_is_live_in_txn(vault, txn, &actor)?))
         || word.companion_for.is_some()
         || word.inform_for.is_some()
         || word.confirmation.is_some()
