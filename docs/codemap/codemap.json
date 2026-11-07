@@ -38559,6 +38559,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/feedback/triage/handoff_index.rs",
+     "purpose": "The handoff rows a sweep reads, indexed (FIX 7550), so the requeue pass and the owner's status read those…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/feedback/triage/jobs.rs",
      "purpose": "A revision's triage job on the Coach's host queue: its input as it rides the queue, its queueing and…",
      "surface": {
@@ -92667,7 +92677,7 @@
      "purpose": "Federation grant record substrate"
     },
     "feedback": {
-     "files": 55,
+     "files": 56,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93628,7 +93638,7 @@
    },
    "over_bar": 181,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6609,
+   "source_files": 6610,
    "test_files": 895
   },
   "oneiron-android": {
