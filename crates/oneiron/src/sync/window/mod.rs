@@ -44,6 +44,7 @@ pub mod test_hooks;
 mod tombstones;
 mod withdrawn;
 
+pub(in crate::sync) use self::admission::encoded_root_state;
 #[cfg(test)]
 pub(in crate::sync) use self::admission::validate_window_update_residence;
 pub(in crate::sync) use self::admission::{

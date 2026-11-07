@@ -11,7 +11,14 @@
 //!   machine that withheld it (none for a vault's founding install);
 //! - `event/<policy>/<revision>`: the receipt of the change that made that
 //!   revision of the policy (fix list row 17205), the revision spelled as a
-//!   policy key spells it.
+//!   policy key spells it;
+//! - `derived/<row>/<machine>`: the policies a row written from bound rows
+//!   reads under, as the machine that wrote the key found its lineage (fix
+//!   list row 17207), `founder` for a vault's founding install. Each machine
+//!   writes only its own key and only adds to it; a holder reads the row
+//!   under every policy any key names.
+
+use std::collections::BTreeSet;
 
 use super::{SourceAudienceEvent, SourceAudienceKind, SourceAudiencePolicy};
 use crate::EntityId;
@@ -25,6 +32,10 @@ const POLICY: &str = "policy/";
 const WITHHELD: &str = "withheld/";
 /// The receipt of one change to a policy: `event/<policy>/<revision>`.
 const EVENT: &str = "event/";
+/// The policies a derived row reads under: `derived/<row>/<machine>`.
+const DERIVED: &str = "derived/";
+/// The machine part of a derived key a founding install writes.
+const FOUNDER: &str = "founder";
 /// The hex digits a revision is spelled in.
 const REVISION_DIGITS: usize = 16;
 
@@ -39,6 +50,9 @@ pub(crate) enum CarrierKey {
     Policy(EntityId, u64),
     Withheld(EntityId),
     Event(EntityId, u64),
+    /// A derived row and the machine that wrote its key (`None` for a
+    /// founding install).
+    Derived(EntityId, Option<EntityId>),
 }
 
 /// `hex` as an id, when it is the id's canonical spelling.
@@ -57,6 +71,15 @@ pub(crate) fn parse_key(map_key: &str) -> Option<CarrierKey> {
     if let Some(rest) = map_key.strip_prefix(EVENT) {
         let (policy, revision) = revision_of(rest)?;
         return Some(CarrierKey::Event(policy, revision));
+    }
+    if let Some(rest) = map_key.strip_prefix(DERIVED) {
+        let (row, by) = rest.split_once('/')?;
+        let by = if by == FOUNDER {
+            None
+        } else {
+            Some(named(by)?)
+        };
+        return Some(CarrierKey::Derived(named(row)?, by));
     }
     let (policy, revision) = revision_of(map_key.strip_prefix(POLICY)?)?;
     Some(CarrierKey::Policy(policy, revision))
@@ -103,6 +126,25 @@ pub(crate) fn event_key(policy: &EntityId, revision: u64) -> String {
     format!("{EVENT}{}/{revision:016x}", policy.to_hex())
 }
 
+/// The key of the policies `by` found the derived row `row` reads under.
+pub(crate) fn derived_key(row: &EntityId, by: Option<&EntityId>) -> String {
+    match by {
+        Some(by) => format!("{DERIVED}{}/{}", row.to_hex(), by.to_hex()),
+        None => format!("{DERIVED}{}/{FOUNDER}", row.to_hex()),
+    }
+}
+
+/// The prefix of every derived key of `row`.
+#[cfg(feature = "sync")]
+pub(crate) fn derived_prefix(row: &EntityId) -> String {
+    format!("{DERIVED}{}/", row.to_hex())
+}
+
+/// A derived row's carried bytes: its policies, in order.
+pub(crate) fn encode_derived(policies: &BTreeSet<EntityId>) -> Result<Vec<u8>> {
+    rmp_serde::to_vec_named(policies).map_err(|_| refused("a derived row's policies do not encode"))
+}
+
 /// A binding's carried bytes.
 pub(crate) fn encode_binding(policy: &EntityId) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(policy).map_err(|_| refused("a binding does not encode"))
@@ -147,6 +189,14 @@ pub(crate) enum Carrier {
         policy: EntityId,
         revision: u64,
         event: SourceAudienceEvent,
+    },
+    /// The policies `by` found the derived row `row` reads under (fix list
+    /// row 17207): a holder reads the row under every one of them, beside
+    /// its own lineage.
+    Derived {
+        row: EntityId,
+        by: Option<EntityId>,
+        policies: BTreeSet<EntityId>,
     },
 }
 
@@ -196,6 +246,19 @@ pub(crate) fn carrier(map_key: &str, bytes: &[u8]) -> Result<Carrier> {
                 revision,
                 event,
             })
+        }
+        CarrierKey::Derived(row, by) => {
+            let policies: BTreeSet<EntityId> = rmp_serde::from_slice(bytes)
+                .map_err(|_| refused("a derived row's policies do not decode"))?;
+            if policies.is_empty() {
+                return Err(refused("a derived row under no policy"));
+            }
+            if encode_derived(&policies)? != bytes {
+                return Err(refused(
+                    "a derived row's policies not in their canonical form",
+                ));
+            }
+            Ok(Carrier::Derived { row, by, policies })
         }
     }
 }
