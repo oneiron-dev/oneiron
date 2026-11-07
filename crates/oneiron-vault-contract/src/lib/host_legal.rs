@@ -300,6 +300,11 @@ pub enum FrameKind {
     Pending = 6,
     /// Exact native order standing ended; not HOST key destruction.
     Released = 7,
+    /// A prospective order stands and is attached to this connection, sent
+    /// once before its first batch; the payload is the exact request digest.
+    /// From here managed stop's trigger leaves the connection open for the
+    /// final drain.
+    Standing = 8,
 }
 
 /// Opaque member/part ordinals only. No source keys or content fingerprints
@@ -332,6 +337,7 @@ impl FrameHeader {
             5 => FrameKind::Ready,
             6 => FrameKind::Pending,
             7 => FrameKind::Released,
+            8 => FrameKind::Standing,
             _ => return Err(invalid("legal capture frame kind")),
         };
         Ok(Self {
@@ -442,10 +448,17 @@ pub enum CaptureExtent {
     GateDecisions,
     WrittenLiveSessionSpill,
     /// The selected stored MESSAGE rows with their document and outgoing edge
-    /// rows, in one source snapshot.
+    /// rows and the result body each still holds, in one source snapshot.
     Messages,
-    /// One batch of a prospective order: the exact MESSAGE rows sealed when
-    /// they landed, in ordinal order. Rows only: no document or edge rows.
+    /// One batch of a prospective order, in ordinal order: each new MESSAGE
+    /// row sealed when it landed (component 8), and each outgoing edge row
+    /// its birth batch wrote, sealed at that batch's end under the row's
+    /// revision (component 10). An edge entry follows its row's ordinal and
+    /// may fall in a later batch; it names its message by source and the
+    /// row's revision, so it joins that row across batches. A message whose
+    /// row the same batch replaced or removed is listed missed instead of
+    /// taking edges. No document rows: a message has none at birth. Edges
+    /// added by a later batch are not part of it.
     ProspectiveMessages,
 }
 
@@ -463,17 +476,33 @@ pub struct CaptureSummary {
     pub live_sessions: u64,
     pub live_bodies: u64,
     /// Selected messages copied; zero for gate and live-session captures.
-    /// In a prospective batch, the sealed message rows it carries.
+    /// In a prospective batch, the sealed message rows it carries (edge rows
+    /// not counted).
     pub messages: u64,
     /// A prospective batch's first outbox ordinal; zero otherwise.
     pub batch_first_ordinal: u64,
-    /// A prospective batch's ordinal count (sealed plus missed); zero
+    /// A prospective batch's ordinal count (rows, edges and missed); zero
     /// otherwise. Ordinals `batch_first_ordinal..+batch_entries` are exactly
     /// the batch, so one acknowledgement never covers another batch.
     pub batch_entries: u64,
-    /// New messages of a prospective batch that landed but could not be
-    /// sealed: a truthful coverage gap, never claimed as captured.
+    /// New messages of a prospective batch whose row, or one of whose birth
+    /// edge rows, could not be sealed: a truthful coverage gap, never claimed
+    /// as captured.
     pub missed_messages: Vec<[u8; 16]>,
+    /// Selected messages whose result attachment names a body the message
+    /// no longer holds, or that no row holds: their rows are captured, the
+    /// body is not and is never claimed. A held body is component 11
+    /// (`MessageResultBody`), revision the BLAKE3 of that message's full
+    /// stored entity row. Empty for every other capture.
+    pub absent_result_bodies: Vec<[u8; 16]>,
+    /// Only on a prospective order's last batch of one source process, sent
+    /// after every writer of that process stopped: `Some(n)`, the order's
+    /// next ordinal. No entry at or after `n` exists, and this process writes
+    /// none; the batch's range ends at `n` (an empty final batch has
+    /// `batch_first_ordinal` `n` and no entries). It is not the order's
+    /// release or end: the standing stays for a later start. `None` on every
+    /// other summary.
+    pub final_next_ordinal: Option<u64>,
     pub extent: CaptureExtent,
     pub components: u64,
     pub plaintext_bytes: u64,
