@@ -63,7 +63,12 @@ pub(super) fn land_answer(
             }
         }
         if !continuations.is_empty() {
-            let mut content = crate::federation::ActorContentTxn::new(vault, txn, actor)?;
+            let mut content = crate::federation::ActorContentTxn::new(
+                vault,
+                txn,
+                actor,
+                crate::core_write::CoreWriteLaneRef::Unbound,
+            )?;
             let mut batch = vault.batch_in();
             for part in &continuations {
                 batch = batch.edge(part, EdgeKind::Mentions, &note, 1.0);

@@ -1,5 +1,6 @@
-//! Lease-fenced workflow verb-hook pauses. The transcript is retained by
-//! the workflow checkpoint writer in the same transaction as this pause.
+//! Lease-fenced verb-hook pauses: a workflow's, whose transcript its
+//! checkpoint writer retains in the same transaction as this pause, and a
+//! turn action's, whose resume point names its wait (FIX 1765).
 
 use super::encoding::decode_record;
 use super::telemetry::invalid_transition;
@@ -62,7 +63,7 @@ impl AttemptQueue<'_> {
             &mut record,
             AttemptInterventionKind::Pause,
             ATTEMPT_RUNTIME_ACTOR.to_owned(),
-            Some("workflow waits on its verb hook".to_owned()),
+            Some("waits on its verb hook".to_owned()),
             input.now,
         )?;
         record.state = AttemptState::Paused;
@@ -102,7 +103,7 @@ impl AttemptQueue<'_> {
                 id,
                 kind: AttemptInterventionKind::Resume,
                 actor: ATTEMPT_RUNTIME_ACTOR.to_owned(),
-                note: Some("workflow verb hook answered".to_owned()),
+                note: Some("its verb hook answered".to_owned()),
                 now,
             },
         )?;
