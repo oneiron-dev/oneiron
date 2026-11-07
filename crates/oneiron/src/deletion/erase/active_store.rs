@@ -92,6 +92,12 @@ impl Vault {
             // An erased world takes its keys with it (fix 7); a deleted one
             // keeps them, so it restores from old bundles.
             if erase {
+                // A reply job naming the row takes its witnessed exchange with
+                // its event, before the provenance pass below clears that
+                // event (FIX 10897).
+                super::super::connector_witness::erase_connector_witness_of_in_txn(
+                    self, wtxn, id, act,
+                )?;
                 self.destroy_world_keys_for_delete_in_txn(
                     wtxn,
                     *id,
@@ -170,6 +176,11 @@ impl Vault {
                 crate::batch::deindex_entity(&write, txn, id)
             })?;
             crate::provenance::erase_row_provenance_in_txn(&write, wtxn, id, erase)?;
+            if erase {
+                crate::dreamer_consolidation::root_evidence::erase_source_bridges_in_txn(
+                    self, wtxn, id,
+                )?;
+            }
             // Saved tags read the turn's messages through their PartOf edges, so
             // they go before the graph is torn down.
             let had_tags = crate::tagging::erase_in_txn(self, wtxn, id)?;
@@ -294,8 +305,13 @@ impl Vault {
         // it (FIX 6034, 6086).
         self.halt_deleted_pack_source_routes_in_txn(wtxn, id)?;
         // An erased custody record is fenced before its body is scrubbed (KS-6
-        // part 2).
+        // part 2). A reply job naming the row takes its witnessed exchange
+        // with its event first, before the provenance pass below clears that
+        // event (FIX 10897).
         if erase {
+            super::super::connector_witness::erase_connector_witness_of_in_txn(
+                self, wtxn, id, act,
+            )?;
             self.fence_erased_credential_in_txn(wtxn, id)?;
             crate::runtime_hooks::scrub_hook_source_in_txn(
                 self,
@@ -361,6 +377,11 @@ impl Vault {
             crate::batch::deindex_entity(&write, txn, id)
         })?;
         crate::provenance::erase_row_provenance_in_txn(&write, wtxn, id, erase)?;
+        if erase {
+            crate::dreamer_consolidation::root_evidence::erase_source_bridges_in_txn(
+                self, wtxn, id,
+            )?;
+        }
         self.store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
         let ledger_changed = self.store.redact_gate_decisions_for_claim_in_txn(
             wtxn,

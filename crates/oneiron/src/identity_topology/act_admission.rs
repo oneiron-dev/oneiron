@@ -340,6 +340,22 @@ impl ResolvedSeal {
             SealBasis::Engine(cause) => SealAuthority::Engine(*cause),
         }
     }
+
+    /// Who this context's seal names as deciding (FIX 7817): the owner, by
+    /// proof or by an answer the engine sealed for him; an agent within its
+    /// Grant; or the engine's own inference.
+    pub(super) fn decider(&self) -> super::TopologyAuditDecider {
+        match &self.basis {
+            SealBasis::Decision {
+                by: ActBy::Owner, ..
+            }
+            | SealBasis::Engine(
+                EngineCause::OwnerAnswerUnproven | EngineCause::OwnerAnswerUnprofiledCarrier,
+            ) => super::TopologyAuditDecider::Owner,
+            SealBasis::Decision { .. } => super::TopologyAuditDecider::Agent,
+            SealBasis::Engine(_) => super::TopologyAuditDecider::Engine,
+        }
+    }
 }
 
 fn seal_refused(reason: &'static str) -> Error {
