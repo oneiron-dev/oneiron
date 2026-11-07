@@ -150,20 +150,29 @@ fn restage_claim(
     let same = (attached || fresh.outcome == "pending")
         && parked_under.is_some_and(|parked| parked.outcome == fresh.outcome)
         && reasons == pending.reason_codes;
+    // A re-staged row is a new pending decision, so a ceremony it newly needs
+    // gets its whole window.
+    let created_at = if same { pending.created_at } else { now };
+    // A re-staged confirm keeps the deadline it froze; a fresh one freezes
+    // the policy's lifetime now (FIX 8760).
+    let expires_at = attached.then(|| {
+        pending.expires_at.filter(|_| same).unwrap_or_else(|| {
+            created_at.saturating_add(policy.critical_confirm_lifetime_seconds())
+        })
+    });
     vault.store.put_pending_gate_consent_in_txn(
         txn,
         &PendingGateConsentRecord {
             version: crate::store::PENDING_GATE_CONSENT_VERSION,
             claim_id: pending.claim_id,
             decision_id: fresh.decision_id,
-            // A re-staged row is a new pending decision, so a ceremony it
-            // newly needs gets its whole window.
-            created_at: if same { pending.created_at } else { now },
+            created_at,
             diff_handle: fresh.diff_handle,
             read_frontier_hash: fresh.read_frontier_hash,
             reason_codes: reasons,
             dreamer_run_id: pending.dreamer_run_id.clone(),
             predicate: Some(body.predicate.clone()),
+            expires_at,
         },
     )?;
     Ok(Some(same))
