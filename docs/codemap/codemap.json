@@ -4732,9 +4732,9 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 50,
+      "crate-vis": 51,
       "mod": 2,
-      "re-export": 71
+      "re-export": 72
      }
     },
     {
@@ -5427,6 +5427,86 @@
      "purpose": "Clock-free expiry of approvals resting on a subsequently revoked roster",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WeaveAdminDigestRequest",
+      "WeaveAdminItemWrongRequest",
+      "WeaveAdminLensRequest",
+      "WeaveAdminLinkWrongRequest",
+      "WeaveAdminReportRequest"
+     ],
+     "path": "src/authority/step_up/admin_inputs.rs",
+     "purpose": "The served weave Admin rows' inputs (OF-499 A3, FIX 11694)",
+     "surface": {
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/step_up/erase.rs",
+     "purpose": "The step-up rows an erase, or a passkey's removal or replacement, drops: passkeys, open ceremonies and…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EnrolledPasskey",
+      "PasskeyAssertion",
+      "PasskeyDescriptor",
+      "PasskeyRegistration",
+      "StepUpCeremony",
+      "StepUpChallenge",
+      "StepUpDone",
+      "StepUpFactor",
+      "StepUpPasskeysReset",
+      "StepUpPasskeysResetRequest"
+     ],
+     "path": "src/authority/step_up/mod.rs",
+     "purpose": "MFA step-up on a person's own request instrument (MFA-1 A, ruled 2026-10-09; FIX 11694, the remainder of FIX…",
+     "surface": {
+      "const": 6,
+      "crate-vis": 3,
+      "enum": 2,
+      "fn": 7,
+      "re-export": 2,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EnrolledTotp",
+      "StepUpTotpReset",
+      "StepUpTotpResetRequest",
+      "TotpCode",
+      "TotpEnrollment"
+     ],
+     "path": "src/authority/step_up/totp.rs",
+     "purpose": "Optional authenticator-app step-up, using the same slip-bound record and Admin witness as passkeys (MFA-1 A…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 6,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/step_up/webauthn.rs",
+     "purpose": "The WebAuthn pieces a passkey step-up reads (W3C Web Authentication Level 2): the client data the browser…",
+     "surface": {
+      "crate-vis": 15
      }
     },
     {
@@ -6666,7 +6746,7 @@
      "path": "src/batch/actor_content.rs",
      "purpose": "One actor-bound batch effect set, derived from normalized local operations",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -6826,7 +6906,7 @@
      "path": "src/batch/builder/apply.rs",
      "purpose": "Caller-transaction terminal: stages the batch into a transaction the caller owns and commits",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -6892,7 +6972,7 @@
      "path": "src/batch/builder/mod.rs",
      "purpose": "The atomic multi-database write-batch builder and its two terminals",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "struct": 1
      }
     },
@@ -6924,7 +7004,7 @@
      "path": "src/batch/builder/reference_read.rs",
      "purpose": "A bound writer's read through the committing terminal (OF-063, FIX 1223, 6068)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -9566,7 +9646,7 @@
      "purpose": "Blob version chain: version record codec and the Vault version-chain API",
      "surface": {
       "const": 1,
-      "crate-vis": 27,
+      "crate-vis": 28,
       "enum": 1,
       "fn": 9,
       "re-export": 1,
@@ -25092,7 +25172,7 @@
      "path": "src/core_write/batch.rs",
      "purpose": "`vault.batch` (OF-181): an atomic core entity batch, the write `POST /v1/core/batch` makes",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 2
      }
@@ -25114,6 +25194,7 @@
      "path": "src/core_write/mod.rs",
      "purpose": "Core entity writes as typed rows (OF-181): the conversation container, a TURN under it, a DAG record and the…",
      "surface": {
+      "crate-vis": 1,
       "mod": 1,
       "re-export": 3
      }
@@ -53404,7 +53485,7 @@
      "path": "src/note/operations.rs",
      "purpose": "Authenticated semantic NOTE commands",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "enum": 1,
       "fn": 5,
       "struct": 3
@@ -74711,7 +74792,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 161,
+      "crate-vis": 162,
       "mod": 68,
       "re-export": 87
      }
@@ -76198,6 +76279,16 @@
      "purpose": "Core half of `store::text_index`: its store-layer items live in `oneiron_store::text_index` and are…",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/totp_custody.rs",
+     "purpose": "The seed's erasable custody leaf",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -86324,7 +86415,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1297
+      "fn": 1304
      }
     },
     {
@@ -86779,7 +86870,7 @@
      "surface": {
       "fn": 8,
       "mod": 1,
-      "re-export": 99,
+      "re-export": 100,
       "struct": 33
      }
     },
@@ -87639,6 +87730,16 @@
       "enum": 1,
       "fn": 9,
       "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/verbs/step_up.rs",
+     "purpose": "The vault owner's reset of a person's step-up passkeys (`vault.step_up.passkeys.reset`, FIX 17553)",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -92166,7 +92267,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 257,
+     "files": 262,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93454,7 +93555,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 387,
+     "files": 388,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93629,7 +93730,7 @@
      "purpose": "Verb catalog vocabulary used by core admission and action surfaces"
     },
     "verbs": {
-     "files": 114,
+     "files": 115,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -93694,7 +93795,7 @@
    },
    "over_bar": 181,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6615,
+   "source_files": 6622,
    "test_files": 895
   },
   "oneiron-android": {
@@ -101279,7 +101380,7 @@
      "purpose": "The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table…",
      "surface": {
       "const": 3,
-      "mod": 3,
+      "mod": 4,
       "re-export": 7
      }
     },
@@ -101380,6 +101481,17 @@
       "enum": 2,
       "fn": 2,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/totp.rs",
+     "purpose": "RFC 6238's authenticator-app profile: HMAC-SHA1, six digits and 30-second steps",
+     "surface": {
+      "const": 3,
+      "fn": 1
      }
     },
     {
@@ -101492,11 +101604,18 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "The suite table: every algorithm combination the format can name, its state and its minimum epoch"
+    },
+    "totp": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "RFC 6238's authenticator-app profile: HMAC-SHA1, six digits and 30-second steps"
     }
    },
    "over_bar": 0,
    "purpose": "The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table…",
-   "source_files": 24,
+   "source_files": 25,
    "test_files": 8
   },
   "oneiron-delivery-vocabulary": {
@@ -108377,7 +108496,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1265
+      "fn": 1272
      }
     },
     {
@@ -110170,7 +110289,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1266
+      "fn": 1273
      }
     },
     {
@@ -114769,7 +114888,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 35
+      "crate-vis": 36
      }
     },
     {
@@ -115689,7 +115808,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 169
+      "crate-vis": 171
      }
     },
     {
@@ -116596,6 +116715,26 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/step_up_doors.rs",
+     "purpose": "FIX 11694: a person's MFA step-up on their own credential (MFA-1 A: a passkey first)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/step_up_doors/totp.rs",
+     "purpose": "Authenticator-app ceremonies on the same admitted own-person slip",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/stream_recovery_doors.rs",
      "purpose": "The stream seeds the vault's open could not replay (FIX 11933), read under the caller's own owner credential",
      "surface": {
@@ -116735,9 +116874,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/weave_admin_doors.rs",
-     "purpose": "The weave Admin's host adapters (OF-499 A3, FIX 9431): an Admin's live report, its lens, its saved digest…",
+     "purpose": "The weave Admin's host adapters (OF-499 A3, FIX 9431, FIX 11694): an Admin's live report, its lens, its…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 12
      }
     },
     {
@@ -131497,7 +131636,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 700,
+     "files": 702,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -132017,7 +132156,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1681,
+   "source_files": 1683,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -146851,6 +146990,10 @@
       "StepRebound",
       "StepSequence",
       "StepTarget",
+      "StepUpPasskeysReset",
+      "StepUpPasskeysResetRequest",
+      "StepUpTotpReset",
+      "StepUpTotpResetRequest",
       "StepXfrm",
       "StockOrder",
       "StockRoles",
@@ -147239,6 +147382,11 @@
       "WakeSettlementView",
       "WakeSettlementsPage",
       "WakeSettlementsRequest",
+      "WeaveAdminDigestRequest",
+      "WeaveAdminItemWrongRequest",
+      "WeaveAdminLensRequest",
+      "WeaveAdminLinkWrongRequest",
+      "WeaveAdminReportRequest",
       "WeaveDigestCadence",
       "WeaveDigestFeedback",
       "WeaveDigestRendered",
@@ -147387,7 +147535,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1139,
-      "struct": 3461
+      "struct": 3470
      }
     },
     {

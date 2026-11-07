@@ -739,6 +739,27 @@ side_tables! {
     /// Blake3 digest stamp of the last claim body that produced a subject's composite state-index
     /// claim, used to detect out-of-band claim edits. Key: id16.
     AFFECT_STATE_COMPOSITE_PRODUCER: VaultMeta b"state:composite:producer:v1:" Raw;
+    /// An open MFA step-up ceremony (FIX 11694): the person, the exact slip it is bound to, the
+    /// ceremony and when it closes. Key: the 32 challenge bytes.
+    STEP_UP_CHALLENGE: VaultMeta b"step_up:challenge:v1:" Named
+        => crate::authority::erase_step_up_challenges_actor_in_txn;
+    /// A person's enrolled passkey (FIX 11694): credential id, COSE algorithm, public key, RP id,
+    /// origin, counter, label and times. Holds no secret. Key: id16 (the person) + SHA-256 (32) of
+    /// the credential id.
+    STEP_UP_PASSKEY: VaultMeta b"step_up:passkey:v1:" Named
+        => crate::authority::erase_step_up_passkeys_actor_in_txn;
+    /// A completed MFA step-up on one slip (FIX 11694): the person, the factor, the passkey and
+    /// when. Key: the 32-byte slip id.
+    STEP_UP_RECORD: VaultMeta b"step_up:record:v1:" Named
+        => crate::authority::erase_step_up_records_actor_in_txn;
+    /// Pending authenticator enrollment: the exact slip, sealed seed, key ref and expiry.
+    /// Key: person id16 + enrollment id32; never replaces a confirmed enrollment.
+    STEP_UP_TOTP_PENDING: VaultMeta b"step_up:totp:pending:v1:" Named Ciphertext
+        => crate::authority::erase_step_up_totp_actor_in_txn;
+    /// A person's confirmed authenticator: sealed seed, erasable key ref and spent step.
+    /// Key: person id16 + enrollment id32. Seed bytes never rest in plaintext.
+    STEP_UP_TOTP: VaultMeta b"step_up:totp:v1:" Named Ciphertext
+        => crate::authority::erase_step_up_totp_actor_in_txn;
     /// Storage ABI stamp. Key: ().
     STORAGE_ABI_VERSION: VaultMeta b"storage_abi_version" Raw;
     /// Per-generation stream receipt keyed by its receipt ref. Key: hex32 ":" hex32.

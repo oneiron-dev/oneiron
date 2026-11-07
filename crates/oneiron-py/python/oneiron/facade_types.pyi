@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1266 facade rows, 4603 declarations.
-Inputs: 1196 of 1266 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1098 of 1266 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1273 facade rows, 4612 declarations.
+Inputs: 1202 of 1273 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1102 of 1273 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -5067,6 +5067,31 @@ class WeaveItemCorrectionView(TypedDict):
     project_ref: NotRequired[str | None]
     actor_ref: str
     recorded_at: int
+class WeaveAdminReportRequest(TypedDict):
+    membership_grant: str
+    request: NotRequired[WeaveReportRequest]
+class WeaveAdminLensRequest(TypedDict):
+    membership_grant: str
+    request: NotRequired[WeaveLensRequest]
+class WeaveAdminDigestRequest(TypedDict):
+    membership_grant: str
+    request: NotRequired[WeaveDigestRequest]
+class WeaveAdminLinkWrongRequest(TypedDict):
+    membership_grant: str
+    request: WeaveWrongLinkRequest
+class WeaveAdminItemWrongRequest(TypedDict):
+    membership_grant: str
+    request: WeaveWrongItemRequest
+class StepUpPasskeysResetRequest(TypedDict):
+    person: str
+class StepUpPasskeysReset(TypedDict):
+    person: str
+    removed: int
+class StepUpTotpResetRequest(TypedDict):
+    person: str
+class StepUpTotpReset(TypedDict):
+    person: str
+    removed: int
 class WeaveEnqueueRequest(TypedDict):
     skill_ref: str
     subject_ref: str

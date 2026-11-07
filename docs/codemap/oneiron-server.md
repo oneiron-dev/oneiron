@@ -295,7 +295,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/esign/parse_lease/isolated.rs` | src | s | 1 crate-vis | — | The geometry callers' input lease, region and isolated parse |
 | `src/api/esign/presentation.rs` | src | m | 8 crate-vis | — | Stateless field editor and capability-scoped ceremony presentation adapters |
 | `src/api/esign/seal_worker.rs` | src | m | 3 crate-vis | — | The seal task's worker (OF-415, ARCH-0064 section 7): every tick it seals the documents whose signing… |
-| `src/api/facade.rs` | src | m | 35 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
+| `src/api/facade.rs` | src | m | 36 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
 | `src/api/facade/action_routes.rs` | src | m | 17 crate-vis | — | OF-181: the app's one action layer over HTTP, for both its callers |
 | `src/api/facade/action_routes/execution.rs` | src | s | 4 crate-vis | — | How one action runs (OF-181): the principal its call reads as, and the driver thread it runs on with its… |
 | `src/api/facade/action_routes/row_door.rs` | src | m | 4 crate-vis | — | The verb door of one action call (OF-181), split from its parent: each verb-table row runs as its own… |
@@ -387,7 +387,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/hook_regen_doors.rs` | src | s | 3 crate-vis | — | Credential-bound host projections of the typed hook regeneration doors (DOOR-077): the due list, one… |
 | `src/api/facade/hook_session.rs` | src | s | 1 crate-vis | — | Which facade row call keeps its verb hooks' records and ask pauses for its live session only (FIX 4283… |
 | `src/api/facade/hooks.rs` | src | m | 11 crate-vis | — | A facade row's verb hooks: the pre chain before its door runs and the post chain after it |
-| `src/api/facade/host_doors.rs` | src | s | 169 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | s | 171 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/host_doors/admission.rs` | src | L | 1 crate-vis | — | The owner preflight every host door's verb meets before its door runs |
 | `src/api/facade/host_doors/artifacts_audit.rs` | src | s | 8 crate-vis | — | The owner's artifact review, ask, admit and deck preview doors, and his audit and mesh reads |
 | `src/api/facade/host_doors/authority_clock.rs` | src | s | 1 crate-vis | — | The owner's authority clock repair door (FIX 10106) |
@@ -478,6 +478,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/skill_execution_doors.rs` | src | m | 4 crate-vis | — | Skill calls on the caller's attached run and owner-anchored pack outcomes |
 | `src/api/facade/slim_doors.rs` | src | s | 6 crate-vis | — | Owner-bound lifecycle doors; each transport reaches the same engine transaction |
 | `src/api/facade/standing_doors.rs` | src | s | 6 crate-vis | — | Standing-block configuration and per-agent dreaming choice, with the caller's own proof (BOARD-04) |
+| `src/api/facade/step_up_doors.rs` | src | s | 3 crate-vis | — | FIX 11694: a person's MFA step-up on their own credential (MFA-1 A: a passkey first) |
+| `src/api/facade/step_up_doors/totp.rs` | src | s | 2 crate-vis | — | Authenticator-app ceremonies on the same admitted own-person slip |
 | `src/api/facade/stream_recovery_doors.rs` | src | s | 1 crate-vis | — | The stream seeds the vault's open could not replay (FIX 11933), read under the caller's own owner credential |
 | `src/api/facade/streamed_claims.rs` | src | s | 1 crate-vis | — | A door's invocation claim held through a streamed reply (FIX 2004): the reply is saved for each duplicate… |
 | `src/api/facade/summary_doors.rs` | src | s | 8 crate-vis | — | SUMMARY writes on the caller's own credential |
@@ -492,7 +494,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/vector_doors.rs` | src | s | 1 crate-vis | — | Full-row vector uploads under the caller's own owner proof and write gate |
 | `src/api/facade/voice_bank_doors.rs` | src | m | 7 crate-vis | — | The voice-bank host doors (DOOR-143, e2e VOICE-02, FIX 4393, 4396): `vault.voices.packs.put`… |
 | `src/api/facade/wave_doors.rs` | src | s | 1 crate-vis | — | The credential door of `tasks.wave` (OF-427) |
-| `src/api/facade/weave_admin_doors.rs` | src | s | 7 crate-vis | — | The weave Admin's host adapters (OF-499 A3, FIX 9431): an Admin's live report, its lens, its saved digest… |
+| `src/api/facade/weave_admin_doors.rs` | src | s | 12 crate-vis | — | The weave Admin's host adapters (OF-499 A3, FIX 9431, FIX 11694): an Admin's live report, its lens, its… |
 | `src/api/facade/weave_doors.rs` | src | m | 19 crate-vis | — | The weave lens's host doors (OF-499): the one-tap wrong control a person uses on a link, claim, project or… |
 | `src/api/facade/web_connector_doors.rs` | src | s | 3 crate-vis | — | Typed owner doors over the built-in web connector's switch and usage rows (FIX 11598) |
 | `src/api/facade/web_fetch_doors.rs` | src | s | 2 crate-vis | — | Distinct typed fetch and crawl doors, shared by HTTP, SDK and MCP |
