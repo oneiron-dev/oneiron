@@ -7246,6 +7246,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::team::TeamRecordInput>(),
             ),
             (
+                "self.team.vote",
+                crate::code_run::vault_read::request_schema::<crate::team::TeamVoteInput>(),
+            ),
+            (
                 "self.team.submit",
                 crate::code_run::vault_read::request_schema::<crate::code_run::TeamSubmitInput>(),
             ),
@@ -27362,12 +27366,7 @@ fn validate_input_vault_artifacts_body_deck_preview(value: &serde_json::Value) -
 }
 #[inline(never)]
 fn validate_input_vault_artifacts_append(value: &serde_json::Value) -> MemoryResult<()> {
-    let input: AppendBlobVersionRequest = decode(value.clone())?;
-    if input.content_base64.len() > crate::memory::caps::MAX_BLOB_BASE64_LEN {
-        return Err(MemoryError::bad_request(
-            "blob base64 exceeds the content ceiling",
-        ));
-    }
+    let _input: AppendBlobVersionRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -48660,11 +48659,6 @@ pub fn vault_artifacts_append(
     memory: &Memory<'_>,
     input: AppendBlobVersionRequest,
 ) -> MemoryResult<crate::memory::BlobVersionAppendOutcome> {
-    if input.content_base64.len() > crate::memory::caps::MAX_BLOB_BASE64_LEN {
-        return Err(MemoryError::bad_request(
-            "blob base64 exceeds the content ceiling",
-        ));
-    }
     memory_requests::append_blob(memory, input)
 }
 pub fn vault_artifacts_read(
