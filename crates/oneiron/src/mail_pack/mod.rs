@@ -29,7 +29,8 @@
 //! audience ([`landing`]), and a provider delete applies the source's setting
 //! ([`provider_delete`]). Provider wires land per provider row: Gmail for
 //! Google Workspace and Google ([`gmail`]), Microsoft Graph for Microsoft 365
-//! ([`microsoft365`]). Calendar sources land through the calendar engine's
+//! ([`microsoft365`]), and IMAP4rev1 over TLS for any other mailbox
+//! ([`imap`], on the engine's own client [`imap_client`]). Calendar sources land through the calendar engine's
 //! connector admission, each EVENT bound to its source at birth
 //! ([`calendar`]), read from Google Calendar ([`google_calendar`]), Microsoft 365
 //! ([`microsoft365_calendar`]) or an ICS subscription ([`ics_calendar`]).
@@ -46,6 +47,8 @@ mod gmail;
 mod google_calendar;
 mod header_retire;
 mod ics_calendar;
+mod imap;
+mod imap_client;
 mod importer;
 mod inbox;
 mod landing;
@@ -85,6 +88,7 @@ pub use doors::{
 pub use gmail::HttpGmailMailWire;
 pub use google_calendar::{GOOGLE_CALENDAR_CONNECTOR_EFFECTOR, HttpGoogleCalendarWire};
 pub use ics_calendar::{HttpIcsCalendarWire, ICS_CALENDAR_CONNECTOR_EFFECTOR};
+pub use imap::{IMAP_CONNECTOR_EFFECTOR, ImapMailWire};
 pub use importer::{MailSyncBudget, MailSyncReport};
 pub use inbox::{
     MailInboxItem, MailInboxPage, MailInboxRequest, MailThreadRequest, MailThreadView,
