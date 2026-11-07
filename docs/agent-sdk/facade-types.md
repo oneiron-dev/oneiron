@@ -5564,7 +5564,7 @@ export type CodeRepoPointer = { local_folder: string; commit: string }
 /** `oneiron::memory::codebase_doors::types::CodeSnapshotIngestRequest` */
 export type CodeSnapshotIngestRequest = { project_id: string; pointer: CodeRepoPointer }
 /** `oneiron::memory::codebase_doors::types::CodeSnapshotView` */
-export type CodeSnapshotView = { repo: EntityId; repo_ref: string; project_id: string; commit?: string | null; snapshot: string; scope_key: string; files: CodeSnapshotFile[] }
+export type CodeSnapshotView = { repo: EntityId; repo_ref: string; project_id: string; commit?: string | null; snapshot: string; scope_key: string; files: CodeSnapshotFile[]; capture_receipt?: string | null }
 /** `oneiron::memory::codebase_doors::types::CodeSnapshotRequest` */
 export type CodeSnapshotRequest = { repo: EntityId; snapshot: string }
 /** `oneiron::memory::codebase_doors::types::CodeSnapshotReadRequest` */

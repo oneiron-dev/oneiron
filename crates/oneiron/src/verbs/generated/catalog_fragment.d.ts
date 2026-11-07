@@ -2800,7 +2800,7 @@ declare namespace Sdk {
   type CodeCacheReadRequest = { account: EntityId; action_digest: CodeActionDigest };
   type CodeRepoPointer = { local_folder: string; commit: string };
   type CodeSnapshotIngestRequest = { project_id: string; pointer: CodeRepoPointer };
-  type CodeSnapshotView = { repo: EntityId; repo_ref: string; project_id: string; commit?: string | null; snapshot: string; scope_key: string; files: CodeSnapshotFile[] };
+  type CodeSnapshotView = { repo: EntityId; repo_ref: string; project_id: string; commit?: string | null; snapshot: string; scope_key: string; files: CodeSnapshotFile[]; capture_receipt?: string | null };
   type CodeSnapshotRequest = { repo: EntityId; snapshot: string };
   type CodeSnapshotReadRequest = { repo: EntityId; snapshot: string; path: string; why?: string | null };
   type CodeSnapshotPinnedFile = { repo: EntityId; snapshot: string; file: CodeSnapshotFile; content: string; text_sha256: string };
