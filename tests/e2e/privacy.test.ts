@@ -891,7 +891,7 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
     const cleanups: string[] = [];
     // Capture the real summary wire body before provider cleanup. The standing
     // matcher stays strict; this artifact makes any mismatching field visible.
-    try { await engine?.artifacts.json("privacy-02-provider-calls.json", { seen: providers.seenFixtureCalls }); }
+    try { await engine?.artifacts.json("diagnostic-privacy-02-provider-calls.json", { seen: providers.seenFixtureCalls }); }
     catch (error) { cleanups.push(errorText(error)); }
     try { await engine?.close(); } catch (error) { cleanups.push(errorText(error)); }
     try { await providers.close(); } catch (error) { cleanups.push(errorText(error)); }

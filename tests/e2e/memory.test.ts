@@ -225,7 +225,7 @@ async function mintProject(engine: EngineFixture, providers: ScriptedProviders, 
   try {
     await providers.awaitBarrier(decide);
   } catch (error) {
-    await engine.artifacts.json(`project-decide-${index}-timeout.json`, {
+    await engine.artifacts.json(`diagnostic-project-decide-${index}-timeout.json`, {
       conversation_ref: conversation.id, message_ref: message,
       seenFixtureCalls: providers.seenFixtureCalls.map(call => ({
         origin: call.origin, fixtureId: call.fixtureId, path: call.path,
