@@ -42008,7 +42008,7 @@
      "path": "src/git_wire/argv.rs",
      "purpose": "Core half of `git_wire::argv`: its store-layer items live in `oneiron_store::git_wire::argv` and are…",
      "surface": {
-      "crate-vis": 37
+      "crate-vis": 39
      }
     },
     {
@@ -42323,6 +42323,16 @@
       "crate-vis": 2,
       "fn": 4,
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/git_wire/secret_purge.rs",
+     "purpose": "The object collection of the owner's confirmed secret purge (FIX 7608 slice 10): once the purge moved a…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -50864,7 +50874,7 @@
      "path": "src/memory/origin_doors/mod.rs",
      "purpose": "Typed origin and checkout doors (DOOR-139): tested-tree export, the origin authority epoch, publication…",
      "surface": {
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -50902,6 +50912,16 @@
      "surface": {
       "enum": 1,
       "fn": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/origin_doors/secret_purge.rs",
+     "purpose": "The repo secret purge doors (FIX 7608 slice 10, owner ruling SECRETS-IN-REPOS = A)…",
+     "surface": {
+      "fn": 3
      }
     },
     {
@@ -56610,7 +56630,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)",
      "surface": {
       "crate-vis": 13,
-      "mod": 17,
+      "mod": 18,
       "re-export": 5
      }
     },
@@ -57030,7 +57050,7 @@
      "purpose": "The repo secret manifest, read from a repository the vault serves as origin (ARCH-0069 S2; ARCH-0068 RC4 and…",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1,
       "struct": 1
      }
@@ -57062,7 +57082,7 @@
      "path": "src/origin/secret_marks/read.rs",
      "purpose": "The reader's half of a pushed key's mark (FIX 7608 slice 2a, CALL 8033 option d): the readable…",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -57327,6 +57347,49 @@
      "surface": {
       "crate-vis": 4,
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RepoSecretPurgeIdRequest",
+      "RepoSecretPurgeKeepRoot",
+      "RepoSecretPurgeOutstanding",
+      "RepoSecretPurgePlan",
+      "RepoSecretPurgeReceipt",
+      "RepoSecretPurgeRefMove",
+      "RepoSecretPurgeRefOutcome",
+      "RepoSecretPurgeRequest",
+      "RepoSecretPurgeState",
+      "RepoSecretPurgeView"
+     ],
+     "path": "src/origin/secret_purge.rs",
+     "purpose": "The owner's purge of marked keys from a served repository's history (FIX 7608 slice 10, owner ruling…",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 2,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/secret_purge/execute.rs",
+     "purpose": "The owner's execute of a frozen purge plan (FIX 7608 slice 10): each ref moves through the origin…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/secret_purge/plan.rs",
+     "purpose": "The purge request (FIX 7608 slice 10): plans one served repository's purge and freezes the plan, moving…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -88403,7 +88466,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1329
+      "fn": 1332
      }
     },
     {
@@ -94930,7 +94993,7 @@
      "purpose": "OF-336 generated-UI component contract"
     },
     "git_wire": {
-     "files": 33,
+     "files": 34,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -95147,7 +95210,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 379,
+     "files": 380,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -95210,7 +95273,7 @@
      "purpose": "Live office body records and Vault doors"
     },
     "origin": {
-     "files": 153,
+     "files": 156,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -95863,7 +95926,7 @@
    },
    "over_bar": 197,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6788,
+   "source_files": 6793,
    "test_files": 895
   },
   "oneiron-android": {
@@ -110751,7 +110814,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1297
+      "fn": 1300
      }
     },
     {
@@ -112544,7 +112607,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1298
+      "fn": 1301
      }
     },
     {
@@ -118623,7 +118686,7 @@
      "path": "src/api/facade/origin_doors.rs",
      "purpose": "Credential-bound host projections of the typed origin and checkout doors (DOOR-139)",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 24
      }
     },
     {
@@ -149129,6 +149192,16 @@
       "RepoProposalSubmitInput",
       "RepoProposalSubmitOutput",
       "RepoQueueEntryView",
+      "RepoSecretPurgeIdRequest",
+      "RepoSecretPurgeKeepRoot",
+      "RepoSecretPurgeOutstanding",
+      "RepoSecretPurgePlan",
+      "RepoSecretPurgeReceipt",
+      "RepoSecretPurgeRefMove",
+      "RepoSecretPurgeRefOutcome",
+      "RepoSecretPurgeRequest",
+      "RepoSecretPurgeState",
+      "RepoSecretPurgeView",
       "RepoSnapshotView",
       "RepoSnapshotsGetInput",
       "RepoSnapshotsIngestInput",
@@ -150531,8 +150604,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1155,
-      "struct": 3538
+      "enum": 1157,
+      "struct": 3546
      }
     },
     {
