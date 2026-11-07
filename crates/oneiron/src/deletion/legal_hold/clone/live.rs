@@ -650,9 +650,14 @@ impl LiveSpillCaptures {
                     )
                     .into());
                 }
-                collector.finish(0, 1, copied, CaptureExtent::WrittenLiveSessionSpill, || {
-                    attempt.check(vault)
-                })
+                collector.finish(
+                    0,
+                    1,
+                    copied,
+                    0,
+                    CaptureExtent::WrittenLiveSessionSpill,
+                    || attempt.check(vault),
+                )
             })();
             capture.finish(&outcome)?;
             outcome?;
