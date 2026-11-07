@@ -52,10 +52,20 @@ pub(super) fn admitted_speaker_in(
     }
 }
 
-/// The attribution a MESSAGE slice pins: its sorted raw `AuthoredBy`
-/// targets and the source speaker they were read as. A merge, an erase or
+/// The source attribution a MESSAGE slice pins, when its MESSAGE carries
+/// one: an imported MESSAGE's sorted raw `AuthoredBy` targets and the source
+/// speaker they were read as, as one hash. None for a native MESSAGE, whose
+/// edge is its writer, and for an import with no edge: they name no source
+/// speaker, and their slices pin no attribution. A merge, an erase or
 /// another edge changes it while the words stay the same.
-pub(super) fn attribution_hash(authors: &[EntityId], speaker: Option<EntityId>) -> [u8; 32] {
+pub(super) fn attribution_hash(
+    imported: bool,
+    authors: &[EntityId],
+    speaker: Option<EntityId>,
+) -> Option<[u8; 32]> {
+    if !imported || authors.is_empty() {
+        return None;
+    }
     let mut hash = blake3::Hasher::new();
     hash.update(b"oneiron:message-attribution:v1");
     hash.update(&(authors.len() as u64).to_be_bytes());
@@ -71,5 +81,5 @@ pub(super) fn attribution_hash(authors: &[EntityId], speaker: Option<EntityId>) 
             hash.update(&[0]);
         }
     }
-    *hash.finalize().as_bytes()
+    Some(*hash.finalize().as_bytes())
 }

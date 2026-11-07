@@ -19,10 +19,10 @@
 //! names a span of an earlier turn the window sent: the span takes the link
 //! the engine saved for that turn at those coordinates, under the same
 //! tagger, and nothing when no such save is there, which the trace counts;
-//! no span is ever guessed from a surface. A speaker link names the turn's
-//! author, or for the addressee the one other party of a 1:1 room, and
-//! otherwise stays an unresolved decision. Either keeps only entities a
-//! world of the turn holds.
+//! no span is ever guessed from a surface. A speaker link names the author
+//! of the span's own MESSAGE, or for the addressee the one other party of a
+//! 1:1 room, and otherwise stays an unresolved decision. Either keeps only
+//! entities a world of the turn holds.
 
 use std::collections::BTreeSet;
 
@@ -186,7 +186,9 @@ pub(super) fn save_in_txn(
     }
     let mut unresolved_speaker_links = 0;
     for link in &output.speaker_links {
-        let found = linker.speaker_link(txn, &messages, link)?;
+        // Only the MESSAGE that holds the span names its speaker.
+        let message = &messages[output.spans[link.span].message];
+        let found = linker.speaker_link(txn, message, link)?;
         unresolved_speaker_links += usize::from(found.is_none());
         coref[link.span] = Coref::Speaker {
             target: link.target,
@@ -629,50 +631,43 @@ impl<'v> Linker<'v> {
         }))
     }
 
-    /// The link a speaker link resolves to: the turn's author for the
-    /// speaker, and for the addressee the one other party of the turn's
-    /// room, when it is a room of two that has only ever held the two of
-    /// them. `None` when no one person is it: the turn's messages name no
-    /// single author, the room is not such a pair, or the person is no
-    /// entity a mention may name in a world of this turn. One member of a
-    /// group is never picked. An imported turn's author is the PERSON its
-    /// source names as the speaker, read as that PERSON's one live canonical
-    /// head (FIX 15412); one with no such head names no one.
+    /// The link a speaker link resolves to: the author of `message`, the
+    /// MESSAGE that holds the linked span, for the speaker, and for the
+    /// addressee the one other party of the turn's room, when it is a room
+    /// of two that has only ever held the two of them. `None` when no one
+    /// person is it: the message names no single author, the room is not
+    /// such a pair, or the person is no entity a mention may name in a
+    /// world of this turn. One member of a group is never picked. An
+    /// imported MESSAGE's author is the one PERSON its source names as the
+    /// speaker, read as that PERSON's one live canonical head (FIX 15412):
+    /// one with no such head, or several, name no one, and another MESSAGE
+    /// of the turn never lends it a speaker.
     fn speaker_link(
         &self,
         txn: &heed::RoTxn<'_>,
-        messages: &[EntityId],
+        message: &EntityId,
         link: &SpeakerLink,
     ) -> Result<Option<MentionLink>> {
         let store = &self.vault.store;
-        let mut imported = false;
-        for message in messages {
-            imported |= crate::memory::imported_message_in_txn(store, txn, message)?;
+        let mut authors = Vec::new();
+        for edge in store.port_edges(
+            txn,
+            message,
+            EdgeDirection::Out,
+            Some(EdgeKind::AuthoredBy),
+            None,
+        )? {
+            authors.push(edge?.target);
         }
-        let mut authors = BTreeSet::new();
-        for message in messages {
-            for edge in store.port_edges(
-                txn,
-                message,
-                EdgeDirection::Out,
-                Some(EdgeKind::AuthoredBy),
-                None,
-            )? {
-                let author = edge?.target;
-                if !imported {
-                    authors.insert(author);
-                    continue;
-                }
-                let Some(person) =
-                    crate::memory::live_canonical_person_in_txn(self.vault, txn, &author)?
-                else {
-                    return Ok(None);
-                };
-                authors.insert(person);
+        let author = if crate::memory::imported_message_in_txn(store, txn, message)? {
+            crate::memory::source_speaker_in_txn(self.vault, txn, &authors)?
+        } else {
+            match authors[..] {
+                [author] => Some(author),
+                _ => None,
             }
-        }
-        let mut authors = authors.into_iter();
-        let (Some(author), None) = (authors.next(), authors.next()) else {
+        };
+        let Some(author) = author else {
             return Ok(None);
         };
         let person = match link.target {

@@ -81,8 +81,8 @@ fn decode_message_spans(value: &Value) -> Result<Vec<MessageSpan>> {
                 revision: revision
                     .ok_or_else(|| invalid_consolidation("missing locator message revision"))?,
                 frontier,
-                attribution: attribution
-                    .ok_or_else(|| invalid_consolidation("missing locator message attribution"))?,
+                // An absent attribution: the MESSAGE named no source speaker.
+                attribution,
             })
         })
         .collect()
