@@ -647,7 +647,9 @@ async fn feed_pieces(
         // allocation alive for every queued small piece.
         for piece in frame.chunks(max_piece) {
             if let Some(admitted) = admitted.take() {
-                let Ok(admitted) = admitted.await else { return; };
+                let Ok(admitted) = admitted.await else {
+                    return;
+                };
                 memory = Some(admitted);
             }
             let piece = Bytes::copy_from_slice(piece);
@@ -702,7 +704,10 @@ impl BodyReader {
         pieces: mpsc::Receiver<BodyPiece>,
         memory: Arc<RawSpoolMemory>,
     ) -> Self {
-        Self { memory: Some(memory), ..Self::new(pieces) }
+        Self {
+            memory: Some(memory),
+            ..Self::new(pieces)
+        }
     }
 }
 
