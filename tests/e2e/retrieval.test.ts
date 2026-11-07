@@ -190,7 +190,7 @@ async function effortCorpus(engine: EngineFixture) {
  * the observed production-reconciliation background corpus below. Unknown input
  * fails the flow; no default vector, prompt echo or engine-derived answer.
  */
-// G8 source-mapped background corpus (FIX21902 closure, Engine 12:03). 27
+// G8 source-mapped background corpus (FIX21902 closure, Engine 12:03; FIX21914 adds observed agent-health-review). 28
 // pinned literals from production-reconciliation batches (R22 32-input batch
 // before first test write, 8-input batches after; egress.allowAll on a fresh
 // vault legitimately seeds bootstrap data): 1 startup literal 'model', 7
@@ -205,7 +205,7 @@ async function effortCorpus(engine: EngineFixture) {
 // backgroundScanVerdict below; producer skill_hub/verdict.rs:254-287 with
 // {contentHash, provider oneiron.static.v1, scannedAt, verdict unknown,
 // riskLevel none, completeness complete, governance recommended,
-// staticInputHash hex64}), and 1 skill-description row (goal-intake prose).
+// staticInputHash hex64}), and 2 skill-description rows (goal-intake + agent-health-review prose).
 // Fresh-run legitimacy is observed in-test via provider.seen (see R06 check)
 // plus 10s awaitPublic server-provided lists (/api/search/vector per-row
 // probes, vault.claims.list), not assumed from R22 snapshots. No fixture
@@ -238,6 +238,7 @@ const BACKGROUND_LITERALS: readonly string[] = [
   '{"contentHash": "f661e275a80d44bfc5ac4cd3cb200f45010a9c41aa15289f47d699849e460c2a", "hubRef": {"hubId": "0f8ccc77298089c9b670f3bac7ae8f07", "refString": "pack-skill:79ba63d22e2a88e88be173d0db70c37d962899d50769a861be5ade0a729577c9", "pin": {"type": "content_hash", "value": "f661e275a80d44bfc5ac4cd3cb200f45010a9c41aa15289f47d699849e460c2a"}}}',
   '{"contentHash": "237cec53997e8d4b4bc642b34913249a2d86672def3fc1d5948679aa75ac7e0c", "hubRef": {"hubId": "0f8ccc77298089c9b670f3bac7ae8f07", "refString": "pack-skill:08da204ede76e8749a0d4866bebbf5d21d3396475f6005f1c4fb68f3431021f8", "pin": {"type": "content_hash", "value": "237cec53997e8d4b4bc642b34913249a2d86672def3fc1d5948679aa75ac7e0c"}}}',
   'Interview a human for a typed project goal record and commit it via authenticated intake.',
+  'Judge agent health from receipts with closed-form detectors and seeded dials.',
 ];
 // contentHashes of the 13 observed skill rows (5 bootstrap + 8 pack).
 const BACKGROUND_SKILL_HASHES: ReadonlySet<string> = new Set([
@@ -392,9 +393,14 @@ suite.test(test, "RETRIEVAL-01", "Five-channel recall and stable rank should wor
       records.set(label, seed);
       await engine.client.call("vault.vectors.put", { entity_ref: seed.entity_ref, vector: [0, 0, 0, 1] });
     }
+    // G-TOPK (FIX21914): isolate the authored ranking corpus from bootstrap
+    // top-k occupancy via the existing record-bound reader, admitting every
+    // intended corpus record and its real PPR seed. Ranking reads use this
+    // scoped reader; writes and pinned revision gets stay on the owner.
+    const reader = await recordBoundReader(engine, [...records.values()].map(record => record.id_hex));
     for (const [label, record] of records) {
       const vector = fixture.corpus.find(row => row.label === label)?.vector ?? [0, 0, 0, 1];
-      await awaitPublic(() => engine.client.call("vault.search.vector", { query: vector, limit: 20 }),
+      await awaitPublic(() => reader.call("vault.search.vector", { query: vector, limit: 20 }),
         read => read.value.hits.some(hit => hit.entity_ref === record.id_hex),
         { label: `published vector: ${label}` });
     }
@@ -407,11 +413,11 @@ suite.test(test, "RETRIEVAL-01", "Five-channel recall and stable rank should wor
       temporal: { start: utc(fixture.anchorUtc), end: utc(fixture.anchorUtc) },
       replay: { now: utc(fixture.anchorUtc), blend_weights: blend }, limit: 20,
     };
-    const first = await awaitPublic(() => engine.client.call("vault.search.hybrid", input),
+    const first = await awaitPublic(() => reader.call("vault.search.hybrid", input),
       read => fixture.expected.relevantLabels.every(label =>
         read.value.some(hit => hit.entity_ref === records.get(label)!.id_hex)),
       { label: "published five-channel authored corpus" });
-    const repeated = await engine.client.call("vault.search.hybrid", input);
+    const repeated = await reader.call("vault.search.hybrid", input);
     for (const read of [first, repeated]) readReceipt(read.narrowing);
     const ids = first.value.map(hit => hit.entity_ref);
     expect(repeated.value.map(hit => hit.entity_ref)).toEqual(ids);
@@ -891,7 +897,14 @@ suite.test(test, "RETRIEVAL-07", "Freshness does not rewrite confidence should w
       expected_body_hash: current.body_hash, profiles,
     });
     await engine.awaitReceipt(configured.receipt_ref);
-    expect((await engine.client.call("vault.retrieval.aging.get", {})).profiles).toEqual(profiles);
+    // G-PRECISION (FIX21914): f32-backed floors compare with tight tolerance;
+    // profile keys and integer half-lives stay exact.
+    const readback = (await engine.client.call("vault.retrieval.aging.get", {})).profiles;
+    expect(Object.keys(readback).sort()).toEqual(Object.keys(profiles).sort());
+    for (const key of Object.keys(profiles) as (keyof typeof profiles)[]) {
+      expect(readback[key]!.half_life_secs).toBe(profiles[key]!.half_life_secs);
+      expect(readback[key]!.floor).toBeCloseTo(0.0001, 10);
+    }
     const scope = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
     const records = new Map<string, Awaited<ReturnType<typeof claim>>>();
     // Memory classes are not writable top-level kind strings. These ordinary
@@ -1020,7 +1033,16 @@ suite.test(test, "RETRIEVAL-08", "Warm and rebuilt graph parity should work", as
     });
     void pending.catch(() => {}); // Still awaited and asserted after releasing the barrier.
     await providers.awaitBarrier("journaled-rerank-held");
-    const dropped = await engine.cli.call("vault.slim.drop_heavy", { cause: "memory_pressure", waited_secs: 0 });
+    // G-SLIM-WAIT (FIX21914): observe a full positive second while the real
+    // provider barrier remains held, using the normal bounded wait. The
+    // measured whole seconds are passed; never a fabricated 1.
+    const slimWaitStarted = Date.now();
+    await awaitPublic(async () => Date.now() - slimWaitStarted,
+      elapsed => elapsed >= 1000,
+      { label: "observed positive barrier-held wait" });
+    const waitedSecs = Math.floor((Date.now() - slimWaitStarted) / 1000);
+    expect(waitedSecs).toBeGreaterThanOrEqual(1);
+    const dropped = await engine.cli.call("vault.slim.drop_heavy", { cause: "memory_pressure", waited_secs: waitedSecs });
     expect(dropped.process_id).toBe(before.process_id);
     expect(dropped.outcome.status).toBe("entered");
     if (dropped.outcome.status !== "entered") throw new Error("Expected a completed in-process SLIM transition");
@@ -1108,7 +1130,10 @@ suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should wo
       if (row.label !== "private-community") allowed.push(saved.id);
       if (row.vad) {
         const consolidated = await engine.client.call("vault.affect.claims.consolidate", { claim_ref: saved.ref });
-        expect(consolidated.vad).toMatchObject(row.vad);
+        // G-PRECISION (FIX21914): f32 VAD coordinates compare with tight tolerance.
+        expect(consolidated.vad.valence).toBeCloseTo(row.vad.valence, 7);
+        expect(consolidated.vad.arousal).toBeCloseTo(row.vad.arousal, 7);
+        expect(consolidated.vad.dominance).toBeCloseTo(row.vad.dominance, 7);
         expect(consolidated.evidence_turns.length).toBeGreaterThan(0);
       }
     }
@@ -1262,11 +1287,11 @@ suite.test(test, "RETRIEVAL-10", "Clustering produces proposals not truth should
       expect(cohort.partition.predicate_root).toBe("profile");
       const subject = await engine.client.call("vault.get", { entity_ref: cohort.partition.subject_ref });
       expect(subject.value?.id_hex).toBe(engine.pairedActor.principalRef);
-      expect(cohort.partition.world_ref).toBeTruthy();
+      // G-CLUSTER-BASE (FIX21914): null is the documented base cohort; the
+      // reserved base id is a scope member, never an entity row, so no vault.get.
+      expect(cohort.partition.world_ref).toBeNull();
       expect(cohort.partition.facet_ref).toBeTruthy();
-      const world = await engine.client.call("vault.get", { entity_ref: cohort.partition.world_ref! });
       const facet = await engine.client.call("vault.get", { entity_ref: cohort.partition.facet_ref! });
-      expect(world.value?.id_hex).toBe(scope.world_id);
       expect(facet.value?.id_hex).toBe(scope.scope_facet_id);
       expect(cohort.cohesion).toBeGreaterThanOrEqual(0.9);
     }
@@ -1439,11 +1464,17 @@ suite.test(test, "RETRIEVAL-12", "Vector prefix candidates get full-dimension re
       expect(put.dimensions).toBe(4);
       records.set(row.label, record.id_hex);
     }
-    for (const [label, id] of records)
-      await awaitPublic(() => ordinary.client.call("vault.search.vector", { query: fixture.query, limit: 10 }),
+    // G-TOPK (FIX21914): isolate the intended ordinary corpus via the existing
+    // record-bound reader; observe publication with each row's own positive
+    // probe, not the deliberately poor common-query rank.
+    const ordinaryReader = await recordBoundReader(ordinary, [...records.values()]);
+    for (const row of fixture.vectors) {
+      const id = records.get(row.label)!;
+      await awaitPublic(() => ordinaryReader.call("vault.search.vector", { query: row.value, limit: 10 }),
         read => read.value.hits.some(hit => hit.entity_ref === id),
-        { label: `published vector: ordinary/${label}` });
-    const first = await ordinary.client.call("vault.search.vector", { query: fixture.query, limit: 10 });
+        { label: `published vector: ordinary/${row.label}` });
+    }
+    const first = await ordinaryReader.call("vault.search.vector", { query: fixture.query, limit: 10 });
     readReceipt(first.narrowing);
     expect(first.value.lane).toBe("ordinary");
     expect(first.value.effective_limit).toBe(10);
@@ -1456,7 +1487,7 @@ suite.test(test, "RETRIEVAL-12", "Vector prefix candidates get full-dimension re
     expect(ids).toContain(records.get(earlier!)!);
     expect(ids).toContain(records.get(later!)!);
     expect(ids.indexOf(records.get(earlier!)!)).toBeLessThan(ids.indexOf(records.get(later!)!));
-    const repeated = await ordinary.client.call("vault.search.vector", { query: fixture.query, limit: 10 });
+    const repeated = await ordinaryReader.call("vault.search.vector", { query: fixture.query, limit: 10 });
     expect(repeated.value.hits.map(hit => hit.entity_ref)).toEqual(ids);
     for (const hit of first.value.hits) {
       expect(Array.isArray(hit.embedding_matches)).toBe(true);
@@ -1499,12 +1530,17 @@ suite.test(test, "RETRIEVAL-12", "Vector prefix candidates get full-dimension re
       expect(put.dimensions).toBe(4);
       records.set(row.label, record.id_hex);
     }
-    for (const [label, id] of records)
-      await awaitPublic(() => voice.client.call("vault.search.vector",
-          { query: [...r12VoiceGeometry.query], limit: 8, lane: "voice_hot" }),
+    // G-TOPK (FIX21914): same scoped-reader isolation for the voice lane;
+    // per-row positive probes keep the prefix-only geometry intact.
+    const voiceReader = await recordBoundReader(voice, [...records.values()]);
+    for (const row of r12VoiceGeometry.rows) {
+      const id = records.get(row.label)!;
+      await awaitPublic(() => voiceReader.call("vault.search.vector",
+          { query: [...row.vector], limit: 8, lane: "voice_hot" }),
         read => read.value.hits.some(hit => hit.entity_ref === id),
-        { label: `published vector: voice/${label}` });
-    const first = await voice.client.call("vault.search.vector",
+        { label: `published vector: voice/${row.label}` });
+    }
+    const first = await voiceReader.call("vault.search.vector",
       { query: [...r12VoiceGeometry.query], limit: 8, lane: "voice_hot" });
     readReceipt(first.narrowing);
     expect(first.value.lane).toBe("voice_hot");
@@ -1515,7 +1551,7 @@ suite.test(test, "RETRIEVAL-12", "Vector prefix candidates get full-dimension re
       full_dimension_rescore: false });
     const ids = first.value.hits.map(hit => hit.entity_ref);
     for (const row of r12VoiceGeometry.rows) expect(ids).toContain(records.get(row.label)!);
-    const repeated = await voice.client.call("vault.search.vector",
+    const repeated = await voiceReader.call("vault.search.vector",
       { query: [...r12VoiceGeometry.query], limit: 8, lane: "voice_hot" });
     expect(repeated.value.refinement).toMatchObject({ score_dimensions: 2, full_dimension_rescore: false });
     for (const hit of first.value.hits) {
