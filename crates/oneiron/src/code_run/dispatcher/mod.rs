@@ -26,6 +26,7 @@ mod repo;
 mod repo_sources;
 mod routed_entry;
 mod session_verbs;
+mod skill_bodies;
 mod spawn_capture;
 mod summarize;
 mod team_submit;
@@ -124,6 +125,10 @@ pub struct HostSelfDispatcher<'a> {
     pub(super) hook_view: RefCell<Option<serde_json::Value>>,
     /// This call's released reason, taken once by its executor recorder.
     pub(super) task_refusal_output: RefCell<Option<Vec<u8>>>,
+    /// Where the last call's native producer witnessed the skill bodies its
+    /// answer carries (FIX 3608): the executor's host takes them with the
+    /// call's answer. Host-internal: no guest call reaches it.
+    pub(super) skill_bodies: RefCell<Option<crate::skill::SkillBodyCapture>>,
     /// The public fold boundary's completed pre chain, for its exact Mark only.
     pub(super) pre_hooked_fold: Option<crate::code_run::actions::PreHookedFold>,
     /// The calls a verb hook's ask parked, as the run's history shows them,
