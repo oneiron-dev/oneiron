@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1296 facade rows, 4698 declarations.
-Inputs: 1225 of 1296 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1125 of 1296 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1297 facade rows, 4700 declarations.
+Inputs: 1226 of 1297 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1126 of 1297 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -5301,6 +5301,7 @@ class InboxLensRow(TypedDict):
     occurred_at: int
     receipt_ref: NotRequired[str | None]
     payload_ref: NotRequired[str | None]
+    approval_digest: NotRequired[str | None]
     concern: NotRequired[InboxLensConcern | None]
     diary_review: NotRequired[InboxLensDiaryReview | None]
     sender: NotRequired[str | None]
@@ -12474,7 +12475,11 @@ class AnnotationLocatorHtml(TypedDict):
     part_id: str
     char_start: int
     char_end: int
-AnnotationLocator = AnnotationLocatorXlsx | AnnotationLocatorDocx | AnnotationLocatorPptx | AnnotationLocatorHtml
+class AnnotationLocatorText(TypedDict):
+    format: Literal["text"]
+    char_start: int
+    char_end: int
+AnnotationLocator = AnnotationLocatorXlsx | AnnotationLocatorDocx | AnnotationLocatorPptx | AnnotationLocatorHtml | AnnotationLocatorText
 class ArtifactUnitView(TypedDict):
     locator: AnnotationLocator
     quote: NotRequired[str | None]
@@ -14424,8 +14429,10 @@ class RepoAnchorBindOutput(TypedDict):
     portable: str
     registration: NotRequired[RepoRegistrationView | None]
     changed: bool
+RepoPortableId = str
 class RepoSnapshotsGetInput(TypedDict):
     repo: EntityId
+    portable_repo: NotRequired[RepoPortableId | None]
     ref: str
     snapshot: str
 class RepoSnapshotView(TypedDict):
@@ -14438,6 +14445,7 @@ class RepoSnapshotView(TypedDict):
 RepoSnapshotsGetOutput = RepoSnapshotView
 class RepoSnapshotsReadInput(TypedDict):
     repo: EntityId
+    portable_repo: NotRequired[RepoPortableId | None]
     ref: str
     snapshot: str
     path: str
@@ -14451,6 +14459,7 @@ class RepoSnapshotsReadOutput(TypedDict):
     text_sha256: str
 class RepoSymbolsDefinitionsInput(TypedDict):
     repo: EntityId
+    portable_repo: NotRequired[RepoPortableId | None]
     ref: str
     snapshot: str
     name: str
@@ -14506,10 +14515,12 @@ class RepoMergeQueueObserveOutput(TypedDict):
     entries: list[RepoQueueEntryView]
 class RepoSnapshotsIngestInput(TypedDict):
     repo: EntityId
+    portable_repo: NotRequired[RepoPortableId | None]
     ref: str
 RepoSnapshotsIngestOutput = RepoSnapshotView
 class RepoWorkOpenInput(TypedDict):
     repo: EntityId
+    portable_repo: NotRequired[RepoPortableId | None]
     ref: str
 RepoWorkOpenOutput = RepoWorkView
 class RepoSymbolsDeclareInput(TypedDict):
@@ -16690,6 +16701,11 @@ class ConsentAnswer(TypedDict):
     part: ConsentPart
     grant: bool
     spend_scope: NotRequired[SpendScopeId | None]
+class RoomLeaveRequest(TypedDict):
+    room: EntityId
+    person: EntityId
+class RoomLeaveOutcome(TypedDict):
+    member_ids: list[EntityId]
 class OfferDraft(TypedDict):
     room: EntityId
     branch: NotRequired[EntityId | None]
@@ -23482,7 +23498,6 @@ class FilesSourceConvertRequest(TypedDict):
 class RepoManifestConflictReviewRequest(TypedDict):
     window: str
     portable_repo: str
-RepoPortableId = str
 class RepoManifestWriter(TypedDict):
     machine: EntityId
     signature: list[int]

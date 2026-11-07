@@ -493,7 +493,7 @@ class Oneiron:
     def graph_fs(self) -> "Oneiron._GraphFsVerbs":
         return Oneiron._GraphFsVerbs(self._client)
     def execute_code(self, spec):
-        """Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal."""
+        """Run foreign JavaScript or TypeScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal."""
         return json.loads(_translate(lambda: self._client.execute_code(json.dumps(spec))))
     def can(self, request: dict[str, Any]) -> dict[str, Any]:
         """Read-only ask routing or attributed partial answers."""
@@ -1886,7 +1886,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def wrong(self, spec):
-            """The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays."""
+            """The owner labels a claim, project, budget or sieve audit item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays."""
             return json.loads(_translate(lambda: self._client.vault_weave_owner_item_wrong(json.dumps(spec))))
     class _VaultWeaveOwnerDigestVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -1898,7 +1898,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def wrong(self, spec):
-            """A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays."""
+            """A person labels a claim, project, budget or sieve audit item in their own lens as wrong; the label teaches the loops and the record stays."""
             return json.loads(_translate(lambda: self._client.vault_weave_item_wrong(json.dumps(spec))))
     class _VaultWeaveAdminVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -4999,6 +4999,9 @@ class Oneiron:
         def consent(self, spec):
             """One party's answer to a join that waits on it, after which the join is decided again."""
             return json.loads(_translate(lambda: self._client.vault_rooms_consent(json.dumps(spec))))
+        def leave(self, spec):
+            """Ends a person's current room membership: their own leave or their principal's, or the vault owner's removal; saving that rode on it stops, and a later vault.rooms.join opens a new membership."""
+            return json.loads(_translate(lambda: self._client.vault_rooms_leave(json.dumps(spec))))
         @property
         def offer(self) -> "Oneiron._VaultRoomsOfferVerbs":
             return Oneiron._VaultRoomsOfferVerbs(self._client)
