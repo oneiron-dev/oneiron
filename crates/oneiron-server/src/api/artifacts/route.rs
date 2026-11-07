@@ -230,9 +230,8 @@ pub(super) fn backend_redirect_path(encoded: &str) -> Result<String, EnvelopedAp
 }
 
 pub(super) fn selector_query_pair(raw: &str) -> bool {
-    decode_component(raw.split('=').next().unwrap_or_default()).is_ok_and(|key| {
-        matches!(key.as_str(), "channel" | "forkHash" | "blobVersion")
-    })
+    decode_component(raw.split('=').next().unwrap_or_default())
+        .is_ok_and(|key| matches!(key.as_str(), "channel" | "forkHash" | "blobVersion"))
 }
 
 fn missing() -> EnvelopedApiError {
