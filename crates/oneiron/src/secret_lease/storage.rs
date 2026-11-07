@@ -350,6 +350,59 @@ pub(crate) fn stamp_reveal_lease_in_txn(
     Ok(SecretLeaseMaterialization { lease, value })
 }
 
+/// The T1 lease a `self.use` T1 operation stamps (FIX 2616): the value
+/// leaves once, to the host callback the operation names, in the
+/// receipt-before-lease order every materialization keeps.
+///
+/// Unlike [`stamp_secret_lease_in_txn`] this resolves the record BY ID: a use
+/// presents the record its handle resolved to before the send, so a name
+/// re-registered between admission and stamp cannot swap the credential.
+/// Unlike [`stamp_reveal_lease_in_txn`] the admission is the record's own
+/// binding for the operation's effector reaching T1 — never the widest
+/// binding, so a masked secret with no binding stays refused until the
+/// owner binds it.
+///
+/// The one T1 admission evaluation per use lives here, under the committing
+/// writer against the live floor (the stamp resolves, as every stamp does):
+/// callers admit liveness and the binding's read grant up front, and this is
+/// the check that must pass for the value to leave.
+pub(crate) fn stamp_use_lease_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    effector: &str,
+    ttl_secs: u64,
+) -> Result<SecretLeaseMaterialization> {
+    let rec = read_secret_custody_admission_in_txn(&vault.store, wtxn, id)?
+        .ok_or_else(|| Error::Secret(SecretError::SecretRefNotFound { name: id.to_hex() }))?;
+    let floor = SecretCustodyFloor::resolve(&vault.store, wtxn)?;
+    admit_record_use(&rec, effector, CustodyTier::T1Leased, &floor)?;
+    crate::secret_custody::refuse_revoked_use_in_txn(vault, wtxn, id, rec.class, &rec.name)?;
+    // ONE instant stamps `granted_at`, dates the receipt and bounds the
+    // lease. A use carries no authority end, so the TTL alone bounds it.
+    let now = VaultInstant(vault.store.clock.now_recorded_at());
+    let expires_at = now.secs().saturating_add(ttl_secs);
+    // The dial caps actual exposure, under the committing writer, before
+    // the value read or either durable row write.
+    crate::credential_door::admit_materialization_in_txn(
+        &vault.store,
+        wtxn,
+        effector,
+        Some(ttl_secs),
+    )?;
+    let value = read_value_for_ref_in_txn(vault, wtxn, id, effector)?;
+    let lease = write_t1_lease_rows_in_txn(
+        vault,
+        wtxn,
+        &rec.name,
+        effector,
+        now.secs(),
+        expires_at,
+        rec.rotation_generation,
+    )?;
+    Ok(SecretLeaseMaterialization { lease, value })
+}
+
 /// The value a delivered reveal's own T1 lease `lease_id` still holds, read
 /// again for the step that collected it, resumed after a park (FIX 2360).
 /// The lease must be this reveal's (its secret and its effector), active,

@@ -173,6 +173,26 @@ pub(in crate::sync) fn admit_document_read_in_txn(
     admit_selected_in_txn(vault, txn, id, selector, &admission)
 }
 
+/// Whether every disclosed cache world is held by this request's live grant
+/// and selector. A NOTE admitted at one world does not prove the whole set.
+pub(in crate::sync) fn cache_worlds_admitted_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    scope: FederationGrantScope,
+    selector: &SyncSelector,
+    worlds: &std::collections::BTreeSet<EntityId>,
+) -> Result<bool> {
+    let admission = authorize_in_txn(vault, txn, scope, selector, None)?;
+    let selected = note_world::selector_world_axis(selector.world);
+    let position = admission.position.as_scope();
+    Ok(worlds.iter().all(|world| {
+        let world = crate::federation::ScopeId(*world);
+        admission.grant.authority_scope.worlds.contains(&world)
+            && selected.contains(&world)
+            && position.worlds.contains(&world)
+    }))
+}
+
 pub(in crate::sync) fn admit_document_write_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

@@ -41,6 +41,10 @@ struct Registry {
 pub(crate) struct HostLegalCaptures {
     registry: Mutex<Registry>,
     stopped: AtomicBool,
+    /// Set once managed stop closes every off-record session: a live order
+    /// whose HOST has no working attempt then ends interrupted instead of
+    /// keeping its session open for a retry.
+    closing_at_stop: AtomicBool,
     /// Live prospective-capture connections (FIX 13866).
     pub(super) prospective: super::outbox::ProspectiveAttempts,
 }
@@ -555,11 +559,13 @@ impl Vault {
         self.host_legal_captures.stop_live()
     }
 
-    /// Managed teardown calls this at its stop trigger: it stops
-    /// live-session captures and leaves each prospective connection draining
-    /// for [`Self::finish_host_legal_prospective`].
-    pub fn stop_live_host_legal_captures(&self) -> Result<()> {
-        self.host_legal_captures.stop_live()
+    /// Managed stop's off-record session close starts: from here a live
+    /// order whose capture cannot run ends interrupted, never captured, and
+    /// its session's close proceeds.
+    pub(crate) fn begin_live_capture_close_at_stop(&self) {
+        self.host_legal_captures
+            .closing_at_stop
+            .store(true, Ordering::Release);
     }
 
     /// Managed teardown calls this once every writer of this process stopped,
@@ -608,14 +614,39 @@ impl LiveSpillCaptures {
     fn capture(&self, vault: &Vault, source: Option<&WrittenSessionSpill>) -> Result<()> {
         let bodies = u64::try_from(source.map_or(0, WrittenSessionSpill::body_count))
             .map_err(|_| io::Error::other("live legal body count overflow"))?;
+        let at_stop = vault
+            .host_legal_captures
+            .closing_at_stop
+            .load(Ordering::Acquire);
         for order in &self.orders {
             if order.completed.load(Ordering::Acquire)
                 || order.ends_at <= vault.store.clock.now_recorded_at()
             {
                 continue;
             }
-            let attempt = order.current_attempt()?;
-            let mut capture = attempt.start(vault)?;
+            let started = order.current_attempt().and_then(|attempt| {
+                let capture = attempt.start(vault)?;
+                Ok((attempt, capture))
+            });
+            let (attempt, mut capture) = match started {
+                Ok(started) => started,
+                // Managed stop: an order with no working attempt can get no
+                // HOST retry. Its capture of this session ends interrupted,
+                // never claimed, and the close goes on. A failure once a
+                // capture runs, of its source or its transport, still fails
+                // the close, as it does today.
+                Err(error) if at_stop => {
+                    tracing::warn!(
+                        %error,
+                        "a live legal capture had no working attempt at managed stop; its spill was not captured"
+                    );
+                    for attempt in order.attempts()? {
+                        attempt.cancel(io::ErrorKind::Interrupted)?;
+                    }
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
             let outcome = (|| -> Result<()> {
                 attempt.check(vault)?;
                 let mut collector =

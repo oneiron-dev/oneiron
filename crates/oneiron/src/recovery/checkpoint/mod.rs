@@ -32,6 +32,13 @@ mod image;
 mod landing;
 pub(crate) use landing::RestoreActorScrubWriter;
 mod landing_lengths;
+#[cfg(unix)]
+mod legal_read;
+#[cfg(unix)]
+pub(crate) use legal_read::{
+    ArtifactComponent, ArtifactMessage, ArtifactRead, ArtifactRefusal, ArtifactRow, LegalReadError,
+    VerifiedArtifact, open_artifact_read,
+};
 mod pad_custody;
 mod pad_objects;
 mod pad_reopen;

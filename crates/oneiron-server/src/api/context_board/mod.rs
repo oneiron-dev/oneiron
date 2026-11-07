@@ -17,8 +17,15 @@ mod prefix;
 mod reply;
 pub(crate) use reply::generate_reply;
 mod run_self;
-pub(crate) use run_self::describe_self_for_run;
+pub(crate) use run_self::{
+    BriefHostFacts, brief_pins_family, describe_self_for_run, run_brief_people, run_brief_state,
+};
 mod layout;
+mod mcp_self;
+pub(crate) use mcp_self::{
+    ConnectionBriefReads, code_mode_brief_key, connection_brief_key, connection_brief_reads,
+    connection_brief_state, connection_has_brief, describe_self_for_mcp,
+};
 mod scratchpad;
 mod session;
 mod split;
@@ -50,6 +57,7 @@ use crate::auth::CoreScope;
 use crate::error::ApiErrorEnvelope;
 use crate::error::EnvelopedApiError;
 use crate::server::SyncServer;
+use crate::server::self_brief_custody::{BriefAcknowledgment, BriefPreparation};
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
@@ -685,9 +693,10 @@ async fn hydrate_inner(
     // Only a trusted host may install a run snapshot. Caller-controlled HTTP
     // fields choose neither authority nor the epoch; an absent snapshot is
     // never filled with fabricated grant or budget data.
-    // Stage prefix bytes and epoch under one session lock. The response may
-    // still fail the full token-budget check below; on failure neither moves.
-    let mut runs = server.self_brief_sessions.lock().await;
+    // Stage the boundary's prefix under one custody lock. The response may
+    // still fail the full token-budget check below; on failure the staged
+    // candidate is dropped unacknowledged and nothing moves.
+    let mut briefs = server.self_brief_sessions.lock().await;
     let mut staged_prefix = None;
     let self_brief = if let (Some(actor_ref), Some(session_id)) = (
         auth.principal_ref()
@@ -698,31 +707,27 @@ async fn hydrate_inner(
             crate::error::ApiError::bad_request("invalid agent actor", Some("session"))
         })?;
         let key = (actor, session_id.to_owned());
-        if let Some(run) = runs.get_mut(&key) {
-            if run.emitted_epoch.is_none() || run.emitted_epoch != Some(run.epoch) {
-                let mut candidate = run.render.clone();
-                // The prefix roster re-lays out only here, at an epoch
-                // boundary: the `people` share of the agent's layout.
-                candidate.set_people_budget_tok(layout.layout.share_tok("people", cap_tok));
-                let card = if run.emitted_epoch.is_none() {
-                    candidate.turn_one(&server.vault, &run.state, &observed_reads, Some(&people))
-                } else {
-                    candidate.fold(&server.vault, &run.state, &observed_reads, Some(&people))
-                }
-                .map_err(|error| super::core_engine_error("self brief failed", error))?;
-                staged_prefix = Some((key, candidate, run.epoch));
-                Some(card)
-            } else if req.describe_self {
-                Some(
-                    run.render
-                        .describe_self(&server.vault, &run.state, &observed_reads, Some(&people))
-                        .map_err(|error| super::core_engine_error("self brief failed", error))?,
-                )
-            } else {
-                None
+        // The prefix roster re-lays out only at an epoch boundary: the
+        // `people` share of the agent's layout.
+        match briefs
+            .prepare(
+                &key,
+                &server.vault,
+                &observed_reads,
+                Some(&people),
+                layout.layout.share_tok("people", cap_tok),
+            )
+            .map_err(|error| super::core_engine_error("self brief failed", error))?
+        {
+            Some(BriefPreparation::Staged { placed, candidate }) => {
+                staged_prefix = Some(candidate);
+                Some(placed)
             }
-        } else {
-            None
+            Some(BriefPreparation::Emitted { .. }) if req.describe_self => briefs
+                .tail(&key, &server.vault, &observed_reads, Some(&people))
+                .transpose()
+                .map_err(|error| super::core_engine_error("self brief failed", error))?,
+            Some(BriefPreparation::Emitted { .. }) | None => None,
         }
     } else {
         None
@@ -779,15 +784,12 @@ async fn hydrate_inner(
     if let Err(error) = server.vault.record_board_hook_deliveries(&hook_blocks) {
         tracing::warn!(kind = ?error.kind(), "board hook delivery record failed");
     }
-    let prefix_committed = staged_prefix.is_some();
-    if let Some((key, render, epoch)) = staged_prefix {
-        let run = runs
-            .get_mut(&key)
-            .expect("run remains locked through response validation");
-        run.render = render;
-        run.emitted_epoch = Some(epoch);
-    }
-    drop(runs);
+    // The response is final: the staged prefix and its roster become the
+    // session's custody, its boundary emitted. The lock held since staging
+    // keeps the candidate current.
+    let prefix_committed = staged_prefix
+        .is_some_and(|candidate| briefs.acknowledge(candidate) == BriefAcknowledgment::Committed);
+    drop(briefs);
     // Every row the board delivered: its MEMORIES rows (pins included), its
     // capability hits, and the task intents, worlds, room and project it named.
     let mut delivered: Vec<_> = response
@@ -924,7 +926,9 @@ fn within_standing_budget(response: &ContextBoardResponse) -> Result<(), crate::
 /// The brief is rendered whole, so a record-narrowed credential is refused.
 /// Beside the card come the rows it is derived from
 /// ([`oneiron::context_board::SelfBrief::sources`]), the PEOPLE roster it
-/// read among them, which every served door releases it by (DEC-0005).
+/// read among them, which every served door releases it by (DEC-0005). An
+/// MCP connection's describe(self) reads its own connection instead
+/// ([`describe_self_for_mcp`]).
 pub(crate) async fn describe_self_for_auth(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -963,30 +967,59 @@ pub(crate) async fn describe_self_for_auth(
         .await
         .session_reads(&actor.to_hex(), Some(session_id))
         .clone();
-    let mut runs = server.self_brief_sessions.lock().await;
-    let (tail, sources) = match runs.get_mut(&(actor, session_id.to_owned())) {
-        Some(run) => {
-            let (card, sources) = run
-                .render
-                .describe_self_listing(&server.vault, &run.state, &read_set, Some(&people))
-                .map_err(|error| super::core_engine_error("self brief failed", error))?;
+    let briefs = server.self_brief_sessions.lock().await;
+    let (tail, sources) = match briefs.tail_listing(
+        &(actor, session_id.to_owned()),
+        &server.vault,
+        &read_set,
+        Some(&people),
+    ) {
+        Some(listing) => {
+            let (card, sources) =
+                listing.map_err(|error| super::core_engine_error("self brief failed", error))?;
             let tail = card.tail.ok_or_else(|| {
                 crate::error::ApiError::internal_server_error("self brief tail is missing")
             })?;
             (tail, sources)
         }
         // FIX 11461: no host installed a snapshot for this session, so the
-        // brief is resolved as a pumped run's is: the agent, the person its
-        // subject anchor names, the clock and the skills this session
-        // loaded, with every field no host resolves (and the budget, as no
-        // run line binds a credential's call) named on one unavailable
-        // line, never stated as a value.
+        // brief is resolved as a pumped run's is: the agent (an agent, as
+        // checked above), the person its subject anchor names, the owner's
+        // agent Grants that stand for it, the credential ceiling and the
+        // comm reach of the slip it presented, the first beside the read key
+        // it was admitted on, the policy's class ceilings, the scratchpad of
+        // the session it names, read as its credential reads its board's,
+        // the pins its own board for that session admits now with no pin
+        // list, room or branch of its own, the clock and the skills this
+        // session loaded, with every field no host resolves named on one
+        // unavailable line, never stated as a value. A session label binds no
+        // dispatch attempt and proves no replay ownership, so the run and
+        // parent ceilings, the run's comm reach and its replay bindings are
+        // among them, as is the budget, as no run line binds a credential's
+        // call.
         None => {
-            let state =
-                run_self::resolved_state(server, actor, None, &read_set).map_err(|error| {
+            let agent = oneiron::WriteActor::new(actor, oneiron::EdgeActorClass::Agent);
+            let host = BriefHostFacts {
+                run_ceiling: None,
+                replay_run: None,
+                // A Core call arrives on no registered MCP connector.
+                credential_ceiling: auth.verified_slip().map(|proof| {
+                    oneiron::context_board::brief_credential_ceiling(proof, read.actor_key(), None)
+                }),
+                communication_credential_ceiling: auth
+                    .verified_slip()
+                    .map(oneiron::authority::VerifiedSlip::comm),
+                scratchpad: scratchpad::scratchpad_memory(server, auth)
+                    .ok()
+                    .and_then(|memory| run_self::scratchpad_family(&memory, session_id)),
+                pins: run_self::credential_pins_family(server, auth, session_id),
+            };
+            let state = run_self::resolved_state(server, agent, None, &read_set, &host).map_err(
+                |error| {
                     tracing::warn!(code = %error.code, "a credential's self brief did not resolve");
                     crate::error::ApiError::internal_server_error("self brief failed")
-                })?;
+                },
+            )?;
             let brief = state
                 .describe(&server.vault, &read_set, Some(&people))
                 .map_err(|error| super::core_engine_error("self brief failed", error))?;

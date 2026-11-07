@@ -182,6 +182,15 @@ pub(in crate::api::mcp_gateway) async fn enter_mcp_code_run(
     let verbs = Arc::new(super::code_mode_verbs::McpCodeModeVerbs::new(
         server, actor, run_id,
     ));
+    // FIX 17594 D5: the durable run's self brief, keyed by its trusted run
+    // id, for a connection that has one; the host installs it under the
+    // run's single flight and closes it when the run completes. A parked
+    // run's automatic re-entry (FIX 4606) takes it the same way.
+    let brief = crate::api::connection_has_brief(actor).then(|| {
+        Arc::new(super::code_mode_self_brief::CodeModeSelfBrief::new(
+            server, actor, run_id,
+        )) as Arc<dyn crate::mcp::McpCodeRunSelfBrief>
+    });
     let outcome = host
         .execute(crate::mcp::McpCodeExecutionRequest {
             vault: Arc::clone(&server.vault),
@@ -191,6 +200,7 @@ pub(in crate::api::mcp_gateway) async fn enter_mcp_code_run(
             task,
             run_id,
             verbs: Arc::clone(&verbs) as Arc<dyn oneiron::code_run::AgentVerbDoor>,
+            brief,
         })
         .await;
     // A run that ended ends its desktop and closes the live lens cards it
