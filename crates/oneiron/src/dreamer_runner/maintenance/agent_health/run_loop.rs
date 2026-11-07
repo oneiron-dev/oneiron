@@ -80,6 +80,7 @@ pub(super) fn run_loop_findings(
                 task: task_of(record),
                 attempt: Some(record.id),
                 generation: Some(record.attempt_count),
+                source_rows: None,
                 evidence: vec![attempt],
                 window: (
                     first.started_at_ms / 1000,
@@ -88,6 +89,8 @@ pub(super) fn run_loop_findings(
                 actual: count,
                 dial: repeats as i64,
                 measured: count,
+                exact_dial: None,
+                exact_measured: None,
                 counter,
                 confession: None,
                 blocked: false,
