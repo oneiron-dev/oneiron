@@ -489,6 +489,9 @@ fn refuse_peer_agent_definition_widening(
 /// materialization must discard.
 #[cfg(feature = "sync")]
 fn validate_admitted_replicated_body(id: &EntityId, entity_type: u8, body: &[u8]) -> Result<()> {
+    // Fix list row 16256: a restricted lane carries no source-audience key,
+    // whatever its value; a peer's body naming it is refused as it came.
+    crate::source_audience::refuse_written_obligation(entity_type, body)?;
     if entity_type != crate::registry::ENTITY_TYPE_AGENT_DEF {
         crate::agent_def::validate_put_at_seeded_id(id, entity_type, None)?;
     }
