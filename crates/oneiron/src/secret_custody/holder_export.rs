@@ -30,7 +30,8 @@
 //! A kept copy whose secret an admitted revoke ended or an erase
 //! here fenced is forgotten (`settle`, FIX 12064). Once the owner's import
 //! of a copy commits, the recipient marks its request imported, and no
-//! install relays the copy any more (`import_mark`, FIX 12062).
+//! install relays the copy any more (`import_mark`, FIX 12062); a mark it
+//! cannot sign then stays owed, value-free, until it can (FIX 12291).
 
 mod import_mark;
 mod part_signature;
