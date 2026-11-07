@@ -57959,20 +57959,35 @@ pub struct ConnectorListRequest {
 }
 
 /// `oneiron::verbs::connector::ConnectorEntry`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct ConnectorEntry {
-    #[serde(rename = "name")]
-    pub name: String,
-    #[serde(rename = "connector")]
-    pub connector: String,
-    #[serde(rename = "summary")]
-    pub summary: String,
-    #[serde(rename = "verbs")]
-    pub verbs: Vec<String>,
-    #[serde(rename = "call_class")]
-    pub call_class: String,
-    #[serde(rename = "registered_at")]
-    pub registered_at: u64,
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "source")]
+pub enum ConnectorEntry {
+    #[serde(rename = "catalog")]
+    Catalog {
+        #[serde(rename = "name")]
+        name: String,
+        #[serde(rename = "connector")]
+        connector: String,
+        #[serde(rename = "summary")]
+        summary: String,
+        #[serde(rename = "verbs")]
+        verbs: Vec<String>,
+        #[serde(rename = "call_class")]
+        call_class: String,
+        #[serde(rename = "registered_at")]
+        registered_at: u64,
+    },
+    #[serde(rename = "builtin")]
+    Builtin {
+        #[serde(rename = "name")]
+        name: String,
+        #[serde(rename = "connector")]
+        connector: String,
+        #[serde(rename = "summary")]
+        summary: String,
+        #[serde(rename = "verbs")]
+        verbs: Vec<String>,
+    },
 }
 
 /// `oneiron::verbs::connector::ConnectorNameRequest`.

@@ -18420,13 +18420,21 @@ class DecisionAskConfirmGrantRequest(TypedDict):
     notice: str
 class ConnectorListRequest(TypedDict):
     query: NotRequired[str | None]
-class ConnectorEntry(TypedDict):
+class ConnectorEntryCatalog(TypedDict):
+    source: Literal["catalog"]
     name: str
     connector: str
     summary: str
     verbs: list[str]
     call_class: str
     registered_at: int
+class ConnectorEntryBuiltin(TypedDict):
+    source: Literal["builtin"]
+    name: str
+    connector: str
+    summary: str
+    verbs: list[str]
+ConnectorEntry = ConnectorEntryCatalog | ConnectorEntryBuiltin
 class ConnectorNameRequest(TypedDict):
     name: str
 class ConnectorView(TypedDict):

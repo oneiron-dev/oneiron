@@ -7215,7 +7215,7 @@ export type DecisionAskConfirmGrantRequest = { seq: number; notice: string }
 /** `oneiron::verbs::connector::ConnectorListRequest` */
 export type ConnectorListRequest = { query?: string | null }
 /** `oneiron::verbs::connector::ConnectorEntry` */
-export type ConnectorEntry = { name: string; connector: string; summary: string; verbs: string[]; call_class: string; registered_at: number }
+export type ConnectorEntry = { source: "catalog"; name: string; connector: string; summary: string; verbs: string[]; call_class: string; registered_at: number } | { source: "builtin"; name: string; connector: string; summary: string; verbs: string[] }
 /** `oneiron::verbs::connector::ConnectorNameRequest` */
 export type ConnectorNameRequest = { name: string }
 /** `oneiron::verbs::connector::ConnectorView` */

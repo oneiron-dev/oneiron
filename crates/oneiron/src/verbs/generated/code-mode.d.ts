@@ -3628,7 +3628,7 @@ declare namespace Sdk {
   type DecisionAskClimbRequest = { seq: number };
   type DecisionAskConfirmGrantRequest = { seq: number; notice: string };
   type ConnectorListRequest = { query?: string | null };
-  type ConnectorEntry = { name: string; connector: string; summary: string; verbs: string[]; call_class: string; registered_at: number };
+  type ConnectorEntry = { source: "catalog"; name: string; connector: string; summary: string; verbs: string[]; call_class: string; registered_at: number } | { source: "builtin"; name: string; connector: string; summary: string; verbs: string[] };
   type ConnectorNameRequest = { name: string };
   type ConnectorView = { key_ref: string; entry: ConnectorEntry; status: string; secret_ref?: string | null; key_generation: number; registered_at: number; status_changed_at?: number | null; budgeted_as_sends: boolean };
   type ConnectorSchemaRequest = { name: string; tool: string };
@@ -4828,7 +4828,7 @@ declare const connector: { readonly [name: string]: { readonly [tool: string]: (
   call(input: Sdk.ConnectorCallRequest): Promise<Sdk.ActAnswer<Sdk.ConnectorCallReply> | StoredResult>;
   /** Where one connector.call stands, by the call_ref its held, pending_delivery or awaiting_input reply named: pending, the questions it waits on, or its settled reply. Only its caller and the vault's owner read it. */
   call_status(input: Sdk.ConnectorCallStatusRequest): Promise<Sdk.ConnectorCallStatus | StoredResult>;
-  /** Every live catalogued connector whose name or summary matches the query. */
+  /** Every matching live catalogued connector and first-party web interface, distinguished by source. */
   list(input: Sdk.ConnectorListRequest): Promise<Sdk.ConnectorEntry[] | StoredResult>;
   outbound: {
     /** Schedules one send through a granted outbound connector, gated and held for delivery. */
