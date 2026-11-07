@@ -548,31 +548,15 @@ impl Vault {
             None
         };
         // OF-013: the floors travel so an import never numbers an epoch under
-        // one a purge removed. A floor whose session a device-local world
-        // keeps stays here, as the session's own row does.
+        // one a purge removed; a device-local world keeps its own.
         if scope == ExportScope::WholeVault {
-            for (session, epoch, turn_end) in
-                crate::compaction::epoch_floors_in_txn(&self.store, &rtxn)?
-            {
-                if crate::settings::device_only_withholds(
-                    &self.store,
-                    &rtxn,
-                    &device_only,
-                    &session,
-                )
-                .or_else(|error| match error {
-                    Error::CorruptedIndex(_) => Ok(true),
-                    error => Err(error),
-                })? {
-                    continue;
-                }
-                sources.insert(session);
-                writer.epoch_floor(&super::ExportEpochFloor {
-                    session: session.to_hex(),
-                    epoch,
-                    turn_end,
-                })?;
-            }
+            super::epoch_floors::write_epoch_floors_in_txn(
+                &self.store,
+                &rtxn,
+                &device_only,
+                &mut sources,
+                &mut writer,
+            )?;
         }
         // FIX 2768, 3681: each carried record's side rows go with it, in a
         // records archive as in the whole-vault one, read in this snapshot

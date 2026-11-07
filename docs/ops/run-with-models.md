@@ -233,8 +233,10 @@ keeps the provider offer's payer, key custody and rates. A free provider
 so a vault routed `on_device` can use it: each call is charged to that payer,
 reserves on its run's budget line (and on the vault's allocation for payer
 `host`), and is refused when they refuse it, exactly as its own-server call
-is. A declared run still refuses a `key_env` (T1) offer unless the owner
-allowed that offer. The native channel sends no key; a key the provider holds
+is. A paid on-device call also reserves on the budget lines of its durable
+model step or Dreamer pass, and its purpose's policy rows cap it, as an
+own-server paid call does. A declared run still refuses a `key_env` (T1)
+offer unless the owner allowed that offer. The native channel sends no key; a key the provider holds
 still makes its calls paid. The receipt names the place `on_device`
 (`<model>@on_device`) and the route `exl3-native@worker:<id>`. One kind of
 provider gets no on-device offer: payer `local`, no key, and locality

@@ -30,7 +30,7 @@ pub mod totp;
 
 pub use crate::envelope::{
     Envelope, Header, Kdf, ONEV_HEADER_PREFIX_MAX, ONEV_HEADER_PREFIX_MIN, OpenKey, OpenPolicy,
-    Purpose, SealKey, SealParams, WrapParams, WrapType, seal, seal_with_aad,
+    Purpose, SealKey, SealParams, WrapParams, WrapType, seal, seal_with_aad, seal_with_aad_into,
 };
 pub use crate::error::{Error, Result};
 pub use crate::keys::{
