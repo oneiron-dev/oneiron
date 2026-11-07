@@ -9,6 +9,7 @@ use crate::EntityId;
 use crate::attempt_queue::AttemptId;
 use crate::memory::codebase_doors::{CodeSnapshotDefinition, CodeSnapshotFile};
 use crate::merge_queue::BatchState;
+use crate::origin::RepoPortableId;
 use crate::store::repo_proposal_record::RepoProposalStatus;
 
 /// `self.code.snapshots.get`: the manifest of one snapshot of the admitted
@@ -16,8 +17,13 @@ use crate::store::repo_proposal_record::RepoProposalStatus;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RepoSnapshotsGetInput {
-    /// The CODE anchor the run's Grant admits.
+    /// The CODE anchor used when the portable selector is absent or unknown.
     pub repo: EntityId,
+    /// Portable repo id (64 lowercase hex digits). Resolves before admission;
+    /// an unknown id uses `repo` instead. The selector grants no authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<String>")]
+    pub portable_repo: Option<RepoPortableId>,
     /// The full Git ref name (`refs/heads/main`).
     #[serde(rename = "ref")]
     pub git_ref: String,
@@ -30,7 +36,13 @@ pub struct RepoSnapshotsGetInput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RepoSnapshotsReadInput {
+    /// The CODE anchor used when the portable selector is absent or unknown.
     pub repo: EntityId,
+    /// Portable repo id (64 lowercase hex digits). Resolves before admission;
+    /// an unknown id uses `repo` instead. The selector grants no authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<String>")]
+    pub portable_repo: Option<RepoPortableId>,
     #[serde(rename = "ref")]
     pub git_ref: String,
     pub snapshot: String,
@@ -48,7 +60,13 @@ pub struct RepoSnapshotsReadInput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RepoSymbolsDefinitionsInput {
+    /// The CODE anchor used when the portable selector is absent or unknown.
     pub repo: EntityId,
+    /// Portable repo id (64 lowercase hex digits). Resolves before admission;
+    /// an unknown id uses `repo` instead. The selector grants no authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<String>")]
+    pub portable_repo: Option<RepoPortableId>,
     #[serde(rename = "ref")]
     pub git_ref: String,
     pub snapshot: String,
@@ -90,7 +108,13 @@ pub struct RepoMergeQueueObserveInput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RepoSnapshotsIngestInput {
+    /// The CODE anchor used when the portable selector is absent or unknown.
     pub repo: EntityId,
+    /// Portable repo id (64 lowercase hex digits). Resolves before admission;
+    /// an unknown id uses `repo` instead. The selector grants no authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<String>")]
+    pub portable_repo: Option<RepoPortableId>,
     #[serde(rename = "ref")]
     pub git_ref: String,
 }
@@ -100,7 +124,13 @@ pub struct RepoSnapshotsIngestInput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RepoWorkOpenInput {
+    /// The CODE anchor used when the portable selector is absent or unknown.
     pub repo: EntityId,
+    /// Portable repo id (64 lowercase hex digits). Resolves before admission;
+    /// an unknown id uses `repo` instead. The selector grants no authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<String>")]
+    pub portable_repo: Option<RepoPortableId>,
     #[serde(rename = "ref")]
     pub git_ref: String,
 }
