@@ -4134,7 +4134,7 @@
      "path": "src/authority/frontier_join.rs",
      "purpose": "Joining a wide causal frontier (FIX 7908 and its duplicates, Phase2 B; CALLS \"Phase2 frontier join\")",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 6
      }
     },
     {
@@ -4265,7 +4265,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "VaultRecoveryRequest"
@@ -4273,7 +4273,7 @@
      "path": "src/authority/history_transfer.rs",
      "purpose": "Signed-history migration and independently authorized per-vault re-root doors",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 7,
       "struct": 1
      }
@@ -4444,6 +4444,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "HostIssuerSeedSlot",
       "LocalHostRootContext",
       "LocalHostRootValidated",
       "RetainedHostRootReplace"
@@ -4451,7 +4452,7 @@
      "path": "src/authority/local_host_root.rs",
      "purpose": "Re-keying this install's host root (FIX 5571, the re-key half of FIX 5346; owner ruling FIX 5341 = A)",
      "surface": {
-      "enum": 1,
+      "enum": 2,
       "fn": 3,
       "struct": 2
      }
@@ -4721,7 +4722,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 49,
+      "crate-vis": 50,
       "mod": 2,
       "re-export": 71
      }
@@ -5390,7 +5391,7 @@
      "purpose": "Where a vault's host issuer seed is kept (FIX-LIST 3018): this install's own `HostIssuerSeed` slot for the…",
      "surface": {
       "crate-vis": 3,
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -17047,6 +17048,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/dispatcher/record_refs.rs",
+     "purpose": "OF-063 on a run's in-core memory writes (FIX 1214)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -21081,15 +21092,17 @@
      "notable": [
       "CompiledPersona",
       "PersonaChange",
-      "PersonaMadeBy"
+      "PersonaInputBasis",
+      "PersonaMadeBy",
+      "PersonaReplayConflict"
      ],
      "path": "src/companion/persona.rs",
      "purpose": "PERSON identity baselines and deterministic replay of recorded changes",
      "surface": {
       "const": 1,
       "crate-vis": 3,
-      "fn": 4,
-      "struct": 3
+      "fn": 5,
+      "struct": 5
      }
     },
     {
@@ -28944,7 +28957,7 @@
      "path": "src/dreamer_consolidation/wake_plan.rs",
      "purpose": "One frozen read revision and exact preparation of queued consolidation work",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "struct": 2
      }
     },
@@ -38620,7 +38633,7 @@
      "path": "src/gate/ceiling.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 37
+      "crate-vis": 38
      }
     },
     {
@@ -45320,7 +45333,7 @@
      "path": "src/llm/decision/questions/mod.rs",
      "purpose": "Versioned questions, scoped answer receipts, and bound outcome labels",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "re-export": 16
      }
     },
@@ -45352,7 +45365,7 @@
      "path": "src/llm/decision/questions/recipe.rs",
      "purpose": "Explicit, resident-authored context recipes over immutable graph questions",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1,
       "re-export": 1
      }
@@ -64660,8 +64673,8 @@
      "purpose": "A verb call a count-bound budget window paced, held in its caller's fair line until its turn (FIX 8753…",
      "surface": {
       "const": 1,
-      "crate-vis": 8,
-      "fn": 4
+      "crate-vis": 9,
+      "fn": 5
      }
     },
     {
@@ -65812,7 +65825,7 @@
      "path": "src/secret_custody/holder_export/part_signature.rs",
      "purpose": "The holder's signature of each numbered part an export secret copy rides in (FIX 12373; Engine 13:54 call A)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -65822,7 +65835,7 @@
      "path": "src/secret_custody/holder_export/relay.rs",
      "purpose": "An export secret request's sealed copy as it is kept and relayed (FIX 11843): a label, the second its holder…",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 25
      }
     },
     {
@@ -77733,7 +77746,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ConnectionConfig",
@@ -80241,12 +80254,14 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "LeaveNoticeCheck",
       "VerifiedLeaveNotice"
      ],
      "path": "src/sync/shared_leave.rs",
      "purpose": "Leaving a shared vault, the device side (OF-158)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
+      "enum": 1,
       "fn": 7,
       "re-export": 1,
       "struct": 1
@@ -92068,7 +92083,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 209,
+     "files": 210,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93407,7 +93422,7 @@
    },
    "over_bar": 178,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6591,
+   "source_files": 6592,
    "test_files": 895
   },
   "oneiron-android": {
@@ -93713,7 +93728,7 @@
      "path": "src/authority/frontier_join.rs",
      "purpose": "A frontier join (FIX 7908, Phase2 B; CALLS \"Phase2 frontier join\"): one signed main-log row whose parents…",
      "surface": {
-      "const": 2,
+      "const": 1,
       "crate-vis": 3,
       "enum": 2,
       "struct": 1
@@ -112050,6 +112065,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/dreamer/destination_bound.rs",
+     "purpose": "Where a Dreamer pass's every leg sends what it reads (FIX 12735): the bound the vending factory states for…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/dreamer/free_time.rs",
      "purpose": "A resident's free-time items on this server (FIX 4453)",
      "surface": {
@@ -114040,7 +114065,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/conversation_dag/mod.rs",
@@ -115462,7 +115487,7 @@
      "path": "src/api/facade/host_doors/support/owner_action.rs",
      "purpose": "The owner-act `as_owner` the channel, code, codebase, code view, merge queue and origin doors share (FIX…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -115532,7 +115557,7 @@
      "path": "src/api/facade/identity.rs",
      "purpose": "Who a facade call acts as: its actor, its invocation id and the owner's authorship",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 13
      }
     },
     {
@@ -123591,10 +123616,30 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/handler/connection/run.rs",
+     "purpose": "One app-tier socket's loop, chosen at its upgrade and fixed for the socket's life: full replication for the…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/handler/connection/run/booking.rs",
+     "purpose": "A stale owner sign-in's app-tier socket (FIX 11712; DEC-0005 and ARCH-0062 stale-owner booking parity…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/handler/connection/run/replication.rs",
      "purpose": "The single-owner connection event loop: one socket's protocol hello, its root snapshot, then every frame it…",
      "surface": {
       "crate-vis": 1
@@ -125169,7 +125214,7 @@
      "purpose": "Managed runtime state, the reap freeze gate, and the supervised serve loop",
      "surface": {
       "const": 1,
-      "crate-vis": 21,
+      "crate-vis": 22,
       "fn": 15,
       "re-export": 2,
       "struct": 3,
@@ -125284,7 +125329,7 @@
      "path": "src/managed/state_serve/ingress.rs",
      "purpose": "Managed HTTP ingress and the reap freeze gate",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1
      }
     },
@@ -126710,6 +126755,16 @@
      "notable": [],
      "path": "src/models/ladder/decision_posture.rs",
      "purpose": "A decision call whose question's posture keeps its unit text on the host (FIX 9525): it goes down only the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/ladder/device_bound.rs",
+     "purpose": "A ladder held to this device for one Dreamer pass (FIX 12735): each of its rungs sends on the device, and…",
      "surface": {
       "crate-vis": 1
      }
@@ -131022,7 +131077,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 123,
+     "files": 124,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -131260,7 +131315,7 @@
      "purpose": "The host's intake of local folders (OF-554, FIX 6942): the confined walk, the notes reader, a Files source's…"
     },
     "handler": {
-     "files": 37,
+     "files": 39,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -131386,7 +131441,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 133,
+     "files": 134,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -131547,9 +131602,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 55,
+   "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1664,
+   "source_files": 1668,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -131927,7 +131982,7 @@
      "path": "src/attempt_read_producer.rs",
      "purpose": "Named producers of a queued attempt's recorded input rows",
      "surface": {
-      "const": 14,
+      "const": 15,
       "fn": 1,
       "struct": 1
      }
