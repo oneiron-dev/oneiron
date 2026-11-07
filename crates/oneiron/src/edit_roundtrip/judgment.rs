@@ -362,14 +362,6 @@ impl Vault {
         if sheet_ask_checkpoint(&resources, work_until).is_err() {
             return Ok(run);
         }
-        let cap = {
-            let rtxn = self.store.env.read_txn()?;
-            crate::gate::resolve_policy_manifest(&self.store, &rtxn)?.sheet_answer_limit(
-                &artifact.to_hex(),
-                request.sheet,
-                request.max_count_override,
-            )
-        };
         // Live reads and byte acquisition retain their existing source pins.
         let live = self.live_head_cells(artifact, request.sheet)?;
         if sheet_ask_checkpoint(&resources, work_until).is_err() {
@@ -457,9 +449,7 @@ impl Vault {
         let mut refusal_memory = resources.allocation();
         let mut answers = Vec::new();
         while let Some(row) = run.next_sheet_row {
-            if Instant::now() >= work_until
-                || cap.is_some_and(|cap| u64::try_from(answers.len()).unwrap_or(u64::MAX) >= cap)
-            {
+            if Instant::now() >= work_until {
                 break;
             }
             let prepared = (|| -> std::result::Result<(), SheetRowFailure> {
