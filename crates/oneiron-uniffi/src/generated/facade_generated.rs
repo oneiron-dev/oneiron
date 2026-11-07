@@ -1901,6 +1901,16 @@ export_facade! {
     let output = client.vault_sync_quarantine_held_edits(&input)?;
     crate::codec::lift_record("vault.sync.quarantine.held_edits", &output)
 };
+"vault.sync.documents.copy_edit.review" => fn vault_sync_documents_copy_edit_review(&self, input: RepoCopyEditReviewRequest) -> Option<RepoCopyEditReviewView> = |client| {
+    let input: oneiron::task_verb::sdk::RepoCopyEditReviewRequest = crate::codec::lower_record("vault.sync.documents.copy_edit.review", input)?;
+    let output = client.vault_sync_documents_copy_edit_review(&input)?;
+    crate::codec::lift_record("vault.sync.documents.copy_edit.review", &output)
+};
+"vault.sync.documents.copy_edit.settle" => fn vault_sync_documents_copy_edit_settle(&self, input: RepoCopyEditSettleRequest) -> RepoCopyEditSettleView = |client| {
+    let input: oneiron::task_verb::sdk::RepoCopyEditSettleRequest = crate::codec::lower_record("vault.sync.documents.copy_edit.settle", input)?;
+    let output = client.vault_sync_documents_copy_edit_settle(&input)?;
+    crate::codec::lift_record("vault.sync.documents.copy_edit.settle", &output)
+};
 "vault.sync.retained_work.wait.set" => fn vault_sync_retained_work_wait_set(&self, input: RetainedWorkWaitSetRequest) -> u64 = |client| {
     let input: oneiron::task_verb::sdk::RetainedWorkWaitSetRequest = crate::codec::lower_record("vault.sync.retained_work.wait.set", input)?;
     let output = client.vault_sync_retained_work_wait_set(&input)?;

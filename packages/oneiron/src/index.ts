@@ -1588,6 +1588,14 @@ export class Oneiron {
         /** The owner lists retained hash-only held-edit evidence in stored sequence order. Hashes are lossless lowercase hex strings. Shared quarantine retention applies; this is not live pending work or settlement status. */
         held_edits: (input: Facade.EmptyRequest): [number, Facade.SyncHeldEditEvidence][] => this.#call(() => this.#client.vaultSyncQuarantineHeldEdits(input) as [number, Facade.SyncHeldEditEvidence][]),
       },
+      documents: {
+        copy_edit: {
+          /** The owner reviews the edit a retained document copy holds for one source document: why it is held, the masked text the copy submitted, and the revision to settle it under; the revision is a token, not authority. */
+          review: (input: Facade.RepoCopyEditReviewRequest): Facade.RepoCopyEditReviewView | null => this.#call(() => this.#client.vaultSyncDocumentsCopyEditReview(input) as Facade.RepoCopyEditReviewView | null),
+          /** The owner settles that held copy edit to an exact replacement text, under the revision they reviewed; a changed or settled edit answers stale. Answers the committed document frame, a local commit, not a delivery. */
+          settle: (input: Facade.RepoCopyEditSettleRequest): Facade.RepoCopyEditSettleView => this.#call(() => this.#client.vaultSyncDocumentsCopyEditSettle(input) as Facade.RepoCopyEditSettleView),
+        },
+      },
       retained_work: {
         wait: {
           /** The owner sets one retained-work queue's wait in seconds, or resets it to its existing default, and receives the effective wait. */

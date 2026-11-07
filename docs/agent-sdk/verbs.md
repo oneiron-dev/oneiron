@@ -386,6 +386,8 @@ both bindings and their export-census tests in one change.
 - `vault.federation.burst.policy`
 - `vault.federation.burst.policy.set`
 - `vault.sync.quarantine.held_edits`
+- `vault.sync.documents.copy_edit.review`
+- `vault.sync.documents.copy_edit.settle`
 - `vault.sync.retained_work.wait.set`
 - `vault.federation.burst.ingress`
 - `vault.federation.burst.disposition`

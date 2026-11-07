@@ -2915,6 +2915,9 @@ class Oneiron:
         def quarantine(self) -> "Oneiron._VaultSyncQuarantineVerbs":
             return Oneiron._VaultSyncQuarantineVerbs(self._client)
         @property
+        def documents(self) -> "Oneiron._VaultSyncDocumentsVerbs":
+            return Oneiron._VaultSyncDocumentsVerbs(self._client)
+        @property
         def retained_work(self) -> "Oneiron._VaultSyncRetainedWorkVerbs":
             return Oneiron._VaultSyncRetainedWorkVerbs(self._client)
         @property
@@ -2926,6 +2929,21 @@ class Oneiron:
         def held_edits(self, spec):
             """The owner lists retained hash-only held-edit evidence in stored sequence order. Hashes are lossless lowercase hex strings. Shared quarantine retention applies; this is not live pending work or settlement status."""
             return json.loads(_translate(lambda: self._client.vault_sync_quarantine_held_edits(json.dumps(spec))))
+    class _VaultSyncDocumentsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def copy_edit(self) -> "Oneiron._VaultSyncDocumentsCopyEditVerbs":
+            return Oneiron._VaultSyncDocumentsCopyEditVerbs(self._client)
+    class _VaultSyncDocumentsCopyEditVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def review(self, spec):
+            """The owner reviews the edit a retained document copy holds for one source document: why it is held, the masked text the copy submitted, and the revision to settle it under; the revision is a token, not authority."""
+            return json.loads(_translate(lambda: self._client.vault_sync_documents_copy_edit_review(json.dumps(spec))))
+        def settle(self, spec):
+            """The owner settles that held copy edit to an exact replacement text, under the revision they reviewed; a changed or settled edit answers stale. Answers the committed document frame, a local commit, not a delivery."""
+            return json.loads(_translate(lambda: self._client.vault_sync_documents_copy_edit_settle(json.dumps(spec))))
     class _VaultSyncRetainedWorkVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

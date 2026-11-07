@@ -529,6 +529,8 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.federation.burst.policy" => a.spec.clone().ok_or_else(invalid),
         "vault.federation.burst.policy.set" => a.spec.clone().ok_or_else(invalid),
         "vault.sync.quarantine.held_edits" => a.spec.clone().ok_or_else(invalid),
+        "vault.sync.documents.copy_edit.review" => a.spec.clone().ok_or_else(invalid),
+        "vault.sync.documents.copy_edit.settle" => a.spec.clone().ok_or_else(invalid),
         "vault.sync.retained_work.wait.set" => a.spec.clone().ok_or_else(invalid),
         "vault.federation.burst.ingress" => a.spec.clone().ok_or_else(invalid),
         "vault.federation.burst.disposition" => a.spec.clone().ok_or_else(invalid),
@@ -2761,6 +2763,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.sync.quarantine.held_edits" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.sync.documents.copy_edit.review" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.sync.documents.copy_edit.settle" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.sync.retained_work.wait.set" => {
@@ -6382,6 +6390,12 @@ async fn execute_agent_verb_row_on(
         }
         "vault.sync.quarantine.held_edits" => {
             boxed_mcp_verb_row_vault_sync_quarantine_held_edits(row).await
+        }
+        "vault.sync.documents.copy_edit.review" => {
+            boxed_mcp_verb_row_vault_sync_documents_copy_edit_review(row).await
+        }
+        "vault.sync.documents.copy_edit.settle" => {
+            boxed_mcp_verb_row_vault_sync_documents_copy_edit_settle(row).await
         }
         "vault.sync.retained_work.wait.set" => {
             boxed_mcp_verb_row_vault_sync_retained_work_wait_set(row).await
@@ -27177,6 +27191,116 @@ async fn mcp_verb_row_vault_sync_quarantine_held_edits(row: McpVerbRow<'_>) -> M
     ));
     let output = output.map_err(mcp_facade_error)?;
     let source = crate::mcp::McpPageSource::complete(output.len());
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_vault_sync_documents_copy_edit_review<'a>(
+    row: McpVerbRow<'a>,
+) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_sync_documents_copy_edit_review(row))
+}
+async fn mcp_verb_row_vault_sync_documents_copy_edit_review(
+    row: McpVerbRow<'_>,
+) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("vault.sync.documents.copy_edit.review", &input)
+        .map_err(mcp_facade_error)?;
+    let input: oneiron::task_verb::sdk::RepoCopyEditReviewRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let (output, listed) = Box::pin(
+        crate::api::facade::host_doors::vault_sync_documents_copy_edit_review(server, auth, input),
+    )
+    .await;
+    // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+    served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+        listed,
+    ));
+    let output = output.map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_vault_sync_documents_copy_edit_settle<'a>(
+    row: McpVerbRow<'a>,
+) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_sync_documents_copy_edit_settle(row))
+}
+async fn mcp_verb_row_vault_sync_documents_copy_edit_settle(
+    row: McpVerbRow<'_>,
+) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    oneiron::task_verb::sdk::validate_input("vault.sync.documents.copy_edit.settle", &input)
+        .map_err(mcp_facade_error)?;
+    let input: oneiron::task_verb::sdk::RepoCopyEditSettleRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let (output, listed) = Box::pin(
+        crate::api::facade::host_doors::vault_sync_documents_copy_edit_settle(server, auth, input),
+    )
+    .await;
+    // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+    served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+        listed,
+    ));
+    let output = output.map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
     mcp_agent_verb_output(output, source)
 }
 #[inline(never)]

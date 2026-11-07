@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1282 facade rows, 4641 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1234.
+// UniFFI census: 1284 facade rows, 4645 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1236.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -23360,6 +23360,48 @@ impl<'de> serde::Deserialize<'de> for TupleU64SyncHeldEditEvidence {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         crate::codec::de_tuple2(deserializer, |item0, item1| Self { item0, item1 })
     }
+}
+
+/// `oneiron::verbs::repo_copy_edit::RepoCopyEditReviewRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RepoCopyEditReviewRequest {
+    #[serde(rename = "source")]
+    pub source: String,
+}
+
+/// `oneiron::verbs::repo_copy_edit::RepoCopyEditReviewView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RepoCopyEditReviewView {
+    #[serde(rename = "source")]
+    pub source: String,
+    #[serde(rename = "cause")]
+    pub cause: String,
+    #[serde(rename = "submitted")]
+    pub submitted: String,
+    #[serde(rename = "revision")]
+    pub revision: String,
+}
+
+/// `oneiron::verbs::repo_copy_edit::RepoCopyEditSettleRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RepoCopyEditSettleRequest {
+    #[serde(rename = "source")]
+    pub source: String,
+    #[serde(rename = "revision")]
+    pub revision: String,
+    #[serde(rename = "replacement")]
+    pub replacement: String,
+}
+
+/// `oneiron::verbs::repo_copy_edit::RepoCopyEditSettleView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RepoCopyEditSettleView {
+    #[serde(rename = "source")]
+    pub source: String,
+    #[serde(rename = "frame_base64")]
+    pub frame_base64: String,
 }
 
 /// `oneiron::sync::federation_burst::schedule::RetainedWorkQueue`.

@@ -1981,6 +1981,20 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             ),
             #[cfg(feature = "sync")]
             (
+                "vault.sync.documents.copy_edit.review",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RepoCopyEditReviewRequest,
+                >(),
+            ),
+            #[cfg(feature = "sync")]
+            (
+                "vault.sync.documents.copy_edit.settle",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RepoCopyEditSettleRequest,
+                >(),
+            ),
+            #[cfg(feature = "sync")]
+            (
                 "vault.sync.retained_work.wait.set",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::RetainedWorkWaitSetRequest,
@@ -7634,6 +7648,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.federation.burst.policy",
     "vault.federation.burst.policy.set",
     "vault.sync.quarantine.held_edits",
+    "vault.sync.documents.copy_edit.review",
+    "vault.sync.documents.copy_edit.settle",
     "vault.sync.retained_work.wait.set",
     "vault.federation.burst.ingress",
     "vault.federation.burst.disposition",
@@ -9037,6 +9053,14 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         #[cfg(feature = "sync")]
         "vault.sync.quarantine.held_edits" => crate::code_run::vault_read::request_schema::<
             Vec<(u64, crate::task_verb::sdk::SyncHeldEditEvidence)>,
+        >(),
+        #[cfg(feature = "sync")]
+        "vault.sync.documents.copy_edit.review" => crate::code_run::vault_read::request_schema::<
+            Option<crate::task_verb::sdk::RepoCopyEditReviewView>,
+        >(),
+        #[cfg(feature = "sync")]
+        "vault.sync.documents.copy_edit.settle" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::RepoCopyEditSettleView,
         >(),
         #[cfg(feature = "sync")]
         "vault.sync.retained_work.wait.set" => crate::code_run::vault_read::request_schema::<u64>(),
@@ -13701,6 +13725,22 @@ pub fn mcp_arguments_schema_from_input(
         }
         #[cfg(feature = "sync")]
         "vault.sync.quarantine.held_edits" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        #[cfg(feature = "sync")]
+        "vault.sync.documents.copy_edit.review" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        #[cfg(feature = "sync")]
+        "vault.sync.documents.copy_edit.settle" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -20464,6 +20504,14 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             validate_input_vault_sync_quarantine_held_edits(value)?
         }
         #[cfg(feature = "sync")]
+        "vault.sync.documents.copy_edit.review" => {
+            validate_input_vault_sync_documents_copy_edit_review(value)?
+        }
+        #[cfg(feature = "sync")]
+        "vault.sync.documents.copy_edit.settle" => {
+            validate_input_vault_sync_documents_copy_edit_settle(value)?
+        }
+        #[cfg(feature = "sync")]
         "vault.sync.retained_work.wait.set" => {
             validate_input_vault_sync_retained_work_wait_set(value)?
         }
@@ -23718,6 +23766,22 @@ fn validate_input_vault_federation_burst_policy_set(value: &serde_json::Value) -
 #[inline(never)]
 fn validate_input_vault_sync_quarantine_held_edits(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+    Ok(())
+}
+#[cfg(feature = "sync")]
+#[inline(never)]
+fn validate_input_vault_sync_documents_copy_edit_review(
+    value: &serde_json::Value,
+) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::RepoCopyEditReviewRequest = decode(value.clone())?;
+    Ok(())
+}
+#[cfg(feature = "sync")]
+#[inline(never)]
+fn validate_input_vault_sync_documents_copy_edit_settle(
+    value: &serde_json::Value,
+) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::RepoCopyEditSettleRequest = decode(value.clone())?;
     Ok(())
 }
 #[cfg(feature = "sync")]
@@ -29325,6 +29389,14 @@ pub fn invoke(
             invoke_vault_sync_quarantine_held_edits(memory, value)
         }
         #[cfg(feature = "sync")]
+        "vault.sync.documents.copy_edit.review" => {
+            invoke_vault_sync_documents_copy_edit_review(memory, value)
+        }
+        #[cfg(feature = "sync")]
+        "vault.sync.documents.copy_edit.settle" => {
+            invoke_vault_sync_documents_copy_edit_settle(memory, value)
+        }
+        #[cfg(feature = "sync")]
         "vault.sync.retained_work.wait.set" => {
             invoke_vault_sync_retained_work_wait_set(memory, value)
         }
@@ -33231,6 +33303,28 @@ fn invoke_vault_sync_quarantine_held_edits(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_sync_quarantine_held_edits(memory, decode(value)?)?)
+}
+#[cfg(feature = "sync")]
+#[inline(never)]
+fn invoke_vault_sync_documents_copy_edit_review(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_sync_documents_copy_edit_review(
+        memory,
+        decode(value)?,
+    )?)
+}
+#[cfg(feature = "sync")]
+#[inline(never)]
+fn invoke_vault_sync_documents_copy_edit_settle(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_sync_documents_copy_edit_settle(
+        memory,
+        decode(value)?,
+    )?)
 }
 #[cfg(feature = "sync")]
 #[inline(never)]
@@ -43166,6 +43260,20 @@ pub fn vault_sync_quarantine_held_edits(
         &memory.embedded_owner("vault.sync.quarantine.held_edits")?,
         input,
     )
+}
+#[cfg(feature = "sync")]
+pub fn vault_sync_documents_copy_edit_review(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RepoCopyEditReviewRequest,
+) -> MemoryResult<Option<crate::task_verb::sdk::RepoCopyEditReviewView>> {
+    crate::task_verb::sdk::host_only(memory, "vault.sync.documents.copy_edit.review", &input)
+}
+#[cfg(feature = "sync")]
+pub fn vault_sync_documents_copy_edit_settle(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RepoCopyEditSettleRequest,
+) -> MemoryResult<crate::task_verb::sdk::RepoCopyEditSettleView> {
+    crate::task_verb::sdk::host_only(memory, "vault.sync.documents.copy_edit.settle", &input)
 }
 #[cfg(feature = "sync")]
 pub fn vault_sync_retained_work_wait_set(

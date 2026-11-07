@@ -384,6 +384,8 @@ pub enum AgentVerb {
     VaultFederationBurstPolicy,
     VaultFederationBurstPolicySet,
     VaultSyncQuarantineHeldEdits,
+    VaultSyncDocumentsCopyEditReview,
+    VaultSyncDocumentsCopyEditSettle,
     VaultSyncRetainedWorkWaitSet,
     VaultFederationBurstIngress,
     VaultFederationBurstDisposition,
@@ -1691,6 +1693,8 @@ impl AgentVerb {
         Self::VaultFederationBurstPolicy,
         Self::VaultFederationBurstPolicySet,
         Self::VaultSyncQuarantineHeldEdits,
+        Self::VaultSyncDocumentsCopyEditReview,
+        Self::VaultSyncDocumentsCopyEditSettle,
         Self::VaultSyncRetainedWorkWaitSet,
         Self::VaultFederationBurstIngress,
         Self::VaultFederationBurstDisposition,
@@ -3005,6 +3009,8 @@ impl AgentVerb {
             Self::VaultFederationBurstPolicy => "vault.federation.burst.policy",
             Self::VaultFederationBurstPolicySet => "vault.federation.burst.policy.set",
             Self::VaultSyncQuarantineHeldEdits => "vault.sync.quarantine.held_edits",
+            Self::VaultSyncDocumentsCopyEditReview => "vault.sync.documents.copy_edit.review",
+            Self::VaultSyncDocumentsCopyEditSettle => "vault.sync.documents.copy_edit.settle",
             Self::VaultSyncRetainedWorkWaitSet => "vault.sync.retained_work.wait.set",
             Self::VaultFederationBurstIngress => "vault.federation.burst.ingress",
             Self::VaultFederationBurstDisposition => "vault.federation.burst.disposition",
@@ -4348,6 +4354,8 @@ impl AgentVerb {
                 | Self::VaultFederationBurstPolicy
                 | Self::VaultFederationBurstPolicySet
                 | Self::VaultSyncQuarantineHeldEdits
+                | Self::VaultSyncDocumentsCopyEditReview
+                | Self::VaultSyncDocumentsCopyEditSettle
                 | Self::VaultSyncRetainedWorkWaitSet
                 | Self::VaultFederationBurstIngress
                 | Self::VaultFederationBurstDisposition
@@ -5684,6 +5692,8 @@ impl AgentVerb {
                 | Self::VaultFederationBurstPolicy
                 | Self::VaultFederationBurstPolicySet
                 | Self::VaultSyncQuarantineHeldEdits
+                | Self::VaultSyncDocumentsCopyEditReview
+                | Self::VaultSyncDocumentsCopyEditSettle
                 | Self::VaultSyncRetainedWorkWaitSet
                 | Self::VaultFederationBurstIngress
                 | Self::VaultFederationBurstDisposition
@@ -7172,6 +7182,8 @@ impl AgentVerb {
                 | Self::VaultFederationBurstPolicy
                 | Self::VaultFederationBurstPolicySet
                 | Self::VaultSyncQuarantineHeldEdits
+                | Self::VaultSyncDocumentsCopyEditReview
+                | Self::VaultSyncDocumentsCopyEditSettle
                 | Self::VaultSyncRetainedWorkWaitSet
                 | Self::VaultFederationBurstIngress
                 | Self::VaultFederationBurstDisposition
@@ -8246,6 +8258,7 @@ impl AgentVerb {
                 | Self::VaultFederationCoreferenceShareConsent
                 | Self::VaultFederationCoreferenceUnlink
                 | Self::VaultFederationBurstPolicySet
+                | Self::VaultSyncDocumentsCopyEditSettle
                 | Self::VaultSyncRetainedWorkWaitSet
                 | Self::VaultFederationBurstIngress
                 | Self::VaultFederationBurstReviewRelease
@@ -9222,6 +9235,8 @@ impl AgentVerb {
             Self::VaultFederationBurstPolicy => &["spec"],
             Self::VaultFederationBurstPolicySet => &["spec"],
             Self::VaultSyncQuarantineHeldEdits => &["spec"],
+            Self::VaultSyncDocumentsCopyEditReview => &["spec"],
+            Self::VaultSyncDocumentsCopyEditSettle => &["spec"],
             Self::VaultSyncRetainedWorkWaitSet => &["spec"],
             Self::VaultFederationBurstIngress => &["spec"],
             Self::VaultFederationBurstDisposition => &["spec"],
@@ -10530,6 +10545,8 @@ impl AgentVerb {
             Self::VaultFederationBurstPolicy => &["spec"],
             Self::VaultFederationBurstPolicySet => &["spec"],
             Self::VaultSyncQuarantineHeldEdits => &["spec"],
+            Self::VaultSyncDocumentsCopyEditReview => &["spec"],
+            Self::VaultSyncDocumentsCopyEditSettle => &["spec"],
             Self::VaultSyncRetainedWorkWaitSet => &["spec"],
             Self::VaultFederationBurstIngress => &["spec"],
             Self::VaultFederationBurstDisposition => &["spec"],
@@ -12584,6 +12601,12 @@ impl AgentVerb {
             }
             Self::VaultSyncQuarantineHeldEdits => {
                 "The owner lists retained hash-only held-edit evidence in stored sequence order. Hashes are lossless lowercase hex strings. Shared quarantine retention applies; this is not live pending work or settlement status."
+            }
+            Self::VaultSyncDocumentsCopyEditReview => {
+                "The owner reviews the edit a retained document copy holds for one source document: why it is held, the masked text the copy submitted, and the revision to settle it under; the revision is a token, not authority."
+            }
+            Self::VaultSyncDocumentsCopyEditSettle => {
+                "The owner settles that held copy edit to an exact replacement text, under the revision they reviewed; a changed or settled edit answers stale. Answers the committed document frame, a local commit, not a delivery."
             }
             Self::VaultSyncRetainedWorkWaitSet => {
                 "The owner sets one retained-work queue's wait in seconds, or resets it to its existing default, and receives the effective wait."
