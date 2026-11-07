@@ -17167,7 +17167,7 @@ class UnsupportedCapability(TypedDict):
     capability: LlmCapability
     model: NotRequired[ModelId | None]
     reason: NotRequired[str | None]
-LabelReadFailure = Literal["EmittedText", "NotEosStop", "MissingLabels", "Malformed"]
+LabelReadFailure = Literal["EmittedText", "NotEosStop", "TokenCap", "MissingLabels", "Malformed"]
 class FatalLlmErrorInvalidRequestDetailBody(TypedDict):
     message: str
     code: NotRequired[str | None]

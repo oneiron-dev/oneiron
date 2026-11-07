@@ -6773,7 +6773,7 @@ export type LlmCapability = "streaming" | "tool_calling" | "tool_results" | "ima
 /** `oneiron_model::llm::error::UnsupportedCapability` */
 export type UnsupportedCapability = { capability: LlmCapability; model?: ModelId | null; reason?: string | null }
 /** `oneiron_model::llm::error::LabelReadFailure` */
-export type LabelReadFailure = "EmittedText" | "NotEosStop" | "MissingLabels" | "Malformed"
+export type LabelReadFailure = "EmittedText" | "NotEosStop" | "TokenCap" | "MissingLabels" | "Malformed"
 /** `oneiron_model::llm::error::FatalLlmError` */
 export type FatalLlmError = "InvalidRequest" | { InvalidRequestDetail: { message: string; code?: string | null } } | "Auth" | "ContentFiltered" | "EmptyResponse" | { Unsupported: UnsupportedCapability } | { LabelRead: LabelReadFailure } | "ResponseErased" | "JobLost"
 /** `oneiron_store::model_step_submission::ModelStepFailureClass` */

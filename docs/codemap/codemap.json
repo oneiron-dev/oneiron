@@ -24147,7 +24147,7 @@
       "RoomSectionPage"
      ],
      "path": "src/context_board/room_verbs/projection.rs",
-     "purpose": "ROOM as one ordered stream of rows (FIX 9746, 9747): the room's roster by actor id, then the rules the…",
+     "purpose": "ROOM as one ordered stream of rows (FIX 9746, 9747): the room's roster in its owning record's order (FIX…",
      "surface": {
       "fn": 5,
       "struct": 1
@@ -25119,7 +25119,7 @@
      "path": "src/conversation/membership.rs",
      "purpose": "Append-only membership ledger",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "enum": 2,
       "fn": 7,
       "re-export": 1,
@@ -30761,6 +30761,16 @@
       "fn": 1,
       "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/agent_health/outcomes/float_setting_fit.rs",
+     "purpose": "Exact-float dial fits for `long_wait`, `cost_spike` and `silent` (FIX 8076): an owner's verdict on a card…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -91296,7 +91306,7 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 42,
+      "crate-vis": 43,
       "enum": 2,
       "fn": 6,
       "re-export": 22,
@@ -93973,7 +93983,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 208,
+     "files": 209,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -95046,7 +95056,7 @@
    },
    "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6728,
+   "source_files": 6729,
    "test_files": 895
   },
   "oneiron-android": {
