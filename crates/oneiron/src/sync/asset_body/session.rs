@@ -160,18 +160,6 @@ pub(crate) fn land_carried_body(
     landing::land(peer, window, body, spool)
 }
 
-/// A verified local landing, constructed only after the native close landed
-/// this attempt's complete spool. Remote wire receipts cannot construct it.
-pub(in crate::sync) struct LocalBodyLand {
-    body: AssetBodyRef,
-}
-
-impl LocalBodyLand {
-    pub(in crate::sync) fn reference(&self) -> crate::error::Result<Vec<u8>> {
-        self.body.encode()
-    }
-}
-
 /// A body this side is owed, and when it asks for it next.
 struct Owed {
     body: AssetBodyRef,
@@ -202,8 +190,6 @@ pub struct AssetBodySession {
     births: Vec<(WindowKey, EntityId)>,
     /// Selected successful own-device imports, dropped with this connection.
     positions: Vec<crate::sync::origin_positions::DeferredPositions>,
-    /// Native local landings already completed in this connection.
-    local_lands: HashMap<EntityId, LocalBodyLand>,
 }
 
 impl AssetBodySession {
@@ -223,7 +209,7 @@ impl AssetBodySession {
         }
     }
 
-    /// Retries this socket's ready live-import witnesses on its existing body
+    /// Retries this socket's selected live-import witnesses on its existing body
     /// housekeeping path. Optional failures never fail a body or raw import.
     pub fn retry_own_device_positions(&mut self, manager: &crate::sync::manager::WindowManager) {
         self.retry_positions(manager);
@@ -231,13 +217,8 @@ impl AssetBodySession {
 
     pub(in crate::sync) fn retain_positions(
         &mut self,
-        mut positions: crate::sync::origin_positions::DeferredPositions,
+        positions: crate::sync::origin_positions::DeferredPositions,
     ) {
-        for landed in self.local_lands.values() {
-            if let Err(error) = positions.body_landed(landed) {
-                tracing::warn!(%error, "optional earlier local body-land positions did not wake");
-            }
-        }
         for older in &mut self.positions {
             older.supersede_by(&positions);
         }
@@ -251,7 +232,7 @@ impl AssetBodySession {
     ) {
         for positions in &mut self.positions {
             if let Err(error) = positions.retry(manager) {
-                tracing::warn!(%error, "optional body-later origin positions did not settle");
+                tracing::warn!(%error, "optional origin positions did not settle");
             }
         }
         self.positions.retain(|positions| !positions.is_empty());
@@ -326,6 +307,19 @@ impl AssetBodySession {
     /// peer's held lane keeps on them (FIX 12118).
     pub(crate) fn take_federated_births(&mut self) -> Vec<(WindowKey, EntityId)> {
         std::mem::take(&mut self.births)
+    }
+
+    /// Whether this session neither owes a body nor has one coming in.
+    pub(crate) fn settled(&self) -> bool {
+        self.owed.is_empty() && self.receiving.is_none()
+    }
+
+    /// The bytes the body coming in has spooled so far; `None` when none
+    /// comes in. Only Data of the current attempt, in order, advances it.
+    pub(crate) fn receiving_bytes(&self) -> Option<u64> {
+        self.receiving
+            .as_ref()
+            .map(|receiving| receiving.spool.received())
     }
 
     /// Owes `body`, which `window` binds `carrier` with, unless a tombstone
@@ -536,15 +530,6 @@ impl AssetBodySession {
             self.held.insert((body.id, body.body_blake3));
             if birth {
                 self.births.push((window.clone(), body.id));
-            }
-            if matches!(peer.lane, AssetBodyLane::OwnDevice) {
-                let landed = LocalBodyLand { body: body.clone() };
-                for positions in &mut self.positions {
-                    if let Err(error) = positions.body_landed(&landed) {
-                        tracing::warn!(%error, "optional local body-land positions did not wake");
-                    }
-                }
-                self.local_lands.insert(body.id, landed);
             }
         } else {
             self.ask_later(&window, &body);
