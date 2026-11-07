@@ -289,5 +289,5 @@ fn add_usage(total: &mut LlmUsage, usage: &LlmUsage) {
         .output
         .reasoning
         .saturating_add(usage.output.reasoning);
-    total.raw_provider = usage.raw_provider.clone();
+    total.merge_provider_metadata(usage);
 }
