@@ -7,6 +7,7 @@
 
 pub(super) mod checkpoint;
 mod codec;
+pub(crate) mod discard;
 mod materialize;
 mod mirror;
 mod scrub;

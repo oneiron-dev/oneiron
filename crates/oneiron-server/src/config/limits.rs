@@ -113,6 +113,10 @@ pub struct LimitsConfig {
     /// How long work may wait for its turn, in milliseconds: a request
     /// timeout, not a limit. A wait that reaches it ends with nothing started.
     pub queue_wait_timeout_ms: u64,
+    /// How long a verb call a budget window paced waits in its caller's
+    /// line for its turn, in seconds, counted from its hold; past it the
+    /// call ends unrun (FIX 8753, ARCH-0044 C5). A week by default.
+    pub paced_verb_wait_secs: u64,
     /// Free bytes the disk holding the vault keeps. An upload that would take
     /// the disk below it, counting the room every other upload in flight has
     /// claimed, is refused: before a byte is read when it declares its size,
@@ -205,6 +209,7 @@ impl Default for LimitsConfig {
             git_scan_blob_bytes: ScanBounds::machine_blob_bytes(),
             git_scan_disk_floor_bytes: ScanBounds::default_disk_floor_bytes(),
             queue_wait_timeout_ms: 300_000,
+            paced_verb_wait_secs: oneiron::runtime_hooks::verb::PACED_VERB_WAIT_DEFAULT_SECS,
             disk_reserve_bytes: 2 * 1024 * 1024 * 1024,
             live_sessions: 4_096,
             live_subscriptions: 65_536,
@@ -280,6 +285,7 @@ impl LimitsConfig {
             git_scan_blob_bytes,
             git_scan_disk_floor_bytes,
             queue_wait_timeout_ms,
+            paced_verb_wait_secs,
             disk_reserve_bytes,
             live_sessions,
             live_subscriptions,
@@ -293,6 +299,16 @@ impl LimitsConfig {
             pairing_redeem_wait_ceiling_ms,
             pairing_redeem_quiet_ms,
             keyed_filter_json_bytes,
+            keyed_namespace_segments,
+            keyed_namespace_bytes,
+            keyed_key_bytes,
+            booking_email_bytes,
+            booking_intake_answers,
+            booking_intake_value_bytes,
+            booking_local_time_windows,
+            claim_input_json_bytes,
+            core_batch_entities,
+            legacy_batch_entities,
             code_result_inline_bytes,
             code_result_disk_floor_bytes,
             code_result_scan_bytes,
@@ -312,6 +328,8 @@ impl LimitsConfig {
             import_folder_notes,
             import_decoded_messages,
             import_decoded_bytes,
+            witness_metadata_nodes,
+            witness_metadata_bytes,
             signature_decode_bytes,
             pptx_comment_patches,
             import_xlsx_live_cells,
@@ -463,6 +481,7 @@ impl LimitsConfig {
             git_scan_disk_floor_bytes,
         );
         set(&mut self.queue_wait_timeout_ms, queue_wait_timeout_ms);
+        set(&mut self.paced_verb_wait_secs, paced_verb_wait_secs);
         set(&mut self.disk_reserve_bytes, disk_reserve_bytes);
         set(&mut self.live_sessions, live_sessions);
         set(&mut self.live_subscriptions, live_subscriptions);
@@ -483,6 +502,25 @@ impl LimitsConfig {
         set(&mut self.pairing_redeem_quiet_ms, pairing_redeem_quiet_ms);
         for (row, bound) in [
             (EngineLimit::KeyedFilterJsonBytes, keyed_filter_json_bytes),
+            (
+                EngineLimit::KeyedNamespaceSegments,
+                keyed_namespace_segments,
+            ),
+            (EngineLimit::KeyedNamespaceBytes, keyed_namespace_bytes),
+            (EngineLimit::KeyedKeyBytes, keyed_key_bytes),
+            (EngineLimit::BookingEmailBytes, booking_email_bytes),
+            (EngineLimit::BookingIntakeAnswers, booking_intake_answers),
+            (
+                EngineLimit::BookingIntakeValueBytes,
+                booking_intake_value_bytes,
+            ),
+            (
+                EngineLimit::BookingLocalTimeWindows,
+                booking_local_time_windows,
+            ),
+            (EngineLimit::ClaimInputJsonBytes, claim_input_json_bytes),
+            (EngineLimit::CoreBatchEntities, core_batch_entities),
+            (EngineLimit::LegacyBatchEntities, legacy_batch_entities),
             (EngineLimit::CodeResultInlineBytes, code_result_inline_bytes),
             (
                 EngineLimit::CodeResultDiskFloorBytes,
@@ -508,6 +546,8 @@ impl LimitsConfig {
             (EngineLimit::ImportFolderNotes, import_folder_notes),
             (EngineLimit::ImportDecodedMessages, import_decoded_messages),
             (EngineLimit::ImportDecodedBytes, import_decoded_bytes),
+            (EngineLimit::WitnessMetadataNodes, witness_metadata_nodes),
+            (EngineLimit::WitnessMetadataBytes, witness_metadata_bytes),
             (EngineLimit::SignatureDecodeBytes, signature_decode_bytes),
             (EngineLimit::PptxCommentPatches, pptx_comment_patches),
             (EngineLimit::ImportXlsxLiveCells, import_xlsx_live_cells),
@@ -745,6 +785,7 @@ impl LimitsConfig {
             ("git_scan_blob_bytes", self.git_scan_blob_bytes),
             ("git_scan_disk_floor_bytes", self.git_scan_disk_floor_bytes),
             ("queue_wait_timeout_ms", self.queue_wait_timeout_ms),
+            ("paced_verb_wait_secs", self.paced_verb_wait_secs),
             ("live_sessions", self.live_sessions as u64),
             ("live_subscriptions", self.live_subscriptions as u64),
             ("message_streams", self.message_streams as u64),
