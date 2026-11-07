@@ -176,5 +176,7 @@ pub(crate) fn settle_waiting_asks(vault: &crate::Vault) -> crate::Result<()> {
         super::world_privacy_wait::reconcile_world_privacy_wait(vault, group)?;
     }
     vault.retry_pending_ask_soft_confirms(usize::MAX)?;
+    // FIX 7494: the relayed words that landed for asks this node admitted.
+    crate::task_verb::drain_ask_forward_intents(vault)?;
     Ok(())
 }

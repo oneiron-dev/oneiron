@@ -421,7 +421,10 @@ impl std::hash::Hash for CustodyPermitSet {
 }
 
 impl serde::Serialize for CustodyPermitSet {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
         use serde::ser::SerializeSeq;
         let mut seq = serializer.serialize_seq(Some(self.len()))?;
         for permit in self.iter() {
@@ -432,7 +435,9 @@ impl serde::Serialize for CustodyPermitSet {
 }
 
 impl<'de> serde::Deserialize<'de> for CustodyPermitSet {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
         Vec::<CustodyRecipientPermit>::deserialize(deserializer).map(Self::from)
     }
 }
@@ -450,9 +455,9 @@ pub fn custody_recipient_set(recipients: &[CustodyRecipientPermit]) -> [u8; 32] 
 /// The commitment bytes of `len` permits in `permits`' order: the one
 /// engine [`custody_recipient_set`] hashes for one run and
 /// [`CustodyPermitSet::recipient_set`] streams for all of them.
-fn hash_permit_sequence<'a>(
+fn hash_permit_sequence(
     len: usize,
-    permits: impl Iterator<Item = &'a CustodyRecipientPermit>,
+    permits: impl Iterator<Item = &CustodyRecipientPermit>,
 ) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new_derive_key(CUSTODY_RECIPIENT_SET_DOMAIN);
     hasher.update(&(len as u64).to_be_bytes());

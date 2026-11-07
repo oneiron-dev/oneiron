@@ -87,6 +87,11 @@ pub(super) const ENVELOPE_PROVENANCE_RUN_KEY: &str = "run";
 
 pub(super) const ENVELOPE_PROVENANCE_ATTEMPT_KEY: &str = "job_id";
 
+/// The provenance surface a self-written compaction's filed step carries
+/// (FIX 4465 B). The memo index admits a step by it and its job (FIX 4816),
+/// so the compaction writer and the index share this constant.
+pub(super) const COMPACTION_STEP_SURFACE: &str = "code-run-compaction";
+
 /// A `params_hash` / `step_hash` is a BLAKE3 digest rendered as lowercase hex.
 pub(super) const STEP_HEX_DIGEST_LEN: usize = 64;
 

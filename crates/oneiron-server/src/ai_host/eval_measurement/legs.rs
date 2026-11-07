@@ -262,6 +262,7 @@ fn request(arm: &ServedArm, task: &str) -> LlmRequest {
             response_format: ResponseFormat::Text,
             locality: arm.locality,
             host_keyless: false,
+            host_paid: false,
         },
         messages,
         tools: Vec::new(),
@@ -337,6 +338,7 @@ pub(super) struct NativeArms {
 pub(super) struct NativeArm {
     model: ModelId,
     skill: Option<String>,
+    trained: Option<std::sync::Arc<crate::server::TrainedEmbedding>>,
 }
 
 /// Whether a non-generative measurement's arms can run here.
@@ -384,6 +386,15 @@ fn native_served(
             MeasurementUnavailable::NoExactModelRoute,
         ));
     };
+    if *seat == EvalSeat::Embedder
+        && let Some(trained) = server.training_embedder_exact(&model, &pin.revision)?
+    {
+        return Ok(NativeServed::Exact(NativeArm {
+            model,
+            skill: None,
+            trained: Some(trained),
+        }));
+    }
     let revision = vault
         .model_registry_row(&model)?
         .and_then(|row| row.backends().ok()?.into_iter().next())
@@ -402,7 +413,11 @@ fn native_served(
         _ => return Ok(NativeServed::Refused(MeasurementUnavailable::NoModelRole)),
     };
     Ok(if served {
-        NativeServed::Exact(NativeArm { model, skill: None })
+        NativeServed::Exact(NativeArm {
+            model,
+            skill: None,
+            trained: None,
+        })
     } else {
         NativeServed::Unserved
     })
@@ -491,10 +506,20 @@ impl NativeArms {
                 if arm.skill.is_some() {
                     return SeatGenerated::Unavailable(MeasurementUnavailable::NoScorer);
                 }
-                let Some(slot) = server.embedder_slot() else {
-                    return SeatGenerated::Unavailable(MeasurementUnavailable::NoExactModelRoute);
+                let slot = server.embedder_slot();
+                let embed = |text: &str| {
+                    if let Some(trained) = &arm.trained {
+                        trained.query(server.vault(), text).map_err(|error| {
+                            tracing::debug!(%error, "a trained eval measurement leg failed");
+                            EmbedQueryRefusal::Failed
+                        })
+                    } else if let Some(slot) = &slot {
+                        slot.embed_query_exact(&arm.model, text, run)
+                    } else {
+                        Err(EmbedQueryRefusal::NotConfigured)
+                    }
                 };
-                let task_vector = match slot.embed_query_exact(&arm.model, &prompt, run) {
+                let task_vector = match embed(&prompt) {
                     Ok(vector) => vector,
                     Err(reason) => {
                         return SeatGenerated::Unavailable(embed_failure(reason, clock));
@@ -505,7 +530,7 @@ impl NativeArms {
                     if clock.decision_time_left().is_zero() {
                         return SeatGenerated::Unavailable(MeasurementUnavailable::ClockExhausted);
                     }
-                    match slot.embed_query_exact(&arm.model, &label.value, run) {
+                    match embed(&label.value) {
                         Ok(vector) => anchors.push(vector),
                         Err(reason) => {
                             return SeatGenerated::Unavailable(embed_failure(reason, clock));

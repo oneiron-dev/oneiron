@@ -12,6 +12,7 @@ use super::{
     GitWireResult,
 };
 use crate::error::Result;
+use oneiron_store::git_wire::path_text::git_path_os_str;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -179,13 +180,19 @@ impl FrozenGitArgv {
     /// `ls-tree -z <tree> -- :(top,literal)<name>`: only the entry `name`
     /// names in one tree, so the output stays one entry however wide the tree
     /// is. The magic reads `name` as one literal component from the root,
-    /// never as a glob or as relative to the working directory.
+    /// never as a glob or as relative to the working directory. `name` is a
+    /// Git path's text, so a name outside UTF-8 reaches Git as its own bytes
+    /// (FIX 21326).
     pub(super) fn read_tree_entry(tree: &GitOid, name: &str) -> GitWireResult<Self> {
-        if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\0']) {
-            return Err(invalid("git tree entry name must be one path component"));
+        let one_component = || invalid("git tree entry name must be one path component");
+        if name.is_empty() || name == "." || name == ".." || name.contains('/') {
+            return Err(one_component());
         }
+        let name = git_path_os_str(name).map_err(|_| one_component())?;
         let mut tail = os_args(&["ls-tree", "-z", tree.as_str(), "--"]);
-        tail.push(OsString::from(format!(":(top,literal){name}")));
+        let mut pathspec = OsString::from(":(top,literal)");
+        pathspec.push(&*name);
+        tail.push(pathspec);
         Ok(Self::frozen(GitWireOperation::ReadTree, tail))
     }
 
