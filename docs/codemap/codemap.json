@@ -7695,7 +7695,7 @@
      "path": "src/batch/lexical_query_hints.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 20
      }
     },
     {
@@ -7705,7 +7705,7 @@
      "path": "src/batch/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 42,
+      "crate-vis": 41,
       "mod": 1,
       "re-export": 3
      }
@@ -17293,7 +17293,7 @@
      "path": "src/code_run/dispatcher/read_worlds.rs",
      "purpose": "A run's read-world capture as its host serves it (FIX 6130)",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 15,
       "fn": 1
      }
     },
@@ -17586,7 +17586,7 @@
      "surface": {
       "crate-vis": 53,
       "mod": 8,
-      "re-export": 34
+      "re-export": 35
      }
     },
     {
@@ -17679,9 +17679,7 @@
      "kind": "src",
      "notable": [
       "ClaimOutcome",
-      "DelegatedSource",
       "ReaderActor",
-      "ReaderFindingRef",
       "ReaderJob",
       "ReaderJobKind",
       "ReaderJobRunner",
@@ -17718,8 +17716,24 @@
       "crate-vis": 13,
       "enum": 8,
       "fn": 20,
-      "struct": 23,
+      "re-export": 1,
+      "struct": 21,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DelegatedSource",
+      "ReaderFindingRef",
+      "ResultOrigins"
+     ],
+     "path": "src/code_run/reader/origins.rs",
+     "purpose": "The descriptors by which one run's result is read in another run (ARCH-0079 #reader-forks): the source a…",
+     "surface": {
+      "crate-vis": 9,
+      "struct": 3
      }
     },
     {
@@ -17825,13 +17839,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/replay_context/reads.rs",
      "purpose": "What a captured step's result reads saw of reader state (FIX 6352): the reader binding its run read under…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 22
      }
     },
     {
@@ -18074,7 +18088,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "HostInput",
@@ -18087,6 +18101,19 @@
      "surface": {
       "fn": 14,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ScopedChildGeneration",
+      "ScopedChildGenerationCall"
+     ],
+     "path": "src/code_run/scoped_generation.rs",
+     "purpose": "A host-profiled child's original generation accounting, lent to compaction",
+     "surface": {
+      "trait": 2
      }
     },
     {
@@ -18232,7 +18259,7 @@
      "path": "src/code_run/shadow_runner/source/reads.rs",
      "purpose": "A captured step's read context as an arm reads it (FIX 6352)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -18386,6 +18413,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/code_run/storage/read_worlds/origins.rs",
+     "purpose": "The origins one run's results carry to another run (FIX 7084): the worlds of the run's read-world ledger and…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_run/storage/reader_folds.rs",
      "purpose": "A fold's receipt (ARCH-0079 #reader-forks) and a summary's memo row, beside the run's fold ledger and where…",
      "surface": {
@@ -18403,10 +18440,20 @@
      "path": "src/code_run/storage/reader_jobs.rs",
      "purpose": "One run's reader children (ARCH-0079 #reader-forks), where the run's rows are: base, or its off-record…",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 24,
       "enum": 1,
       "fn": 14,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/reader_jobs/findings.rs",
+     "purpose": "A run's reader findings at the store (ARCH-0079 #reader-forks): a child's finding report, fenced by its…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -23049,10 +23096,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/consent/widen/row_reuse.rs",
+     "purpose": "Reuse the admitted row only when the acting writer sees its exact bytes",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/consent/widen/streamed.rs",
      "purpose": "File-backed expected widen bytes, compared before taking the acting writer",
      "surface": {
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -36031,6 +36088,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/compaction/wait.rs",
+     "purpose": "Waiting for a run's existing pass without consuming its landing result",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -36068,6 +36135,16 @@
      "purpose": "A flight's self-written passes, filed before any of them lands (FIX 4465 B): every paid call, a try the gate…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/compaction_host/wait.rs",
+     "purpose": "A blocking host can join the pass its full window is already waiting on",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -36134,7 +36211,7 @@
      "path": "src/engine_executor/host.rs",
      "purpose": "The recording JS host, its state and its runtime adapter",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -36204,7 +36281,7 @@
      "path": "src/engine_executor/host/replay_context.rs",
      "purpose": "The live half of a step's read context (FIX 6352): what the step's result reads see of reader state, kept…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -36234,7 +36311,7 @@
      "path": "src/engine_executor/mod.rs",
      "purpose": "Engine-native JS code-mode executor",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "mod": 3,
       "re-export": 9
      }
@@ -37342,7 +37419,7 @@
       "crate-vis": 4,
       "enum": 4,
       "fn": 8,
-      "re-export": 6,
+      "re-export": 7,
       "struct": 5
      }
     },
@@ -37372,7 +37449,7 @@
      "purpose": "FIX6 code-fix exports (DEC-0005 #world-privacy-p8-tier2)",
      "surface": {
       "const": 1,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 9,
       "fn": 3,
       "re-export": 1,
@@ -37495,6 +37572,21 @@
      "purpose": "Tier-1 aggregation policy vocabulary, defined by the manifest layer",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FailureSignalBatchReceipt",
+      "FailureSignalDeliveryStatus",
+      "FailureSignalWaiting"
+     ],
+     "path": "src/failure_signals/status.rs",
+     "purpose": "Content-free delivery diagnostics from the existing durable queues and direct-dispatch receipts",
+     "surface": {
+      "fn": 1,
+      "struct": 3
      }
     },
     {
@@ -37967,7 +38059,7 @@
      "path": "src/federation/peer_authority.rs",
      "purpose": "Peer authority-log admission (FED-03) and roster refolding",
      "surface": {
-      "const": 2,
+      "const": 1,
       "crate-vis": 2,
       "fn": 4
      }
@@ -62089,7 +62181,7 @@
      "path": "src/receipt/direct_dispatch.rs",
      "purpose": "Ordinary outbound receipts for hosts that call dispatch directly",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -62247,7 +62339,7 @@
      "path": "src/receipt/mod.rs",
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "mod": 5,
       "re-export": 19
      }
@@ -93335,7 +93427,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 218,
+     "files": 222,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93440,7 +93532,7 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
     "consent": {
-     "files": 44,
+     "files": 45,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -93657,7 +93749,7 @@
      "purpose": "Embedding pipeline root: attach, decide, and reconcile under one budget dial"
     },
     "engine_executor": {
-     "files": 55,
+     "files": 57,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93692,7 +93784,7 @@
      "purpose": "ONE-1887 failure ladder: classify → bounded retry → healer slot → surface"
     },
     "failure_signals": {
-     "files": 14,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -94674,7 +94766,7 @@
    },
    "over_bar": 187,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6696,
+   "source_files": 6704,
    "test_files": 895
   },
   "oneiron-android": {
@@ -101137,7 +101229,7 @@
      "purpose": "`EntityId` + world-id newtypes + id parsing/hex",
      "surface": {
       "const": 3,
-      "fn": 18,
+      "fn": 19,
       "mod": 2,
       "struct": 4
      }
@@ -101149,7 +101241,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 90,
+      "const": 91,
       "crate-vis": 1
      }
     },
@@ -101428,7 +101520,7 @@
      "purpose": "The process's physical-memory admission line for host and native work",
      "surface": {
       "enum": 1,
-      "fn": 15,
+      "fn": 16,
       "struct": 2
      }
     },
@@ -108169,9 +108261,26 @@
      "surface": {
       "const": 2,
       "fn": 3,
+      "re-export": 1,
       "struct": 3,
       "trait": 1,
       "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SystemOnePackAnswer",
+      "SystemOnePackPrediction",
+      "SystemOnePackQuestion",
+      "SystemOnePackRequest"
+     ],
+     "path": "src/pack.rs",
+     "purpose": "One native System One request over a shared state and ordered typed questions",
+     "surface": {
+      "fn": 2,
+      "struct": 4
      }
     },
     {
@@ -108184,6 +108293,13 @@
     }
    ],
    "modules": {
+    "pack": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "One native System One request over a shared state and ordered typed questions"
+    },
     "tests": {
      "files": 1,
      "impl_vault": false,
@@ -108194,7 +108310,7 @@
    },
    "over_bar": 0,
    "purpose": "The remote System One protocol adapter; policy and receipts live in `oneiron::llm::decision`",
-   "source_files": 1,
+   "source_files": 2,
    "test_files": 1
   },
   "oneiron-mesh-transport": {
@@ -113237,7 +113353,7 @@
      "path": "src/ai_host/compaction.rs",
      "purpose": "Compaction for code mode's runs (agent-runtime-v1 §d7)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -113268,6 +113384,16 @@
      "purpose": "The agent's own compaction from its live context (FIX 4465 C)",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/compaction/profiled.rs",
+     "purpose": "A compaction seat on a host-profiled child's original generation",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -113508,6 +113634,16 @@
      "purpose": "The served thing-child host (FIX 7508): what this server lends a thing branch's scoped code-mode agent",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/dreamer_thing/compaction.rs",
+     "purpose": "Compaction calls on the thing child's original generation count",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -114648,7 +114784,7 @@
      "path": "src/api/body_spool.rs",
      "purpose": "An owner request's body, spooled (FIX 8195, FIX 7917, Rule 5)",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 25
      }
     },
     {
@@ -114668,7 +114804,7 @@
      "path": "src/api/body_spool/json.rs",
      "purpose": "One JSON object decoded as it is read, its bulk string members streamed (FIX 7917, Rule 5)",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -114678,7 +114814,7 @@
      "path": "src/api/body_spool/memory.rs",
      "purpose": "Fixed spool-reader and streamed string-decoder buffers on the process line",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 15
      }
     },
     {
@@ -116116,7 +116252,7 @@
      "path": "src/api/facade/clock_ingress.rs",
      "purpose": "A facade, owner-table or MCP call over a damaged authority clock floor (FIX 11190, FIX 11201, FIX 11202, FIX…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -121228,7 +121364,7 @@
      "path": "src/api/transfer.rs",
      "purpose": "Bounded transfers between an HTTP body and a blocking worker, shared by the git smart-HTTP and LFS bridges",
      "surface": {
-      "crate-vis": 33
+      "crate-vis": 34
      }
     },
     {
@@ -127588,7 +127724,7 @@
       "fn": 7,
       "struct": 4,
       "trait": 3,
-      "type": 4
+      "type": 5
      }
     },
     {
@@ -127710,7 +127846,7 @@
      "path": "src/mcp/quickjs_provider.rs",
      "purpose": "Production MCP provider over the hash-pinned engine QuickJS component",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 8,
       "struct": 1
      }
@@ -130041,6 +130177,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/failure_signals.rs",
+     "purpose": "The owner's content-free failure-signal delivery diagnostics",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -130147,7 +130293,7 @@
      "path": "src/owner/mod.rs",
      "purpose": "The owner's own actions on his vault, shared by the CLI and `/v1/owner`",
      "surface": {
-      "crate-vis": 36
+      "crate-vis": 37
      }
     },
     {
@@ -131339,11 +131485,21 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/server/reader_runner/child.rs",
      "purpose": "Execution and settlement of claimed reader children and summary jobs",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/reader_runner/child/compaction.rs",
+     "purpose": "The child's ordinary host-metered compaction, on its own spend scope",
      "surface": {
       "crate-vis": 4
      }
@@ -132809,7 +132965,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 127,
+     "files": 129,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -133201,7 +133357,7 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 46,
+     "files": 47,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -133257,7 +133413,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 88,
+     "files": 89,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -133348,9 +133504,9 @@
      "purpose": "The host's precision recalculator (ARCH-0075 xlsx row; FIX 2462, OF-505 = A): LibreOffice Calc headless…"
     }
    },
-   "over_bar": 57,
+   "over_bar": 58,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1706,
+   "source_files": 1710,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -135453,7 +135609,7 @@
      "path": "src/config/context_spec.rs",
      "purpose": "The `ContextSpec` descriptor, its bounds, normalization, and structural validation",
      "surface": {
-      "const": 9,
+      "const": 5,
       "enum": 2,
       "fn": 8,
       "struct": 1
@@ -141396,8 +141552,8 @@
      "path": "src/write_envelope/claim_body/lexical_query_hint.rs",
      "purpose": "Codec primitives for `core.lexical.query_hint` side records",
      "surface": {
-      "const": 4,
-      "fn": 4,
+      "const": 3,
+      "fn": 6,
       "struct": 1
      }
     },
