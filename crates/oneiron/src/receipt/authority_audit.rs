@@ -165,7 +165,7 @@ pub struct AuthorityAuditRow {
     /// A federation lifecycle op's grant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant_ref: Option<String>,
-    /// An Owner handover's execution receipt, as the signed op names it.
+    /// The execution receipt named by a signed membership withdrawal or Owner handover.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub receipt_ref: Option<String>,
     /// The grant ids the signed Owner handover says the change affected.
@@ -502,11 +502,15 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
                 ..OpFields::default()
             },
         ),
-        AuthorityOp::SlipGrantRevoke { grant_ref } => (
+        AuthorityOp::SlipGrantRevoke {
+            grant_ref,
+            membership_receipt,
+        } => (
             Revoke,
             "slip_grant_revoke",
             OpFields {
                 grant_ref: Some(grant_ref.to_hex()),
+                receipt_ref: membership_receipt.clone(),
                 ..OpFields::default()
             },
         ),

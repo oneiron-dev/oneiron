@@ -2844,6 +2844,21 @@ Set `shared_merge_evidence_rows` under `[limits]` to change the existing shared-
 evidence question's bound. The value must be a positive integer. The default remains
 4,096 rows; the override does not change the question policy.
 
+## Membership withdrawal receipt links
+
+A signed `slip_grant_revoke` made by a shared-vault membership change names
+that change's execution receipt in `membership_receipt`. The writer uses the
+same receipt ID for the grant withdrawals, any Owner handover, and its committed
+membership receipt. The authority audit exposes this signed link as `receipt_ref`
+next to `grant_ref`. Owner handover audit rows also retain their signed
+`affected_grants` list.
+
+An ordinary guest revoke has no membership receipt link. A membership change
+without a live host issuer still lands through the existing pending carrier
+record, which names its own original execution receipt. A receipt link is a
+record of what the signer named, not an authority grant or proof that another
+replica has received the change.
+
 ## Limits today
 
 - Erase does not reach local backups yet. A backup keeps the plaintext of anything erased after
