@@ -87865,6 +87865,7 @@
      "notable": [
       "AiAnswer",
       "AiCallRequest",
+      "AiImageMask",
       "AiOptions",
       "AiOptionsRequest",
       "AiPart",
@@ -87894,9 +87895,9 @@
      "surface": {
       "crate-vis": 1,
       "enum": 5,
-      "fn": 16,
+      "fn": 17,
       "re-export": 6,
-      "struct": 20
+      "struct": 21
      }
     },
     {
@@ -108317,7 +108318,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DirectOpenAiImageBackend",
@@ -108330,7 +108331,7 @@
      "path": "src/lib/image.rs",
      "purpose": "Direct OpenAI image generation and multi-reference edits; HTTP and authentication stay host-owned",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 1,
       "struct": 4,
@@ -109393,7 +109394,7 @@
      "path": "src/llm/image.rs",
      "purpose": "Provider-neutral image generation and reference-edit intent",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 5,
       "trait": 1,
       "type": 1
@@ -109574,7 +109575,7 @@
      "purpose": "Media call requests and voices",
      "surface": {
       "enum": 2,
-      "fn": 10,
+      "fn": 11,
       "struct": 1
      }
     },
@@ -145104,6 +145105,7 @@
       "AgentWakeTriggers",
       "AiAnswer",
       "AiCallRequest",
+      "AiImageMask",
       "AiOperation",
       "AiOptions",
       "AiOptionsRequest",
@@ -149654,7 +149656,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1143,
-      "struct": 3502
+      "struct": 3503
      }
     },
     {
