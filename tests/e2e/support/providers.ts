@@ -37,7 +37,7 @@ export interface ProviderSocket {
   readonly exchanges:readonly {readonly request:Json|Uint8Array;readonly replies:readonly StreamPart[]}[];
 }
 interface SocketState {script:ProviderSocket;index:number;pending:Promise<void>}
-export interface ProviderScenario { readonly id:string;readonly steps:readonly ProviderStep[];readonly sockets?:readonly ProviderSocket[];readonly artifacts?:Artifacts }
+export interface ProviderScenario { readonly id:string;readonly steps:readonly ProviderStep[];readonly sockets?:readonly ProviderSocket[];readonly artifacts?:Artifacts;readonly origins?: readonly string[] }
 export interface SeenFixtureCall {
   readonly fixtureId:string|null;readonly origin:string;readonly sequence:number;readonly role:string|null;readonly purpose:string|null;
   readonly method:string;readonly path:string;readonly body:unknown;readonly standing?:boolean;
@@ -119,7 +119,7 @@ export class ScriptedProviders {
     }
     const urls:Record<string,string>={};
     try {
-      for(const origin of [...new Set([...instance.pending.keys(),...instance.sockets.keys()])].sort()) {
+      for(const origin of [...new Set([...instance.pending.keys(),...instance.standing.keys(),...instance.sockets.keys(),...(scenario.origins??[])])].sort()) {
         assertFlowActive();
         const server=Bun.serve<SocketState>({hostname:"127.0.0.1",port:0,idleTimeout:0,
           fetch:(request,server)=>{
@@ -167,6 +167,20 @@ export class ScriptedProviders {
     let wake:()=>void=()=>{};
     try {await withDeadline(new Promise<void>(resolve=>{wake=resolve;const set=this.waiting.get(name)??new Set();set.add(wake);this.waiting.set(name,set)}),timeoutMs,`provider barrier ${name}`)}
     finally {this.waiting.get(name)?.delete(wake)}
+  }
+  /** Adds one step after start: a reply carrying a value the engine returned
+   * earlier in this flow. Matching stays strict; the origin must already
+   * listen (declare it in start's steps or origins). */
+  enqueue(step:ProviderStep):void {
+    assertFlowActive();
+    if(this.closed) throw new ProviderScriptError("Provider fixture is closed");
+    if(!step.id||!step.role||!step.purpose) throw new ProviderScriptError("Provider steps require unique IDs, role and purpose");
+    if(!this.urls[step.origin]) throw new ProviderScriptError(`No provider server for origin ${step.origin}`);
+    const known=[...this.pending.values(),...this.standing.values()].flat().some(item=>item.id===step.id)
+      ||this.seen.some(call=>call.fixtureId===step.id);
+    if(known) throw new ProviderScriptError(`Provider step ID reused: ${step.id}`);
+    const table=step.standing?this.standing:this.pending;
+    const queue=table.get(step.origin)??[];queue.push(step);table.set(step.origin,queue);
   }
   private async hold(name:string):Promise<void> {
     this.reached.add(name);for(const wake of this.waiting.get(name)??[]) wake();this.waiting.delete(name);

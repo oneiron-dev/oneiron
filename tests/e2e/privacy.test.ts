@@ -413,16 +413,30 @@ enabled = false
 `;
 }
 
-// The Dreamer's background extraction producers (follower, keyframe
-// fold, novelty rung, window audit) are not scripted here: each gets a
-// declared 503 and parks; a foreground answer is never handed to one.
-function backgroundExtraction(model: string): ProviderStep[] {
+type BackgroundKey = "follower_instruction" | "follower_keyframe_instruction" | "novelty_instruction" | "audit_window_instruction";
+// The Dreamer's background extraction producers. A keyframe fold accepts
+// any non-blank text and a window audit accepts an empty finding, so both
+// get that valid answer. The follower (one reading per asked span) and the
+// novelty rung (a decision pack keyed by span-derived question ids) have no
+// static valid answer: they keep a declared 503, which the step retries
+// and then parks. A case that scripts one of them itself omits its rule.
+const BACKGROUND_REPLIES: Partial<Record<BackgroundKey, string>> = {
+  follower_keyframe_instruction: "No change to the keyframe.",
+  audit_window_instruction: JSON.stringify({ discovered: [] }),
+};
+function backgroundExtraction(model: string, omit: readonly BackgroundKey[] = []): ProviderStep[] {
   return (["follower_instruction", "follower_keyframe_instruction", "novelty_instruction", "audit_window_instruction"] as const)
-    .map(key => ({ id: `background-${key}`, origin: "extraction", role: "extraction_teacher",
-      purpose: `background ${key}`, standing: true as const,
-      request: { method: "POST" as const, path: "/v1/chat/completions", model, system: recipeDefaults[key] },
-      response: { kind: "json" as const, status: 503,
-        body: { error: { type: "fixture_background_unscripted", message: "Background producer is not scripted" } } } }));
+    .filter(key => !omit.includes(key))
+    .map(key => {
+      const text = BACKGROUND_REPLIES[key];
+      return { id: `background-${key}`, origin: "extraction", role: "extraction_teacher",
+        purpose: `background ${key}`, standing: true as const,
+        request: { method: "POST" as const, path: "/v1/chat/completions", model, system: recipeDefaults[key] },
+        response: text === undefined
+          ? { kind: "json" as const, status: 503,
+            body: { error: { type: "fixture_background_unscripted", message: "Background producer is not scripted" } } }
+          : openaiText(`background-${key}`, model, text, { inputTokens: 64, outputTokens: 8 }) };
+    });
 }
 
 async function grantExtraction(engine: EngineFixture): Promise<void> {
@@ -518,6 +532,12 @@ suite.test(test, "PRIVACY-01", "Archive restoration without erasure should work"
     response: openaiText("eligible-people", "privacy-extract", JSON.stringify({ candidates: [],
       persons: names.map((name, index) => ({ id: `new:P${index + 1}`, name, evidence_turn_refs: ["T1"] })) }),
       { inputTokens: 128, outputTokens: 64 }),
+  }, {
+    id: "archive-summary", origin: "summary", role: "dreamer_current", purpose: "background scope summary",
+    standing: true,
+    request: { method: "POST", path: "/v1/chat/completions", model: "privacy-summary", fields: { response_format: { type: "json_schema" } } },
+    response: openaiText("archive-summary", "privacy-summary", JSON.stringify({ text: "A short note was recorded.", keep: "" }),
+      { inputTokens: 128, outputTokens: 16 }),
   }, ...backgroundExtraction("privacy-extract")] });
   let engine: EngineFixture | undefined;
   let primaryFailed: boolean = false;
@@ -693,7 +713,7 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
     request: { method: "POST", path: "/v1/chat/completions", model: "privacy-summary", system: SUMMARY_PROMPT, fields: { response_format: { type: "json_schema" } } },
     response: openaiText("source-summary", "privacy-summary", JSON.stringify({ text: spec.summaryText, keep: "" }),
       { inputTokens: 128, outputTokens: 48 }),
-  }, ...backgroundExtraction("privacy-extract")] });
+  }, ...backgroundExtraction("privacy-extract", ["follower_instruction"])] });
   let engine: EngineFixture | undefined;
   let primaryFailed: boolean = false;
   let primary: unknown;

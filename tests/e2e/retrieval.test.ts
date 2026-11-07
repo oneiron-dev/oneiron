@@ -4,7 +4,7 @@ import type { Facade, FacadeInput, FacadeResult } from "@oneiron/client";
 import { EngineFixture, awaitPublic } from "./support/engine.ts";
 import { PublicHttpClient, credentialParts } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
-import { ScriptedProviders } from "./support/providers.ts";
+import { ScriptedProviders, openaiText } from "./support/providers.ts";
 import { assertFlowActive, defineFile, ownResource, recordStart, redactor } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
@@ -168,6 +168,34 @@ function rerankStep(id: string, barrier?: string) {
     } }, ...(barrier ? { barrier } : {}),
   };
 }
+// One exact configured chat model for a durable owner model step. The
+// checker role arms no Dreamer, workflow or code-mode seat, so the vault
+// holds no other journaled step.
+const slimStepConfig = (endpoint: string) => `
+[models.providers.slim]
+kind = "local-openai-compat"
+base_url = "${endpoint}"
+revision = "e2e-v1"
+[models.roles.checker]
+model = "slim:slim-chat"
+`;
+const SLIM_STEP_TEXT = "Hold this durable step while the vault sheds its heavy state.";
+const slimStep = {
+  id: "slim-durable-step", origin: "slim", role: "checker", purpose: "durable owner model step held for SLIM",
+  request: { method: "POST" as const, path: "/v1/chat/completions", model: "slim-chat" },
+  barrier: "durable-step-held",
+  response: openaiText("slim-durable-step", "slim-chat", "Held step answered.", { inputTokens: 16, outputTokens: 4 }),
+};
+const slimSubmit: FacadeInput<"ai.steps.submit"> = {
+  step_key: "retrieval-08-slim-wait",
+  request: {
+    model: "slim/slim-chat@e2e-v1",
+    envelope: { purpose: "answer_gen", class: { kind: "best_effort" }, tier: { global_default: "answer" },
+      response_format: { format: "text" }, locality: "own_server" },
+    messages: [{ role: "user", content: [{ kind: "text", text: SLIM_STEP_TEXT }] }],
+  },
+  retry: { max_attempts: 1 },
+};
 async function effortCorpus(engine: EngineFixture) {
   const scope = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
   const rows: Awaited<ReturnType<typeof claim>>[] = [];
@@ -951,11 +979,32 @@ suite.test(test, "RETRIEVAL-07", "Freshness does not rewrite confidence should w
     expect(factors.get("semantic-new")![1]!).toBeGreaterThan(factors.get("working-new")![1]!);
     expect(factors.get("semantic-new")![0]!).toBeGreaterThan(factors.get("semantic-old")![0]!);
     const original = records.get("semantic-old")!;
-    const replacement = await claim(engine, scope, {
+    // A replacement is a closure proposal (landing.rs): it lands Proposed and
+    // the prior stays active until the owner clears it with the engine's own
+    // nonce and read frontier. Supersession is checked after that.
+    const proposed = await engine.client.call("vault.claims.upsert", {
+      scope, subject_ref: engine.pairedActor.principalRef, source: "user_stated",
       predicate: "profile.retrieval_aging_semantic_old", value: fixture.newValue,
       confidence: fixture.confidence, occurred_at: utc(fixture.newUtc), learned_at: utc(fixture.newUtc), salience: 0.5,
     });
-    expect(replacement.receipt.superseded_short_id).toBe(original.ref);
+    expect(proposed.approval).toBe("proposed");
+    expect(proposed.receipt_ref).toMatch(/^gate:[0-9a-f]+$/);
+    const beforeSettlement = await engine.client.call("vault.claims.history", { claim_ref: original.ref });
+    readReceipt(beforeSettlement.narrowing);
+    expect(beforeSettlement.value.find(row => row.claim_ref === original.id || row.short_ref === original.ref))
+      .toMatchObject({ value: fixture.oldValue, lifecycle: "active" });
+    const pending = await engine.client.call("vault.writes.critical_confirm.pending", { pending_operation: proposed.receipt_ref });
+    expect(pending.pending_operation).toBe(proposed.receipt_ref);
+    const settled = await engine.client.call("vault.writes.critical_confirm.clear", {
+      pending_operation: pending.pending_operation, nonce: pending.nonce, read_frontier_hash: pending.read_frontier_hash,
+    });
+    expect(settled.resolution).toBe("Cleared");
+    expect(settled.receipt.disposition).toBe("clear");
+    await engine.awaitReceipt(proposed.receipt_ref);
+    const hydrated = await engine.client.call("vault.hydrate", { refs: [proposed.claim_short_id] });
+    readReceipt(hydrated.narrowing);
+    expect(hydrated.value).toHaveLength(1);
+    const replacement = { ref: proposed.claim_short_id, id: hydrated.value[0]!.id_hex };
     const present = await engine.client.call("vault.search.hybrid", {
       query: "field kit locker", replay: { now: utc(fixture.timeAnchorsUtc[1]!), blend_weights: blend }, limit: 20,
     });
@@ -983,15 +1032,15 @@ suite.test(test, "RETRIEVAL-07", "Freshness does not rewrite confidence should w
   }
 });
 
-/* RETRIEVAL-08: the real journaled rerank wait permits in-process SLIM. */
+/* RETRIEVAL-08: a held durable owner model step permits in-process SLIM. */
 suite.test(test, "RETRIEVAL-08", "Warm and rebuilt graph parity should work", async () => {
   const fixture = await scenario<{
     seed: string; allowedNeighborhood: string[]; privateNode: string;
     edges: { from: string; kind: string; to: string }[];
   }>("RETRIEVAL-08");
-  const providers = await ScriptedProviders.start({ id: "retrieval-slim", steps: [rerankStep("slim-wait", "journaled-rerank-held")] });
-  const engine = await EngineFixture.start({ id: "RETRIEVAL-08", profile, serverConfig: rerankConfig(providers.urls.reranker!) });
-  let pending: Promise<FacadeResult<"vault.recall">> | undefined;
+  const providers = await ScriptedProviders.start({ id: "retrieval-slim", steps: [slimStep] });
+  const engine = await EngineFixture.start({ id: "RETRIEVAL-08", profile, serverConfig: slimStepConfig(providers.urls.slim!) });
+  let pending: Promise<FacadeResult<"ai.steps.submit">> | undefined;
   let primaryFailed: boolean = false;
   let primary: unknown;
   try {
@@ -1030,15 +1079,12 @@ suite.test(test, "RETRIEVAL-08", "Warm and rebuilt graph parity should work", as
     expect(semantics(warm)).toEqual(semantics(cold));
     const before = await engine.client.call("vault.slim.state", {});
     expect(before.state.residency).toBe("full");
-    // This public recall creates its own run, lease and model checkpoint.
-    // A provider barrier proves the outbound call exists. No run id, lease,
-    // outbound intent or elapsed wait is fabricated for the drop request.
-    const recallReader = await recordBoundReader(engine, [engine.pairedActor.principalRef, ...rows.map(row => row.id)]);
-    pending = recallReader.call("vault.recall", {
-      query: "retrievaleffortlantern", effort: "high", scope: { kinds: ["CLAIM"] }, limit: 10,
-    });
+    // The owner's durable model step writes its Started row, then its provider
+    // call waits on the barrier: the one journaled outbound step SLIM selects.
+    // No run id, lease, step id or elapsed wait is fabricated.
+    pending = engine.client.call("ai.steps.submit", slimSubmit);
     void pending.catch(() => {}); // Still awaited and asserted after releasing the barrier.
-    await providers.awaitBarrier("journaled-rerank-held");
+    await providers.awaitBarrier("durable-step-held");
     // G-SLIM-WAIT (FIX21914): observe a full positive second while the real
     // provider barrier remains held, using the normal bounded wait. The
     // measured whole seconds are passed; never a fabricated 1.
@@ -1059,11 +1105,13 @@ suite.test(test, "RETRIEVAL-08", "Warm and rebuilt graph parity should work", as
     expect(slim.state.residue.step).toEqual(dropped.outcome.residue.step);
     const step = slim.state.residue.step;
     expect(step.kind).toBe("model");
-    if (step.kind !== "model") throw new Error("Expected the held rerank model checkpoint");
+    if (step.kind !== "model") throw new Error("Expected the held durable model step");
     const saved = await engine.client.call("vault.slim.resume_step", {
       kind: "model", attempt_id: step.attempt_id, step_hash: step.step_hash,
     });
     expect(saved.kind).toBe("model");
+    expect(saved).toMatchObject({ kind: "model", attempt_id: step.attempt_id, step_hash: step.step_hash,
+      checkpoint: { progression: "started" } });
     const resumed = await engine.cli.call("vault.slim.resume", {});
     expect(resumed.process_id).toBe(before.process_id);
     expect(resumed.outcome.status).toBe("resumed");
@@ -1074,16 +1122,18 @@ suite.test(test, "RETRIEVAL-08", "Warm and rebuilt graph parity should work", as
     const full = await engine.client.call("vault.slim.state", {});
     expect(full).toEqual(before);
     expect(providers.seenFixtureCalls).toHaveLength(1);
-    providers.releaseBarrier("journaled-rerank-held");
+    providers.releaseBarrier("durable-step-held");
     const delivered = await pending;
-    expect(sorted(delivered.items.map(item => item.short_id))).toEqual(sorted(rows.map(row => row.ref)));
+    expect(delivered.step_ref).toBe(step.attempt_id);
+    expect(delivered.step_hash).toBe(step.step_hash);
+    expect(delivered.result?.status).toBe("finished");
     expect(providers.seenFixtureCalls).toHaveLength(1);
     await engine.artifacts.json("retrieval-slim-parity.json", { cold, warm, before, dropped, slim, saved, resumed, rebuilt, rewarm, full });
   } catch (error) {
     primaryFailed = true;
     primary = error;
   } finally {
-    providers.releaseBarrier("journaled-rerank-held");
+    providers.releaseBarrier("durable-step-held");
     // Settle the owned request before stopping its server on assertion failure.
     await pending?.catch(() => {});
     const cleanups: string[] = [];
