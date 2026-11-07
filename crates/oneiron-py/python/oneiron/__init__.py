@@ -1116,7 +1116,7 @@ class Oneiron:
             """The owner asserts two identities are distinct through one symmetric claim that suppresses merge re-proposals."""
             return json.loads(_translate(lambda: self._client.vault_identity_assert_distinct(json.dumps(spec))))
         def propose(self, spec):
-            """The owner parks a nominated merge or split candidate with no topology effects; distinct pairs suppress merge proposals."""
+            """The owner parks a nominated merge, split or facet candidate with no topology effects; distinct pairs suppress merge proposals."""
             return json.loads(_translate(lambda: self._client.vault_identity_propose(json.dumps(spec))))
         def undo(self, spec):
             """The owner undoes one current topology event by appending a counter-event under its observed revision."""
@@ -2673,11 +2673,14 @@ class Oneiron:
             """Read a member's visible role grants, scopes, expiry and person/relationship through the caller's own scoped read; relationship labels confer no additional authority."""
             return json.loads(_translate(lambda: self._client.vault_members_projection(json.dumps(spec))))
         def add(self, spec):
-            """An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending."""
+            """An Admin invites a live person into a shared vault at a non-root role; they join when they accept. It names no key: the invitee binds a key of their own to the invitation."""
             return json.loads(_translate(lambda: self._client.vault_members_add(json.dumps(spec))))
         def invitation_slip(self, spec):
-            """An Admin mints a pending invitation's slip for the public key the invitee generated on their own device: a founding invitation's, or one whose slip was lost."""
+            """The invitee binds their own pending invitation to the key of the independent human credential the request came on, and gets the invitation's slip: good only at that invitation's doors while it is pending and that key stays bound."""
             return json.loads(_translate(lambda: self._client.vault_members_invitation_slip(json.dumps(spec))))
+        def invitation_code(self, spec):
+            """The owner mints a single-use pairing code for a pending invitation, passed to the invitee by any channel; redeemed at the pairing door with the invitee's own key, it binds the invitation to that key."""
+            return json.loads(_translate(lambda: self._client.vault_members_invitation_code(json.dumps(spec))))
         def change(self, spec):
             """An Admin assigns another non-root role to a member who is not an Owner."""
             return json.loads(_translate(lambda: self._client.vault_members_change(json.dumps(spec))))
@@ -3667,6 +3670,9 @@ class Oneiron:
         def code_run_lifts(self, spec):
             """The owner lists value-free code-result secret lift proposals. With dismiss, one exact handle and occurrence is dismissed with a receipt first; secret and taint marks, body redaction and exports remain unchanged."""
             return json.loads(_translate(lambda: self._client.vault_secrets_code_run_lifts(json.dumps(spec))))
+        def code_run_room_lifts(self, spec):
+            """The owner lists value-free positive MESSAGE-linked secret lift proposals in one room overlay, under participant, historical sight and private-thread visibility. Absence is not clearance; no body, preview or dismissal is returned."""
+            return json.loads(_translate(lambda: self._client.vault_secrets_code_run_room_lifts(json.dumps(spec))))
         def lift_history(self, spec):
             """The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued."""
             return json.loads(_translate(lambda: self._client.vault_secrets_lift_history(json.dumps(spec))))

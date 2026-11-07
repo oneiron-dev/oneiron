@@ -885,7 +885,7 @@ class Oneiron:
         def assert_distinct(self, spec: Facade.IdentityAssertDistinctRequest) -> Facade.IdentityTopologyResult:
             """The owner asserts two identities are distinct through one symmetric claim that suppresses merge re-proposals."""
         def propose(self, spec: Facade.IdentityProposeRequest) -> Facade.IdentityTopologyResult:
-            """The owner parks a nominated merge or split candidate with no topology effects; distinct pairs suppress merge proposals."""
+            """The owner parks a nominated merge, split or facet candidate with no topology effects; distinct pairs suppress merge proposals."""
         def undo(self, spec: Facade.IdentityUndoRequest) -> Facade.IdentityTopologyResult:
             """The owner undoes one current topology event by appending a counter-event under its observed revision."""
         def resolve(self, spec: Facade.IdentityEntityRequest) -> Facade.IdentityResolution:
@@ -1794,10 +1794,12 @@ class Oneiron:
             """A live parent Admin or Owner mints one explicit scope narrowing for a holder, bounded by policy and a server-clock expiry of at most 90 days; the Delegate cannot delegate onward."""
         def projection(self, spec: Facade.SharedMemberRequest) -> Facade.MemberProjection:
             """Read a member's visible role grants, scopes, expiry and person/relationship through the caller's own scoped read; relationship labels confer no additional authority."""
-        def add(self, spec: Facade.SharedMemberAddRequest) -> Facade.SharedMemberInvited:
-            """An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending."""
+        def add(self, spec: Facade.SharedMemberAddRequest) -> Facade.SharedActExecutionReceipt:
+            """An Admin invites a live person into a shared vault at a non-root role; they join when they accept. It names no key: the invitee binds a key of their own to the invitation."""
         def invitation_slip(self, spec: Facade.InvitationSlipRequest) -> Facade.InvitationSlip:
-            """An Admin mints a pending invitation's slip for the public key the invitee generated on their own device: a founding invitation's, or one whose slip was lost."""
+            """The invitee binds their own pending invitation to the key of the independent human credential the request came on, and gets the invitation's slip: good only at that invitation's doors while it is pending and that key stays bound."""
+        def invitation_code(self, spec: Facade.InvitationCodeRequest) -> Facade.InvitationCode:
+            """The owner mints a single-use pairing code for a pending invitation, passed to the invitee by any channel; redeemed at the pairing door with the invitee's own key, it binds the invitation to that key."""
         def change(self, spec: Facade.SharedMemberRoleRequest) -> Facade.SharedActExecutionReceipt:
             """An Admin assigns another non-root role to a member who is not an Owner."""
         def remove(self, spec: Facade.SharedMemberRequest) -> Facade.SharedActExecutionReceipt:
@@ -2384,6 +2386,8 @@ class Oneiron:
     class _VaultSecretsVerbs:
         def code_run_lifts(self, spec: Facade.CodeRunSecretLiftRequest) -> Facade.CodeRunSecretLiftStatus:
             """The owner lists value-free code-result secret lift proposals. With dismiss, one exact handle and occurrence is dismissed with a receipt first; secret and taint marks, body redaction and exports remain unchanged."""
+        def code_run_room_lifts(self, spec: Facade.CodeRunRoomSecretLiftRequest) -> list[Facade.CodeRunSecretLiftProposalView]:
+            """The owner lists value-free positive MESSAGE-linked secret lift proposals in one room overlay, under participant, historical sight and private-thread visibility. Absence is not clearance; no body, preview or dismissal is returned."""
         def lift_history(self, spec: Facade.SecretLiftRequest) -> Facade.SecretLiftStatus:
             """The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued."""
         def register(self, spec: Facade.SecretRegisterRequest) -> Facade.SecretRegisterReply:
