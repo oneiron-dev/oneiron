@@ -22,12 +22,12 @@ pub(crate) use thread_readers::{
 
 impl Memory<'_> {
     /// The room's roster (ARCH-0067 §8): the channel Conversation's members,
-    /// each with the worlds that member reads by default. The engine reads
-    /// all of it from the room's owning record; no request supplies any part.
-    /// Runtime presence is writable by any authenticated writer, so it never
-    /// takes a member out of the meet: every member counts as present.
-    /// Membership alone reads nothing: the caller's own grants must admit the
-    /// room's record as well.
+    /// in its owning record's order, each with the worlds that member reads
+    /// by default. The engine reads all of it from the room's owning record;
+    /// no request supplies any part. Runtime presence is writable by any
+    /// authenticated writer, so it never takes a member out of the meet:
+    /// every member counts as present. Membership alone reads nothing: the
+    /// caller's own grants must admit the room's record as well.
     pub fn room_roster(&self, room: EntityId) -> MemoryResult<Vec<RoomPresence>> {
         let roster = self.roster_of(room)?;
         if !self.room_record_readable(room)? {
@@ -36,7 +36,8 @@ impl Memory<'_> {
         Ok(roster)
     }
 
-    /// The roster the room's own record holds, for a caller that reads it
+    /// The roster the room's own record holds, in that record's order
+    /// ([`room_members_in`]), for a caller that reads it
     /// ([`room_reader_in`]): a member, or an agent on a Ready join. Deriving
     /// the room's Scope from it shows the caller nothing.
     fn roster_of(&self, room: EntityId) -> MemoryResult<Vec<RoomPresence>> {
@@ -49,7 +50,7 @@ impl Memory<'_> {
         let worlds = reading_defaults_in(vault, &txn, &members)?;
         let clearances = clearances_in(vault, &txn, &members)?;
         drop(txn);
-        let mut roster = members
+        Ok(members
             .into_iter()
             .zip(worlds.into_iter().zip(clearances))
             .map(|(member, (active_worlds, clearance))| RoomPresence {
@@ -60,9 +61,7 @@ impl Memory<'_> {
                 active_worlds,
                 clearance,
             })
-            .collect::<Vec<_>>();
-        roster.sort_by_key(|member| member.actor);
-        Ok(roster)
+            .collect())
     }
 
     /// Whether the caller's own grants admit the room's record, which holds
@@ -347,11 +346,12 @@ fn unknown_room() -> MemoryError {
     MemoryError::bad_request_with("unknown room", &[])
 }
 
-/// A room's members from its owning record in `txn`: a project home room's
-/// validated roster, or an ordinary Conversation's membership ledger, of any
-/// kind (channel, direct, group, agent or mirror: one room substrate). A
-/// body's unchecked extension fields never stand in for either. `None` is a
-/// room that is missing, deleted, not a valid Conversation, or holds no valid
+/// A room's members from its owning record in `txn`, in that record's order
+/// (FIX 10567): a project home room's validated roster, or an ordinary
+/// Conversation's membership ledger as its typed body lists it, of any kind
+/// (channel, direct, group, agent or mirror: one room substrate). A body's
+/// unchecked extension fields never stand in for either. `None` is a room
+/// that is missing, deleted, not a valid Conversation, or holds no valid
 /// roster.
 fn room_members_in(
     vault: &Vault,
@@ -372,7 +372,9 @@ fn room_members_in(
         return Ok(None);
     }
     // The owning writer bounds the membership; the Scope reads all of it.
-    Ok(vault.room_audience_members_in_txn(txn, room).ok())
+    Ok(vault
+        .room_audience_members_in_record_order_in_txn(txn, room)
+        .ok())
 }
 
 /// The ARCH-0022 reading default of each actor in `txn`'s authority
