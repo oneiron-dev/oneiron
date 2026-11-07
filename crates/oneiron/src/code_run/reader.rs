@@ -128,10 +128,10 @@ pub const SUMMARY_GROUP_EXCEEDS_WINDOW: &str = "group_exceeds_window";
 /// in this many.
 pub const SUMMARY_WINDOW_DIVISOR: u64 = 2;
 
-/// The bytes a token is taken to stand for when a summary's group is sized
-/// before it is read: a group whose bytes pass its window share at this
-/// many bytes a token is refused unread, as too big for it.
-pub const SUMMARY_READ_BYTES_PER_TOKEN: u64 = 8;
+/// The most bytes one counted token stands for, the longest ordinary token of
+/// every `count_context_pack_tokens` tokenizer: a group past its budget at this
+/// rate cannot fit and is refused unread; any other is counted (FIX 2260).
+pub const SUMMARY_READ_BYTES_PER_TOKEN: u64 = 128;
 
 /// The tokens one summary's input may take on a model of `window_tokens`.
 #[must_use]
@@ -662,6 +662,35 @@ pub enum ClaimOutcome {
     SourceNotReady,
     /// It is settled, or its cutoff settled it now.
     Settled,
+}
+
+/// A place in a store's claim queue, just after one queued child: where a
+/// walk of the queue goes on from (FIX 9708). Cursors order as the queue
+/// does, by enqueue time, then task id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ReaderQueueCursor {
+    pub(crate) enqueued_at_ms: u64,
+    pub(crate) task: EntityId,
+}
+
+impl ReaderQueueCursor {
+    /// Just after `job` in its store's queue.
+    #[must_use]
+    pub const fn after(job: &ReaderJob) -> Self {
+        Self {
+            enqueued_at_ms: job.enqueued_at_ms,
+            task: job.task,
+        }
+    }
+}
+
+/// One page of a store's claim queue, oldest first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReaderQueuePage {
+    pub jobs: Vec<ReaderJob>,
+    /// Where the next page starts while queue rows follow this one; `None`
+    /// once the page reached the queue's end.
+    pub next: Option<ReaderQueueCursor>,
 }
 
 /// What the runner is told when a child is queued. It must not block or
