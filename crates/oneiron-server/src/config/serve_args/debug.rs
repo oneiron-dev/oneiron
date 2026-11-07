@@ -30,6 +30,10 @@ impl fmt::Debug for ServeArgs {
             .field("restore_result_fd", &self.restore_result_fd)
             .field("vsock_guest", &self.vsock_guest)
             .field("vm_restore_revision", &self.vm_restore_revision)
+            .field(
+                "checkpoint_host_holds_recipient_fd",
+                &self.checkpoint_host_holds_recipient_fd,
+            )
             .field("vm_anchor_revision", &self.vm_anchor_revision)
             .field("vm_anchor_url", &redacted_secret(&self.vm_anchor_url))
             .field("vm_anchor_socket", &self.vm_anchor_socket)
@@ -112,10 +116,6 @@ impl fmt::Debug for ServeArgs {
             )
             .field("max_messages_per_sec", &self.max_messages_per_sec)
             .field("ephemeral_timeout_ms", &self.ephemeral_timeout_ms)
-            .field(
-                "max_ephemeral_payload_bytes",
-                &self.max_ephemeral_payload_bytes,
-            )
             .field(
                 "max_ephemeral_snapshot_bytes",
                 &self.max_ephemeral_snapshot_bytes,

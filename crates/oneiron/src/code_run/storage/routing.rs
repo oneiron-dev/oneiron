@@ -30,6 +30,7 @@ use crate::secret_rotation::ArtifactTaintState;
 use crate::store::{BODY_KEYS, BodySink, body_key_row_in_txn};
 
 mod bodies;
+mod output_progress;
 mod replay;
 mod type_feedback;
 
@@ -445,7 +446,9 @@ impl<'a> ExecutorStorage<'a> {
                 // A caller filter is met inside the scan, before the rank and
                 // the cut (FIX 3977).
                 let hits = match filter {
-                    Some(_) => vault.search_text_scoped_observed(&lane, query, limit, |_, _| {})?,
+                    Some(_) => {
+                        vault.search_text_scoped_observed(&lane, query, limit, |_, _| {}, None)?
+                    }
                     None => vault.search_text(query, limit)?,
                 };
                 Ok(lane.filter_scored_entities(hits)?.value)

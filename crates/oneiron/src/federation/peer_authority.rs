@@ -26,12 +26,6 @@ use crate::vault::Vault;
 /// LMDB `sync_state` key prefix for admitted peer authority-log entry bytes.
 pub const PEER_AUTHORITY_KEY_PREFIX: &str = "peerauth:";
 
-/// Ceiling on DISTINCT admitted entry hashes per peer vault.
-///
-/// Distinct HASHES, not admission calls: re-offering a stored entry is
-/// idempotent at any size, including at the ceiling.
-pub const MAX_PEER_AUTHORITY_ENTRIES_PER_PEER: usize = 4096;
-
 /// Admitted peer AUTHORITY_LOG entry bytes. Key: `{peer_vault_id_hex}:{entry_hash_hex}`
 /// (after the `peerauth:` table prefix).
 const PEER_AUTHORITY: SideTable<String, Vec<u8>, Raw> =
@@ -67,7 +61,9 @@ fn peer_authority_row_prefix(peer_vault_id: &AuthorityVaultId) -> String {
 /// bytes and decode (one act — the decoder re-encodes, compares, and verifies
 /// the embedded origin signature before yielding an entry), derive the entry's
 /// OWN vault id and require it to equal the claimed peer, hash the canonical
-/// bytes, check the per-peer ceiling, store idempotently.
+/// bytes, store idempotently. No count of a peer's entries refuses a valid
+/// one (FIX 8736): each is checked on its own, and re-offering a stored entry
+/// stays idempotent.
 ///
 /// Admitted bytes live in `sync_state` only. They never enter AUTHORITY_LOG entity
 /// storage and never touch the local roster.
@@ -90,18 +86,9 @@ pub fn admit_peer_authority_log_entry(
         return Err(peer_authority_vault_mismatch());
     }
     let key = peer_authority_row_key(peer_vault_id, &authority_entry_hash(&entry)?);
-    let prefix = peer_authority_row_prefix(peer_vault_id);
     vault.with_write_txn_grouped(|wtxn| {
         if PEER_AUTHORITY.contains(&vault.store, wtxn, &key)? {
             return Ok(());
-        }
-        let distinct = PEER_AUTHORITY
-            .scan_keys(&vault.store, wtxn, prefix.as_bytes())?
-            .len();
-        if distinct >= MAX_PEER_AUTHORITY_ENTRIES_PER_PEER {
-            return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
-                "peer authority log flood",
-            )));
         }
         PEER_AUTHORITY.put(&vault.store, wtxn, &key, &bytes.to_vec())?;
         crate::authority::advance_authority_cache_generation(&vault.store, wtxn)?;

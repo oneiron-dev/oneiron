@@ -9,8 +9,8 @@ use super::driver::EngineNativeExecutor;
 use super::record::{StepEnd, completed_step_count};
 use super::types::{EngineExecutorConfig, EngineExecutorResult};
 use crate::code_run::{
-    CapsuleHost, CodeRunReplayRecord, ExecutorStorage, StepCapture, StepContextCapture,
-    StepContextCommit, StepReplayContext, StepStartCapture, capture_step,
+    CapsuleHost, CodeRunReplayRecord, ConsoleSlot, ExecutorStorage, StepCapture,
+    StepContextCapture, StepContextCommit, StepReplayContext, StepStartCapture, capture_step,
 };
 use crate::{EntityId, Error, LlmRequest};
 
@@ -18,7 +18,9 @@ impl EngineNativeExecutor<'_> {
     /// The complete rows this step's request was read from, or `None` when
     /// any constituent lacks a witness (FIX 6999). The host-built task and
     /// browser-handoff evidence stay unknown today; the other sets are real
-    /// witnesses, ready for their later carriers to complete the union.
+    /// witnesses, ready for their later carriers to complete the union. The
+    /// self brief the request carries brings the rows its host listed beside
+    /// it (FIX 17594), and a request with none brings none.
     pub(super) fn step_source_rows(
         &self,
         config: &EngineExecutorConfig,
@@ -49,6 +51,7 @@ impl EngineNativeExecutor<'_> {
                 .map(|(row, _)| row.summary_id())
                 .collect::<Vec<_>>()
         });
+        let brief_rows = Some(self.brief_source_rows());
         // Browser planner handoff evidence has no row witness yet (FIX 6999).
         let browser_rows: Option<Vec<EntityId>> = None;
         crate::skill_optimize::union_source_rows([
@@ -56,11 +59,13 @@ impl EngineNativeExecutor<'_> {
             exposure_rows,
             bridge_rows,
             epoch_rows,
+            brief_rows,
             browser_rows,
         ])
     }
 
-    /// Captures `request` before it is sent, with `record`, the run's row as
+    /// Captures `request` before it is sent, with `console`, where it shows
+    /// the step before's console whole (FIX 3608), and `record`, the run's row as
     /// it stands before the step, and the config and teaching fingerprint it
     /// runs under, when the run is a leased attempt's own canonical run (the
     /// run whose id is the attempt's). Step 0's request is the one input no
@@ -79,6 +84,7 @@ impl EngineNativeExecutor<'_> {
         config: &EngineExecutorConfig,
         step: u64,
         request: &LlmRequest,
+        console: Option<ConsoleSlot>,
         record: &CodeRunReplayRecord,
         prompt_fingerprint: &str,
     ) {
@@ -105,6 +111,7 @@ impl EngineNativeExecutor<'_> {
                 request,
                 task: &config.task,
                 exposures,
+                console,
                 source_rows,
                 start: Some(StepStartCapture {
                     record,
@@ -121,8 +128,10 @@ impl EngineNativeExecutor<'_> {
 
     /// The replay context of the step `record` is about to checkpoint, whose
     /// calls are its bridge rows from `bridge_start` on, with what its host
-    /// kept in `capture`: the responses it handed out (FIX 6351) and what its
-    /// result reads saw of reader state (FIX 6352). Beside them, where its
+    /// kept in `capture`: the responses it handed out (FIX 6351), what its
+    /// result reads saw of reader state (FIX 6352), the callables its
+    /// program called that answered and the skill bodies calls' answers
+    /// delivered to it (FIX 3608). Beside them, where its
     /// checkpoint says its calls end (FIX 6354): the end and the
     /// context's digest, which the checkpoint binds, and the context as the
     /// checkpoint commits it. Only a leased attempt's own canonical run
@@ -151,6 +160,8 @@ impl EngineNativeExecutor<'_> {
             bridge_end,
             guest_responses: capture.guest_responses,
             reader_reads: capture.reader_reads,
+            callables: capture.callables,
+            deliveries: capture.deliveries,
         };
         let commit = StepContextCommit::new(capsule, context)?;
         let end = StepEnd {

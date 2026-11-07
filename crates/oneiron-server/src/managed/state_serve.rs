@@ -46,9 +46,8 @@ use refusal::writes_frozen_body;
 mod admission;
 /// The vault data key's boot steps: its page seal, escrow wraps and spool.
 mod boot_keys;
-/// A vault VM's live look at its outbox companion and the escrow
-/// recipients its carrier delivers (FIX 6683, FIX 6684).
-#[cfg(target_os = "linux")]
+/// Live looks at a vault VM's outbox companion and carrier recipients, and
+/// at a process host's argv recipients (FIX 6683, FIX 6684, FIX 11852).
 mod carrier_watch;
 /// The ctl dispatcher, [`ManagedState::handle_request`].
 mod control;
@@ -69,6 +68,8 @@ mod reap;
 mod refusal;
 /// The relay delete ctl requests (FIX 6826).
 mod relay_delete;
+/// Generic original-usage export over ctl (LC191311).
+mod usage_export;
 
 #[cfg(target_os = "linux")]
 pub(super) use self::carrier_watch::carrier_recipients_snapshot;

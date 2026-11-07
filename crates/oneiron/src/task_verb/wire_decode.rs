@@ -84,8 +84,22 @@ pub(crate) fn task_is_blocked_in(
     txn: &heed::RoTxn<'_>,
     task_ref: EntityId,
 ) -> Result<bool> {
-    Ok(task_verb_body_in(vault, txn, task_ref)?
-        .is_some_and(|body| matches!(body.state, Some(TaskExecutionState::Blocked { .. }))))
+    Ok(task_is_blocked_with_source_in(vault, txn, task_ref)?.is_some_and(|(blocked, _)| blocked))
+}
+
+/// The same blocked-state read beside the actual typed TASK row it decoded.
+/// Missing or non-typed TASK rows name no source; native errors propagate.
+pub(crate) fn task_is_blocked_with_source_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+) -> Result<Option<(bool, EntityId)>> {
+    Ok(task_verb_body_in(vault, txn, task_ref)?.map(|body| {
+        (
+            matches!(body.state, Some(TaskExecutionState::Blocked { .. })),
+            task_ref,
+        )
+    }))
 }
 
 /// The evidence a Done TASK's done-means needs: each `yes_if_all`

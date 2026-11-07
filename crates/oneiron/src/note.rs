@@ -16,8 +16,11 @@ pub use reads::{
     NoteAccessRequest, NoteAnchoredSpan, NoteEditorBinding, NoteEditorCloseRequest,
     NoteEditorClosed, NoteHistoryView, NoteReadRequest, NoteReadSource, NoteReadSpan, NoteReadView,
 };
+mod archive_import;
 #[cfg(feature = "sync")]
 mod residence_read;
+pub use archive_import::ImportedNoteRead;
+pub(crate) use archive_import::{ArchivedNoteAdmission, archived_note_body};
 #[cfg(feature = "sync")]
 pub(crate) use residence_read::opened_note_view;
 mod archive_read;

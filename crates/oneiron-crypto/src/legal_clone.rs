@@ -63,6 +63,18 @@ pub enum SourceComponent {
     MessageDocument = 9,
     /// One exact stored outgoing edge row of that message.
     MessageEdge = 10,
+    /// The exact result body that message's result attachment names and
+    /// the message still holds. Its revision is the BLAKE3 of that
+    /// message's full stored entity row, the revision of its `MessageRow`;
+    /// its source key is the stored raw-output key of the attachment's
+    /// handle; its fingerprint and length are the whole body's.
+    MessageResultBody = 11,
+    /// One exact stored row of that message's revision ledger: the retained
+    /// history document of its earlier stored rows, its revision state, one
+    /// retained frontier, or one frontier's reverse identity. Its revision
+    /// is the BLAKE3 of that message's full stored entity row, the revision
+    /// of its `MessageRow`.
+    MessageRevision = 12,
 }
 
 impl SourceComponent {
@@ -79,6 +91,8 @@ impl SourceComponent {
             8 => Ok(Self::MessageRow),
             9 => Ok(Self::MessageDocument),
             10 => Ok(Self::MessageEdge),
+            11 => Ok(Self::MessageResultBody),
+            12 => Ok(Self::MessageRevision),
             _ => Err(Error::NonCanonical),
         }
     }

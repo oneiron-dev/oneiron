@@ -30,6 +30,33 @@ pub trait SyncDialer: Send + Sync + std::fmt::Debug {
     fn dial(&self) -> SyncDial<'_>;
 }
 
+/// FIX 4748: the carriers to this device's other machines while its home is
+/// down. A peer has no URL: each dial rides the paired mesh to the machine it
+/// names, private to it as a [`SyncDialer`]'s stream is, and the upgrade, its
+/// slip and machine proofs are the bytes a home dial carries.
+pub trait SyncPeerDialer: Send + Sync + std::fmt::Debug {
+    /// The machines this device may sync with while its home is down, the
+    /// standby home first ([`crate::sync::peer_route::choose_sync_peer`]);
+    /// empty when none may.
+    fn peers(&self) -> Vec<crate::EntityId>;
+    /// Opens the stream one sync socket to `peer` rides.
+    fn dial_peer(&self, peer: crate::EntityId) -> SyncDial<'_>;
+}
+
+/// One peer's dial as the [`SyncDialer`] a peer session's socket rides
+/// (FIX 4748).
+#[derive(Debug)]
+pub(crate) struct PeerDial<'a> {
+    pub(crate) dialer: &'a dyn SyncPeerDialer,
+    pub(crate) peer: crate::EntityId,
+}
+
+impl SyncDialer for PeerDial<'_> {
+    fn dial(&self) -> SyncDial<'_> {
+        self.dialer.dial_peer(self.peer)
+    }
+}
+
 /// The carrier under one sync socket.
 pub enum SyncIo {
     Tcp(TcpStream),
@@ -80,6 +107,17 @@ impl AsyncWrite for SyncIo {
 /// server (ARCH-0081 §7).
 pub(crate) type SyncSocket = WireSocket<WebSocketStream<SyncIo>>;
 
+/// The most bytes one message from the home may reassemble to on a sync
+/// socket (ABC transport row T25): a 1024th of this machine's memory, never
+/// under 64 MiB, and 64 MiB when memory cannot be read, the derivation of the
+/// server's request floor, in place of tungstenite's implicit 64 MiB.
+fn sync_socket_message_bytes() -> usize {
+    const FLOOR: u64 = 64 * 1024 * 1024;
+    let bytes =
+        crate::host_memory::memory_bytes().map_or(FLOOR, |memory| (memory / 1024).max(FLOOR));
+    usize::try_from(bytes).unwrap_or(usize::MAX)
+}
+
 /// Whether `error` is the home's HTTP 401 answer to the upgrade: it did not
 /// accept the credential the upgrade carried (FIX 12442).
 pub(crate) fn upgrade_unauthorized(error: &WsError) -> bool {
@@ -99,10 +137,27 @@ pub(crate) async fn connect_sync_socket(
     dialer: Option<&dyn SyncDialer>,
 ) -> Result<(SyncSocket, tokio_tungstenite::tungstenite::http::HeaderMap), WsError> {
     let request = request.into_client_request()?;
-    let io = match dialer {
-        Some(dialer) => SyncIo::Dialed(dialer.dial().await.map_err(WsError::Io)?),
+    let io = open_carrier(request.uri(), dialer).await?;
+    let config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
+        .max_message_size(Some(sync_socket_message_bytes()));
+    let (socket, response) =
+        tokio_tungstenite::client_async_with_config(request, io, Some(config)).await?;
+    Ok((
+        WireSocket::to_our_server(socket, MAX_CODEC_INNER_BYTES),
+        response.into_parts().0.headers,
+    ))
+}
+
+/// The carrier one sync socket to `uri` rides: `dialer`'s stream when there
+/// is one, else TCP to the URI's host, `ws` only. A home probe opens it alone
+/// (FIX 4748).
+pub(crate) async fn open_carrier(
+    uri: &tokio_tungstenite::tungstenite::http::Uri,
+    dialer: Option<&dyn SyncDialer>,
+) -> Result<SyncIo, WsError> {
+    match dialer {
+        Some(dialer) => Ok(SyncIo::Dialed(dialer.dial().await.map_err(WsError::Io)?)),
         None => {
-            let uri = request.uri();
             if uri.scheme_str() == Some("wss") {
                 return Err(WsError::Url(UrlError::TlsFeatureNotEnabled));
             }
@@ -113,16 +168,11 @@ pub(crate) async fn connect_sync_socket(
                 .trim_end_matches(']')
                 .to_owned();
             let port = uri.port_u16().unwrap_or(80);
-            SyncIo::Tcp(
+            Ok(SyncIo::Tcp(
                 TcpStream::connect((host.as_str(), port))
                     .await
                     .map_err(WsError::Io)?,
-            )
+            ))
         }
-    };
-    let (socket, response) = tokio_tungstenite::client_async(request, io).await?;
-    Ok((
-        WireSocket::to_our_server(socket, MAX_CODEC_INNER_BYTES),
-        response.into_parts().0.headers,
-    ))
+    }
 }

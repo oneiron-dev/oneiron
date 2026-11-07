@@ -37,6 +37,7 @@
 mod args;
 mod attested_routes;
 mod backup_facts;
+mod checkpoint_recipient;
 mod container_dirs;
 #[cfg(test)]
 mod ctl_shed_tests;
@@ -82,11 +83,11 @@ mod vm_host;
 #[cfg(target_os = "linux")]
 mod vm_init;
 #[cfg(target_os = "linux")]
-mod vm_source_control;
-#[cfg(target_os = "linux")]
 mod vm_outbox;
 #[cfg(target_os = "linux")]
 mod vm_schedule;
+#[cfg(target_os = "linux")]
+mod vm_source_control;
 #[cfg(target_os = "linux")]
 pub use self::vm_host::{
     SleepOutcome, VaultVm, VaultVmConfig, VaultVmInspect, VaultVmRun, VmAnchorHostIo, VmExitWatch,

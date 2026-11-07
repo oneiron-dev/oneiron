@@ -422,6 +422,7 @@ pub async fn run_free_time_for_human(
         .selected_locality()
         .ok_or_else(|| invalid("the host binding names no locality"))?;
     let keyless = model.inference.selected_keyless();
+    let paid = model.inference.selected_paid();
     let request = LlmRequest {
         model: model.model.clone(),
         envelope: CallEnvelope {
@@ -439,6 +440,7 @@ pub async fn run_free_time_for_human(
             response_format: ResponseFormat::Text,
             locality,
             host_keyless: keyless,
+            host_paid: paid,
         }
         .with_purpose_defaults(),
         messages: vec![

@@ -781,6 +781,13 @@ fn check_claim_policy_for_write_with_record_inner(
                 },
                 dreamer_run_id: pending_consent_dreamer_run_id(envelope, body),
                 predicate: Some(body.predicate.clone()),
+                // The confirm's deadline is the policy's lifetime now,
+                // frozen with it (FIX 8760).
+                expires_at: attach_critical_confirm.then(|| {
+                    pending_decision
+                        .created_at
+                        .saturating_add(policy.critical_confirm_lifetime_seconds())
+                }),
             };
             store.put_pending_gate_consent_in_txn(wtxn, &pending)?;
             // A fresh local confirm on this revision is the item the claim's
