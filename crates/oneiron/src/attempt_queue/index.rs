@@ -85,6 +85,10 @@ pub(super) fn delete_deleted_in_txn(
         PARENT_CHILD.delete(store, wtxn, &(parent, record.id))?;
     }
     ANNOTATION_HOLD.delete(store, wtxn, &record.id)?;
+    crate::dreamer_consolidation::delete_lineage_origin_in_txn(store, wtxn, record.id)?;
+    crate::dreamer_consolidation::branch_scope::delete_selection_scope_in_txn(
+        store, wtxn, record.id,
+    )?;
     Ok(())
 }
 

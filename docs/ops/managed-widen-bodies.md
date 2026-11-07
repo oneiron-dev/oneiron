@@ -21,8 +21,8 @@ the existing native comparison rules.
 The `proposal_ref` string is also unescaped into an anonymous file. Property names
 are matched as they stream, without copying them or an unknown member's value
 into a metadata head. Missing, duplicate, unknown and non-string members still
-produce the same invalid-JSON response. The generic decoder used by other doors
-is unchanged.
+produce the same invalid-JSON response. Large widen answers do not use the generic
+metadata decoder. The existing whole-JSON reader used by other doors is unchanged.
 
 Large reject bodies use the same closed-schema string reader and UTF-8 file sink
 for their sole required `proposal_ref` member. They have no delta member. Small
@@ -42,12 +42,30 @@ claim. Files are anonymous and are removed when their handles close.
 
 ## Spool and decoder I/O memory
 
-The raw-body spool uses the same shared process memory line before allocating its
-existing 64 KiB read piece. This wait runs on its dedicated transfer worker after
-the anonymous spool file is created, outside every vault transaction. The actual
-buffer capacity is recorded on the lease. The piece drops before its lease on
-success, error and unwind; both are released before the decoder starts, so they
-do not overlap the decoder's later reservation.
+The raw-body spool admits one finite payload phase on the shared process memory
+line. It covers the existing two queued copies, the producer's unsent copy, the
+reader's current copy and the existing 64 KiB read piece. Each copied piece is at
+most 64 KiB; these are the existing queue and I/O geometry, not a request-size
+limit. Admission runs on the dedicated transfer worker after the anonymous spool
+file is created, outside every vault transaction.
+
+The feed starts observing input and the existing idle policy immediately, but
+waits for that admission before its first nonempty piece copy. This wait is worker
+backpressure, not a new client deadline. The actual copied lengths and read-buffer
+capacity are recorded on the same lease. Once a current copy is fully consumed,
+its backing is freed and returned to that lease's pending room under the original
+memory-line lock. No other waiter can take the freed room between those steps,
+and no further admission is needed for the next piece.
+
+The reader, current copy, queue and read piece drop before the worker signals the
+end of the raw phase. An explicit owner then destroys the whole producer future,
+including any unsent copy, before acknowledging that signal. Cancellation performs
+the same destruction before closing the acknowledgment channel; a closed channel
+never starts the decoder. Only after acknowledgment does the worker drop the final
+raw-phase lease and call the decoder. All raw payloads therefore drop before their
+lease on success, error and unwind, and do not overlap a decoder's later reservation.
+Channel, future and error metadata, upstream frame backing and allocator RSS are
+not included in this payload accounting.
 
 The raw-spool wait has no new deadline and observes the same cancellation flag
 as the decoder wait. A physical memory floor uses the existing internal-server-
@@ -92,8 +110,56 @@ The completed transfer's cancellation flag is not reused for a later admission.
 A physical memory floor keeps the existing internal-server-error shape with a spool
 reader allocation message; cancellation keeps the body-not-whole response. Admitted
 reads retain the existing JSON-before-sink and native validation order. This accounts
-only for the fixed reader buffer, not generic DTOs, metadata heads, base64 text or
-native decoded rows.
+only for the fixed reader buffer, not generic DTOs, metadata heads or native decoded
+rows. The sealed object's additional fixed base64 buffers are covered below.
+
+## Sealed base64 and metadata working buffers
+
+The sealed custody reader admits its source JSON reader, pending base64 text,
+decoded output and metadata-head writer together on the original transfer worker,
+before any of them allocates. One lease covers two existing 64 KiB I/O windows,
+128 KiB of pending base64 text and 96 KiB of initialized output: 352 KiB in this
+phase. These capacities derive from the existing window and piece geometry, not
+a request-size limit. Each actual capacity is recorded once on the combined lease.
+
+The sink keeps reusable text and initialized output buffers. It decodes the same
+text extent with the same standard base64 engine and writes only the decoded
+prefix. Chunk boundaries, padding checks, JSON-before-sink errors, file writes
+and final field handling keep their existing order.
+
+The other object members stream to a second anonymous vault-staged file instead
+of one rebuilt encoded metadata vector. Values and quoted property names retain
+their original bytes. Names are unescaped only into the existing stack-array bulk
+matcher, never a name vector or normalization string. A non-bulk name is replayed
+from its saved extent through the same admitted reader, after any preceding comma;
+the reader ends exactly at that name's closing quote. Escaped names keep the same
+meaning for the later DTO decode. Omitting the base64 member also removes its name
+and punctuation. The head and decoded input bytes therefore fit within the raw
+body's stored-copy room; no second
+cumulative disk claim is created. Files still close on drop, and real disk
+capacity failures keep the custody response.
+
+A head-file write failure stops further writes but does not stop syntax scanning.
+After scanning, both sinks close inside the first lease. All four working buffers
+and that lease drop before a later admission. Known syntax and head-file failures
+are returned before waiting for another reader. Only then does the same original
+transfer worker admit a separate 64 KiB head reader and decode the route's DTO.
+There is no buffer lease or vault transaction across that wait, and the original
+live cancellation flag remains in use. The phases do not overlap. A head-file
+read failure keeps body-not-whole rather than being called malformed JSON.
+Position, seek and original-name replay failures keep that same response; malformed
+name escapes or UTF-8 still produce invalid JSON. A head write failure does not
+stop replaying the name's full extent or judging the rest of the document.
+
+A readable head's DTO errors still precede saved input-sink errors. The reader
+drops before its lease, including refusal and unwind; the returned request keeps
+only its original head, input file and disk room. The transient head file is gone
+before the worker returns.
+
+A physical memory floor uses the existing internal-server-error shape with a
+custody-decode allocation message. A stopped wait keeps body-not-whole, not disk
+capacity. The later serde reader's key scratch space, generic DTOs and native
+decoded rows remain unpriced; this is not whole-endpoint heap admission.
 
 ## Native answers
 
@@ -102,9 +168,48 @@ existing 64-byte lowercase hex shape. It reads that reference into a fixed 64-by
 buffer and checks EOF, never a request-sized string. Invalid references retain
 their existing refusal and do not bypass the holder check.
 
-For an accept, file comparison runs on a blocking worker, outside every LMDB
-transaction. It
-compares exact bytes to the proposal's stored canonical delta, not just a digest.
+For a large accept, native work runs on a dedicated transfer worker, not the
+runtime's shared blocking pool. It carries the same restriction-clock, run-write
+and idempotency context as the old blocking helper. Both decoded files and their
+disk room stay owned by that worker through their last use, even if HTTP leaves.
+A separate live stop flag lets a queued native memory wait end when HTTP leaves;
+it does not reuse the completed spool's flag or revoke the native operation.
+A thread that cannot start or ends without an answer keeps the existing
+"widen approval failed" internal-server-error response.
+
+Before decoding the first stored canonical byte vector, a short authorized read
+measures the stored row's byte length and closes. The process memory line then
+reserves a conservative allowance for that vector's payload and growth. The
+allowance derives from the pinned JSON Vec decoder and Rust allocator geometry,
+not a request-size cap or the observed canonical length. A fresh read rechecks
+owner and credential and the required allowance before decoding. A row that grew
+replans only after closing the transaction and returning the entire old allowance,
+before reading the expected file. No memory wait holds a read or write transaction
+or another memory lease.
+
+The actual canonical vector capacity is recorded on the same lease. The vector
+stays charged through comparison and the acting writer, and drops before its lease.
+A physical floor keeps the existing internal-server-error shape and says the
+canonical byte allowance could not be reserved, not that an allocation was observed
+to fail. A stopped wait keeps body-not-whole; native refusals keep their old mapping.
+The admitted read keeps its decoded proposal row with that vector. In the acting
+writer, owner and holder liveness are checked first. A streaming JSON writer then
+compares the entire retained row's serialized bytes with the actual stored bytes,
+without making another encoded row vector. Only exact whole-row equality reuses the
+retained row and its already charged canonical payload. Validation, current-owner,
+expiry, unresolved-state and full canonical-byte checks still precede grant minting.
+The row, including its payload, drops before the same lease on every return path.
+
+Any stored-byte difference, including a metadata-only change or a different JSON
+spelling, takes the original native row decode, validation and owner checks. An
+encoding failure also takes that path. No new refusal, memory wait, file replay or
+request-size bound is added. This fallback's second canonical vector remains
+unaccounted, as do row metadata, validation trees, typed values, re-encoding,
+overlay-owned raw row copies and allocator RSS. The unchanged-row reuse is not a
+claim of complete native-answer heap admission.
+
+For an accept, file comparison runs outside every LMDB transaction. It compares
+exact bytes to the proposal's stored canonical delta, not just a digest.
 The acting writer then checks the current owner, holder credential, unresolved
 state, expiry and the same canonical bytes before minting the grant and recording
 the acceptance. No file read or await runs inside that writer.
@@ -122,7 +227,7 @@ has no `expected_delta`.
 This removes request-sized `expected_delta`, `proposal_ref`, property-name and
 metadata-head allocations on large widen-answer paths. It is not a bound on the
 whole endpoint or a claim of complete heap admission. Other doors' generic metadata
-decoding, queued feed/frame-buffer admission and stored proposal allocations
-remain separate work. The fixed 64 KiB working buffers and 64-byte reference buffer
+decoding, upstream frame backing and channel/future/error metadata, and the
+remaining stored proposal allocations stay separate work. The fixed 64 KiB working buffers and 64-byte reference buffer
 are internal I/O geometry and the existing reference shape, not new request caps,
 defaults or timeouts.
