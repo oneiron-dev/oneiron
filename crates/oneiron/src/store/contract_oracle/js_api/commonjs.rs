@@ -4,7 +4,7 @@ use oxc_ast::{
     AstKind,
     ast::{
         AssignmentExpression, AssignmentTarget, BindingPattern, Expression, IdentifierReference,
-        MemberExpression, ObjectExpression, Program, Statement,
+        MemberExpression, Program, Statement,
     },
 };
 use oxc_semantic::Semantic;
@@ -17,7 +17,7 @@ enum Target {
 }
 
 // Property receivers are captured from the original module value, before
-// evaluating the chain's single fresh object-literal result.
+// evaluating the chain's single fresh terminal value.
 enum ChainReference {
     Whole,
     Exports,
@@ -109,16 +109,16 @@ pub(super) fn collect(
                 }
                 continue;
             }
-            if let Some(object) =
+            if let Some(value) =
                 replacement_chain(assignment, semantic, alias, native_module, &mut accounted)
             {
                 commonjs = true;
                 alias = true;
                 module.bindings.clear();
-                object_bindings(object, module);
+                value_bindings(value, module);
                 continue;
             }
-            if let Some((references, object)) =
+            if let Some((references, value)) =
                 property_reference_chain(assignment, semantic, alias, native_module, &mut accounted)
             {
                 commonjs = true;
@@ -129,7 +129,7 @@ pub(super) fn collect(
                         ChainReference::Whole => {
                             if !module_replaced {
                                 module.bindings.clear();
-                                object_bindings(object, module);
+                                value_bindings(value, module);
                                 module_replaced = true;
                             }
                         }
@@ -205,14 +205,9 @@ pub(super) fn collect(
                     }
                     alias = false;
                     module.bindings.clear();
-                    if let Expression::ObjectExpression(object) = value {
-                        object_bindings(object, module);
-                    } else if !matches!(
-                        value,
-                        Expression::FunctionExpression(_)
-                            | Expression::ArrowFunctionExpression(_)
-                            | Expression::ClassExpression(_)
-                    ) {
+                    if fresh_value(value) {
+                        value_bindings(value, module);
+                    } else {
                         module.unresolved.insert("commonjs:opaque-value".to_owned());
                     }
                 }
@@ -287,7 +282,7 @@ fn replacement_chain<'ast, 'src>(
     alias: bool,
     native_module: bool,
     accounted: &mut BTreeSet<(u32, u32)>,
-) -> Option<&'ast ObjectExpression<'src>> {
+) -> Option<&'ast Expression<'src>> {
     let mut assignment = assignment;
     let mut chain_accounted = BTreeSet::new();
     let mut assigns_exports = false;
@@ -314,19 +309,32 @@ fn replacement_chain<'ast, 'src>(
         }
         match assignment.right.get_inner_expression() {
             Expression::AssignmentExpression(next) => assignment = next,
-            Expression::ObjectExpression(object) if assigns_exports && assigns_whole => {
+            value if assigns_exports && assigns_whole && fresh_value(value) => {
                 // These references are stable: no link rebinds `module` or
                 // targets a property of the replaceable exports value. Every
-                // store receives this same literal, so both slots re-alias.
+                // store receives this same value, so both slots re-alias.
                 accounted.extend(chain_accounted);
-                return Some(object);
+                return Some(value);
             }
             _ => return None,
         }
     }
 }
 
-fn object_bindings(object: &ObjectExpression<'_>, module: &mut Module) {
+fn fresh_value(value: &Expression<'_>) -> bool {
+    matches!(
+        value,
+        Expression::ObjectExpression(_)
+            | Expression::FunctionExpression(_)
+            | Expression::ArrowFunctionExpression(_)
+            | Expression::ClassExpression(_)
+    )
+}
+
+fn value_bindings(value: &Expression<'_>, module: &mut Module) {
+    let Expression::ObjectExpression(object) = value else {
+        return;
+    };
     for property in &object.properties {
         let Some(property) = property.as_property() else {
             module
@@ -360,7 +368,7 @@ fn property_reference_chain<'ast, 'src>(
     alias: bool,
     native_module: bool,
     accounted: &mut BTreeSet<(u32, u32)>,
-) -> Option<(Vec<ChainReference>, &'ast ObjectExpression<'src>)> {
+) -> Option<(Vec<ChainReference>, &'ast Expression<'src>)> {
     let mut assignment = assignment;
     let mut references = Vec::new();
     let mut chain_accounted = BTreeSet::new();
@@ -395,9 +403,9 @@ fn property_reference_chain<'ast, 'src>(
         references.push(reference);
         match assignment.right.get_inner_expression() {
             Expression::AssignmentExpression(next) => assignment = next,
-            Expression::ObjectExpression(object) if has_property && has_slot => {
+            value if has_property && has_slot && fresh_value(value) => {
                 accounted.extend(chain_accounted);
-                return Some((references, object));
+                return Some((references, value));
             }
             _ => return None,
         }
