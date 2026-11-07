@@ -109,7 +109,7 @@ impl CanonicalEntityDocument {
     }
 }
 
-fn metadata_size(fields: &BTreeMap<String, Vec<u8>>) -> usize {
+pub(super) fn metadata_size(fields: &BTreeMap<String, Vec<u8>>) -> usize {
     fields
         .iter()
         .map(|(field, value)| field.len() + value.len())
@@ -128,6 +128,13 @@ impl CanonicalSnapshot {
 
     /// Encode the same immutable source whose validation groups just completed.
     pub(super) fn encode_validated_within(&self, limit: usize) -> Result<Vec<u8>> {
+        let mut bytes = self.encode_validated_payload_within(limit)?;
+        seal_recovery_artifact(CANONICAL_SNAPSHOT_ARTIFACT_TYPE, &mut bytes);
+        Ok(bytes)
+    }
+
+    /// The same bounded encoding, with its reserved header left for the checksum page.
+    pub(super) fn encode_validated_payload_within(&self, limit: usize) -> Result<Vec<u8>> {
         let mut out = BoundedWriter {
             bytes: Vec::new(),
             budget: ByteBudget::new(limit.min(CANONICAL_SNAPSHOT_MAX_BYTES)),
@@ -136,7 +143,6 @@ impl CanonicalSnapshot {
         // Room for the envelope header, sealed once the payload is written.
         std::io::Write::write_all(&mut out, &[0; super::HEADER_LEN]).map_err(|_| out.refusal())?;
         rmp_serde::encode::write_named(&mut out, self).map_err(|_| out.refusal())?;
-        seal_recovery_artifact(CANONICAL_SNAPSHOT_ARTIFACT_TYPE, &mut out.bytes);
         Ok(out.bytes)
     }
 
