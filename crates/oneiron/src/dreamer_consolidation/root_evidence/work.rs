@@ -66,8 +66,9 @@ pub(crate) fn frontier_frozen<E: From<Error>>(
     vault.try_with_write_txn(|txn| {
         let actor = owner(txn)?;
         let (id, mut root) = owned_root(vault, txn, actor, &input.root_ref)?;
-        apply_receipts(&mut root, receipts)?;
+        let fresh = apply_receipts(&mut root, receipts)?;
         ROOTS.put(&vault.store, txn, &id, &root)?;
+        super::bridge::enqueue_new_bridges_in_txn(vault, read, txn, id, &root, &fresh, input)?;
         Ok(root.accounting)
     })
 }
@@ -138,7 +139,7 @@ fn child_receipts(
 fn apply_receipts(
     root: &mut Root,
     receipts: Vec<(usize, ConsolidationChildReceipt)>,
-) -> Result<()> {
+) -> Result<Vec<(usize, ConsolidationChildReceipt)>> {
     // Each child identity's bucket and place in it, as the root holds it.
     let mut homes: BTreeMap<String, (usize, usize)> = BTreeMap::new();
     for (index, bucket) in root.accounting.buckets.iter().enumerate() {
@@ -147,6 +148,7 @@ fn apply_receipts(
         }
     }
     let mut touched = BTreeSet::new();
+    let mut fresh = Vec::new();
     for (index, receipt) in receipts {
         let bucket = root
             .accounting
@@ -168,6 +170,7 @@ fn apply_receipts(
             }
             None => {
                 homes.insert(receipt.child_ref.clone(), (index, bucket.children.len()));
+                fresh.push((index, receipt.clone()));
                 bucket.children.push(receipt);
                 touched.insert(index);
             }
@@ -180,5 +183,5 @@ fn apply_receipts(
             .sort_by(|left, right| left.child_ref.cmp(&right.child_ref));
         account_bucket(bucket)?;
     }
-    Ok(())
+    Ok(fresh)
 }
