@@ -39,6 +39,7 @@ fn spawn_intent_digest(input: &DispatchAgent, spawn: &AgentSpawnContext) -> Resu
         &spawn.scope,
         &spawn.type_ref,
         &spawn.budget,
+        &spawn.token_ceiling,
         &spawn.spend,
         &spawn.room,
         &spawn.team,
@@ -264,6 +265,7 @@ impl<'a> AgentDispatcher<'a> {
         let requested_ref = input.target.agent_definition_ref()?;
         let spend = spawn.spend.clone();
         let budget = spawn.budget;
+        let token_ceiling = spawn.token_ceiling;
         let planned = spawn.plan.is_some();
         let origin =
             self.origin_conversation_in_txn(wtxn, requested_parent, spawn.origin_conversation)?;
@@ -287,6 +289,7 @@ impl<'a> AgentDispatcher<'a> {
             requested_parent,
             spend.as_ref(),
             budget,
+            token_ceiling,
             &input.target,
             dispatch_input.plan.as_ref().map(|plan| &plan.plan.model),
             input.now,
