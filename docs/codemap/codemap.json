@@ -17108,7 +17108,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/dispatcher/agent_verb/session_write.rs",
@@ -18451,10 +18451,20 @@
      "path": "src/code_run/storage/reader_jobs.rs",
      "purpose": "One run's reader children (ARCH-0079 #reader-forks), where the run's rows are: base, or its off-record…",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "enum": 1,
       "fn": 14,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/reader_jobs/close.rs",
+     "purpose": "Existing base spend scopes whose reader rows evaporated on explicit close",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -18844,7 +18854,7 @@
      "path": "src/code_run/storage/session_write.rs",
      "purpose": "One write a run bound to an off-record session stages in its room, kept on its receipt in the same segment…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -36332,7 +36342,7 @@
      "path": "src/engine_executor/host/readers.rs",
      "purpose": "Reader sources, findings and summaries bound by the recording host",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -93588,7 +93598,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 223,
+     "files": 224,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94927,7 +94937,7 @@
    },
    "over_bar": 187,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6719,
+   "source_files": 6720,
    "test_files": 895
   },
   "oneiron-android": {
@@ -120430,7 +120440,7 @@
      "path": "src/api/owner_routes/recovery_kit_target_routes.rs",
      "purpose": "The target install's own kit calls (FIX 4736, 4530, 4564, 4955): the material a root change or a late…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -120439,6 +120449,16 @@
      "notable": [],
      "path": "src/api/owner_routes/recovery_kit_target_routes/authority_enrollment.rs",
      "purpose": "The owner's explicit pre-loss recovery-key enrollment on the kit's target install",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/recovery_kit_target_routes/authority_recover.rs",
+     "purpose": "Lost-owner recovery: the enrolled kit key authenticates; the device is only a target",
      "surface": {
       "crate-vis": 1
      }
@@ -133274,7 +133294,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 715,
+     "files": 716,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -133808,7 +133828,7 @@
    },
    "over_bar": 59,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1722,
+   "source_files": 1723,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -140802,7 +140822,7 @@
      "path": "src/session_overlay/overlay/held.rs",
      "purpose": "What the overlay's readers hold beyond its published state, counted in what the overlay retains (FIX 11083)…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 11
      }
     },
     {
@@ -140815,7 +140835,7 @@
      "purpose": "Overlay lifecycle state machine, leases, seal/rearm/close",
      "surface": {
       "crate-vis": 10,
-      "fn": 7,
+      "fn": 8,
       "struct": 1
      }
     },
