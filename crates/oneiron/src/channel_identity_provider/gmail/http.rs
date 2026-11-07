@@ -1,4 +1,4 @@
-//! Production Gmail send wire: one POST to `users.messages.send` (OF-374).
+//! Production Gmail send wire for `users.messages.send` (OF-374).
 //!
 //! The Bearer header exists only inside the send authority's door callback,
 //! marked sensitive, and is dropped with it. Redirects are off and the client
@@ -24,7 +24,8 @@ const MAX_RESPONSE_BYTES: u64 = 1_048_576;
 /// the custody door injects is either the bare OAuth access token or a JSON
 /// object carrying `access_token`. A refresh-only grant carrying its OAuth
 /// client is exchanged inside that same custody callback. Existing access
-/// credentials remain unchanged; this wire does not retry an expired token.
+/// credentials remain unchanged. An HTTP 401 can refresh the injected grant
+/// and repeat the same rejected request once; uncertain sends are never retried.
 pub struct HttpGmailSendWire {
     client: reqwest::blocking::Client,
 }
@@ -47,22 +48,33 @@ impl HttpGmailSendWire {
 
     fn post_send(
         &self,
-        auth: &HeaderValue,
+        auth: &mut HeaderValue,
+        token: &[u8],
         body: &Value,
     ) -> std::result::Result<GmailSentMessage, GmailSendWireError> {
-        let response = self
-            .client
-            .post(GMAIL_SEND_URL)
-            .header(AUTHORIZATION, auth.clone())
-            .json(body)
-            .send()
-            .map_err(|error| {
-                if error.is_connect() || error.is_builder() {
-                    GmailSendWireError::NotSent("gmail_send_connect_failed".to_owned())
-                } else {
-                    GmailSendWireError::Uncertain("gmail_send_transport_uncertain".to_owned())
-                }
-            })?;
+        let request = |auth: &HeaderValue| {
+            self.client
+                .post(GMAIL_SEND_URL)
+                .header(AUTHORIZATION, auth.clone())
+                .json(body)
+                .send()
+                .map_err(|error| {
+                    if error.is_connect() || error.is_builder() {
+                        GmailSendWireError::NotSent("gmail_send_connect_failed".to_owned())
+                    } else {
+                        GmailSendWireError::Uncertain("gmail_send_transport_uncertain".to_owned())
+                    }
+                })
+        };
+        let mut response = request(auth)?;
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED
+            && let Some(refreshed) = refreshed_bearer_header_for_client(&self.client, token)
+                .map_err(|_| GmailSendWireError::NotSent("gmail_refresh_failed".to_owned()))?
+        {
+            drop(response);
+            *auth = refreshed;
+            response = request(auth)?;
+        }
         let status = response.status();
         // A 4xx is Google refusing the request (bad message, auth, scope,
         // quota): nothing was sent. A 5xx or anything else may have been.
@@ -145,8 +157,8 @@ impl GmailSendWire for HttpGmailSendWire {
         }
         let mut outcome = None;
         let door = authority.with_token_at_door(&mut |token: &[u8]| {
-            let auth = bearer_header_for_client(&self.client, token)?;
-            let mut sent = self.post_send(&auth, &body);
+            let mut auth = bearer_header_for_client(&self.client, token)?;
+            let mut sent = self.post_send(&mut auth, token, &body);
             if let Ok(message) = sent.as_mut() {
                 message.rfc_message_id = self.read_rfc_message_id(&auth, &message.gmail_message_id);
             }
@@ -184,6 +196,20 @@ pub(super) fn bearer_header_for_client(
             }
         }
     }
+}
+
+/// Exchanges an injected refresh grant after Google rejects an access token.
+/// The returned header is sensitive and stays inside the admitted callback.
+pub(super) fn refreshed_bearer_header_for_client(
+    client: &reqwest::blocking::Client,
+    token: &[u8],
+) -> Result<Option<HeaderValue>> {
+    let refreshed =
+        crate::connector_key::ProviderConnectionChecks::refresh_stored_google_grant(client, token)
+            .map_err(|_| Error::InvalidConfig("gmail_refresh_failed".to_owned()))?;
+    refreshed
+        .map(|access_token| bearer_header(access_token.as_bytes()))
+        .transpose()
 }
 
 /// The sensitive `Authorization: Bearer` value for one injected credential.

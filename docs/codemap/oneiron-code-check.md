@@ -19,5 +19,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/output.rs` | src | s | 2 crate-vis | — | Reads `tsc --pretty false` output |
 | `src/tsc_rs.rs` | src | s | 2 struct · 1 fn · 1 const | TscRsBudget, TscRsWasm | tsc-rs in process: the pinned Wasm build of the checker (`components/tsc-rs`), run on the engine's Wasmtime… |
 | `src/tsrs.rs` | src | s | 1 struct · 1 fn · 2 const | TsrsWasm | tsrs in process: the pinned Wasm build of oxc's Rust port of TypeScript 7 (`@tsrs/wasm`, vendored in… |
-| `src/wasm.rs` | src | m | 7 crate-vis | — | The Wasmtime runner of the in-process backends: tsc-rs (`components/tsc-rs`) and tsrs (`vendor/tsrs`) |
+| `src/wasm.rs` | src | m | 9 crate-vis | — | The Wasmtime runner of the in-process backends: tsc-rs (`components/tsc-rs`) and tsrs (`vendor/tsrs`) |
 | `tests/golden.rs` | test | s | — | — | Oracle comparison: the synthetic code-mode programs of the tsc-check evidence give the same diagnostics on… |

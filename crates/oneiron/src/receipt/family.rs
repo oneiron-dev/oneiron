@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::brief_share::brief_share_receipts;
+use super::content::ReceiptContent;
 use super::dispatch_observation::dispatch_observations;
 use super::grant::{
     StandingOutboundGrantsLens, StandingOutboundGrantsLensQuery, access_grant_owner_act_receipts,
@@ -28,7 +29,7 @@ use super::projection::{
     project_receipts_by_counterparty_with_contacts, project_receipts_by_grant_limited,
 };
 use super::record::reference_refusal_receipts;
-use super::record::{scan_suppression_receipts, served_form_receipts};
+use super::record::scan_suppression_receipts;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -77,7 +78,17 @@ pub struct PendingTrayAsk {
 impl Vault {
     /// Queries the unified receipt family across existing receipt emitters.
     pub fn receipts(&self, query: ReceiptQuery) -> Result<Vec<ReceiptRecord>> {
-        receipt_family_query(self, &query)
+        receipt_family_query(self, &query, ReceiptContent::base(self))
+    }
+
+    /// [`Self::receipts`], its served forms read from `content` (FIX 7355):
+    /// a room's view serves the room's own beside base's, in one order.
+    pub(crate) fn receipts_in(
+        &self,
+        query: ReceiptQuery,
+        content: ReceiptContent<'_>,
+    ) -> Result<Vec<ReceiptRecord>> {
+        receipt_family_query(self, &query, content)
     }
 
     /// Scans receipts with explicit source and result-limit completeness.
@@ -252,14 +263,22 @@ impl Vault {
     }
 }
 
-fn receipt_family_query(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecord>> {
+fn receipt_family_query(
+    vault: &Vault,
+    query: &ReceiptQuery,
+    content: ReceiptContent<'_>,
+) -> Result<Vec<ReceiptRecord>> {
     if query.limit == 0 {
         return Ok(Vec::new());
     }
 
-    let records = collect_receipt_records(vault, query)?;
+    let records = collect_receipt_records(vault, query, content)?;
     let lineage_records = if query.job_ref.is_some() {
-        Some(collect_receipt_records(vault, &lineage_scan_query())?)
+        Some(collect_receipt_records(
+            vault,
+            &lineage_scan_query(),
+            content,
+        )?)
     } else {
         None
     };
@@ -270,9 +289,13 @@ fn receipt_family_query(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Recei
     ))
 }
 
+/// Every family source's receipts `query` matches, none cut across sources
+/// yet. Served forms are read from `content` (FIX 7355); every other source
+/// reads base.
 pub(super) fn collect_receipt_records(
     vault: &Vault,
     query: &ReceiptQuery,
+    content: ReceiptContent<'_>,
 ) -> Result<Vec<ReceiptRecord>> {
     let mut records = Vec::new();
     if query.includes_kind(ReceiptKind::Outbound) {
@@ -365,6 +388,12 @@ pub(super) fn collect_receipt_records(
     if query.includes_kind(ReceiptKind::ArtifactSettle) {
         records.extend(crate::edit_settle::settle_receipts(vault, query)?);
     }
+    // FIX 4727: each reviewed run's settlement, in its own read txn.
+    if query.includes_kind(ReceiptKind::ProposalOutcome) {
+        records.extend(crate::memory::run_review::run_settlement_receipts(
+            vault, query,
+        )?);
+    }
 
     let rtxn = vault.store.env.read_txn()?;
     // ONE type-76 scan serves both kinds it projects; the projector-level
@@ -373,6 +402,16 @@ pub(super) fn collect_receipt_records(
         || query.includes_kind(ReceiptKind::ProposalOutcome)
     {
         records.extend(identity_topology_receipts(vault, &rtxn, query)?);
+    }
+    // FIX 7817: the SIXTH Gate projector: each topology-audit candidate's
+    // post-hoc review, the rung that replaces the pre-check for reversible
+    // automatic classes. Same kind, own store, own field class, as the
+    // skill-edit verdicts; local review evidence from its own three tables,
+    // read in the shared txn.
+    if query.includes_kind(ReceiptKind::Gate) {
+        records.extend(crate::identity_topology::topology_audit_receipts(
+            vault, &rtxn, query,
+        )?);
     }
     if query.includes_kind(ReceiptKind::ScopedRead) {
         records.extend(access_grant_receipts(vault, &rtxn, query)?);
@@ -404,11 +443,12 @@ pub(super) fn collect_receipt_records(
         records.extend(commitment_lifecycle_receipts(vault, &rtxn, query)?);
     }
     // OF-329: the form each read served of an asset. Its own kind and its own
-    // RECEIPT_RECORDs, read through the type index in the shared txn. No
+    // RECEIPT_RECORDs, read through the content target's type index in the
+    // shared txn: base's, or a room's overlay ∪ base (FIX 7355). No
     // completeness is claimed for them (`Vault::scan_receipts` is
     // outbound-only).
     if query.includes_kind(ReceiptKind::ServedForm) {
-        records.extend(served_form_receipts(vault, &rtxn, query)?);
+        records.extend(content.served_forms(vault, &rtxn, query)?);
     }
     // OF-063: the writes refused for naming a record their writer could not
     // resolve. Its own kind and its own RECEIPT_RECORDs, read through the type

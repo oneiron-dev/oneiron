@@ -11,7 +11,8 @@
 //! grants it again (`vault.connectors.read_grants.grant`, FIX 10962), which
 //! issues it anew at the same id. The consent registry lists every
 //! witness-read grant beside the owner's other grants, with its own one-tap
-//! revoke, and its receipts name the reason it was issued.
+//! revoke and, when revoked, its owner re-grant command with the exact agent
+//! and conversation. Its receipts name the reason it was issued.
 
 use crate::Vault;
 use crate::access_grant::{
@@ -21,7 +22,8 @@ use crate::access_grant::{
 use crate::authority::ActSurface;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::{
-    AuthenticatedOwner, ConsentDomain, ConsentGrantStatus, ConsentRegistryRow, ConsentRevokeAction,
+    AuthenticatedOwner, ConsentDomain, ConsentGrantStatus, ConsentRegistryRow,
+    ConsentRegrantAction, ConsentRevokeAction,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
@@ -384,6 +386,13 @@ fn registry_row(
             command: CONNECTOR_WITNESS_READ_REVOKE_COMMAND.to_owned(),
             grant_ref: grant_ref.clone(),
         },
+        regrant_action: (grant.status == AccessGrantStatus::Revoked).then(|| {
+            ConsentRegrantAction {
+                command: "vault.connectors.read_grants.grant".to_owned(),
+                agent: grant.principal_ref.to_hex(),
+                conversation: conversation.to_hex(),
+            }
+        }),
         grant_ref,
         bypass: None,
         delegation: None,

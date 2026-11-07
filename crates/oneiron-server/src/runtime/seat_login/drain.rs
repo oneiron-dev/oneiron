@@ -17,27 +17,29 @@ pub(super) fn drain_spooled(
     deadline: Instant,
 ) -> mpsc::Receiver<ByoaResult<ByoaStream>> {
     let (done, drain) = mpsc::sync_channel(1);
-    std::thread::spawn(move || {
-        let mut stream = ByoaStream::writer(floor, Some(deadline));
-        let mut chunk = [0_u8; 8192];
-        let spooled = loop {
-            match reader.read(&mut chunk) {
-                Ok(0) => break stream.finish(),
-                Ok(read) => {
-                    if let Err(error) = stream.append(&chunk[..read]) {
-                        break Err(error);
+    crate::engine_thread("seat-login-drain".into())
+        .spawn(move || {
+            let mut stream = ByoaStream::writer(floor, Some(deadline));
+            let mut chunk = [0_u8; 8192];
+            let spooled = loop {
+                match reader.read(&mut chunk) {
+                    Ok(0) => break stream.finish(),
+                    Ok(read) => {
+                        if let Err(error) = stream.append(&chunk[..read]) {
+                            break Err(error);
+                        }
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(_) => {
+                        break Err(ByoaError::Backend(
+                            "official seat output read failed".to_owned(),
+                        ));
                     }
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(_) => {
-                    break Err(ByoaError::Backend(
-                        "official seat output read failed".to_owned(),
-                    ));
-                }
-            }
-        };
-        let _ = done.send(spooled);
-    });
+            };
+            let _ = done.send(spooled);
+        })
+        .expect("failed to spawn thread");
     drain
 }
 
