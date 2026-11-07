@@ -55,6 +55,11 @@ pub enum SelfCompactionUnavailable {
     /// The live request and the reply's reserve leave the live model no
     /// room for the window: the prefix is never cut to make room.
     LivePrefixTooLong,
+    /// The live request was read from rows its host did not witness whole
+    /// (a code-run step's host-built task, today), so a summary forked from
+    /// it could not derive from each (FIX 9463). A row on `auto` is written
+    /// by the cheap writer instead.
+    LivePrefixUnwitnessed,
     /// The run's driver did not admit the capture: the profile's writer is
     /// not `self`, or it was captured for another actor.
     LiveForkNotAdmitted,
@@ -86,6 +91,7 @@ impl SelfCompactionUnavailable {
             Self::LiveForkNotCaptured => "live_fork_not_captured",
             Self::LiveRungUnbound => "live_rung_unbound",
             Self::LivePrefixTooLong => "live_prefix_too_long",
+            Self::LivePrefixUnwitnessed => "live_prefix_unwitnessed",
             Self::LiveForkNotAdmitted => "live_fork_not_admitted",
             Self::LiveForkStale => "live_fork_stale",
             Self::NoIdentity => "no_identity",
@@ -218,6 +224,10 @@ pub struct CompactionExecution {
     pub step_hash: Option<String>,
     /// The home the call wore.
     pub home: Vec<CompactionHomeRef>,
+    /// On the live fork, every row its captured request was read from
+    /// (FIX 9463); empty on the retained turns.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prefix_sources: Vec<EntityId>,
     /// The accepted summary's snapshot, stamped when the gate accepted it:
     /// the hex BLAKE3 of its bytes and their length.
     pub snapshot_hash: Option<String>,
@@ -365,6 +375,15 @@ impl CompactionExecution {
     /// A part cut for room never reached the call.
     pub fn home_dependencies(&self) -> impl Iterator<Item = EntityId> + '_ {
         compaction_home_worn_rows(&self.home)
+    }
+
+    /// Every row the call read beyond its request's sources: each home part
+    /// it wore whole, then, on the live fork, each row its captured prefix
+    /// was read from (FIX 9463). Its summary depends on each for withdrawal,
+    /// so erasing a row only the live context held withdraws what it shaped.
+    pub fn input_dependencies(&self) -> impl Iterator<Item = EntityId> + '_ {
+        self.home_dependencies()
+            .chain(self.prefix_sources.iter().copied())
     }
 
     /// The accepted snapshot, when the gate accepted this pass.
