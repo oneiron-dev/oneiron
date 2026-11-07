@@ -629,12 +629,14 @@ fn read_reaction_signals(
     // withholds. Only an owner-grade caller with no slip keeps the raw feed
     // of one person's messages; a delegated, room-scoped or
     // interlocutor-scoped read is filtered by the same scoped read and
-    // disclosure clamp as the pack. Paging follows the filter, so a cursor
-    // never names a signal this caller was not shown.
+    // disclosure clamp as the pack, and so is a read that names its own
+    // filter, which the pack's reader carries (FIX 3977). Paging follows the
+    // filter, so a cursor never names a signal this caller was not shown.
     let scoped = auth.verified_slip().is_some()
         || !auth.is_owner_grade()
         || req.conversation_id.is_some()
-        || req.interlocutors.is_some();
+        || req.interlocutors.is_some()
+        || req.filter.is_some();
     let mut kept = Vec::new();
     for signal in signals {
         checkpoint()?;
