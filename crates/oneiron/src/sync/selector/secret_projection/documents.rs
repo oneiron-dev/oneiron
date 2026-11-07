@@ -220,6 +220,17 @@ fn text_copy_in_txn(
     }
 }
 
+/// The document release's own copy decision, without updating its lineage.
+pub(crate) fn document_text_would_project_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    marks: &RepoIndexMarks,
+    id: &EntityId,
+    text: &str,
+) -> Result<bool> {
+    Ok(text_copy_in_txn(vault, txn, marks, id, text)?.is_some())
+}
+
 fn project_text_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -313,21 +324,21 @@ fn save_lineage(vault: &Vault, txn: &mut RwTxn<'_>, copy: EntityId, doc: &LoroDo
         .port_document_state_vector_put(txn, slot, &doc.oplog_vv().encode())
 }
 
-/// Bring `lineage`'s text to `copy` as `source`'s lineage author, its
-/// head read only when the text changes; whether it changed.
+/// Bring `lineage`'s text to `copy` as the lineage author `author` names,
+/// read only when the text changes; whether it changed. The home writes as
+/// the source's one author ([`author`]); a device as its own
+/// ([`device::device_author`], FIX 10872).
 fn bring_current(
-    vault: &Vault,
-    txn: &RoTxn<'_>,
     lineage: &LoroDoc,
-    source: &EntityId,
     copy: &str,
+    author: impl FnOnce() -> Result<u64>,
 ) -> Result<bool> {
     let text = lineage.get_text(BODY);
     if text.to_string() == copy {
         return Ok(false);
     }
     lineage
-        .set_peer_id(author(vault, txn, source)?)
+        .set_peer_id(author()?)
         .map_err(|_| Error::InvariantViolation("document copy author"))?;
     text.update(copy, UpdateOptions::default())
         .map_err(|_| Error::InvariantViolation("document copy diff"))?;
@@ -359,7 +370,7 @@ pub(crate) fn document_copy_in_txn(
     };
     let id = copy_id(&source)?;
     let lineage = load_lineage(vault, txn, id)?;
-    if bring_current(vault, txn, &lineage, &source, &copy.copy)? {
+    if bring_current(&lineage, &copy.copy, || author(vault, &*txn, &source))? {
         save_lineage(vault, txn, id, &lineage)?;
     }
     Ok(Some(DocumentCopy {
@@ -372,6 +383,9 @@ pub(crate) fn document_copy_in_txn(
 
 /// Owner settlement of a retained copy lineage (FIX12419, document-only).
 pub(crate) mod settlement;
+
+/// The device half of a marked source's copy stream (FIX 10872).
+pub(crate) mod device;
 
 /// The shipped visible diff of `submitted`, a peer's text of `copy`, onto
 /// `text`: pure, no store read. Both the import writer and the
@@ -444,62 +458,12 @@ where
         let id = copy_id(&source)?;
         let lineage = load_lineage(vault, txn, id)?;
         let stored = lineage.oplog_vv();
-        bring_current(vault, txn, &lineage, &source, &copy.copy)?;
+        bring_current(&lineage, &copy.copy, || author(vault, &*txn, &source))?;
         storage::import_complete(&lineage, bytes)?;
         let submitted = lineage.get_text(BODY).to_string();
-        let result = copy_diff_result(&text, &copy, &submitted)?;
-        let landed = match result {
-            RepoProjectionDiffResult::Unchanged => None,
-            RepoProjectionDiffResult::Applied(applied) => match String::from_utf8(applied) {
-                Ok(text) => Some(text),
-                Err(_) => {
-                    let cause = RepoProjectionDiffResult::ProjectionEditConflict;
-                    save_lineage(vault, txn, id, &lineage)?;
-                    return Ok(Some(held(source, cause, bytes, stored)));
-                }
-            },
-            cause @ (RepoProjectionDiffResult::SealedFileEdited
-            | RepoProjectionDiffResult::ProjectionEditConflict) => {
-                save_lineage(vault, txn, id, &lineage)?;
-                return Ok(Some(held(source, cause, bytes, stored)));
-            }
-        };
-        if let Some(text) = landed {
-            // A fresh peer: the landing's operations are no one's but the
-            // diff's, as before.
-            resident
-                .set_peer_id(LoroDoc::new().peer_id())
-                .map_err(|_| Error::InvariantViolation("document copy landing peer"))?;
-            let before = resident.oplog_vv();
-            resident
-                .get_text(BODY)
-                .update(&text, UpdateOptions::default())
-                .map_err(|_| Error::InvariantViolation("document copy landing diff"))?;
-            resident.commit();
-            let update = resident
-                .export(ExportMode::updates(&before))
-                .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportUpdates, e))?;
-            // The canonical writer lands them beside the lineage, reading only
-            // the copy the peer edited, never the source's text (Engine 06:57).
-            crate::entity_doc::join_sync_update_in_txn(
-                vault,
-                txn,
-                &source,
-                &update,
-                Some(&submitted),
-            )?;
-            // FIX 10732: the landed text carries the copy's mark, in this
-            // writer, so it is never committed unmarked (L04 05:5x).
-            crate::origin::secret_marks::carry_repo_secret_marks_in_txn(
-                vault,
-                txn,
-                &copy.blob,
-                text.as_bytes(),
-                source,
-            )?;
-        }
+        let hold = land_copy_in_txn(vault, txn, source, &resident, &text, &copy, &submitted)?;
         save_lineage(vault, txn, id, &lineage)?;
-        Ok(None)
+        Ok(hold.map(|cause| held(source, cause, bytes, stored)))
     })?;
     let Some((edit, vector)) = held else {
         return Ok(None);
@@ -507,6 +471,61 @@ where
     let place = format!("e:{}", copy_id(&source)?.to_hex());
     super::held::record_held_edits(vault, &place, std::slice::from_ref(&edit))?;
     Ok(Some(vector))
+}
+
+/// Lands `submitted`, a copy lineage's text after a peer's operations, on
+/// `source`'s durable text `resident` (its body `text`, its copy `copy`):
+/// the shipped visible diff, then the canonical writer, carrying the copy's
+/// mark (FIX 10732). A ruled hold applies nothing to the source and answers
+/// its cause; the caller keeps the lineage either way.
+///
+/// # Errors
+/// The visible diff's own failure, or the canonical writer's.
+fn land_copy_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    source: EntityId,
+    resident: &LoroDoc,
+    text: &str,
+    copy: &TextCopy,
+    submitted: &str,
+) -> Result<Option<RepoProjectionDiffResult>> {
+    let landed = match copy_diff_result(text, copy, submitted)? {
+        RepoProjectionDiffResult::Unchanged => return Ok(None),
+        RepoProjectionDiffResult::Applied(applied) => match String::from_utf8(applied) {
+            Ok(landed) => landed,
+            Err(_) => return Ok(Some(RepoProjectionDiffResult::ProjectionEditConflict)),
+        },
+        cause @ (RepoProjectionDiffResult::SealedFileEdited
+        | RepoProjectionDiffResult::ProjectionEditConflict) => return Ok(Some(cause)),
+    };
+    // A fresh peer: the landing's operations are no one's but the diff's, as
+    // before.
+    resident
+        .set_peer_id(LoroDoc::new().peer_id())
+        .map_err(|_| Error::InvariantViolation("document copy landing peer"))?;
+    let before = resident.oplog_vv();
+    resident
+        .get_text(BODY)
+        .update(&landed, UpdateOptions::default())
+        .map_err(|_| Error::InvariantViolation("document copy landing diff"))?;
+    resident.commit();
+    let update = resident
+        .export(ExportMode::updates(&before))
+        .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportUpdates, e))?;
+    // The canonical writer lands them beside the lineage, reading only the
+    // copy the peer edited, never the source's text (Engine 06:57).
+    crate::entity_doc::join_sync_update_in_txn(vault, txn, &source, &update, Some(submitted))?;
+    // FIX 10732: the landed text carries the copy's mark, in this writer, so
+    // it is never committed unmarked (L04 05:5x).
+    crate::origin::secret_marks::carry_repo_secret_marks_in_txn(
+        vault,
+        txn,
+        &copy.blob,
+        landed.as_bytes(),
+        source,
+    )?;
+    Ok(None)
 }
 
 /// The ruled hold of `bytes`, a peer's update of `source`'s copy lineage:

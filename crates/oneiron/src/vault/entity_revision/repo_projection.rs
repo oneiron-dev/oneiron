@@ -136,6 +136,7 @@ pub(super) fn staged_inputs_in_txn(
     if copied {
         staged.vector = None;
         staged.provenance = None;
+        staged.locality = None;
     }
     Ok(staged)
 }
