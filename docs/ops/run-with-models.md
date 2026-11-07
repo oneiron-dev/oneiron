@@ -1111,6 +1111,11 @@ max_runs = 32                # optional; runs at once, each its own thread (defa
 step_wall_secs = 30           # optional; one step's time allowance in seconds (default: 5)
 ```
 
+The same package may override `blocks/code-reader-summary.md` for `summarize`.
+Without that optional block, summaries use the shipped text. See
+[Code-reader summary prompts](code-reader-summaries.md) for placeholders and the
+queued recipe's prompt binding.
+
 A run holds its place until its worker ends, whether or not its caller is
 still waiting. Past `max_runs` a new run waits its turn, round-robin across
 credentials, and the row asks whether everything is okay; a run that waits
