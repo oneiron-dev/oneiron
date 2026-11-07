@@ -32,6 +32,7 @@
 
 mod compliance;
 mod doors;
+mod header_retire;
 mod importer;
 mod inbox;
 mod landing;
