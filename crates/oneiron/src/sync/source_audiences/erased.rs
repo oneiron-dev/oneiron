@@ -23,7 +23,11 @@
 //! persist and compaction scrubs again ([`super::refresh_and_scrub`]), so a
 //! loaded copy that has not merged the removal, or a peer's copy that brings
 //! a revision back, never ships one. A stored window that does not rebuild
-//! fails the erase: nothing would show its carriers gone.
+//! does not stop the erase (fix list row 17209): it is pinned history-free,
+//! its queued sends go but the delete-bearing, it is marked for a full
+//! resync, and it is owed the sweep's compaction, which keeps its row, and so
+//! counts it as not done, until a pass compacts it; nothing ships from it
+//! meanwhile, since an export rebuilds it first and scrubs it then.
 
 use std::collections::BTreeSet;
 
@@ -52,9 +56,12 @@ use crate::sync::window_rows::{HISTORY_FREE_WINDOW, WINDOW_FULL_RESYNC_MARKER};
 /// writes each such policy's current revision beside the others; rewrites
 /// each change receipt naming one without it.
 ///
+/// A stored window that does not rebuild is pinned history-free and owed
+/// the sweep's compaction instead (fix list row 17209).
+///
 /// # Errors
 ///
-/// Storage and codec failures; a stored window that does not rebuild.
+/// Storage and codec failures.
 pub(crate) fn erase_carriers_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -64,9 +71,21 @@ pub(crate) fn erase_carriers_in_txn(
         let doc = match stored_window_in_txn(vault, wtxn, &key)? {
             Some(Ok(doc)) => doc,
             Some(Err(error)) => {
-                return Err(Error::InvalidConfig(format!(
-                    "an erased actor's source audience carriers: window {key} does not rebuild: {error}"
-                )));
+                tracing::warn!(
+                    window = %key,
+                    error = %error,
+                    "an erased actor's source audience carriers: stored window does not rebuild; \
+                     pinned and owed its compaction"
+                );
+                // As a rewrite does: its queued sends go but the
+                // delete-bearing, so no earlier revision leaves from the
+                // queue, and peers take it whole again.
+                let label = key.as_str().to_owned();
+                HISTORY_FREE_WINDOW.put(&vault.store, wtxn, &label, &[1u8])?;
+                crate::sync::queue::scrub_window_updates_in_txn(vault, wtxn, &label)?;
+                WINDOW_FULL_RESYNC_MARKER.put(&vault.store, wtxn, &label, &[1u8])?;
+                crate::sweep::owed::owe_window_compaction_in_txn(vault, wtxn, &key)?;
+                continue;
             }
             None => continue,
         };
