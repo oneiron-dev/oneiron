@@ -3114,6 +3114,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_members_accept_with_credential(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.members.accept_with_credential", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_members_decline(
         &self,
         input: serde_json::Value,
@@ -6442,6 +6451,33 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_code_secrets_purge_request(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.secrets.purge.request", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_secrets_purge_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.secrets.purge.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_secrets_purge_execute(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.secrets.purge.execute", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_code_checkout_holder_bind(
         &self,
         input: serde_json::Value,
@@ -9425,6 +9461,15 @@ impl NativeClient {
     pub fn vault_neighbors(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.neighbors", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_edges_provenance(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.edges.provenance", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

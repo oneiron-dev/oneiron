@@ -255,6 +255,7 @@ impl LimitRow {
         Self::Engine(EngineLimit::ContextThirdParties),
         Self::Engine(EngineLimit::MemoryPinnedRefs),
         Self::Engine(EngineLimit::CodebaseManifestFiles),
+        Self::Engine(EngineLimit::RecallQueryBytes),
         Self::Engine(EngineLimit::RequestedResultRows),
         Self::Engine(EngineLimit::TournamentLineageRows),
         Self::Engine(EngineLimit::EmbeddingDimensions),
