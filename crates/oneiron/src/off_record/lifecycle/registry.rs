@@ -270,6 +270,16 @@ impl OffRecordSessionRegistry {
         Ok(self.sessions()?.get(session_ref).cloned())
     }
 
+    /// Every registered instance with its key, cloned under the registry
+    /// lock, which is then released: managed stop closes each (FIX 13868).
+    pub(super) fn entries(&self) -> Result<Vec<(String, Arc<OffRecordSessionEntry>)>> {
+        Ok(self
+            .sessions()?
+            .iter()
+            .map(|(key, entry)| (key.clone(), Arc::clone(entry)))
+            .collect())
+    }
+
     /// The key a call from `actor` names by `session_ref` among the
     /// stretches entered alone by a creator (FIX 4597): an instance handle
     /// as it stands, or the name `actor` gave one of its own live stretches.
