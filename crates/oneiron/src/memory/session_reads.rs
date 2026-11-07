@@ -1,7 +1,7 @@
 //! The reads a code run bound to an off-record session serves through the
 //! room's own view (WILL L11-01, S01-1): `vault.get`, `vault.hydrate`,
-//! `vault.refs.resolve`, `vault.search.bm25` and the run's own
-//! `vault.search`.
+//! `vault.refs.resolve`, `vault.search.bm25`, `vault.receipts` ([`receipts`],
+//! FIX 7355) and the run's own `vault.search`.
 //!
 //! Each call reads ONE view of the room ([`SessionReadContext`]), under the
 //! narrow key the run's host admitted for its caller, never a wider one:
@@ -60,6 +60,8 @@ pub struct QueryBm25Request {
 use crate::vault::{ReadMode, RevisionRef};
 use crate::{Vault, WriteActor};
 
+mod receipts;
+
 /// One read a run bound to a room serves through the room's view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SessionRead {
@@ -71,6 +73,8 @@ pub(crate) enum SessionRead {
     RefsResolve,
     /// `vault.search.bm25`.
     SearchBm25,
+    /// `vault.receipts` (FIX 7355).
+    Receipts,
 }
 
 /// What one read in the room answers.
@@ -167,6 +171,11 @@ impl<'s> SessionReadContext<'s> {
                     .filter_map(|record| EntityId::from_hex(&record.id).ok())
                     .collect();
                 (encode(&read)?, rows)
+            }
+            SessionRead::Receipts => {
+                let page = self.receipts_page(&decode(input)?)?;
+                let rows = receipts::page_rows(&page);
+                (encode(&page)?, rows)
             }
         };
         Ok(SessionAnswer::Answered { output, rows })
@@ -388,9 +397,16 @@ impl<'s> SessionReadContext<'s> {
             None => (reference.trim(), ReadMode::Live),
         };
         if let Some((alias, hash)) = room_short_ref(reference) {
-            let id = match mode {
-                ReadMode::Pinned(revision) => self.room_pinned_alias(alias, hash, revision)?,
-                _ => self.room_alias(alias, hash)?,
+            // A room's alias names its row; a pin of one is checked by the
+            // lane's read of that revision on this view, as a pinned id is
+            // (FIX 5162). A revision the row does not hold reads as none. A
+            // pin whose hash names that revision's own bytes still names its
+            // row after an edit moved the live alias.
+            let id = match (self.room_alias(alias, hash)?, mode) {
+                (None, ReadMode::Pinned(revision)) => {
+                    self.room_pinned_alias(alias, hash, revision)?
+                }
+                (id, _) => id,
             };
             return Ok(id.map(|id| (id, mode)));
         }
@@ -566,9 +582,15 @@ pub(crate) fn scoped_session_text(
     admit: impl FnOnce(&heed::RoTxn<'_>) -> crate::Result<()>,
 ) -> crate::Result<(Vec<ScoredEntity>, (u64, Instant))> {
     let config = crate::config::Bm25RankProfile::default().to_bm25_config()?;
-    let (filter, policy) = lane.recall_plan()?;
+    let crate::claim::SearchPlan {
+        filter,
+        candidates,
+        policy,
+    } = lane.recall_plan()?;
     let started = (vault.store.clock.now_recorded_at(), Instant::now());
-    if filter.deny_all {
+    // A key that reads nothing by itself still searches the rows its own
+    // live Grants read (FIX 7528).
+    if candidates.deny_all {
         lane.end_recall_plan()?;
         return Ok((Vec::new(), started));
     }
@@ -580,7 +602,7 @@ pub(crate) fn scoped_session_text(
     let scores = {
         let txn = vault.store.env.read_txn()?;
         admit(&txn)?;
-        let admit = lane.recall_candidates_in(&txn, &policy, &filter);
+        let admit = lane.recall_candidates_in(&txn, &policy, &filter, None);
         let mut admits = |id: &EntityId| admit(id);
         vault.text_scoped_in_txn(
             view,
