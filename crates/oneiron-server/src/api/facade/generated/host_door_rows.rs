@@ -45,6 +45,7 @@
 //! - `vault.shared.deletion`
 //! - `vault.org_admin.powers`
 //! - `vault.trusted_contacts.concern.deliver`
+//! - `vault.files.sources.exclude`
 //! - `vault.drafters.list_as`
 //! - `vault.drafters.revert_as`
 //! - `vault.roots.requests.cancel`
@@ -1722,6 +1723,7 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.shared.deletion"
                 | "vault.org_admin.powers"
                 | "vault.trusted_contacts.concern.deliver"
+                | "vault.files.sources.exclude"
                 | "vault.drafters.list_as"
                 | "vault.drafters.revert_as"
                 | "vault.roots.requests.cancel"

@@ -2106,6 +2106,11 @@ export_facade! {
     let output = client.vault_files_sources_files(&input)?;
     crate::codec::lift_record("vault.files.sources.files", &output)
 };
+"vault.files.sources.exclude" => fn vault_files_sources_exclude(&self, input: FilesSourceExcludeRequest) -> FilesSourceExcludeAnswer = |client| {
+    let input: oneiron::task_verb::sdk::FilesSourceExcludeRequest = crate::codec::lower_record("vault.files.sources.exclude", input)?;
+    let output = client.vault_files_sources_exclude(&input)?;
+    crate::codec::lift_record("vault.files.sources.exclude", &output)
+};
 "vault.residence.mode" => fn vault_residence_mode(&self, input: ResidenceModeRequest) -> ResidenceModeAnswer = |client| {
     let input: oneiron::task_verb::sdk::ResidenceModeRequest = crate::codec::lower_record("vault.residence.mode", input)?;
     let output = client.vault_residence_mode(&input)?;
