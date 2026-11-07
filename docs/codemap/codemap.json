@@ -7727,7 +7727,7 @@
      "path": "src/batch/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 41,
+      "crate-vis": 42,
       "mod": 1,
       "re-export": 3
      }
@@ -8686,7 +8686,7 @@
      "path": "src/batch/vad_postcommit.rs",
      "purpose": "Transaction-owner handoff for Dreamer VAD approvals and digest invalidation",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -65876,8 +65876,9 @@
      "path": "src/runtime_hooks/verb/ask/wait.rs",
      "purpose": "Wake hints for a host retaining a caller-only verb-hook wait",
      "surface": {
-      "crate-vis": 1,
-      "enum": 1
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -68990,7 +68991,7 @@
       "crate-vis": 7,
       "enum": 3,
       "fn": 13,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 7
      }
     },
@@ -69004,6 +69005,19 @@
      "purpose": "A sitting's expiry policy (FIX 8600): the vault's own idle-floor and lifetime-ceiling rows, narrowed by…",
      "surface": {
       "crate-vis": 3,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SessionOpenHint"
+     ],
+     "path": "src/session_lifecycle/open_hint.rs",
+     "purpose": "The immutable identity and timestamp of a caller-retained session open",
+     "surface": {
       "fn": 4,
       "struct": 1
      }
@@ -83085,7 +83099,7 @@
      "path": "src/task_verb/ask_record.rs",
      "purpose": "Protected replicated ask facts",
      "surface": {
-      "crate-vis": 33
+      "crate-vis": 34
      }
     },
     {
@@ -94878,7 +94892,7 @@
      "purpose": "Context-pack serialization"
     },
     "session_lifecycle": {
-     "files": 4,
+     "files": 5,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -95223,7 +95237,7 @@
    },
    "over_bar": 192,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6741,
+   "source_files": 6742,
    "test_files": 895
   },
   "oneiron-android": {
@@ -105909,6 +105923,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/session/pending.rs",
+     "purpose": "Caller-retained session opens and causal queues for their actor/machine key",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "SessionLifecycleConfig"
      ],
@@ -106477,7 +106501,7 @@
    ],
    "modules": {
     "session": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -106514,7 +106538,7 @@
    },
    "over_bar": 3,
    "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
-   "source_files": 36,
+   "source_files": 37,
    "test_files": 10
   },
   "oneiron-ffi": {
