@@ -14895,7 +14895,7 @@ impl AgentVerb {
                 "The owner asserts two identities are distinct through one symmetric claim that suppresses merge re-proposals."
             }
             Self::VaultIdentityPropose => {
-                "The owner parks a nominated merge or split candidate with no topology effects; distinct pairs suppress merge proposals."
+                "The owner parks a nominated merge, split or facet candidate with no topology effects; distinct pairs suppress merge proposals."
             }
             Self::VaultIdentityUndo => {
                 "The owner undoes one current topology event by appending a counter-event under its observed revision."

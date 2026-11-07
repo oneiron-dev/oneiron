@@ -3761,7 +3761,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.identity.split": { description: "The owner splits an identity into zero, one or many heads using an evidence-guided reassignment map.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.identity.facet": { description: "The owner mints identity facets and forks assigned claims under their masks without restamping original claims.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.identity.assert_distinct": { description: "The owner asserts two identities are distinct through one symmetric claim that suppresses merge re-proposals.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.identity.propose": { description: "The owner parks a nominated merge or split candidate with no topology effects; distinct pairs suppress merge proposals.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.identity.propose": { description: "The owner parks a nominated merge, split or facet candidate with no topology effects; distinct pairs suppress merge proposals.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.identity.undo": { description: "The owner undoes one current topology event by appending a counter-event under its observed revision.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.identity.resolve": { description: "The owner resolves an identity to its current head set and reads shell edges, facets and evidence assignments.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.identity.events.get": { description: "The owner reads one topology decision with its actor, evidence, action and current decision revision.", scope: "Read", proposes: false, hostDoor: true, section: false },
@@ -3986,7 +3986,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         facet: (input: Facade.IdentityFacetRequest, options?: O): FacadeReturns<"vault.identity.facet">[K] => invoke("vault.identity.facet", input, options, newInvocation()),
         /** The owner asserts two identities are distinct through one symmetric claim that suppresses merge re-proposals. */
         assert_distinct: (input: Facade.IdentityAssertDistinctRequest, options?: O): FacadeReturns<"vault.identity.assert_distinct">[K] => invoke("vault.identity.assert_distinct", input, options, newInvocation()),
-        /** The owner parks a nominated merge or split candidate with no topology effects; distinct pairs suppress merge proposals. */
+        /** The owner parks a nominated merge, split or facet candidate with no topology effects; distinct pairs suppress merge proposals. */
         propose: (input: Facade.IdentityProposeRequest, options?: O): FacadeReturns<"vault.identity.propose">[K] => invoke("vault.identity.propose", input, options, newInvocation()),
         /** The owner undoes one current topology event by appending a counter-event under its observed revision. */
         undo: (input: Facade.IdentityUndoRequest, options?: O): FacadeReturns<"vault.identity.undo">[K] => invoke("vault.identity.undo", input, options, newInvocation()),
