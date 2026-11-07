@@ -147,6 +147,10 @@ pub struct PdfPreparation<'a> {
     pub audit: &'a [EsignEventRow],
     pub canonical_url: &'a str,
     pub signature_images: &'a BTreeMap<String, SignatureRaster>,
+    /// Allocated capacities of caller-held byte buffers outside the parse
+    /// pool, including this original exactly once. This is not a witness for
+    /// the caller's whole heap. The hosted native path uses it at admission.
+    pub pinned_buffer_bytes: u64,
 }
 #[derive(Debug)]
 pub struct PreparedEsignPdf {
@@ -217,7 +221,13 @@ pub fn prepare_esign_pdf_within(
     request: PdfPreparation<'_>,
     stream_decode_bytes: u64,
 ) -> Result<PreparedEsignPdf> {
-    prepare_in(original, &request, stream_decode_bytes, None)
+    prepare_in(
+        original,
+        &request,
+        stream_decode_bytes,
+        None,
+        &admitted::Stage::UNADMITTED,
+    )
 }
 
 /// The same trusted preparation with the audit the seal task already
@@ -229,7 +239,35 @@ pub fn prepare_esign_pdf_with_replayed_audit(
     chain: [u8; 32],
     trail: Vec<String>,
 ) -> Result<PreparedEsignPdf> {
-    prepare_in(original, request, stream_decode_bytes, Some((chain, trail)))
+    prepare_in(
+        original,
+        request,
+        stream_decode_bytes,
+        Some((chain, trail)),
+        &admitted::Stage::UNADMITTED,
+    )
+}
+
+/// Trusted preparation using the seal task's existing audit replay, with
+/// parsing and source-content buffers admitted before allocation. The host
+/// keeps the memory line alive through this call and reads its own refusal,
+/// as it does for [`inspect_pdf_pages_admitted`]. Output and field rendering
+/// allocations are not covered by this parse admission.
+pub fn prepare_esign_pdf_with_replayed_audit_admitted(
+    original: &[u8],
+    request: &PdfPreparation<'_>,
+    stream_decode_bytes: u64,
+    chain: [u8; 32],
+    trail: Vec<String>,
+    memory: std::sync::Arc<dyn InspectionMemory>,
+) -> Result<PreparedEsignPdf> {
+    prepare_in(
+        original,
+        request,
+        stream_decode_bytes,
+        Some((chain, trail)),
+        &admitted::Stage::on(memory),
+    )
 }
 
 fn prepare_in(
@@ -237,12 +275,13 @@ fn prepare_in(
     request: &PdfPreparation<'_>,
     stream_decode_bytes: u64,
     replayed: Option<([u8; 32], Vec<String>)>,
+    stage: &admitted::Stage,
 ) -> Result<PreparedEsignPdf> {
     if !original.starts_with(b"%PDF-") {
         return Err(PdfPreparationError::MalformedPdf);
     }
     let bound = StreamBound::of(stream_decode_bytes);
-    let source = preflight::load(original, bound, &admitted::Stage::UNADMITTED)?;
+    let source = preflight::load(original, bound, stage)?;
     reject_signatures(&source)?;
     let catalog = source.catalog()?;
     if [b"OCProperties".as_slice(), b"AlternatePresentations"]
@@ -298,6 +337,7 @@ fn prepare_in(
         active: BTreeSet::new(),
         bound,
         copied_resources: BTreeMap::new(),
+        stage,
     };
     // This item's fields by page, in document order: each page burns its own
     // without reading every other page's (FIX 3810).
@@ -329,7 +369,7 @@ fn prepare_in(
         let geometry = source::page_geometry(&source, page)?;
         let crop = geometry.crop;
         let streams = match page.get(b"Contents".as_slice()) {
-            Some(value) => contents.admit(&source, value, bound)?,
+            Some(value) => contents.admit(&source, value, bound, stage)?,
             None => Vec::new(),
         };
         let mut resources = match page.get(b"Resources".as_slice()) {
