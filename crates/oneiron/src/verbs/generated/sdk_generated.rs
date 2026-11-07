@@ -5698,7 +5698,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.calendar.occurrences",
                 crate::code_run::vault_read::request_schema::<
-                    crate::calendar::query::CalendarOccurrencesRequest,
+                    crate::calendar::query::CalendarOccurrencesPageRequest,
                 >(),
             ),
             (
@@ -5714,13 +5714,14 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             ),
             (
                 "vault.calendar.search",
-                crate::code_run::vault_read::request_schema::<crate::calendar::CalendarSearchRequest>(
-                ),
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::query::CalendarSearchPageRequest,
+                >(),
             ),
             (
                 "vault.calendar.freebusy",
                 crate::code_run::vault_read::request_schema::<
-                    crate::task_verb::sdk::CalendarFreebusyRequest,
+                    crate::calendar::query::CalendarFreebusyPageRequest,
                 >(),
             ),
             (
@@ -10271,7 +10272,7 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::calendar::ingest::door::CalendarIcsImportReceipt,
         >(),
         "vault.calendar.occurrences" => crate::code_run::vault_read::request_schema::<
-            crate::claim::ScopedReadResult<Vec<crate::calendar::query::CalendarOccurrenceView>>,
+            crate::claim::ScopedReadResult<crate::calendar::query::CalendarOccurrencesPage>,
         >(),
         "vault.calendar.instances.move" => crate::code_run::vault_read::request_schema::<
             crate::calendar::ingest::door::CalendarIcsImportReceipt,
@@ -10280,10 +10281,10 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::claim::ScopedReadResult<Option<crate::calendar::CalendarEventView>>,
         >(),
         "vault.calendar.search" => crate::code_run::vault_read::request_schema::<
-            crate::claim::ScopedReadResult<Vec<crate::calendar::CalendarEventView>>,
+            crate::claim::ScopedReadResult<crate::calendar::query::CalendarSearchPage>,
         >(),
         "vault.calendar.freebusy" => crate::code_run::vault_read::request_schema::<
-            crate::claim::ScopedReadResult<crate::memory::CalendarFreebusyDto>,
+            crate::claim::ScopedReadResult<crate::calendar::query::CalendarFreebusyPage>,
         >(),
         "vault.calendar.prep" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Option<crate::calendar::PrepPack>>,
@@ -26942,7 +26943,8 @@ fn validate_input_vault_calendar_ics_import(value: &serde_json::Value) -> Memory
 }
 #[inline(never)]
 fn validate_input_vault_calendar_occurrences(value: &serde_json::Value) -> MemoryResult<()> {
-    let _input: crate::calendar::query::CalendarOccurrencesRequest = decode(value.clone())?;
+    let input: crate::calendar::query::CalendarOccurrencesPageRequest = decode(value.clone())?;
+    crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
     Ok(())
 }
 #[inline(never)]
@@ -26957,12 +26959,14 @@ fn validate_input_vault_calendar_read(value: &serde_json::Value) -> MemoryResult
 }
 #[inline(never)]
 fn validate_input_vault_calendar_search(value: &serde_json::Value) -> MemoryResult<()> {
-    let _input: crate::calendar::CalendarSearchRequest = decode(value.clone())?;
+    let input: crate::calendar::query::CalendarSearchPageRequest = decode(value.clone())?;
+    crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
     Ok(())
 }
 #[inline(never)]
 fn validate_input_vault_calendar_freebusy(value: &serde_json::Value) -> MemoryResult<()> {
-    let _input: crate::task_verb::sdk::CalendarFreebusyRequest = decode(value.clone())?;
+    let input: crate::calendar::query::CalendarFreebusyPageRequest = decode(value.clone())?;
+    crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
     Ok(())
 }
 #[inline(never)]
@@ -47926,10 +47930,10 @@ pub fn vault_calendar_ics_import(
 }
 pub fn vault_calendar_occurrences(
     memory: &Memory<'_>,
-    input: crate::calendar::query::CalendarOccurrencesRequest,
-) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::calendar::query::CalendarOccurrenceView>>>
-{
-    memory.calendar_occurrences(&input)
+    input: crate::calendar::query::CalendarOccurrencesPageRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::calendar::query::CalendarOccurrencesPage>> {
+    crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
+    memory.calendar_occurrences_page(&input)
 }
 pub fn vault_calendar_instances_move(
     memory: &Memory<'_>,
@@ -47945,15 +47949,17 @@ pub fn vault_calendar_read(
 }
 pub fn vault_calendar_search(
     memory: &Memory<'_>,
-    input: crate::calendar::CalendarSearchRequest,
-) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::calendar::CalendarEventView>>> {
-    memory.calendar_search(&input)
+    input: crate::calendar::query::CalendarSearchPageRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::calendar::query::CalendarSearchPage>> {
+    crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
+    memory.calendar_search_page(&input)
 }
 pub fn vault_calendar_freebusy(
     memory: &Memory<'_>,
-    input: crate::task_verb::sdk::CalendarFreebusyRequest,
-) -> MemoryResult<crate::claim::ScopedReadResult<crate::memory::CalendarFreebusyDto>> {
-    memory.calendar_freebusy(&input.calendars, input.range.to_time_range())
+    input: crate::calendar::query::CalendarFreebusyPageRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::calendar::query::CalendarFreebusyPage>> {
+    crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
+    memory.calendar_freebusy_page(&input)
 }
 pub fn vault_calendar_prep(
     memory: &Memory<'_>,
