@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1333 code-mode rows (1292 host rows, 41 run rows), 4695 declarations.
+// Census: 1333 code-mode rows (1292 host rows, 41 run rows), 4696 declarations.
 // Replies: 1141 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
@@ -3804,11 +3804,12 @@ declare namespace Sdk {
   type CalendarImportedEvent = { event_ref: string; uid: string; original_start_utc?: number | null; claims: CalendarImportClaimReceipt[] };
   type CalendarIcsImportReceipt = { source_blob_ref: string; source_version: number; events: CalendarImportedEvent[]; screen_verdict: string };
   type CalendarOccurrencesPageRequest = { master_ref: string; range: CalendarRangeDto; deadline_ms?: number | null; resume_from?: number | null };
-  type CalendarOccurrenceView = { event_ref: string; master_ref: string; uid: string; original_start_utc: number; start_utc: number; end_utc: number };
+  type CalendarCivilSpan = { time_kind: string; start: string; end: string };
+  type CalendarOccurrenceView = { event_ref: string; master_ref: string; uid: string; original_start_utc: number; start_utc: number; end_utc: number; civil?: CalendarCivilSpan | null };
   type CalendarOccurrencesPage = { occurrences: CalendarOccurrenceView[]; complete: boolean; resume_from?: number | null };
   type CalendarInstanceMoveRequest = { system: string; source_blob_ref: string; source_version: number; uid: string; original_start_utc: number; start_utc: number; end_utc: number };
   type CalendarReadRequest = { event_ref: string };
-  type CalendarEventView = { origin: string; event_ref: string; name?: string | null; start_utc?: number | null; end_utc?: number | null; calendar_systems: string[]; blocks_time: boolean };
+  type CalendarEventView = { origin: string; event_ref: string; name?: string | null; start_utc?: number | null; end_utc?: number | null; calendar_systems: string[]; blocks_time: boolean; civil?: CalendarCivilSpan | null };
   type CalendarSel = { system?: string | null };
   type CalendarSearchPageRequest = { calendars: CalendarSel[]; range?: CalendarRangeDto | null; text?: string | null; limit: number; deadline_ms?: number | null; resume_from?: number | null };
   type CalendarSearchPage = { events: CalendarEventView[]; complete: boolean; resume_from?: number | null };

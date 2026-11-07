@@ -251,9 +251,12 @@ pub struct CalendarPassportValue {
 /// Value of a `calendar.series_master` claim.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CalendarSeriesMasterValue {
-    /// Verbatim RFC 5545 recurrence text.
+    /// RFC 5545 recurrence text: verbatim, or for an all-day or floating
+    /// series as it steps on the UTC carrier (`calendar.rrule` keeps the
+    /// source text; FIX 16568).
     pub rrule: String,
-    /// Series start instant.
+    /// Series start instant, or an all-day or floating series' civil start
+    /// on the UTC carrier (its civil fields read as UTC).
     pub dtstart_utc: u64,
     /// IANA zone the recurrence expands in.
     pub tz: String,

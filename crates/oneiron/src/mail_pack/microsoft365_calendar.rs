@@ -434,11 +434,33 @@ fn day_digits(seconds: u64) -> Option<String> {
     Some(at.format("%Y%m%d").to_string())
 }
 
+/// The IANA zone an all-day Graph event's days fall in: the zone it was
+/// made in (`originalStartTimeZone`), an IANA name as it is or a Windows
+/// name through CLDR's table (fix list row 17868). `None` for a name
+/// neither reads, whose days keep the all-zone envelope.
+fn event_zone(event: &Value) -> Option<String> {
+    let zone = text_of(event.get("originalStartTimeZone"))?;
+    let zone = zone.trim();
+    if crate::calendar::tz::ResolvedTimeZone::new(zone).is_ok() {
+        return Some(zone.to_owned());
+    }
+    crate::calendar::windows_zones::iana_of_windows(zone).map(str::to_owned)
+}
+
 /// One Graph event as a `VCALENDAR` resource of one VEVENT: an all-day
 /// event's `days`, else its times UTC.
 fn event_ics(uid: &str, event: &Value, days: Option<&(String, String)>) -> Result<String> {
     let mut ics = String::from("BEGIN:VCALENDAR\r\nVERSION:2.0\r\n");
     ics.push_str("PRODID:-//oneiron//mail-pack microsoft graph calendar//EN\r\n");
+    // An all-day event's days are in the zone it was made in, which heads
+    // its resource (fix list row 17868).
+    if days.is_some()
+        && let Some(zone) = event_zone(event)
+    {
+        ics.push_str("X-WR-TIMEZONE:");
+        ics.push_str(&zone);
+        ics.push_str("\r\n");
+    }
     ics.push_str("BEGIN:VEVENT\r\n");
     line(&mut ics, "UID", &text(uid));
     if let Some(stamp) = event
