@@ -6156,6 +6156,245 @@ async fn vault_weave_owner_item_wrong(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_weave_admin_report(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.weave.admin.report")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.weave.admin.report", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.weave.admin.report", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_weave_admin_report(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_weave_admin_lens(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.weave.admin.lens")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.weave.admin.lens", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.weave.admin.lens", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_weave_admin_lens(
+            server,
+            auth,
+            None,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_weave_admin_digest(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.weave.admin.digest")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.weave.admin.digest", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.weave.admin.digest", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_weave_admin_digest(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_weave_admin_link_wrong(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.weave.admin.link.wrong")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.weave.admin.link.wrong", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.weave.admin.link.wrong", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_weave_admin_link_wrong(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_weave_admin_item_wrong(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.weave.admin.item.wrong")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.weave.admin.item.wrong", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.weave.admin.item.wrong", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_weave_admin_item_wrong(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_step_up_passkeys_reset(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.step_up.passkeys.reset")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.step_up.passkeys.reset", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.step_up.passkeys.reset", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_step_up_passkeys_reset(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_step_up_totp_reset(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.step_up.totp.reset")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.step_up.totp.reset", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.step_up.totp.reset", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_step_up_totp_reset(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_weave_enqueue(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -41697,6 +41936,62 @@ fn boxed_vault_weave_owner_item_wrong<'a>(
     Box::pin(vault_weave_owner_item_wrong(server, call, input))
 }
 #[inline(never)]
+fn boxed_vault_weave_admin_report<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_weave_admin_report(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_weave_admin_lens<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_weave_admin_lens(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_weave_admin_digest<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_weave_admin_digest(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_weave_admin_link_wrong<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_weave_admin_link_wrong(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_weave_admin_item_wrong<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_weave_admin_item_wrong(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_step_up_passkeys_reset<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_step_up_passkeys_reset(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_step_up_totp_reset<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_step_up_totp_reset(server, call, input))
+}
+#[inline(never)]
 fn boxed_vault_weave_enqueue<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
@@ -50536,6 +50831,19 @@ async fn call_verb_row(
         "vault.weave.owner.item.wrong" => {
             boxed_vault_weave_owner_item_wrong(server, call, input).await
         }
+        "vault.weave.admin.report" => boxed_vault_weave_admin_report(server, call, input).await,
+        "vault.weave.admin.lens" => boxed_vault_weave_admin_lens(server, call, input).await,
+        "vault.weave.admin.digest" => boxed_vault_weave_admin_digest(server, call, input).await,
+        "vault.weave.admin.link.wrong" => {
+            boxed_vault_weave_admin_link_wrong(server, call, input).await
+        }
+        "vault.weave.admin.item.wrong" => {
+            boxed_vault_weave_admin_item_wrong(server, call, input).await
+        }
+        "vault.step_up.passkeys.reset" => {
+            boxed_vault_step_up_passkeys_reset(server, call, input).await
+        }
+        "vault.step_up.totp.reset" => boxed_vault_step_up_totp_reset(server, call, input).await,
         "vault.weave.enqueue" => boxed_vault_weave_enqueue(server, call, input).await,
         "vault.weave.schedules.list" => boxed_vault_weave_schedules_list(server, call, input).await,
         "vault.weave.schedules.put" => boxed_vault_weave_schedules_put(server, call, input).await,
