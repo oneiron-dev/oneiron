@@ -87122,10 +87122,11 @@
       "OutboundScheduleRequest"
      ],
      "path": "src/verbs/connector.rs",
-     "purpose": "The `connector.*` rows over the foreign surface's catalog (`connector.list`, the discovery lens…",
+     "purpose": "Connector discovery, catalog-key history and outbound scheduling",
      "surface": {
+      "enum": 1,
       "fn": 3,
-      "struct": 5
+      "struct": 4
      }
     },
     {
@@ -149322,8 +149323,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1139,
-      "struct": 3488
+      "enum": 1140,
+      "struct": 3487
      }
     },
     {
