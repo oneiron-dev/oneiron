@@ -97,12 +97,16 @@ const SMART_ART_EXTENT: (i64, i64) = CHART_EXTENT;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExportProfile {
     pub name: String,
+    /// Ceilings for compiling new or replaced live pictures.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graphics: Option<GraphicLimits>,
 }
 
 impl Default for ExportProfile {
     fn default() -> Self {
         Self {
             name: "pptx-live-v1".to_owned(),
+            graphics: None,
         }
     }
 }
@@ -119,6 +123,8 @@ pub struct ExportKey {
     /// in the state hash).
     pub allocation_hash: [u8; 32],
     pub profile: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graphics: Option<GraphicLimits>,
     pub projector: String,
 }
 
@@ -166,6 +172,7 @@ pub fn export_key(
         allocation_hash: *blake3::hash(&serde_json::to_vec(&deck.id_marks).unwrap_or_default())
             .as_bytes(),
         profile: profile.name.clone(),
+        graphics: profile.graphics,
         projector: PROJECTOR_VERSION.to_owned(),
     })
 }
@@ -369,6 +376,7 @@ fn born(
     id: NodeId,
     part: &str,
     assets: &dyn Assets,
+    graphics: GraphicLimits,
 ) -> Result<u32, LiveError> {
     let node = &deck.nodes[&id];
     let (high, seed) = (work.shape_mark(part), work.seed(id, "shape"));
@@ -416,7 +424,7 @@ fn born(
                         record: &record,
                         bytes: &bytes,
                         requested: requested(image),
-                        limits: GraphicLimits::default(),
+                        limits: graphics,
                     },
                     offset,
                     extent: node.geometry.extent.unwrap_or(PICTURE_BOX),

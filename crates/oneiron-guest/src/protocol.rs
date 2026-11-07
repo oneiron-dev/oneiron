@@ -94,6 +94,10 @@ enum GuestFrame<'a> {
     StepResult {
         result_json: &'a str,
     },
+    /// The program's own error, as its `run-step` returned it (FIX 9209).
+    StepError {
+        message: &'a str,
+    },
     Finish {
         status: i32,
     },
@@ -335,10 +339,20 @@ impl<T: Read + Write> Session<T> {
     }
 
     pub(crate) fn result(&mut self, result_json: &str) -> Result<()> {
-        if self.finished || result_json.len() > MAX_FILE {
-            return Err(Error::Protocol("step result bounds"));
+        if self.finished {
+            return Err(Error::Protocol("step result after finish"));
         }
         self.send(&GuestFrame::StepResult { result_json })
+    }
+
+    /// Sends the program's own error text, header included, in place of a
+    /// step result (FIX 9209). A text the frame bound cannot hold is not
+    /// sent, so the host keeps its fixed failure. The nonzero finish follows.
+    pub(crate) fn step_error(&mut self, message: &str) -> Result<()> {
+        if self.finished {
+            return Err(Error::Protocol("step error after finish"));
+        }
+        self.send(&GuestFrame::StepError { message })
     }
 
     pub(crate) fn finish(&mut self, status: i32) -> Result<()> {

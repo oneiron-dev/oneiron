@@ -415,7 +415,9 @@ pub struct VerbAskDrainPermit {
 }
 
 impl VerbAskDrainPermit {
-    const fn new(invocation: InvocationId) -> Self {
+    /// `pub(super)`: the plain drain mints one for its own call too (FIX
+    /// 2183); nothing outside the verb-hook drain paths may.
+    pub(super) const fn new(invocation: InvocationId) -> Self {
         Self {
             invocation,
             credential_door: None,
