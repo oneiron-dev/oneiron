@@ -23,7 +23,7 @@ pub(super) fn retained_in_txn(
         .prefix_iter(txn, b"m:federation-review:v1:")?
         .map(|row| {
             let (_, bytes) = row?;
-            rmp_serde::from_slice(&bytes).map_err(|_| corrupt())
+            super::review_memory::decode(&bytes)
         })
         .collect()
 }
@@ -38,7 +38,7 @@ pub(super) fn retain_in_txn(
     };
     let key = key(&work.peer);
     let mut bundle: FederationBurstReviewBundle = match vault.store.sync_queue.get(txn, &key)? {
-        Some(bytes) => rmp_serde::from_slice(&bytes).map_err(|_| corrupt())?,
+        Some(bytes) => super::review_memory::decode(&bytes)?,
         None => FederationBurstReviewBundle {
             bundle_ref: format!(
                 "federation-review:{}",
@@ -64,8 +64,8 @@ pub(super) fn retain_in_txn(
                     streak_ratio: work.streak_ratio,
                 }),
         );
-        let bytes = rmp_serde::to_vec_named(&bundle).map_err(|_| corrupt())?;
-        vault.store.sync_queue.put(txn, &key, &bytes)?;
+        let bytes = super::review_encoding::encode(&bundle)?;
+        vault.store.sync_queue.put(txn, &key, bytes.as_slice())?;
     }
     Ok(())
 }
@@ -81,7 +81,7 @@ pub(super) fn scrub_in_txn(
 ) -> Result<()> {
     let key = key(peer);
     let mut bundle: FederationBurstReviewBundle = match store.sync_queue.get(txn, &key)? {
-        Some(bytes) => rmp_serde::from_slice(&bytes).map_err(|_| corrupt())?,
+        Some(bytes) => super::review_memory::decode(&bytes)?,
         None => return Ok(()),
     };
     let request_ref = blake3::Hash::from(*id).to_hex().to_string();
@@ -90,8 +90,8 @@ pub(super) fn scrub_in_txn(
         .updates
         .retain(|update| update.request_ref != request_ref);
     if bundle.updates.len() != held {
-        let bytes = rmp_serde::to_vec_named(&bundle).map_err(|_| corrupt())?;
-        store.sync_queue.put(txn, &key, &bytes)?;
+        let bytes = super::review_encoding::encode(&bundle)?;
+        store.sync_queue.put(txn, &key, bytes.as_slice())?;
     }
     Ok(())
 }

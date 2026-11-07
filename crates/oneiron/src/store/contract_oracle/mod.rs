@@ -5,6 +5,7 @@ pub use oneiron_store::contract_oracle::*;
 
 use crate::error::{CodeError, Error, Result};
 pub use graph::{AffectedTests, WorkspaceGraph};
+pub use js_api::{JsPublicNames, js_public_names};
 use oneiron_store::contract_oracle::types;
 pub use rust_api::{RustPublicNames, rust_public_names};
 use std::path::{Component, Path, PathBuf};
@@ -17,5 +18,6 @@ pub use types::{
 pub(crate) use self::storage::contract_oracle_baseline_accepts_masked;
 pub(crate) use self::storage::contract_oracle_verdict_accepts_masked;
 
+mod js_api;
 mod rust_api;
 mod storage;
