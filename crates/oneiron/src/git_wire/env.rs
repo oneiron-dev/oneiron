@@ -25,7 +25,7 @@ pub struct GitWireProcessEnv {
     pub(super) hub_root: Option<PathBuf>,
     pub(super) mirror_egress: Option<super::mirror_push::MirrorEgress>,
     pub(super) import_profile: Option<super::import_fetch::ImportProcessProfile>,
-    /// An exact publish's relay leg on a served host (FIX 19083).
+    /// An origin mirror's relay leg on a served host (FIX 19083).
     pub(super) origin_relay: Option<super::origin_relay::OriginRelayEgress>,
     #[cfg(test)]
     pub(super) after_attribute_snapshot: Option<(PathBuf, Vec<u8>)>,
