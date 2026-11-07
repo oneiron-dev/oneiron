@@ -26107,7 +26107,7 @@
      "path": "src/deletion/legal_hold/prospective.rs",
      "purpose": "A HOST order's explicit prospective capture of new on-record messages (LEGAL-HOLD-USE = B as a clone, owner…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 18
      }
     },
     {
@@ -129630,7 +129630,7 @@
      "path": "src/server/core.rs",
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
-      "crate-vis": 37,
+      "crate-vis": 38,
       "fn": 16,
       "re-export": 1,
       "struct": 1
