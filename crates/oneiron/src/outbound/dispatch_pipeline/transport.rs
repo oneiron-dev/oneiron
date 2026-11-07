@@ -1,6 +1,7 @@
 //! Chokepoint OutboundTransport adapter: frozen-call guard, header/invite rehydration, sink execute.
 use super::retry_after::{PROVIDER_RETRY_AFTER_FIELD, provider_retry_after_secs};
 use crate::Vault;
+use crate::agent_dispatch::{AGENT_RUN_FENCE_FIELD, AGENT_RUN_STOOD_DOWN};
 use crate::outbound::capability::OutboundVerbContract;
 use crate::outbound::connector_task::{
     SEND_EXECUTOR_FENCE_FIELD, SEND_EXECUTOR_STOOD_DOWN, send_executor_fence_permits_send,
@@ -9,12 +10,30 @@ use crate::outbound::dispatch_types::{
     OutboundDispatchRequest, OutboundExecutionOutcome, OutboundExecutionOutcomeKind,
     OutboundExecutionRequest, OutboundExecutionSink,
 };
+use crate::outbound::send_lookup::{
+    SENT_LOOKUP_CANNOT_TELL, SENT_LOOKUP_CANNOT_TELL_REASON, SENT_LOOKUP_DEDUPED_RESEND,
+    SENT_LOOKUP_FIELD, SENT_LOOKUP_NOT_SENT, SENT_LOOKUP_SENT,
+};
+use crate::outbound::{SentLookup, SentLookupTarget};
+use crate::outbound_chokepoint::UncertainSendStep;
 pub(super) struct DispatchChokepointTransport<'a, S> {
     vault: &'a Vault,
     request: &'a OutboundDispatchRequest,
     verb_contract: &'static OutboundVerbContract,
     sink: &'a mut S,
     pub(super) execution: Option<OutboundExecutionOutcome>,
+    /// FIX 4747: what this dispatch's one provider lookup found, once it
+    /// ran; a dispatch looks its send up at most once.
+    looked_up: Option<LookupFound>,
+}
+
+/// What a dispatch's provider lookup found (FIX 4747).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LookupFound {
+    Sent,
+    NotSent,
+    DedupedResend,
+    CannotTell,
 }
 impl<'a, S> DispatchChokepointTransport<'a, S> {
     pub(super) fn new(
@@ -29,8 +48,39 @@ impl<'a, S> DispatchChokepointTransport<'a, S> {
             verb_contract,
             sink,
             execution: None,
+            looked_up: None,
         }
     }
+}
+
+/// What a lookup of `request`'s send may read: its frozen intent, its verb
+/// and the sender identity the dispatch resolved (FIX 4747).
+fn sent_lookup_target<'r>(
+    request: &'r OutboundDispatchRequest,
+    verb_contract: &'static OutboundVerbContract,
+) -> SentLookupTarget<'r> {
+    SentLookupTarget {
+        intent_ref: &request.intent_ref,
+        intent: &request.intent,
+        verb_contract,
+        channel_identity_ref: request.channel_identity_ref,
+        send_approved_at: request.send_approved_at,
+    }
+}
+
+/// The execution a lookup that found the send kept stands for: delivered
+/// under the provider's ref, with nothing sent now (FIX 4747).
+fn looked_up_sent(provider_ref: String) -> OutboundExecutionOutcome {
+    OutboundExecutionOutcome::delivered_to_channel(provider_ref)
+        .with_receipt_field(SENT_LOOKUP_FIELD, SENT_LOOKUP_SENT)
+}
+
+/// The execution a lookup that could not tell stands for: nothing sent now,
+/// and an earlier send may have gone (FIX 4747).
+fn looked_up_cannot_tell() -> OutboundExecutionOutcome {
+    OutboundExecutionOutcome::failed(SENT_LOOKUP_CANNOT_TELL_REASON)
+        .with_possible_delivery()
+        .with_receipt_field(SENT_LOOKUP_FIELD, SENT_LOOKUP_CANNOT_TELL)
 }
 impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
     for DispatchChokepointTransport<'_, S>
@@ -100,6 +150,7 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
             apns_interruption_level: self.request.delivery_window_apns_interruption_level,
             calendar_invite,
             space_posting,
+            engine_send_id: self.request.engine_send_id.as_ref(),
         };
         if !crate::task_verb::validate_ask_soft_confirm_dispatch(self.vault, self.request)
             .unwrap_or(false)
@@ -119,7 +170,56 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
             );
             return transport_not_started();
         }
+        // FIX 4747 slice 5: a send an agent run starts goes only while that
+        // run's machine still holds the run; a stale executor stands down
+        // here, at the same last point, and its sink is never called.
+        if let Some(fence) = self.request.agent_run_fence.as_ref()
+            && !crate::agent_dispatch::agent_run_fence_permits_effect(self.vault, fence)
+        {
+            self.execution = Some(
+                OutboundExecutionOutcome::failed(AGENT_RUN_STOOD_DOWN)
+                    .with_receipt_field(AGENT_RUN_FENCE_FIELD, AGENT_RUN_STOOD_DOWN),
+            );
+            return transport_not_started();
+        }
+        // FIX 4747: a send an earlier executor of its TASK may have made is
+        // looked up first: one the provider kept settles delivered, sending
+        // nothing; one nobody can tell about sends nothing and stays
+        // uncertain for the owner's ask; only one the provider has not seen
+        // goes. The owner's resend goes with no lookup.
+        let request = self.request;
+        if request.earlier_send_lookup
+            && !request.owner_released_resend
+            && self.looked_up.is_none()
+            && let Some(engine_send_id) = request.engine_send_id.as_ref()
+        {
+            let target = sent_lookup_target(request, self.verb_contract);
+            match self.sink.lookup_sent(engine_send_id, &target) {
+                SentLookup::Sent { provider_ref } => {
+                    self.looked_up = Some(LookupFound::Sent);
+                    self.execution = Some(looked_up_sent(provider_ref));
+                    return crate::outbound_intent_ledger::OutboundSendOutcome::Acked;
+                }
+                SentLookup::NotSent => self.looked_up = Some(LookupFound::NotSent),
+                SentLookup::DedupedResend => self.looked_up = Some(LookupFound::DedupedResend),
+                SentLookup::CannotTell => {
+                    self.looked_up = Some(LookupFound::CannotTell);
+                    self.execution = Some(looked_up_cannot_tell());
+                    return crate::outbound_intent_ledger::OutboundSendOutcome::Ambiguous;
+                }
+            }
+        }
         let mut execution = self.sink.execute(&execution_request);
+        let looked_up_field = match self.looked_up {
+            Some(LookupFound::NotSent) => Some(SENT_LOOKUP_NOT_SENT),
+            Some(LookupFound::DedupedResend) => Some(SENT_LOOKUP_DEDUPED_RESEND),
+            _ => None,
+        };
+        if let Some(found) = looked_up_field {
+            execution
+                .receipt_fields
+                .insert(SENT_LOOKUP_FIELD.to_owned(), found.to_owned());
+        }
         // Only the pipeline may author the normalized re-arm authority, even
         // when the adapter's raw `retry_after` is missing or malformed.
         execution.receipt_fields.remove(PROVIDER_RETRY_AFTER_FIELD);
@@ -172,6 +272,74 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
         self.sink
             .admit_in(txn)
             .map_err(crate::outbound_intent_ledger::IntentLedgerError::from)
+    }
+
+    /// A connector-send TASK's dispatch looks a send that may have gone out
+    /// up before any resend (FIX 4747).
+    fn looks_up_uncertain_sends(&self) -> bool {
+        self.request.engine_send_id.is_some()
+    }
+
+    /// A LINE push or narrowcast of a connector-send TASK: LINE keeps its
+    /// retry key for 24 hours only (FIX 4747, review #6555). Engine call
+    /// (CALLS, FIX 4747): the channels and verbs whose key lapses.
+    fn idempotent_resend_is_time_bounded(
+        &self,
+        _call: &crate::outbound_intent_ledger::FrozenOutboundCall,
+    ) -> bool {
+        self.request.engine_send_id.is_some()
+            && crate::outbound::capability::normalize_key(&self.request.intent.channel)
+                == crate::channel_identity_provider::LINE_CHANNEL
+            && matches!(self.request.intent.verb.as_str(), "push" | "narrowcast")
+    }
+
+    /// The owner's resend releases the uncertain call; else the sink's
+    /// provider lookup for a call this transport would send decides (FIX
+    /// 4747). A call this transport would not send, or a second lookup in
+    /// one dispatch, holds.
+    fn uncertain_send_step(
+        &mut self,
+        call: &crate::outbound_intent_ledger::FrozenOutboundCall,
+    ) -> UncertainSendStep {
+        let request = self.request;
+        let Some(engine_send_id) = request.engine_send_id.as_ref() else {
+            return UncertainSendStep::Hold;
+        };
+        if call.server() != request.intent.channel
+            || call.tool() != self.verb_contract.kind
+            || call.resolved_endpoint().is_some()
+        {
+            self.execution = Some(looked_up_cannot_tell());
+            return UncertainSendStep::Hold;
+        }
+        if request.owner_released_resend {
+            return UncertainSendStep::OwnerReleased;
+        }
+        if self.looked_up.is_some() {
+            self.execution = Some(looked_up_cannot_tell());
+            return UncertainSendStep::Hold;
+        }
+        let target = sent_lookup_target(request, self.verb_contract);
+        match self.sink.lookup_sent(engine_send_id, &target) {
+            SentLookup::Sent { provider_ref } => {
+                self.looked_up = Some(LookupFound::Sent);
+                self.execution = Some(looked_up_sent(provider_ref));
+                UncertainSendStep::Delivered
+            }
+            SentLookup::NotSent => {
+                self.looked_up = Some(LookupFound::NotSent);
+                UncertainSendStep::LookedUpUnsent
+            }
+            SentLookup::DedupedResend => {
+                self.looked_up = Some(LookupFound::DedupedResend);
+                UncertainSendStep::ResendDeduplicated
+            }
+            SentLookup::CannotTell => {
+                self.looked_up = Some(LookupFound::CannotTell);
+                self.execution = Some(looked_up_cannot_tell());
+                UncertainSendStep::Hold
+            }
+        }
     }
 
     /// The sink's proof of non-delivery, for a call this transport would

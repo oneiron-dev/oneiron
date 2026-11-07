@@ -744,6 +744,9 @@ class Oneiron:
         def outbound_calls(self) -> "Oneiron._VaultOutboundCallsVerbs":
             return Oneiron._VaultOutboundCallsVerbs(self._client)
         @property
+        def outbound(self) -> "Oneiron._VaultOutboundVerbs":
+            return Oneiron._VaultOutboundVerbs(self._client)
+        @property
         def research(self) -> "Oneiron._VaultResearchVerbs":
             return Oneiron._VaultResearchVerbs(self._client)
         @property
@@ -3148,6 +3151,18 @@ class Oneiron:
         def erase(self, spec):
             """The owner erases one outbound call's frozen request, keeping its delivery evidence and accounting."""
             return json.loads(_translate(lambda: self._client.vault_outbound_calls_request_erase(json.dumps(spec))))
+    class _VaultOutboundVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def uncertain_send(self) -> "Oneiron._VaultOutboundUncertainSendVerbs":
+            return Oneiron._VaultOutboundUncertainSendVerbs(self._client)
+    class _VaultOutboundUncertainSendVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def answer(self, spec):
+            """The owner answers the ask on a scheduled send that may have gone out and that the provider cannot confirm: send it once more, or leave it unsent."""
+            return json.loads(_translate(lambda: self._client.vault_outbound_uncertain_send_answer(json.dumps(spec))))
     class _VaultResearchVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

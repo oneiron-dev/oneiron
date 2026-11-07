@@ -3924,6 +3924,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_outbound_uncertain_send_answer(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.outbound.uncertain_send.answer", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_research_create_child(
         &self,
         input: serde_json::Value,

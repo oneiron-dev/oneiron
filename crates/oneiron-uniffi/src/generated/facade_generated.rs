@@ -2261,6 +2261,11 @@ export_facade! {
     let output = client.vault_outbound_calls_request_erase(&input)?;
     crate::codec::lift_record("vault.outbound_calls.request.erase", &output)
 };
+"vault.outbound.uncertain_send.answer" => fn vault_outbound_uncertain_send_answer(&self, input: UncertainSendAnswer) -> UncertainSendAnswered = |client| {
+    let input: oneiron::task_verb::sdk::UncertainSendAnswer = crate::codec::lower_record("vault.outbound.uncertain_send.answer", input)?;
+    let output = client.vault_outbound_uncertain_send_answer(&input)?;
+    crate::codec::lift_record("vault.outbound.uncertain_send.answer", &output)
+};
 "vault.research.create_child" => fn vault_research_create_child(&self, input: ResearchChildWire) -> ResearchChildReceipt = |client| {
     let input: oneiron::task_verb::sdk::ResearchChildWire = crate::codec::lower_record("vault.research.create_child", input)?;
     let output = client.vault_research_create_child(&input)?;

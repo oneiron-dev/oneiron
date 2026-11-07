@@ -461,6 +461,40 @@ impl<'a> DreamerRunnerStore<'a> {
         )
     }
 
+    /// FIX 4747 slice 6: queues on this machine, under its own id, the live
+    /// try of an agent run another machine ran and this machine takes over:
+    /// the frozen payload, dedupe key, run and realized TASK backlink its
+    /// dispatch queued it with, `retry_of` the try it goes on from, and its
+    /// run-tree row, as [`Self::enqueue_with_task_ref_in_txn`] queues a
+    /// dispatch. A row under that id refuses as a collision; a pending row
+    /// here that holds the dedupe key answers `Existing`, and nothing is
+    /// queued. The caller's commit owes the deadline watch its wake.
+    pub(crate) fn enqueue_handed_over_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: AttemptId,
+        input: EnqueueAttempt,
+        task_ref: Option<String>,
+        retry_of: Option<AttemptId>,
+    ) -> Result<EnqueueOutcome> {
+        let parent_attempt = decode_dreamer_attempt_payload(&input.payload)?.parent_attempt;
+        let outcome = self
+            .attempts
+            .enqueue_handed_over_in_txn(wtxn, id, input, task_ref, retry_of)?;
+        if let EnqueueOutcome::Enqueued(record) = &outcome {
+            put_run_tree_record_in_txn(
+                self.vault,
+                wtxn,
+                &DreamerRunTreeRecord {
+                    attempt_id: record.id,
+                    parent_attempt,
+                    created_at: record.created_at,
+                },
+            )?;
+        }
+        Ok(outcome)
+    }
+
     /// FIX 5661: queues again, on a new home, a free-time item a home move
     /// carried whose try never started on its old home: under that try's own
     /// attempt id and first queue time, with the payload, dedupe key and run
@@ -855,6 +889,9 @@ impl<'a> DreamerRunnerStore<'a> {
                     "agent retry requires a dispatch attempt",
                 ));
             }
+            // FIX 4747: a stale executor's failure queues no retry; the run
+            // is another machine's.
+            crate::agent_dispatch::fence_agent_run_settlement_in_txn(self.vault, &*txn, source.id)?;
             // OF-220: the TASK requeues before its try's lease clears.
             crate::task_verb::highway_runner::report_leased_task_in_txn(
                 self.vault,
@@ -1091,6 +1128,8 @@ impl<'a> DreamerRunnerStore<'a> {
         super::outage_due::index_outage_due_in_txn(self.vault, wtxn, &record)?;
         super::program::index_program_hold_in_txn(self.vault, wtxn, &record)?;
         crate::dreamer_wake::record_checkpoint_in_txn(self.vault, wtxn, &record);
+        // FIX 4747: a parking agent run keeps its executor lease.
+        crate::agent_dispatch::renew_agent_run_lease_in_txn(self.vault, wtxn, record.attempt_id)?;
         Ok(record)
     }
 
@@ -1146,6 +1185,9 @@ impl<'a> DreamerRunnerStore<'a> {
         super::outage_due::unindex_outage_due_in_txn(self.vault, wtxn, &record)?;
         super::program::unindex_program_hold_in_txn(self.vault, wtxn, &record)?;
         PARKED.delete(&self.vault.store, wtxn, &attempt_id)?;
+        // FIX 4747: a resuming agent run keeps its executor lease until its
+        // next claim takes it.
+        crate::agent_dispatch::renew_agent_run_lease_in_txn(self.vault, wtxn, attempt_id)?;
         if let Some(lease_owner) = status.attempt.lease_owner.as_deref() {
             // Callers pass their own clock (the trap layer's counts
             // milliseconds); the queue row keeps the vault's seconds.

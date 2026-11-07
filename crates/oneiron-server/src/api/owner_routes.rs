@@ -115,6 +115,7 @@ mod stream_recovery_routes;
 mod support_grant_routes;
 mod support_repair_routes;
 mod training_swap_routes;
+mod uncertain_send_routes;
 mod usage_repair_routes;
 pub(super) mod vault_key_routes;
 pub(super) mod weave_digest_channel_routes;
@@ -176,6 +177,7 @@ fn owner_tables() -> OwnerTable {
         support_grant_routes::owner_table(),
         support_repair_routes::owner_table(),
         agent_grant_routes::owner_table(),
+        uncertain_send_routes::owner_table(),
         proactivity_routes::owner_table(),
         weave_routes::owner_table(),
         weave_digest_channel_routes::owner_table(),

@@ -421,6 +421,9 @@ pub(crate) fn report_leased_task_in_txn(
     if record.task_ref.is_none() || !record.state.is_running() {
         return Ok(());
     }
+    // FIX 4747: a fenced agent run reports the TASK it realizes only while
+    // its run TASK names the holding its claim took.
+    crate::agent_dispatch::fence_agent_run_settlement_in_txn(vault, &*txn, attempt)?;
     let judged = match &settle {
         RunnerSettle::Judged(answer) => Some(answer.clone()),
         RunnerSettle::Done | RunnerSettle::Failed { .. } => None,

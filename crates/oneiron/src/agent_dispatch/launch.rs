@@ -15,13 +15,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::llm::run_admission::LeaseUnit;
 
 use super::spend_calibration::ExpectedSpend;
-use super::spend_record::{ChildSpend, SCOPE, SpendScope, SpendScopeId, SpendState};
+use super::spend_record::{ChildSpend, SCOPE, SpendRefused, SpendScope, SpendScopeId, SpendState};
 use super::widen_record::invalid;
-use super::{AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, DispatchAgent};
+use super::{
+    AgentDispatchInput, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, DispatchAgent,
+};
 
 /// A root launch's spend: the root scope the host opened with
 /// [`AgentDispatcher::open_root_spend_scope`]. A child launch never names one;
@@ -157,6 +159,125 @@ impl LaunchAdmission {
                 Some(dispatcher.reserve_agent_in_txn(txn, parent, &attempt, agent, *ask, now)?)
             }
         })
+    }
+}
+
+/// What a machine that takes over an agent run reserves for it (FIX 4747
+/// slice 6).
+enum HandedOverReserve {
+    Reserve(LaunchReserve),
+    /// This machine cannot fund the run as its launch was stated: it waits.
+    Unfunded,
+}
+
+/// What an agent run another machine dispatched reserves on the machine that
+/// takes it over, from the launch statement its dispatch froze (FIX 4747
+/// slice 6). Engine call (CALLS, FIX 4747): a launch stated unmetered stays
+/// unmetered; a pinned `budget` outside any tree pins the same cap here; a
+/// launch under a tree scope this machine holds open, or books at an open
+/// ancestor (`tree_here`), reserves under it as the dispatch did, a carve of
+/// its budget or a hold of its expected spend. A tree scope this machine
+/// does not hold lives on the machine that opened it, and nothing of it is
+/// seeded here (cross-node budget custody is FIX 4889): the run gets a pinned
+/// hard scope of what its launch reserved from that tree, so it never spends
+/// past what its launch set aside. A launch that reserved nothing there, or
+/// a room-bound one, whose payer only that tree names, is unfunded here.
+fn handed_over_launch_reserve(
+    statement: &LaunchStatement,
+    tree_here: bool,
+    room_bound: bool,
+) -> HandedOverReserve {
+    let Some(cap_units) = statement.cap_units else {
+        return HandedOverReserve::Reserve(LaunchReserve::Unmetered);
+    };
+    let unit = statement.unit.clone();
+    match &statement.parent_scope {
+        None => HandedOverReserve::Reserve(LaunchReserve::Pinned { unit, cap_units }),
+        Some(parent) if tree_here => HandedOverReserve::Reserve(LaunchReserve::Child {
+            parent: parent.clone(),
+            ask: if statement.hard {
+                ChildSpend::Carve { cap_units }
+            } else {
+                ChildSpend::Hold {
+                    expected_units: statement.expected.units,
+                }
+            },
+        }),
+        Some(_) if room_bound || statement.reserved_units == 0 => HandedOverReserve::Unfunded,
+        Some(_) => HandedOverReserve::Reserve(LaunchReserve::Pinned {
+            unit,
+            cap_units: statement.reserved_units,
+        }),
+    }
+}
+
+impl AgentDispatcher<'_> {
+    /// Reserves on this machine the spend of `attempt`, the try of an agent
+    /// run this machine takes over, in the take's write (FIX 4747 slice 6),
+    /// as `handed_over_launch_reserve` rules from the launch statement
+    /// `input` froze. A scope that already stands here for `attempt` is kept.
+    /// A room-bound run proves its join again under the scope it reserves
+    /// under, as its dispatch did. `false` when this machine cannot fund it:
+    /// the take writes nothing, and the run waits.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(super) fn reserve_handed_over_launch_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        attempt: AttemptId,
+        input: &AgentDispatchInput,
+        now: u64,
+    ) -> Result<bool> {
+        if SCOPE.contains(
+            &self.vault.store,
+            txn,
+            &SpendScopeId::for_attempt(&attempt).0,
+        )? {
+            return Ok(true);
+        }
+        let Some(statement) = input.launch.as_ref() else {
+            return Ok(true);
+        };
+        let tree_here = match &statement.parent_scope {
+            Some(parent) => match SCOPE.get(&self.vault.store, txn, &parent.0)? {
+                Some(row) if row.state == SpendState::Open => true,
+                Some(_) => self.effective_scope_in_txn(txn, parent)?.state == SpendState::Open,
+                None => false,
+            },
+            None => false,
+        };
+        let agent = input.target.agent_definition_ref()?;
+        match handed_over_launch_reserve(statement, tree_here, input.room.is_some()) {
+            HandedOverReserve::Unfunded => return Ok(false),
+            HandedOverReserve::Reserve(LaunchReserve::Unmetered) => {}
+            HandedOverReserve::Reserve(LaunchReserve::Pinned { unit, cap_units }) => {
+                self.open_pinned_scope_in_txn(txn, &attempt, Some(agent), unit, cap_units, now)?;
+            }
+            HandedOverReserve::Reserve(LaunchReserve::Child { parent, ask }) => {
+                match self.reserve_agent_in_txn(txn, &parent, &attempt, Some(agent), ask, now) {
+                    Ok(_) => {}
+                    Err(SpendRefused::Engine(error)) => return Err(error),
+                    Err(SpendRefused::OverCap { .. } | SpendRefused::Start(_)) => {
+                        return Ok(false);
+                    }
+                }
+            }
+        }
+        if input.room.is_some() {
+            match self.require_room_join_in_txn(
+                txn,
+                input.room.as_ref(),
+                agent,
+                statement.parent_scope.as_ref(),
+            ) {
+                Ok(_) => {}
+                Err(Error::Claim(_) | Error::Artifact(_)) => return Ok(false),
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(true)
     }
 }
 

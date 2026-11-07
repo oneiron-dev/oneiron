@@ -22,6 +22,7 @@ impl AttemptQueue<'_> {
         task_ref: Option<String>,
         dedupe_actor_ref: Option<&str>,
         id: Option<AttemptId>,
+        retry_of: Option<AttemptId>,
     ) -> Result<EnqueueOutcome> {
         validate_kind(&input.kind)?;
         validate_optional_dedupe(input.dedupe_key.as_deref())?;
@@ -66,7 +67,7 @@ impl AttemptQueue<'_> {
             attempt_count: 0,
             claimed_at: None,
             scheduled_at: None,
-            retry_of: None,
+            retry_of,
             folded_retries: 0,
             backoff_until: None,
             last_error: None,
