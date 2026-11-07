@@ -165,6 +165,49 @@ impl RefusalNote {
     }
 }
 
+/// A per-vault wake for a HOST order's prospective capture worker
+/// (LEGAL-HOLD-USE = B as a clone, FIX 13866). A writer that seals a new
+/// message into an outbox bumps it inside that writer; the worker records the
+/// generation, then takes the LMDB writer as a barrier before it reads, so a
+/// bump it saw is never read before its writer ended. Never persisted.
+#[derive(Debug, Default)]
+pub(crate) struct ProspectiveWake {
+    generation: Mutex<u64>,
+    changed: std::sync::Condvar,
+}
+
+impl ProspectiveWake {
+    /// The current generation.
+    pub(crate) fn generation(&self) -> u64 {
+        *self
+            .generation
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Moves the generation and wakes every waiter.
+    pub(crate) fn bump(&self) {
+        let mut generation = self
+            .generation
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        *generation = generation.wrapping_add(1);
+        self.changed.notify_all();
+    }
+
+    /// Waits until the generation is no longer `seen`, or `timeout` passes.
+    pub(crate) fn wait_past(&self, seen: u64, timeout: std::time::Duration) {
+        let generation = self
+            .generation
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let _ = self
+            .changed
+            .wait_timeout_while(generation, timeout, |generation| *generation == seen)
+            .unwrap_or_else(PoisonError::into_inner);
+    }
+}
+
 /// Refusals not yet in a hold log, outside any door's own attempt
 /// (`settlement`). The refusing transaction rolls back, so the door that owns
 /// it logs them once that writer has ended, before it returns
