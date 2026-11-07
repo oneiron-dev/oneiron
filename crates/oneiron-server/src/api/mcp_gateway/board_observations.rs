@@ -46,6 +46,20 @@ pub(super) async fn read_set<'a>(
     }))
 }
 
+/// A copy of a connector's own session read set, as it stands now, under
+/// its tagged MCP key ([`read_set`]): what its self brief reads its loaded
+/// skills from (FIX 17594). A connection already detached keeps no reads,
+/// so it reads an empty set, as its board does ([`state`]).
+pub(crate) async fn mcp_session_reads(
+    server: &SyncServer,
+    actor: &McpResolvedActor,
+) -> SessionReadSet {
+    match read_set(server, actor).await {
+        Some(reads) => reads.clone(),
+        None => SessionReadSet::default(),
+    }
+}
+
 /// The session's read state, the changed line with this session's own
 /// deliveries fitted in, and the same line before they were: board state an
 /// epoch hashes never depends on what a delivery displaced.
