@@ -53950,6 +53950,7 @@
      "path": "src/model_step_error.rs",
      "purpose": "Durable model-step failure and reply-check contracts",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "type": 2
      }
@@ -61517,7 +61518,17 @@
      "path": "src/ppr/cache_store.rs",
      "purpose": "PPR cache constants, TTL policy, cache IO, and binary codec",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 31
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ppr/cache_store/invalidation_plan.rs",
+     "purpose": "Ordered PPR invalidation against a writer or its caller-owned read projection",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -71564,13 +71575,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/skill_hub/package_codec.rs",
      "purpose": "Bounded, typed package persistence",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 15,
       "re-export": 1
      }
     },
@@ -71738,7 +71749,7 @@
      "path": "src/skill_hub/source_carrier.rs",
      "purpose": "Holder-bound exact source custody over ordinary replicated ASSET rows",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -71748,7 +71759,7 @@
      "path": "src/skill_hub/source_custody.rs",
      "purpose": "Source-only retirement and payload cleanup, shared by local/raw/replay/erase",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -71816,7 +71827,7 @@
      "path": "src/skill_hub/verdict.rs",
      "purpose": "Skill scan verdict admission",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 4,
       "fn": 6,
       "re-export": 1,
@@ -71907,7 +71918,7 @@
      "purpose": "The N dial over vault_meta, and the two text helpers every child in this module uses",
      "surface": {
       "const": 2,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2
      }
     },
@@ -72241,7 +72252,7 @@
      "purpose": "SKILL-OPT-2 (ONE-1449, ARCH-0026 dreamer-v2 / ARCH-0053 §6): the held-out score gate that arms `candidate →…",
      "surface": {
       "const": 4,
-      "crate-vis": 15,
+      "crate-vis": 16,
       "re-export": 13
      }
     },
@@ -72267,7 +72278,7 @@
      "path": "src/skill_optimize/gate/basis.rs",
      "purpose": "What a ruling rests on before the gate decides: the held-out split, the identity a verdict binds itself to…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 15,
       "fn": 12,
       "static": 1,
       "struct": 2,
@@ -72299,6 +72310,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/skill_optimize/gate/decision/sources.rs",
+     "purpose": "Native verdict and anchor inputs behind the gate's cap and judge cadence",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/skill_optimize/gate/deferred_approval.rs",
      "purpose": "An approved tradeoff that cannot admit yet (FIX 8848)",
      "surface": {
@@ -72317,7 +72338,7 @@
      "path": "src/skill_optimize/gate/goal_axis.rs",
      "purpose": "Goal-axis replay scores",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 2,
       "struct": 3
@@ -72330,7 +72351,7 @@
      "path": "src/skill_optimize/gate/judge_binding.rs",
      "purpose": "The judge a kept score was measured by (FIX 8846)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -72340,7 +72361,7 @@
      "path": "src/skill_optimize/gate/ledger.rs",
      "purpose": "The verdict ledger, and the `Gate` receipts projected from it",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 10,
       "fn": 5
      }
     },
@@ -72361,7 +72382,7 @@
      "path": "src/skill_optimize/gate/live.rs",
      "purpose": "Live goal-axis measurement of a proposal (ARCH-0053: \"Primary axes are measured online.\" \"Offline axes run…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 4
      }
     },
@@ -72395,7 +72416,7 @@
      "path": "src/skill_optimize/gate/preflight.rs",
      "purpose": "A proposal's offline floors, judged on the held-out set before any live run is routed to it (ARCH-0053…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1,
       "struct": 1
      }
@@ -72423,7 +72444,7 @@
      "path": "src/skill_optimize/gate/rule_policy.rs",
      "purpose": "The instructions the gate compares for a rule skill (FIX 10878): its description, then the dial seeds the…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -72439,7 +72460,7 @@
      "path": "src/skill_optimize/gate/tradeoff.rs",
      "purpose": "The ARCH-0053 §10a tradeoff ladder: what happens to a [`SkillEditDisposition::NeedsTradeoffDecision`]",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 9,
       "fn": 8,
       "re-export": 1,
       "struct": 5
@@ -72633,11 +72654,22 @@
      "path": "src/skill_optimize/labels.rs",
      "purpose": "Human-calibrated judge asks and the append-only label anchor",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 2,
-      "fn": 6,
-      "re-export": 1,
+      "fn": 5,
+      "re-export": 2,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/labels/anchor.rs",
+     "purpose": "Skill-filtered label anchors and their native read sources",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
      }
     },
     {
@@ -72653,7 +72685,7 @@
      "path": "src/skill_optimize/labels/rubric.rs",
      "purpose": "Judge rubric pins, label rechecks and human regrades",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 2,
       "struct": 3,
@@ -72667,7 +72699,7 @@
      "path": "src/skill_optimize/mod.rs",
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "mod": 3,
       "re-export": 20
      }
@@ -72826,7 +72858,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SkillOptimizeCandidate"
@@ -72834,7 +72866,7 @@
      "path": "src/skill_optimize/selection.rs",
      "purpose": "Which skill the job may work on: the tier-filtered, dev-partitioned ranking and the reading behind it",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2,
       "struct": 1
      }
@@ -72864,7 +72896,7 @@
      "path": "src/skill_optimize/tier.rs",
      "purpose": "The fail-closed governance-tier resolver: what the tier axis says about one stored skill, including the…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 3
      }
@@ -72908,7 +72940,7 @@
      "path": "src/skill_reliability/amended.rs",
      "purpose": "Amendment verdicts on an attempt's outcome row (ARCH-0056 §5): one record per attempt, and the later verdict…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -72980,8 +73012,18 @@
      "path": "src/skill_reliability/ledger.rs",
      "purpose": "The durable per-(skill, receipt) outcome ledger: the contributing-win door and the tallies read off it",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_reliability/ledger/sources.rs",
+     "purpose": "Native outcome values beside the bodies consulted by the same fold",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -73051,7 +73093,7 @@
      "path": "src/skill_reliability/provenance.rs",
      "purpose": "Classifying a stored skill for the prior table: the scan-clearance and hub-vouch reads behind the…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 2
      }
     },
@@ -73065,7 +73107,7 @@
      "path": "src/skill_reliability/read.rs",
      "purpose": "Skill reliability reads use learning cells, never SkillRecord confidence",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 10,
       "struct": 2
      }
@@ -86190,7 +86232,7 @@
      "path": "src/vault/edges.rs",
      "purpose": "Vault edge writes, adjacency queries and graph traversal",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 13,
       "fn": 14,
       "struct": 1
      }
@@ -94892,7 +94934,7 @@
      "purpose": "Transaction-composable storage ports"
     },
     "ppr": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -95172,14 +95214,14 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 72,
+     "files": 74,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…"
     },
     "skill_reliability": {
-     "files": 19,
+     "files": 20,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -95454,7 +95496,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6758,
+   "source_files": 6762,
    "test_files": 895
   },
   "oneiron-android": {
@@ -109747,7 +109789,7 @@
      "surface": {
       "const": 1,
       "enum": 7,
-      "fn": 6,
+      "fn": 7,
       "struct": 5
      }
     },
@@ -124529,7 +124571,7 @@
      "purpose": "`[models.dreamer.wording]`: the host's wording of what the engine asks a model in its own words today (FIX…",
      "surface": {
       "crate-vis": 2,
-      "fn": 15,
+      "fn": 17,
       "struct": 1
      }
     },
