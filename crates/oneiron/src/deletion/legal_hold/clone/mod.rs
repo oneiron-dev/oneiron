@@ -2,13 +2,14 @@
 //! key custody, persistence, legal access audit and destruction. No clone is a
 //! Vault, and no ordinary owner/member/agent surface routes to this channel.
 
+mod artifact;
 mod auth;
 mod collector;
 mod live;
 mod messages;
 mod outbox;
 
-pub use auth::{HostLegalChannel, HostLegalConnection};
+pub use auth::{HostLegalChannel, HostLegalConnection, HostLegalConnectionRole};
 pub(crate) use live::HostLegalCaptures;
 
 use std::io::{self, Write};
@@ -28,9 +29,12 @@ use crate::{EntityId, Vault};
 use collector::Collector;
 
 impl HostLegalConnection {
-    /// Run on the managed blocking executor. Teardown cancels the private live
-    /// registry, shuts ALL accepted streams and joins ALL workers before Vault
-    /// close. A successful stream ACK covers only its declared source extent.
+    /// Run on the managed blocking executor. At its stop trigger teardown
+    /// cancels the private live registry and shuts every accepted stream but
+    /// a prospective order's; after every writer stopped it runs the final
+    /// prospective drain, then shuts the rest and joins ALL workers before
+    /// Vault close. A successful stream ACK covers only its declared source
+    /// extent.
     pub fn run(mut self, vault: &Vault, cancelled: &AtomicBool) -> Result<()> {
         self.stream.set_nonblocking(false)?;
         SourceHello {
@@ -68,21 +72,48 @@ impl HostLegalConnection {
         self.stream.set_read_timeout(deadline)?;
         self.stream.set_write_timeout(deadline)?;
         if matches!(&request.scope, CaptureScope::LiveSession(_)) {
+            // Teardown's stop trigger leaves this stream open for the
+            // off-record session close; one it already closed never registers.
+            if !self.role.claim_live() {
+                return Err(
+                    io::Error::new(io::ErrorKind::Interrupted, "legal capture stopped").into(),
+                );
+            }
             return self.run_live(vault, request, public);
         }
         if matches!(&request.scope, CaptureScope::ProspectiveMessages(_)) {
-            return self.run_prospective(vault, request, public, cancelled);
+            // Teardown's stop trigger leaves this stream open; the final
+            // drain, a release or the order's term ends it. A connection the
+            // trigger already closed never becomes prospective.
+            if !self.role.claim_prospective() {
+                return Err(
+                    io::Error::new(io::ErrorKind::Interrupted, "legal capture stopped").into(),
+                );
+            }
+            return self.run_prospective(vault, request, public);
         }
         if let CaptureScope::Messages(ids) = &request.scope {
             return messages::capture(&mut self.stream, vault, &request, &public, ids, || {
                 check(vault, &request, cancelled)
             });
         }
+        if let CaptureScope::ArtifactMessages(selection) = &request.scope {
+            return artifact::capture(
+                &mut self.stream,
+                vault,
+                &request,
+                &public,
+                selection,
+                || check(vault, &request, cancelled),
+            );
+        }
         let check = || check(vault, &request, cancelled);
-        // Gate custody BEFORE its source writer. Neither guard is reused for
-        // LIVE: K lends its final overlay/spill source at the close boundary.
+        // Gate custody BEFORE its source snapshot, one LMDB read snapshot held
+        // through every stream to the exact ACK: no writer, so the vault's
+        // own writes go on meanwhile. Neither guard is reused for LIVE: K
+        // lends its final overlay/spill source at the close boundary.
         let _custody = vault.store.gate_custody_read_guard()?;
-        let txn = vault.store.env.write_txn()?;
+        let txn = vault.store.env.read_txn()?;
         check()?;
         let mut collector = Collector::pinned(&mut self.stream, &public, &request)?;
         let mut stored_revision = [0; 32];
@@ -126,7 +157,7 @@ impl HostLegalConnection {
             .into());
         }
         collector.finish(decisions, 0, 0, 0, CaptureExtent::GateDecisions, check)?;
-        // Read-only abort, after the exact durable HOST acknowledgement.
+        // The snapshot ends after the exact durable HOST acknowledgement.
         drop(txn);
         Ok(())
     }
