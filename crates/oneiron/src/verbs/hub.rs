@@ -173,6 +173,23 @@ impl From<HubSyncDisposition> for HubSkillSyncReceipt {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HubSkillProposalSettleRequest {
+    pub entity: EntityId,
+    pub proposal: EntityId,
+    pub accept: bool,
+}
+
+/// Approved means the proposal's exact package landed; Rejected closes only
+/// the proposal and leaves the working skill and its capabilities unchanged.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct HubSkillProposalSettled {
+    pub entity: EntityId,
+    pub proposal: EntityId,
+    pub approval: crate::claim::ClaimApprovalStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HubSkillReceipts {
     pub sources: Vec<HubRef>,
     pub imports: Vec<HubImportReceipt>,
@@ -372,6 +389,20 @@ pub fn hub_skill_sync_as_owner(
     input: &HubSkillRequest,
 ) -> MemoryResult<HubSkillSyncReceipt> {
     Ok(vault.sync_skill_from_hub_ref(owner, &input.entity)?.into())
+}
+
+pub fn hub_skill_proposal_settle_as_owner(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: &HubSkillProposalSettleRequest,
+) -> MemoryResult<HubSkillProposalSettled> {
+    let approval =
+        vault.settle_hub_update_proposal(owner, &input.entity, &input.proposal, input.accept)?;
+    Ok(HubSkillProposalSettled {
+        entity: input.entity,
+        proposal: input.proposal,
+        approval,
+    })
 }
 
 pub fn hub_skill_receipts_as_owner(

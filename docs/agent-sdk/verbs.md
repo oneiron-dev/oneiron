@@ -8,6 +8,7 @@ both bindings and their export-census tests in one change.
 
 - `vault.commitments.create`
 - `vault.commitments.get`
+- `vault.commitments.ledger`
 - `vault.commitments.instances`
 - `vault.commitments.proposals`
 - `vault.commitments.fulfill`
@@ -255,6 +256,7 @@ both bindings and their export-census tests in one change.
 - `vault.packs.get`
 - `vault.skills.import`
 - `vault.skills.sync`
+- `vault.skills.proposal.settle`
 - `vault.skills.receipts`
 - `vault.skills.convert`
 - `vault.skills.get`
@@ -492,6 +494,7 @@ both bindings and their export-census tests in one change.
 - `vault.coach.training_offers.pilots.complete`
 - `vault.coach.training_offers.pilots.get`
 - `vault.coach.training_offers.sources`
+- `vault.coach.training_runs.cancel`
 - `vault.drafters.list`
 - `vault.drafters.list_as`
 - `vault.drafters.status`
@@ -647,6 +650,7 @@ both bindings and their export-census tests in one change.
 - `host.compact`
 - `host.wake`
 - `host.budget.hit`
+- `vault.hooks.checks`
 - `vault.hooks.replay`
 - `vault.hooks.regen.due`
 - `vault.hooks.regen.get`
@@ -699,6 +703,7 @@ both bindings and their export-census tests in one change.
 - `vault.code.oplog`
 - `execute_code`
 - `vault.code.model_heal_count`
+- `vault.code.corrections`
 - `vault.code.type_diagnostics`
 - `vault.code.waits.resolve`
 - `vault.code.waits.receipt`
@@ -845,6 +850,9 @@ both bindings and their export-census tests in one change.
 - `ask`
 - `wait`
 - `tasks.answer`
+- `tasks.answer.forward.challenge`
+- `tasks.answer.forward`
+- `tasks.answer.forward.status`
 - `tasks.outcomes`
 - `vault.rooms.list`
 - `vault.rooms.messages`
@@ -928,6 +936,7 @@ both bindings and their export-census tests in one change.
 - `ai.streams.detach`
 - `ai.streams.abort`
 - `ai.streams.terminal`
+- `ai.streams.release`
 - `ai.reply`
 - `vault.receipts.context`
 - `vault.receipts.craft_reply_manifest`
@@ -980,6 +989,8 @@ both bindings and their export-census tests in one change.
 - `vault.questions.create`
 - `vault.questions.edit`
 - `vault.questions.pause`
+- `vault.questions.prepare`
+- `vault.questions.admit`
 - `vault.questions.backfill`
 - `vault.questions.read`
 - `vault.questions.outcome_windows`
@@ -1241,3 +1252,6 @@ both bindings and their export-census tests in one change.
 - `vault.mail.inbox`
 - `vault.mail.threads.read`
 - `vault.mail.compliance.search`
+- `vault.files.sources.convert`
+- `vault.sync.repo_manifests.conflict.review`
+- `vault.sync.repo_manifests.conflict.discard`

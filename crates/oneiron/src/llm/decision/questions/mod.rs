@@ -81,7 +81,10 @@ pub(crate) use response_custody::{typed_question_carriage, typed_question_copy_o
 pub(crate) use role_asks::keep_artifact_unit_ask;
 pub use role_asks::{QuestionUnitAsk, question_unit_correlation};
 pub(crate) use saved_reader::{wake_artifact_reads, wake_lane};
-pub use standing::{StandingAnswer, backfill_standing_answer, standing_source_frontier};
+pub use standing::{
+    StandingAnswer, admit_standing_answer, backfill_standing_answer, prepare_standing_answer,
+    standing_source_frontier,
+};
 pub(crate) use store::create_question_in_txn;
 pub(crate) use store::read_question_in_txn;
 pub use store::{

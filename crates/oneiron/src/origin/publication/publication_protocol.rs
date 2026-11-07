@@ -177,6 +177,23 @@ impl Vault {
         git: &GitWire<'_>,
         request: OriginPublicationRequest,
     ) -> Result<OriginPublicationReceipt> {
+        match self.publish_origin_ref_checked(git, request, |_| {
+            Ok(Ok::<(), std::convert::Infallible>(()))
+        })? {
+            Ok(receipt) => Ok(receipt),
+            Err(never) => match never {},
+        }
+    }
+
+    /// [`Self::publish_origin_ref`], with `check` judged again as the first
+    /// act of the staging writer (FIX 7179): a refusal publishes nothing.
+    /// Replay, resolve, advance and finish behavior is unchanged.
+    pub(crate) fn publish_origin_ref_checked<R>(
+        &self,
+        git: &GitWire<'_>,
+        request: OriginPublicationRequest,
+        check: impl Fn(&heed::RoTxn<'_>) -> Result<std::result::Result<(), R>>,
+    ) -> Result<std::result::Result<OriginPublicationReceipt, R>> {
         validate_origin_publication_request(&request)?;
         self.validate_origin_repo(request.repo_id, &request.repo)?;
         let _guard = lock_repository(request.repo.common_dir())?;
@@ -195,28 +212,34 @@ impl Vault {
         }
         let record = match existing {
             Some(record) if record.status == OriginPublicationStatus::Published => {
-                return self.redrive_published_origin_ref(
+                return Ok(Ok(self.redrive_published_origin_ref(
                     git,
                     &request.repo,
                     record,
                     request.learned_at,
-                );
+                )?));
             }
             Some(record) if record.status.is_terminal() => {
-                return origin_receipt(record, false, None);
+                return Ok(Ok(origin_receipt(record, false, None)?));
             }
             Some(record) => record,
-            None => match self.admit_origin_publication(git, &request, publication_id)? {
-                OriginAdmission::Staged(record) => record,
-                OriginAdmission::Resolved(owner) => {
+            None => match self.admit_origin_publication_checked(
+                git,
+                &request,
+                publication_id,
+                &check,
+            )? {
+                Ok(OriginAdmission::Staged(record)) => record,
+                Ok(OriginAdmission::Resolved(owner)) => {
                     let mut receipt = origin_receipt(owner, true, None)?;
                     receipt.answer = OriginPublicationAnswer::ResolvedToOwner;
-                    return Ok(receipt);
+                    return Ok(Ok(receipt));
                 }
+                Err(refused) => return Ok(Err(refused)),
             },
         };
         if record.status.is_terminal() {
-            return origin_receipt(record, false, None);
+            return Ok(Ok(origin_receipt(record, false, None)?));
         }
         let advance = self.advance_prepared_origin_publication(
             git,
@@ -229,7 +252,11 @@ impl Vault {
                 "origin publication awaits readable objects",
             ));
         }
-        origin_receipt(advance.record, advance.already_applied, advance.wire)
+        Ok(Ok(origin_receipt(
+            advance.record,
+            advance.already_applied,
+            advance.wire,
+        )?))
     }
 
     /// The post-crash census: exactly one durable disposition per partial
