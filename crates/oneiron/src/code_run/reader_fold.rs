@@ -5,25 +5,37 @@
 
 use super::reader::{SummarizeEffort, SummarizeRecipe};
 
-/// The system prompt a summary job's one model call takes, by `recipe`. The
-/// members follow it as the user message, each fenced and named by its ref.
+pub(super) const SUMMARIZE_PROMPT_RELATIVE_PATH: &str = "blocks/code-reader-summary.md";
+const DEFAULT_SUMMARIZE_TEMPLATE: &str =
+    include_str!("../../prompts/blocks/code-reader-summary.md");
+
+pub(super) fn render_summarize_prompt(
+    version: u32,
+    effort: SummarizeEffort,
+    template: &str,
+) -> String {
+    let length = match effort {
+        SummarizeEffort::Low => include_str!("../../prompts/blocks/code-reader-summary-low.md"),
+        SummarizeEffort::Medium => {
+            include_str!("../../prompts/blocks/code-reader-summary-medium.md")
+        }
+        SummarizeEffort::High => include_str!("../../prompts/blocks/code-reader-summary-high.md"),
+    };
+    template
+        .replace("{{version}}", &version.to_string())
+        .replace("{{effort}}", effort.as_str())
+        .replace("{{length}}", length)
+}
+
+pub(super) fn default_summarize_prompt(version: u32, effort: SummarizeEffort) -> String {
+    render_summarize_prompt(version, effort, DEFAULT_SUMMARIZE_TEMPLATE)
+}
+
+/// The system prompt frozen when this summary was queued. The memo and the
+/// worker use these same bytes even if its package changes while it waits.
 #[must_use]
 pub fn summarize_prompt(recipe: &SummarizeRecipe) -> String {
-    let length = match recipe.effort {
-        SummarizeEffort::Low => "in at most five sentences",
-        SummarizeEffort::Medium => "in at most three short paragraphs",
-        SummarizeEffort::High => "thoroughly, keeping every distinct finding",
-    };
-    format!(
-        "You summarize results of a code run (summary recipe v{version}, effort {effort}).\n\
-         Each part below is fenced and named by its ref; a part may be a reader's JSON finding \
-         with `answer`, `cites` and `coverage`, or plain text.\n\
-         Write one plain-text summary {length}. Keep every cited byte range as it is \
-         written, as `[start, end]`, next to what it supports. Say what the parts disagree on. \
-         State nothing the parts do not say, and add no preface.",
-        version = recipe.version,
-        effort = recipe.effort.as_str(),
-    )
+    recipe.prompt.clone()
 }
 
 /// The user message of one summary: each member's text fenced and named by

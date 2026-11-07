@@ -231,8 +231,10 @@ impl Vault {
 /// never changes it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MembershipStanding {
-    /// A live Owner, Admin, Member or Viewer grant over this vault: roster
-    /// standing.
+    /// A live Owner, Admin, Member, Viewer or Delegate grant over this vault:
+    /// roster standing (ARCH-0043). A Delegate's `role` stays `Delegate`: it
+    /// is never administrative, and its grant keeps its own scope, expiry
+    /// and one-hop limits.
     Member {
         grant: crate::EntityId,
         role: FederationGrantRole,
@@ -259,11 +261,14 @@ pub(crate) const FIRST_PARTY_MEMBER_ROLES: [FederationGrantRole; 5] = [
 
 impl Vault {
     /// `person`'s standing in shared vault `vault_id` in the caller's
-    /// snapshot. A delegate grant is an attenuated read, not membership, and
-    /// is skipped; a deleted vault holds no standing. A guest grant is
-    /// ask-scoped and names no vault, so it is evidence only for the shared
-    /// vault whose store holds it: asked about another `vault_id`, it gives
-    /// no standing (FIX 1014). `None`: no live grant.
+    /// snapshot; a deleted vault holds no standing. A live Delegate grant over
+    /// this vault is roster standing (FIX 8738), read only when the person
+    /// holds no other roster grant, so it never hides an Owner or Admin
+    /// grant; a GitPush grant is purpose-specific and an owner-agent grant is
+    /// the owner's verb grant to his agent, so neither gives standing. A
+    /// guest grant is ask-scoped and names no vault, so it is evidence only
+    /// for the shared vault whose store holds it: asked about another
+    /// `vault_id`, it gives no standing (FIX 1014). `None`: no live grant.
     pub(crate) fn membership_standing_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -280,6 +285,7 @@ impl Vault {
         let guest_vault = self
             .shared_vault_creation_in_txn(txn)?
             .map(|creation| creation.vault_id);
+        let mut delegate = None;
         let mut guest = None;
         for entry in self
             .store
@@ -323,67 +329,25 @@ impl Vault {
                         role: grant.role,
                     }));
                 }
+                // An owner-agent grant is the owner's verb grant to his
+                // agent, never roster standing.
+                FederationGrantRole::Delegate
+                    if grant.scope == FederationGrantScope::vault(vault_id)
+                        && !grant.is_git_push()
+                        && !grant.owner_agent =>
+                {
+                    delegate.get_or_insert(MembershipStanding::Member {
+                        grant: id,
+                        role: grant.role,
+                    });
+                }
                 FederationGrantRole::Guest if guest_vault == Some(vault_id) => {
                     guest.get_or_insert(MembershipStanding::ScopedGuest { grant: id });
                 }
                 _ => {}
             }
         }
-        Ok(guest)
-    }
-
-    /// Whether `person` holds a live Delegate grant over shared vault
-    /// `vault_id` in the caller's snapshot, over the same liveness, expiry
-    /// and pact checks as [`Self::membership_standing_in_txn`], which skips
-    /// it. A delegate is no member and this grants nothing: a door that shows
-    /// members a vault setting reads it (C4, FIX 5502).
-    pub(crate) fn delegate_standing_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        vault_id: u64,
-        person: &crate::EntityId,
-    ) -> Result<bool> {
-        if vault_id == 0 || self.shared_vault_deletion_in_txn(txn)?.is_some() {
-            return Ok(false);
-        }
-        let fold = self.authority_fold_readonly_in_txn(txn)?;
-        if fold.vault_root_is_conflicted() {
-            return Err(denied());
-        }
-        for entry in self
-            .store
-            .port_entity_ids_by_type(txn, ENTITY_TYPE_FEDERATION_GRANT, None)?
-        {
-            let id = entry?;
-            let raw = self
-                .store
-                .port_entity_record(txn, &id)?
-                .ok_or_else(denied)?
-                .encode();
-            if EntityMetadataHeader::parse(&raw)
-                .is_none_or(|header| header.entity_type != ENTITY_TYPE_FEDERATION_GRANT)
-            {
-                return Err(denied());
-            }
-            if raw.len() == ENTITY_METADATA_HEADER_LEN
-                || !crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live()
-            {
-                continue;
-            }
-            let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-            if grant.member_ref == *person
-                && grant.role == FederationGrantRole::Delegate
-                && !grant.is_git_push()
-                && grant.scope == FederationGrantScope::vault(vault_id)
-                && grant
-                    .expires_at
-                    .is_none_or(|expires| self.store.clock.now_recorded_at() < expires)
-                && super::pact_admits_grant(&fold, &id, &grant)
-            {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        Ok(delegate.or(guest))
     }
 
     /// The standing ONE authenticated grant gives `principal` here, for
