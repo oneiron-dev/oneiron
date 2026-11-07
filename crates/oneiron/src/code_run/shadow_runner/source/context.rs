@@ -9,6 +9,7 @@
 //! outcome in its place.
 
 use super::{Outcome, PreparedShadowStep, Reason, unavailable};
+use crate::EntityId;
 use crate::code_run::{
     CapturedCallable, CapturedGuestResponse, CodeRunReplayRecord, ExecutorStepStart,
     StepReplayCapsule, StepReplayContext,
@@ -33,7 +34,8 @@ pub(crate) enum ArmContext {
 /// or step, another start or end, keeps a response at a position twice or
 /// past the step's end, keeps a read of reader state (FIX 6352) for
 /// another run or outside the step's window, or keeps a callable (FIX 3608)
-/// whose calls are not inside the step's own.
+/// whose calls are not inside the step's own, or a skill delivery (FIX
+/// 3608) at no call of the step's own.
 pub(super) fn freeze_context(
     bytes: Option<Vec<u8>>,
     capsule: &StepReplayCapsule,
@@ -55,6 +57,7 @@ pub(super) fn freeze_context(
             .reader_reads
             .held_within(capsule.run, start.bridge_start, bridge_end)
         || !context.callables_placed()
+        || !context.deliveries_placed()
     {
         return Err(mismatch());
     }
@@ -118,6 +121,16 @@ impl PreparedShadowStep {
         match &self.context {
             ArmContext::Captured { context, .. } => context.callables.as_slice(),
             ArmContext::Missing => &[],
+        }
+    }
+
+    /// Whether the step's replay context kept a delivery of `skill`'s body
+    /// by the call at bridge position `seq` (FIX 3608); `false` when no
+    /// context is read.
+    pub(crate) fn delivered_at(&self, seq: u64, skill: EntityId) -> bool {
+        match &self.context {
+            ArmContext::Captured { context, .. } => context.delivery_at(seq, skill).is_some(),
+            ArmContext::Missing => false,
         }
     }
 

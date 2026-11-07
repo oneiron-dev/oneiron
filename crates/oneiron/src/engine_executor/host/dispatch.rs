@@ -173,6 +173,9 @@ impl RecordingJsHost<'_, '_> {
         seq: u64,
         write: impl FnOnce(&mut BodySink) -> Result<()>,
     ) -> Result<serde_json::Value> {
+        // The card stands for the answer: no skill body it holds reaches the
+        // guest (FIX 3608).
+        self.held_delivery.clear();
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor result storage unavailable".into(),
         ))?;
@@ -411,6 +414,9 @@ impl RecordingJsHost<'_, '_> {
         call: SelfCall,
         runtime: Option<(&mut dyn JsCodeModeRuntime, &StepCancellation)>,
     ) -> Result<SelfDispatchResponse> {
+        // No skill body an earlier call's answer held reaches this call's
+        // reply (FIX 3608).
+        self.held_delivery.clear();
         // A resumed turn program's settled calls answer from the rows that
         // settled them, before a position is taken or anything dispatched
         // (DOOR-141 PR3b). Only a pinned entry binds an injection.
@@ -570,6 +576,10 @@ impl RecordingJsHost<'_, '_> {
         // the call: the guest reads it, the row keeps the outcome and whether
         // a view was served (the view's own read rows stay unwitnessed).
         let view = self.gated_write.take_hook_view();
+        // The skill bodies its producer witnessed, held while the guest's
+        // reply may still carry them whole (FIX 3608).
+        let given = dispatched.as_ref().ok().map(|(outcome, _)| outcome);
+        self.hold_delivery(seq, view.is_some(), given);
         // The seats this call's spawn resolved, taken whatever came of it:
         // its row keeps them, a failure's included (FIX 9180).
         let seats = self.gated_write.take_spawn_seats();
@@ -579,6 +589,7 @@ impl RecordingJsHost<'_, '_> {
         }) {
             Ok(answered) => answered,
             Err(err) => {
+                self.held_delivery.clear();
                 let Some(error_outcome) = dispatch_error_outcome(&call, &err) else {
                     // Infrastructure failure: no guest-visible response
                     // exists for this call at all.

@@ -19,8 +19,8 @@ use crate::learning::Anchor;
 
 impl Runner<'_> {
     /// A pair's inputs, settled before either fork is paid for: a knowledge
-    /// pair's here, a callable's ([`Self::prepare_callable`], FIX 3608) once
-    /// its anchor is one a pair replays.
+    /// pair's here, a callable's or a delivery's ([`Self::prepare_caller`],
+    /// FIX 3608) once its anchor is one a pair replays.
     pub(super) fn prepare(&self, rows: &ForkRows, step: TargetStep) -> Outcome<Prepared> {
         use ContributionReplayUnavailable as Unavailable;
         // An owner verdict's pair is generated here like any other and
@@ -35,7 +35,7 @@ impl Runner<'_> {
         let capsule = match step {
             TargetStep::Knowledge(Ok(capsule)) => capsule,
             TargetStep::Knowledge(Err(reason)) => return Ok(Err(reason)),
-            TargetStep::Callable(callable) => return self.prepare_callable(rows, *callable),
+            TargetStep::Caller(caller) => return self.prepare_caller(rows, *caller),
         };
         // An erased capsule's content went with its actor (FIX 6144): none of
         // its rung, exposures or request is read, and the pair is unreadable.

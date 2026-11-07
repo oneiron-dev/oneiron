@@ -24,13 +24,17 @@
 //! settling commit.
 //!
 //! A knowledge exposure is one unit: a body the host put in the run's task,
-//! tagged where it went. A callable's load is the other (FIX 3608): a
+//! tagged where it went. A callable's load is another (FIX 3608): a
 //! skill the run's program called, judged by running the caller's step
 //! again with that exact load and without it, and regenerating the next
-//! step from each branch's own observation ([`execution`]). A result-only
-//! use, an ancestor the run read through a verb, an anchor that cannot judge
-//! a new output, and any missing or ambiguous context are unavailable, never
-//! "did not contribute".
+//! step from each branch's own observation ([`execution`]). A skill body a
+//! call's answer delivered to the run's program after its first step is the
+//! third (FIX 3608): judged the same way, the call answering as recorded,
+//! then as the skill were not found. A result-only use, a body that reached
+//! the run through a stored value or a read with no native witness of its
+//! origin, an ancestor the run read through a verb, an anchor that cannot
+//! judge a new output, and any missing or ambiguous context are
+//! unavailable, never "did not contribute".
 
 mod admission;
 mod ancestor;
@@ -99,9 +103,9 @@ pub enum ContributionReplayUnavailable {
     Erased,
     /// No knowledge exposure of the target in a captured step: the skill's
     /// body, or the edge's source's, as the host put it in the run's task,
-    /// and no call of the skill's load that a step's replay context froze
-    /// (FIX 3608). A result-only use, and an ancestor the run read through a
-    /// verb, is not replayed.
+    /// and no call of the skill's load, nor delivery of its body, that a
+    /// step's replay context kept (FIX 3608). A result-only use, and an
+    /// ancestor the run read through a verb, is not replayed.
     NoExposure,
     /// The target reached the run only as site knowledge on a browser
     /// observation (FIX 11436): it is recorded, but it has no byte span in
@@ -127,9 +131,10 @@ pub enum ContributionReplayUnavailable {
     /// may clear (no runtime now, a cancelled run). The pair waits for that
     /// one retry; a reason that holds then, or a lasting one, puts the pair
     /// in the `Text` mode instead. Never a loss of the program. A callable's
-    /// pair (FIX 3608) stops here too when a branch of its caller's step did
-    /// not run against the step's recorded calls, or the next step's request
-    /// cannot take a branch's observation, for the shadow runner's reason.
+    /// or a delivery's pair (FIX 3608) stops here too when a branch of its
+    /// caller's step did not run against the step's recorded calls, or the
+    /// next step's request cannot take a branch's observation, for the
+    /// shadow runner's reason.
     ProgramReplay(ShadowUnavailable),
 }
 
@@ -180,9 +185,9 @@ pub enum ForkTreatment {
     /// The step as captured.
     WithSkill,
     /// The step with the target's exposure removed (the skill's body, or the
-    /// edge's source's), and nothing else changed; for a callable's load
-    /// (FIX 3608), the next step's request as its caller's step makes it
-    /// once that load is absent.
+    /// edge's source's), and nothing else changed; for a callable's load or
+    /// a delivered body (FIX 3608), the next step's request as its caller's
+    /// step makes it once that load or body is absent.
     WithoutSkill,
 }
 
