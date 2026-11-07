@@ -116,8 +116,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/checkout_task.rs` | src | s | 1 enum · 2 fn | CheckoutTaskClass | Checkout task classes and their lease-reclaim policy |
 | `src/checkpoint_host_recipient.rs` | src | s | 1 struct · 1 enum · 3 fn | HostHoldsRecipient, HostHoldsSealing | Host recipient and sealing policy for checkpoint legal-hold members |
 | `src/checkpoint_payload/kept.rs` | src | s | 1 struct · 4 fn | KeptGenerations | What the kept copies of a vault's checkpoints still need of its payload leaves (KS7-5): each compartment's… |
-| `src/checkpoint_payload/loro.rs` | src | s | 5 struct · 2 enum · 1 trait · 10 fn · 1 type · 4 const · 2 mod | Atom, JoinedLoro, LoroActorCodec, OpenedRow, Site, Slice, SplitRow, SplitValue | The one Loro history projection the document families share (KS-7, FIX 6072): a group of Loro rows (a full… |
-| `src/checkpoint_payload/loro/frame.rs` | src | s | 1 struct · 3 const | Frame | A Loro row's content as the shared projection frames it: the framing version, the family, the slice, each… |
+| `src/checkpoint_payload/loro.rs` | src | m | 5 struct · 2 enum · 1 trait · 10 fn · 1 type · 4 const · 2 mod | Atom, JoinedLoro, LoroActorCodec, OpenedRow, Site, Slice, SplitRow, SplitValue | The one Loro history projection the document families share (KS-7, FIX 6072): a group of Loro rows (a full… |
+| `src/checkpoint_payload/loro/frame.rs` | src | s | 1 struct · 4 const | Frame | A Loro row's content as the shared projection frames it: the framing version, the family, the slice, each… |
 | `src/checkpoint_payload/loro/proof.rs` | src | s | 1 fn | — | The typed equality of two Loro histories a join's proof compares (FIX 6072, Engine R1): change by change and… |
 | `src/checkpoint_payload/mod.rs` | src | s | 1 struct · 2 enum · 16 fn · 5 const · 2 mod | CompartmentAccess, PayloadItem, Subtype | Checkpoint payload custody (KS-7, FIX 5688): the ordinary payload a checkpoint copies is sealed one owner at… |
 | `src/claim_lineage.rs` | src | s | 6 fn | — | Claim source lineage, evidence taint, and stored value projections |
