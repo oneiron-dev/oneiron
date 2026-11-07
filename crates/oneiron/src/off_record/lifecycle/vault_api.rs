@@ -422,6 +422,32 @@ impl Vault {
         self.close_off_record_entry(session_ref, &entry, receipt_log)
     }
 
+    /// Managed stop closes every registered off-record session this way,
+    /// after every admitted write ended and before the final legal drain (FIX
+    /// 13868). Each closes as an explicit close does, with an empty
+    /// off-record receipt log, so a session a HOST live order covers has its
+    /// written spill captured for that order, or that order's capture ends
+    /// interrupted and is never claimed, before its bodies go. A session that
+    /// does not close is logged and the rest still close. The discard is the
+    /// one a stop already makes, run in order.
+    #[cfg(unix)]
+    pub fn close_off_record_sessions_at_stop(&self) {
+        self.begin_live_capture_close_at_stop();
+        let entries = match self.store.off_record_sessions.entries() {
+            Ok(entries) => entries,
+            Err(error) => {
+                tracing::warn!(%error, "off-record sessions were not listed at managed stop");
+                return;
+            }
+        };
+        for (session_ref, entry) in entries {
+            let receipt_log = SessionLocalReceiptLog::off_record(&session_ref);
+            if let Err(error) = self.close_off_record_entry(&session_ref, &entry, receipt_log) {
+                tracing::warn!(%error, "an off-record session did not close at managed stop");
+            }
+        }
+    }
+
     /// [`Self::close_off_record_session`] of the instance `entry`, the one a
     /// handle bound: a stretch that took the name since is never the one
     /// closed. The caller has vetted the ref and the receipt log.

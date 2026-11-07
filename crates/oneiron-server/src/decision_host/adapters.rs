@@ -214,8 +214,10 @@ impl DecisionProvider for SystemOneRung {
         {
             return Ok(abstain);
         }
+        let mut question = call.question.clone();
+        question.text = call.question_text().into_owned();
         let request = SeatRequest {
-            question: call.question.clone(),
+            question,
             state: call.state.clone(),
             images: call.images.to_vec(),
             audio: call.audio.to_vec(),
@@ -326,11 +328,18 @@ impl SystemOneRung {
         if call.deadline.decision_time_left().is_zero() {
             return Err(failed("admitted after the work time"));
         }
-        let asked = self.runtime.block_on(self.seat.ask(
-            request,
-            permit.lease(),
-            call.deadline.decision_time_left(),
-        ));
+        let asked = self.runtime.block_on(async {
+            let cancel = call.deadline.work_cancel();
+            tokio::select! {
+                biased;
+                () = cancel.cancelled() => Err(failed("the seat call was cancelled")),
+                result = self.seat.ask(
+                    request,
+                    permit.lease(),
+                    call.deadline.decision_time_left(),
+                ) => result.map_err(|error| failed(&format!("the seat failed: {error}"))),
+            }
+        });
         let answer = match asked {
             Ok(answer) => {
                 permit
@@ -339,11 +348,11 @@ impl SystemOneRung {
                 answer
             }
             Err(error) => {
-                // The seat may still bill a failed call.
+                // The seat may still bill a failed or cancelled call.
                 permit
                     .settle(CallOutcome::Failed)
                     .map_err(|_| failed("settlement refused"))?;
-                return Err(failed(&format!("the seat failed: {error}")));
+                return Err(error);
             }
         };
         let abstained = answer.answer == DecisionAnswer::Abstain;

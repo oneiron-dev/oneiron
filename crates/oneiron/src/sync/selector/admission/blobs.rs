@@ -138,6 +138,13 @@ fn admit_federated_entity_blob_graded(
 
     let header =
         EntityMetadataHeader::parse(blob).ok_or(Error::CorruptedIndex("entity metadata"))?;
+    // Fix list row 16256: a restricted lane carries no source-audience key.
+    // A peer's row naming it is refused as it came, before any copy, grading
+    // or restamp, never stripped.
+    crate::source_audience::refuse_written_obligation(
+        header.entity_type,
+        &blob[ENTITY_METADATA_HEADER_LEN..],
+    )?;
     if crate::sync::pack_sync::is_pack_handle(header.entity_type) {
         validate_federated_pack(&vault.store, txn, blob)?;
         return Ok((id, blob.to_vec()));

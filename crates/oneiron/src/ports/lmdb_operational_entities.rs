@@ -85,6 +85,13 @@ impl EntityStoreMaintenance for Store {
                 "a document pointer body carries exactly one entity_doc_ref",
             ));
         }
+        // Fix list row 16256: the pointer body states the source-audience
+        // obligation exactly as the row it replaces does in this write.
+        if !crate::source_audience::keeps_row_obligation(&stored, body) {
+            return Err(Error::InvariantViolation(
+                "a document pointer body keeps the row's source_audience_required as it stands",
+            ));
+        }
         // A pointer body is no epoch: what an epoch summary's words carried
         // stays on its record (Sol round 23).
         super::keep_worlds_of_unmade_epoch_in_txn(write, txn, id, entity_type, body)?;
