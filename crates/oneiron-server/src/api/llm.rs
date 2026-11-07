@@ -33,19 +33,16 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         )
         // Owner-grade credentials can hand an agent a real read/replace tool;
         // scoped core tokens cannot edit vault policy.
-        .route(
-            "/defaults",
-            get(read_defaults)
-                .put(replace_defaults)
-                .layer(DefaultBodyLimit::max(16 * 1024)),
-        )
+        // The defaults table and the generate and stream bodies read up to
+        // the API's request floor (`limits.request_body_bytes`, ABC transport
+        // rows T3, T4), set once on the API router.
+        .route("/defaults", get(read_defaults).put(replace_defaults))
         // FIX 8211: the kept proposals, and a holder's answer to one.
         .route("/defaults/proposals", get(defaults_submit::list_proposals))
         .route(
             "/defaults/proposals/{proposal}",
             post(defaults_submit::rule_proposal),
         )
-        .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
 }
 /// A refusal's wire code and its other wire field (empty for a code-only
 /// body), kept on the response for the OpenAI proxy's call receipt

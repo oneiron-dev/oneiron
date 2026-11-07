@@ -61,6 +61,7 @@ pub(super) fn apply_text_index_update(
         Some(fields),
         None,
         None,
+        None,
     )? {
         // The analysis done before the transaction opened, when it was read
         // from these very fields; otherwise analyze here as before.
