@@ -27,7 +27,6 @@ use std::{
 };
 
 const MAX_FRAME: usize = oneiron_sandbox_contract::MAX_FRAME_BYTES;
-const MAX_REQUESTS: usize = oneiron_sandbox_contract::MAX_REQUESTS;
 
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -331,25 +330,13 @@ fn receive_proposals_cancellable(
     // The snapshot tree (empty directories included) with every accepted
     // proposal applied, under the same rules as the guest and the walker.
     let mut shape = base.shape.clone();
-    // The file streaming in, if any. Its frames are not requests: a file's
-    // size never spends the request budget.
+    // The file streaming in, if any.
     let mut open: Option<(SandboxVirtualPath, SandboxProposalBodyWriter)> = None;
-    let mut requests = 0;
+    // No frame count ends a run: cancellation and the deadline bound it, and
+    // each frame is checked as it comes (FIX 8026).
     loop {
         cancel.check()?;
         let frame = read_frame(&mut stream, deadline)?;
-        if !matches!(
-            frame,
-            GuestFrame::WriteChunk { .. }
-                | GuestFrame::OutputText { .. }
-                | GuestFrame::OutputBytes { .. }
-                | GuestFrame::StoreBytes { .. }
-        ) {
-            if requests == MAX_REQUESTS {
-                return Err(refused("guest protocol request budget exhausted"));
-            }
-            requests += 1;
-        }
         // A step error is terminal: only the guest's nonzero finish follows.
         if guest_error.is_some() && !matches!(frame, GuestFrame::Finish { status } if status != 0) {
             return Err(refused("guest frame after its step error"));

@@ -29,10 +29,12 @@
 //! Consent (ARCH-0055 r3): `Auto` is the family default and applies
 //! immediately; `Approved` applies; `Proposed` PARKS — the event is
 //! recorded for legibility but carries zero topology effects until
-//! approved; `Rejected` is the consent no-op. The propose lane is an
-//! explicit caller choice, never an engine-imposed gate. Undo is a
-//! counter-event over the ledger, never a rewrite (r1); claim subjects are
-//! never eagerly rewritten (r6) — read-time canonicalization runs through
+//! approved; `Rejected` is the consent no-op. A parked facet records its
+//! specs and map and mints no FACET until its ruling approves it (FIX 7814).
+//! The propose lane is an explicit caller choice, never an engine-imposed
+//! gate. Undo is a counter-event over the ledger, never a rewrite (r1);
+//! claim subjects are never eagerly rewritten (r6) — read-time
+//! canonicalization runs through
 //! the redirect projection in [`crate::identity_redirect`] (ONE-1744).
 //! Reassignment-map application and FACET minting arm in ONE-1745.
 //!
@@ -113,8 +115,9 @@ pub(crate) use admission_disposition::{SealTrust, core_digest, decision_in_force
 #[cfg(all(test, feature = "sync"))]
 pub(crate) use admission_disposition::{sealed_by_key_for_test, signed_validated_row_for_test};
 pub(crate) use attribution::{
-    admitted_author_in_txn, drop_unheld_author_marks_in_txn, effective_author_in_txn,
-    record_author_attribution_in_txn, redact_actor_in_txn, redact_author_attribution_in_txn,
+    admitted_author_in_txn, author_carrier_actor, drop_unheld_author_marks_in_txn,
+    effective_author_in_txn, record_author_attribution_in_txn, redact_actor_in_txn,
+    redact_author_attribution_in_txn,
 };
 #[cfg(feature = "sync")]
 pub(crate) use attribution::{

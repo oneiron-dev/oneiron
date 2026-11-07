@@ -167,10 +167,12 @@ fn handle_document_inner(
             let _ = direct.send(notice);
             let payload = serde_json::to_vec(&receipt)
                 .map_err(|_| ProtocolError::InvalidPayload("NOTE receipt encode"))?;
-            let frame =
-                transport::encode_document(entity, document_sub_tags::NOTE_RECEIPT, &payload)
-                    .into_result()
-                    .map_err(|_| ProtocolError::InvalidPayload("NOTE receipt too large"))?;
+            let frame = transport::encode_unsplit_document(
+                entity,
+                document_sub_tags::NOTE_RECEIPT,
+                &payload,
+            )
+            .map_err(|_| ProtocolError::InvalidPayload("NOTE receipt too large"))?;
             let _ = direct.send(frame);
             Ok(())
         }
@@ -278,6 +280,17 @@ fn owner_request(
         })
         .map_err(storage_error)?;
         let _ = direct.send(frame);
+        // The NOTE's pending forks follow its text (FIX 12789). A denial
+        // withholds them as it withholds the text.
+        if let Ok(forks) = crate::server::blocking(|| {
+            server
+                .reassert_manager
+                .export_owner_note_forks_for(entity, peer)
+        }) {
+            for frame in forks {
+                let _ = direct.send(frame);
+            }
+        }
     }
     Ok(())
 }
@@ -364,15 +377,45 @@ fn owner_document(
             // sends the current state, then the receipt (FIX 9491).
             let payload = serde_json::to_vec(&receipt)
                 .map_err(|_| ProtocolError::InvalidPayload("NOTE receipt encode"))?;
+            let frame = transport::encode_unsplit_document(
+                entity,
+                document_sub_tags::NOTE_RECEIPT,
+                &payload,
+            )
+            .map_err(|_| ProtocolError::InvalidPayload("NOTE receipt too large"))?;
+            let _ = direct.send(frame);
+            Ok(())
+        }
+        // An own device's replica-local fork (FIX 12789): admitted under the
+        // same owner session as a NOTE command; its receipt answers this
+        // connection alone.
+        document_sub_tags::NOTE_FORK_UPLOAD => {
+            let auth = owner_auth(server, state, true)?;
+            let actor = EntityId::from_hex(
+                auth.require_registered_principal()
+                    .map_err(|_| ProtocolError::RpcNoPrincipal)?,
+            )
+            .map_err(|_| ProtocolError::RpcNoPrincipal)?;
+            let receipt = server
+                .vault
+                .memory(actor, oneiron::EdgeActorClass::Human)
+                .admit_owner_note_fork(
+                    entity,
+                    |txn| auth.credential_is_live_in_write_txn(&server.vault, txn),
+                    payload,
+                )
+                .map_err(|error| ProtocolError::Persistence(error.to_string()))?;
+            let payload = serde_json::to_vec(&receipt)
+                .map_err(|_| ProtocolError::InvalidPayload("NOTE fork receipt encode"))?;
             let frame =
-                transport::encode_document(entity, document_sub_tags::NOTE_RECEIPT, &payload)
+                transport::encode_document(entity, document_sub_tags::NOTE_FORK_RECEIPT, &payload)
                     .into_result()
-                    .map_err(|_| ProtocolError::InvalidPayload("NOTE receipt too large"))?;
+                    .map_err(|_| ProtocolError::InvalidPayload("NOTE fork receipt too large"))?;
             let _ = direct.send(frame);
             Ok(())
         }
         _ => Err(ProtocolError::InvalidPayload(
-            "owner lane carries requests, acks and NOTE operations",
+            "owner lane carries requests, acks, NOTE operations and NOTE forks",
         )),
     }
 }
@@ -466,7 +509,7 @@ pub(super) fn document_delivery_retrying(
     retry: &mut Vec<Vec<u8>>,
 ) -> Result<Vec<Vec<u8>>, ProtocolError> {
     let mut docs = match data.first() {
-        Some(&transport::TAG_DOCUMENT) => vec![transport::decode_document(&data[1..])],
+        Some(&transport::TAG_DOCUMENT) => vec![transport::decode_unsplit_document(&data[1..])],
         Some(&transport::TAG_BATCH) => transport::decode_document_batch(&data[1..])
             .map_err(|_| ProtocolError::InvalidPayload("invalid document batch"))?
             .into_iter()
@@ -488,6 +531,28 @@ pub(super) fn document_delivery_retrying(
             && transport::decode_document_waited_out(doc.payload).is_ok()
         {
             out.extend(notice(doc));
+            return false;
+        }
+        // A NOTE fork's state, and the set after it, were built for this
+        // socket's own NOTE: they pass as built, behind its owner gate again,
+        // never exported again as the NOTE's text (FIX 12789). Only the
+        // empty set, the notice of a fork change, is read below.
+        if doc.kind == document_sub_tags::NOTE_FORK_STATE
+            || (doc.kind == document_sub_tags::NOTE_FORK_SET && !doc.payload.is_empty())
+        {
+            if state.owner_documents.contains_key(&doc.entity)
+                && owner_auth(server, state, false).is_ok()
+            {
+                out.extend(notice(doc));
+            }
+            return false;
+        }
+        // A fork upload's receipt changes no text, so no state goes before
+        // it; it reaches the owner lane its upload came on (FIX 12789).
+        if doc.kind == document_sub_tags::NOTE_FORK_RECEIPT {
+            if owner_auth(server, state, false).is_ok() {
+                out.extend(notice(doc));
+            }
             return false;
         }
         if doc.kind != document_sub_tags::ARTIFACT_RECEIPT {
@@ -517,6 +582,18 @@ pub(super) fn document_delivery_retrying(
                 owner_receipt(server, &doc, remote_vv, peer, &mut out, retry)?;
                 continue;
             }
+            // A fork change moves no text: the device takes the NOTE's
+            // pending forks again, then their set (FIX 12789).
+            if doc.kind == document_sub_tags::NOTE_FORK_SET {
+                if let Ok(forks) = crate::server::blocking(|| {
+                    server
+                        .reassert_manager
+                        .export_owner_note_forks_for(doc.entity, peer)
+                }) {
+                    out.extend(forks);
+                }
+                continue;
+            }
             // Denial withholds this entity; it never falls back to the raw notice.
             match crate::server::blocking(|| {
                 server
@@ -527,6 +604,10 @@ pub(super) fn document_delivery_retrying(
                 Err(error) if waited_out(&error) => retry.extend(notice(&doc)),
                 Err(_) => {}
             }
+            continue;
+        }
+        // NOTE forks go only to the owner's own devices (FIX 12789).
+        if doc.kind == document_sub_tags::NOTE_FORK_SET {
             continue;
         }
         // FIX 10730: a marked source's notice reaches its copy-id subscribers as the copy.
@@ -571,8 +652,7 @@ pub(super) fn document_delivery_retrying(
                         continue;
                     }
                     out.push(
-                        transport::encode_document(doc.entity, doc.kind, doc.payload)
-                            .into_result()
+                        transport::encode_unsplit_document(doc.entity, doc.kind, doc.payload)
                             .map_err(|_| ProtocolError::InvalidPayload("invalid NOTE receipt"))?,
                     );
                 } else if doc.kind == document_sub_tags::ACK {
@@ -708,9 +788,14 @@ pub(super) fn retry_later(
 
 /// The notice of one document, to queue again.
 pub(super) fn notice(doc: &transport::DocumentFrame<'_>) -> Option<Vec<u8>> {
-    transport::encode_document(doc.entity, doc.kind, doc.payload)
-        .into_result()
-        .ok()
+    match doc.kind {
+        document_sub_tags::STATE | document_sub_tags::UPDATE | document_sub_tags::NOTE_RECEIPT => {
+            transport::encode_unsplit_document(doc.entity, doc.kind, doc.payload).ok()
+        }
+        _ => transport::encode_document(doc.entity, doc.kind, doc.payload)
+            .into_result()
+            .ok(),
+    }
 }
 
 fn document_principal(server: &SyncServer, state: &ConnState) -> Result<EntityId, ProtocolError> {
