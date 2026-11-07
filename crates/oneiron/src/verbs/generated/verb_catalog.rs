@@ -491,6 +491,7 @@ pub enum AgentVerb {
     VaultCoachTrainingOffersPilotsComplete,
     VaultCoachTrainingOffersPilotsGet,
     VaultCoachTrainingOffersSources,
+    VaultCoachTrainingRunsCancel,
     VaultDraftersList,
     VaultDraftersListAs,
     VaultDraftersStatus,
@@ -646,6 +647,7 @@ pub enum AgentVerb {
     HostCompact,
     HostWake,
     HostBudgetHit,
+    VaultHooksChecks,
     VaultHooksReplay,
     VaultHooksRegenDue,
     VaultHooksRegenGet,
@@ -844,6 +846,9 @@ pub enum AgentVerb {
     Ask,
     Wait,
     TasksAnswer,
+    TasksAnswerForwardChallenge,
+    TasksAnswerForward,
+    TasksAnswerForwardStatus,
     TasksOutcomes,
     VaultRoomsList,
     VaultRoomsMessages,
@@ -1261,6 +1266,7 @@ pub enum AgentVerb {
     VaultMailInbox,
     VaultMailThreadsRead,
     VaultMailComplianceSearch,
+    VaultFilesSourcesConvert,
     ConnectorAnswer,
     SelfBrowserOpen,
     SelfBrowserObserve,
@@ -1789,6 +1795,7 @@ impl AgentVerb {
         Self::VaultCoachTrainingOffersPilotsComplete,
         Self::VaultCoachTrainingOffersPilotsGet,
         Self::VaultCoachTrainingOffersSources,
+        Self::VaultCoachTrainingRunsCancel,
         Self::VaultDraftersList,
         Self::VaultDraftersListAs,
         Self::VaultDraftersStatus,
@@ -1944,6 +1951,7 @@ impl AgentVerb {
         Self::HostCompact,
         Self::HostWake,
         Self::HostBudgetHit,
+        Self::VaultHooksChecks,
         Self::VaultHooksReplay,
         Self::VaultHooksRegenDue,
         Self::VaultHooksRegenGet,
@@ -2142,6 +2150,9 @@ impl AgentVerb {
         Self::Ask,
         Self::Wait,
         Self::TasksAnswer,
+        Self::TasksAnswerForwardChallenge,
+        Self::TasksAnswerForward,
+        Self::TasksAnswerForwardStatus,
         Self::TasksOutcomes,
         Self::VaultRoomsList,
         Self::VaultRoomsMessages,
@@ -2559,6 +2570,7 @@ impl AgentVerb {
         Self::VaultMailInbox,
         Self::VaultMailThreadsRead,
         Self::VaultMailComplianceSearch,
+        Self::VaultFilesSourcesConvert,
         Self::ConnectorAnswer,
         Self::SelfBrowserOpen,
         Self::SelfBrowserObserve,
@@ -3106,6 +3118,7 @@ impl AgentVerb {
             }
             Self::VaultCoachTrainingOffersPilotsGet => "vault.coach.training_offers.pilots.get",
             Self::VaultCoachTrainingOffersSources => "vault.coach.training_offers.sources",
+            Self::VaultCoachTrainingRunsCancel => "vault.coach.training_runs.cancel",
             Self::VaultDraftersList => "vault.drafters.list",
             Self::VaultDraftersListAs => "vault.drafters.list_as",
             Self::VaultDraftersStatus => "vault.drafters.status",
@@ -3265,6 +3278,7 @@ impl AgentVerb {
             Self::HostCompact => "host.compact",
             Self::HostWake => "host.wake",
             Self::HostBudgetHit => "host.budget.hit",
+            Self::VaultHooksChecks => "vault.hooks.checks",
             Self::VaultHooksReplay => "vault.hooks.replay",
             Self::VaultHooksRegenDue => "vault.hooks.regen.due",
             Self::VaultHooksRegenGet => "vault.hooks.regen.get",
@@ -3467,6 +3481,9 @@ impl AgentVerb {
             Self::Ask => "ask",
             Self::Wait => "wait",
             Self::TasksAnswer => "tasks.answer",
+            Self::TasksAnswerForwardChallenge => "tasks.answer.forward.challenge",
+            Self::TasksAnswerForward => "tasks.answer.forward",
+            Self::TasksAnswerForwardStatus => "tasks.answer.forward.status",
             Self::TasksOutcomes => "tasks.outcomes",
             Self::VaultRoomsList => "vault.rooms.list",
             Self::VaultRoomsMessages => "vault.rooms.messages",
@@ -3894,6 +3911,7 @@ impl AgentVerb {
             Self::VaultMailInbox => "vault.mail.inbox",
             Self::VaultMailThreadsRead => "vault.mail.threads.read",
             Self::VaultMailComplianceSearch => "vault.mail.compliance.search",
+            Self::VaultFilesSourcesConvert => "vault.files.sources.convert",
             Self::ConnectorAnswer => "connector.answer",
             Self::SelfBrowserOpen => "self.browser.open",
             Self::SelfBrowserObserve => "self.browser.observe",
@@ -4424,6 +4442,7 @@ impl AgentVerb {
                 | Self::VaultCoachTrainingOffersPilotsComplete
                 | Self::VaultCoachTrainingOffersPilotsGet
                 | Self::VaultCoachTrainingOffersSources
+                | Self::VaultCoachTrainingRunsCancel
                 | Self::VaultDraftersList
                 | Self::VaultDraftersListAs
                 | Self::VaultDraftersStatus
@@ -4579,6 +4598,7 @@ impl AgentVerb {
                 | Self::HostCompact
                 | Self::HostWake
                 | Self::HostBudgetHit
+                | Self::VaultHooksChecks
                 | Self::VaultHooksReplay
                 | Self::VaultHooksRegenDue
                 | Self::VaultHooksRegenGet
@@ -4777,6 +4797,9 @@ impl AgentVerb {
                 | Self::Ask
                 | Self::Wait
                 | Self::TasksAnswer
+                | Self::TasksAnswerForwardChallenge
+                | Self::TasksAnswerForward
+                | Self::TasksAnswerForwardStatus
                 | Self::TasksOutcomes
                 | Self::VaultRoomsList
                 | Self::VaultRoomsMessages
@@ -5172,6 +5195,7 @@ impl AgentVerb {
                 | Self::VaultMailInbox
                 | Self::VaultMailThreadsRead
                 | Self::VaultMailComplianceSearch
+                | Self::VaultFilesSourcesConvert
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -5751,6 +5775,7 @@ impl AgentVerb {
                 | Self::VaultCoachTrainingOffersPilotsComplete
                 | Self::VaultCoachTrainingOffersPilotsGet
                 | Self::VaultCoachTrainingOffersSources
+                | Self::VaultCoachTrainingRunsCancel
                 | Self::VaultDraftersList
                 | Self::VaultDraftersListAs
                 | Self::VaultDraftersStatus
@@ -5906,6 +5931,7 @@ impl AgentVerb {
                 | Self::HostCompact
                 | Self::HostWake
                 | Self::HostBudgetHit
+                | Self::VaultHooksChecks
                 | Self::VaultHooksReplay
                 | Self::VaultHooksRegenDue
                 | Self::VaultHooksRegenGet
@@ -6104,6 +6130,9 @@ impl AgentVerb {
                 | Self::Ask
                 | Self::Wait
                 | Self::TasksAnswer
+                | Self::TasksAnswerForwardChallenge
+                | Self::TasksAnswerForward
+                | Self::TasksAnswerForwardStatus
                 | Self::TasksOutcomes
                 | Self::VaultRoomsList
                 | Self::VaultRoomsMessages
@@ -6499,6 +6528,7 @@ impl AgentVerb {
                 | Self::VaultMailInbox
                 | Self::VaultMailThreadsRead
                 | Self::VaultMailComplianceSearch
+                | Self::VaultFilesSourcesConvert
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -6617,6 +6647,7 @@ impl AgentVerb {
                 | Self::VaultSealPending
                 | Self::VaultSecretsCodeRunRoomLifts
                 | Self::VaultDisclosureReveals
+                | Self::VaultHooksChecks
                 | Self::VaultHooksReplay
                 | Self::VaultHooksRegenDue
                 | Self::VaultArtifactsThreadsList
@@ -7228,6 +7259,7 @@ impl AgentVerb {
                 | Self::VaultCoachTrainingOffersPilotsComplete
                 | Self::VaultCoachTrainingOffersPilotsGet
                 | Self::VaultCoachTrainingOffersSources
+                | Self::VaultCoachTrainingRunsCancel
                 | Self::VaultDraftersList
                 | Self::VaultDraftersListAs
                 | Self::VaultDraftersStatus
@@ -7383,6 +7415,7 @@ impl AgentVerb {
                 | Self::HostCompact
                 | Self::HostWake
                 | Self::HostBudgetHit
+                | Self::VaultHooksChecks
                 | Self::VaultHooksReplay
                 | Self::VaultHooksRegenDue
                 | Self::VaultHooksRegenGet
@@ -7550,6 +7583,9 @@ impl AgentVerb {
                 | Self::Ask
                 | Self::Wait
                 | Self::TasksAnswer
+                | Self::TasksAnswerForwardChallenge
+                | Self::TasksAnswerForward
+                | Self::TasksAnswerForwardStatus
                 | Self::TasksOutcomes
                 | Self::VaultRoomsList
                 | Self::VaultRoomsMessages
@@ -7921,6 +7957,7 @@ impl AgentVerb {
                 | Self::VaultMailInbox
                 | Self::VaultMailThreadsRead
                 | Self::VaultMailComplianceSearch
+                | Self::VaultFilesSourcesConvert
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -8254,6 +8291,7 @@ impl AgentVerb {
                 | Self::VaultCoachTrainingOffersCandidatesPrepare
                 | Self::VaultCoachTrainingOffersPilotsPrepare
                 | Self::VaultCoachTrainingOffersPilotsComplete
+                | Self::VaultCoachTrainingRunsCancel
                 | Self::VaultDraftersPolicySet
                 | Self::VaultDraftersRevert
                 | Self::VaultDraftersRevertAs
@@ -8469,6 +8507,7 @@ impl AgentVerb {
                 | Self::Ask
                 | Self::Wait
                 | Self::TasksAnswer
+                | Self::TasksAnswerForward
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
                 | Self::VaultRoomsThreadAudienceAdd
@@ -8695,6 +8734,7 @@ impl AgentVerb {
                 | Self::VaultMailThreadsUnshare
                 | Self::VaultMailComplianceSet
                 | Self::VaultMailComplianceSearch
+                | Self::VaultFilesSourcesConvert
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserClick
@@ -8746,7 +8786,10 @@ impl AgentVerb {
         )
     }
     pub const fn is_task_work(self) -> bool {
-        matches!(self, Self::Can | Self::Ask | Self::Wait | Self::TasksAnswer)
+        matches!(
+            self,
+            Self::Can | Self::Ask | Self::Wait | Self::TasksAnswer | Self::TasksAnswerForward
+        )
     }
     pub const fn takes_task_decisions(self) -> bool {
         matches!(
@@ -9263,6 +9306,7 @@ impl AgentVerb {
             Self::VaultCoachTrainingOffersPilotsComplete => &["spec"],
             Self::VaultCoachTrainingOffersPilotsGet => &["spec"],
             Self::VaultCoachTrainingOffersSources => &["spec"],
+            Self::VaultCoachTrainingRunsCancel => &["spec"],
             Self::VaultDraftersList => &["spec"],
             Self::VaultDraftersListAs => &["spec"],
             Self::VaultDraftersStatus => &["spec"],
@@ -9418,6 +9462,7 @@ impl AgentVerb {
             Self::HostCompact => &["spec"],
             Self::HostWake => &["spec"],
             Self::HostBudgetHit => &["spec"],
+            Self::VaultHooksChecks => &["spec"],
             Self::VaultHooksReplay => &["spec"],
             Self::VaultHooksRegenDue => &["spec"],
             Self::VaultHooksRegenGet => &["spec"],
@@ -9616,6 +9661,9 @@ impl AgentVerb {
             Self::Ask => &["spec"],
             Self::Wait => &["spec"],
             Self::TasksAnswer => &["spec"],
+            Self::TasksAnswerForwardChallenge => &["spec"],
+            Self::TasksAnswerForward => &["spec"],
+            Self::TasksAnswerForwardStatus => &["spec"],
             Self::TasksOutcomes => &["spec"],
             Self::VaultRoomsList => &[],
             Self::VaultRoomsMessages => &["room_ref", "turn_ref", "thread_ref"],
@@ -10033,6 +10081,7 @@ impl AgentVerb {
             Self::VaultMailInbox => &["spec"],
             Self::VaultMailThreadsRead => &["spec"],
             Self::VaultMailComplianceSearch => &["spec"],
+            Self::VaultFilesSourcesConvert => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
@@ -10562,6 +10611,7 @@ impl AgentVerb {
             Self::VaultCoachTrainingOffersPilotsComplete => &["spec"],
             Self::VaultCoachTrainingOffersPilotsGet => &["spec"],
             Self::VaultCoachTrainingOffersSources => &["spec"],
+            Self::VaultCoachTrainingRunsCancel => &["spec"],
             Self::VaultDraftersList => &["spec"],
             Self::VaultDraftersListAs => &["spec"],
             Self::VaultDraftersStatus => &["spec"],
@@ -10717,6 +10767,7 @@ impl AgentVerb {
             Self::HostCompact => &["spec"],
             Self::HostWake => &["spec"],
             Self::HostBudgetHit => &["spec"],
+            Self::VaultHooksChecks => &["spec"],
             Self::VaultHooksReplay => &["spec"],
             Self::VaultHooksRegenDue => &["spec"],
             Self::VaultHooksRegenGet => &["spec"],
@@ -10915,6 +10966,9 @@ impl AgentVerb {
             Self::Ask => &["spec"],
             Self::Wait => &["spec"],
             Self::TasksAnswer => &["spec"],
+            Self::TasksAnswerForwardChallenge => &["spec"],
+            Self::TasksAnswerForward => &["spec"],
+            Self::TasksAnswerForwardStatus => &["spec"],
             Self::TasksOutcomes => &["spec"],
             Self::VaultRoomsList => &[],
             Self::VaultRoomsMessages => &["room_ref"],
@@ -11332,6 +11386,7 @@ impl AgentVerb {
             Self::VaultMailInbox => &["spec"],
             Self::VaultMailThreadsRead => &["spec"],
             Self::VaultMailComplianceSearch => &["spec"],
+            Self::VaultFilesSourcesConvert => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
@@ -12820,6 +12875,9 @@ impl AgentVerb {
             Self::VaultCoachTrainingOffersSources => {
                 "Before preparing a training run, read a reservoir scope's sources with other people or unknown people, each with its pairs, and the pairs the run would carry and leave out by reason under the ticks given so far."
             }
+            Self::VaultCoachTrainingRunsCancel => {
+                "Cancel a staged trained embedder swap while its binding still waits or fills; an applied swap keeps the existing space-move undo door."
+            }
             Self::VaultDraftersList => {
                 "The owner lists the vault's own drafter versions, all or one target's: state, parent, recipe, source count, and whether each is retained, serving and revertible."
             }
@@ -13270,6 +13328,9 @@ impl AgentVerb {
             }
             Self::HostBudgetHit => {
                 "Notifies a spent durable budget seat under Suspend, retaining the original line, root payer, cap and accounting for hook follow-up work."
+            }
+            Self::VaultHooksChecks => {
+                "The owner reads saved hook cycle and depth checks, including their causal lineage. Reads no hook arguments, body or result values and changes nothing; keeps the native list's oldest-key order and 1000-row limit."
             }
             Self::VaultHooksReplay => {
                 "The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands, 256 entries a page; next_cursor continues to the rest."
@@ -13850,6 +13911,15 @@ impl AgentVerb {
             }
             Self::TasksAnswer => {
                 "Admits one person's word on an ask; the word is evidence, never approval."
+            }
+            Self::TasksAnswerForwardChallenge => {
+                "The challenge one person signs, through their slip's binding transcript, to relay their own word or seat void on an ask to the node that admitted it."
+            }
+            Self::TasksAnswerForward => {
+                "Relays one person's own word, or the void of their own seat, on an ask to the node that admitted it; it stays pending until that node's result reads here."
+            }
+            Self::TasksAnswerForwardStatus => {
+                "Where one relayed ask word stands, for its own holder: pending until the admitting node's result reads here, then that result."
             }
             Self::TasksOutcomes => {
                 "Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to."
@@ -15061,6 +15131,9 @@ impl AgentVerb {
             }
             Self::VaultMailComplianceSearch => {
                 "Org compliance search across every mailbox while the setting is on, by the Owner or an Admin with a stated purpose; logged before it answers."
+            }
+            Self::VaultFilesSourcesConvert => {
+                "The owner converts an attached notes folder on this host to Files, keeping its existing notes, history and links. The host rescans the folder into its Files world and returns the source and rescan report."
             }
             Self::ConnectorAnswer => {
                 "Answers the questions one of the caller's own connector calls waits on, by the handle its awaiting_input reply named, under that call's grant and principal; the connector's next questions or its result come back as foreign data."
