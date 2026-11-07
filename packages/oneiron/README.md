@@ -400,7 +400,10 @@ No input chooses another actor, world, owner, entity ID, or erasure reason.
 Namespaces compare complete literal string segments. Search accepts exact
 field-equality filters, not operators or semantic queries. Results have lexical
 namespace/key order. Namespace rows are deduplicated after optional depth
-truncation. `limit` is 1–1000 and `offset` is 0–1000000. Pages are individual live
+truncation. `limit` is 1–1000 and `offset` is any nonnegative integer. Namespaces
+and keys may be any length; past the `[limits]` rows `keyed_namespace_segments`,
+`keyed_namespace_bytes` and `keyed_key_bytes` the engine asks whether everything is
+okay and serves them whole. Pages are individual live
 snapshots; concurrent mutations can shift subsequent offsets.
 
 Keyed bodies never appear in generic recall, context packs, scoped hydration,
@@ -429,9 +432,12 @@ history, or receipts. Keep the true source and use a separate key for generated
 output. Only a genuine new user statement may be submitted as `user_stated`.
 Never relabel model output or delete then put to bypass the protection.
 
-Erased shells and malformed rows are not live heads. Reads skip them and never
-fall back to superseded values. Unrelated keys remain usable. Replaying a
-request against an erased/malformed revision refuses instead of restoring it.
+Erased shells and malformed rows are not live heads. Nor is a value the
+canonical claim read withholds: deleted, archived or withdrawn words, a stale
+value, or a value whose recorded source was deleted or is being withdrawn.
+Reads skip them and never fall back to superseded values; a put at that key
+writes a fresh head. Unrelated keys remain usable. Replaying a request against
+an erased/malformed revision refuses instead of restoring it.
 
 Delete retracts the caller's current claim and returns `existed` plus receipt
 refs. It is idempotent while absent and retains history. It is not an owner
