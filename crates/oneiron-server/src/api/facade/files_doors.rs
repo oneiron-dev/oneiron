@@ -1,6 +1,6 @@
 //! The host doors of the Files world's source rows (FIX 6942):
-//! `vault.files.sources.attach`, `.rescan`, `.detach`, `.list`, `.files` and
-//! `.exclude`.
+//! `vault.files.sources.attach`, `.convert`, `.rescan`, `.detach`, `.list`, `.files`
+//! and `.exclude`.
 //! `host_doors` re-exports them, so the generated HTTP facade handler and the
 //! MCP dispatcher call them by the name every host door has. Each runs under
 //! the vault owner's proof, as `/v1/owner` takes it, off the async runtime:
@@ -21,9 +21,9 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{
     self, FilesRescanAnswer, FilesSourceAttachAnswer, FilesSourceAttachRequest,
-    FilesSourceDetachAnswer, FilesSourceDetachRequest, FilesSourceExcludeAnswer,
-    FilesSourceExcludeRequest, FilesSourceFiles, FilesSourceFilesRequest, FilesSourceList,
-    FilesSourceListRequest, FilesSourceRescanRequest,
+    FilesSourceConvertRequest, FilesSourceDetachAnswer, FilesSourceDetachRequest,
+    FilesSourceExcludeAnswer, FilesSourceExcludeRequest, FilesSourceFiles, FilesSourceFilesRequest,
+    FilesSourceList, FilesSourceListRequest, FilesSourceRescanRequest,
 };
 
 use super::host_doors::support::{Listed, internal, owner_proof};
@@ -82,6 +82,35 @@ pub(crate) async fn vault_files_sources_attach(
                 input.exclude,
                 input.kind.as_deref(),
             )?;
+            let answer = files_attached(vault, owner, world, &source)?;
+            Ok((answer, vec![world.world]))
+        },
+    )
+    .await
+}
+
+/// Converts an attached notes source to Files, preserving its existing notes.
+pub(crate) async fn vault_files_sources_convert(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: FilesSourceConvertRequest,
+) -> Listed<FilesSourceAttachAnswer> {
+    let surface = super::owner_binding::act_surface(auth);
+    as_owner_listing(
+        server,
+        auth,
+        "vault.files.sources.convert",
+        move |server, owner| {
+            let folder = canonical_folder(Path::new(&input.path)).map_err(|error| {
+                MemoryError::new(
+                    MEMORY_CODE_BAD_REQUEST,
+                    format!("{error:#}"),
+                    &["Name a folder this host can read."],
+                )
+            })?;
+            let vault = server.vault();
+            let (world, source) =
+                vault.convert_folder_source_to_files(owner, surface, &folder, input.exclude)?;
             let answer = files_attached(vault, owner, world, &source)?;
             Ok((answer, vec![world.world]))
         },
