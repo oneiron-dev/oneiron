@@ -19,8 +19,10 @@
 //! `office.pptx.v1`), which keeps its commits and receipts. A DOCX export
 //! lands as one tracked revision. An XLSX body is a map keyed by sheet and
 //! address; its export writes the changed cells and names and recalculates in
-//! process, and [`Vault::preview_xlsx_body`] shows the recalculated values
-//! without landing a version. DOCX and XLSX forks are typed-body forks.
+//! process, a workbook the native engine refuses through the host's
+//! precision fallback when it installed one (`precision`), and
+//! [`Vault::preview_xlsx_body`] shows the recalculated values without
+//! landing a version. DOCX and XLSX forks are typed-body forks.
 //!
 //! A PPTX body is the OF-510 live deck: one tree with a rich-text body per
 //! text shape, whose concurrent edits merge and must still keep the deck's
@@ -42,6 +44,7 @@ mod live_recalc;
 mod live_units;
 mod masked_view;
 mod pptx;
+mod precision;
 mod records;
 mod resources;
 mod revision_window;
@@ -72,9 +75,14 @@ pub(crate) use holder_ask::{
 };
 pub use live_units::LivePin;
 pub(crate) use live_units::{LiveChange, LiveSheet};
+pub use oneiron_docedit::contract::{
+    ContractError, DocumentLocationArgs, ErrorCode, RecalcClockArgs, RecalcPort, Recalculated,
+};
 pub use oneiron_docedit::live::LandingReceipt;
+pub use oneiron_docedit::retained_opc::Limits as PackageLimits;
 pub use oneiron_docedit::xlsx_body::{
-    XlsxArea, XlsxBook, XlsxLock, XlsxSheetVisibility, XlsxStyle, XlsxTable, XlsxValue,
+    CachedValuesWritten, XlsxArea, XlsxBook, XlsxLock, XlsxSheetVisibility, XlsxStyle, XlsxTable,
+    XlsxValue, write_cached_values,
 };
 pub use pptx::merge_deck_peers;
 pub use pptx::{
@@ -83,6 +91,8 @@ pub use pptx::{
     DeckPreviewSlide, DeckReviewView, PptxBody, PptxExport, PptxReview,
 };
 pub(crate) use pptx::{deck_json_values, deck_log_ops, live_refused};
+pub use precision::XlsxPrecisionRecalc;
+use precision::{precision_recalc, takes_precision_fallback};
 pub use verbs::{
     DocxBlockView, DocxBodyView, DocxCellView, DocxStoryCellParagraphView, DocxStoryCellView,
     DocxStoryParagraphView, DocxStoryTableView, DocxStoryView, OfficeBodyArtifactRequest,

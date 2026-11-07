@@ -264,3 +264,25 @@ segment builder, marker offset law and note auto-number behavior are unchanged.
 The comment-cell text settle also retains structural markers from a deleted
 text segment as Normal markers, including when the replacement is empty. It
 adds no refusal and does not change any other paragraph or cell.
+
+## Native deck transaction graphic ceilings (FIX 10653)
+
+A deck transaction may carry `graphics` with the existing `svg_bytes`,
+`raster_bytes`, and `raster_pixels` ceilings. Every `set_picture` step uses that
+same setting through `Picture.limits`. An absent setting uses the unchanged
+`GraphicLimits::default()` values and is omitted from canonical serialization.
+An explicit setting stays in the canonical transaction and therefore the existing
+handoff hash and settlement replay. The asset identity/hash checks, factual-use
+and provenance rules, resource admission, capacity errors, candidate part-diff
+checks, and reports are unchanged. Native deck creation and live export retain
+their existing defaults; this is only the transaction slice of FIX 10653.
+
+
+### Native live deck export graphic settings (FIX 10653)
+
+The live deck export profile accepts optional `GraphicLimits`. The projector resolves
+those settings once and passes them to both new-picture creation and bound-picture
+replacement. Existing held-media paths do not re-admit their bytes. Omitting the
+settings keeps the existing numeric defaults and the old profile/key serialization.
+An explicit setting is part of `ExportKey`, so a memo for another setting cannot
+stand in for it. The projector signature and export gate remain unchanged.
