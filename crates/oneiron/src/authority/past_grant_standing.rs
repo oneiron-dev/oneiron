@@ -170,7 +170,7 @@ fn preserved_one(
                 AgentGrantChange::Mint { .. } => mints.push(*hash),
                 AgentGrantChange::Revoke { .. } => revokes.push(*hash),
             },
-            AuthorityOp::SlipGrantRevoke { grant_ref } if *grant_ref == grant => {
+            AuthorityOp::SlipGrantRevoke { grant_ref, .. } if *grant_ref == grant => {
                 return Ok(None);
             }
             AuthorityOp::MembershipExecution(record)
