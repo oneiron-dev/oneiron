@@ -11,6 +11,16 @@
 //! and the caller's program runs its own fallback. No reply is cut out
 //! after its effects happened: each branch makes its own observation.
 //!
+//! A skill body a call's answer delivered to the run's program after its
+//! first step (FIX 3608, `vault.skills.get`'s answer) is judged the same
+//! way, by the step that made the call: the earliest delivery of the
+//! skill's current revision its step's replay context kept, unless a call
+//! of its load came first. With the body present, the call answers as its
+//! row recorded it. With the body absent, it answers the verb's own
+//! not-found refusal, and the caller's program runs its own fallback. A call
+//! with no not-found answer of its own (a library page, an archive, a
+//! restore, the leader's pattern load) is unavailable.
+//!
 //! Each branch's observation is rendered by the request builder's own
 //! formatter into the one message the next step's captured request showed
 //! the caller's console in, whole ([`ConsoleSlot`]); the rest of that
@@ -56,13 +66,14 @@ use super::super::{
 };
 use super::{ExecutedFork, ExecutedStepStatus, Ran, executed_run};
 use crate::code_run::shadow_runner::{
-    ArmCallableLoad, ArmCallables, PreparedShadowStep, ShadowBodyStore, ShadowUnavailable,
-    ShadowUnavailableReason as Reason, prepare_shadow_step_source,
+    ArmCallableLoad, ArmCallables, ArmTreatedCall, PreparedShadowStep, ShadowBodyStore,
+    ShadowUnavailable, ShadowUnavailableReason as Reason, absent_delivery_outcome,
+    prepare_shadow_step_source,
 };
 use crate::code_run::{
     CapsuleHost, CapsuleRequest, CapturedCallable, CodeRunBridgeCall, CodeRunHistoryTurn,
     ConsoleSlot, SelfEffect, StepReplayCapsule, StepReplayContext, agent_verb_observations_of,
-    capsule_context_body, capsule_request,
+    capsule_context_body, capsule_request, recorded_verb_call,
 };
 use crate::engine_executor::continuation::continuation_tail_effect;
 use crate::engine_executor::{
@@ -70,11 +81,13 @@ use crate::engine_executor::{
     observation_output_path, run_shadow_callable_branch, script_output_path,
 };
 use crate::skill_attribution::ContributionTarget;
+use crate::task_verb::sdk::AgentVerb;
 use crate::{ContentPart, EntityId, LlmRequest, Result, Vault};
 
-/// One branch of a callable's counterfactual (FIX 3608), as the host's
-/// program run takes it: the caller step's own recorded program, and how
-/// the branch treats the step's recorded callables.
+/// One branch of a callable's or a delivery's counterfactual (FIX 3608), as
+/// the host's program run takes it: the caller step's own recorded program,
+/// and how the branch treats the step's recorded callables and the call it
+/// treats.
 pub struct CallableBranch {
     program: String,
     callables: ArmCallables,
@@ -108,36 +121,45 @@ pub fn execute_callable_branch(
     executed_run(step, run, runtime_pin, store)
 }
 
-/// The steps a callable's check regenerates from (FIX 3608): the caller's
-/// step that called the target's load, the bridge position of that call
-/// and the revision it loaded at, and the next step, whose request each
-/// branch rebuilds; `None` when that step was not captured.
-pub(crate) struct CallableTarget {
+/// The steps a callable's or a delivery's check regenerates from (FIX
+/// 3608): the caller's step that made the call the pair treats, the bridge
+/// position of that call, what it is (a call of the target's load, or a call
+/// whose answer delivered the target's body), the revision it loaded or
+/// delivered, and the next step, whose request each branch rebuilds; `None`
+/// when that step was not captured.
+pub(crate) struct CallerTarget {
     pub(crate) caller: StepReplayCapsule,
     pub(crate) seq: u64,
+    pub(crate) kind: ArmTreatedCall,
     pub(crate) revision: String,
     pub(crate) next: Option<StepReplayCapsule>,
 }
 
-/// The callable `target`'s check regenerates from among `capsules`, one
-/// run's captured steps, read in `txn`: for a loaded skill, the first call
-/// of its load that its step's replay context froze, in the earliest such
-/// step of the latest lease generation with one. `None` for a used edge,
-/// and when no context froze a call of the skill's load.
+/// The call `target`'s check regenerates from among `capsules`, one run's
+/// captured steps, read in `txn`: for a loaded skill, in the earliest step
+/// of the latest lease generation with one, the step's first call that
+/// either called the skill's load, as its replay context froze it, or
+/// delivered the skill's body at its current revision to the step's
+/// program, as its replay context kept it. `None` for a used edge, and when
+/// no context holds either.
 ///
 /// # Errors
 ///
 /// Storage errors.
-pub(crate) fn callable_target_in_txn(
+pub(crate) fn caller_target_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     capsules: &[StepReplayCapsule],
     target: ContributionTarget,
-) -> Result<Option<CallableTarget>> {
+) -> Result<Option<CallerTarget>> {
     let ContributionTarget::LoadedSkill(skill) = target else {
         return Ok(None);
     };
-    let mut found: Option<(&StepReplayCapsule, CapturedCallable)> = None;
+    // A delivery is of the skill's own version, the one its check judges.
+    let current = vault
+        .get_skill_record_in_txn(txn, &skill)?
+        .map(|record| format!("{}@{}", record.skill_id, record.version));
+    let mut found: Option<(&StepReplayCapsule, (u64, ArmTreatedCall, String))> = None;
     for capsule in capsules {
         let preferred = found
             .as_ref()
@@ -154,15 +176,11 @@ pub(crate) fn callable_target_in_txn(
         if context.run != capsule.run || context.step != capsule.step {
             continue;
         }
-        let called = context
-            .callables
-            .into_iter()
-            .find(|callable| callable.selected.entity == skill);
-        if let Some(callable) = called {
-            found = Some((capsule, callable));
+        if let Some(first) = first_treated_call(context, skill, current.as_deref()) {
+            found = Some((capsule, first));
         }
     }
-    Ok(found.map(|(caller, callable)| CallableTarget {
+    Ok(found.map(|(caller, (seq, kind, revision))| CallerTarget {
         next: capsules
             .iter()
             .find(|next| {
@@ -172,9 +190,42 @@ pub(crate) fn callable_target_in_txn(
             })
             .cloned(),
         caller: caller.clone(),
-        seq: callable.seq,
-        revision: callable.selected.revision,
+        seq,
+        kind,
+        revision,
     }))
+}
+
+/// The first call of `context`'s step that called `skill`'s load, or that
+/// delivered its body at `revision`, the skill's current one (FIX 3608): its
+/// bridge position, its kind and the revision it loaded or delivered.
+fn first_treated_call(
+    context: StepReplayContext,
+    skill: EntityId,
+    revision: Option<&str>,
+) -> Option<(u64, ArmTreatedCall, String)> {
+    let called = context
+        .callables
+        .into_iter()
+        .find(|callable| callable.selected.entity == skill)
+        .map(|callable| {
+            let revision = callable.selected.revision;
+            (callable.seq, ArmTreatedCall::Callable, revision)
+        });
+    let delivered = context
+        .deliveries
+        .into_iter()
+        .find(|delivery| {
+            delivery.body.entity == skill && revision == Some(delivery.body.revision.as_str())
+        })
+        .map(|delivery| {
+            let revision = delivery.body.revision;
+            (delivery.seq, ArmTreatedCall::Delivery, revision)
+        });
+    called
+        .into_iter()
+        .chain(delivered)
+        .min_by_key(|(seq, ..)| *seq)
 }
 
 /// Which of two captured steps a check prefers: the later lease generation,
@@ -184,15 +235,15 @@ fn capture_order(capsule: &StepReplayCapsule) -> (u32, Reverse<u64>) {
 }
 
 impl Runner<'_> {
-    /// A callable pair's inputs (FIX 3608), settled before either fork is
-    /// paid for: the next step's capsule and rung, the two requests its
-    /// caller's branches rebuilt, and the anchor. The target's current
-    /// record must be at the revision the call loaded, as an exposure's
-    /// must be at the revision the step saw.
-    pub(crate) fn prepare_callable(
+    /// A callable's or a delivery's pair inputs (FIX 3608), settled before
+    /// either fork is paid for: the next step's capsule and rung, the two
+    /// requests its caller's branches rebuilt, and the anchor. The target's
+    /// current record must be at the revision the call loaded or delivered,
+    /// as an exposure's must be at the revision the step saw.
+    pub(crate) fn prepare_caller(
         &self,
         rows: &ForkRows,
-        target: CallableTarget,
+        target: CallerTarget,
     ) -> Outcome<Prepared> {
         let Some(next) = target.next else {
             return Ok(Err(Unavailable::NoCapsule));
@@ -238,10 +289,11 @@ impl Runner<'_> {
         if !self.clock.decision_may_start() {
             return Ok(Err(Unavailable::Unfinished));
         }
-        let observations = match self.branch_observations(&target.caller, target.seq)? {
-            Ok(observations) => observations,
-            Err(unavailable) => return Ok(Err(Unavailable::ProgramReplay(unavailable))),
-        };
+        let observations =
+            match self.branch_observations(&target.caller, target.seq, target.kind)? {
+                Ok(observations) => observations,
+                Err(unavailable) => return Ok(Err(Unavailable::ProgramReplay(unavailable))),
+            };
         let [with_console, without_console] = observations.map(|observation| {
             let turn = CodeRunHistoryTurn {
                 code: String::new(),
@@ -268,10 +320,14 @@ impl Runner<'_> {
         {
             return Ok(Err(Unavailable::ForksDiverged));
         }
-        // The branch without the load has no recorded world past its step:
-        // no fork's program runs, and the pair is scored in the `Text` mode.
-        let unrecorded =
-            ShadowUnavailable::new(Reason::WholeRunUnsupported, "callable_counterfactual");
+        // The branch without the load or body has no recorded world past
+        // its step: no fork's program runs, and the pair is scored in the
+        // `Text` mode.
+        let counterfactual = match target.kind {
+            ArmTreatedCall::Callable => "callable_counterfactual",
+            ArmTreatedCall::Delivery => "delivery_counterfactual",
+        };
+        let unrecorded = ShadowUnavailable::new(Reason::WholeRunUnsupported, counterfactual);
         Ok(Ok(Prepared {
             with_skill_hash: request_hash(&with_skill)?,
             without_skill_hash: request_hash(&without_skill)?,
@@ -287,34 +343,51 @@ impl Runner<'_> {
         }))
     }
 
-    /// The observation of `caller`'s step in each branch, the load called
-    /// at bridge position `seq` present, then absent: the caller's own
-    /// recorded program run again in two scratch arms under the host's one
-    /// pin, each to its step's end with its run going on. Only a callable
-    /// of the first-party tier runs in an arm. The branch without the load
-    /// must leave out no recorded call whose answer the next request shows
-    /// outside the console, and no call that may change state; the step
-    /// must bind no result (FIX 3608, [`removed_unrebuilt`]).
-    fn branch_observations(&self, caller: &StepReplayCapsule, seq: u64) -> Ran<[String; 2]> {
+    /// The observation of `caller`'s step in each branch, the load called,
+    /// or the body delivered, at bridge position `seq` (as `kind` says)
+    /// present, then absent: the caller's own recorded program run again in
+    /// two scratch arms under the host's one pin, each to its step's end
+    /// with its run going on. Only a callable of the first-party tier runs in
+    /// an arm, and only a delivery whose call answers a missing skill of its
+    /// own ([`undeliverable`]) is left out. The branch without the load or
+    /// body must leave out no recorded call whose answer the next request
+    /// shows outside the console, and no call that may change state; the
+    /// step must bind no result (FIX 3608, [`removed_unrebuilt`]).
+    fn branch_observations(
+        &self,
+        caller: &StepReplayCapsule,
+        seq: u64,
+        kind: ArmTreatedCall,
+    ) -> Ran<[String; 2]> {
         let step = match prepare_shadow_step_source(self.vault, caller)? {
             Ok(step) => step,
             Err(unavailable) => return Ok(Err(unavailable)),
         };
-        let nested_end = match step.callable_at(seq) {
-            None => {
-                return Ok(Err(ShadowUnavailable::new(
-                    Reason::SourceMissing,
-                    "callable",
-                )));
+        let nested_end = match kind {
+            ArmTreatedCall::Callable => match step.callable_at(seq) {
+                None => {
+                    return Ok(Err(ShadowUnavailable::new(
+                        Reason::SourceMissing,
+                        "callable",
+                    )));
+                }
+                Some(callable) if !callable.selected.first_party => {
+                    let tier = ShadowUnavailable::new(Reason::SandboxUnavailable, "callable_tier");
+                    return Ok(Err(tier));
+                }
+                Some(callable) => callable.nested_end,
+            },
+            ArmTreatedCall::Delivery => {
+                let skill = self.candidate.target.removed();
+                if let Some(unavailable) = undeliverable(&step, seq, skill) {
+                    return Ok(Err(unavailable));
+                }
+                seq.saturating_add(1)
             }
-            Some(callable) if !callable.selected.first_party => {
-                let tier = ShadowUnavailable::new(Reason::SandboxUnavailable, "callable_tier");
-                return Ok(Err(tier));
-            }
-            Some(callable) => callable.nested_end,
         };
-        // The load's own call and its subtree never happen without it.
-        if let Some(cause) = removed_unrebuilt(&step, seq, nested_end) {
+        // The load's own call and its subtree never happen without it; a
+        // delivery's call answers otherwise.
+        if let Some(cause) = removed_unrebuilt(&step, seq, nested_end, kind) {
             let shown = ShadowUnavailable::new(Reason::CapturedOutcomeMissing, cause);
             return Ok(Err(shown));
         }
@@ -326,9 +399,10 @@ impl Runner<'_> {
         for callable in step.callables() {
             programs.push((callable.seq, callable_source(self.vault, callable)?));
         }
-        if !programs
-            .iter()
-            .any(|(at, source)| *at == seq && source.is_some())
+        if kind == ArmTreatedCall::Callable
+            && !programs
+                .iter()
+                .any(|(at, source)| *at == seq && source.is_some())
         {
             let unread = ShadowUnavailable::new(Reason::SourceMissing, "callable_program");
             return Ok(Err(unread));
@@ -346,6 +420,7 @@ impl Runner<'_> {
                 program: program.clone(),
                 callables: ArmCallables {
                     treated: seq,
+                    kind,
                     load,
                     programs: programs.clone(),
                 },
@@ -370,31 +445,67 @@ impl Runner<'_> {
     }
 }
 
-/// Why the branch without the load, called at bridge position `seq` of
-/// `step` with its subtree to `nested_end`, is no counterfactual the next
-/// request can be rebuilt for (FIX 3608), as the cause the pair is
+/// Why the branch without the load or body treated at bridge position
+/// `seq` of `step`, its subtree to `nested_end`, is no counterfactual the
+/// next request can be rebuilt for (FIX 3608), as the cause the pair is
 /// unavailable for; `None` when nothing in the step's record says so:
 ///
-/// - an answer of the load's own call or its subtree that the next request
+/// - an answer of the treated call or its subtree that the next request
 ///   shows outside the console ([`shown_outside_console`]);
-/// - a call in its subtree that may change state (`subtree_effect`), by
-///   its recorded kind, as a continuation's tail is judged
+/// - a call in a callable's subtree that may change state
+///   (`subtree_effect`), or a delivery's call that may (`delivery_effect`),
+///   by its recorded kind, as a continuation's tail is judged
 ///   ([`continuation_tail_effect`]): a later recorded read of the step
 ///   answers as it read after the change, which that branch never made;
 /// - a result name the step bound or rebound (`bound_result`,
 ///   [`step_bound_result`]).
-fn removed_unrebuilt(step: &PreparedShadowStep, seq: u64, nested_end: u64) -> Option<&'static str> {
+fn removed_unrebuilt(
+    step: &PreparedShadowStep,
+    seq: u64,
+    nested_end: u64,
+    kind: ArmTreatedCall,
+) -> Option<&'static str> {
     if let Some(cause) = shown_outside_console(step, seq..nested_end) {
         return Some(cause);
     }
-    // The load's own call is the one the pair treats: its subtree follows.
-    let Some(subtree) = recorded_calls(step, seq.saturating_add(1)..nested_end) else {
+    // A callable's own call is the one the pair treats: its subtree follows.
+    // A delivery's call is all the branch answers otherwise.
+    let (first, effect) = match kind {
+        ArmTreatedCall::Callable => (seq.saturating_add(1), "subtree_effect"),
+        ArmTreatedCall::Delivery => (seq, "delivery_effect"),
+    };
+    let Some(removed) = recorded_calls(step, first..nested_end) else {
         return Some("bridge_window");
     };
-    if subtree.iter().any(continuation_tail_effect) {
-        return Some("subtree_effect");
+    if removed.iter().any(continuation_tail_effect) {
+        return Some(effect);
     }
     step_bound_result(step).then_some("bound_result")
+}
+
+/// Why the call at bridge position `seq` of `step` is no delivery a branch
+/// can leave `skill`'s body out of (FIX 3608): the step's replay context
+/// kept no delivery of that body there (`skill_delivery`), or the call has
+/// no not-found answer of its own for the live host to give
+/// (`delivery_absence`, [`absent_delivery_outcome`]). `None` when it is one.
+fn undeliverable(
+    step: &PreparedShadowStep,
+    seq: u64,
+    skill: EntityId,
+) -> Option<ShadowUnavailable> {
+    if !step.delivered_at(seq, skill) {
+        return Some(ShadowUnavailable::new(
+            Reason::SourceMissing,
+            "skill_delivery",
+        ));
+    }
+    let verb = recorded_calls(step, seq..seq.saturating_add(1))
+        .and_then(<[CodeRunBridgeCall]>::first)
+        .and_then(recorded_verb_call)
+        .and_then(|(verb, _)| AgentVerb::from_name(verb));
+    absent_delivery_outcome(verb)
+        .is_none()
+        .then(|| ShadowUnavailable::new(Reason::WholeRunUnsupported, "delivery_absence"))
 }
 
 /// Whether `step`'s record binds a result name at the step's end that the
