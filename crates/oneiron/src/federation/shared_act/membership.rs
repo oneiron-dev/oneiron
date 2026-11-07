@@ -225,6 +225,7 @@ impl Vault {
         member: EntityId,
         leaves: bool,
         slips: Option<&HostSlipIssuer>,
+        receipt: &str,
     ) -> Result<(Vec<EntityId>, Vec<EntityId>)> {
         let dropped: Vec<(EntityId, bool)> = self
             .vault_grants_in_txn(txn, vault_id)?
@@ -243,7 +244,9 @@ impl Vault {
                 continue;
             }
             let signed = match slips {
-                Some(issuer) => self.log_membership_grant_withdrawal_in_txn(txn, issuer, *id)?,
+                Some(issuer) => {
+                    self.log_membership_grant_withdrawal_in_txn(txn, issuer, *id, receipt)?
+                }
                 None => false,
             };
             if !signed {
@@ -269,6 +272,7 @@ impl Vault {
         from: Role,
         to: Option<Role>,
         slips: Option<&HostSlipIssuer>,
+        receipt: &str,
         now: u64,
     ) -> Result<MemberMove> {
         let mut grants = Vec::new();
@@ -277,8 +281,14 @@ impl Vault {
         }
         let mut unsigned_withdrawals = Vec::new();
         if to.is_none_or(|role| !role.is_admin()) {
-            let (dropped, unsigned) =
-                self.drop_member_grants_in_txn(txn, vault_id, member, to.is_none(), slips)?;
+            let (dropped, unsigned) = self.drop_member_grants_in_txn(
+                txn,
+                vault_id,
+                member,
+                to.is_none(),
+                slips,
+                receipt,
+            )?;
             grants.extend(dropped);
             unsigned_withdrawals = unsigned;
         }
@@ -314,6 +324,7 @@ impl Vault {
         keeps: Option<Role>,
         gainer: Option<EntityId>,
         slips: Option<&HostSlipIssuer>,
+        receipt: &str,
         now: u64,
     ) -> Result<MemberMove> {
         self.check_handover_in_txn(txn, owners.clone(), loser, keeps, gainer)?;
@@ -321,8 +332,16 @@ impl Vault {
         if let Some(gainer) = gainer {
             grants.extend(self.set_member_role_in_txn(txn, vault_id, gainer, Role::Owner, now)?);
         }
-        let mut moved =
-            self.move_member_in_txn(txn, vault_id, loser, Role::Owner, keeps, slips, now)?;
+        let mut moved = self.move_member_in_txn(
+            txn,
+            vault_id,
+            loser,
+            Role::Owner,
+            keeps,
+            slips,
+            receipt,
+            now,
+        )?;
         grants.append(&mut moved.grants);
         moved.grants = grants;
         Ok(moved)
@@ -386,7 +405,7 @@ impl Vault {
         power: Option<OrgAdminPower>,
         apply: impl FnOnce(&mut heed::RwTxn<'_>, EntityId, u64) -> Result<Effect>,
     ) -> Result<SharedActExecutionReceipt> {
-        self.move_shared_member(actor, vault_id, power, |txn, actor, now| {
+        self.move_shared_member(actor, vault_id, power, |txn, actor, now, _receipt| {
             Ok((apply(txn, actor, now)?, None))
         })
     }
@@ -404,6 +423,7 @@ impl Vault {
             &mut heed::RwTxn<'_>,
             EntityId,
             u64,
+            &str,
         ) -> Result<(Effect, Option<UnsignedExecution>)>,
     ) -> Result<SharedActExecutionReceipt> {
         let mut txn = self.store.env.write_txn()?;
@@ -420,8 +440,8 @@ impl Vault {
         }
         let now = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
         let owners = live_owners(&self.live_act_holders(&txn, vault_id, now)?, None);
-        let (effect, unsigned) = apply(&mut txn, actor_id, now)?;
         let id = self.store.clock.entity_id()?.to_hex();
+        let (effect, unsigned) = apply(&mut txn, actor_id, now, &id)?;
         let record = match unsigned {
             Some(unsigned) => self.file_membership_execution_in_txn(
                 &mut txn, vault_id, &id, actor_id, now, unsigned,
@@ -458,8 +478,8 @@ impl Vault {
         if !crate::consent::person_is_live_in_txn(self, txn, &member)? {
             return Err(invalid());
         }
-        let (effect, _) =
-            self.issue_invitation_in_txn(txn, vault_id, creator, member, role, true, None, now)?;
+        let effect =
+            self.issue_invitation_in_txn(txn, vault_id, creator, member, role, true, now)?;
         let id = self.store.clock.entity_id()?.to_hex();
         self.record_shared_change_in_txn(
             txn,
@@ -479,7 +499,9 @@ impl Vault {
     /// Invite `member`, a live person with no membership here, at a non-root
     /// role, or the creation preset's default member role when `None`. No
     /// grant is written until they accept ([`Vault::accept_shared_invitation`]);
-    /// the receipt's `MemberInvited` names the invitation.
+    /// the receipt's `MemberInvited` names the invitation. The `add_member`
+    /// power only creates or withdraws invitations: it names no key, and the
+    /// invitee binds their own ([`Vault::mint_invitation_slip`], FIX 8745).
     pub fn add_shared_member(
         &self,
         admin: &AuthenticatedOwner,
@@ -487,25 +509,7 @@ impl Vault {
         member: EntityId,
         role: Option<Role>,
     ) -> Result<SharedActExecutionReceipt> {
-        self.invite_shared_member(admin, vault_id, member, role, None)
-            .map(|(receipt, _)| receipt)
-    }
-
-    /// [`Vault::add_shared_member`], and with `credential` (the host's slip
-    /// issuer and the public key `member` generated on their own device) the
-    /// invitee's own slip for this invitation (FIX 1925), minted in the same
-    /// writer: it reaches only the invitation's list, accept and decline, and
-    /// stands while the invitation is pending.
-    pub fn invite_shared_member(
-        &self,
-        admin: &AuthenticatedOwner,
-        vault_id: u64,
-        member: EntityId,
-        role: Option<Role>,
-        credential: Option<(&HostSlipIssuer, [u8; 32])>,
-    ) -> Result<(SharedActExecutionReceipt, Option<CapabilitySlip>)> {
-        let mut slip = None;
-        let receipt = self.change_shared_membership(
+        self.change_shared_membership(
             admin,
             vault_id,
             Some(OrgAdminPower::AddMember),
@@ -524,14 +528,9 @@ impl Vault {
                 {
                     return Err(invalid());
                 }
-                let (effect, minted) = self.issue_invitation_in_txn(
-                    txn, vault_id, inviter, member, role, false, credential, now,
-                )?;
-                slip = minted;
-                Ok(effect)
+                self.issue_invitation_in_txn(txn, vault_id, inviter, member, role, false, now)
             },
-        )?;
-        Ok((receipt, slip))
+        )
     }
     /// Assign `member` another non-root role. An Owner's role changes only
     /// through the `transfer_ownership` and `remove_owner` acts.
@@ -548,7 +547,7 @@ impl Vault {
             admin,
             vault_id,
             Some(OrgAdminPower::AssignRole),
-            |txn, _, now| {
+            |txn, _, now, receipt| {
                 non_root(Some(role))?;
                 let from = self
                     .member_role_in_txn(txn, vault_id, member)?
@@ -563,7 +562,16 @@ impl Vault {
                     revoked_slips,
                     unsigned_withdrawals,
                     ..
-                } = self.move_member_in_txn(txn, vault_id, member, from, Some(role), slips, now)?;
+                } = self.move_member_in_txn(
+                    txn,
+                    vault_id,
+                    member,
+                    from,
+                    Some(role),
+                    slips,
+                    receipt,
+                    now,
+                )?;
                 let effect = Effect {
                     change: SharedVaultChange::MemberRoleChanged {
                         member: member.to_hex(),
@@ -598,7 +606,7 @@ impl Vault {
             admin,
             vault_id,
             Some(OrgAdminPower::RemoveMember),
-            |txn, _, now| {
+            |txn, _, now, receipt| {
                 let from = self
                     .member_role_in_txn(txn, vault_id, member)?
                     .ok_or_else(invalid)?;
@@ -612,7 +620,8 @@ impl Vault {
                     revoked_slips,
                     unsigned_withdrawals,
                     ..
-                } = self.move_member_in_txn(txn, vault_id, member, from, None, slips, now)?;
+                } = self
+                    .move_member_in_txn(txn, vault_id, member, from, None, slips, receipt, now)?;
                 let effect = Effect {
                     change: SharedVaultChange::MemberRemoved {
                         member: member.to_hex(),
@@ -666,6 +675,7 @@ impl Vault {
         {
             return Err(invalid());
         }
+        let id = self.store.clock.entity_id()?.to_hex();
         let mut grants =
             self.set_member_role_in_txn(&mut txn, vault_id, claimant, Role::Owner, now)?;
         let mut moved = self.move_member_in_txn(
@@ -675,6 +685,7 @@ impl Vault {
             Role::Owner,
             None,
             Some(issuer),
+            &id,
             now,
         )?;
         grants.append(&mut moved.grants);
@@ -685,7 +696,6 @@ impl Vault {
             revoked_slips,
             ..
         } = moved;
-        let id = self.store.clock.entity_id()?.to_hex();
         let authority_entry = self.append_owner_handover_in_txn(
             &mut txn,
             issuer,
@@ -741,7 +751,7 @@ impl Vault {
         slips: Option<&HostSlipIssuer>,
     ) -> Result<SharedActExecutionReceipt> {
         let own_issuer = self.membership_issuer(slips);
-        self.move_shared_member(member, vault_id, None, |txn, actor, now| {
+        self.move_shared_member(member, vault_id, None, |txn, actor, now, receipt| {
             let from = self
                 .member_role_in_txn(txn, vault_id, actor)?
                 .ok_or_else(invalid)?;
@@ -755,7 +765,7 @@ impl Vault {
                 revoked_slips,
                 unsigned_withdrawals,
                 ..
-            } = self.move_member_in_txn(txn, vault_id, actor, from, None, slips, now)?;
+            } = self.move_member_in_txn(txn, vault_id, actor, from, None, slips, receipt, now)?;
             let effect = Effect {
                 change: SharedVaultChange::MemberLeft {
                     member: actor.to_hex(),

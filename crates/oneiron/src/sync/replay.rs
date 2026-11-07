@@ -45,6 +45,13 @@ pub fn replay_entity_with_birth(
                 entity.body,
             )
             .apply(txn)?;
+        // Fix list row 16256: this door carries no source-audience binding,
+        // so a row whose own bytes name the obligation and stands unbound
+        // rolls the whole replay back, pending its binding; it travels in a
+        // window with its binding and policy.
+        if crate::source_audience::unbound_obligation_in(vault, txn, &entity.id)? {
+            return Err(crate::sync::source_audiences::pending_error());
+        }
         if let Some(birth) = birth
             && crate::vault::live_entity_row_in_txn(&vault.store, txn, &entity.id)?.is_live()
         {
