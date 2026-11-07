@@ -72,10 +72,12 @@ pub(crate) fn version_claim_rows(body: &ClaimBody) -> Option<Option<Vec<EntityId
     )
 }
 
-/// Each stored `blob.version` claim about an artifact a claim here named, local
-/// and replicated alike (fix list row 15416): a replica holds these claims and
-/// no version chain. Each comes with the artifact it names and, read through
-/// the version's own made_by codec, the bytes it names and what made them. A
+/// Each `blob.version` claim stored in the snapshot `txn`, local and
+/// replicated alike, found through the claim predicate index (fix list row
+/// 15416): a replica holds these claims and no version chain, and a claim can
+/// stand before any `claim_of` edge to its artifact does. Each comes with the
+/// artifact its own subject names and, read through the version's own
+/// made_by codec, the bytes its own content hash names and what made them. A
 /// claim whose body does not read names no artifact or bytes.
 ///
 /// # Errors
@@ -85,41 +87,28 @@ pub(crate) fn archive_claimed_versions(
     store: &Store,
     txn: &RoTxn<'_>,
 ) -> Result<Vec<(EntityId, ArchivedVersionSource)>> {
-    let mut artifacts = std::collections::BTreeSet::new();
-    for row in CLAIMED_HASH.iter_from(store, txn, &[])? {
-        let ((artifact, _), ()) = row?;
-        artifacts.insert(artifact);
-    }
     let mut versions = Vec::new();
-    for artifact in artifacts {
-        for edge in crate::ports::EdgeStoreRead::port_edges(
-            store,
-            txn,
-            &artifact,
-            crate::ports::EdgeDirection::In,
-            Some(crate::edge::EdgeKind::ClaimOf),
-            None,
-        )? {
-            let claim = edge?.target;
+    crate::store::claim_projection::for_each_claim_id_for_predicate_in_txn(
+        store,
+        txn,
+        BLOB_VERSION_CLAIM_PREDICATE,
+        |claim| {
             let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &claim)?
             else {
-                continue;
+                return Ok(());
             };
             if raw.len() <= ENTITY_METADATA_HEADER_LEN || raw[0] != ENTITY_TYPE_CLAIM {
-                continue;
+                return Ok(());
             }
             let Ok(body) = crate::write_envelope::claim_body::decode_claim_body(
                 &raw[ENTITY_METADATA_HEADER_LEN..],
                 true,
             ) else {
-                continue;
+                return Ok(());
             };
-            let Some((named, hash)) = version_claim_reference(&body) else {
-                continue;
+            let Some((artifact, hash)) = version_claim_reference(&body) else {
+                return Ok(());
             };
-            if named != artifact {
-                continue;
-            }
             versions.push((
                 artifact,
                 ArchivedVersionSource {
@@ -128,8 +117,9 @@ pub(crate) fn archive_claimed_versions(
                     made_by: version_claim_rows(&body).flatten(),
                 },
             ));
-        }
-    }
+            Ok(())
+        },
+    )?;
     Ok(versions)
 }
 

@@ -360,6 +360,26 @@ impl MailboxLineage {
     }
 }
 
+/// The rows a blob version's ledger claim names beside its own lineage, when
+/// the stored row `raw` of type `entity_type` is one: each row its made_by
+/// names, read through the version's own made_by codec
+/// ([`crate::blob_artifact::version_claim_rows`]), `Some(None)` when its
+/// made_by does not read. `None` for any other row and for a claim whose body
+/// does not decode. An archive, an OKF copy and the JSON bundle make this one
+/// check of such a claim: it goes only when the copy carries every one of
+/// those rows (fix list row 15416).
+pub(super) fn version_claim_names(entity_type: u8, raw: &[u8]) -> Option<Option<Vec<EntityId>>> {
+    if entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+        return None;
+    }
+    let claim = crate::write_envelope::claim_body::decode_claim_body(
+        raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)?,
+        true,
+    )
+    .ok()?;
+    crate::blob_artifact::version_claim_rows(&claim)
+}
+
 /// One Owner's whole-vault copy as each of its passes makes it.
 pub(crate) struct OwnerCopyPass {
     pub(crate) destination: ReadDestination,

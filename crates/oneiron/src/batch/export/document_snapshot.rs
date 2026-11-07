@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Seek, Write};
 
-use super::copy_release::{MailboxLineage, MemberMailPass};
+use super::copy_release::{MailboxLineage, MemberMailPass, version_claim_names};
 use super::snapshot_body::{asset_folded, row_body, row_live_in_txn};
 use super::{
     ArchiveSecretCustody, ExportAdapterDescriptor, ExportCut, ExportDiaryLedger, ExportEdge,
@@ -463,12 +463,7 @@ impl Vault {
             // them, and they count as carried once the claim ships; one whose
             // made_by does not read stays home (fix list row 15416).
             if judge.is_some()
-                && header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
-                && let Ok(claim) = crate::write_envelope::claim_body::decode_claim_body(
-                    &raw[ENTITY_METADATA_HEADER_LEN..],
-                    true,
-                )
-                && let Some(names) = crate::blob_artifact::version_claim_rows(&claim)
+                && let Some(names) = version_claim_names(header.entity_type, &raw)
                 && !lineage.supplements(judge.as_mut(), id, names.as_deref())?
             {
                 continue;
