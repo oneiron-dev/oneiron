@@ -18,6 +18,8 @@
 //! a use limit on it for that hold's purpose only (FIX 8849). Everywhere,
 //! "erase confirmed" stands apart from "erase completed" (C4, row 04).
 
+#[cfg(unix)]
+pub(super) mod clone;
 mod confirmation;
 mod held_scrubs;
 mod types;

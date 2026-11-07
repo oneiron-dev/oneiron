@@ -337,6 +337,10 @@ impl Held {
                 &mut bodies,
             )?;
         }
+        // The kept removal archives' files, owned by their receipts, which
+        // are no kept entity (FIX 3679).
+        #[cfg(unix)]
+        crate::federation::removal_archive_body_keys_in_txn(store, txn, &mut bodies)?;
         Ok(Self {
             bodies,
             gate: store.held_gate_rows_in_txn(txn)?,

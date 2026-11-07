@@ -79,6 +79,10 @@ pub use delete::{
 };
 // A maintenance pass's audited corrupt-CLAIM classification (FIX 7800).
 pub use erase::CorruptClaimRepair;
+#[cfg(unix)]
+pub(crate) use legal_hold::clone::HostLegalCaptures;
+#[cfg(unix)]
+pub use legal_hold::clone::{HostLegalChannel, HostLegalConnection};
 pub use legal_hold::{
     ERASE_COMPLETION_PENDING, ErasePendingReason, EraseWithdrawal, HostOrderHold,
     LEGAL_HOLD_LOG_RETENTION_MONTHS, LEGAL_HOLD_REFUSAL, LIFT_AND_ERASE_PROMPT,
