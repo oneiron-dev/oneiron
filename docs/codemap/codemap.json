@@ -2018,7 +2018,17 @@
      "path": "src/anchored_annotation/anchor_text.rs",
      "purpose": "What an anchor says: the text under a locator in one version's bytes, the exact places those words occur in…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/anchored_annotation/anchor_text/text.rs",
+     "purpose": "Plain-text artifacts: notes, Markdown, data files and source code kept as blob versions (FIX 7905, OF-511…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -2138,9 +2148,9 @@
      "purpose": "Domain types: A1 ranges, format-typed locators, anchors, thread/comment/brief structs, and the re-anchor op…",
      "surface": {
       "const": 6,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 4,
-      "fn": 10,
+      "fn": 11,
       "struct": 8
      }
     },
@@ -5154,7 +5164,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/authority/revocation_notice.rs",
-     "purpose": "The credential revocation notice (FIX 10381): content-free, per open vault, bumped after each commit that…",
+     "purpose": "The credential revocation notice (FIX 10381): content-free, per open vault, bumped after a capability-slip…",
      "surface": {
       "crate-vis": 1,
       "fn": 2
@@ -25210,7 +25220,7 @@
      "path": "src/conversation/membership.rs",
      "purpose": "Append-only membership ledger",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "enum": 2,
       "fn": 7,
       "re-export": 1,
@@ -38058,7 +38068,7 @@
      "path": "src/federation/git_push/admission.rs",
      "purpose": "The one receive-pack decision (FIX 6867, G1-PUSH): who may push into a served repository, read in the…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -38236,7 +38246,7 @@
      "surface": {
       "crate-vis": 9,
       "enum": 1,
-      "fn": 1,
+      "fn": 2,
       "re-export": 1
      }
     },
@@ -38532,7 +38542,7 @@
      "path": "src/federation/repo_access.rs",
      "purpose": "The repo admission seams on an owner's agent Grant (FIX 6867): the L02 seams the Engine approved for L11 G1",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -51626,7 +51636,7 @@
      "purpose": "The run repo doors (FIX 6867, L11 G1 PR2a): a leased agent run's own reads of the repos its owner's Grant…",
      "surface": {
       "const": 1,
-      "crate-vis": 11,
+      "crate-vis": 13,
       "re-export": 5,
       "struct": 2
      }
@@ -51728,7 +51738,7 @@
      "path": "src/memory/repo_doors/work.rs",
      "purpose": "`self.code.snapshots.ingest` and `self.code.work.open`, the ref contract the run doors share (CALLS \"FIX…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 11,
       "fn": 2
      }
     },
@@ -51750,7 +51760,7 @@
      "path": "src/memory/repo_secret_reads/reveal.rs",
      "purpose": "A Memory handle's per-file repo read that may ask for real bytes (FIX 7608 slice 2b-ii-A, GAP-B / FIX 8960)",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 1
      }
     },
@@ -57148,7 +57158,7 @@
      "path": "src/origin/secret_projection/git/recipient.rs",
      "purpose": "A proven recipient's granted Git copy (FIX 7608 pre-flip, FIX 9328; CALLs GIT-REVEAL-OPT-IN…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -57662,8 +57672,8 @@
      "path": "src/origin/smart_http/recipient_serve.rs",
      "purpose": "Who a Git read serves, as its host proved it (FIX 7608 slice 2b-ii-A, ASK 1)",
      "surface": {
-      "crate-vis": 3,
-      "fn": 6,
+      "crate-vis": 4,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -61647,7 +61657,7 @@
      "path": "src/ports/vault_read.rs",
      "purpose": "Vault reads in a snapshot the caller holds (FIX 5870): [`Vault::get`] and the TURN doors' admission and…",
      "surface": {
-      "fn": 6
+      "fn": 7
      }
     },
     {
@@ -70884,7 +70894,7 @@
      "path": "src/skill_hub/default_hub.rs",
      "purpose": "First-party library source: offline seeding, immutable Git ref, explicit import",
      "surface": {
-      "const": 2,
+      "const": 5,
       "crate-vis": 4,
       "fn": 12,
       "re-export": 1,
@@ -88345,7 +88355,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1328
+      "fn": 1329
      }
     },
     {
@@ -91074,7 +91084,7 @@
      "surface": {
       "crate-vis": 30,
       "mod": 1,
-      "re-export": 23
+      "re-export": 24
      }
     },
     {
@@ -91815,6 +91825,20 @@
       "crate-vis": 12,
       "enum": 2,
       "fn": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RoomLeaveOutcome",
+      "RoomLeaveRequest"
+     ],
+     "path": "src/workspace_roster/room_leave.rs",
+     "purpose": "The room leave door (FIX 3968)",
+     "surface": {
+      "fn": 1,
       "struct": 2
      }
     },
@@ -94242,7 +94266,7 @@
      "purpose": "Agent run status is part of the context-board projection vocabulary"
     },
     "anchored_annotation": {
-     "files": 23,
+     "files": 24,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -95775,7 +95799,7 @@
      "purpose": "Monthly CRDT window keys and their timestamp conversion"
     },
     "workspace_roster": {
-     "files": 128,
+     "files": 129,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -95791,7 +95815,7 @@
    },
    "over_bar": 197,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6783,
+   "source_files": 6785,
    "test_files": 895
   },
   "oneiron-android": {
@@ -110679,7 +110703,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1296
+      "fn": 1297
      }
     },
     {
@@ -112472,7 +112496,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1297
+      "fn": 1298
      }
     },
     {
@@ -116851,7 +116875,7 @@
      "path": "src/api/conversations/turn_reads.rs",
      "purpose": "The TURN read and list doors' rows (FIX 5652, 5938), each one judged and its words read in one snapshot (FIX…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -119393,7 +119417,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/git_http/routes.rs",
@@ -126902,7 +126926,17 @@
      "path": "src/handler/transport.rs",
      "purpose": "Guarded socket chokepoint with revocation consults on queue and flush",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/handler/transport/live_person.rs",
+     "purpose": "The roster lifetime of a managed person socket, not an admission gate",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -134618,7 +134652,7 @@
      "purpose": "The host's intake of local folders (OF-554, FIX 6942): the confined walk, the notes reader, a Files source's…"
     },
     "handler": {
-     "files": 40,
+     "files": 41,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -134921,7 +134955,7 @@
    },
    "over_bar": 62,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1739,
+   "source_files": 1740,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -149269,6 +149303,8 @@
       "RoomHostRequest",
       "RoomHosting",
       "RoomJoinHold",
+      "RoomLeaveOutcome",
+      "RoomLeaveRequest",
       "RoomMessagesRequest",
       "RoomOriginCard",
       "RoomPage",
@@ -150448,7 +150484,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1155,
-      "struct": 3536
+      "struct": 3538
      }
     },
     {
