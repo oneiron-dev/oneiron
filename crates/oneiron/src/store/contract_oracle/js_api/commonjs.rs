@@ -109,11 +109,11 @@ pub(super) fn collect(
                 }
                 continue;
             }
-            if let Some(value) =
+            if let Some((value, assigns_exports)) =
                 replacement_chain(assignment, semantic, alias, native_module, &mut accounted)
             {
                 commonjs = true;
-                alias = true;
+                alias = assigns_exports;
                 module.bindings.clear();
                 value_bindings(value, module);
                 continue;
@@ -282,7 +282,13 @@ fn replacement_chain<'ast, 'src>(
     alias: bool,
     native_module: bool,
     accounted: &mut BTreeSet<(u32, u32)>,
-) -> Option<&'ast Expression<'src>> {
+) -> Option<(&'ast Expression<'src>, bool)> {
+    if !matches!(
+        assignment.right.get_inner_expression(),
+        Expression::AssignmentExpression(_)
+    ) {
+        return None;
+    }
     let mut assignment = assignment;
     let mut chain_accounted = BTreeSet::new();
     let mut assigns_exports = false;
@@ -309,12 +315,13 @@ fn replacement_chain<'ast, 'src>(
         }
         match assignment.right.get_inner_expression() {
             Expression::AssignmentExpression(next) => assignment = next,
-            value if assigns_exports && assigns_whole && fresh_value(value) => {
+            value if assigns_whole && fresh_value(value) => {
                 // These references are stable: no link rebinds `module` or
                 // targets a property of the replaceable exports value. Every
-                // store receives this same value, so both slots re-alias.
+                // store receives this same value; only an actual `exports`
+                // assignment reconnects that wrapper binding.
                 accounted.extend(chain_accounted);
-                return Some(value);
+                return Some((value, assigns_exports));
             }
             _ => return None,
         }

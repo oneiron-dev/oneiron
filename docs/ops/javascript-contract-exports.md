@@ -67,6 +67,11 @@ value. Only object literals contribute interior declared keys; function and clas
 members are not inferred. References are collected before applying
 the chain; no admitted link rebinds `module` or targets a property of the replaced
 value. The literal uses the ordinary own-key, spread and `__proto__` rules.
+Repeated whole-slot chains such as `module.exports = module.exports = {a: 1}`
+also use one fresh terminal value and contribute its declared keys once. They require
+at least two plain-assignment links. Without an actual wrapper `exports` assignment,
+the old `exports` binding remains detached; a repeated whole store does not reconnect it.
+A chain containing only wrapper `exports` assignments keeps its ordinary handling.
 
 Mixed chains can also contain eligible named properties of the current module value.
 Each property receiver is captured before the right-hand side, and all stores use
