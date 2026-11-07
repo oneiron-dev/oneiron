@@ -10,18 +10,21 @@ use std::collections::{BTreeMap, HashMap};
 /// What one read admits a conversation record's reactions under, in one
 /// snapshot: the lane's own resolved request (its bound caller filter met
 /// with the floor), the held authority its rows share, and the disclosure
-/// clamp the read runs under, if any (FIX 3977).
+/// clamp the read runs under, if any (FIX 3977), and the receipt of the
+/// walk (FIX 8669).
 struct ReactionAdmission<'d> {
     policy: PolicyManifestResolution,
     filter: ResolvedRetrievalFilter,
     authority: HeldAuthority,
     disclosure: Option<&'d DisclosureContext>,
+    receipt: ScopedReadReceipt,
 }
 
 impl ScopedRead<'_> {
     /// The current reactions on one conversation record this read may see,
-    /// one grouped line per glyph (`👍×8 (Anna, Ben, +6)`), first put first.
-    pub fn reaction_lines(&self, record: &EntityId) -> Result<Vec<String>> {
+    /// one grouped line per glyph (`👍×8 (Anna, Ben, +6)`), first put first,
+    /// with the receipt of the read that admitted them (FIX 8669).
+    pub fn reaction_lines(&self, record: &EntityId) -> Result<ScopedReadResult<Vec<String>>> {
         self.reaction_lines_counting(record, &mut Vec::new())
     }
 
@@ -31,27 +34,41 @@ impl ScopedRead<'_> {
         &self,
         record: &EntityId,
         counted: &mut Vec<EntityId>,
-    ) -> Result<Vec<String>> {
+    ) -> Result<ScopedReadResult<Vec<String>>> {
         let rtxn = self.grant_read_txn()?;
         let admission = self.reaction_admission_in(&rtxn, None)?;
-        self.reaction_lines_in(&rtxn, &admission, record, counted)
+        let value = self.reaction_lines_in(&rtxn, &admission, record, counted)?;
+        Ok(ScopedReadResult {
+            value,
+            receipt: admission.receipt,
+        })
     }
 
     /// The admission this lane's reactions take in `rtxn`: the lane's own
-    /// request, resolved as a door that names none resolves it, so a
-    /// reaction CLAIM meets the check a claim this lane reads directly meets
-    /// (FIX 3977).
+    /// request, resolved as a door that names none resolves it (its bound
+    /// caller filter met with the floor), so a reaction CLAIM meets the check
+    /// a claim this lane reads directly meets (FIX 3977), and the receipt of
+    /// that walk (FIX 8669). The walk asks for no narrowing of its own and
+    /// judges each row under the scope the receipt names as applied, so every
+    /// row it withholds is the key's own denial or the caller's own filter
+    /// and stays opaque (FIX 8670): the receipt counts none. A disclosure
+    /// clamp narrows the audience, not the read, so a row it keeps out adds
+    /// no count either. A key whose credential is no longer live refuses
+    /// here, as every receipted read does, rather than answer under a scope
+    /// it cannot read.
     fn reaction_admission_in<'d>(
         &self,
         rtxn: &heed::RoTxn<'_>,
         disclosure: Option<&'d DisclosureContext>,
     ) -> Result<ReactionAdmission<'d>> {
         let (filter, policy) = self.resolve_retrieval_filter_in(rtxn, None)?;
+        let receipt = self.receipt_for(None, &policy, &filter, 0);
         Ok(ReactionAdmission {
             policy,
             filter,
             authority: self.held_for(None),
             disclosure,
+            receipt,
         })
     }
 
@@ -114,8 +131,10 @@ impl ScopedRead<'_> {
     }
 
     /// Attaches each hydrated MESSAGE or TURN result's grouped reaction lines
-    /// under [`REACTIONS_FIELD`]. Run after the pack's own scope filter.
-    pub fn attach_reactions(&self, pack: &mut ContextPack) -> Result<()> {
+    /// under [`REACTIONS_FIELD`]. Run after the pack's own scope filter, and
+    /// fold the returned receipt of the read that admitted the lines into
+    /// the pack's own (FIX 8669).
+    pub fn attach_reactions(&self, pack: &mut ContextPack) -> Result<ScopedReadReceipt> {
         self.attach_reactions_under(pack, None)
     }
 
@@ -125,24 +144,25 @@ impl ScopedRead<'_> {
         &self,
         pack: &mut ContextPack,
         disclosure: Option<&DisclosureContext>,
-    ) -> Result<()> {
+    ) -> Result<ScopedReadReceipt> {
         self.attach_reactions_quoting(pack, &HashMap::new(), disclosure, &mut Vec::new())
     }
 
     /// [`Self::attach_reactions_under`] for a pack whose TURNs took the place
     /// of matched messages (`quoted`, per TURN): a TURN's lines are followed
     /// by those of each message it quotes that this read may see. Each
-    /// reaction claim a line counts is added to `counted`.
+    /// reaction claim a line counts is added to `counted`. Every line of the
+    /// pack is read in one snapshot, under the one receipt returned.
     pub(crate) fn attach_reactions_quoting(
         &self,
         pack: &mut ContextPack,
         quoted: &HashMap<EntityId, Vec<EntityId>>,
         disclosure: Option<&DisclosureContext>,
         counted: &mut Vec<EntityId>,
-    ) -> Result<()> {
+    ) -> Result<ScopedReadReceipt> {
         let rtxn = self.grant_read_txn()?;
         // One snapshot, one resolved request and one held authority for
-        // every record's reactions (FIX 3977).
+        // every record's reactions (FIX 3977), under one receipt (FIX 8669).
         let admission = self.reaction_admission_in(&rtxn, disclosure)?;
         for entity in &mut pack.results {
             if !matches!(entity.entity_type, ENTITY_TYPE_MESSAGE | ENTITY_TYPE_TURN) {
@@ -158,18 +178,19 @@ impl ScopedRead<'_> {
                 fields.insert(REACTIONS_FIELD.to_owned(), serde_json::json!(lines));
             }
         }
-        Ok(())
+        Ok(admission.receipt)
     }
 
     /// [`crate::Vault::reaction_pills`] under this read, in one snapshot: only
     /// messages this read reads get pills, and a pill counts only the
-    /// reactions it reads, each under its whole admission. Like every read on
-    /// this lane, an owner lane refuses once its binding is gone.
+    /// reactions it reads, each under its whole admission. The pills come
+    /// with the receipt of that read (FIX 8669). Like every read on this
+    /// lane, an owner lane refuses once its binding is gone.
     pub fn reaction_pills(
         &self,
         messages: &[EntityId],
         viewer: EntityId,
-    ) -> Result<BTreeMap<EntityId, Vec<ReactionPill>>> {
+    ) -> Result<ScopedReadResult<BTreeMap<EntityId, Vec<ReactionPill>>>> {
         let rtxn = self.grant_read_txn()?;
         // The lane's own resolved request, as its recall reactions take it
         // (FIX 3977).
@@ -180,10 +201,15 @@ impl ScopedRead<'_> {
                 readable.push(*message);
             }
         }
-        self.vault
+        let value = self
+            .vault
             .reaction_pills_in(&rtxn, &readable, viewer, |row| {
                 self.row_admitted_in(&rtxn, &admission, &row.id)
-            })
+            })?;
+        Ok(ScopedReadResult {
+            value,
+            receipt: admission.receipt,
+        })
     }
 
     /// Whether this read may see a reaction signal: the reacted record and

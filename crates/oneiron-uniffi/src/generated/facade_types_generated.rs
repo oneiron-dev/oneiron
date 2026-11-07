@@ -34565,10 +34565,16 @@ pub enum PolicyCriticality {
 /// `oneiron::gate::policy_manifest_doors::types::PolicySensitivity`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum PolicySensitivity {
-    #[serde(rename = "normal")]
-    Normal,
+    #[serde(rename = "public")]
+    Public,
+    #[serde(rename = "private")]
+    Private,
     #[serde(rename = "sensitive")]
     Sensitive,
+    #[serde(rename = "restricted")]
+    Restricted,
+    #[serde(rename = "normal")]
+    Normal,
 }
 
 /// `oneiron::gate::policy_manifest_doors::types::PolicyAxes`.

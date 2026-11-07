@@ -4369,7 +4369,7 @@ export type PolicyManifestRead = { manifest_ref?: string | null }
 /** `oneiron::gate::policy_manifest_doors::types::PolicyCriticality` */
 export type PolicyCriticality = "normal" | "critical"
 /** `oneiron::gate::policy_manifest_doors::types::PolicySensitivity` */
-export type PolicySensitivity = "normal" | "sensitive"
+export type PolicySensitivity = "public" | "private" | "sensitive" | "restricted" | "normal"
 /** `oneiron::gate::policy_manifest_doors::types::PolicyAxes` */
 export type PolicyAxes = { criticality?: PolicyCriticality | null; sensitivity?: PolicySensitivity | null }
 /** `oneiron::gate::policy_manifest_doors::types::PolicyRule` */
