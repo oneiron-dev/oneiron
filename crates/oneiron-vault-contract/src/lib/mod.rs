@@ -32,6 +32,8 @@ pub mod esign_delivery;
 /// Shared lifecycle and host-specific adapters.
 pub mod host;
 pub mod host_adapters;
+/// HOST-private segregated legal-clone capture stream, never tenant ctl.
+pub mod host_legal;
 mod http_headers;
 mod ledger;
 /// The wake ledger's report in bounded pages (FIX 9549).
@@ -57,6 +59,7 @@ pub mod settings_policy;
 pub mod slim_control;
 /// Account and organization vault bindings with per-vault lifecycle hooks.
 pub mod tenancy;
+mod usage_export;
 /// The host's vault UID allocation table: its path, file shape and row codec.
 pub mod vault_uids;
 mod version;
@@ -134,6 +137,7 @@ pub use self::preview::{
 pub use self::secrets::{
     Credentials, TokenHex, from_hex, hex, read_credentials, write_credentials,
 };
+pub use self::usage_export::{UsageExportChunk, UsageExportCursor, UsageExportPage};
 pub use self::version::{CONTRACT_VERSION, SLIM_CONTRACT_VERSION, supports_slim};
 pub use self::wake::{
     Schedule, UnixTs, WakeEntry, now_ts, valid_vault_name, validate_wake_entries,

@@ -9,8 +9,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::adopted_evidence::AdoptedEvidence;
 
-#[cfg(feature = "sync")]
-mod handoff;
 mod page;
 
 pub(super) use page::{DecodedRow, PageVerdict, decode_page, page_root};
@@ -387,8 +385,10 @@ impl Vault {
 
     /// Appends an already-signed ReRoot only if its transition is valid in this vault.
     /// Each vault consumes its own independently signed history; there is no master share.
+    /// It brings no leave-notice delegation, so it bridges no root for a
+    /// removed person's leave notice ([`Self::apply_signed_re_root_with_joins`]).
     pub fn apply_signed_re_root(&self, entry: &AuthorityLogEntry) -> Result<EntityId> {
-        self.apply_signed_re_root_with_joins(&[], entry)
+        self.apply_signed_re_root_with_joins(&[], entry, None)
     }
 
     /// [`Self::apply_signed_re_root`] for a move signed elsewhere over a
@@ -402,18 +402,35 @@ impl Vault {
     /// are marked for the vault's loaded windows in the same write and
     /// announced once it commits, as an import's are.
     ///
+    /// `delegation` is the leave-notice delegation the move's signer signed
+    /// beside it (FIX 7932, [`Self::unsigned_leave_notice_delegation`]): it
+    /// is checked against the move (its vault, predecessor, successor, edge
+    /// hash and predecessor delegation) and stored in the same write. A move
+    /// with none settles as before and bridges no root for a removed
+    /// person's leave notice.
+    ///
     /// # Errors
     /// A move that is no ReRoot, a join that is no host-family main-log join
     /// by the move's own signer of the same vault or that the move does not
     /// rest on, a repeated join, a move that leaves a current main-log head
-    /// uncovered, a transition the fold refuses, or a storage error.
+    /// uncovered, a transition the fold refuses, a delegation that is not
+    /// the move's or does not verify, or a storage error.
     pub fn apply_signed_re_root_with_joins(
         &self,
         joins: &[AuthorityLogEntry],
         entry: &AuthorityLogEntry,
+        delegation: Option<&LeaveNoticeDelegation>,
     ) -> Result<EntityId> {
         let mut txn = self.store.env.write_txn()?;
         let (id, rows) = self.apply_signed_re_root_in_txn(&mut txn, joins, entry)?;
+        if let Some(delegation) = delegation {
+            super::leave_notice_continuity::store_delegation_in_txn(
+                &self.store,
+                &mut txn,
+                entry,
+                delegation,
+            )?;
+        }
         self.mark_authority_rows_in_txn(&mut txn, &rows)?;
         txn.commit()?;
         self.note_committed_authority_rows(rows);
@@ -506,18 +523,20 @@ impl Vault {
     /// Constructs and appends one root migration under the current root's
     /// signature, in one write transaction. The signer callback receives only
     /// domain-separated transcripts, each signed with `signer_key`, and runs
-    /// while that transaction is open, so it must not write to this vault.
+    /// while that transaction is open, so it must not write to this vault:
+    /// the joins', the move's, and then the move's leave-notice delegation's
+    /// ([`LEAVE_NOTICE_DELEGATION_DOMAIN`], FIX 7932), stored in the same
+    /// write.
     ///
     /// A main-log frontier wider than one entry names is joined first (FIX
-    /// 11867): the root signs each join through the callback, in the host
+    /// 11867): the root signs the join through the callback, in the host
     /// family, whose rule (a live owner roster key) is the standing the move
-    /// itself stands on, and the move names the join tips. An Ed25519 and a
-    /// P-256 root join alike (FIX 11993). The joins cover every head in this
-    /// call, in groups of [`AUTHORITY_FRONTIER_JOIN_ARITY`] until at most
-    /// [`MAX_PARENTS`] tips are left, so no head count refuses and every head
-    /// stays in the move's causal past, inside its fence. The joins and the
-    /// move are marked for the vault's loaded windows in the write and
-    /// announced once it commits.
+    /// itself stands on, and the move names the join. An Ed25519 and a
+    /// P-256 root join alike (FIX 11993). One join names every head in this
+    /// call (FIX 8527), so no head count refuses and every head stays in the
+    /// move's causal past, inside its fence. The join and the move are
+    /// marked for the vault's loaded windows in the write and announced once
+    /// it commits.
     pub fn re_root_authority<S>(
         &self,
         new_device: DeviceAuthority,
@@ -543,24 +562,26 @@ impl Vault {
     }
 
     /// The same move inside the caller's write transaction. `signer` runs
-    /// while that transaction is open, so it must not open another. A
-    /// frontier wider than one entry names is joined first by `joiner`, the
-    /// key the move retires: the host signer, as its host-issued ops are
-    /// (FIX 8498, Engine 09:31 (3)), or the root through the move's callback
-    /// (FIX 11867, 11993); the move then names the join tips. With no
-    /// `joiner` the move names the heads alone. The joins and the move are
-    /// marked for the vault's loaded windows in `txn`; the rows come back for
-    /// the caller to announce once its own commit lands
+    /// while that transaction is open, so it must not open another; it signs
+    /// the move, then the move's leave-notice delegation, which lands in
+    /// `txn` with it while the key the move retires is still at hand (FIX
+    /// 7932). A frontier wider than one entry names is joined first by
+    /// `joiner`, the key the move retires: the host signer, as its
+    /// host-issued ops are (FIX 8498, Engine 09:31 (3)), or the root through
+    /// the move's callback (FIX 11867, 11993); the move then names the join.
+    /// With no `joiner` the move names the heads alone. The join and the move
+    /// are marked for the vault's loaded windows in `txn`; the rows come back
+    /// for the caller to announce once its own commit lands
     /// ([`Self::note_committed_authority_rows`]).
     pub(super) fn re_root_authority_in_txn<S>(
         &self,
         txn: &mut heed::RwTxn<'_>,
         new_device: DeviceAuthority,
         (signer_key, joiner): (&AuthorityKey, Option<FrontierSigner<'_>>),
-        signer: S,
+        mut signer: S,
     ) -> Result<(AuthorityLogEntry, BTreeSet<EntityId>)>
     where
-        S: FnOnce(&[u8]) -> Result<Vec<u8>>,
+        S: FnMut(&[u8]) -> Result<Vec<u8>>,
     {
         let mut rows = BTreeSet::new();
         if let Some(joiner) = joiner {
@@ -578,6 +599,12 @@ impl Vault {
         let mut entry = self.unsigned_re_root_in_txn(txn, new_device, signer_key.clone())?;
         entry.signer.signature = signer(&authority_transcript(&entry)?)?;
         let (_, moved) = self.apply_signed_re_root_in_txn(txn, &[], &entry)?;
+        super::leave_notice_continuity::sign_delegation_in_txn(
+            &self.store,
+            txn,
+            &entry,
+            &mut signer,
+        )?;
         rows.extend(moved);
         self.mark_authority_rows_in_txn(txn, &rows)?;
         Ok((entry, rows))
@@ -705,11 +732,16 @@ fn signed_re_root_joins(
 
 /// One vault and its independently signed migration entry, with the joins
 /// its signer signed first over a frontier wider than one entry names (FIX
-/// 11993; empty when the frontier fits).
+/// 11993; empty when the frontier fits), and the leave-notice delegation its
+/// signer signed beside it (FIX 7932).
 pub struct VaultRecoveryRequest<'a> {
     pub vault: &'a Vault,
     pub joins: Vec<AuthorityLogEntry>,
     pub entry: AuthorityLogEntry,
+    /// The move's leave-notice delegation
+    /// ([`Vault::unsigned_leave_notice_delegation`], signed by the move's
+    /// signer); `None` bridges no root for a removed person's leave notice.
+    pub delegation: Option<LeaveNoticeDelegation>,
 }
 
 /// Recovers independent vaults. Results are per-vault: there is no cross-vault
@@ -721,130 +753,11 @@ pub fn recover_vaults_independently(
     requests
         .iter()
         .map(|request| {
-            request
-                .vault
-                .apply_signed_re_root_with_joins(&request.joins, &request.entry)
+            request.vault.apply_signed_re_root_with_joins(
+                &request.joins,
+                &request.entry,
+                request.delegation.as_ref(),
+            )
         })
         .collect()
-}
-
-#[cfg(feature = "sync")]
-impl Vault {
-    /// This vault's folded roster carried on, in memory, by `handoff`: signed
-    /// ReRoot rows in chain order that hand the root on from where this
-    /// vault's fold stands (FIX 2053). Each row is judged as the fold judges
-    /// a ReRoot ([`handoff_row_stands`]) against the roster the rows before
-    /// it leave, and applied as the fold applies one: every key it stood on
-    /// is revoked and its successor stands. A row this fold already holds is
-    /// skipped while no new row has landed. Nothing is written, and the
-    /// folded roster is only ever extended, never replaced. A handoff that
-    /// carries the rows its edges stand on folds whole with this vault's
-    /// rows instead, in memory ([`handoff::through_closure`], FIX 3797).
-    ///
-    /// The authority vault id and the roster; `None` when the fold is in
-    /// conflict or the handoff does not carry it on: a row out of chain, one
-    /// a key this fold retired signed (a fork), or any other refusal.
-    ///
-    /// # Errors
-    ///
-    /// Storage errors.
-    pub(crate) fn roster_through_handoff(
-        &self,
-        handoff: &[Vec<u8>],
-    ) -> Result<Option<(AuthorityVaultId, BTreeMap<AuthorityKey, FoldedDevice>)>> {
-        let txn = self.store.env.read_txn()?;
-        let fold = self.authority_view_readonly_in_txn(&txn)?;
-        drop(txn);
-        if fold.vault_root_is_conflicted() {
-            return Ok(None);
-        }
-        let Some(vault_id) = fold.vault_id else {
-            return Ok(None);
-        };
-        let handoff = match handoff::through_closure(self, vault_id, handoff)? {
-            handoff::HandoffClosure::Folded(verdict) => return Ok(verdict),
-            handoff::HandoffClosure::Edges(edges) => edges,
-        };
-        let mut roster = fold.roster.clone();
-        let mut landed = false;
-        for bytes in &handoff {
-            let Ok(entry) = decode_authority_log_entry_body(bytes) else {
-                return Ok(None);
-            };
-            let Ok(hash) = authority_entry_hash(&entry) else {
-                return Ok(None);
-            };
-            if !landed && fold.valid_entries.contains(&hash) {
-                continue;
-            }
-            let AuthorityOp::ReRoot { new_device } = &entry.op else {
-                return Ok(None);
-            };
-            if !handoff_row_stands(&fold, &roster, vault_id, &entry, new_device) {
-                return Ok(None);
-            }
-            for device in roster.values_mut() {
-                device.revoked = true;
-            }
-            roster.insert(
-                new_device.key.clone(),
-                FoldedDevice {
-                    key: new_device.key.clone(),
-                    tier: new_device.tier,
-                    roles: new_device.roles,
-                    revoked: false,
-                },
-            );
-            landed = true;
-        }
-        Ok(Some((vault_id, roster)))
-    }
-}
-
-/// Whether `entry`, a ReRoot to `new_device`, stands on `roster` as the fold
-/// judges a ReRoot (FIX 2053): well formed and well signed, in this vault,
-/// signed by a live Owner key of `roster` that `fold` never retired, its
-/// cosigners live there too, a sequence past every row its signer signed in
-/// `fold`, and a successor no wider than its signer and new to the roster.
-/// The rows between `fold`'s heads and the handoff do not ride with it, so
-/// its signer's standing in `roster` is the ancestry it is judged on.
-#[cfg(feature = "sync")]
-fn handoff_row_stands(
-    fold: &AuthorityFold,
-    roster: &BTreeMap<AuthorityKey, FoldedDevice>,
-    vault_id: AuthorityVaultId,
-    entry: &AuthorityLogEntry,
-    new_device: &DeviceAuthority,
-) -> bool {
-    if entry.validate_shape().is_err()
-        || verify_entry_signatures(entry).is_err()
-        || entry.vault_id != Some(vault_id)
-    {
-        return false;
-    }
-    let signer = entry.signer_key();
-    let Some(old_root) = roster.get(signer).filter(|device| !device.revoked) else {
-        return false;
-    };
-    if old_root.roles & ROLE_OWNER == 0
-        || new_device.roles & !(old_root.roles | ROLE_CLOUD) != 0
-        || fold.retired_keys.contains(signer)
-        || roster.contains_key(&new_device.key)
-        || fold
-            .append_sequences
-            .get(signer)
-            .is_some_and(|prior| entry.seq <= *prior)
-    {
-        return false;
-    }
-    let live = |key: &AuthorityKey| {
-        roster
-            .get(key)
-            .is_some_and(|device| !device.revoked && device.roles != 0)
-    };
-    let participants: BTreeSet<&AuthorityKey> = std::iter::once(&entry.signer)
-        .chain(&entry.cosigns)
-        .map(|signature| &signature.public_key)
-        .collect();
-    participants.iter().all(|&key| live(key))
 }
