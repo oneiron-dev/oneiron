@@ -4915,7 +4915,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ports/document_fields.rs` | src | s | 2 crate-vis | — | Core half of `ports::document_fields`: its store-layer items live in `oneiron_store::ports::document_fields`… |
 | `src/ports/document_rows.rs` | src | s | 11 crate-vis | — | The document-row port: the ARCH-0023b entity-document families of one document slot |
 | `src/ports/integrity.rs` | src | m | 31 crate-vis | — | Source-prefix dependency index and deletion invalidation in the caller's transaction |
-| `src/ports/lmdb_aux.rs` | src | m | 6 crate-vis | — | LMDB audit, dependency, content-addressed blob and queue adapters |
+| `src/ports/lmdb_aux.rs` | src | m | 8 crate-vis | — | LMDB audit, dependency, content-addressed blob and queue adapters |
 | `src/ports/lmdb_claim.rs` | src | m | 5 crate-vis | — | Claim adapter preserves the history door; current-state queries exclude stale claims |
 | `src/ports/lmdb_document_rows.rs` | src | s | — | — | LMDB/session adapter of the document-row port, over the declared `sync_state` families |
 | `src/ports/lmdb_entity.rs` | src | m | 7 crate-vis | — | LMDB entity, edge and place adapters |
@@ -4937,7 +4937,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ports/memory/auxiliary.rs` | src | m | — | — | In-memory secondary indexes, immutable audit rows, blobs and queue leases |
 | `src/ports/memory/query.rs` | src | m | — | — | Memory implementation of the same lazy read contracts as LMDB |
 | `src/ports/mod.rs` | src | s | 9 re-export · 26 crate-vis | — | Transaction-composable storage ports |
-| `src/ports/mutation.rs` | src | s | 5 crate-vis | — | Mutation audit composition |
+| `src/ports/mutation.rs` | src | s | 9 crate-vis | — | Mutation audit composition |
+| `src/ports/mutation/plan.rs` | src | s | 11 crate-vis | — | The native audit append program and its ordered, caller-owned projection |
 | `src/ports/point_read.rs` | src | s | 1 struct · 1 re-export | ReadRow | Core half of `ports::point_read`: its store-layer items live in `oneiron_store::ports::point_read` and are… |
 | `src/ports/query.rs` | src | m | 3 struct · 3 enum · 8 trait · 1 type | ChangeLogStoreRead, DeletionFamily, DeletionMarker, DeletionState, EdgeStoreRead, EntityStoreRead, EntityTime, EntityWriteSegmentRead +6 | Read halves of the storage ports |
 | `src/ports/regeneration.rs` | src | s | 5 crate-vis | — | Generation-fenced completion of derived artifacts |
@@ -4953,7 +4954,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ports/tests/step23_conformance.rs` | test | m | — | — | — |
 | `src/ports/tests/support.rs` | test | s | 6 crate-vis | — | — |
 | `src/ports/time.rs` | src | m | 3 fn · 1 re-export · 16 crate-vis | — | Per-store clock and id source |
-| `src/ports/time/recording_plan.rs` | src | s | 12 crate-vis | — | The native recording-clock row program and its caller-owned projection |
+| `src/ports/time/recording_plan.rs` | src | s | 14 crate-vis | — | The native recording-clock row program and its caller-owned projection |
 | `src/ports/vault_read.rs` | src | s | 6 fn | — | Vault reads in a snapshot the caller holds (FIX 5870): [`Vault::get`] and the TURN doors' admission and… |
 | `src/ports/window_rows.rs` | src | s | 5 crate-vis | — | The window deletion-row port: the rows a deletion leaves under a window address |
 | `src/ppr/cache_evict.rs` | src | s | 2 crate-vis | — | Bounded, resumable eviction of the PPR cache for a serving host |
