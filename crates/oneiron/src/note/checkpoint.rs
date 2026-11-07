@@ -5,17 +5,19 @@
 //! document ([`pins`]); each operation receipt under the NOTE its key leads
 //! with; and each title row, its key split from its author
 //! ([`super::title_index::checkpoint`]). Every actor a row names is split
-//! out; a fork no one decided whose opener stays erased goes on restore, as
-//! the erase deletes it.
+//! out; a fork no one decided whose opener stays erased goes on restore with
+//! its proposal document, as the erase deletes both (FIX 3520, FIX 6523).
 //!
 //! A proposal head's Loro snapshot splits through the shared Loro projection
 //! under its NOTE ([`loro`], FIX 6072): its stamps' and authorship records'
 //! actors out, and the join writing the same history back with every actor
-//! that did not open erased. One whose fork no one decided, a shallow one and
-//! one that is no value-only proposal stay under the vault-wide seal, named
-//! with the NOTE. The live documents' rows are split by the entity-document
-//! getter through the same NOTE codec, and a NOTE core's author by the
-//! entity-row getter ([`body`]). Nothing calls this until KS7-5, and only
+//! that did not open erased; its pins stay in it, and the restore's
+//! citation erase takes out each one whose record went (FIX 18270). A
+//! shallow one, and one whose fork no one decided and whose fork record did
+//! not split beside it, stay under the vault-wide seal, named with the NOTE.
+//! The live documents' rows are split by the entity-document getter through
+//! the same NOTE codec, and a NOTE core's author by the entity-row getter
+//! ([`body`]). Nothing calls this until KS7-5, and only
 //! once CHECKPOINT_PAYLOADS_ENABLED is on.
 #![allow(
     dead_code,
@@ -27,7 +29,7 @@ mod bundle;
 mod loro;
 mod pins;
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 use heed::{RoTxn, RwTxn};
 
@@ -41,26 +43,33 @@ use super::lifecycle::NOTE_SEAL;
 use super::overrides::NOTE_OVERRIDE;
 use super::proposals::{
     ACTOR_ERASE_PENDING_NOTE_FORK, NOTE_FORK, NOTE_PROPOSAL_BUNDLE, NOTE_RECEIPT, NoteActor,
-    PendingNoteForkErase,
+    NoteFork, PendingNoteForkErase,
 };
-use super::sync_rows::{NOTE_RECEIPT_BY_REQUEST, SYNC_NC_E};
+use super::side_keys::HexPair;
+use super::sync_rows::{NOTE_FORK_AUTHORITY, NOTE_RECEIPT_BY_REQUEST, SYNC_NC_E};
 use super::title_index;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::side_table::SideKey;
 use crate::store::ManifestDbs;
 use crate::store::checkpoint_payload::rows::{
-    self, ActorPart, Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowLocator,
-    Unresolved,
+    self, ActorPart, Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowDb, RowLocator,
+    RowPart, Unresolved,
 };
 
 /// The field a row's one actor fills.
 const ACTOR: &str = "actor";
 
-/// Moves a row's actor out, leaving no one.
+/// Moves a row's local actor out, leaving no one. An imported author is
+/// source provenance, never a local actor part: it stays in the row
+/// (FIX 7777).
 fn take_actor(slot: &mut NoteActor) -> Vec<(String, EntityId)> {
-    match std::mem::replace(slot, NoteActor::Erased) {
-        NoteActor::Actor(id) => vec![(ACTOR.to_owned(), id)],
-        NoteActor::Erased => Vec::new(),
+    match *slot {
+        NoteActor::Actor(id) => {
+            *slot = NoteActor::Erased;
+            vec![(ACTOR.to_owned(), id)]
+        }
+        NoteActor::Erased | NoteActor::Imported(_) => Vec::new(),
     }
 }
 
@@ -106,22 +115,27 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
             take_actor(&mut seal.sealed_by)
         })?;
     }
-    // Each fork no one decided, by its NOTE and head: its proposal document
-    // goes with it when its opener does not open.
-    let mut undecided = BTreeSet::new();
+    // Each fork no one decided, by its NOTE and head, and whether its record
+    // split under that NOTE: its proposal document goes with it when its
+    // opener does not open, so the document splits only beside the record.
+    let mut undecided = BTreeMap::new();
     for row in rows::typed_rows(dbs, txn, NOTE_FORK, &mut out)? {
-        if !row.value.decided {
-            undecided.insert((row.value.note, row.value.fork));
-        }
         let owner = OwnerRef::entity(&row.value.note);
+        if !row.value.decided {
+            // The split places the record under `owner` exactly when its
+            // codec spells it back; otherwise it leaves it unclassified. Its
+            // document's restore finds it by the head its key names.
+            let beside = row.key == row.value.fork && rows::spells_back(NOTE_FORK, &row);
+            undecided.insert((row.value.note, row.value.fork), beside);
+        }
         rows::split_actors(&mut out, owner, NOTE_FORK, row, |fork| {
             take_actor(&mut fork.actor)
         })?;
     }
     for row in rows::typed_rows(dbs, txn, NOTE_PROPOSAL_DOC, &mut out)? {
         let note = row.key.0.0;
-        let pending = undecided.contains(&(note, row.key.1.0));
-        loro::capture_proposal(&mut out, note, pending, row);
+        let fork = undecided.get(&(note, row.key.1.0)).copied();
+        loro::capture_proposal(&mut out, note, fork, row);
     }
     for row in rows::typed_rows(dbs, txn, NOTE_RECEIPT, &mut out)? {
         let owner = OwnerRef::entity(&row.value.note);
@@ -149,6 +163,11 @@ fn capture_operation_receipts(
             None => out.unclassified(row.at, None, Unresolved::NoOwner),
         }
     }
+    // Each mark on a fork its authority sent, under the NOTE its key leads
+    // with (FIX 12789).
+    for row in rows::typed_rows(dbs, txn, NOTE_FORK_AUTHORITY, out)? {
+        out.exact(OwnerRef::entity(&row.key.0.0), row.at, row.bytes);
+    }
     for row in rows::typed_rows(dbs, txn, NOTE_RECEIPT_BY_REQUEST, out)? {
         let owner = OwnerRef::entity(&row.key.0.0);
         rows::split_actors(out, owner, NOTE_RECEIPT_BY_REQUEST, row, |receipt| {
@@ -170,6 +189,7 @@ fn owns(at: &RowLocator) -> bool {
         NOTE_PROPOSAL_DOC.decl(),
         SYNC_NC_E.decl(),
         NOTE_RECEIPT_BY_REQUEST.decl(),
+        NOTE_FORK_AUTHORITY.decl(),
     ]
     .into_iter()
     .any(|decl| at.in_table(decl))
@@ -204,6 +224,8 @@ fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
         rows::check_row(SYNC_NC_E, at, value)
     } else if at.in_table(NOTE_RECEIPT_BY_REQUEST.decl()) {
         rows::check_row(NOTE_RECEIPT_BY_REQUEST, at, value)
+    } else if at.in_table(NOTE_FORK_AUTHORITY.decl()) {
+        rows::check_row(NOTE_FORK_AUTHORITY, at, value)
     } else if pins::owns(at) {
         pins::check(at, value)
     } else if title_index::checkpoint::owns(at) {
@@ -213,13 +235,55 @@ fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
     }
 }
 
+/// Whether a joined fork record goes: one no one decided whose opener did
+/// not open, as the erase deletes it (FIX 3520).
+fn pending_fork_goes(fork: &NoteFork) -> bool {
+    fork.actor == NoteActor::Erased
+        && !fork.decided
+        && ACTOR_ERASE_PENDING_NOTE_FORK == PendingNoteForkErase::Delete
+}
+
+/// Whether the proposal document at `at` goes with its fork on this restore
+/// (FIX 6523): the fork record of its head in `opened` joins as one no one
+/// decided whose opener did not open, which the erase deletes with its
+/// document. An exact record restores as it is, and so does its document. A
+/// document no record here names (a decided fork's is split exact or with
+/// its own actors, as is an unforked one) stays.
+fn proposal_goes(opened: &OpenedOwnerRows, at: &RowLocator) -> Result<bool> {
+    let key = at.key.strip_prefix(NOTE_PROPOSAL_DOC.decl().prefix);
+    let key = key
+        .and_then(HexPair::decode_key)
+        .ok_or_else(rows::bad_part)?;
+    let record = RowLocator::row(RowDb::of(NOTE_FORK.decl()), NOTE_FORK.key_bytes(&key.1.0));
+    let Some(part) = opened.rows.iter().find(|part| part.at() == &record) else {
+        return Ok(false);
+    };
+    match part {
+        RowPart::Exact { .. } => Ok(false),
+        RowPart::NoActor { value, .. } => {
+            let parts: Vec<&ActorPart> = opened
+                .actor_parts
+                .iter()
+                .filter(|part| part.content_locator == record)
+                .collect();
+            let fork = rows::join_actors(NOTE_FORK, value, &parts, |fork, field, actor| {
+                put_actor(&mut fork.actor, field, actor)
+            })?;
+            Ok(fork.note == key.0.0 && pending_fork_goes(&fork))
+        }
+        RowPart::ActorKeyed { .. } => Err(rows::bad_part()),
+    }
+}
+
 /// A no-one-form row with its opened actors back. A fork no one decided
-/// whose opener did not open goes, as the erase deletes it; every other row
-/// stays, naming no one where its actor did not open. A proposal document's
-/// history is rebuilt the same, a document of the NOTE its key leads with.
+/// whose opener did not open goes with its proposal document, as the erase
+/// deletes both; every other row stays, naming no one where its actor did
+/// not open. A proposal document's history is rebuilt the same, a document
+/// of the NOTE its key leads with.
 fn join(
     dbs: &impl ManifestDbs,
     view: &RoTxn<'_>,
+    opened: &OpenedOwnerRows,
     at: &RowLocator,
     value: &[u8],
     parts: &[&ActorPart],
@@ -228,10 +292,7 @@ fn join(
         let fork = rows::join_actors(NOTE_FORK, value, parts, |fork, field, actor| {
             put_actor(&mut fork.actor, field, actor)
         })?;
-        if fork.actor == NoteActor::Erased
-            && !fork.decided
-            && ACTOR_ERASE_PENDING_NOTE_FORK == PendingNoteForkErase::Delete
-        {
+        if pending_fork_goes(&fork) {
             return Ok(None);
         }
         return NOTE_FORK.encode_value(&fork).map(Some);
@@ -261,6 +322,9 @@ fn join(
         return bundle::join(dbs, view, at, value, parts);
     }
     if at.in_table(NOTE_PROPOSAL_DOC.decl()) {
+        if proposal_goes(opened, at)? {
+            return Ok(None);
+        }
         return loro::join_proposal(at, value, parts).map(Some);
     }
     Err(rows::bad_part())
@@ -273,6 +337,7 @@ fn join(
 fn join_row(
     dbs: &impl ManifestDbs,
     view: &RoTxn<'_>,
+    opened: &OpenedOwnerRows,
     at: &RowLocator,
     value: &[u8],
     parts: &[&ActorPart],
@@ -280,7 +345,7 @@ fn join_row(
     if title_index::checkpoint::owns(at) {
         return title_index::checkpoint::join(at, value, parts);
     }
-    Ok(join(dbs, view, at, value, parts)?.map(|value| (at.clone(), value)))
+    Ok(join(dbs, view, opened, at, value, parts)?.map(|value| (at.clone(), value)))
 }
 
 /// Puts `opened`'s NOTE rows back: exact rows as they are, each actor that
@@ -293,6 +358,6 @@ pub(crate) fn restore_in_txn(
     opened: OpenedOwnerRows,
 ) -> Result<Restored> {
     rows::restore_parts_keyed(dbs, txn, &opened, check, |view, at, value, parts| {
-        join_row(dbs, view, at, value, parts)
+        join_row(dbs, view, &opened, at, value, parts)
     })
 }
