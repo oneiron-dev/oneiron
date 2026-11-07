@@ -10,6 +10,7 @@
 //! Every time here is unix milliseconds on one clock: the parent's cutoff,
 //! fixed in its parent row at its first spawn.
 
+mod coverage;
 mod origins;
 
 use std::sync::Arc;
@@ -23,6 +24,8 @@ use crate::attempt_queue::{AttemptId, BorrowedAttemptLease};
 use crate::vault::VaultId;
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
 
+pub use self::coverage::SourceDeliveryWitness;
+pub(crate) use self::coverage::{merge_ranges, subtract_ranges};
 pub(crate) use self::origins::OriginsUnion;
 pub use self::origins::{DelegatedSource, ReaderFindingRef, ResultOrigins};
 
@@ -545,7 +548,8 @@ pub struct SpawnParentBinding {
 }
 
 /// Where a child stands. A settled one (`Done`, `Partial`, `Failed`) never
-/// moves again.
+/// moves again. `Done` is completed with a committed finding: it proves no
+/// read of any input (FIX 7735).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum ReaderJobState {
@@ -593,6 +597,10 @@ pub struct ReaderJob {
     pub finding: Option<ReaderFindingRef>,
     pub enqueued_at_ms: u64,
     pub settled_at_ms: Option<u64>,
+    /// What a scoped child's reads were shown of its primary source in its
+    /// latest claim, frozen when it settles (FIX 7735).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery_witness: Option<SourceDeliveryWitness>,
 }
 
 impl ReaderJob {
