@@ -5,9 +5,7 @@
 use crate::{
     Error, Result,
     filesystem::{Workspace, validate_files},
-    protocol::{
-        Input, MAX_CHUNK, MAX_COMPONENT, MAX_FILE, MAX_REQUESTS, MAX_SOURCE, Session, Snapshot,
-    },
+    protocol::{Input, MAX_CHUNK, MAX_COMPONENT, MAX_FILE, MAX_SOURCE, Session, Snapshot},
 };
 use oneiron_sandbox_contract::{ShapeError, WorkspacePath, WorkspaceShape};
 use serde::Deserialize;
@@ -29,7 +27,6 @@ struct State<T> {
     session: Session<T>,
     workspace: Workspace,
     limits: StoreLimits,
-    calls: usize,
     poisoned: bool,
     proposed: Proposed,
 }
@@ -54,11 +51,12 @@ struct OpenFile {
 type Reply = std::result::Result<u64, String>;
 
 impl<T> State<T> {
+    /// A host call is refused only once the run is poisoned: no lifetime
+    /// count ends a healthy guest's calls (FIX 8026).
     fn count_call(&mut self) -> wasmtime::Result<()> {
-        if self.poisoned || self.calls >= MAX_REQUESTS - 1 {
-            return Err(wasmtime::Error::msg("guest host-call budget exhausted"));
+        if self.poisoned {
+            return Err(wasmtime::Error::msg("guest host calls are poisoned"));
         }
-        self.calls += 1;
         Ok(())
     }
 
@@ -190,7 +188,6 @@ pub(crate) fn execute<T: Read + Write + 'static>(
             session,
             workspace,
             limits,
-            calls: 0,
             poisoned: false,
             proposed: Proposed {
                 shape,
