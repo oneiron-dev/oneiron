@@ -107,6 +107,7 @@ mod grants_doors;
 mod graph_ask_doors;
 mod guest_document_doors;
 mod guest_doors;
+mod hook_check_doors;
 mod hook_regen_doors;
 mod hook_session;
 mod hooks;

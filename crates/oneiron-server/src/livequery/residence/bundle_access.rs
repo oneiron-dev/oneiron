@@ -11,6 +11,10 @@
 //! - `get` (read): one generation's grants for the machine this socket
 //!   proved, never one the request names.
 //!
+//! The `publicationPending`, `publicationOffer`, `publicationGet` and
+//! `publicationInvalidate` operations carry native request-bound pairs for
+//! asked publishers. They use the same door, not the pad-admission authority.
+//!
 //! The home opens nothing. A refused call looks missing; no door asks where
 //! the caller runs.
 
@@ -18,11 +22,12 @@ use base64::Engine;
 use oneiron::EntityId;
 use oneiron::authority::PeerMachine;
 use oneiron::sync::residence::{
-    PadAccessRequest, PadAccessState, ensure_sealed_pad_access, offer_sealed_pad_access,
-    pending_sealed_pad_access, sealed_digest_from_hex, sealed_digest_hex, sealed_generation_hex,
-    sealed_pad_access,
+    PadAccessRequest, PadAccessState, ensure_sealed_pad_access, invalidate_publication_grant,
+    offer_publication_grant, offer_sealed_pad_access, pending_publication_grants,
+    pending_sealed_pad_access, publication_grant, sealed_digest_from_hex, sealed_digest_hex,
+    sealed_generation_hex, sealed_pad_access,
 };
-use oneiron::world_keys::{PadAdmissionTarget, SealedPadAdmissionGrant};
+use oneiron::world_keys::{PadAdmissionTarget, SealedPadAdmissionGrant, SealedPublicationGrant};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -36,6 +41,10 @@ enum AccessRequest {
     Pending,
     Offer { grant: String },
     Get { generation: String },
+    PublicationPending,
+    PublicationOffer { grant: String },
+    PublicationGet { generation: String, request: String },
+    PublicationInvalidate { grant: String },
 }
 
 /// One machine, by its id and the digest of its encryption key, both hex.
@@ -70,6 +79,13 @@ fn target_json(target: &PadAdmissionTarget) -> Value {
     })
 }
 
+fn publication_from_wire(text: &str) -> Result<SealedPublicationGrant, AppError> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(text)
+        .map_err(|_| AppError::invalid_params())?;
+    SealedPublicationGrant::from_bytes(&bytes).map_err(|_| AppError::invalid_params())
+}
+
 pub(super) fn bundle_access(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -79,6 +95,49 @@ pub(super) fn bundle_access(
     let input: AccessRequest =
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
     let reply = match input {
+        AccessRequest::PublicationPending => {
+            let rows = pending_publication_grants(&server.vault, peer).map_err(|_| missing())?;
+            let pending: Vec<Value> = rows
+                .iter()
+                .map(|row| {
+                    json!({
+                        "generation": sealed_generation_hex(&row.generation),
+                        "request": sealed_digest_hex(&row.request),
+                        "executor": row.executor.to_hex(),
+                    })
+                })
+                .collect();
+            json!({ "pending": pending })
+        }
+        AccessRequest::PublicationOffer { grant } => {
+            auth.require(CoreScope::Write)?;
+            let grant = publication_from_wire(&grant)?;
+            offer_publication_grant(&server.vault, &grant).map_err(|_| missing())?;
+            json!({ "offered": true })
+        }
+        AccessRequest::PublicationGet {
+            generation,
+            request,
+        } => {
+            let generation = bundle_generation(&generation)?;
+            let request = sealed_digest_from_hex(&request).ok_or_else(AppError::invalid_params)?;
+            let grant = publication_grant(&server.vault, peer, generation, request)
+                .map_err(|_| missing())?
+                .map(|grant| {
+                    grant
+                        .to_bytes()
+                        .map(|bytes| base64::engine::general_purpose::STANDARD.encode(bytes))
+                })
+                .transpose()
+                .map_err(|_| missing())?;
+            json!({ "grant": grant })
+        }
+        AccessRequest::PublicationInvalidate { grant } => {
+            auth.require(CoreScope::Write)?;
+            let grant = publication_from_wire(&grant)?;
+            invalidate_publication_grant(&server.vault, peer, &grant).map_err(|_| missing())?;
+            json!({ "invalidated": true })
+        }
         AccessRequest::Ensure { targets } => {
             auth.require(CoreScope::Write)?;
             let requests = targets
