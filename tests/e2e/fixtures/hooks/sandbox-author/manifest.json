@@ -1,0 +1,541 @@
+{
+  "version": 1,
+  "area": "hooks-sandbox-author",
+  "assets": [
+    {
+      "id": "hooks-sandbox-author-PACK-md",
+      "path": "PACK.md",
+      "source": {
+        "uri": "independent-oracle:hooks05-native-sandbox-and-foreign-author",
+        "revision": "hooks05-sandbox-author-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "4e4b7bac6aef1b7463e58fe7070cf2fb06d67c48fb6e4aba8d21a87018c9b52b",
+      "expectedFacts": {
+        "packPath": "PACK.md",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects",
+        "permissions": "explicit real owner grants; declarations carry no authority"
+      },
+      "scenarios": [
+        "HOOKS-05"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-sandbox-author-hooks-file-attempt-HOOK-md",
+      "path": "hooks/file-attempt/HOOK.md",
+      "source": {
+        "uri": "independent-oracle:hooks05-native-sandbox-and-foreign-author",
+        "revision": "hooks05-sandbox-author-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "9b54609f9e40a960508a992a33808029fd653a98831f74e272e0bf224b756bfa",
+      "expectedFacts": {
+        "packPath": "hooks/file-attempt/HOOK.md",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects",
+        "permissions": "explicit real owner grants; declarations carry no authority"
+      },
+      "scenarios": [
+        "HOOKS-05"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-sandbox-author-hooks-file-attempt-body-js",
+      "path": "hooks/file-attempt/body.js",
+      "source": {
+        "uri": "independent-oracle:hooks05-native-sandbox-and-foreign-author",
+        "revision": "hooks05-sandbox-author-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "9cdffcac792286d95c8f0522d16cb881d4aaddefe6cea4d56af3e60d8183fba7",
+      "expectedFacts": {
+        "packPath": "hooks/file-attempt/body.js",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects",
+        "permissions": "explicit real owner grants; declarations carry no authority"
+      },
+      "scenarios": [
+        "HOOKS-05"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-sandbox-author-hooks-file-attempt-intent-md",
+      "path": "hooks/file-attempt/intent.md",
+      "source": {
+        "uri": "independent-oracle:hooks05-native-sandbox-and-foreign-author",
+        "revision": "hooks05-sandbox-author-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "9820d9a43c39edb88cfb096d312653becc194c6ccf9bae7e0728a6e3eefc44b0",
+      "expectedFacts": {
+        "packPath": "hooks/file-attempt/intent.md",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects",
+        "permissions": "explicit real owner grants; declarations carry no authority"
+      },
+      "scenarios": [
+        "HOOKS-05"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-sandbox-author-hooks-network-attempt-HOOK-md",
+      "path": "hooks/network-attempt/HOOK.md",
+      "source": {
+        "uri": "independent-oracle:hooks05-native-sandbox-and-foreign-author",
+        "revision": "hooks05-sandbox-author-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "61fadde6bf7934e8d5f5c0ae4a9b8926d63a5cf9eb2a22111873ecaeb03366b7",
+      "expectedFacts": {
+        "packPath": "hooks/network-attempt/HOOK.md",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects",
+        "permissions": "explicit real owner grants; declarations carry no authority"
+      },
+      "scenarios": [
+        "HOOKS-05"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-sandbox-author-hooks-network-attempt-body-js",
+      "path": "hooks/network-attempt/body.js",
+      "source": {
+        "uri": "independent-oracle:hooks05-native-sandbox-and-foreign-author",
+        "revision": "hooks05-sandbox-author-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "4d4e39dafa4dfc3045e33ed9cd50d9540d91526df2692eb21d5082b6177aecba",
+      "expectedFacts": {
+        "packPath": "hooks/network-attempt/body.js",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects",
+        "permissions": "explicit real owner grants; declarations carry no authority"
+      },
+      "scenarios": [
+        "HOOKS-05"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-sandbox-author-hooks-network-attempt-intent-md",
+      "path": "hooks/network-attempt/intent.md",
+      "source": {
+        "uri": "independent-oracle:hooks05-native-sandbox-and-foreign-author",
+        "revision": "hooks05-sandbox-author-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "64e99e6904e384925e4842646933424d326bdcb1342b64e125c773766374a7b1",
+      "expectedFacts": {
+        "packPath": "hooks/network-attempt/intent.md",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects",
+        "permissions": "explicit real owner grants; declarations carry no authority"
+      },
+      "scenarios": [
+        "HOOKS-05"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-sandbox-author-hooks-secret-attempt-HOOK-md",
+      "path": "hooks/secret-attempt/HOOK.md",
+      "source": {
+        "uri": "independent-oracle:hooks05-native-sandbox-and-foreign-author",
+        "revision": "hooks05-sandbox-author-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "09a0abe7ea5b2ff1881abbdf874ce8001db51e8e32b876bc619d6e985bf5fbb4",
+      "expectedFacts": {
+        "packPath": "hooks/secret-attempt/HOOK.md",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects",
+        "permissions": "explicit real owner grants; declarations carry no authority"
+      },
+      "scenarios": [
+        "HOOKS-05"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-sandbox-author-hooks-secret-attempt-body-js",
+      "path": "hooks/secret-attempt/body.js",
+      "source": {
+        "uri": "independent-oracle:hooks05-native-sandbox-and-foreign-author",
+        "revision": "hooks05-sandbox-author-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "1dd6c9b118a02bcb186410d0ef5d505cf20a6fb7854c432f64be8f4c1904f731",
+      "expectedFacts": {
+        "packPath": "hooks/secret-attempt/body.js",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects",
+        "permissions": "explicit real owner grants; declarations carry no authority"
+      },
+      "scenarios": [
+        "HOOKS-05"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-sandbox-author-hooks-secret-attempt-intent-md",
+      "path": "hooks/secret-attempt/intent.md",
+      "source": {
+        "uri": "independent-oracle:hooks05-native-sandbox-and-foreign-author",
+        "revision": "hooks05-sandbox-author-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "83870b0bcaa1302b3f1af4f2b1f373ce59f730d557ef90642b7adf03a02849cb",
+      "expectedFacts": {
+        "packPath": "hooks/secret-attempt/intent.md",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects",
+        "permissions": "explicit real owner grants; declarations carry no authority"
+      },
+      "scenarios": [
+        "HOOKS-05"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-sandbox-author-hooks-kind-escape-HOOK-md",
+      "path": "hooks/kind-escape/HOOK.md",
+      "source": {
+        "uri": "independent-oracle:hooks05-native-sandbox-and-foreign-author",
+        "revision": "hooks05-sandbox-author-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "8873d99d9f32c16cba3eb0c0dd0d8a1afa0a7291a6d3f6940d26d7b7e5271be2",
+      "expectedFacts": {
+        "packPath": "hooks/kind-escape/HOOK.md",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects",
+        "permissions": "explicit real owner grants; declarations carry no authority"
+      },
+      "scenarios": [
+        "HOOKS-05"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-sandbox-author-hooks-kind-escape-body-js",
+      "path": "hooks/kind-escape/body.js",
+      "source": {
+        "uri": "independent-oracle:hooks05-native-sandbox-and-foreign-author",
+        "revision": "hooks05-sandbox-author-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "b69998425cc484571ed23205630c736974bd36cfb6efecc5a88f9af424214096",
+      "expectedFacts": {
+        "packPath": "hooks/kind-escape/body.js",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects",
+        "permissions": "explicit real owner grants; declarations carry no authority"
+      },
+      "scenarios": [
+        "HOOKS-05"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-sandbox-author-hooks-kind-escape-intent-md",
+      "path": "hooks/kind-escape/intent.md",
+      "source": {
+        "uri": "independent-oracle:hooks05-native-sandbox-and-foreign-author",
+        "revision": "hooks05-sandbox-author-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "37bf8033669a2e158be90b59c5254590a22d3f1a6dd57a636e7f3c55cbc9ddf7",
+      "expectedFacts": {
+        "packPath": "hooks/kind-escape/intent.md",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects",
+        "permissions": "explicit real owner grants; declarations carry no authority"
+      },
+      "scenarios": [
+        "HOOKS-05"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-sandbox-author-hooks-offer-marker-HOOK-md",
+      "path": "hooks/offer-marker/HOOK.md",
+      "source": {
+        "uri": "independent-oracle:hooks05-native-sandbox-and-foreign-author",
+        "revision": "hooks05-sandbox-author-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "05c9eb5c072ae3d8b70579c54f9ea124d69ad32ae7621221cc4cc4c936e0e71f",
+      "expectedFacts": {
+        "packPath": "hooks/offer-marker/HOOK.md",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects",
+        "permissions": "explicit real owner grants; declarations carry no authority"
+      },
+      "scenarios": [
+        "HOOKS-05"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-sandbox-author-hooks-offer-marker-body-js",
+      "path": "hooks/offer-marker/body.js",
+      "source": {
+        "uri": "independent-oracle:hooks05-native-sandbox-and-foreign-author",
+        "revision": "hooks05-sandbox-author-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "4d1a67cfca2081676eb3389cc2ce4828184fcbc9b46a9ff2c5e6f2ef4bdb6ee5",
+      "expectedFacts": {
+        "packPath": "hooks/offer-marker/body.js",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects",
+        "permissions": "explicit real owner grants; declarations carry no authority"
+      },
+      "scenarios": [
+        "HOOKS-05"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-sandbox-author-hooks-offer-marker-intent-md",
+      "path": "hooks/offer-marker/intent.md",
+      "source": {
+        "uri": "independent-oracle:hooks05-native-sandbox-and-foreign-author",
+        "revision": "hooks05-sandbox-author-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "76de49033083ae1305369d89855271729d8fc33565c8466b534f0c5403e9ce0a",
+      "expectedFacts": {
+        "packPath": "hooks/offer-marker/intent.md",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects",
+        "permissions": "explicit real owner grants; declarations carry no authority"
+      },
+      "scenarios": [
+        "HOOKS-05"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-sandbox-author-hooks-saved-question-HOOK-md",
+      "path": "hooks/saved-question/HOOK.md",
+      "source": {
+        "uri": "independent-oracle:hooks05-native-sandbox-and-foreign-author",
+        "revision": "hooks05-sandbox-author-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "b297e214baa456220f549cbacee2d30e19c62d3aa0eb21d3342a939d1361c5f6",
+      "expectedFacts": {
+        "packPath": "hooks/saved-question/HOOK.md",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects",
+        "permissions": "explicit real owner grants; declarations carry no authority"
+      },
+      "scenarios": [
+        "HOOKS-05"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-sandbox-author-hooks-saved-question-body-js",
+      "path": "hooks/saved-question/body.js",
+      "source": {
+        "uri": "independent-oracle:hooks05-native-sandbox-and-foreign-author",
+        "revision": "hooks05-sandbox-author-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "828d9c82a8b01672c7e6e77ac412c46438c1d8fe9cb9286ae1b78ffcf2d25cc7",
+      "expectedFacts": {
+        "packPath": "hooks/saved-question/body.js",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects",
+        "permissions": "explicit real owner grants; declarations carry no authority"
+      },
+      "scenarios": [
+        "HOOKS-05"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-sandbox-author-hooks-saved-question-intent-md",
+      "path": "hooks/saved-question/intent.md",
+      "source": {
+        "uri": "independent-oracle:hooks05-native-sandbox-and-foreign-author",
+        "revision": "hooks05-sandbox-author-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "3c47b69d31c473ce5818e44383ea436f9444e33d9e4f87ecb96fe1b00b69dfd8",
+      "expectedFacts": {
+        "packPath": "hooks/saved-question/intent.md",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects",
+        "permissions": "explicit real owner grants; declarations carry no authority"
+      },
+      "scenarios": [
+        "HOOKS-05"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-sandbox-author-hooks-after-marker-HOOK-md",
+      "path": "hooks/after-marker/HOOK.md",
+      "source": {
+        "uri": "independent-oracle:hooks05-native-sandbox-and-foreign-author",
+        "revision": "hooks05-sandbox-author-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "d63390bd2debf88466e427c517d40fbe30e03f61c80312e196953f787c5432db",
+      "expectedFacts": {
+        "packPath": "hooks/after-marker/HOOK.md",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects",
+        "permissions": "explicit real owner grants; declarations carry no authority"
+      },
+      "scenarios": [
+        "HOOKS-05"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-sandbox-author-hooks-after-marker-body-js",
+      "path": "hooks/after-marker/body.js",
+      "source": {
+        "uri": "independent-oracle:hooks05-native-sandbox-and-foreign-author",
+        "revision": "hooks05-sandbox-author-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "eb10e56a6b226a63a59217b734391fe0311dbe4bb538ffb5025ba3f17889d523",
+      "expectedFacts": {
+        "packPath": "hooks/after-marker/body.js",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects",
+        "permissions": "explicit real owner grants; declarations carry no authority"
+      },
+      "scenarios": [
+        "HOOKS-05"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-sandbox-author-hooks-after-marker-intent-md",
+      "path": "hooks/after-marker/intent.md",
+      "source": {
+        "uri": "independent-oracle:hooks05-native-sandbox-and-foreign-author",
+        "revision": "hooks05-sandbox-author-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "3c47b69d31c473ce5818e44383ea436f9444e33d9e4f87ecb96fe1b00b69dfd8",
+      "expectedFacts": {
+        "packPath": "hooks/after-marker/intent.md",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects",
+        "permissions": "explicit real owner grants; declarations carry no authority"
+      },
+      "scenarios": [
+        "HOOKS-05"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-sandbox-author-scenario-json",
+      "path": "scenario.json",
+      "source": {
+        "uri": "independent-oracle:hooks05-native-sandbox-and-foreign-author",
+        "revision": "hooks05-sandbox-author-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "ea54e0b3be1240a853457ee25bc7b87f14d708267663e6ccab82cce37c5fa249",
+      "expectedFacts": {
+        "realSafeReplayBeforeLiveAttempts": true,
+        "imports": [
+          "scoped-read",
+          "ai-verdict",
+          "emit-outcome"
+        ],
+        "directCapabilities": [],
+        "fileAttempt": "invoke require(\"fs\").readFileSync on a local synthetic path",
+        "networkAttempt": "invoke fetch on the loopback sink URL",
+        "secretAttempt": "invoke hydrate with a real registered secret handle",
+        "author": "actual hub publisher, never installing owner",
+        "source": "generated",
+        "outOfKindEffects": 0,
+        "outOfReadGrant": "withheld, not owner scope",
+        "offerIsNotActivation": true,
+        "samePublisherAuthorityRequired": true,
+        "sameAuthorGrantRevoked": true,
+        "durablePendingAcrossRestart": true,
+        "postRevokeForeignEffects": 0,
+        "currentAuthorityRefusalRequired": true,
+        "taskAnswerIsAuthority": false,
+        "savedTerminalReceiptObservedIsNotAssumed": true,
+        "savedCallerMayResumeUnderOwnAuthority": true,
+        "revokedForeignGeneratedEffects": 0,
+        "currentAuthorityRefusalSurface": "known revoked binding grant/replay door; not an invented saved-call terminal getter"
+      },
+      "scenarios": [
+        "HOOKS-05"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-sandbox-author-control-PACK-md",
+      "path": "control/PACK.md",
+      "source": {
+        "uri": "independent-oracle:hooks05-native-sandbox-and-foreign-author",
+        "revision": "hooks05-sandbox-author-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "c69a9b182f28bb29189a6d758a8e1603bd1f0acc9e4de6a02b5fc634792e40ec",
+      "expectedFacts": {
+        "packPath": "control/PACK.md",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects",
+        "permissions": "explicit real owner grants; declarations carry no authority"
+      },
+      "scenarios": [
+        "HOOKS-05"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-sandbox-author-control-hooks-progress-control-HOOK-md",
+      "path": "control/hooks/progress-control/HOOK.md",
+      "source": {
+        "uri": "independent-oracle:hooks05-native-sandbox-and-foreign-author",
+        "revision": "hooks05-sandbox-author-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "d966f74d9bfc8a445b506735af9687c03f0c790c16c3d3bbcb8ca9dafbd6ffc4",
+      "expectedFacts": {
+        "packPath": "control/hooks/progress-control/HOOK.md",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects",
+        "permissions": "explicit real owner grants; declarations carry no authority"
+      },
+      "scenarios": [
+        "HOOKS-05"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-sandbox-author-control-hooks-progress-control-body-js",
+      "path": "control/hooks/progress-control/body.js",
+      "source": {
+        "uri": "independent-oracle:hooks05-native-sandbox-and-foreign-author",
+        "revision": "hooks05-sandbox-author-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "3bcba5e62dd69e6b2c3ea0840c50edc814d847394eca1effbb90a9f244c992ca",
+      "expectedFacts": {
+        "packPath": "control/hooks/progress-control/body.js",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects",
+        "permissions": "explicit real owner grants; declarations carry no authority"
+      },
+      "scenarios": [
+        "HOOKS-05"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-sandbox-author-control-hooks-progress-control-intent-md",
+      "path": "control/hooks/progress-control/intent.md",
+      "source": {
+        "uri": "independent-oracle:hooks05-native-sandbox-and-foreign-author",
+        "revision": "hooks05-sandbox-author-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "d36b8aeefc6d34785751d0953d2c7a6cf17a013d930b3bc33b50173e2e3c79df",
+      "expectedFacts": {
+        "packPath": "control/hooks/progress-control/intent.md",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects",
+        "permissions": "explicit real owner grants; declarations carry no authority"
+      },
+      "scenarios": [
+        "HOOKS-05"
+      ],
+      "requires": []
+    }
+  ]
+}
