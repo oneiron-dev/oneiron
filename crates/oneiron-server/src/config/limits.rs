@@ -480,6 +480,7 @@ impl LimitsConfig {
             context_third_parties,
             memory_pinned_refs,
             codebase_manifest_files,
+            recall_query_bytes,
             requested_result_rows,
             embedding_dimensions,
             shared_merge_evidence_rows,
@@ -791,6 +792,7 @@ impl LimitsConfig {
             (EngineLimit::ContextThirdParties, context_third_parties),
             (EngineLimit::MemoryPinnedRefs, memory_pinned_refs),
             (EngineLimit::CodebaseManifestFiles, codebase_manifest_files),
+            (EngineLimit::RecallQueryBytes, recall_query_bytes),
             (EngineLimit::RequestedResultRows, requested_result_rows),
             (EngineLimit::EmbeddingDimensions, embedding_dimensions),
             (
