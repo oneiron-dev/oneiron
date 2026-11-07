@@ -30,10 +30,10 @@ use oneiron::conversation::{
     ChatBreakpoint, ChatBreakpointUserTurn, TurnAction, TurnActionAttempt,
 };
 use oneiron::llm::run_admission::PayerPerson;
-use oneiron::memory::{Memory, MessageStreamHandle, WitnessAuthor, resolve_entity_ref};
+use oneiron::memory::{Memory, WitnessAuthor, resolve_entity_ref};
 use oneiron::{EntityId, LlmMessage, LlmMessageRole, LlmRequest, Vault, WriteActor};
 
-use super::text_message;
+use super::{AnswerStream, text_message};
 use crate::ai_host::{AiHandle, ChatBreakpointCall, ChatSelfMode};
 use crate::models::RoleCall;
 
@@ -291,14 +291,16 @@ pub(super) struct TurnMeter {
 /// its source's again), kept for `handle`'s generation before the call is
 /// sent (FIX 5028), and, past its threshold, the flight of its log queued
 /// off the answer's path: a chat turn's, or a reused prefix's own action
-/// log (FIX 5027).
+/// log (FIX 5027). `sources` is every row `admitted` was read from, `None`
+/// when not all were witnessed.
 pub(super) fn enter(
     ai: &AiHandle,
     vault: &Arc<Vault>,
     breakpoint: AnswerBreakpoint,
     admitted: &RoleCall,
-    handle: MessageStreamHandle,
+    handle: &AnswerStream,
     meter: TurnMeter,
+    sources: Option<Vec<EntityId>>,
 ) -> PendingSeed {
     let AnswerBreakpoint {
         mode,
@@ -335,7 +337,8 @@ pub(super) fn enter(
             payer: meter.payer,
             funding: meter.funding,
             budget_units: meter.budget_units,
-            message: handle.message_id(),
+            message: handle.correlation_id(),
+            sources,
         };
         match crate::server::blocking(|| ai.enter_chat_breakpoint(call, admitted)) {
             Ok(()) | Err(ConversationCompactionUnavailable::Quiet) => {}
