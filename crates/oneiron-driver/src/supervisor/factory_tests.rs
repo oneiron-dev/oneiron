@@ -684,6 +684,7 @@ async fn production_factory_executes_owner_admitted_agent_authored_recipe() -> R
                 reserve_units: 100,
                 now: 4,
                 host_scope: None,
+                destination_bound: None,
             },
             &mut exec,
             &WakeCancellation::new(),

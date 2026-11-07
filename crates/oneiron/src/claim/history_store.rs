@@ -285,6 +285,17 @@ pub(crate) fn validate_machine_history_put(
                 .map_err(|_| invalid_history())?;
             super::transition::verify_machine_claim_transition_event(&event)
                 .map_err(|_| invalid_history())?;
+            // A wide frontier is one atomic signed fact (FIX 8673): past its
+            // threshold row the count of its tips asks whether everything is
+            // okay, once per claim, and refuses nothing.
+            let mut tips = crate::scan_check::ScanCount::start(
+                store,
+                txn,
+                crate::scan_check::EngineScan::MachineTransitionFrontier,
+                event.target.as_bytes(),
+            )?;
+            tips.rows(event.predecessors.len());
+            tips.defer(store);
             if super::transition::machine_claim_transition_event_id(&event)
                 .map_err(|_| invalid_history())?
                 != *id

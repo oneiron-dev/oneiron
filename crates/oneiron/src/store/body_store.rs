@@ -66,6 +66,7 @@ pub(crate) struct BodyDir {
     pub(crate) dir: File,
     pub(crate) sealed: Option<super::DirSeal>,
     pub(crate) session: bool,
+    pub(crate) live_spill: Option<Arc<super::LiveSpillSources>>,
 }
 
 impl BodyDir {
@@ -97,6 +98,7 @@ impl BodyDir {
             dir,
             sealed: None,
             session: false,
+            live_spill: None,
         }))
     }
 
