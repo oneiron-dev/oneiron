@@ -114,6 +114,11 @@ impl Memory<'_> {
             Landing::Base { held, .. } => *held,
             Landing::Overlay { .. } => None,
         };
+        let held_hint_lane = if held.is_some() && assertion_lane.is_none() {
+            self.read_lane_if_granted(ClaimReadStatus::Recorded)?
+        } else {
+            None
+        };
         let sink = match landing {
             Landing::Base { route, .. } => WitnessSink::Base(self.base_sink(&plan, route)?),
             Landing::Overlay {
@@ -146,6 +151,7 @@ impl Memory<'_> {
                         room_speech,
                         quote_key: quote_key.as_ref(),
                         assertion_lane: assertion_lane.as_ref(),
+                        held_hint_lane: assertion_lane.as_ref().or(held_hint_lane.as_ref()),
                         refused: &refused,
                         unproven: &unproven,
                         silent,

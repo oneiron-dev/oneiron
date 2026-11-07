@@ -79,7 +79,7 @@ pub use verbs::{
 };
 pub(crate) use verbs::{envelope_view, mention_view};
 
-pub(crate) use held::settle_held_tags_in_txn;
+pub(crate) use held::{settle_held_tags_in_txn, settle_held_tags_scoped_in_txn};
 pub(crate) use input::{shown_message_text, turn_members_in_txn, turn_messages_in_txn, turn_role};
 pub(crate) use marker::text_entity_type_in_txn;
 pub(crate) use marker::{mark_on_publication_in_txn, mark_turn_in_txn, same_marker_identity};
@@ -97,7 +97,6 @@ pub(crate) use tags::{
     readable_page_in_txn, readable_view_in_txn, saved_turn_mood_in_txn, settle_mention_in_txn,
     tagged_messages_absent_in_txn, tear_in_txn,
 };
-
 #[cfg(test)]
 mod save_tests;
 #[cfg(test)]

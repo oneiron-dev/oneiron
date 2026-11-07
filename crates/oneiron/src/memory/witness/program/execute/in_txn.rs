@@ -12,6 +12,7 @@ pub(super) struct WitnessWrite<'w, 't, 'a, 'v, 'l> {
     pub(super) room_speech: Option<(&'a OffRecordSession<'v>, EntityId)>,
     pub(super) quote_key: Option<&'w crate::claim::ScopedReadActorKey>,
     pub(super) assertion_lane: Option<&'w ScopedRead<'l>>,
+    pub(super) held_hint_lane: Option<&'w ScopedRead<'l>>,
     pub(super) refused: &'w Cell<Option<String>>,
     pub(super) unproven: &'w Cell<Vec<String>>,
     pub(super) silent: bool,
