@@ -63,6 +63,41 @@ fn amount(value: &str) -> Result<f64> {
         .ok_or_else(|| invalid("invalid backend price"))
 }
 
+/// The catalog's monetary quote applied to the reported token usage. A missing
+/// cache price is unknown when that cache was used, not a free cache read.
+pub fn catalog_usage_cost(price: &LlmCatalogCost, usage: &LlmUsage) -> Result<f64> {
+    let cached = usage
+        .input
+        .cache_read
+        .checked_add(usage.input.cache_write)
+        .ok_or_else(|| invalid("model usage overflow"))?;
+    let uncached = usage
+        .input
+        .total
+        .checked_sub(cached)
+        .ok_or_else(|| invalid("cache usage exceeds input usage"))?;
+    let cache_cost = |tokens: u64, value: &Option<String>| -> Result<f64> {
+        if tokens == 0 {
+            return Ok(0.0);
+        }
+        Ok(tokens as f64
+            * amount(
+                value
+                    .as_deref()
+                    .ok_or_else(|| invalid("cache price missing"))?,
+            )?)
+    };
+    let cost = (uncached as f64 * amount(&price.input_per_million)?
+        + usage.output.total as f64 * amount(&price.output_per_million)?
+        + cache_cost(usage.input.cache_read, &price.cache_read_per_million)?
+        + cache_cost(usage.input.cache_write, &price.cache_write_per_million)?)
+        / 1_000_000.0;
+    if !cost.is_finite() {
+        return Err(invalid("model cost overflow"));
+    }
+    Ok(cost)
+}
+
 impl PricedModelBackend {
     pub fn validate(&self) -> Result<()> {
         self.pin.validate()?;
@@ -84,35 +119,10 @@ impl PricedModelBackend {
     /// Missing cache prices do not silently turn a measured bill into an estimate.
     pub fn cost_receipt(&self, usage: LlmUsage, units: u64) -> Result<ModelCostReceipt> {
         self.validate()?;
-        let cached = usage
-            .input
-            .cache_read
-            .checked_add(usage.input.cache_write)
-            .ok_or_else(|| invalid("model usage overflow"))?;
-        let uncached = usage
-            .input
-            .total
-            .checked_sub(cached)
-            .ok_or_else(|| invalid("cache usage exceeds input usage"))?;
         if units == 0 {
             return Err(invalid("a cost receipt needs units"));
         }
-        let cache_cost = |tokens: u64, value: &Option<String>| -> Result<f64> {
-            if tokens == 0 {
-                return Ok(0.0);
-            }
-            Ok(tokens as f64
-                * amount(
-                    value
-                        .as_deref()
-                        .ok_or_else(|| invalid("cache price missing"))?,
-                )?)
-        };
-        let cost = (uncached as f64 * amount(&self.price.input_per_million)?
-            + usage.output.total as f64 * amount(&self.price.output_per_million)?
-            + cache_cost(usage.input.cache_read, &self.price.cache_read_per_million)?
-            + cache_cost(usage.input.cache_write, &self.price.cache_write_per_million)?)
-            / 1_000_000.0;
+        let cost = catalog_usage_cost(&self.price, &usage)?;
         let cost_per_thousand = cost * 1_000.0 / units as f64;
         if !cost.is_finite() || !cost_per_thousand.is_finite() {
             return Err(invalid("model cost overflow"));

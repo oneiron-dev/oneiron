@@ -29,7 +29,7 @@ use aes_gcm::{Aes256Gcm, Nonce};
 use getrandom::SysRng;
 use oneiron_crypto::{
     Argon2Cost, Envelope, Kek, OpenKey, OpenPolicy, Purpose, SealKey, SealParams, SuiteId,
-    WrapType, seal_with_aad,
+    WrapType, seal_with_aad_into,
 };
 use zeroize::Zeroizing;
 
@@ -223,15 +223,44 @@ fn seal_chunk(
         recipient: RECIPIENT,
         vault_id: id,
     };
-    Ok(seal_with_aad(
+    let len = plaintext
+        .len()
+        .checked_add(oneiron_crypto::TAG_LEN)
+        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::OutOfMemory))?;
+    let mut ciphertext = Vec::new();
+    ciphertext
+        .try_reserve_exact(len)
+        .map_err(std::io::Error::from)?;
+    ciphertext.resize(len, 0);
+    let envelope = seal_with_aad_into(
         &params,
         SealKey::SymmetricKek(kek),
         plaintext,
         extra,
         &mut SysRng,
+        ciphertext,
     )
-    .map_err(|_| refused("sealing an inference snapshot failed"))?
-    .to_bytes())
+    .map_err(|_| refused("sealing an inference snapshot failed"))?;
+    let mut frame = Vec::new();
+    frame
+        .try_reserve_exact(envelope.len())
+        .map_err(std::io::Error::from)?;
+    envelope.write_to(&mut frame)?;
+    Ok(frame)
+}
+
+fn chunk_policy<'a>(id: &'a [u8; ID_LEN], key_id: &'a [u8; 27]) -> OpenPolicy<'a> {
+    OpenPolicy {
+        purpose: Purpose::InferenceSnapshotChunk,
+        vault_id: id,
+        recipient: RECIPIENT,
+        key_id,
+        wraps: &[WrapType::SymmetricKek],
+        aead_suites: &[AEAD],
+        kem_suites: &[],
+        min_epoch: EPOCH,
+        argon2_max: Argon2Cost::RFC9106_SECOND,
+    }
 }
 
 /// The plaintext of `frame`, authenticated as envelope `index` of `role`
@@ -247,17 +276,7 @@ fn open_chunk(
     len: u64,
 ) -> Result<Zeroizing<Vec<u8>>> {
     let key_id = key_id(id, index, role);
-    let policy = OpenPolicy {
-        purpose: Purpose::InferenceSnapshotChunk,
-        vault_id: id,
-        recipient: RECIPIENT,
-        key_id: &key_id,
-        wraps: &[WrapType::SymmetricKek],
-        aead_suites: &[AEAD],
-        kem_suites: &[],
-        min_epoch: EPOCH,
-        argon2_max: Argon2Cost::RFC9106_SECOND,
-    };
+    let policy = chunk_policy(id, &key_id);
     let plaintext = Envelope::parse(frame)
         .map_err(|_| corrupt())?
         .open_with_aad(OpenKey::SymmetricKek(kek), &policy, extra)
@@ -266,6 +285,24 @@ fn open_chunk(
         return Err(corrupt());
     }
     Ok(plaintext)
+}
+
+/// Opens a native chunk directly into its already-reserved plaintext range.
+fn open_chunk_into(
+    kek: &Kek,
+    id: &[u8; ID_LEN],
+    index: u64,
+    role: Role,
+    extra: &[u8],
+    frame: &[u8],
+    plaintext: &mut [u8],
+) -> Result<()> {
+    let key_id = key_id(id, index, role);
+    let policy = chunk_policy(id, &key_id);
+    Envelope::parse(frame)
+        .map_err(|_| corrupt())?
+        .open_with_aad_into(OpenKey::SymmetricKek(kek), &policy, extra, plaintext)
+        .map_err(|_| corrupt())
 }
 
 /// The associated data a data key is wrapped under: the wrap domain and its
@@ -443,9 +480,11 @@ fn open_snapshot_inner(
     let kek = Kek::from_bytes_ref(&key);
     let last_extra = last_extra_aad(manifest, sealed.total, sealed.count)?;
     let mut plain = Zeroizing::new(Vec::new());
-    if let Some(expected) = expected_plaintext_len {
-        let bytes = usize::try_from(expected)
-            .map_err(|_| std::io::Error::from(std::io::ErrorKind::OutOfMemory))?;
+    let expected_bytes = expected_plaintext_len
+        .map(usize::try_from)
+        .transpose()
+        .map_err(|_| std::io::Error::from(std::io::ErrorKind::OutOfMemory))?;
+    if let Some(bytes) = expected_bytes {
         plain
             .try_reserve_exact(bytes)
             .map_err(std::io::Error::from)?;
@@ -461,16 +500,27 @@ fn open_snapshot_inner(
             Role::Chunk => manifest,
             Role::Last => last_extra.as_slice(),
         };
-        let piece = open_chunk(
-            &kek,
-            &sealed.id,
-            index,
-            role,
-            extra,
-            frame,
-            chunk_len(sealed.count, sealed.total, role)?,
-        )?;
-        plain.extend_from_slice(&piece);
+        let len = chunk_len(sealed.count, sealed.total, role)?;
+        if let Some(expected) = expected_bytes {
+            let start = plain.len();
+            let end = start
+                .checked_add(usize::try_from(len).map_err(|_| corrupt())?)
+                .filter(|end| *end <= expected)
+                .ok_or_else(corrupt)?;
+            plain.resize(end, 0);
+            open_chunk_into(
+                &kek,
+                &sealed.id,
+                index,
+                role,
+                extra,
+                frame,
+                &mut plain[start..end],
+            )?;
+        } else {
+            let piece = open_chunk(&kek, &sealed.id, index, role, extra, frame, len)?;
+            plain.extend_from_slice(&piece);
+        }
     }
     if plain.len() as u64 != sealed.total {
         return Err(corrupt());

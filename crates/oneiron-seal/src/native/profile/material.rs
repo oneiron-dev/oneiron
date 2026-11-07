@@ -186,7 +186,7 @@ pub(super) fn key_bound_issuer<'a>(
     };
     for cand_der in chain.iter().chain(anchors.iter()) {
         if let Some(cand) = verify::EmbeddedCert::admitted(cand_der, memory)?
-            && verify::issued_by(&cert, &cand)
+            && verify::issued_by(&cert, &cand, memory)?
         {
             return Ok(Some(cand_der.as_slice()));
         }
@@ -265,8 +265,13 @@ pub(super) async fn gather_validation_material(
     }
     let empty_chain: &[Vec<u8>] = &[];
     let tsa_chain = token.map_or(empty_chain, |t| t.tsa_chain_ders.as_slice());
-    let Some((ocsps_der, crls_der)) =
-        gather_revocation(ctx, &[signer_chain_ders.as_slice(), tsa_chain], &[]).await?
+    let Some((ocsps_der, crls_der)) = gather_revocation(
+        ctx,
+        &[signer_chain_ders.as_slice(), tsa_chain],
+        &[],
+        &[certs_der.as_slice()],
+    )
+    .await?
     else {
         return Ok(None);
     };
@@ -297,8 +302,16 @@ pub(super) async fn include_timestamp_material(
     material: &mut DssMaterial,
     token: &tsp::ValidatedToken,
 ) -> Result<bool, SealError> {
-    let Some((ocsps, crls)) =
-        gather_revocation(ctx, &[token.tsa_chain_ders.as_slice()], &material.certs_der).await?
+    let Some((ocsps, crls)) = gather_revocation(
+        ctx,
+        &[token.tsa_chain_ders.as_slice()],
+        &material.certs_der,
+        &[
+            material.certs_der.as_slice(),
+            token.tsa_chain_ders.as_slice(),
+        ],
+    )
+    .await?
     else {
         return Ok(false);
     };
@@ -337,6 +350,7 @@ async fn gather_revocation(
     ctx: &SealContext<'_>,
     chains: &[&[Vec<u8>]],
     already_covered: &[Vec<u8>],
+    dss_cert_chains: &[&[Vec<u8>]],
 ) -> Result<Option<(Vec<SharedBytes>, Vec<SharedBytes>)>, SealError> {
     let memory = ctx
         .limits
@@ -347,6 +361,8 @@ async fn gather_revocation(
     let mut ocsps_der = Vec::new();
     let mut covered = 0usize;
     let mut need = 0usize;
+    // Admitted once, when a certificate first falls to OCSP (FIX 13657).
+    let mut ocsp_context = None;
     for &chain in chains {
         for cert in chain {
             if ctx.config.trust_anchors_der.iter().any(|a| a == cert)
@@ -373,8 +389,20 @@ async fn gather_revocation(
                         break;
                     }
                 }
+                if !crl_covered && ocsp_context.is_none() {
+                    ocsp_context = Some(
+                        ocsp::OcspContext::admitted_chains(
+                            dss_cert_chains,
+                            &ctx.config.trust_anchors_der,
+                            &memory,
+                        )
+                        .map_err(|refusal| refusal.seal_error(SealStage::Revocation))?,
+                    );
+                }
                 if !crl_covered
-                    && let Some(ocsp) = ocsp::fetch_valid_ocsp(ctx, cert, issuer, &memory).await?
+                    && let Some(context) = &ocsp_context
+                    && let Some(ocsp) =
+                        ocsp::fetch_valid_ocsp(ctx, cert, issuer, context, &memory).await?
                 {
                     if ocsps_der.is_empty() {
                         let slots = chains

@@ -61,6 +61,16 @@ impl Vault {
             }
             return Ok(RepoMount { files });
         }
+        // A fork already recorded for the repo as named reads from the vault
+        // alone, as a codebase snapshot does: the live checkout and its lock
+        // guard the working tree, never the recorded bytes (FIX 20449). A
+        // name the oplog does not know, an alias or a path inside the
+        // checkout, resolves through the checkout below.
+        if let RepoMountRef::Fork(hash) = reference
+            && snapshot_recorded_for_repo(self, repo_ref, hash)?
+        {
+            return self.fork_mount(hash);
+        }
         let root = resolve_mutable_repo_root(repo_ref)?;
         let canonical = canonical_repo_ref_for_root(repo_ref, &root)?;
         let _guard = lock_repository(&git_common_dir(&root)?)?;
@@ -81,48 +91,53 @@ impl Vault {
                         "fork is not recorded for this repo",
                     )));
                 }
-                let txn = self.store.env.read_txn()?;
-                let snapshot = super::oplog::SNAPSHOT
-                    .get(&self.store, &txn, &repo_mutation_snapshot_key(hash))?
-                    .ok_or(Error::EntityNotFound)?;
-                let raw = super::oplog::SNAPSHOT.encode_value(&snapshot)?;
-                if *blake3::hash(&raw).as_bytes() != hash
-                    && super::support::sha256_bytes(&raw) != hash
-                {
-                    return Err(Error::CorruptedIndex("fork hash mismatch"));
-                }
-                let snapshot = super::snapshot::require_snapshot_schema(snapshot)?;
-                // A file the lift sweep marked reads as a withheld one does
-                // (OF-067).
-                let lifted = super::lift::lifted_entries_in_txn(
-                    self,
-                    &txn,
-                    &repo_mutation_snapshot_key(hash),
-                    &raw,
-                )?;
-                let mut files = BTreeMap::new();
-                for entry in snapshot.entries {
-                    validate_relative_repo_path(&entry.path)?;
-                    if lifted.contains(&entry.path) {
-                        continue;
-                    }
-                    let bytes = match entry.kind {
-                        StoredRepoSnapshotEntryKind::File
-                        | StoredRepoSnapshotEntryKind::Gitlink => entry.content,
-                        StoredRepoSnapshotEntryKind::Symlink => entry
-                            .symlink_target
-                            .ok_or(Error::CorruptedIndex("symlink target missing"))?
-                            .into_bytes(),
-                        // Snapshot custody kept its bytes out of the fork.
-                        StoredRepoSnapshotEntryKind::Withheld => continue,
-                    };
-                    if files.insert(entry.path, bytes).is_some() {
-                        return Err(Error::CorruptedIndex("duplicate fork path"));
-                    }
-                }
-                Ok(RepoMount { files })
+                self.fork_mount(hash)
             }
             RepoMountRef::Snapshot(_) => unreachable!("handled before local repo access"),
         }
+    }
+
+    /// The recorded fork `hash`, as its snapshot holds it: each file the lift
+    /// sweep marked, or snapshot custody withheld, reads as absent (OF-067).
+    fn fork_mount(&self, hash: RepoForkHash) -> Result<RepoMount> {
+        let txn = self.store.env.read_txn()?;
+        let snapshot = super::oplog::SNAPSHOT
+            .get(&self.store, &txn, &repo_mutation_snapshot_key(hash))?
+            .ok_or(Error::EntityNotFound)?;
+        let raw = super::oplog::SNAPSHOT.encode_value(&snapshot)?;
+        if *blake3::hash(&raw).as_bytes() != hash && super::support::sha256_bytes(&raw) != hash {
+            return Err(Error::CorruptedIndex("fork hash mismatch"));
+        }
+        let snapshot = super::snapshot::require_snapshot_schema(snapshot)?;
+        // A file the lift sweep marked reads as a withheld one does
+        // (OF-067).
+        let lifted = super::lift::lifted_entries_in_txn(
+            self,
+            &txn,
+            &repo_mutation_snapshot_key(hash),
+            &raw,
+        )?;
+        let mut files = BTreeMap::new();
+        for entry in snapshot.entries {
+            validate_relative_repo_path(&entry.path)?;
+            if lifted.contains(&entry.path) {
+                continue;
+            }
+            let bytes = match entry.kind {
+                StoredRepoSnapshotEntryKind::File | StoredRepoSnapshotEntryKind::Gitlink => {
+                    entry.content
+                }
+                StoredRepoSnapshotEntryKind::Symlink => entry
+                    .symlink_target
+                    .ok_or(Error::CorruptedIndex("symlink target missing"))?
+                    .into_bytes(),
+                // Snapshot custody kept its bytes out of the fork.
+                StoredRepoSnapshotEntryKind::Withheld => continue,
+            };
+            if files.insert(entry.path, bytes).is_some() {
+                return Err(Error::CorruptedIndex("duplicate fork path"));
+            }
+        }
+        Ok(RepoMount { files })
     }
 }
