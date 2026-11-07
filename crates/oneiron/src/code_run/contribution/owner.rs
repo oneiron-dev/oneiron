@@ -13,16 +13,17 @@
 //! commit ([`settle_owner_pair_in_txn`]). That writer reads both kept
 //! answers and the capsule again, unblinds the choice, scores both forks
 //! with the owner's judgment and records the pair through the contribution
-//! check's own door. "Cannot judge", a fallback, a stale ask and an answer
-//! that no longer reads score nothing and close the pair. The pair keeps the
-//! original credit's anchor. The owner's word is each fork score's judge,
-//! never a world outcome.
+//! check's own door. A temporary subject fence keeps the accepted word for
+//! the Coach's next pass. "Cannot judge", a fallback, a stale ask and an
+//! answer that no longer reads score nothing and close the pair. The pair
+//! keeps the original credit's anchor. The owner's word is each fork
+//! score's judge, never a world outcome.
 
 use serde::{Deserialize, Serialize};
 
 use super::super::storage::{
-    close_owner_pair_in_txn, fork_response, judge_owner_pair_in_txn, owner_pair_in_txn,
-    put_owner_pair,
+    accept_owner_pair_in_txn, close_owner_pair_in_txn, fork_response, judge_owner_pair_in_txn,
+    owner_pair_in_txn, put_owner_pair,
 };
 use super::{
     ContributionForkReceipt, ContributionReplayUnavailable as Unavailable, ExecutedForkView,
@@ -165,6 +166,13 @@ pub(crate) enum OwnerPairRoute {
         revision: u64,
         question_digest: [u8; 32],
     },
+    /// The owner's word was admitted, but a temporary subject fence kept
+    /// it from scoring the forks. Its judgment carries the ask and time.
+    Accepted {
+        with_passed: bool,
+        without_passed: bool,
+        judgment: OwnerJudgment,
+    },
     /// The owner's word scored both forks.
     Judged(OwnerJudgment),
     /// Its ask settled with no score: "cannot judge", no owner's word, a
@@ -277,8 +285,9 @@ pub(crate) struct OwnerPairAnswer {
 /// digest it was admitted with, under the proof of the owner it asked,
 /// scores it: both forks get the unblinded passes and the owner's judgment,
 /// and the pair is recorded as a contribution check in this same writer.
-/// Every other settlement closes it unscored. A pair already judged or
-/// closed, or no longer kept, is left as it is.
+/// A temporary subject fence keeps that accepted judgment for a later
+/// Coach pass. Every other settlement closes it unscored. A pair already
+/// accepted, judged or closed, or no longer kept, is left as it is.
 ///
 /// # Errors
 ///
@@ -314,11 +323,21 @@ pub(crate) fn settle_owner_pair_in_txn(
     let Some(((with_passed, without_passed), judgment)) = verdict else {
         return close_owner_pair_in_txn(vault, txn, &key, ask, now);
     };
-    // The ask is settled, so a pair the writer refuses closes for any
-    // reason; the writer names it as the fork writers do (FIX 6256).
+    // An accepted word survives only a temporary subject fence. The ask
+    // is already settled, so the Coach retries from the pair itself.
     let judged =
         match judge_owner_pair_in_txn(vault, txn, &key, with_passed, without_passed, judgment)? {
             Ok(judged) => judged,
+            Err(Unavailable::Unfinished) => {
+                return accept_owner_pair_in_txn(
+                    vault,
+                    txn,
+                    &key,
+                    with_passed,
+                    without_passed,
+                    judgment,
+                );
+            }
             Err(reason) => {
                 tracing::debug!(
                     reason = reason.as_str(),
@@ -327,6 +346,20 @@ pub(crate) fn settle_owner_pair_in_txn(
                 return close_owner_pair_in_txn(vault, txn, &key, ask, now);
             }
         };
+    record_owner_pair_in_txn(vault, txn, &judged, with_passed, without_passed, now)
+}
+
+/// Records both forks through the contribution check's own door, in the
+/// writer that judged them. A refused check keeps its scores for the next
+/// Coach pass, as an ask's immediate settlement does.
+fn record_owner_pair_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    judged: &OwnerPair,
+    with_passed: bool,
+    without_passed: bool,
+    now: u64,
+) -> Result<()> {
     let contribution = ContributionPair {
         attempt_receipt: judged.attempt_receipt.clone(),
         outcome_receipt: judged.scoring.outcome_receipt.clone(),
@@ -416,6 +449,9 @@ impl Runner<'_> {
                 Err(reason) => return Ok(Err(reason)),
             },
         };
+        if matches!(pair.route, OwnerPairRoute::Accepted { .. }) {
+            return self.retry_owner_pair(pair.handle);
+        }
         if pair.route == OwnerPairRoute::Reserved {
             let texts = match self.owner_pair_texts(
                 prepared,
@@ -434,6 +470,55 @@ impl Runner<'_> {
             crate::task_verb::ask_contribution_pair(self.vault, &pair, &texts);
         }
         Ok(Err(Unavailable::Unfinished))
+    }
+
+    /// Retries an already admitted owner's word, once, under the same
+    /// capsule, provenance and held-answer checks as immediate settlement.
+    fn retry_owner_pair(&self, handle: EntityId) -> Outcome<ContributionForks> {
+        let now = self.vault.store.clock.now_recorded_at();
+        self.vault.with_write_txn_grouped(|txn| {
+            let Some((key, pair)) = owner_pair_in_txn(self.vault, txn, handle)? else {
+                return Ok(Err(Unavailable::Unfinished));
+            };
+            let OwnerPairRoute::Accepted {
+                with_passed,
+                without_passed,
+                judgment,
+            } = pair.route
+            else {
+                return Ok(Err(Unavailable::Unfinished));
+            };
+            let judged = match judge_owner_pair_in_txn(
+                self.vault,
+                txn,
+                &key,
+                with_passed,
+                without_passed,
+                judgment,
+            )? {
+                Ok(judged) => judged,
+                Err(Unavailable::Unfinished) => return Ok(Err(Unavailable::Unfinished)),
+                Err(reason) => {
+                    tracing::debug!(
+                        reason = reason.as_str(),
+                        "an owner-judged pair closes unscored"
+                    );
+                    close_owner_pair_in_txn(self.vault, txn, &key, judgment.ask, now)?;
+                    return Ok(Err(Unavailable::Unfinished));
+                }
+            };
+            record_owner_pair_in_txn(self.vault, txn, &judged, with_passed, without_passed, now)?;
+            Ok(Ok(ContributionForks {
+                with_skill: ContributionFork {
+                    receipt: judged.with_skill.receipt,
+                    passed: with_passed,
+                },
+                without_skill: ContributionFork {
+                    receipt: judged.without_skill.receipt,
+                    passed: without_passed,
+                },
+            }))
+        })
     }
 
     /// Keeps this pair's pending pair, once: a fresh blinded mapping, the
