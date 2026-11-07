@@ -100027,7 +100027,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 77,
+      "const": 88,
       "crate-vis": 1
      }
     },
@@ -105003,6 +105003,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native/egress.rs",
+     "purpose": "A guest-local Fetch entry to the VM's existing host-policy relay",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -105069,10 +105079,10 @@
      "purpose": "Descriptor-relative workspace access"
     },
     "native": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "s",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "Native OCI session inside a no-NIC microVM"
     },
     "protocol": {
@@ -105099,7 +105109,7 @@
    },
    "over_bar": 0,
    "purpose": "Linux microVM guest agent and an unprivileged protocol conformance adapter",
-   "source_files": 9,
+   "source_files": 10,
    "test_files": 2
   },
   "oneiron-image": {
