@@ -26,8 +26,8 @@ use crate::outbound_intent_ledger::{
     BudgetChargeMarker, IntentEscalationReason, IntentLedgerError, IntentState,
     LedgerPayloadContext, OutboundCallRequest, RecordedOutboundOutcome, force_sync,
     insert_pending_in_txn, insert_suppressed_in_txn, payload_recipient_in_txn,
-    read_intent_for_attempt_in_txn, read_intent_record_in_txn, reserve_budget_in_txn,
-    stored_admission_in_txn,
+    payload_recipients_in_txn, read_intent_for_attempt_in_txn, read_intent_record_in_txn,
+    reserve_budget_in_txn, stored_admission_in_txn,
 };
 use crate::ports::TombstoneStore;
 
@@ -333,16 +333,20 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
 
     // FIX 9283, 9372: the actor the Gate verified and whether the caller keeps
     // no record, kept with the row's payload; never read from the request.
-    // FIX 10953: and the person the engine's own frozen send names as its
-    // counterparty, as the comm index resolves it now.
+    // FIX 10953: and the persons the engine's own frozen send names as its
+    // recipients (its counterparty, and each recipient of one message to
+    // several, fix list row 17645), as the comm index resolves them now.
     let payload_context = LedgerPayloadContext {
         actor: prepared.gate.provenance.actor_entity_ref,
         off_record: matches!(
             &prepared.authorization,
             PreparedAuthorization::ScopedMcp { prepared, .. } if prepared.keeps_no_record()
         ),
-        recipient: payload_recipient_in_txn(vault, &wtxn, &prepared.payload),
+        recipients: payload_recipients_in_txn(vault, &wtxn, &prepared.payload),
     };
+    // FIX 11030 keeps the party of a counterparty that resolved to no
+    // PERSON, whatever the send's other recipients resolved to.
+    let counterparty = payload_recipient_in_txn(vault, &wtxn, &prepared.payload);
     let dedupe_key = dedupe::dedupe_key(&prepared)?;
     // `now_ms` is supplied by the dispatch caller; semantic suppression must
     // use the vault's own clock, not a caller-selected future timestamp.
@@ -398,7 +402,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
             &mut wtxn,
             &suppressed.id,
             suppressed.payload(),
-            payload_context.recipient,
+            counterparty,
         )?;
         crate::receipt::put_suppression_in_txn(vault, &mut wtxn, &intent_id, &receipt, dedupe_now)?;
         wtxn.commit().map_err(Error::from)?;
@@ -668,7 +672,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         &mut wtxn,
         &pending.id,
         pending.payload(),
-        payload_context.recipient,
+        counterparty,
     )?;
     reserve_budget_in_txn(vault, &mut wtxn, &pending.id, reserved, spend_basis)?;
     // The wait's admission commits with the spend, the decision and the

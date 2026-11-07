@@ -45,7 +45,7 @@ pub(crate) use self::late_recipient::{
 };
 pub(crate) use self::payload::{
     LedgerPayloadContext, admitting_actor_in_txn, erase_outbound_intent_actor_in_txn,
-    payload_recipient_in_txn, stored_admission_in_txn,
+    payload_recipient_in_txn, payload_recipients_in_txn, stored_admission_in_txn,
 };
 pub(crate) use self::pinned_approval::{
     PinnedApproval, PinnedApprovalFamily, keep_press_after_admission, pinned_retry_approval,

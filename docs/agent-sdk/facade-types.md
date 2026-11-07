@@ -8926,11 +8926,11 @@ export type MailThreadShareRequest = { record_ref: string; person_ref: string }
 /** `oneiron::mail_pack::share::MailThreadShareReceipt` */
 export type MailThreadShareReceipt = { thread_ref: string; person_ref: string; shared: boolean; changed: boolean; shared_with: string[] }
 /** `oneiron::mail_pack::reply::MailReplyDraftRequest` */
-export type MailReplyDraftRequest = { thread_ref: string; parent_turn_ref?: string | null; body: string; body_html?: string | null; request_key: string }
+export type MailReplyDraftRequest = { thread_ref: string; parent_turn_ref?: string | null; body: string; body_html?: string | null; reply_all?: boolean; cc?: string[]; request_key: string }
 /** `oneiron::mail_pack::reply::MailReplyDraftState` */
 export type MailReplyDraftState = "proposed" | "approved" | "sent" | "unsettled" | "discarded"
 /** `oneiron::mail_pack::reply::MailReplyDraftView` */
-export type MailReplyDraftView = { draft_ref: string; revision: number; source_ref: string; thread_ref: string; parent_turn_ref: string; to: string; subject: string; body: string; body_html?: string | null; plan_ref: string; state: MailReplyDraftState; outcome?: string | null; drafted_at: number; updated_at: number }
+export type MailReplyDraftView = { draft_ref: string; revision: number; source_ref: string; thread_ref: string; parent_turn_ref: string; to: string[]; cc?: string[]; subject: string; body: string; body_html?: string | null; plan_ref: string; state: MailReplyDraftState; outcome?: string | null; drafted_at: number; updated_at: number }
 /** `oneiron::mail_pack::reply::MailReplyDraftsRequest` */
 export type MailReplyDraftsRequest = { thread_ref?: string | null; include_settled?: boolean }
 /** `oneiron::mail_pack::reply::MailReplyDraftPage` */

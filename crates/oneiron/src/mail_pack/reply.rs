@@ -9,7 +9,11 @@
 //!
 //! A reply is one plain-text message to the answered message's `Reply-To`,
 //! else its sender, threaded by `In-Reply-To`, `References` and the
-//! subject. It leaves by the mailbox's own provider:
+//! subject. A reply to all adds the answered message's own To and Cc in
+//! their roles, and the drafter may name Cc recipients of its own (fix list
+//! row 17645, `reply_recipients`): one message, one approval and one send
+//! for every recipient, each judged by the Gate, none dropped. It leaves by
+//! the mailbox's own provider:
 //!
 //! - **Google** (Workspace or not): through the source's delegated identity
 //!   granted `gmail.send`, on the Gmail thread (`threadId`); the plan is
@@ -23,8 +27,8 @@
 //! An IMAP or Microsoft 365 reply names no sender identity: the frozen
 //! message rides in the draft itself, its dispatch pins as one
 //! communication (FIX 6606, a provider rail), and the owner's one press is
-//! minted for exactly that send's digest. A group address, more than one
-//! recipient and attachments are refused, not dropped.
+//! minted for exactly that send's digest. A group sender and attachments
+//! are refused, not dropped.
 //!
 //! Each new revision asks the mailbox's person in their inbox (fix list
 //! row 17644, `reply_ask`); the Ask clears when that revision is
@@ -35,6 +39,7 @@ use serde::{Deserialize, Serialize};
 use super::inbox::sources_by_audience_in;
 use super::reply_ask::{clear_reply_ask_in_txn, raise_reply_ask_in_txn};
 use super::reply_mime::{REPLY_MESSAGE_REF_PREFIX, ReplyDraft, ReplyMessage};
+use super::reply_recipients::{addresses_in, reply_recipients};
 use super::reply_send::{ReplySink, ReplyTransport};
 use super::source::{MailProvider, MailSourceKind, MailSourceRow, MailSourceStatus, SOURCES};
 use super::state::{MailOccurrence, MailPresence, MailReplyHeaders, OCCURRENCES};
@@ -47,7 +52,7 @@ use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult
 use crate::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchGate,
     OutboundDispatchOutcome, OutboundDispatchRequest, OutboundIntent, OutboundIntentDraft,
-    OutboundIntentTrigger,
+    OutboundIntentTrigger, OutboundRecipient, OutboundRecipientRole,
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault, source_audience};
@@ -99,7 +104,12 @@ pub(super) struct MailReplyDraftRow {
     plan_ref: String,
     /// The logical send this revision is: one per revision.
     send_ref: String,
+    /// The reply's first recipient, in To.
     to: String,
+    /// Every recipient of a reply to several, in its role and place, `to`
+    /// first (fix list row 17645); empty for a reply to `to` alone.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    recipients: Vec<OutboundRecipient>,
     subject: String,
     body: String,
     /// The HTML alternative, as the mail HTML gate wrote it (fix list row
@@ -140,8 +150,18 @@ pub struct MailReplyDraftRequest {
     /// script is sent. At most 256 KiB.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body_html: Option<String>,
-    /// The caller's key for this draft: the same key with the same body is
-    /// the same draft; with another body, its next revision.
+    /// Replies to all: the answered message's own To and Cc recipients
+    /// receive the reply too, in their roles, beside its `Reply-To` (else its
+    /// sender). The mailbox's own address never does.
+    #[serde(default)]
+    pub reply_all: bool,
+    /// More recipients in Cc, each one bare address (`name@example.com`). A
+    /// list's address is one recipient; no group is expanded. To, Cc and
+    /// these together name at most 50 recipients; more is refused, not cut.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cc: Vec<String>,
+    /// The caller's key for this draft: the same key with the same body and
+    /// recipients is the same draft; with others, its next revision.
     pub request_key: String,
 }
 
@@ -155,7 +175,12 @@ pub struct MailReplyDraftView {
     pub source_ref: String,
     pub thread_ref: String,
     pub parent_turn_ref: String,
-    pub to: String,
+    /// Every To recipient, in its place: the answered message's `Reply-To`
+    /// (else its sender) first.
+    pub to: Vec<String>,
+    /// Every Cc recipient, in its place (fix list row 17645).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cc: Vec<String>,
     pub subject: String,
     pub body: String,
     /// The HTML alternative that sends beside the text, exactly as it
@@ -213,13 +238,22 @@ fn invalid_state(message: &str) -> MemoryError {
 }
 
 fn view(id: EntityId, row: &MailReplyDraftRow) -> MailReplyDraftView {
+    let (to, cc) = if row.recipients.is_empty() {
+        (vec![row.to.clone()], Vec::new())
+    } else {
+        (
+            addresses_in(&row.recipients, OutboundRecipientRole::To),
+            addresses_in(&row.recipients, OutboundRecipientRole::Cc),
+        )
+    };
     MailReplyDraftView {
         draft_ref: id.to_hex(),
         revision: row.revision,
         source_ref: row.source.to_hex(),
         thread_ref: row.thread.to_hex(),
         parent_turn_ref: row.parent_turn.to_hex(),
-        to: row.to.clone(),
+        to,
+        cc,
         subject: row.subject.clone(),
         body: row.body.clone(),
         body_html: row.body_html.clone(),
@@ -229,39 +263,6 @@ fn view(id: EntityId, row: &MailReplyDraftRow) -> MailReplyDraftView {
         drafted_at: row.drafted_at,
         updated_at: row.updated_at,
     }
-}
-
-/// The mailboxes of one address header value, a comma-separated list
-/// (`Name <a@b>, c@d`): each one's bare address. Commas inside a quoted
-/// display name or an angle address do not split it.
-fn mailboxes(text: &str) -> Vec<String> {
-    let mut parts = Vec::new();
-    let (mut start, mut quoted, mut angled) = (0, false, false);
-    for (at, character) in text.char_indices() {
-        match character {
-            '"' if !angled => quoted = !quoted,
-            '<' if !quoted => angled = true,
-            '>' if !quoted => angled = false,
-            ',' if !quoted && !angled => {
-                parts.push(&text[start..at]);
-                start = at + 1;
-            }
-            _ => {}
-        }
-    }
-    parts.push(&text[start..]);
-    parts
-        .into_iter()
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
-        .map(|part| {
-            let address = match (part.rfind('<'), part.rfind('>')) {
-                (Some(open), Some(close)) if open < close => &part[open + 1..close],
-                _ => part,
-            };
-            address.trim().to_owned()
-        })
-        .collect()
 }
 
 /// The subject a reply carries: the parent's, marked as a reply once.
@@ -389,42 +390,32 @@ fn parent_of(
     Ok((parent.turn, reply))
 }
 
-/// The one mailbox a reply to `parent` goes to: its `Reply-To` list, else
-/// its `From` list, each exactly one address; more than one is refused, not
-/// cut.
-fn reply_recipient(parent: &MailReplyHeaders) -> MemoryResult<String> {
-    let named: Vec<String> = if parent.reply_to.is_empty() {
-        parent.from.as_deref().map(mailboxes).unwrap_or_default()
-    } else {
-        parent
-            .reply_to
-            .iter()
-            .flat_map(|entry| mailboxes(entry))
-            .collect()
-    };
-    match named.as_slice() {
-        [only] if only.contains('@') => Ok(only.clone()),
-        [] | [_] => Err(MemoryError::bad_request(
-            "the message names no address to reply to",
-        )),
-        _ => Err(MemoryError::bad_request(
-            "the message names more than one address to reply to",
-        )),
+/// The first recipient of `recipients`, a reply's whole list, and the list
+/// it freezes: empty for a reply to that one alone, whose message, send and
+/// approval stay those of a reply to one (fix list row 17645).
+fn split_recipients(
+    recipients: &[OutboundRecipient],
+) -> MemoryResult<(&str, &[OutboundRecipient])> {
+    match recipients {
+        [] => Err(MemoryError::bad_request("the reply names no recipient")),
+        [only] => Ok((only.address.as_str(), &[])),
+        [first, ..] => Ok((first.address.as_str(), recipients)),
     }
 }
 
 /// The message a reply to `parent` from the mailbox `from` sends as that
-/// mailbox's own account: to the parent's `Reply-To`, else its sender,
-/// threaded by its `Message-ID` and `References`.
+/// mailbox's own account: to `recipients`, its whole list, threaded by its
+/// `Message-ID` and `References`.
 fn message_for(
     from: &str,
     send_ref: &str,
     parent: &MailReplyHeaders,
+    recipients: &[OutboundRecipient],
     body: &str,
     html: Option<&str>,
     composed_at: u64,
 ) -> MemoryResult<ReplyMessage> {
-    let to = reply_recipient(parent)?;
+    let (to, recipients) = split_recipients(recipients)?;
     let parent_message_id = parent
         .rfc_message_id
         .as_deref()
@@ -432,7 +423,8 @@ fn message_for(
     let subject = reply_subject(parent.subject.as_deref().unwrap_or_default());
     ReplyMessage::new(&ReplyDraft {
         from,
-        to: &to,
+        to,
+        recipients,
         subject: &subject,
         body,
         html,
@@ -444,18 +436,19 @@ fn message_for(
     .map_err(|error| MemoryError::bad_request(error.to_string()))
 }
 
-/// The plan a reply to `parent` sends: from the adapter's mailbox to the
-/// parent's `Reply-To`, else its sender, threaded on the provider.
+/// The plan a reply to `parent` sends: from the adapter's mailbox to
+/// `recipients`, its whole list, threaded on the provider.
 fn plan_for(
     adapter: &GmailDelegatedAdapter,
     send_ref: &str,
     parent: &MailReplyHeaders,
+    recipients: &[OutboundRecipient],
     body: &str,
     html: Option<&str>,
     composed_at: u64,
 ) -> MemoryResult<GmailSendPlan> {
     let refuse = |message: &str| MemoryError::bad_request(message.to_owned());
-    let to = reply_recipient(parent)?;
+    let (to, recipients) = split_recipients(recipients)?;
     let thread_id = parent
         .thread_id
         .as_deref()
@@ -470,12 +463,13 @@ fn plan_for(
     let plan = GmailSendPlan::new(
         adapter,
         send_ref,
-        &to,
+        to,
         &subject,
         body,
         Some(thread),
         composed_at,
     )
+    .and_then(|plan| plan.with_recipients(recipients))
     .map_err(|error| refuse(&error.to_string()))?;
     match html {
         Some(html) => plan
@@ -522,10 +516,11 @@ fn human_actor(person: EntityId) -> OutboundDispatchActor {
 /// approved, sent as the mailbox's own account (fix list rows 17872,
 /// 17643): `email`/`send` by a human actor naming no sender identity, its
 /// content the frozen message of a draft that stands Approved at exactly
-/// that revision and send, from an active IMAP or Microsoft 365 personal
-/// mailbox whose owner is that actor. The gate takes the owner's one press
-/// for exactly that send's digest as its authority, as it takes a
-/// member-mail press.
+/// that revision and send, to exactly its recipients (each of a reply to
+/// several, fix list row 17645, the Gate judging each as the counterparty),
+/// from an active IMAP or Microsoft 365 personal mailbox whose owner is that
+/// actor. The gate takes the owner's one press for exactly that send's
+/// digest as its authority, as it takes a member-mail press.
 ///
 /// # Errors
 ///
@@ -566,12 +561,22 @@ pub(crate) fn approved_source_reply_in_txn(
     let Some(row) = DRAFTS.get(store, txn, &draft)? else {
         return Ok(false);
     };
+    let counterparty = effect.counterparty.as_deref();
+    let addressed = if row.recipients.is_empty() {
+        counterparty == Some(row.to.as_str())
+    } else {
+        row.recipients
+            .iter()
+            .any(|named| counterparty == Some(named.address.as_str()))
+    };
     if row.plan_ref != content_ref
         || row.identity.is_some()
         || row.message.is_none()
         || row.state != MailReplyDraftState::Approved
         || row.approved_at.is_none()
         || send_ref != format!("outbound:{}", row.send_ref)
+        || effect.provenance.mail_recipients != row.recipients
+        || !addressed
     {
         return Ok(false);
     }
@@ -589,7 +594,8 @@ pub(crate) fn approved_source_reply_in_txn(
 
 /// The one dispatch request a draft's revision is, sent as `actor`: a
 /// Gmail reply's identity's bound sender, or the mailbox's owner for one
-/// sent as the mailbox's own account, which names no sender identity.
+/// sent as the mailbox's own account, which names no sender identity. A
+/// reply to several is one message to its whole list (fix list row 17645).
 fn request_for(
     id: EntityId,
     row: &MailReplyDraftRow,
@@ -601,7 +607,8 @@ fn request_for(
         OutboundIntentDraft::new(author, "send", "email", row.to.clone())
             .content_ref(row.plan_ref.clone()),
         OutboundIntentTrigger::agent_immediate(format!("mail-reply:{}", id.to_hex())),
-    );
+    )
+    .with_recipients(row.recipients.clone());
     let request = OutboundDispatchRequest::new(
         format!("outbound:{}", row.send_ref),
         row.send_ref.clone(),
@@ -662,6 +669,16 @@ impl Memory<'_> {
         // The mailbox's own person approves it, so they are asked.
         let asked = row.owner.filter(|person| *person != actor);
         let (parent_turn, parent) = parent_of(&messages, parent_turn)?;
+        // Every recipient the reply names, as it would send, so a redraft to
+        // the same people is the same revision (fix list row 17645). The
+        // mailbox's own address is never one of them; one no mail can go to
+        // is no recipient's either.
+        let own: Vec<String> =
+            crate::channel_identity_provider::native_mail::canonical_recipient(&row.address)
+                .ok()
+                .into_iter()
+                .collect();
+        let recipients = reply_recipients(&parent, &own, input.reply_all, &input.cc)?;
         // The HTML as it would send, so a redraft of the same words is the
         // same revision (fix list row 17645).
         let html = input
@@ -679,6 +696,8 @@ impl Memory<'_> {
             if prior.body == input.body
                 && prior.body_html == html
                 && prior.parent_turn == parent_turn
+                && split_recipients(&recipients)?
+                    == (prior.to.as_str(), prior.recipients.as_slice())
             {
                 return Ok(view(id, prior));
             }
@@ -687,26 +706,43 @@ impl Memory<'_> {
         let send_ref = format!("mail-reply:{}:{revision}", id.to_hex());
         let now = crate::unix_seconds_now();
         let raw_html = input.body_html.as_deref();
-        let (identity, plan_ref, to, body_html, message) = match route {
+        let (identity, plan_ref, to, frozen_recipients, body_html, message) = match route {
             ReplyRoute::Gmail(identity) => {
                 let adapter = adapter_of(vault, identity)?;
-                let plan = plan_for(&adapter, &send_ref, &parent, &input.body, raw_html, now)?;
+                let plan = plan_for(
+                    &adapter,
+                    &send_ref,
+                    &parent,
+                    &recipients,
+                    &input.body,
+                    raw_html,
+                    now,
+                )?;
                 plan.keep(vault)?;
                 (
                     Some(identity),
                     plan.content_ref().to_owned(),
                     plan.recipient().to_owned(),
+                    plan.recipients().to_vec(),
                     plan.body_html().map(str::to_owned),
                     None,
                 )
             }
             ReplyRoute::Account(_) => {
-                let message =
-                    message_for(&row.address, &send_ref, &parent, &input.body, raw_html, now)?;
+                let message = message_for(
+                    &row.address,
+                    &send_ref,
+                    &parent,
+                    &recipients,
+                    &input.body,
+                    raw_html,
+                    now,
+                )?;
                 (
                     None,
                     message.content_ref(),
                     message.to.clone(),
+                    message.recipients.clone(),
                     message.html.clone(),
                     Some(message),
                 )
@@ -721,6 +757,7 @@ impl Memory<'_> {
             plan_ref,
             send_ref,
             to,
+            recipients: frozen_recipients,
             subject: reply_subject(parent.subject.as_deref().unwrap_or_default()),
             body: input.body.clone(),
             body_html,
