@@ -39,8 +39,9 @@ use crate::models::RoleCall;
 use crate::server::SyncServer;
 
 /// An agent's one reply to one event: every run of it names the same
-/// logical send, which the ledger replays rather than sending twice.
-const REPLY_REF: &str = "reply";
+/// logical send, which the ledger replays rather than sending twice. The
+/// engine's own, so a participant's erase finds the reply's witness rows.
+const REPLY_REF: &str = oneiron::outbound::CONNECTOR_REPLY_REF;
 /// The verb a reply goes out on: an answer in the message's own thread.
 const REPLY_VERB: &str = "send";
 /// The purpose a reply's model call is metered and routed under.
