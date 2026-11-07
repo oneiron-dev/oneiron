@@ -2132,6 +2132,8 @@ export class Oneiron {
       view: (input: Facade.ShareViewRequest): Facade.ScopedReadResult<Facade.SharedBriefView | null> => this.#call(() => this.#client.vaultSharesView(input) as Facade.ScopedReadResult<Facade.SharedBriefView | null>),
     },
     hooks: {
+      /** The owner reads saved hook cycle and depth checks, including their causal lineage. Reads no hook arguments, body or result values and changes nothing; keeps the native list's oldest-key order and 1000-row limit. */
+      checks: (input: Facade.EmptyRequest = {}): Facade.HookCheck[] => this.#call(() => this.#client.vaultHooksChecks(input) as Facade.HookCheck[]),
       /** The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands, 256 entries a page; next_cursor continues to the rest. */
       replay: (input: Facade.HooksReplayRequest): Facade.HooksReplayPage => this.#call(() => this.#client.vaultHooksReplay(input) as Facade.HooksReplayPage),
       regen: {

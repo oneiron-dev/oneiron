@@ -3206,6 +3206,11 @@ export_facade! {
     let output = client.host_budget_hit(&input)?;
     crate::codec::lift_record("host.budget.hit", &output)
 };
+"vault.hooks.checks" => fn vault_hooks_checks(&self) -> Vec<HookCheck> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.hooks.checks")?;
+    let output = client.vault_hooks_checks(&input)?;
+    crate::codec::lift_record("vault.hooks.checks", &output)
+};
 "vault.hooks.replay" => fn vault_hooks_replay(&self, input: HooksReplayRequest) -> HooksReplayPage = |client| {
     let input: oneiron::task_verb::sdk::HooksReplayRequest = crate::codec::lower_record("vault.hooks.replay", input)?;
     let output = client.vault_hooks_replay(&input)?;
