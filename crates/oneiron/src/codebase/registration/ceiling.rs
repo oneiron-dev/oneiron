@@ -100,12 +100,16 @@ impl Vault {
     ///
     /// # Errors
     /// A store failure, and a CODE body that does not decode.
-    pub(crate) fn admit_registered_edit_in_txn(
+    pub(crate) fn admit_registered_edit_in_txn<P>(
         &self,
         txn: &heed::RoTxn<'_>,
         repo: EntityId,
-        paths: impl IntoIterator<Item = &str>,
-    ) -> Result<std::result::Result<(), RepoAccessRefusal>> {
+        paths: P,
+    ) -> Result<std::result::Result<(), RepoAccessRefusal>>
+    where
+        P: IntoIterator,
+        P::Item: AsRef<str>,
+    {
         let Some(registration) = self
             .registered_repository_body_in_txn(txn, repo)?
             .and_then(|body| body.registration)
@@ -115,7 +119,7 @@ impl Vault {
         Ok(
             match paths
                 .into_iter()
-                .find(|path| !registration.admits_edit(path))
+                .find(|path| !registration.admits_edit(path.as_ref()))
             {
                 Some(_) => Err(RepoAccessRefusal::PathOutsideScope),
                 None => Ok(()),
@@ -129,13 +133,17 @@ impl Vault {
     ///
     /// # Errors
     /// A miss, or a store failure.
-    pub(crate) fn require_registered_edit_in_txn(
+    pub(crate) fn require_registered_edit_in_txn<P>(
         &self,
         txn: &heed::RoTxn<'_>,
         anchor: Option<EntityId>,
         locator: &str,
-        paths: impl IntoIterator<Item = &str>,
-    ) -> Result<()> {
+        paths: P,
+    ) -> Result<()>
+    where
+        P: IntoIterator,
+        P::Item: AsRef<str>,
+    {
         match self.first_outside_ceiling_in_txn(txn, anchor, locator, paths)? {
             Some(path) => Err(outside_ceiling(&path)),
             None => Ok(()),
@@ -144,13 +152,17 @@ impl Vault {
 
     /// The first path of `paths` some ceiling of `locator` or `anchor` does
     /// not admit.
-    fn first_outside_ceiling_in_txn(
+    fn first_outside_ceiling_in_txn<P>(
         &self,
         txn: &heed::RoTxn<'_>,
         anchor: Option<EntityId>,
         locator: &str,
-        paths: impl IntoIterator<Item = &str>,
-    ) -> Result<Option<String>> {
+        paths: P,
+    ) -> Result<Option<String>>
+    where
+        P: IntoIterator,
+        P::Item: AsRef<str>,
+    {
         let mut ceilings = self.registered_repositories_in_txn(txn, locator)?;
         if let Some(anchor) = anchor
             && !ceilings.iter().any(|(repo, _)| *repo == anchor)
@@ -168,9 +180,9 @@ impl Vault {
             .find(|path| {
                 ceilings
                     .iter()
-                    .any(|(_, registration)| !registration.admits_edit(path))
+                    .any(|(_, registration)| !registration.admits_edit(path.as_ref()))
             })
-            .map(str::to_owned))
+            .map(|path| path.as_ref().to_owned()))
     }
 }
 
