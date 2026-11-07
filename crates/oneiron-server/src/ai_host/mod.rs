@@ -121,10 +121,6 @@ const DREAMER_ROLE: ModelRole = ModelRole::DreamerCurrent;
 pub(crate) const CHAT_ROLE: ModelRole = ModelRole::GenerativeReasoner;
 /// How long shutdown lets running chat turns finish before stopping them.
 const TURN_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
-/// How the host words the house mind's project question (OF-501).
-const PROJECT_DETECTION_WORDING: &str = "Does this message start or describe a piece of work \
-with its own goal that will take more than one sitting, worth tracking as a project? \
-Answer no for a passing question, a chat or a single task.";
 /// What one project question may spend on the host's ladder.
 const PROJECT_DETECTION_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
 
