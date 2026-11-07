@@ -19,16 +19,22 @@ use super::{
     resolve_core_disclosure_with_once, resolve_core_interlocutor_set, resolve_core_room,
     spend_core_once_disclosures,
 };
+use crate::api::FacadeCall;
+use crate::api::native_read_hooks::{
+    NativeReadAnswer, NativeReadBody, NativeReadError, decoded, encoded, native_read_hooked,
+};
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
 use crate::error::ApiError;
 use crate::error::ApiErrorEnvelope;
-use crate::error::EnvelopedApiError;
 use crate::projection::View;
 use crate::server::{QueryDoor, SyncServer};
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
+use oneiron::code_run::vault_read::VaultReadMethod;
+use serde_json::Value;
 use std::sync::Arc;
 
 /// Assemble a context pack from existing retrieval and hydration APIs.
@@ -49,16 +55,110 @@ use std::sync::Arc;
 pub(crate) async fn core_context_pack(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<CoreContextPackRequest>, JsonRejection>,
-) -> Result<Json<CoreContextPackResponse>, EnvelopedApiError> {
+    headers: HeaderMap,
+    extensions: Extensions,
+    payload: Result<Json<Value>, JsonRejection>,
+) -> Result<Json<Value>, NativeReadError> {
     auth.require(CoreScope::Read)?;
     // A facet-narrowed credential reads a facet-narrowed pack (FIX 646): every
     // row, count and handle the pack echoes passes the admitted read, the
     // room's signed facets met in (FIX 643).
-    let req = json_payload(payload)?;
-    req.check_query_bytes(&server, &auth, QueryDoor::ContextPack, "query")?;
-    let (response, _, _) = run_context_pack(&server, &auth, req, None).await?;
-    Ok(Json(response))
+    let body = json_payload(payload)?;
+    let call = FacadeCall::http(&server, &auth, &headers, &extensions);
+    let answer = core_context_pack_hooked(&server, &call, body).await?;
+    Ok(Json(answer.value))
+}
+
+/// The members of a context pack request that its route reads and the
+/// native `memory.context_pack` contract does not carry: its room, session,
+/// reaction signals, affect, assembly policy, time window, projection,
+/// interlocutors and reader.
+const CONTEXT_PACK_ROUTE_CONTROLS: &[&str] = &[
+    "conversation_id",
+    "session_id",
+    "signals_since",
+    "signals_after",
+    "signals_limit",
+    "signals_deadline_ms",
+    "signals_person",
+    "query_affect",
+    "queryAffect",
+    "hydrate",
+    "include_edges",
+    "includeEdges",
+    "include_vectors",
+    "includeVectors",
+    "view",
+    "policy",
+    "time",
+    "interlocutors",
+    "reader",
+];
+
+/// `POST /v1/core/context-pack` on `body`, for `call`'s caller, through its
+/// verb-hook boundary as `memory.context_pack` (FIX 1435). The request's
+/// query bytes and the caller's read admission are checked first. The pre
+/// chain then runs, before any pack work. The pack's other request checks
+/// and its ref admissions run in [`run_context_pack`] on the request the
+/// chain left, under the caller's own credential; that pipeline runs no
+/// hook itself.
+pub(crate) async fn core_context_pack_hooked(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    body: Value,
+) -> Result<NativeReadAnswer, NativeReadError> {
+    let auth = call.auth();
+    let admit = {
+        let (server, auth) = (Arc::clone(server), auth.clone());
+        move |body: &Value| admit_context_pack(&server, &auth, body)
+    };
+    let req = admit(&body)?;
+    // The caller's read admission, before any hook runs.
+    scoped_read_for_core_auth(&server.vault, auth)?;
+    let body = NativeReadBody::split(body, CONTEXT_PACK_ROUTE_CONTROLS);
+    native_read_hooked(
+        server,
+        call,
+        VaultReadMethod::ContextPack,
+        body,
+        req,
+        admit,
+        |req| read_context_pack(server, auth, req),
+    )
+    .await
+}
+
+/// The route's own admission of the context pack `body` for `auth`: decoded,
+/// and its query checked against `[limits].retrieval_query_bytes`.
+fn admit_context_pack(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    body: &Value,
+) -> Result<CoreContextPackRequest, ApiError> {
+    let req: CoreContextPackRequest = decoded(body)?;
+    req.check_query_bytes(server, auth, QueryDoor::ContextPack, "query")?;
+    Ok(req)
+}
+
+/// An admitted context pack, assembled for `auth` through the shared
+/// pipeline, as the JSON the route answers. The answer goes beside the rows
+/// the final response lists it was derived from
+/// (`CoreContextPackResponse::producer_rows`, FIX 1435). A response whose
+/// rows are not all known lists none.
+async fn read_context_pack(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    req: CoreContextPackRequest,
+) -> Result<NativeReadAnswer, NativeReadError> {
+    let (response, _, _) = run_context_pack(server, auth, req, None).await?;
+    let rows = response
+        .producer_rows()
+        .map_err(|error| core_engine_error("producer ids failed", error))?;
+    let value = encoded(&response)?;
+    Ok(match rows {
+        Some(rows) => NativeReadAnswer::listed(value, rows),
+        None => NativeReadAnswer::unlisted(value),
+    })
 }
 
 /// The shared context-pack pipeline behind `/v1/core/context-pack` and the

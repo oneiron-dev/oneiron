@@ -122,7 +122,8 @@ impl<'a> FacadeCall<'a> {
     /// act records: a linked machine its headers' machine proof verifies
     /// on this very request, or the caller the binding door admitted
     /// (`owner_routes::machine_routes::act_surface_admitted`, FIX 4625).
-    pub(super) fn http(
+    /// A direct native read route reads its call the same way (FIX 1435).
+    pub(crate) fn http(
         server: &SyncServer,
         auth: &'a CoreAuth,
         headers: &'a HeaderMap,
@@ -241,7 +242,7 @@ impl<'a> FacadeCall<'a> {
         }
     }
 
-    pub(super) const fn auth(&self) -> &'a CoreAuth {
+    pub(crate) const fn auth(&self) -> &'a CoreAuth {
         self.auth
     }
 

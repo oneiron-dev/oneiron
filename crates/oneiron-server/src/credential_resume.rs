@@ -3,9 +3,10 @@
 //! runner's drain hands the saved call here. The instrument the caller's
 //! request was admitted on is verified again against current authority, the
 //! caller is rebuilt from it alone, and the call runs through the door it came
-//! in by, whose own admission runs again: the facade's generated dispatch, or
-//! the MCP registration it named. A task's answer is never the credential;
-//! any failure refuses the call, and the engine ends it with one receipt.
+//! in by, whose own admission runs again: the facade's generated dispatch, a
+//! direct native read's own route (FIX 1435), or the MCP registration it
+//! named. A task's answer is never the credential; any failure refuses the
+//! call, and the engine ends it with one receipt.
 //!
 //! A managed vault's attested owner kept no slip (FIX 11063): his caller is
 //! built again as the owner the vault records as live now, and his console
@@ -54,8 +55,9 @@ impl ServerVerbAskCredentialCheck {
     }
 
     /// Runs `call` again through its door, under its credential as it
-    /// stands now; the refusal when it does not. An MCP door lists the rows
-    /// its answer was derived from beside it (FIX 1435, FIX 21054).
+    /// stands now; the refusal when it does not. An MCP door and a native
+    /// read's door list the rows its answer was derived from beside it (FIX
+    /// 1435, FIX 21054).
     fn resumed(
         &self,
         call: VerbAskSavedCall,
@@ -67,9 +69,21 @@ impl ServerVerbAskCredentialCheck {
             .ok_or(VerbAskRefusal::CredentialUnavailable)?;
         match call.reference.door.clone() {
             VerbAskDoor::Facade { room } => {
-                let auth = kept_auth(&server, &call, Some(&call.verb))?;
+                // A direct native HTTP read came in by its own route, which
+                // no facade row or invitee door is (FIX 1435).
+                let native = crate::api::native_read_hooks::native_read_method(&call.verb);
+                let door = native.is_none().then_some(call.verb.as_str());
+                let auth = kept_auth(&server, &call, door)?;
                 require_saved_facade_caller(&server, &auth, &call)?;
                 let resumed = FacadeCall::resumed(&auth, room, call.invocation, drain);
+                if let Some(method) = native {
+                    // The route's own admission and read, on the heap.
+                    return Ok(self.runtime.block_on(Box::pin(
+                        crate::api::native_read_hooks::resume_native_read(
+                            &server, &resumed, method, call.args,
+                        ),
+                    )));
+                }
                 let ran = self.runtime.block_on(facade_call_verb(
                     &server,
                     &resumed,
