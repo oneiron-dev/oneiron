@@ -860,14 +860,14 @@ enum Refusal {
 impl Refusal {
     /// The JSON-RPC error for request `id`; an auth refusal's advice is
     /// `auth`'s own.
-    fn rpc_error(&self, id: &Value, auth: &bridge_auth::Auth) -> String {
+    fn rpc_error(self, id: &Value, auth: &bridge_auth::Auth) -> String {
         match self {
             Self::Auth(body) => rpc_error(
                 id,
                 -32001,
                 "mcp_auth_required",
                 auth.refused_advice(),
-                Some(body.clone()),
+                Some(body),
             ),
             Self::Refused(answer) => match answer.get("error") {
                 Some(error) => json!({ "jsonrpc": "2.0", "id": id, "error": error }).to_string(),
@@ -876,11 +876,11 @@ impl Refusal {
                     -32000,
                     "server_error",
                     "the server's /mcp initialize held no result, so no endpoint was picked; pass --surface to name one",
-                    Some(answer.clone()),
+                    Some(answer),
                 ),
             },
             Self::Server(message, body) => {
-                rpc_error(id, -32000, "server_error", message, Some(body.clone()))
+                rpc_error(id, -32000, "server_error", &message, Some(body))
             }
             Self::Unreachable(message) => rpc_error(
                 id,
