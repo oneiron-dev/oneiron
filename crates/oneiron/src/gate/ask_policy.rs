@@ -214,9 +214,6 @@ impl AskOperationalPolicy {
         let Value::Array(rows) = fields[5]? else {
             return None;
         };
-        if rows.len() > 256 {
-            return None;
-        }
         let mut holder_overrides = BTreeMap::new();
         for row in rows {
             let cells = map(
