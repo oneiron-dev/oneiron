@@ -21,6 +21,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 
+use super::archive_side_tables::SideProvenance;
 use super::{ExportCut, ExportReceiptSource, ReceiptSourceOmission, WholeVaultExportReceipt};
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -29,6 +30,7 @@ use crate::mail_pack::{CarriedMemberMailboxes, MailboxExportNotice, MemberMailbo
 use crate::memory::{ExportCopy, record_export, record_member_mail_export};
 use crate::settings::ReadDestination;
 use crate::source_audience::{ExportJudge, ExportVerdicts};
+use crate::store::Store;
 use crate::store::receipt_row::ReceiptRecord;
 use crate::write_envelope::WriteActor;
 
@@ -80,15 +82,68 @@ impl MemberMailPass {
 /// the session of an epoch floor, the rows a saved output was made from, the
 /// rows each side row it serializes names), each row a carried row was
 /// folded from or names beside its lineage, by that row, and the rows each
-/// receipt a row cites was made from, by that row and the receipt's id.
+/// receipt a row cites was made from, by that row and the receipt's id. It
+/// holds what the side ledgers record each row's body was made from, read
+/// once in the pass's snapshot, and judges it before any body is read.
 #[derive(Default)]
 pub(super) struct MailboxLineage {
     carried: BTreeSet<EntityId>,
     folded: Vec<(EntityId, EntityId)>,
     receipts: BTreeMap<(EntityId, String), BTreeSet<EntityId>>,
+    recorded: SideProvenance,
 }
 
 impl MailboxLineage {
+    /// The lineage of one pass reading the snapshot `txn`: with what the side
+    /// ledgers record each row's body was made from ([`SideProvenance`]) for
+    /// a pass its judge judges (`judged`), and with nothing for a pass the
+    /// rule does not judge.
+    ///
+    /// # Errors
+    ///
+    /// Storage failures.
+    pub(super) fn read_in(store: &Store, txn: &heed::RoTxn<'_>, judged: bool) -> Result<Self> {
+        let recorded = if judged {
+            SideProvenance::read_in(store, txn)?
+        } else {
+            SideProvenance::default()
+        };
+        Ok(Self {
+            recorded,
+            ..Self::default()
+        })
+    }
+
+    /// Whether the pass's `judge`, when it has one, carries the row `id` (its
+    /// bytes `raw`, else as the pass's view holds them) and every row the
+    /// side ledgers record its body was made from
+    /// ([`SideProvenance::admitted`]): the one check every row meets before
+    /// its body is read, in an archive and an OKF copy alike. Those rows
+    /// count as carried only once `id` ships ([`Self::outcome`]).
+    ///
+    /// # Errors
+    ///
+    /// Storage failures.
+    pub(super) fn admits(
+        &mut self,
+        judge: Option<&mut ExportJudge<'_, '_, '_>>,
+        id: EntityId,
+        raw: Option<&[u8]>,
+    ) -> Result<bool> {
+        let Some(judge) = judge else {
+            return Ok(true);
+        };
+        let carried = judge.carries(id, raw)?;
+        match self.recorded.admitted(judge, id)? {
+            Some(sources) if carried => {
+                self.folded
+                    .extend(sources.into_iter().map(|source| (id, source)));
+                Ok(true)
+            }
+            Some(_) | None => Ok(false),
+        }
+    }
+
     /// The rows `rows`, each one the pass's judge carries, went into the copy
     /// outside its entity rows: a custody record or an epoch floor's session
     /// it wrote, or the rows a side row it serialized names.
@@ -122,7 +177,9 @@ impl MailboxLineage {
     }
 
     /// Whether the pass's `judge`, when it has one, carries the row `source`
-    /// that the row `row` is folded from; no source, nothing to judge.
+    /// that the row `row` is folded from, and every row the side ledgers
+    /// record its body was made from, as [`Self::admits`] judges a row; no
+    /// source, nothing to judge. They count as carried once `row` ships.
     ///
     /// # Errors
     ///
@@ -137,10 +194,15 @@ impl MailboxLineage {
             return Ok(true);
         };
         let carried = judge.carries(*source, None)?;
-        if carried {
-            self.folded.push((row, *source));
+        match self.recorded.admitted(judge, *source)? {
+            Some(recorded) if carried => {
+                self.folded.push((row, *source));
+                self.folded
+                    .extend(recorded.into_iter().map(|recorded| (row, recorded)));
+                Ok(true)
+            }
+            Some(_) | None => Ok(false),
         }
-        Ok(carried)
     }
 
     /// Why the pass's `judge`, when it has one, keeps home a saved output
