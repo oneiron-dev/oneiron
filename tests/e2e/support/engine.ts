@@ -3,7 +3,7 @@ import { createServer } from "node:net";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { createHash } from "node:crypto";
-import { Artifacts, BlockedDoor, LIMITS, ManagedProcess, isolatedEnv, ownResource, redactor, secretHex, tempRoot, withDeadline, recordStart } from "./run.ts";
+import { Artifacts, BlockedDoor, LIMITS, ManagedProcess, isolatedEnv, ownResource, redactor, secretHex, tempRoot, withDeadline, recordStart, assertFlowActive } from "./run.ts";
 import { loadBuildManifest, requireAsset } from "./fixtures.ts";
 import type { BuildManifest, Profile } from "./fixtures.ts";
 import { CliClient, CliError, PublicHttpClient, McpClient, SdkProcessDriver, WsClient, credentialParts } from "./clients.ts";
@@ -45,6 +45,7 @@ export interface EngineOptions {
 }
 interface Schema {readonly paths?:Readonly<Record<string,Readonly<Record<string,unknown>>>>}
 async function reservePort():Promise<{port:number;release:()=>Promise<void>}> {
+  assertFlowActive();
   const server=createServer();
   await new Promise<void>((resolve,reject)=>{server.once("error",reject);server.listen(0,"127.0.0.1",resolve)});
   const address=server.address();
@@ -56,7 +57,8 @@ export async function awaitPublic<T>(read:()=>Promise<T>,ready:(value:T)=>boolea
   const end=performance.now()+(options.timeoutMs??LIMITS.requestMs);
   let last:unknown;
   while(performance.now()<end) {
-    try {const value=await withDeadline(read(),Math.max(1,end-performance.now()),options.label);last=value;if(ready(value)) return value}
+    assertFlowActive();
+    try {const value=await withDeadline(read(),Math.max(1,end-performance.now()),options.label);assertFlowActive();last=value;if(ready(value)) return value}
     catch(error) {last=error;if(!options.readiness) throw error}
     const left=end-performance.now();
     if(left>0) await new Promise<void>(resolve=>setTimeout(resolve,Math.min(25,left)));
@@ -140,7 +142,10 @@ export class EngineFixture {
       await stage("schema-snapshot");
       const schema=await engine.client.request<Schema>("GET","/api/openapi.json");
       engine.schema=schema.body;
-      await engine.artifacts.json("public-schema.json",schema.body);
+      await engine.artifacts.json("public-schema.json",{
+        sha256:createHash("sha256").update(schema.bytes).digest("hex"),
+        bytes:schema.bytes.byteLength,pathCount:Object.keys(schema.body.paths??{}).length,
+      });
       await stage("public-readiness");
       if(options.ready) await awaitPublic(()=>options.ready!(engine.client),Boolean,{timeoutMs:LIMITS.readyMs,label:"requested public capabilities"});
       const configBytes=await readFile(config);

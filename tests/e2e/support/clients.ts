@@ -5,7 +5,7 @@ import { blake3 } from "@noble/hashes/blake3";
 import { encode, decode } from "@msgpack/msgpack";
 import type { FacadeInput, FacadeResult, FacadeVerb } from "@oneiron/client";
 import type { WitnessTurn, RecallOptions } from "oneiron";
-import { BlockedDoor, LIMITS, redactor, runProcess, withDeadline, secretHex, ownResource, recordStart } from "./run.ts";
+import { BlockedDoor, LIMITS, redactor, runProcess, withDeadline, secretHex, ownResource, recordStart, assertFlowActive, flowAbortSignal } from "./run.ts";
 import { Artifacts, type ProcessResult } from "./run.ts";
 import { requireAsset } from "./fixtures.ts";
 import type { BuildManifest } from "./fixtures.ts";
@@ -43,7 +43,6 @@ export function boundHeaders(credential: string): Headers {
   const transcript = Buffer.concat([Buffer.from("oneiron/slip-binding/v2\0"),Buffer.from(blake3(Buffer.from(bearer.slice(8),"hex"))),length,challenge]);
   const key = createPrivateKey({key:Buffer.concat([Buffer.from("302e020100300506032b657004220420","hex"),Buffer.from(seed,"hex")]),format:"der",type:"pkcs8"});
   const proof = JSON.stringify({timestamp,nonce,signature:sign(null,transcript,key).toString("hex")});
-  redactor.add(proof);
   return new Headers({authorization:`Bearer ${bearer}`,"x-oneiron-binding":proof});
 }
 export interface HttpOptions {
@@ -61,17 +60,25 @@ export class PublicHttpClient {
   }
   /** Raw public request for existing non-facade endpoints and malformed-wire cases; no invented verbs. */
   async raw<T = unknown>(method: string, path: string, body?: unknown, headers?: HeadersInit): Promise<WireReply<T>> {
+    assertFlowActive();
     const url = new URL(path,this.url);
     if (url.origin !== this.url.origin) throw new TypeError("Cross-origin credential request refused");
     const bound = this.options.credential ? boundHeaders(this.options.credential) : new Headers();
+    const proofSecrets = [bound.get("x-oneiron-binding")];
     for (const [name,value] of new Headers(headers)) bound.set(name,value);
+    proofSecrets.push(bound.get("x-oneiron-binding"));
+    const requestSecrets = proofSecrets.filter((value): value is string => value !== null);
     if (body !== undefined && !bound.has("content-type")) bound.set("content-type","application/json");
     const rpc = (url.pathname === "/mcp" || url.pathname === "/mcp/tool-first") && body && typeof body === "object" && "method" in body
       ? {rpcMethod:body.method} : {};
     const stepId = await recordStart("http",{method,path:url.pathname,client:this.options.label,...rpc},this.options.artifacts);
     try {
-      const response = await fetch(url,{method,headers:bound,redirect:"manual",signal:AbortSignal.timeout(this.options.timeoutMs ?? LIMITS.requestMs),
-        ...(body === undefined ? {} : {body: typeof body === "string" || body instanceof Uint8Array ? body : JSON.stringify(body)})});
+      const requestBody = body === undefined ? undefined : typeof body === "string" || body instanceof Uint8Array ? body : JSON.stringify(body);
+      assertFlowActive();
+      const flowSignal = flowAbortSignal();
+      const timeoutSignal = AbortSignal.timeout(this.options.timeoutMs ?? LIMITS.requestMs);
+      const response = await fetch(url,{method,headers:bound,redirect:"manual",signal:flowSignal ? AbortSignal.any([flowSignal,timeoutSignal]) : timeoutSignal,
+        ...(requestBody === undefined ? {} : {body:requestBody})});
       const bytes = new Uint8Array(await response.arrayBuffer());
       const raw = new TextDecoder().decode(bytes);
       let parsed: unknown = raw;
@@ -80,12 +87,12 @@ export class PublicHttpClient {
       // Bodies can contain fixture secrets; persist only transport metadata.
       const artifacts = this.options.artifacts ?? (process.env.E2E_ARTIFACTS_DIR ? new Artifacts(process.env.E2E_ARTIFACTS_DIR) : undefined);
       await artifacts?.json(`http-${stepId}.json`,{stepId,phase:"complete",finishedAt:new Date().toISOString(),method,path:url.pathname,
-        client:this.options.label,...rpc,status:response.status,headers:Object.fromEntries(response.headers)});
+        client:this.options.label,...rpc,status:response.status,headers:Object.fromEntries(response.headers)},requestSecrets);
       return reply;
     } catch (error) {
       const artifacts = this.options.artifacts ?? (process.env.E2E_ARTIFACTS_DIR ? new Artifacts(process.env.E2E_ARTIFACTS_DIR) : undefined);
       await artifacts?.json(`http-${stepId}.json`,{stepId,phase:"error",finishedAt:new Date().toISOString(),method,path:url.pathname,
-        client:this.options.label,...rpc,error:error instanceof Error ? {name:error.name,message:error.message} : String(error)});
+        client:this.options.label,...rpc,error:error instanceof Error ? {name:error.name,message:error.message} : String(error)},requestSecrets);
       throw error;
     }
   }
@@ -164,6 +171,7 @@ export class WsClient {
   }
   private fail(error: Error): void { this.failure = error; for (const waiter of this.waiters.splice(0)) waiter.reject(error) }
   static async connect(origin: string, credential: string, timeoutMs: number = LIMITS.requestMs): Promise<WsClient> {
+    assertFlowActive();
     const url = new URL("/ws",origin); url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     // lib.dom hides Bun's client constructor overload for authentication headers.
     const BunWebSocket = WebSocket as typeof WebSocket & {
@@ -182,8 +190,9 @@ export class WsClient {
     } catch (error) { client.close(); throw error }
   }
   send(tag: 30 | 31, envelope: WsEnvelope): void {
+    assertFlowActive();
     const packed = encode(envelope);
-    const bytes = new Uint8Array(packed.length+1); bytes[0] = tag; bytes.set(packed,1); this.socket.send(bytes);
+    const bytes = new Uint8Array(packed.length+1); bytes[0] = tag; bytes.set(packed,1); assertFlowActive(); this.socket.send(bytes);
   }
   async next(timeoutMs: number = LIMITS.requestMs): Promise<WsFrame> {
     const queued = this.queue.shift(); if (queued) return queued;

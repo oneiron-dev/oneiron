@@ -5,7 +5,7 @@ import { EngineFixture, awaitPublic } from "./support/engine.ts";
 import { PublicHttpClient, credentialParts } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 import { ScriptedProviders } from "./support/providers.ts";
-import { defineFile, ownResource, recordStart, redactor } from "./support/run.ts";
+import { assertFlowActive, defineFile, ownResource, recordStart, redactor } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
@@ -128,7 +128,6 @@ async function witnessedText(engine: EngineFixture, text: string, occurredAt: nu
     conversation_ref: conversation.id, occurred_at: occurredAt,
     messages: [{ author: "user", message_type: "text", content: text, is_visible: true, order: 0 }],
   });
-  await engine.awaitReceipt(witnessed.receipt_ref);
   expect(witnessed.message_short_ids).toHaveLength(1);
   const message = await engine.client.call("vault.get", { entity_ref: witnessed.message_short_ids[0]! });
   expect(message.value).not.toBeNull();
@@ -200,6 +199,7 @@ function startVectorTable(fixture: EvidenceFixture, extraVectors: readonly (read
   const violations: string[] = [];
   let closed = false;
   let disown = () => {};
+  assertFlowActive();
   const server = Bun.serve({
     hostname: "127.0.0.1", port: 0,
     async fetch(request) {
