@@ -25,8 +25,8 @@ use super::super::super::contribution::{
     ContributionForkReceipt, ContributionReplayUnavailable, ForkTreatment,
 };
 use super::super::super::replay_capsule::{
-    CapsuleContent, CapsuleDraft, CapsuleRequest, ExecutorStepStart, ExposureSlot, StepCapture,
-    StepReplayCapsule, StepStartBody, StepStartCapture, StoredSpan,
+    CapsuleContent, CapsuleDraft, CapsuleRequest, ConsoleSlot, ExecutorStepStart, ExposureSlot,
+    StepCapture, StepReplayCapsule, StepStartBody, StepStartCapture, StoredSpan,
 };
 use super::super::records::{REPLAY_RECORDS, finish_output};
 use super::super::spawn_erase::fence_spawn_targets_in_txn;
@@ -229,6 +229,7 @@ fn write_capsule_in_txn(
         messages_digest: draft.messages_digest,
         source_rows: capture.source_rows.clone(),
         exposures: stored_slots(&draft.exposures, capture.request, &request),
+        console: stored_console(draft.console.as_ref(), capture.request, &request),
         seed: request_seed(capture),
         binding: None,
         route_pin: None,
@@ -277,6 +278,7 @@ fn write_withheld_in_txn(
                 ..slot.clone()
             })
             .collect(),
+        console: unstored_console(draft.console.as_ref()),
         seed: request_seed(capture),
         binding: None,
         route_pin: None,
@@ -508,24 +510,61 @@ fn stored_slots(
     slots
         .iter()
         .map(|slot| ExposureSlot {
-            stored: stored_span(slot, sent, &admitted.request, replaced),
+            stored: stored_span(
+                (slot.message, slot.part),
+                slot.stored,
+                sent,
+                &admitted.request,
+                replaced,
+            ),
             ..slot.clone()
         })
         .collect()
 }
 
-/// Where `slot` sits in `stored`, the request as the wall admitted it: its
-/// bounds moved by the replacements the wall made in its text, and the hash
-/// of the masked bytes between them. `None` when a bound falls inside a
-/// replaced span, or the text changed by more than those replacements.
+/// `console`, located in `sent`, moved to where it sits in the request as
+/// the wall admitted it (FIX 3608), as an exposure moves.
+fn stored_console(
+    console: Option<&ConsoleSlot>,
+    sent: &LlmRequest,
+    admitted: &AdmittedRequest,
+) -> Option<ConsoleSlot> {
+    let console = console?;
+    let stored = match &admitted.replaced {
+        Some(replaced) => {
+            let at = (console.message, console.part);
+            stored_span(at, console.stored, sent, &admitted.request, replaced)
+        }
+        None => console.stored,
+    };
+    Some(ConsoleSlot {
+        stored,
+        ..console.clone()
+    })
+}
+
+/// `console` kept with no stored span: its request was withheld.
+fn unstored_console(console: Option<&ConsoleSlot>) -> Option<ConsoleSlot> {
+    console.map(|console| ConsoleSlot {
+        stored: None,
+        ..console.clone()
+    })
+}
+
+/// Where `span`, in part `at` (its message and part) of `sent`, sits in
+/// `stored`, the request as the wall admitted it: its bounds moved by the
+/// replacements the wall made in its text, and the hash of the masked bytes
+/// between them. `None` when a bound falls inside a replaced span, or the
+/// text changed by more than those replacements.
 fn stored_span(
-    slot: &ExposureSlot,
+    at: (u32, u32),
+    span: Option<StoredSpan>,
     sent: &LlmRequest,
     stored: &LlmRequest,
     replaced: &TextReplacements,
 ) -> Option<StoredSpan> {
-    let span = slot.stored?;
-    let (sent_text, stored_text) = (text_part(sent, slot)?, text_part(stored, slot)?);
+    let span = span?;
+    let (sent_text, stored_text) = (text_part(sent, at)?, text_part(stored, at)?);
     let Some(moves) = replaced.get(blake3::hash(sent_text.as_bytes()).as_bytes()) else {
         // The wall left this text as it was.
         return (sent_text == stored_text).then_some(span);
@@ -581,10 +620,10 @@ fn same_bytes(kept: Option<&[u8]>, held: Option<&[u8]>) -> bool {
     kept.is_some() && kept == held
 }
 
-/// The text of `slot`'s part in `request`.
-fn text_part<'r>(request: &'r LlmRequest, slot: &ExposureSlot) -> Option<&'r str> {
-    let message = request.messages.get(usize::try_from(slot.message).ok()?)?;
-    match message.content.get(usize::try_from(slot.part).ok()?)? {
+/// The text of part `at` (its message and part) in `request`.
+fn text_part(request: &LlmRequest, (message, part): (u32, u32)) -> Option<&str> {
+    let message = request.messages.get(usize::try_from(message).ok()?)?;
+    match message.content.get(usize::try_from(part).ok()?)? {
         ContentPart::Text { text } => Some(text.as_str()),
         _ => None,
     }

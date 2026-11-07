@@ -8,7 +8,9 @@
 
 use std::ops::Range;
 
-use crate::api::{Counter, note_current};
+use super::admitted;
+use crate::api::{Counter, SealResourceLimits, note_current};
+use crate::memory::SealMemoryRefusal;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Kind {
@@ -27,6 +29,7 @@ pub(super) struct Token<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum LexError {
     Malformed,
+    Memory(SealMemoryRefusal),
 }
 
 pub(super) fn space(b: u8) -> bool {
@@ -248,53 +251,79 @@ fn name_is(token: &Token<'_>, expected: &[u8]) -> Result<bool, LexError> {
 /// dictionaries nest: each open container waits on an explicit stack
 /// (`true` for a dictionary, which reads a key before each value). An
 /// indirect reference's three tokens are one value.
-fn skip_value<'a>(lexer: &mut PdfLexer<'a>, first: Token<'a>) -> Result<(), LexError> {
+fn skip_value<'a>(
+    lexer: &mut PdfLexer<'a>,
+    first: Token<'a>,
+    limits: &SealResourceLimits,
+) -> Result<(), LexError> {
     let mut open: Vec<bool> = Vec::new();
-    let mut value = first;
-    loop {
-        match value.kind {
-            Kind::DictStart => open.push(true),
-            Kind::Delimiter if value.value == b"[" => open.push(false),
-            Kind::Word if value.value.iter().all(u8::is_ascii_digit) => {
-                // An indirect reference is three tokens: object, generation, R.
-                let checkpoint = lexer.at;
-                let next = lexer.next()?;
-                let end = lexer.next()?;
-                if !matches!((&next, &end), (Some(generation), Some(r))
-                    if generation.kind == Kind::Word && generation.value.iter().all(u8::is_ascii_digit)
-                        && r.kind == Kind::Word && r.value == b"R")
-                {
-                    lexer.at = checkpoint;
+    let mut charged = 0usize;
+    let result = (|| {
+        let mut value = first;
+        loop {
+            match value.kind {
+                Kind::DictStart => {
+                    let (len, capacity) = (open.len(), open.capacity());
+                    admitted::push(limits, &mut open, true).map_err(LexError::Memory)?;
+                    charged =
+                        charged.saturating_add(admitted::growth_charge::<bool>(len, capacity, 1));
                 }
+                Kind::Delimiter if value.value == b"[" => {
+                    let (len, capacity) = (open.len(), open.capacity());
+                    admitted::push(limits, &mut open, false).map_err(LexError::Memory)?;
+                    charged =
+                        charged.saturating_add(admitted::growth_charge::<bool>(len, capacity, 1));
+                }
+                Kind::Word if value.value.iter().all(u8::is_ascii_digit) => {
+                    // An indirect reference is three tokens: object, generation, R.
+                    let checkpoint = lexer.at;
+                    let next = lexer.next()?;
+                    let end = lexer.next()?;
+                    if !matches!((&next, &end), (Some(generation), Some(r))
+                        if generation.kind == Kind::Word && generation.value.iter().all(u8::is_ascii_digit)
+                            && r.kind == Kind::Word && r.value == b"R")
+                    {
+                        lexer.at = checkpoint;
+                    }
+                }
+                Kind::DictEnd => return Err(LexError::Malformed),
+                Kind::Delimiter if value.value == b"]" => return Err(LexError::Malformed),
+                _ => {}
             }
-            Kind::DictEnd => return Err(LexError::Malformed),
-            Kind::Delimiter if value.value == b"]" => return Err(LexError::Malformed),
-            _ => {}
-        }
-        lexer.deepen(open.len());
-        // The next value to skip, past every container that closes first.
-        value = loop {
-            let Some(&dictionary) = open.last() else {
-                return Ok(());
-            };
-            let next = lexer.next()?.ok_or(LexError::Malformed)?;
-            if dictionary {
-                if next.kind == Kind::DictEnd {
+            lexer.deepen(open.len());
+            // The next value to skip, past every container that closes first.
+            value = loop {
+                let Some(&dictionary) = open.last() else {
+                    return Ok(());
+                };
+                let next = lexer.next()?.ok_or(LexError::Malformed)?;
+                if dictionary {
+                    if next.kind == Kind::DictEnd {
+                        open.pop();
+                        continue;
+                    }
+                    if next.kind != Kind::Name {
+                        return Err(LexError::Malformed);
+                    }
+                    break lexer.next()?.ok_or(LexError::Malformed)?;
+                }
+                if next.kind == Kind::Delimiter && next.value == b"]" {
                     open.pop();
                     continue;
                 }
-                if next.kind != Kind::Name {
-                    return Err(LexError::Malformed);
-                }
-                break lexer.next()?.ok_or(LexError::Malformed)?;
-            }
-            if next.kind == Kind::Delimiter && next.value == b"]" {
-                open.pop();
-                continue;
-            }
-            break next;
-        };
+                break next;
+            };
+        }
+    })();
+    drop(open);
+    if charged != 0 {
+        limits
+            .memory
+            .ledger()
+            .map_err(LexError::Memory)?
+            .release_admitted(u64::try_from(charged).unwrap_or(u64::MAX));
     }
+    result
 }
 
 /// [`table_prev_work`] without its token count.
@@ -308,7 +337,10 @@ pub(super) fn table_prev(section: &[u8]) -> Result<Option<usize>, LexError> {
 /// spelling match. Nested names/values cannot impersonate its key. The
 /// whole section is lexed however long it is (Rule 5); the tokens it took
 /// come back beside the offset for the `[limits]` structural-work row.
-pub(super) fn table_prev_work(section: &[u8]) -> Result<(Option<usize>, usize), LexError> {
+pub(super) fn table_prev_work(
+    section: &[u8],
+    limits: &SealResourceLimits,
+) -> Result<(Option<usize>, usize), LexError> {
     let mut lexer = PdfLexer::new(section, 0);
     if lexer
         .next()?
@@ -349,7 +381,7 @@ pub(super) fn table_prev_work(section: &[u8]) -> Result<(Option<usize>, usize), 
                 .map_err(|_| LexError::Malformed)?;
             prev = Some(offset);
         } else {
-            skip_value(&mut lexer, value)?;
+            skip_value(&mut lexer, value, limits)?;
         }
     }
     Ok((prev, lexer.work()))

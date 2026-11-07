@@ -11,6 +11,9 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock, PoisonError, RwLock};
 
+/// The decision policy's questions-per-call value until the vault sets one.
+pub const DEFAULT_DECISION_QUESTIONS_PER_CALL: usize = 16;
+
 /// What a memory-derived row comes to when the machine's memory cannot be
 /// read.
 const MEMORY_FALLBACK_BYTES: u64 = 256 << 20;
@@ -588,6 +591,19 @@ pub enum EngineLimit {
     /// (FIX 5218). Past it the row asks whether everything is okay and
     /// the merge scores over every receipt.
     SharedMergeEvidenceRows,
+    /// Third-party interlocutors one context-pack request names: the
+    /// submitted `interlocutors.third_parties` list whole, label-only
+    /// parties included, measured after its shape checks and before contact
+    /// resolution (physical65 ABC14). Past it the row asks whether
+    /// everything is okay and every party is resolved and served whole.
+    ContextThirdParties,
+    /// Explicit pinned refs one board or pack request names: the submitted
+    /// `pinned_refs` list, measured where it is read and before its
+    /// resolution (physical68 ABC17). Manifest, hook and voice pins are
+    /// separate policies and are not counted here. Past it the row asks
+    /// whether everything is okay and every ref is resolved and served
+    /// whole.
+    MemoryPinnedRefs,
     /// Files one legacy codebase snapshot manifest names (FIX 74). Past
     /// it the row asks whether everything is okay and the manifest is
     /// kept whole.
@@ -611,6 +627,9 @@ pub enum EngineLimit {
     /// past it the row asks whether everything is okay and the whole budget
     /// is offered to the existing execution path.
     MemoryReasonTokens,
+    /// Questions in one logical decision pack. The producer reports its actual
+    /// policy's questions-per-call bound; larger packs are still served whole.
+    DecisionQuestionsPerCall,
     /// Edge-walk depth one context pack hydrates neighbors over (FIX 62).
     /// Past it the row asks whether everything is okay and the pack is
     /// still served whole; nothing is refused or clamped.
