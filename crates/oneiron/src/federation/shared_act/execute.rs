@@ -159,6 +159,7 @@ impl Vault {
                     plan.from_keeps,
                     Some(to),
                     slips,
+                    &receipt_id,
                     now,
                 )?;
                 handover_ids = moved.handover_ids();
@@ -197,6 +198,7 @@ impl Vault {
                     plan.target_keeps,
                     successor,
                     slips,
+                    &receipt_id,
                     now,
                 )?;
                 handover_ids = moved.handover_ids();
