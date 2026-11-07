@@ -1306,7 +1306,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/livequery/subscriptions/opening.rs` | src | s | 1 crate-vis | — | How a live query subscription opens: admitted, derived, budgeted and registered in one turn |
 | `src/livequery/test_wire.rs` | src | s | 4 crate-vis | — | Socket fixture codec |
 | `src/livequery/tests.rs` | test | m | — | — | — |
-| `src/livequery/wire.rs` | src | m | 15 crate-vis | — | Version-8 app envelopes |
+| `src/livequery/wire.rs` | src | m | 18 crate-vis | — | Version-8 app envelopes |
 | `src/logging.rs` | src | s | 1 re-export · 4 crate-vis | — | What the binaries write to their log sinks, and the panic hook |
 | `src/logging/tests.rs` | test | s | 4 crate-vis | — | — |
 | `src/mac_worker_bootstrap/entry.rs` | src | s | 1 crate-vis | — | — |

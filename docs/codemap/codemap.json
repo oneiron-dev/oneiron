@@ -2748,7 +2748,7 @@
      "path": "src/attempt_queue/engine/reads.rs",
      "purpose": "Point/list/dedupe reads plus retry-chain and dreamer-root walks",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 34,
       "fn": 6
      }
     },
@@ -39516,7 +39516,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/gate/ask_policy.rs",
@@ -127009,7 +127009,7 @@
      "path": "src/livequery/wire.rs",
      "purpose": "Version-8 app envelopes",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 18
      }
     },
     {
