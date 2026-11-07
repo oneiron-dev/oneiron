@@ -705,6 +705,17 @@ fn dispatch_input(attempt: &AttemptRecord) -> Option<crate::agent_dispatch::Agen
     decode_agent_dispatch_input(&payload.input).ok()
 }
 
+/// All stored code-fix records, including a carried batch's shares. This
+/// snapshot neither tests export eligibility nor purges a record.
+pub(super) fn stored_code_fix_records_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<u64> {
+    let mut records = 0;
+    for row in QUEUE.iter_raw_from(&vault.store, txn, &[])? {
+        row?;
+        records += 1;
+    }
+    Ok(records)
+}
+
 /// Readable everywhere: any narrower, conflicted or unknowable setting is
 /// private.
 fn all_public(fold: &AuthorityFold, worlds: &[EntityId]) -> bool {
