@@ -14987,10 +14987,10 @@ impl AgentVerb {
                 "Withdraws a mail thread's share with a person: by a reader of its source, the person who shared it, or the person leaving."
             }
             Self::VaultMailReplyDraft => {
-                "Drafts a reply, or its next revision, to a mail thread the caller reads, in text with optional simple HTML, to its sender (reply_all adds To and Cc; cc adds more), with artifact versions on Google or Microsoft 365. The owner approves it."
+                "Drafts a reply, or its next revision, to a mail thread the caller reads, in text with optional simple HTML, to its sender (reply_all adds To and Cc; cc adds more), with pinned artifact versions as files. The owner approves it."
             }
             Self::VaultMailReplyDrafts => {
-                "The drafted replies on the mail threads the caller reads, newest first, each with its words, every To and Cc recipient, each file's name, type, size and digest, the exact message's size and digest, frozen plan and state."
+                "The drafted replies on the mail threads the caller reads, newest first, each with its words, every To and Cc recipient, each file's name, type, size and digest, the exact message's size, digest and SMTP limit, frozen plan and state."
             }
             Self::VaultMailReplyDiscard => {
                 "Discards a drafted reply that was not approved; its drafter or the mailbox owner may. It never sends."

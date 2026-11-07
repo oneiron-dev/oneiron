@@ -15,6 +15,7 @@ use super::limits::LimitsConfig;
 use super::line::LineConfig;
 use super::linear::LinearConfig;
 use super::lookup::LEGACY_DEFAULT_VAULT_PATH;
+use super::mail::MailConfig;
 use super::oneironer::OneironerConfig;
 use super::recall::RecallConfig;
 use super::self_heal::SelfHealConfig;
@@ -158,6 +159,10 @@ pub struct SyncServerConfig {
     /// `[line]`: the plan of the LINE Official Account the built-in LINE
     /// pack serves, and the pushes it includes each month.
     pub line: LineConfig,
+    /// `[mail]`: the host operator's mail settings each served vault's mail
+    /// pack reads (fix list row 17645); the defaults unless the file names
+    /// others.
+    pub mail: MailConfig,
     /// `[channel_endpoints]`: where the served sinks reach each provider's
     /// API; the public APIs unless the file names others.
     pub channel_endpoints: ChannelEndpointsConfig,
@@ -249,6 +254,7 @@ impl Default for SyncServerConfig {
             runtime: RuntimeConfig::default(),
             skills: SkillsConfig::default(),
             line: LineConfig::default(),
+            mail: MailConfig::default(),
             channel_endpoints: ChannelEndpointsConfig::default(),
             apns: ApnsConfig::default(),
             linear: None,
@@ -442,6 +448,9 @@ pub struct ServeConfig {
     /// The `[line]` section: the LINE Official Account's plan, a free
     /// account unless the config file names one.
     pub line: LineConfig,
+    /// The `[mail]` section: the host operator's mail settings, the
+    /// defaults unless the config file names others.
+    pub mail: MailConfig,
     /// The `[channel_endpoints]` section: the provider APIs the served sinks
     /// reach, the public ones unless the config file names others.
     pub channel_endpoints: ChannelEndpointsConfig,
@@ -576,6 +585,7 @@ impl Default for ServeConfig {
             connectors: std::collections::BTreeMap::new(),
             embedding: None,
             line: server.line,
+            mail: server.mail,
             channel_endpoints: server.channel_endpoints.clone(),
             apns: server.apns.clone(),
             linear: None,
@@ -644,6 +654,7 @@ impl ServeConfig {
             runtime: self.runtime.clone(),
             skills: self.skills.clone(),
             line: self.line,
+            mail: self.mail,
             channel_endpoints: self.channel_endpoints.clone(),
             apns: self.apns.clone(),
             linear: self.linear.clone(),

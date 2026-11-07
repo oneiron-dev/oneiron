@@ -9,20 +9,25 @@
 //! - **IMAP.** Submitted over SMTP (RFC 6409) to the server the mailbox's
 //!   credential names, read at the source's door with effector
 //!   `connector:smtp`: a credential bound for reading only sends nothing.
-//!   One `RCPT` per recipient; a refused one is `smtp_envelope_refused`, as
-//!   for a send to one, and a reply to several resets before the data goes.
+//!   The session's own `SIZE` limit, else the host's setting
+//!   `mail.smtp.max_message_octets_unadvertised`, refuses a larger message
+//!   before `MAIL` (`reply_smtp`). One `RCPT` per recipient; a refused one
+//!   is `smtp_envelope_refused`, as for a send to one, and a reply to
+//!   several resets before the data goes.
 //! - **Microsoft 365.** One MIME `POST /me/sendMail` on Graph with the
 //!   mailbox's own token (effector `connector:microsoft365`), once `/me`
 //!   shows the token is the mailbox's. A `202` is the send taken; a token
 //!   without `Mail.Send` is refused there.
 //!
-//! A Microsoft 365 reply with files (fix list row 17645) sends the exact
-//! message it was frozen with: its holder (`reply_attachments`) judges the
-//! send again in the writer that admits it, opens the message at egress
-//! once its send still stands, checked against its frozen length and BLAKE3,
-//! and judges it once more in the credential door's writer. The POST body is
-//! that message's base64, refused above Graph's one-shot limit; nothing is
-//! read, masked or rendered again.
+//! A reply with files (fix list row 17645) sends the exact message it was
+//! frozen with: its holder (`reply_attachments`) judges the send again in
+//! the writer that admits it, opens the message at egress once its send
+//! still stands, checked against its frozen length and BLAKE3, and judges it
+//! once more in the credential door's writer. Over SMTP its data is that
+//! message, dot-stuffed; through Graph the POST body is that message's
+//! base64, refused above Graph's one-shot limit. Nothing is read, masked or
+//! rendered again. A server that refuses it late is a refused send, as any
+//! other is: no smaller or second message is ever sent.
 //!
 //! A send that may have been taken (the data's final dot written, or the
 //! POST sent, and no answer) is uncertain, never refused: email has no
@@ -61,6 +66,36 @@ const RECEIPT_RFC_IN_REPLY_TO: &str = "rfc_in_reply_to";
 const RECEIPT_RFC_REFERENCES: &str = "rfc_references";
 const RECEIPT_REPLY_MESSAGE_REF: &str = "mail_reply_message_ref";
 const RECEIPT_SEND_ERROR: &str = "mail_reply_send_error";
+
+/// The authenticated submission session of the IMAP mailbox `source`, opened
+/// with `secret`, its credential at its door: the submission server it
+/// names, over TLS, `EHLO` naming the domain of `from`, the mailbox's
+/// address, then `AUTH` with its token, else its password. The send and the
+/// size check of a reply with files (`reply_smtp`) open it alike.
+///
+/// # Errors
+///
+/// A credential that names no submission server or holds no secret, and any
+/// refusal of the session.
+pub(super) fn open_submission(
+    source: &MailSyncSource,
+    secret: &[u8],
+    from: &str,
+) -> Result<SmtpSession> {
+    let account = submission_account(source, secret)?;
+    let auth = match (&account.access_token, &account.password) {
+        (Some(token), _) => SmtpAuth::Token(token),
+        (None, Some(password)) => SmtpAuth::Password(password),
+        (None, None) => return Err(refused("imap_credential_holds_no_secret")),
+    };
+    let client_name = from
+        .rsplit_once('@')
+        .map_or("localhost", |(_, domain)| domain);
+    let mut session =
+        SmtpSession::connect(&account.host, account.port, account.security, client_name)?;
+    session.authenticate(&account.username, &auth)?;
+    Ok(session)
+}
 
 /// How a reply leaves its mailbox.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,18 +149,15 @@ impl<'v> ReplySink<'v> {
     /// names: opened by the holder bound to this sink, after its send is
     /// judged once more, once that holder still keeps the carrier and the
     /// manifest the reply's content ref `message_ref` names by its digest,
-    /// and checked against the length and BLAKE3 that manifest froze. Graph
-    /// alone sends a reply with files, and the dispatch carries no hygiene
-    /// header for it: the message was frozen with none.
+    /// and checked against the length and BLAKE3 that manifest froze. The
+    /// dispatch carries no hygiene header for it, on SMTP as on Graph: the
+    /// message was frozen with none.
     fn retained_message(
         &self,
         files: &ReplyMessageFiles,
         message_ref: &str,
         hygiene_headers: &BTreeMap<String, String>,
     ) -> std::result::Result<Zeroizing<Vec<u8>>, &'static str> {
-        if self.transport != ReplyTransport::Graph {
-            return Err("mail_reply_files_unsupported");
-        }
         if !hygiene_headers.is_empty() {
             return Err("mail_reply_headers_invalid");
         }
@@ -149,34 +181,26 @@ impl<'v> ReplySink<'v> {
         Ok(raw)
     }
 
-    /// Submits `raw` over SMTP with the mailbox's credential.
+    /// Submits `raw` over SMTP with the mailbox's credential, refused before
+    /// `MAIL` above the session's own `SIZE` limit, else above the host's
+    /// setting for a server that names none. A reply with files is judged
+    /// once more in the credential door's writer by the holder of its
+    /// message (fix list row 17645).
     fn submit_smtp(&self, raw: &[u8]) -> Submitted {
+        let unadvertised = self
+            .vault
+            .mail_host_settings()
+            .smtp_max_message_octets_unadvertised;
         let mut outcome = None;
-        let door = self.vault.with_source_token_at_door(
+        let door = self.vault.with_source_token_at_door_admitting(
             &self.source,
             WireReads::Mailbox,
             SMTP_SUBMISSION_CONNECTOR_EFFECTOR,
+            self.retained,
             &mut |secret: &[u8]| {
-                let account = submission_account(&self.source, secret)?;
-                let auth = match (&account.access_token, &account.password) {
-                    (Some(token), _) => SmtpAuth::Token(token),
-                    (None, Some(password)) => SmtpAuth::Password(password),
-                    (None, None) => return Err(refused("imap_credential_holds_no_secret")),
-                };
-                let client_name = self
-                    .message
-                    .from
-                    .rsplit_once('@')
-                    .map_or("localhost", |(_, domain)| domain);
-                let mut session = SmtpSession::connect(
-                    &account.host,
-                    account.port,
-                    account.security,
-                    client_name,
-                )?;
-                session.authenticate(&account.username, &auth)?;
+                let mut session = open_submission(&self.source, secret, &self.message.from)?;
                 let recipients = self.message.delivery_addresses();
-                let submitted = session.submit(&self.message.from, &recipients, raw);
+                let submitted = session.submit(&self.message.from, &recipients, raw, unadvertised);
                 session.quit();
                 outcome = Some(submitted);
                 Ok(())

@@ -3,18 +3,50 @@
 //! runs one import step of a source, under the proof `/v1/owner` takes from
 //! the request. The generated HTTP and MCP dispatchers both enter here; an
 //! embedded handle runs them as its embedded owner.
+//!
+//! Each served vault's mail pack also runs its blocking mail work here
+//! ([`install_mail_host`], fix list row 17645): an IMAP mailbox's drafted
+//! reply with files asks its submission server the size it takes, and that
+//! check waits on the network inside `vault.mail.reply.draft`. It runs on
+//! this server's blocking hop, in the drafter's own call, with the drafter's
+//! own handle and the mailbox's own credential: no owner proof is taken or
+//! lent, and the verb's route is the one every draft takes. Under the
+//! host's `[mail]` settings.
 
 use std::sync::Arc;
 
+use oneiron::Vault;
 use oneiron::mail_pack::{
-    MailReplyApproveRequest, MailReplyDraftView, MailSourceSyncRequest, MailSyncReport,
+    MailBlockingRunner, MailReplyApproveRequest, MailReplyDraftView, MailSourceSyncRequest,
+    MailSyncReport,
 };
 use oneiron::memory::MemoryResult;
 use oneiron::task_verb::sdk::{EmptyRequest, PackPutReceipt};
 
 use super::host_doors::support::{internal, owner_proof};
 use crate::auth::CoreAuth;
+use crate::config::MailConfig;
 use crate::server::SyncServer;
+
+/// The runner a served vault's blocking mail work runs on (fix list row
+/// 17645): the caller's own thread, moved off the async runtime first
+/// ([`crate::server::blocking`]), so a check that waits on a submission
+/// server holds no runtime worker. The work keeps whatever its caller holds:
+/// the drafter's handle, its credential and its call.
+struct ServedMailBlocking;
+
+impl MailBlockingRunner for ServedMailBlocking {
+    fn run(&self, work: &mut (dyn FnMut() + Send)) {
+        crate::server::blocking(work);
+    }
+}
+
+/// Installs on `vault`, as this server opens it, the host's `[mail]`
+/// settings `mail` and the blocking runner its mail pack's network checks
+/// run on (fix list row 17645).
+pub(crate) fn install_mail_host(vault: &Vault, mail: &MailConfig) {
+    vault.install_mail_host(mail.host_settings(), Some(Arc::new(ServedMailBlocking)));
+}
 
 /// `vault.mail.pack.install`: installs the pack folder through the ordinary
 /// owner install. It connects no source and grants nothing.

@@ -22922,6 +22922,8 @@ class MailReplyDraftView(TypedDict):
     attachments: NotRequired[list[MailReplyAttachmentView]]
     message_octets: NotRequired[int | None]
     message_blake3: NotRequired[str | None]
+    smtp_limit_octets: NotRequired[int | None]
+    smtp_limit_read_at: NotRequired[int | None]
     plan_ref: str
     state: MailReplyDraftState
     outcome: NotRequired[str | None]

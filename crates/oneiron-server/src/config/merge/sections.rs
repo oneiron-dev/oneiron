@@ -327,6 +327,9 @@ impl PartialServeConfig {
         if let Some(value) = self.line {
             resolved.line = value;
         }
+        if let Some(value) = self.mail {
+            resolved.mail = value;
+        }
         if let Some(value) = self.channel_endpoints {
             resolved.channel_endpoints = value;
         }

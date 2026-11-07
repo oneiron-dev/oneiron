@@ -71096,6 +71096,18 @@ pub struct MailReplyDraftView {
         skip_serializing_if = "Option::is_none"
     )]
     pub message_blake3: Option<String>,
+    #[serde(
+        rename = "smtp_limit_octets",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub smtp_limit_octets: Option<u64>,
+    #[serde(
+        rename = "smtp_limit_read_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub smtp_limit_read_at: Option<u64>,
     #[serde(rename = "plan_ref")]
     pub plan_ref: String,
     #[serde(rename = "state")]

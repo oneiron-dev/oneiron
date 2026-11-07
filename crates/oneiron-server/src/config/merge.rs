@@ -358,6 +358,7 @@ struct FileServeConfig {
     connectors: Option<std::collections::BTreeMap<String, super::ConnectorHostConfig>>,
     embedding: Option<super::EmbeddingConfig>,
     line: Option<super::LineConfig>,
+    mail: Option<super::MailConfig>,
     channel_endpoints: Option<super::ChannelEndpointsConfig>,
     apns: Option<super::ApnsConfig>,
     linear: Option<super::LinearConfig>,
@@ -432,6 +433,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             connectors: value.connectors,
             embedding: value.embedding,
             line: value.line,
+            mail: value.mail,
             channel_endpoints: value.channel_endpoints,
             apns: value.apns,
             linear: value.linear,
@@ -524,6 +526,8 @@ struct PartialServeConfig {
     embedding: Option<super::EmbeddingConfig>,
     /// `[line]` is file-only, as `[browser]` is.
     line: Option<super::LineConfig>,
+    /// `[mail]` is file-only, as `[line]` is.
+    mail: Option<super::MailConfig>,
     /// `[channel_endpoints]` is file-only, as `[line]` is.
     channel_endpoints: Option<super::ChannelEndpointsConfig>,
     /// `[apns]` is file-only, as `[channel_endpoints]` is.
@@ -627,6 +631,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("connectors", &self.connectors)
             .field("embedding", &self.embedding)
             .field("line", &self.line)
+            .field("mail", &self.mail)
             .field("channel_endpoints", &self.channel_endpoints)
             .field("apns", &self.apns)
             .field("linear", &self.linear)
@@ -730,6 +735,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             connectors: None,
             embedding: None,
             line: None,
+            mail: None,
             channel_endpoints: None,
             apns: None,
             linear: None,

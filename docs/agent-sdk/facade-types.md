@@ -8794,7 +8794,7 @@ export type MailReplyAttachmentView = { artifact_ref: string; version: number; n
 /** `oneiron::mail_pack::reply::MailReplyDraftState` */
 export type MailReplyDraftState = "proposed" | "approved" | "sent" | "unsettled" | "discarded"
 /** `oneiron::mail_pack::reply::MailReplyDraftView` */
-export type MailReplyDraftView = { draft_ref: string; revision: number; source_ref: string; thread_ref: string; parent_turn_ref: string; to: string[]; cc?: string[]; subject: string; body: string; body_html?: string | null; attachments?: MailReplyAttachmentView[]; message_octets?: number | null; message_blake3?: string | null; plan_ref: string; state: MailReplyDraftState; outcome?: string | null; drafted_at: number; updated_at: number }
+export type MailReplyDraftView = { draft_ref: string; revision: number; source_ref: string; thread_ref: string; parent_turn_ref: string; to: string[]; cc?: string[]; subject: string; body: string; body_html?: string | null; attachments?: MailReplyAttachmentView[]; message_octets?: number | null; message_blake3?: string | null; smtp_limit_octets?: number | null; smtp_limit_read_at?: number | null; plan_ref: string; state: MailReplyDraftState; outcome?: string | null; drafted_at: number; updated_at: number }
 /** `oneiron::mail_pack::reply::MailReplyDraftsRequest` */
 export type MailReplyDraftsRequest = { thread_ref?: string | null; include_settled?: boolean }
 /** `oneiron::mail_pack::reply::MailReplyDraftPage` */
