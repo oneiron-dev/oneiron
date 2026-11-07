@@ -191,23 +191,6 @@ impl Vault {
                     )?;
                     return Ok((head, ReanchorSummary::default(), record, None));
                 }
-                if let Some(bundle) = &proposal.sheet_answers {
-                    let policy = crate::gate::resolve_policy_manifest(&self.store, &*wtxn)?;
-                    let cap = policy
-                        .sheet_answer_limit(
-                            &artifact_id.to_hex(),
-                            &bundle.sheet,
-                            bundle.max_count_override,
-                        )
-                        .ok_or(Error::Artifact(ArtifactError::InvalidEditManifest(
-                            "typed answer count policy unavailable",
-                        )))?;
-                    if u64::try_from(bundle.answers.len()).unwrap_or(u64::MAX) > cap {
-                        return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
-                            "typed answer count exceeds policy",
-                        )));
-                    }
-                }
                 // A policy revision under this write lock can only make the budget
                 // stricter than the preflight. Re-evaluate before any durable row.
                 let docx_limits = if proposal.format == OfficeFormat::Docx {
