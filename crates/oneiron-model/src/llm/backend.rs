@@ -178,8 +178,19 @@ pub trait SingleRouteBackend: LlmBackend {
 }
 
 /// How a credential broker is kept apart from the daemon (ARCH-0069
-/// `#broker-isolation`). A call's dispatch receipt names it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+/// `#broker-isolation`). A call's dispatch receipt names it, and so does an
+/// exact publish request whose push a broker carried (FIX 19083).
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum BrokerIsolation {
     /// The broker runs as its own OS user.
