@@ -7629,7 +7629,7 @@
      "path": "src/batch/export/snapshot_body.rs",
      "purpose": "FIX 3677: a live row's body as the whole-vault snapshot reads it",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -17287,13 +17287,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/dispatcher/program_step.rs",
      "purpose": "A turn program's code run (DOOR-141 PR2): the program's own leased try, lent to the one callable SKILL its…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -28203,6 +28203,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_consolidation/executor/root_bridge.rs",
+     "purpose": "Accepted root judgements enter the normal conflict and sealed-write path",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_consolidation/extracted_people.rs",
      "purpose": "Explicit PERSON outputs from the production extraction response",
      "surface": {
@@ -28272,7 +28282,7 @@
      "path": "src/dreamer_consolidation/gap.rs",
      "purpose": "Reflection gaps: missed follow-ups, open threads, unacted intents, contradictions",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 2,
       "fn": 4,
       "struct": 2
@@ -28801,6 +28811,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_consolidation/resources/root.rs",
+     "purpose": "A typed root is a resource origin, not a conversation partition",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_consolidation/resources/signals.rs",
      "purpose": "Actor- and branch-filtered graph/vector inputs for mechanical selection",
      "surface": {
@@ -28826,7 +28846,7 @@
      "path": "src/dreamer_consolidation/resources/write.rs",
      "purpose": "Sealed resource handoff",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 20,
       "fn": 2,
       "struct": 1
      }
@@ -28912,7 +28932,27 @@
      "path": "src/dreamer_consolidation/root_evidence.rs",
      "purpose": "Root-owned reference pins",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/root_evidence/bridge.rs",
+     "purpose": "Durable typed child proposals and their live root write fence",
+     "surface": {
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/root_evidence/bridge/recovery.rs",
+     "purpose": "Native grant proofs select retained source revisions, never copied bodies",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -60973,7 +61013,7 @@
      "path": "src/ports/safe_read.rs",
      "purpose": "Integrity reads compose ports without opening a transaction",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 2
      }
     },
@@ -84528,7 +84568,6 @@
      "kind": "src",
      "notable": [
       "BorrowedCellView",
-      "CoordinationPatternView",
       "CriticAssociation",
       "CriticObservation",
       "LaunchedMember",
@@ -84558,9 +84597,9 @@
      "purpose": "The owner's task-type tree doors (DOOR-111, OF-541): store an authored tree on an open team-shape fork, and…",
      "surface": {
       "const": 1,
-      "enum": 3,
+      "enum": 2,
       "fn": 3,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 23
      }
     },
@@ -84568,15 +84607,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "SpawnAskKnob",
       "SpawnIntentReply",
       "SpawnIntentRequest"
      ],
      "path": "src/team/doors/spawn.rs",
      "purpose": "The owner's planned spawn door (DOOR-111, slice 10): the owner launches one reserved planned agent or team…",
      "surface": {
-      "enum": 1,
       "fn": 1,
+      "re-export": 1,
       "struct": 2
      }
     },
@@ -93685,7 +93723,7 @@
      "purpose": "FIX 12569: each vault's own small draft model (I5-DRAFTER = A), retrained at night on the vault's own…"
     },
     "dreamer_consolidation": {
-     "files": 166,
+     "files": 170,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94786,7 +94824,7 @@
    },
    "over_bar": 187,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6706,
+   "source_files": 6710,
    "test_files": 895
   },
   "oneiron-android": {
@@ -145420,7 +145458,6 @@
       "CooperativeDeletionDispositionKind",
       "Coord",
       "CoordinationPattern",
-      "CoordinationPatternView",
       "CopingAggregate",
       "CopingAggregateRequest",
       "CopingOutcomeReceipt",
@@ -148381,9 +148418,6 @@
       "SpaceProbe",
       "SpaceRef",
       "SpawnAskField",
-      "SpawnAskKnobString",
-      "SpawnAskKnobU32",
-      "SpawnAskKnobU64",
       "SpawnCare",
       "SpawnErasure",
       "SpawnIntentReply",
@@ -148989,7 +149023,7 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1143,
+      "enum": 1139,
       "struct": 3488
      }
     },
