@@ -7,8 +7,8 @@ use oneiron::engine_executor::RunCompaction;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::{LlmRequest, Vault};
 
-use super::{CodeModeCompaction, CompactionMeter, LiveAdmission};
-use crate::models::{ModelRuntime, RoleCall, RoleRefusal};
+use super::{AnsweringRungSlot, CodeModeCompaction, CompactionMeter, LiveAdmission};
+use crate::models::{AnsweringRung, ModelRuntime, RoleCall, RoleRefusal};
 
 #[cfg(feature = "code-sandbox-wasmtime")]
 pub(super) fn seat(
@@ -49,5 +49,17 @@ impl LiveAdmission for Live {
     fn admit_live(&self, request: LlmRequest) -> Result<RoleCall, RoleRefusal> {
         self.models
             .admit_seat_bound(&self.vault, self.role, request)
+    }
+
+    /// The child's generation answers on its own backend, which fills no
+    /// answering rung slot of this host (FIX 4933).
+    fn hold_answering_rungs(&self, _: &LlmRequest) -> Option<Arc<AnsweringRungSlot>> {
+        None
+    }
+
+    /// No answering rung is recorded for the child's calls, so its live
+    /// fork binds none (FIX 4933): no rung is guessed.
+    fn answering_rung(&self, _: &LlmRequest) -> Option<AnsweringRung> {
+        None
     }
 }
