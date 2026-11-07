@@ -77,6 +77,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     |write, txn, id| {
         crate::llm::decision::questions::erase_question_source_in_txn(write.store, txn, id)
     },
+    // FIX 7824: the unclear attribution notes written about the row, or from it.
+    crate::skill_attribution::erase_unclear_source_in_txn,
     // FIX 10019: an erased export's accepted persona copy.
     crate::persona_snapshot::erase_in_txn,
     // FIX 9598: an erased claim's owed VAD consolidation.

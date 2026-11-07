@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1265 facade rows, 4599 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1217.
+// UniFFI census: 1272 facade rows, 4609 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1224.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -15496,6 +15496,90 @@ pub struct WeaveItemCorrectionView {
     pub recorded_at: u64,
 }
 
+/// `oneiron::authority::step_up::admin_inputs::WeaveAdminReportRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WeaveAdminReportRequest {
+    #[serde(rename = "membership_grant")]
+    pub membership_grant: String,
+    #[serde(rename = "request", default, skip_serializing_if = "Option::is_none")]
+    pub request: Option<WeaveReportRequest>,
+}
+
+/// `oneiron::authority::step_up::admin_inputs::WeaveAdminLensRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WeaveAdminLensRequest {
+    #[serde(rename = "membership_grant")]
+    pub membership_grant: String,
+    #[serde(rename = "request", default, skip_serializing_if = "Option::is_none")]
+    pub request: Option<WeaveLensRequest>,
+}
+
+/// `oneiron::authority::step_up::admin_inputs::WeaveAdminDigestRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WeaveAdminDigestRequest {
+    #[serde(rename = "membership_grant")]
+    pub membership_grant: String,
+    #[serde(rename = "request", default, skip_serializing_if = "Option::is_none")]
+    pub request: Option<WeaveDigestRequest>,
+}
+
+/// `oneiron::authority::step_up::admin_inputs::WeaveAdminLinkWrongRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WeaveAdminLinkWrongRequest {
+    #[serde(rename = "membership_grant")]
+    pub membership_grant: String,
+    #[serde(rename = "request")]
+    pub request: WeaveWrongLinkRequest,
+}
+
+/// `oneiron::authority::step_up::admin_inputs::WeaveAdminItemWrongRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WeaveAdminItemWrongRequest {
+    #[serde(rename = "membership_grant")]
+    pub membership_grant: String,
+    #[serde(rename = "request")]
+    pub request: WeaveWrongItemRequest,
+}
+
+/// `oneiron::authority::step_up::StepUpPasskeysResetRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct StepUpPasskeysResetRequest {
+    #[serde(rename = "person")]
+    pub person: String,
+}
+
+/// `oneiron::authority::step_up::StepUpPasskeysReset`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct StepUpPasskeysReset {
+    #[serde(rename = "person")]
+    pub person: String,
+    #[serde(rename = "removed")]
+    pub removed: u64,
+}
+
+/// `oneiron::authority::step_up::totp::StepUpTotpResetRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct StepUpTotpResetRequest {
+    #[serde(rename = "person")]
+    pub person: String,
+}
+
+/// `oneiron::authority::step_up::totp::StepUpTotpReset`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct StepUpTotpReset {
+    #[serde(rename = "person")]
+    pub person: String,
+    #[serde(rename = "removed")]
+    pub removed: u64,
+}
+
 /// `oneiron::verbs::weave::WeaveEnqueueRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -20875,6 +20959,18 @@ pub struct AuthorityAuditRow {
     pub subject_ref: Option<String>,
     #[serde(rename = "grant_ref", default, skip_serializing_if = "Option::is_none")]
     pub grant_ref: Option<String>,
+    #[serde(
+        rename = "receipt_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub receipt_ref: Option<String>,
+    #[serde(
+        rename = "affected_grants",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub affected_grants: Option<Vec<String>>,
     #[serde(rename = "claim_ref", default, skip_serializing_if = "Option::is_none")]
     pub claim_ref: Option<String>,
     #[serde(
@@ -32256,43 +32352,6 @@ pub enum ErasePendingReason {
     VetoWindow,
 }
 
-/// `oneiron_contracts::error::legal_hold::LegalHoldBoundKind`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum LegalHoldBoundKind {
-    #[serde(rename = "law")]
-    Law,
-}
-
-/// `oneiron_contracts::error::legal_hold::LegalHoldBound`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct LegalHoldBound {
-    #[serde(rename = "kind")]
-    pub kind: LegalHoldBoundKind,
-    #[serde(rename = "order_ref", default, skip_serializing_if = "Option::is_none")]
-    pub order_ref: Option<String>,
-    #[serde(
-        rename = "legal_basis_ref",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub legal_basis_ref: Option<String>,
-    #[serde(
-        rename = "jurisdiction",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub jurisdiction: Option<String>,
-    #[serde(
-        rename = "issuing_authority_ref",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub issuing_authority_ref: Option<String>,
-    #[serde(rename = "ends_at", default, skip_serializing_if = "Option::is_none")]
-    pub ends_at: Option<u64>,
-}
-
 /// `oneiron::verbs::legal_hold::LegalHoldEraseState`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "state")]
@@ -32316,15 +32375,6 @@ pub enum LegalHoldEraseState {
         receipt_ref: Option<String>,
         #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
         reason: Option<ErasePendingReason>,
-    },
-    #[serde(rename = "retained_for_law")]
-    RetainedForLaw {
-        #[serde(rename = "bound")]
-        bound: LegalHoldBound,
-        #[serde(rename = "works_self_hosted")]
-        works_self_hosted: bool,
-        #[serde(rename = "self_hosted_note")]
-        self_hosted_note: String,
     },
     #[serde(rename = "failed")]
     Failed {
@@ -42654,6 +42704,15 @@ pub struct OriginPublishRefusal {
     pub detail: Option<String>,
 }
 
+/// `oneiron_model::llm::backend::BrokerIsolation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum BrokerIsolation {
+    #[serde(rename = "separate_user")]
+    SeparateUser,
+    #[serde(rename = "same_user")]
+    SameUser,
+}
+
 /// `oneiron::origin::publish::types::OriginPublishRequestView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OriginPublishRequestView {
@@ -42711,6 +42770,12 @@ pub struct OriginPublishRequestView {
         skip_serializing_if = "Option::is_none"
     )]
     pub finished_at: Option<u64>,
+    #[serde(
+        rename = "broker_isolation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub broker_isolation: Option<BrokerIsolation>,
 }
 
 /// `oneiron_store::origin::publish::inputs::OriginPublishReviewRequest`.
@@ -57766,6 +57831,43 @@ pub enum LegalHoldState {
     RetainedForLaw,
     #[serde(rename = "use_restricted")]
     UseRestricted,
+}
+
+/// `oneiron_contracts::error::legal_hold::LegalHoldBoundKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum LegalHoldBoundKind {
+    #[serde(rename = "law")]
+    Law,
+}
+
+/// `oneiron_contracts::error::legal_hold::LegalHoldBound`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LegalHoldBound {
+    #[serde(rename = "kind")]
+    pub kind: LegalHoldBoundKind,
+    #[serde(rename = "order_ref", default, skip_serializing_if = "Option::is_none")]
+    pub order_ref: Option<String>,
+    #[serde(
+        rename = "legal_basis_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub legal_basis_ref: Option<String>,
+    #[serde(
+        rename = "jurisdiction",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub jurisdiction: Option<String>,
+    #[serde(
+        rename = "issuing_authority_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub issuing_authority_ref: Option<String>,
+    #[serde(rename = "ends_at", default, skip_serializing_if = "Option::is_none")]
+    pub ends_at: Option<u64>,
 }
 
 /// `oneiron_contracts::error::legal_hold::LegalHoldNotice`.
