@@ -22,7 +22,6 @@ use super::ErrorKind;
 #[non_exhaustive]
 pub enum SyncConfigField {
     EphemeralTimeoutMs,
-    MaxEphemeralPayloadBytes,
     MaxEphemeralSnapshotBytes,
 }
 
@@ -32,7 +31,6 @@ impl SyncConfigField {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::EphemeralTimeoutMs => "ephemeral_timeout_ms",
-            Self::MaxEphemeralPayloadBytes => "max_ephemeral_payload_bytes",
             Self::MaxEphemeralSnapshotBytes => "max_ephemeral_snapshot_bytes",
         }
     }

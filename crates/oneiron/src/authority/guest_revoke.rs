@@ -79,8 +79,10 @@ impl Vault {
     /// Mints the capability slip of one Ask or active Connect guest (OF-232; canon names no
     /// issuance door, Engine ruling 2026-10-17): the vault owner's act, under
     /// the host's `issuer`, for the live, unwithdrawn guest FEDERATION_GRANT
-    /// `grant_ref`. The slip's signed claims name that grant, carry its
-    /// scope, hold for its member, and bind the public key the guest
+    /// `grant_ref`, judged live whatever its verbs, so a propose-only Connect
+    /// guest gets a slip that proposes and never reads (FIX 8734). The slip's
+    /// signed claims name that grant, carry its scope, hold for its member,
+    /// and bind the public key the guest
     /// generated on their own device: the one their ask carried into the
     /// grant (FIX-LIST 1978), else the owner's `holder_key`; with neither,
     /// the mint refuses. No private key is delivered anywhere. It lives until `expires_at`, and withdrawing the grant
@@ -112,7 +114,7 @@ impl Vault {
         let grant = decode_federation_grant_body(&body)?;
         require_guest_purpose_in_txn(self, &txn, grant_ref, &grant)?;
         let now = self.instant_in_txn(&txn)?.secs();
-        if !grant.confers_at(now) || expires_at <= now {
+        if !grant.is_live_at(now) || expires_at <= now {
             return Err(invalid_authority());
         }
         let holder_key = grant
@@ -157,7 +159,8 @@ impl Vault {
 
     /// A grant-bound slip (OF-232) stands only while its grant does: the
     /// FEDERATION_GRANT its claims name is live, not withdrawn, still an Ask or active Connect
-    /// guest's grant for the slip's holder, and confers at `now`; or it is
+    /// guest's grant for the slip's holder, and live at `now` whatever its
+    /// verbs (FIX 8734: each door judges the slip's verb); or it is
     /// the holder's own-device grant (FIX 3134), live and conferring; or an
     /// ordinary live shared-vault membership grant (FIX 12441). An Ask
     /// guest's slip also stays inside the grant's current disclosure (FIX
@@ -263,7 +266,8 @@ impl Vault {
 
     /// An Ask or active Connect guest's FEDERATION_GRANT `grant_ref` still stands for `member`
     /// (PERSON hex): live, not withdrawn, a guest grant whose member it
-    /// is, and conferring at `now`. A grant-bound slip and a guest's task-verb
+    /// is, and live at `now` ([`crate::federation::FederationGrant::is_live_at`],
+    /// no verb asked, FIX 8734). A grant-bound slip and a guest's task-verb
     /// proof (OF-220) both read it.
     pub(super) fn require_live_guest_grant_in_txn(
         &self,
@@ -296,7 +300,7 @@ impl Vault {
         };
         let grant = decode_federation_grant_body(&body)?;
         require_guest_purpose_in_txn(self, txn, grant_ref, &grant)?;
-        if grant.member_ref.to_hex() != member || !grant.confers_at(now) {
+        if grant.member_ref.to_hex() != member || !grant.is_live_at(now) {
             return Err(invalid_authority());
         }
         Ok(grant)
@@ -421,7 +425,14 @@ impl Vault {
         // fold and every checkpoint image carry it, so a slip another replica
         // minted under the grant and merges later is tombstoned there too
         // (FIX 1978).
-        self.append_slip_op_in_txn(txn, issuer, AuthorityOp::SlipGrantRevoke { grant_ref })?;
+        self.append_slip_op_in_txn(
+            txn,
+            issuer,
+            AuthorityOp::SlipGrantRevoke {
+                grant_ref,
+                membership_receipt: None,
+            },
+        )?;
         // The withdrawal stays known here and reaches its peers, in this
         // writer (FIX-LIST 5107, 10772).
         super::withdraw_grant_row_in_txn(&self.store, txn, grant_ref)?;

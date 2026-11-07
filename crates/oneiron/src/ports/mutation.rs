@@ -6,14 +6,19 @@ use crate::store::Store;
 use crate::write_envelope::WriteEnvelope;
 use crate::{EntityId, TimeRange};
 
+mod plan;
+pub(super) use plan::append_changelog_in_txn;
+pub(crate) use plan::{MutationAuditProjection, PreparedMutationAudit};
+
 /// A storage service principal, not a user, person, session, or runtime slot.
 /// Used when the mutation door carries no authenticated actor binding, and
-/// the actor a critical-confirm timeout demotion settles as (FIX 1093).
+/// the actor a critical-confirm timeout demotion settles as (FIX 1093). The
+/// one derived-id rule names it (FIX 10043).
 pub(crate) fn storage_service_principal() -> Result<EntityId> {
-    let digest = blake3::hash(b"oneiron:storage-service-principal:v1");
-    let mut bytes = [0; 16];
-    bytes.copy_from_slice(&digest.as_bytes()[..16]);
-    EntityId::from_bytes(bytes)
+    EntityId::derive(
+        crate::entity_id::derived_domains::STORAGE_SERVICE_PRINCIPAL,
+        &[],
+    )
 }
 
 pub(crate) struct MutationAudit<'a> {
@@ -29,27 +34,43 @@ pub(crate) fn audit_mutation_in_txn(
     txn: &mut heed::RwTxn<'_>,
     mutation: MutationAudit<'_>,
 ) -> Result<()> {
-    let id = store.clock.ulid()?;
-    let recorded_at = recorded_at_in_txn(store, txn)?;
-    store.port_changelog_append(
-        txn,
-        &ChangeLogRecord {
-            id,
-            entity: mutation.entity,
-            op: mutation.op,
-            actor_principal: match mutation.actor_principal {
-                Some(actor) => actor,
-                None => storage_service_principal()?,
-            },
-            // A principal's person is a separate relationship. Never infer equality.
-            actor_person: None,
-            occurred_at: mutation.occurred_at,
-            recorded_at,
-            input_hash: *blake3::hash(mutation.input).as_bytes(),
-            patch: None,
-            reason: mutation.reason.map(str::to_owned),
+    let record = prepare_mutation_audit_in_txn(store, txn, mutation)?;
+    store.port_changelog_append(txn, &record)
+}
+
+/// Allocate the audit record at the mutation's native transaction position.
+/// Recording its time can write the clock floors in this writer.
+pub(crate) fn prepare_mutation_audit_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    mutation: MutationAudit<'_>,
+) -> Result<ChangeLogRecord> {
+    prepare_mutation_audit(&store.clock, || recorded_at_in_txn(store, txn), mutation)
+}
+
+fn prepare_mutation_audit(
+    clock: &super::time::StoreClock,
+    recorded_at: impl FnOnce() -> Result<u64>,
+    mutation: MutationAudit<'_>,
+) -> Result<ChangeLogRecord> {
+    let id = clock.ulid()?;
+    let recorded_at = recorded_at()?;
+    Ok(ChangeLogRecord {
+        id,
+        entity: mutation.entity,
+        op: mutation.op,
+        actor_principal: match mutation.actor_principal {
+            Some(actor) => actor,
+            None => storage_service_principal()?,
         },
-    )
+        // A principal's person is a separate relationship. Never infer equality.
+        actor_person: None,
+        occurred_at: mutation.occurred_at,
+        recorded_at,
+        input_hash: *blake3::hash(mutation.input).as_bytes(),
+        patch: None,
+        reason: mutation.reason.map(str::to_owned),
+    })
 }
 
 pub(crate) struct EntityPutAudit<'a> {
@@ -68,7 +89,30 @@ pub(crate) fn audit_entity_put_in_txn(
     txn: &mut heed::RwTxn<'_>,
     put: EntityPutAudit<'_>,
 ) -> Result<()> {
+    match prepare_entity_put_audit_in_txn(store, txn, put)? {
+        Some(record) => store.port_changelog_append(txn, &record),
+        None => Ok(()),
+    }
+}
+
+/// Select and allocate an audit row against the put's current native prefix.
+/// An unchanged put has no audit row and does not allocate an audit time.
+pub(crate) fn prepare_entity_put_audit_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    put: EntityPutAudit<'_>,
+) -> Result<Option<ChangeLogRecord>> {
     let old = store.entities.get(txn, put.id.as_bytes())?;
+    let Some(mutation) = entity_put_mutation(old.as_deref(), put) else {
+        return Ok(None);
+    };
+    prepare_mutation_audit_in_txn(store, txn, mutation).map(Some)
+}
+
+fn entity_put_mutation<'a>(
+    old: Option<&[u8]>,
+    put: EntityPutAudit<'a>,
+) -> Option<MutationAudit<'a>> {
     if let Some(raw) = old.as_ref()
         && let Some(header) = EntityMetadataHeader::parse(raw)
         && raw.get(ENTITY_METADATA_HEADER_LEN..) == Some(put.data)
@@ -76,7 +120,7 @@ pub(crate) fn audit_entity_put_in_txn(
         && header.occurred_end == put.occurred.end
         && header.learned_at == put.learned_at
     {
-        return Ok(());
+        return None;
     }
     let mut op = if old.is_some() {
         ChangeOp::Update
@@ -118,16 +162,12 @@ pub(crate) fn audit_entity_put_in_txn(
         .transition
         .and_then(VerifiedClaimTransition::closed_at)
         .unwrap_or(put.occurred.start);
-    audit_mutation_in_txn(
-        store,
-        txn,
-        MutationAudit {
-            entity: put.id,
-            op,
-            actor_principal,
-            occurred_at,
-            input: put.data,
-            reason: None,
-        },
-    )
+    Some(MutationAudit {
+        entity: put.id,
+        op,
+        actor_principal,
+        occurred_at,
+        input: put.data,
+        reason: None,
+    })
 }
