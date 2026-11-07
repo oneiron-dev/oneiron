@@ -254,6 +254,10 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // A held-back row stays denied in the image as it was.
     (&t::SOURCE_AUDIENCE_HELD, CONTENT),
     (&t::SOURCE_AUDIENCE_POLICY, LIVE),
+    // A policy's pending wake and the windows it rides are this vault's own
+    // work over its live policies and stored windows (fix list row 17203).
+    (&t::SOURCE_AUDIENCE_POLICY_WAKE, LIVE),
+    (&t::SOURCE_AUDIENCE_POLICY_WINDOW, LIVE),
     // A row's birth binding stands with the row as the image holds it.
     (&t::SOURCE_AUDIENCE_RECORD, CONTENT),
     (&t::SOURCE_AUDIENCE_THREAD, CONTENT),

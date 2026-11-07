@@ -31,6 +31,7 @@
 
 pub(in crate::sync) mod checkpoint;
 mod erased;
+mod wake;
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -488,31 +489,81 @@ pub(crate) fn mirror_record(vault: &Vault, doc: &LoroDoc, id: &EntityId) -> Resu
 
 /// Writes this vault's receipt of each change to each of `policies` that
 /// `map` does not carry yet (fix list row 17205), none naming an actor this
-/// vault erased. A key that holds other bytes stays as it is: an unredacted
-/// copy goes in the scrub ([`refresh_and_scrub`]) before this writes, and
-/// another vault's narrower copy or a contradiction admission refused stands.
-/// Whether the map changed.
+/// vault erased. A key that holds other bytes stays as it is here: an
+/// unredacted copy goes in the scrub ([`refresh_and_scrub`]) before this
+/// writes, and the export or persist then puts this vault's narrower meet
+/// in its place ([`reconcile_events`]). Whether the map changed.
 fn write_events(vault: &Vault, map: &LoroMap, policies: &BTreeSet<EntityId>) -> Result<bool> {
-    let receipts = {
-        let rtxn = vault.store.env.read_txn()?;
-        let mut receipts = Vec::new();
-        for policy in policies {
-            for (revision, event) in source_audience::events_of_in(vault, &rtxn, policy)? {
-                if !source_audience::event_names_erased_actor_in(vault, &rtxn, &event)? {
-                    receipts.push((event_key(policy, revision), event));
-                }
-            }
-        }
-        receipts
-    };
     let mut wrote = false;
-    for (map_key, event) in receipts {
+    for (map_key, event) in held_receipts(vault, policies)? {
         if map_get_bytes(map, &map_key).is_none() {
             map_insert_bytes(map, &map_key, &encode_event(&event)?)?;
             wrote = true;
         }
     }
     Ok(wrote)
+}
+
+/// Puts this vault's receipt of each change to each of `policies` in place
+/// of a wider one `map` carries (fix list row 17203): the receipt this vault
+/// holds is the meet of every copy it merged, an actor another replica erased
+/// taken out. A carried copy that contradicts it stands, as admission left
+/// it. The carried bytes stay in the window's history, so the window `pin`
+/// names goes history-free first. Whether the map changed.
+fn reconcile_events(
+    vault: &Vault,
+    map: &LoroMap,
+    policies: &BTreeSet<EntityId>,
+    pin: Option<&WindowKey>,
+) -> Result<bool> {
+    let mut wrote = false;
+    for (map_key, event) in held_receipts(vault, policies)? {
+        let Some(bytes) = map_get_bytes(map, &map_key) else {
+            continue;
+        };
+        let narrower = match carrier(&map_key, &bytes) {
+            Ok(Carrier::Event { event: carried, .. }) => {
+                carried != event && narrows(&event, &carried)
+            }
+            _ => false,
+        };
+        if narrower {
+            pin_history_free(vault, pin)?;
+            map_insert_bytes(map, &map_key, &encode_event(&event)?)?;
+            wrote = true;
+        }
+    }
+    Ok(wrote)
+}
+
+/// Whether `held` is `carried` with some of its actors taken out, and
+/// nothing else changed.
+fn narrows(
+    held: &source_audience::SourceAudienceEvent,
+    carried: &source_audience::SourceAudienceEvent,
+) -> bool {
+    held.op == carried.op
+        && held.at == carried.at
+        && (held.person.is_none() || held.person == carried.person)
+        && (held.by.is_none() || held.by == carried.by)
+}
+
+/// This vault's receipt of each change to each of `policies`, by its map
+/// key, but for one naming an actor this vault erased.
+fn held_receipts(
+    vault: &Vault,
+    policies: &BTreeSet<EntityId>,
+) -> Result<Vec<(String, source_audience::SourceAudienceEvent)>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut receipts = Vec::new();
+    for policy in policies {
+        for (revision, event) in source_audience::events_of_in(vault, &rtxn, policy)? {
+            if !source_audience::event_names_erased_actor_in(vault, &rtxn, &event)? {
+                receipts.push((event_key(policy, revision), event));
+            }
+        }
+    }
+    Ok(receipts)
 }
 
 /// The policies `map`'s bindings still reach, each thread's source
@@ -695,10 +746,37 @@ pub(crate) fn refresh_and_scrub(
     // redaction rides where its unredacted copy went.
     let carried: BTreeSet<EntityId> = carried_heads(&map).into_keys().collect();
     changed |= write_events(vault, &map, &carried)?;
+    changed |= reconcile_events(vault, &map, &carried, pin)?;
     if changed {
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
+    // The window is filed under each policy it rides, so a change of one
+    // wakes it (fix list row 17203).
+    if let Some(key) = pin {
+        let revisions = carried_heads(&map)
+            .into_iter()
+            .map(|(policy, head)| (policy, head.map(|head| head.revision)))
+            .collect();
+        source_audience::note_policy_windows(vault, key.as_str(), &revisions)?;
+    }
     Ok(changed)
+}
+
+/// Whether `doc`'s map carries a revision of `policy`: what the policy wake
+/// reads of a window it persisted again (fix list row 17203).
+fn carries_policy(doc: &LoroDoc, policy: &EntityId) -> bool {
+    carried_revision(doc, policy).is_some()
+}
+
+/// The revision of `policy` `doc`'s map carries as its head (`Some(None)`
+/// for a head that conflicts), or `None` when it carries none.
+fn carried_revision(doc: &LoroDoc, policy: &EntityId) -> Option<Option<u64>> {
+    if !holds_map(doc) {
+        return None;
+    }
+    carried_heads(&doc.get_map(SOURCE_AUDIENCES_MAP))
+        .remove(policy)
+        .map(|head| head.map(|head| head.revision))
 }
 
 /// Pins the window `pin` names history-free, before a carrier goes.
