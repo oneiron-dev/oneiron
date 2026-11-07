@@ -97,16 +97,20 @@ impl ScriptExecutionPlan {
     /// The program the guest runs: `prepared`, the authored script's one
     /// preparation, after the grants prelude. TypeScript runs as the
     /// JavaScript Oxc printed for it, JavaScript as written; the pack's
-    /// source tree stays as admitted.
+    /// source tree stays as admitted. Beside it, the prelude's line count,
+    /// counted from its text: a guest error position moves past those
+    /// lines before it is mapped (FIX 9209).
     pub(crate) fn assemble_program(
         &self,
         prepared: &PreparedSource<'_>,
         grants: &BTreeMap<String, Value>,
-    ) -> Result<String> {
+    ) -> Result<(String, u32)> {
         let script = prepared.executed();
         let prelude = GrantPrelude::encode(grants)?;
         shape(self.program.assemble(script.len(), prelude.0.len()))?;
-        Ok(format!("{}{script}", prelude.0))
+        let lines = u32::try_from(prelude.0.matches('\n').count())
+            .map_err(|_| invalid("grant prelude line count overflow"))?;
+        Ok((format!("{}{script}", prelude.0), lines))
     }
     pub(crate) fn output_bytes(&self, write: &SandboxProposalWrite) -> Result<Vec<u8>> {
         self.output.bytes(write)
