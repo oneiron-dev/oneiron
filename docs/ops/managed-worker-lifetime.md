@@ -102,3 +102,27 @@ gets no on-device offer, because on device its paid calls would turn free.
 The reranker keeps its HTTP route, so the device-only reranking guard still
 sends it a device-only row empty. Other Unix targets retain their existing
 transport semantics: no PID check, no on-device offer.
+
+## Non-vault model worker controller
+
+`oneiron model-workers --config /absolute/path/oneiron.toml` runs the configured
+`[models.workers]` in a separate process, without opening a vault or starting a
+vault listener. It reads that file's `[models]` section with the normal provider,
+worker, artifact, and prompt resolution. Relative paths use the config file's
+parent directory. This command does not layer serve environment variables or an
+owner settings file over it.
+
+The controller uses the existing process-wide worker host, supervisors, launch
+records, and device ledgers. Managed rows install, launch, and qualify through
+that host. External rows are only probed. Configured endpoints, idle-stop policy,
+lease draining, and stop grace are unchanged. Ctrl-C or SIGTERM retires all of
+this process's supervisors, waits for their existing drain and stop paths, and
+removes only those same supervisor instances from the host.
+
+This is startup and shutdown ownership, not a remote request-lease protocol.
+Managed vault processes still never launch model workers. They call their
+configured provider endpoints as before. They do not yet acquire this
+controller's native request leases, wake a worker that its configured idle-stop
+policy has stopped, or gain an on-device native transport through this command.
+Shared-vault demand, lease, and native-channel integration remain follow-up
+work. The command does not start Hypnos or adopt its vault child processes.

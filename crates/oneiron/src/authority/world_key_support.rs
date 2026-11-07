@@ -58,7 +58,8 @@ pub(crate) fn sign_side_entry(
 
 /// [`sign_side_entry`]'s entry before its signature: the key `signer`
 /// alone over `parents`, in its own suite, its signature zeroed, for a
-/// signer held behind a callback (FIX 11867, 11993).
+/// signer held behind a callback (FIX 11867, 11993). A frontier join names
+/// every head it joins, past [`MAX_PARENTS`] (FIX 8527).
 pub(crate) fn unsigned_side_entry(
     fold: &AuthorityFold,
     signer: AuthorityKey,
@@ -67,7 +68,11 @@ pub(crate) fn unsigned_side_entry(
     op: AuthorityOp,
     now: u64,
 ) -> Result<AuthorityLogEntry> {
-    if fold.vault_id.is_none() || parents.is_empty() || parents.len() > MAX_PARENTS {
+    let joins_frontier = matches!(op, AuthorityOp::FrontierJoin(_));
+    if fold.vault_id.is_none()
+        || parents.is_empty()
+        || (!joins_frontier && parents.len() > MAX_PARENTS)
+    {
         return Err(invalid_authority());
     }
     Ok(AuthorityLogEntry {
