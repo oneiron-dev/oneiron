@@ -594,7 +594,11 @@ impl ConnectorManifestDrift {
             }
             if a.input_schema != b.input_schema {
                 kinds.insert(ConnectorDriftKind::Schema);
-                reconsent_tools.insert(name.clone());
+                // A provable restriction carries its consent, as the slate
+                // judges one (FIX 2604); anything else re-asks its row.
+                if !super::slate::schema_narrows(Some(&a.input_schema), Some(&b.input_schema)) {
+                    reconsent_tools.insert(name.clone());
+                }
             }
             if a != b {
                 affected_tools.insert(name);

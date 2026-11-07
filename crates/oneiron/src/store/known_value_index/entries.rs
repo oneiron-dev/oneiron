@@ -34,11 +34,12 @@ impl KnownValues {
                 }
             };
             let bucket = &mut buckets[at];
-            if bucket
-                .known
-                .iter()
-                .any(|known| known.len == len && known.fingerprint == entry.fingerprint)
-            {
+            // Each holder of the same bytes keeps its own entry (FIX 8966):
+            // the first still wins a place, and a holder enumeration sees
+            // every record a release of those bytes shows.
+            if bucket.known.iter().any(|known| {
+                known.len == len && known.fingerprint == entry.fingerprint && known.origin == origin
+            }) {
                 continue;
             }
             longest = longest.max(len);
