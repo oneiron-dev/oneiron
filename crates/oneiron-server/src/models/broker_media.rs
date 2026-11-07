@@ -299,7 +299,7 @@ impl BrokerMedia {
                 (
                     OpenAiMediaMethod::Post,
                     ["images", "edits"],
-                    OpenAiMediaBody::Multipart { .. },
+                    OpenAiMediaBody::Json(_) | OpenAiMediaBody::Multipart { .. },
                 ) => Shape::OpenAiImageEdits,
                 (OpenAiMediaMethod::Post, ["audio", "speech"], OpenAiMediaBody::Json(_)) => {
                     Shape::OpenAiSpeech

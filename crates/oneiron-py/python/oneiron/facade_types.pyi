@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1284 facade rows, 4649 declarations.
+Census: 1284 facade rows, 4650 declarations.
 Inputs: 1213 of 1284 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1113 of 1284 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -17873,6 +17873,9 @@ class AiPartEmbedding(TypedDict):
     kind: Literal["embedding"]
     vector: list[float]
 AiPart = AiPartText | AiPartImage | AiPartAudio | AiPartVideo | AiPartEmbedding
+class AiImageMask(TypedDict):
+    media_type: str
+    data: str
 class AiVoiceStock(TypedDict):
     kind: Literal["stock"]
     name: str
@@ -17886,6 +17889,7 @@ class AiCallRequest(TypedDict):
     prompt: NotRequired[str | None]
     input: NotRequired[list[AiPart]]
     references: NotRequired[list[AiPart]]
+    mask: NotRequired[AiImageMask | None]
     params: NotRequired[dict[str, Any]]
     voice: NotRequired[AiVoice | None]
     idempotency_key: NotRequired[str | None]
