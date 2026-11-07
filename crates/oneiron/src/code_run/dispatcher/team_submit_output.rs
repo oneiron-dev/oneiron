@@ -86,8 +86,8 @@ impl OutputDescriptor {
             candidate = candidate.with_world(world);
         }
         candidate = candidate.with_relationships(self.rel.clone());
-        if let Some(scope) = &self.scope {
-            candidate = candidate.with_scope(scope.clone());
+        if let Some(scope) = crate::claim::without_initial_weight(self.scope.clone()) {
+            candidate = candidate.with_scope(scope);
         }
         candidate
     }
@@ -96,7 +96,8 @@ impl OutputDescriptor {
     pub(super) fn scopes(&self, body: &ClaimBody) -> bool {
         body.world == self.world
             && body.rel == self.rel
-            && body.scope == self.scope
+            && crate::claim::without_initial_weight(body.scope.clone())
+                == crate::claim::without_initial_weight(self.scope.clone())
             && body.scope_facet == self.facet
             && body.scope_project == self.project
     }
