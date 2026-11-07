@@ -131,6 +131,7 @@ fn persist_structural_with_origin(
             scan_write_payload(pin.quote_text.as_bytes())?;
         }
     }
+    super::documents::admit_value_fields_in_txn(&vault.store, txn, &doc.metadata()?)?;
     let masked = admit_body(vault, txn, doc, masks)?;
     // Keep the live NOTE projection valid, including after concurrent
     // batches merge. A refused commit leaves the durable document unchanged.
