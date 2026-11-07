@@ -18,6 +18,7 @@ use std::io::Cursor;
 
 mod contact_verdict_index;
 mod offers;
+mod row_reuse;
 mod streamed;
 
 /// Parked authority-widening request, keyed by its own hex64 reference.
@@ -202,6 +203,10 @@ fn widen_rejection_digest(proposal: &WidenProposal) -> EffectDigest {
     EffectDigest::from_bytes(*hasher.finalize().as_bytes())
 }
 fn validate_row(row: StoredProposal, reference: &str) -> Result<StoredProposal> {
+    validate_row_fields(&row, reference)?;
+    Ok(row)
+}
+fn validate_row_fields(row: &StoredProposal, reference: &str) -> Result<()> {
     let p = &row.proposal;
     decode_delta(&p.canonical_delta)?;
     if row.version != 1
@@ -220,7 +225,7 @@ fn validate_row(row: StoredProposal, reference: &str) -> Result<StoredProposal> 
     {
         return Err(invalid_row());
     }
-    Ok(row)
+    Ok(())
 }
 impl Vault {
     /// A verified agent may propose an action widening, but cannot grant it.
@@ -517,16 +522,7 @@ impl Vault {
         reference: &str,
     ) -> Result<StoredProposal> {
         let principal_ref = self.widen_answer_principal_in_txn(txn, owner, credential)?;
-        let row = WIDEN_PROPOSALS
-            .get(&self.store, txn, &reference.to_owned())?
-            .ok_or_else(invalid_row)?;
-        let row = validate_row(row, reference)?;
-        if row.proposal.owner_ref != principal_ref {
-            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
-                "widen proposal belongs to another holder",
-            )));
-        }
-        Ok(row)
+        self.widen_row_for_principal_in_txn(txn, principal_ref, reference)
     }
 
     /// Declines one frozen proposal: it settles [`WIDEN_REJECTED`], so no
@@ -610,33 +606,7 @@ impl Vault {
         reference: &str,
         matches_delta: impl FnOnce(&[u8]) -> bool,
     ) -> Result<ConsentReceipt> {
-        validate_reference_shape(reference)?;
-        let key = reference.to_owned();
-        self.with_write_txn_grouped(|txn| {
-            let mut row = self.owned_widen_row_in_txn(&*txn, owner, credential, reference)?;
-            let proposal = &row.proposal;
-            if row.resolved
-                || proposal.expires_at <= self.store.clock.now_recorded_at()
-                || !matches_delta(&proposal.canonical_delta)
-            {
-                return Err(Error::Gate(GateError::InvalidConsentBound(
-                    "widen proposal is stale, changed, or resolved",
-                )));
-            }
-            let WidenDelta::Bound(bound) = decode_delta(&proposal.canonical_delta)? else {
-                return Err(Error::Gate(GateError::InvalidConsentBound(
-                    "a contact-disclosure offer settles through confirm_contact_disclosure",
-                )));
-            };
-            let receipt = self.create_standing_grant_in_txn(txn, owner, bound)?;
-            row.resolved = true;
-            row.settlement = Some(StoredSettlement {
-                verdict: "accepted".to_owned(),
-                decision_id: receipt.decision_id().as_bytes(),
-            });
-            WIDEN_PROPOSALS.put(&self.store, txn, &key, &row)?;
-            Ok(receipt)
-        })
+        self.accept_widen_matching_reusing(owner, credential, reference, None, matches_delta)
     }
 
     /// The open contact-disclosure offer `reference` names, checked in the

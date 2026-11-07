@@ -131,8 +131,7 @@ impl Vault {
         let body = crate::ports::ClaimStore::port_claim_get(self, rtxn, id)?;
         let Some(body) = body else { return Ok(None) };
         if crate::authority::machine_claim_needs_history(&self.store, rtxn, &body)?
-            || !super::history_store::machine_history_ids_for_target(&self.store, rtxn, *id)?
-                .is_empty()
+            || super::history_store::machine_history_present_for_target(&self.store, rtxn, *id)?
             || self
                 .store
                 .vault_meta

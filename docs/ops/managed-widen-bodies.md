@@ -42,12 +42,30 @@ claim. Files are anonymous and are removed when their handles close.
 
 ## Spool and decoder I/O memory
 
-The raw-body spool uses the same shared process memory line before allocating its
-existing 64 KiB read piece. This wait runs on its dedicated transfer worker after
-the anonymous spool file is created, outside every vault transaction. The actual
-buffer capacity is recorded on the lease. The piece drops before its lease on
-success, error and unwind; both are released before the decoder starts, so they
-do not overlap the decoder's later reservation.
+The raw-body spool admits one finite payload phase on the shared process memory
+line. It covers the existing two queued copies, the producer's unsent copy, the
+reader's current copy and the existing 64 KiB read piece. Each copied piece is at
+most 64 KiB; these are the existing queue and I/O geometry, not a request-size
+limit. Admission runs on the dedicated transfer worker after the anonymous spool
+file is created, outside every vault transaction.
+
+The feed starts observing input and the existing idle policy immediately, but
+waits for that admission before its first nonempty piece copy. This wait is worker
+backpressure, not a new client deadline. The actual copied lengths and read-buffer
+capacity are recorded on the same lease. Once a current copy is fully consumed,
+its backing is freed and returned to that lease's pending room under the original
+memory-line lock. No other waiter can take the freed room between those steps,
+and no further admission is needed for the next piece.
+
+The reader, current copy, queue and read piece drop before the worker signals the
+end of the raw phase. An explicit owner then destroys the whole producer future,
+including any unsent copy, before acknowledging that signal. Cancellation performs
+the same destruction before closing the acknowledgment channel; a closed channel
+never starts the decoder. Only after acknowledgment does the worker drop the final
+raw-phase lease and call the decoder. All raw payloads therefore drop before their
+lease on success, error and unwind, and do not overlap a decoder's later reservation.
+Channel, future and error metadata, upstream frame backing and allocator RSS are
+not included in this payload accounting.
 
 The raw-spool wait has no new deadline and observes the same cancellation flag
 as the decoder wait. A physical memory floor uses the existing internal-server-
@@ -174,8 +192,21 @@ stays charged through comparison and the acting writer, and drops before its lea
 A physical floor keeps the existing internal-server-error shape and says the
 canonical byte allowance could not be reserved, not that an allocation was observed
 to fail. A stopped wait keeps body-not-whole; native refusals keep their old mapping.
-This covers only the first vector's payload and growth, not row metadata, validation
-trees, typed values, re-encoding or the acting writer's second decode.
+The admitted read keeps its decoded proposal row with that vector. In the acting
+writer, owner and holder liveness are checked first. A streaming JSON writer then
+compares the entire retained row's serialized bytes with the actual stored bytes,
+without making another encoded row vector. Only exact whole-row equality reuses the
+retained row and its already charged canonical payload. Validation, current-owner,
+expiry, unresolved-state and full canonical-byte checks still precede grant minting.
+The row, including its payload, drops before the same lease on every return path.
+
+Any stored-byte difference, including a metadata-only change or a different JSON
+spelling, takes the original native row decode, validation and owner checks. An
+encoding failure also takes that path. No new refusal, memory wait, file replay or
+request-size bound is added. This fallback's second canonical vector remains
+unaccounted, as do row metadata, validation trees, typed values, re-encoding,
+overlay-owned raw row copies and allocator RSS. The unchanged-row reuse is not a
+claim of complete native-answer heap admission.
 
 For an accept, file comparison runs outside every LMDB transaction. It compares
 exact bytes to the proposal's stored canonical delta, not just a digest.
@@ -196,7 +227,7 @@ has no `expected_delta`.
 This removes request-sized `expected_delta`, `proposal_ref`, property-name and
 metadata-head allocations on large widen-answer paths. It is not a bound on the
 whole endpoint or a claim of complete heap admission. Other doors' generic metadata
-decoding, queued feed/frame-buffer admission and the remaining stored proposal
-allocations stay separate work. The fixed 64 KiB working buffers and 64-byte reference buffer
+decoding, upstream frame backing and channel/future/error metadata, and the
+remaining stored proposal allocations stay separate work. The fixed 64 KiB working buffers and 64-byte reference buffer
 are internal I/O geometry and the existing reference shape, not new request caps,
 defaults or timeouts.
