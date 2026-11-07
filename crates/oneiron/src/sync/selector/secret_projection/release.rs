@@ -79,7 +79,13 @@ pub fn prepare_repo_sync_frame(
     payload: &[u8],
     context: Option<&LoroDoc>,
 ) -> Result<Option<Vec<u8>>> {
-    SyncSecretProjection::read(vault)?.release_window_blob(&vault.store, payload, context, false)
+    SyncSecretProjection::read(vault)?.release_window_blob(
+        &vault.store,
+        payload,
+        context,
+        false,
+        None,
+    )
 }
 
 /// [`prepare_repo_sync_frame`] for a device's send to its home, `context`
@@ -94,7 +100,13 @@ pub fn prepare_repo_sync_frame_for_home(
     payload: &[u8],
     context: Option<&LoroDoc>,
 ) -> Result<Option<Vec<u8>>> {
-    SyncSecretProjection::read(vault)?.release_window_blob(&vault.store, payload, context, true)
+    SyncSecretProjection::read(vault)?.release_window_blob(
+        &vault.store,
+        payload,
+        context,
+        true,
+        None,
+    )
 }
 
 /// `payload`, a window blob of `window` a peer sent, as this window takes
@@ -167,12 +179,20 @@ pub fn repo_copy_generation(vault: &Vault, doc: &LoroDoc) -> Result<Option<[u8; 
 }
 
 /// A self-contained window update (a detached selector document's) as a
-/// peer gets it.
+/// peer gets it. `observe`, when set, sees the SAME post-projection
+/// `released` doc in the Updates Some path just before its final export
+/// (FIX2999); `None` behaves exactly as [`prepare_repo_sync_frame`].
 ///
 /// # Errors
 /// As [`prepare_repo_sync_frame`].
-pub(crate) fn released_update(vault: &Vault, update: Vec<u8>) -> Result<Vec<u8>> {
-    Ok(prepare_repo_sync_frame(vault, &update, None)?.unwrap_or(update))
+pub(crate) fn released_update(
+    vault: &Vault,
+    update: Vec<u8>,
+    observe: Option<&mut dyn FnMut(&LoroDoc)>,
+) -> Result<Vec<u8>> {
+    Ok(SyncSecretProjection::read(vault)?
+        .release_window_blob(&vault.store, &update, None, false, observe)?
+        .unwrap_or(update))
 }
 
 /// The row a residence read returns for `item`: `read` looks the row up

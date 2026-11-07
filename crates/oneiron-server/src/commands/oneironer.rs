@@ -469,8 +469,8 @@ fn fetch(args: FetchArgs) -> anyhow::Result<()> {
     // that thread with it: stderr is locked per line there, and stdout
     // keeps its single JSON object below.
     let fetched = std::thread::scope(|scope| {
-        scope
-            .spawn(|| {
+        crate::engine_thread("oneironer-fetch".into())
+            .spawn_scoped(scope, || {
                 let mut progress = FetchProgress::new();
                 release::fetch_release(
                     entry,
@@ -482,6 +482,7 @@ fn fetch(args: FetchArgs) -> anyhow::Result<()> {
                     },
                 )
             })
+            .expect("failed to spawn thread")
             .join()
     });
     let outcome = fetched.map_err(|_| anyhow::anyhow!("the oneironer fetch panicked"))??;
