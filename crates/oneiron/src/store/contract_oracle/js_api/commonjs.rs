@@ -204,6 +204,19 @@ pub(super) fn collect(
                             .insert("commonjs:compound-replacement".to_owned());
                         continue;
                     }
+                    if let Some(values) = whole_sequence_values(
+                        &assignment.right,
+                        semantic,
+                        native_module,
+                        &mut accounted,
+                    ) {
+                        alias = false;
+                        for value in values {
+                            module.bindings.clear();
+                            value_bindings(value, module);
+                        }
+                        continue;
+                    }
                     // A replacement changes the object; the wrapper's original
                     // `exports` alias no longer points at it.
                     let value = assignment.right.get_inner_expression();
@@ -243,6 +256,58 @@ pub(super) fn collect(
             ));
         }
     }
+}
+
+fn whole_sequence_values<'ast, 'src>(
+    value: &'ast Expression<'src>,
+    semantic: &Semantic<'_>,
+    native_module: bool,
+    accounted: &mut BTreeSet<(u32, u32)>,
+) -> Option<Vec<&'ast Expression<'src>>> {
+    if !native_module {
+        return None;
+    }
+    let Expression::SequenceExpression(sequence) = value.get_inner_expression() else {
+        return None;
+    };
+    let (last, replacements) = sequence.expressions.split_last()?;
+    if replacements.is_empty() {
+        return None;
+    }
+    let mut sequence_accounted = BTreeSet::new();
+    let mut values = Vec::new();
+    for expression in replacements {
+        let Expression::AssignmentExpression(assignment) = expression.get_inner_expression() else {
+            return None;
+        };
+        if !assignment.operator.is_assign()
+            || !matches!(
+                target(
+                    assignment.left.as_member_expression()?,
+                    semantic,
+                    false,
+                    native_module,
+                    &mut sequence_accounted,
+                ),
+                Some(Target::Whole)
+            )
+        {
+            return None;
+        }
+        let value = assignment.right.get_inner_expression();
+        if !fresh_value(value) {
+            return None;
+        }
+        values.push(value);
+    }
+    let last = last.get_inner_expression();
+    if fresh_value(last) {
+        values.push(last);
+    } else if !whole_value(last, semantic, &mut sequence_accounted) {
+        return None;
+    }
+    accounted.extend(sequence_accounted);
+    Some(values)
 }
 
 fn property_chain(
