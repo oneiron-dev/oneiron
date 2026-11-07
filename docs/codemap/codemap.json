@@ -46919,6 +46919,8 @@
       "ModelStreamEventsRequest",
       "ModelStreamOpen",
       "ModelStreamOpened",
+      "ModelStreamRelease",
+      "ModelStreamReleased",
       "ModelStreamSink",
       "ModelStreamStatus",
       "ModelStreamSubscribe",
@@ -46930,8 +46932,8 @@
      "purpose": "Owner-submitted shared model streams over the engine's one-producer `LlmEventBus`: many subscribers attach…",
      "surface": {
       "enum": 1,
-      "fn": 5,
-      "struct": 12
+      "fn": 6,
+      "struct": 14
      }
     },
     {
@@ -52820,7 +52822,7 @@
      "path": "src/memory/witness/program/caller/binding.rs",
      "purpose": "Owned caller/session authority for native work that outlives a borrowed Memory",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 8,
       "struct": 1
      }
@@ -54721,6 +54723,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/off_record/lifecycle/code_consent_asks.rs",
+     "purpose": "A sealed held call's caller binding, kept in its session's RAM until its typed code consent ask opens (FIX…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "OffRecordCreator"
      ],
@@ -54826,7 +54838,7 @@
      "path": "src/off_record/lifecycle/registry.rs",
      "purpose": "In-process session registry, entry state, publish/lookup/membership doors and ref vetting",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 29
      }
     },
     {
@@ -58388,7 +58400,18 @@
      "purpose": "A held `connector.call` a code consent wait owns (DOOR-079 1a): the first effect a code consent wait binds",
      "surface": {
       "crate-vis": 10,
-      "fn": 4
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_consent/connector_call_code/ask_repair.rs",
+     "purpose": "The pass that retries a held call's typed code consent ask when its first ask did not open (#5367)",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
      }
     },
     {
@@ -58837,7 +58860,7 @@
      "path": "src/outbound_grant/mod.rs",
      "purpose": "Standing outbound-grant records for OF-367 RS6.2/RS6.5",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 4
      }
     },
@@ -58879,7 +58902,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/outbound_grant/verb_class.rs",
-     "purpose": "Canonical outbound verb classes and class membership",
+     "purpose": "Outbound verb-class membership, re-exported from the one registry",
      "surface": {
       "crate-vis": 1
      }
@@ -62855,7 +62878,7 @@
      "purpose": "CRDT-independent, byte-exact Layer-1 snapshot and fresh-window construction",
      "surface": {
       "const": 2,
-      "crate-vis": 19,
+      "crate-vis": 20,
       "re-export": 9
      }
     },
@@ -64297,7 +64320,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/recovery/work/encoded_digest.rs",
-     "purpose": "Resumable outer hashing of the original bounded canonical byte buffer",
+     "purpose": "Resumable envelope and outer hashing of the original bounded canonical buffer",
      "surface": {
       "crate-vis": 4
      }
@@ -83378,7 +83401,7 @@
      "path": "src/task_verb/code_consent_word.rs",
      "purpose": "The person's word a code consent answer stands on (DOOR-079 1a)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -87767,7 +87790,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1317
+      "fn": 1318
      }
     },
     {
@@ -94501,7 +94524,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 39,
+     "files": 40,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94536,7 +94559,7 @@
      "purpose": "Replay-first outbound effect execution"
     },
     "outbound_consent": {
-     "files": 35,
+     "files": 36,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -95168,7 +95191,7 @@
    },
    "over_bar": 192,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6737,
+   "source_files": 6739,
    "test_files": 895
   },
   "oneiron-android": {
@@ -109244,7 +109267,7 @@
      "path": "src/llm/bus.rs",
      "purpose": "Ephemeral one-producer fanout",
      "surface": {
-      "fn": 7,
+      "fn": 9,
       "struct": 2,
       "trait": 1
      }
@@ -110031,7 +110054,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1285
+      "fn": 1286
      }
     },
     {
@@ -110571,7 +110594,7 @@
      "path": "src/landing.rs",
      "purpose": "An organ's results onto the artifact family's one landing (ARCH-0078 \"A proposal landing\"): each export file…",
      "surface": {
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -111824,7 +111847,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1286
+      "fn": 1287
      }
     },
     {
@@ -117823,7 +117846,7 @@
      "path": "src/api/facade/model_stream_doors.rs",
      "purpose": "Owner-proof shared model streams: subscriptions can attach before one admitted producer opens",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -136386,9 +136409,9 @@
      "path": "src/consent_bound.rs",
      "purpose": "Consent bound vocabulary, normalization and containment",
      "surface": {
-      "const": 4,
+      "const": 5,
       "enum": 5,
-      "fn": 49,
+      "fn": 50,
       "struct": 7
      }
     },
@@ -147500,6 +147523,8 @@
       "ModelStreamEventsRequest",
       "ModelStreamOpen",
       "ModelStreamOpened",
+      "ModelStreamRelease",
+      "ModelStreamReleased",
       "ModelStreamStatus",
       "ModelStreamSubscribe",
       "ModelStreamSubscribed",
@@ -149675,7 +149700,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1143,
-      "struct": 3506
+      "struct": 3508
      }
     },
     {

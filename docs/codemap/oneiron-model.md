@@ -33,7 +33,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/budget/tests/per_call.rs` | test | s | — | — | — |
 | `src/llm/budget/types.rs` | src | s | 5 struct · 4 enum · 5 fn · 1 const | BudgetAdmission, BudgetExhaustionPolicy, BudgetLadderEvent, BudgetLeaseState, BudgetRead, BudgetSettlement, BudgetSignalDeliveryChannel, BudgetSteeringSignal +1 | Public budget DTOs and the exhaustion policy |
 | `src/llm/burst_inputs.rs` | src | s | 1 struct · 1 fn | NormalizedBurstInputs | Peer-relative write velocity and structural-failure streaks for automatic verdicts |
-| `src/llm/bus.rs` | src | m | 2 struct · 1 trait · 7 fn | LlmEventBus, StreamSubscription, TerminalSink | Ephemeral one-producer fanout |
+| `src/llm/bus.rs` | src | m | 2 struct · 1 trait · 9 fn | LlmEventBus, StreamSubscription, TerminalSink | Ephemeral one-producer fanout |
 | `src/llm/cache.rs` | src | m | 6 struct · 5 enum · 7 fn | CacheBackend, CacheCallUsage, CacheCounterSource, CacheDigest, CacheEpoch, CacheEvidenceError, CacheIdentity, CacheOutcome +3 | What a backend reported about its prompt cache on one physical model call (FIX 6567, INF 2 step 1): for each… |
 | `src/llm/call.rs` | src | s | 5 struct · 6 enum · 7 fn | CallClass, CallEnvelope, CallPurpose, DeterministicFallback, LlmRole, ModelLocality, ModelTierRef, PinnedConfigViolation +3 | Per-call description: envelope, pin admission, roles, tier precedence, response format, and locality |
 | `src/llm/catalog.rs` | src | m | 2 struct · 2 enum · 10 fn · 2 const | LlmCapability, LlmCatalogCost, LlmCatalogEntry, ReasoningEffort | Capability catalog: flags, entries with supports/require, costs, and reasoning effort |
