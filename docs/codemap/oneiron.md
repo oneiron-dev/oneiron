@@ -4041,7 +4041,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/repo_doors/symbols.rs` | src | s | 3 fn · 3 crate-vis | — | `self.code.symbols.declare`, `.renew` and `.release` (FIX 6867, G1 PR2b): a leased run's own symbol… |
 | `src/memory/repo_doors/types.rs` | src | m | 25 struct · 7 type | RepoMergeQueueEnqueueInput, RepoMergeQueueObserveInput, RepoMergeQueueObserveOutput, RepoProposalSubmitInput, RepoProposalSubmitOutput, RepoQueueEntryView, RepoRunStamp, RepoSnapshotView +17 | The run repo doors' closed inputs and per-row outputs (FIX 6867, G1 PR2a), and the run stamp a run's own… |
 | `src/memory/repo_doors/work.rs` | src | m | 2 fn · 9 crate-vis | — | `self.code.snapshots.ingest` and `self.code.work.open`, the ref contract the run doors share (CALLS "FIX… |
-| `src/memory/repo_secret_reads.rs` | src | m | 1 fn · 14 crate-vis | — | Repo bytes a Memory handle's masked reader reads (FIX 7608 slice 2a, ASK 1) |
+| `src/memory/repo_secret_reads.rs` | src | m | 1 fn · 15 crate-vis | — | Repo bytes a Memory handle's masked reader reads (FIX 7608 slice 2a, ASK 1) |
 | `src/memory/repo_secret_reads/reveal.rs` | src | m | 1 fn · 7 crate-vis | — | A Memory handle's per-file repo read that may ask for real bytes (FIX 7608 slice 2b-ii-A, GAP-B / FIX 8960) |
 | `src/memory/report.rs` | src | s | 4 fn | — | A report files evidence, not authority |
 | `src/memory/residence_item.rs` | src | s | 3 struct · 2 enum | OpenedItem, ResidenceHit, ResidenceSearch, SearchSource, ThinItem | Read-only residence cache entries and complete or partial search results |
