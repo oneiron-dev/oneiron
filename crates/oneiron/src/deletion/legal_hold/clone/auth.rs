@@ -23,32 +23,40 @@ pub struct HostLegalConnection {
 }
 
 /// What an accepted connection turned out to be, decided once: a prospective
-/// order's connection, or one managed teardown closed first. A connection
-/// teardown closed never becomes prospective, and one that is prospective is
-/// never closed by teardown's stop trigger.
+/// order's or a live-session capture's connection, or one managed teardown
+/// closed first. A connection teardown closed never becomes either, and one
+/// that is either is never closed by teardown's stop trigger: it is kept for
+/// the off-record session close or the final drain.
 #[derive(Debug, Default)]
 pub struct HostLegalConnectionRole(AtomicU8);
 
 const ROLE_UNDECIDED: u8 = 0;
 const ROLE_PROSPECTIVE: u8 = 1;
 const ROLE_CLOSED: u8 = 2;
+const ROLE_LIVE: u8 = 3;
 
 impl HostLegalConnectionRole {
     /// Makes the connection a prospective order's, unless teardown closed it
     /// first. True when it did.
     pub(super) fn claim_prospective(&self) -> bool {
+        self.claim(ROLE_PROSPECTIVE)
+    }
+
+    /// Makes the connection a live-session capture's, unless teardown closed
+    /// it first. True when it did.
+    pub(super) fn claim_live(&self) -> bool {
+        self.claim(ROLE_LIVE)
+    }
+
+    fn claim(&self, role: u8) -> bool {
         self.0
-            .compare_exchange(
-                ROLE_UNDECIDED,
-                ROLE_PROSPECTIVE,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            )
+            .compare_exchange(ROLE_UNDECIDED, role, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
     }
 
     /// Teardown's stop trigger: closes the connection unless it is a
-    /// prospective order's. True when the caller must shut its socket.
+    /// prospective order's or a live-session capture's. True when the caller
+    /// must shut its socket.
     pub fn close_unless_prospective(&self) -> bool {
         match self.0.compare_exchange(
             ROLE_UNDECIDED,
@@ -61,9 +69,10 @@ impl HostLegalConnectionRole {
         }
     }
 
-    /// Whether the connection is a prospective order's.
-    pub fn is_prospective(&self) -> bool {
-        self.0.load(Ordering::Acquire) == ROLE_PROSPECTIVE
+    /// Whether teardown keeps the connection through its stop trigger: a
+    /// prospective order's or a live-session capture's.
+    pub fn is_kept(&self) -> bool {
+        matches!(self.0.load(Ordering::Acquire), ROLE_PROSPECTIVE | ROLE_LIVE)
     }
 }
 
