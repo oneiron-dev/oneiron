@@ -37,6 +37,9 @@ const DEFAULT_COACH_SKILL_WORKFLOW_ANSWER: &str =
 const DEFAULT_COACH_SKILL_DRAFT: &str = include_str!("../../../prompts/coach-skill-draft.md");
 const DEFAULT_COACH_SKILL_CAUSE: &str = include_str!("../../../prompts/coach-skill-cause.md");
 const DEFAULT_COACH_PRODUCER_FIX: &str = include_str!("../../../prompts/coach-producer-fix.md");
+const DEFAULT_COACH_ENVIRONMENT_REPAIR: &str =
+    include_str!("../../../prompts/coach-environment-repair.md");
+const DEFAULT_COACH_PROMPT_REPAIR: &str = include_str!("../../../prompts/coach-prompt-repair.md");
 
 /// `[models.dreamer.wording]` as written in the config file.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -58,6 +61,10 @@ pub(super) struct DreamerWordingFile {
     coach_skill_cause_prompt_file: Option<PathBuf>,
     coach_producer_fix_prompt: Option<String>,
     coach_producer_fix_prompt_file: Option<PathBuf>,
+    coach_environment_repair_prompt: Option<String>,
+    coach_environment_repair_prompt_file: Option<PathBuf>,
+    coach_prompt_repair_prompt: Option<String>,
+    coach_prompt_repair_prompt_file: Option<PathBuf>,
     commitment_reminder_prompt: Option<String>,
     commitment_reminder_prompt_file: Option<PathBuf>,
     #[serde(default)]
@@ -129,6 +136,20 @@ impl DreamerWordingFile {
             base,
         )?
         .unwrap_or_else(|| DEFAULT_COACH_PRODUCER_FIX.to_owned());
+        let coach_environment_repair = super::levels::prompt_text(
+            "models.dreamer.wording.coach_environment_repair_prompt",
+            self.coach_environment_repair_prompt,
+            self.coach_environment_repair_prompt_file,
+            base,
+        )?
+        .unwrap_or_else(|| DEFAULT_COACH_ENVIRONMENT_REPAIR.to_owned());
+        let coach_prompt_repair = super::levels::prompt_text(
+            "models.dreamer.wording.coach_prompt_repair_prompt",
+            self.coach_prompt_repair_prompt,
+            self.coach_prompt_repair_prompt_file,
+            base,
+        )?
+        .unwrap_or_else(|| DEFAULT_COACH_PROMPT_REPAIR.to_owned());
         let reminder_instruction = super::levels::prompt_text(
             "models.dreamer.wording.commitment_reminder_prompt",
             self.commitment_reminder_prompt,
@@ -159,6 +180,8 @@ impl DreamerWordingFile {
             coach_skill_draft,
             coach_skill_cause,
             coach_producer_fix,
+            coach_environment_repair,
+            coach_prompt_repair,
             reminder_instruction,
             reminder_personas: self.commitment_reminder_personas,
             coach_heal_route,
@@ -178,6 +201,8 @@ pub struct DreamerWording {
     coach_skill_draft: String,
     coach_skill_cause: String,
     coach_producer_fix: String,
+    coach_environment_repair: String,
+    coach_prompt_repair: String,
     reminder_instruction: String,
     reminder_personas: BTreeMap<String, String>,
     coach_heal_route: String,
@@ -234,6 +259,16 @@ impl DreamerWording {
         &self.coach_producer_fix
     }
 
+    #[must_use]
+    pub fn coach_environment_repair(&self) -> &str {
+        &self.coach_environment_repair
+    }
+
+    #[must_use]
+    pub fn coach_prompt_repair(&self) -> &str {
+        &self.coach_prompt_repair
+    }
+
     /// The instruction used to word commitment reminders, not to send them.
     #[must_use]
     pub fn commitment_reminder_instruction(&self) -> &str {
@@ -271,6 +306,8 @@ impl Default for DreamerWording {
             coach_skill_draft: DEFAULT_COACH_SKILL_DRAFT.to_owned(),
             coach_skill_cause: DEFAULT_COACH_SKILL_CAUSE.to_owned(),
             coach_producer_fix: DEFAULT_COACH_PRODUCER_FIX.to_owned(),
+            coach_environment_repair: DEFAULT_COACH_ENVIRONMENT_REPAIR.to_owned(),
+            coach_prompt_repair: DEFAULT_COACH_PROMPT_REPAIR.to_owned(),
             reminder_instruction: default_reminder_instruction(),
             reminder_personas: BTreeMap::new(),
             coach_heal_route: DEFAULT_COACH_HEAL_ROUTE.to_owned(),

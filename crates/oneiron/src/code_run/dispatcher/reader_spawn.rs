@@ -33,8 +33,8 @@ use crate::limit_ask::EngineLimit;
 use crate::{EntityId, Error, Result};
 
 /// The refusal a reader child meets at every call but its report,
-/// `self.context` and `self.think`: no verbs, writes, ambient reads or
-/// children of its own.
+/// `self.context` and `self.think`: no verbs, writes or ambient reads. A
+/// native reader-spawn seat also lends spawning and waiting on its own children.
 pub(crate) const READER_CHILD_READ_ONLY: &str = "reader_child_read_only";
 
 /// What the wait a not-done `tasks.wait` parks on says, before its set's id.
@@ -133,8 +133,9 @@ impl HostSelfDispatcher<'_> {
 
     /// Binds this dispatcher to reader child `task`, as its runner claimed
     /// it at `generation`: the run reads its parent's source as `src`, and
-    /// makes no call but its report, `self.context` and `self.think`. The
-    /// job's run is the run it is bound to.
+    /// makes no call but its report, `self.context` and `self.think`, unless
+    /// its host also lends a reader-spawn seat. The job's run is the run it
+    /// is bound to.
     ///
     /// # Errors
     ///
@@ -285,7 +286,10 @@ impl HostSelfDispatcher<'_> {
         let admitted = matches!(
             effect,
             SelfEffect::ReaderReport | SelfEffect::Context | SelfEffect::Think
-        ) || (effect == SelfEffect::AgentVerb && self.scoped_child_spec().is_some());
+        ) || (effect == SelfEffect::AgentVerb && self.scoped_child_spec().is_some())
+            || (self.scoped_child_spec().is_none()
+                && self.reader_spawn_seat().is_some()
+                && matches!(effect, SelfEffect::ReaderSpawn | SelfEffect::TasksWaitSet));
         (self.reader_child.is_some() && !admitted).then(|| {
             SelfDispatchOutcome::Denied(SelfDeniedResult {
                 effect,

@@ -107,28 +107,26 @@ impl WorkflowPump {
         // Waiting from the moment the pump exists, so a status read right
         // after start never sees the pre-start state.
         status.update(|status| status.workflows = WorkStatus::waiting());
-        let thread = std::thread::Builder::new()
-            .name("oneiron-workflows".into())
-            .spawn(move || {
-                let runtime = match tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                {
-                    Ok(runtime) => runtime,
-                    Err(error) => {
-                        tracing::error!(%error, "workflow pump runtime failed to start");
-                        status.update(|status| {
-                            status.workflows = WorkStatus::idle(IdleReason::StartFailed);
-                        });
-                        return;
-                    }
-                };
-                let recoveries = runner.models.recoveries();
-                pump(
-                    &runtime, &vault, &runner, &status, &questions, &decisions, &installed,
-                    stopped, recoveries,
-                );
-            })?;
+        let thread = crate::engine_thread("oneiron-workflows".into()).spawn(move || {
+            let runtime = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => runtime,
+                Err(error) => {
+                    tracing::error!(%error, "workflow pump runtime failed to start");
+                    status.update(|status| {
+                        status.workflows = WorkStatus::idle(IdleReason::StartFailed);
+                    });
+                    return;
+                }
+            };
+            let recoveries = runner.models.recoveries();
+            pump(
+                &runtime, &vault, &runner, &status, &questions, &decisions, &installed, stopped,
+                recoveries,
+            );
+        })?;
         Ok(Self {
             stop,
             thread,
