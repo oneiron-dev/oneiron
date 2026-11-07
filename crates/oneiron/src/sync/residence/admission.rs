@@ -150,6 +150,13 @@ impl<'v> ResidenceAdmission<'v> {
         })
     }
 
+    /// Whether the original credential may see every world in an optional
+    /// complete cache-provenance set. A failure changes no item read.
+    pub fn covers_cache_worlds(&self, worlds: &BTreeSet<EntityId>) -> Result<bool> {
+        let txn = self.vault.store.env.read_txn()?;
+        self.context.covers_worlds_in(&txn, worlds)
+    }
+
     /// Whether every row of `rows` may go to the destination.
     ///
     /// # Errors
