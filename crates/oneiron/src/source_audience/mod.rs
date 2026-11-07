@@ -31,11 +31,14 @@
 //! bound row on another lane stay out of replication
 //! ([`withheld_from_replication_in`]); and a row a source landed, read where
 //! its binding is absent, reads to no one. A vault that holds no policy
-//! binds no row, and the conjunct answers at once for every row no source
-//! landed.
+//! binds no row, and until a row a source landed is written here the
+//! conjunct answers at once from each row's own stamp (fix list row 16255).
 
 pub(crate) mod carried;
+pub(crate) mod checkpoint;
+mod obligation;
 mod replica;
+mod wake;
 mod walk;
 
 use std::collections::BTreeSet;
@@ -43,20 +46,41 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
+use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::side_table::{self, Named, SideTable};
+use crate::store::source_audience_obligation::SourceAudienceObligation;
 use crate::{EntityId, Vault};
 
+pub(crate) use obligation::{
+    SourceAudienceBirth, admit_obligation_in_txn, admit_session_obligation_in_txn,
+    binding_stands_on, body_names_obligation, keeps_row_obligation, mark_birth_in_txn,
+    refuse_unbound_births_in, refuse_written_obligation, restorable_obligation,
+};
+#[cfg(feature = "sync")]
+pub(crate) use obligation::{row_obligation, unbound_obligation_in};
 pub(crate) use replica::{
     ReplicaMerge, bind_replicated_in_txn, event_conflicts_in, event_join,
     event_names_erased_actor_in, event_without_erased_actors, merge_event_in_txn,
     merge_policy_in_txn, names_erased_actor_in, policy_closure_in, policy_conflicts_in, policy_in,
     publishable_in, published_closure_in, redacted_successor_in, thread_source_in,
 };
+#[cfg(feature = "sync")]
+pub(crate) use wake::{
+    PolicyWake, advance_policy_wake, forget_policy_window, note_policy_windows, policy_wakes,
+    policy_windows_after,
+};
+#[cfg(feature = "sync")]
+pub(crate) use walk::derived_travel_in;
 pub(crate) use walk::{
     ReplicationScope, lineage_held_in, readable_with_read_in, withheld_by_lineage_in,
     withheld_from_replication_in,
 };
 
+/// Each row a source landing is about to stamp with the source-audience
+/// obligation, marked in its own write before it stages the row (fix list
+/// row 16256). Binding the row takes the mark away, and the landing commits
+/// with none of its rows still marked: a mark never outlives its write.
+const BIRTHS: SideTable<EntityId, (), Named> = SideTable::new(&side_table::SOURCE_AUDIENCE_BIRTH);
 /// One policy, by its id.
 const POLICIES: SideTable<EntityId, SourceAudiencePolicy, Named> =
     SideTable::new(&side_table::SOURCE_AUDIENCE_POLICY);
@@ -77,6 +101,11 @@ const LANDED: SideTable<(), bool, Named> = SideTable::new(&side_table::SOURCE_AU
 /// own key keeps the first.
 const THREADS: SideTable<(EntityId, [u8; 32]), EntityId, Named> =
     SideTable::new(&side_table::SOURCE_AUDIENCE_THREAD);
+/// The policies each derived row reads under beside its own lineage (fix
+/// list row 17207), by the row: the union of every set a full-window carrier
+/// brought. It only grows; a carrier that goes takes nothing from it.
+const DERIVED: SideTable<EntityId, BTreeSet<EntityId>, Named> =
+    SideTable::new(&side_table::SOURCE_AUDIENCE_DERIVED);
 /// Every change to a policy's readers, by the policy and the revision the
 /// change made.
 const EVENTS: SideTable<(EntityId, u64), SourceAudienceEvent, Named> =
@@ -213,14 +242,15 @@ pub(crate) fn lift_hold_in_txn(
 /// Whether a row a source landed was ever written here, by any door: a
 /// pack landing, a replica's receipt, a logical archive's import or a
 /// restore of an image that held one (fix list row 16255). Until one is, no
-/// row's words came from one, so the walk answers at once.
+/// row's words came from one, so the walk answers from each row's own stamp.
 pub(crate) fn any_landed_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
     Ok(LANDED.get(&vault.store, txn, &())?.unwrap_or(false))
 }
 
-/// Notes, in the write that materializes it, a TURN or CONVERSATION row a
-/// source landed: one whose body names a source audience's import source
-/// (fix list row 16255). Every base write of a row runs it, whoever writes.
+/// Notes, in the write that materializes it, a row a source landed: one
+/// whose own body carries the source-audience obligation, valid or
+/// malformed, whatever its kind, as the walk reads a row's stamp (fix list
+/// rows 16255, 16256). Every base write of a row runs it, whoever writes.
 ///
 /// # Errors
 ///
@@ -228,18 +258,67 @@ pub(crate) fn any_landed_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool
 pub(crate) fn note_landed_in(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
-    entity_type: u8,
     body: &[u8],
 ) -> Result<()> {
-    if walk::body_marked(entity_type, body) && LANDED.get(store, txn, &())? != Some(true) {
+    if obligation::body_names_obligation(body) && LANDED.get(store, txn, &())? != Some(true) {
         LANDED.put(store, txn, &(), &true)?;
     }
     Ok(())
 }
 
-/// Whether the vault holds any policy: one that holds none binds no row.
+/// Whether the vault holds any policy, or a derived row's carried policies
+/// (fix list row 17207): one that holds neither binds no row, and no read of
+/// it walks until a row a source landed is written here ([`any_landed_in`]).
 pub(crate) fn any_policy_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
-    Ok(POLICIES.iter_from(&vault.store, txn, &[])?.next().is_some())
+    Ok(POLICIES.iter_from(&vault.store, txn, &[])?.next().is_some()
+        || DERIVED.iter_from(&vault.store, txn, &[])?.next().is_some())
+}
+
+/// The policies the derived row `row` reads under beside its own lineage,
+/// as full-window carriers brought them (fix list row 17207).
+pub(crate) fn derived_policies_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &EntityId,
+) -> Result<Option<BTreeSet<EntityId>>> {
+    DERIVED.get(&vault.store, txn, row)
+}
+
+/// Adds `policies` to those the derived row `row` reads under, in `txn`.
+/// Whether the set grew.
+///
+/// # Errors
+///
+/// Storage failures.
+#[cfg(feature = "sync")]
+pub(crate) fn add_derived_policies_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    row: &EntityId,
+    policies: &BTreeSet<EntityId>,
+) -> Result<bool> {
+    let mut held = DERIVED.get(&vault.store, txn, row)?.unwrap_or_default();
+    let before = held.len();
+    held.extend(policies.iter().copied());
+    if held.len() == before {
+        return Ok(false);
+    }
+    DERIVED.put(&vault.store, txn, row, &held)?;
+    Ok(true)
+}
+
+/// Drops the derived row `row`'s carried policies with the row: the
+/// entity erase's (fix list row 17207).
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn erase_derived_policies_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    row: &EntityId,
+) -> Result<()> {
+    DERIVED.delete(store, txn, row).map(drop)
 }
 
 /// The policy the row `record` was born under, if it was bound.
@@ -439,6 +518,7 @@ fn set_source_readers_row_in_txn(
     let open = *open;
     let added: Vec<EntityId> = readers.difference(current).copied().collect();
     let removed: Vec<EntityId> = current.difference(&readers).copied().collect();
+    let changed = !added.is_empty() || !removed.is_empty();
     for (op, person) in added
         .into_iter()
         .map(|person| (SourceAudienceOp::ReaderAdded, person))
@@ -463,6 +543,10 @@ fn set_source_readers_row_in_txn(
     }
     policy.kind = SourceAudienceKind::Source { readers, open };
     POLICIES.put(&vault.store, txn, id, &policy)?;
+    // Every window the policy rides takes the change (fix list row 17203).
+    if changed {
+        wake::wake_policy_in_txn(vault, txn, id)?;
+    }
     Ok(policy)
 }
 
@@ -506,6 +590,7 @@ fn set_source_open_row_in_txn(
     )?;
     policy.kind = SourceAudienceKind::Source { readers, open };
     POLICIES.put(&vault.store, txn, id, &policy)?;
+    wake::wake_policy_in_txn(vault, txn, id)?;
     Ok(policy)
 }
 
@@ -560,6 +645,10 @@ pub(crate) fn thread_policy_in_txn(
 /// Binds the row `record` to `policy` at its birth, in the writer that
 /// lands it. A row bound already stays where it was born: a second bind to
 /// the same policy changes nothing, and one to another policy is refused.
+/// Only a CONVERSATION, TURN or MESSAGE whose live bytes in `txn` carry the
+/// source-audience obligation is bound (fix list row 16256): the stamp in
+/// its own body is what tells every later read it is a source's row. The
+/// bind takes away the birth mark its landing left on the row.
 pub(crate) fn bind_record_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -569,13 +658,31 @@ pub(crate) fn bind_record_in_txn(
     if POLICIES.get(&vault.store, txn, policy)?.is_none() {
         return Err(Error::EntityNotFound);
     }
-    match RECORDS.get(&vault.store, txn, record)? {
-        Some(bound) if bound == *policy => Ok(()),
-        Some(_) => Err(Error::InvalidConfig(
-            "a row stays under the source audience it was born under".into(),
-        )),
-        None => RECORDS.put(&vault.store, txn, record, policy),
+    let stamped = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, record)?
+        .is_some_and(|raw| {
+            crate::batch::EntityMetadataHeader::parse(&raw).is_some_and(|header| {
+                matches!(
+                    header.entity_type,
+                    ENTITY_TYPE_CONVERSATION | ENTITY_TYPE_TURN | ENTITY_TYPE_MESSAGE
+                )
+            }) && obligation::row_obligation(&raw) == SourceAudienceObligation::Required
+        });
+    if !stamped {
+        return Err(Error::InvalidConfig(
+            "a source audience binds only a row its landing stamped".into(),
+        ));
     }
+    match RECORDS.get(&vault.store, txn, record)? {
+        Some(bound) if bound == *policy => {}
+        Some(_) => {
+            return Err(Error::InvalidConfig(
+                "a row stays under the source audience it was born under".into(),
+            ));
+        }
+        None => RECORDS.put(&vault.store, txn, record, policy)?,
+    }
+    // The landing that marked the row born binds it here: the mark goes.
+    obligation::clear_birth_in_txn(vault, txn, record)
 }
 
 /// Shares the thread policy `thread` with `person` (`share`), or withdraws
@@ -623,6 +730,7 @@ pub(crate) fn share_thread_in_txn(
         },
     )?;
     POLICIES.put(&vault.store, txn, thread, &policy)?;
+    wake::wake_policy_in_txn(vault, txn, thread)?;
     Ok(true)
 }
 
@@ -751,6 +859,7 @@ pub(crate) fn erase_actor_in_txn(
         if changed {
             policy.revision = replica::next_revision(policy.revision)?;
             POLICIES.put(&vault.store, wtxn, &id, &policy)?;
+            wake::wake_policy_in_txn(vault, wtxn, &id)?;
         }
     }
     let events = EVENTS.scan(&vault.store, wtxn)?;
@@ -766,6 +875,7 @@ pub(crate) fn erase_actor_in_txn(
         }
         if changed {
             EVENTS.put(&vault.store, wtxn, &key, &event)?;
+            wake::wake_policy_in_txn(vault, wtxn, &key.0)?;
         }
     }
     // Every stored window's revisions naming the actor go with them; each

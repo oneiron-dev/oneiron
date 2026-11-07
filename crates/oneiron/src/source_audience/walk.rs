@@ -23,9 +23,11 @@
 //! authenticates no one reads no bound row, as a private thread is read
 //! (FIX 2951). A cycle adds no restriction of its own.
 //!
-//! A row a source landed carries its source in its own bytes: a mail
-//! CONVERSATION's or TURN's `import_source` (one of the pack's own source
-//! names), a MESSAGE through its TURN. Such a row read where its binding is
+//! A row a source landed carries the source-audience obligation in its own
+//! bytes (fix list row 16256): the engine's landing stamps it on every row it
+//! binds, a MESSAGE as much as its TURN, so a MESSAGE whose TURN or `PartOf`
+//! edge has not arrived is still known. A stamp in any shape, valid or not,
+//! marks the row, whatever its kind. Such a row read where its binding is
 //! absent reads to no one. Bindings and policies travel with their rows on
 //! the owner's full-window lane only ([`super::replica`]): a row bound to a
 //! policy that resolves here leaves by it, its binding beside it; a row
@@ -40,92 +42,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::EdgeKind;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
-use crate::registry::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN,
-};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE};
 use crate::{EntityId, Vault};
 
-/// The TURN and CONVERSATION body key naming an imported transcript's
-/// source.
-const IMPORT_SOURCE_KEY: &str = "import_source";
-/// The import sources a source audience lands: the Mail & Calendar pack's
-/// own, exactly (`mail_pack::landing::import_source`). A caller that births
-/// a conversation stamped with one of these names only hides its own rows.
-const SOURCE_IMPORTS: [&str; 6] = [
-    "mail.google_workspace",
-    "mail.google",
-    "mail.microsoft365",
-    "mail.imap",
-    "calendar.caldav",
-    "calendar.ics",
-];
-
-/// The string value of `key` in a MessagePack map body.
-fn body_string<'b>(body: &'b [u8], key: &str) -> Option<&'b str> {
-    let mut cursor = body;
-    let Ok(rmpv::ValueRef::Map(entries)) = rmpv::decode::read_value_ref(&mut cursor) else {
-        return None;
-    };
-    entries
-        .into_iter()
-        .find_map(|(name, value)| match (name, value) {
-            (rmpv::ValueRef::String(name), rmpv::ValueRef::String(value))
-                if name.as_str() == Some(key) =>
-            {
-                value.into_str()
-            }
-            _ => None,
-        })
-}
-
-/// Whether a TURN or CONVERSATION row `raw` is a source's import.
-fn container_marked(raw: &[u8]) -> bool {
-    let Some(header) = EntityMetadataHeader::parse(raw) else {
-        return false;
-    };
-    body_marked(
-        header.entity_type,
-        raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default(),
-    )
-}
-
-/// Whether a row of type `entity_type` with body `body` is a source's
-/// import: a TURN or CONVERSATION naming one of the source imports.
-pub(super) fn body_marked(entity_type: u8, body: &[u8]) -> bool {
-    matches!(entity_type, ENTITY_TYPE_TURN | ENTITY_TYPE_CONVERSATION)
-        && body_string(body, IMPORT_SOURCE_KEY)
-            .is_some_and(|source| SOURCE_IMPORTS.contains(&source))
-}
-
-/// Whether the row `id` (bytes `raw`) is one a source audience landed: a
-/// source-imported TURN or CONVERSATION by its own stamp, a MESSAGE by its
-/// TURN's (`PartOf`), since a MESSAGE's type is its caller's word.
-fn source_marked_in(
-    dbs: &crate::store::StoreRead<'_>,
-    txn: &heed::RoTxn<'_>,
-    id: EntityId,
-    raw: &[u8],
-) -> Result<bool> {
-    let Some(header) = EntityMetadataHeader::parse(raw) else {
-        return Ok(false);
-    };
-    match header.entity_type {
-        ENTITY_TYPE_TURN | ENTITY_TYPE_CONVERSATION => Ok(container_marked(raw)),
-        ENTITY_TYPE_MESSAGE => {
-            for turn in
-                crate::conversation_dag::counted_edge_ids(dbs, txn, &id, EdgeKind::PartOf, false)?
-            {
-                if let Some(bytes) =
-                    crate::ports::EntityStoreRead::port_entity_raw(dbs, txn, &turn)?
-                    && container_marked(&bytes)
-                {
-                    return Ok(true);
-                }
-            }
-            Ok(false)
-        }
-        _ => Ok(false),
-    }
+/// Whether the row bytes `raw` are one a source audience landed: its OWN
+/// body states the source-audience obligation, valid or malformed, whatever
+/// its kind (fix list row 16256). No parent, edge or import label is read.
+fn source_marked(raw: &[u8]) -> bool {
+    super::obligation::row_obligation(raw).is_present()
 }
 
 /// What the words of the row `id` (bytes `bytes`) came from, as the walk
@@ -250,10 +174,11 @@ pub(crate) fn lineage_held_in(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityI
 /// come from rows as a read takes them: every row it was written from, and,
 /// for a CLAIM, one of its supports, so a claim one free support carries
 /// travels as it reads (FIX 12559 follow-up); a restricted lane counts every
-/// support. Where the vault holds no policy and no source ever landed a row
-/// here, only a row stamped as a source's import is withheld, by its own
-/// stamp; where one did, the walk runs as everywhere, so a row whose words
-/// came from an unbound landed row stays too (fix list row 16255).
+/// support. Where the vault holds no policy and no row a source landed was
+/// ever written here, only a row whose own bytes carry the source-audience
+/// obligation is withheld, by that stamp; where one was, the walk runs as
+/// everywhere, so a row whose words came from a landed row whose policy
+/// does not resolve here stays too (fix list row 16255).
 ///
 /// # Errors
 ///
@@ -268,10 +193,10 @@ pub(crate) fn withheld_by_lineage_in(
     if !super::any_policy_in(vault, txn)? && !super::any_landed_in(vault, txn)? {
         // No row here came from a landed one: only the row's own stamp can
         // hold it.
-        return match crate::ports::EntityStoreRead::port_entity_raw(&dbs, txn, id)? {
-            Some(raw) => source_marked_in(&dbs, txn, *id, &raw),
-            None => Ok(false),
-        };
+        return Ok(
+            crate::ports::EntityStoreRead::port_entity_raw(&dbs, txn, id)?
+                .is_some_and(|raw| source_marked(&raw)),
+        );
     }
     // The policy the row travels under, when the lane carries one.
     let travels_under = match scope {
@@ -294,7 +219,112 @@ pub(crate) fn withheld_by_lineage_in(
         policies: BTreeMap::new(),
         rows: BTreeMap::new(),
     };
-    Ok(!judge.row_readable(*id, None)?)
+    let withheld = !judge.row_readable(*id, None)?;
+    // On the owner's full window a row its lineage would keep home travels
+    // with the policies that lineage reaches, when they publish (fix list
+    // row 17207).
+    if withheld && scope == ReplicationScope::FullOwnerWindow {
+        return Ok(derived_closure_in(vault, txn, id)?.is_none());
+    }
+    Ok(withheld)
+}
+
+/// The policies the row `id` travels under on the owner's full window
+/// beside its own binding, when its lineage would keep it home there (fix
+/// list row 17207): what [`travel_closure_in`] finds, when the full-window
+/// judge withholds the row and the set is not empty. `None` for a row that
+/// travels as it is, or stays home.
+///
+/// # Errors
+///
+/// Storage failures.
+#[cfg(feature = "sync")]
+pub(crate) fn derived_travel_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<BTreeSet<EntityId>>> {
+    if !super::any_policy_in(vault, txn)? || lineage_held_in(vault, txn, id)? {
+        return Ok(None);
+    }
+    let dbs = vault.store.read();
+    let travels_under = match super::binding_in(vault, txn, id)? {
+        Some(policy) if super::replica::publishable_in(vault, txn, &policy)? => Some(policy),
+        _ => None,
+    };
+    let mut judge = Judge {
+        vault,
+        dbs: &dbs,
+        txn,
+        ask: Ask::Travel {
+            under: travels_under,
+            every_support: false,
+        },
+        policies: BTreeMap::new(),
+        rows: BTreeMap::new(),
+    };
+    if judge.row_readable(*id, None)? {
+        return Ok(None);
+    }
+    derived_closure_in(vault, txn, id)
+}
+
+/// [`travel_closure_in`], when it names at least one policy.
+fn derived_closure_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<BTreeSet<EntityId>>> {
+    Ok(travel_closure_in(vault, txn, id)?.filter(|policies| !policies.is_empty()))
+}
+
+/// Every policy the lineage of the row `id` reaches, the row itself
+/// included (fix list row 17207): the binding of each row its words came
+/// from and of every support of a CLAIM (a support alternative counts as
+/// required, so the set reads never wider than the row does), and every
+/// policy a full-window carrier brought for one of them. A row gone from
+/// this view adds its own binding and carried policies and nothing more.
+/// `None` when the lineage cannot travel: a row held back here, a row a
+/// source landed with no binding, or a policy that does not publish.
+fn travel_closure_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<BTreeSet<EntityId>>> {
+    let dbs = vault.store.read();
+    let mut policies = BTreeSet::new();
+    let mut seen = BTreeSet::from([*id]);
+    let mut pending = vec![*id];
+    while let Some(row) = pending.pop() {
+        if super::held_back_in(vault, txn, &row)?.is_some() {
+            return Ok(None);
+        }
+        if let Some(carried) = super::derived_policies_in(vault, txn, &row)? {
+            policies.extend(carried);
+        }
+        let binding = super::binding_in(vault, txn, &row)?;
+        if let Some(policy) = binding {
+            policies.insert(policy);
+        }
+        let Some(bytes) = crate::ports::EntityStoreRead::port_entity_raw(&dbs, txn, &row)? else {
+            continue;
+        };
+        if binding.is_none() && source_marked(&bytes) {
+            return Ok(None);
+        }
+        let (every, supports) = word_sources(vault, &dbs, txn, row, &bytes)?;
+        for source in every.into_iter().chain(supports) {
+            if seen.insert(source) {
+                pending.push(source);
+            }
+        }
+    }
+    for policy in &policies {
+        if !super::replica::publishable_in(vault, txn, policy)? {
+            return Ok(None);
+        }
+    }
+    Ok(Some(policies))
 }
 
 /// Whether every one of `viewers` reads the revision `raw` of `id` under
@@ -317,7 +347,7 @@ pub(crate) fn readable_with_read_in(
     {
         // No row here came from a landed one: only the row's own stamp can
         // deny it.
-        return Ok(!source_marked_in(dbs, txn, id, raw)?);
+        return Ok(!source_marked(raw));
     }
     let mut judge = Judge {
         vault,
@@ -568,6 +598,23 @@ impl Judge<'_, '_, '_> {
         {
             return Ok(Opened::Decided(false));
         }
+        // The policies a full-window carrier brought for a derived row (fix
+        // list row 17207): every one of them reads, whatever the row's own
+        // lineage here says, before anything else; an unknown one reads to
+        // no one. A replication walk ships such a row only with its carried
+        // policies, as its own sets them (`travel_closure_in`).
+        if let Some(policies) = super::derived_policies_in(self.vault, self.txn, &id)? {
+            match self.ask {
+                Ask::Read(viewers) => {
+                    for policy in policies {
+                        if !self.policy_readable(policy, viewers)? {
+                            return Ok(Opened::Decided(false));
+                        }
+                    }
+                }
+                Ask::Travel { .. } => return Ok(Opened::Decided(false)),
+            }
+        }
         let binding = super::binding_in(self.vault, self.txn, &id)?;
         if let Some(policy) = binding {
             let admitted = match self.ask {
@@ -590,7 +637,7 @@ impl Judge<'_, '_, '_> {
             }
         };
         // A row a source landed whose binding is absent here reads to no one.
-        if binding.is_none() && source_marked_in(self.dbs, self.txn, id, &bytes)? {
+        if binding.is_none() && source_marked(&bytes) {
             return Ok(Opened::Decided(false));
         }
         let (mut every, mut supports) = word_sources(self.vault, self.dbs, self.txn, id, &bytes)?;

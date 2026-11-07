@@ -62,6 +62,7 @@ pub(in crate::api::facade) fn door_admits(
                 })
         }
         Row::VaultSecretsCodeRunLifts
+        | Row::VaultSecretsCodeRunRoomLifts
         | Row::VaultIngestAgUiImport
         | Row::VaultModelsManifestRead
         | Row::VaultModelsManifestReplace
@@ -657,6 +658,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCustodyMembersDrainFolder
         | Row::VaultCustodyMembersReenrol
         | Row::VaultMessageStreamsRefused
+        | Row::VaultStepUpPasskeysReset
         | Row::VaultOutboundCallsRequestErase => owner_proof(auth, server, verb).map(drop),
         Row::VaultSharedProposeDelete
         | Row::VaultSharedProposeTransfer
@@ -674,6 +676,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultMembersDecline
         | Row::VaultMembersWithdrawInvitation
         | Row::VaultMembersInvitationSlip
+        | Row::VaultMembersInvitationCode
         | Row::VaultSharedObject
         | Row::VaultSharedWithdrawObjection
         | Row::VaultSharedStarted
