@@ -40,6 +40,7 @@ pub(crate) use self::index::{
     standing_outbound_grant_principal_index_prefix,
 };
 pub(crate) use self::mint::standing_outbound_grant_in_txn;
+pub(crate) use self::verb_class::verb_in_class;
 
 /// The built-in outbound class registry's membership
 /// (`verb_class::verb_in_class`), for the owner-agent class resolver

@@ -65,8 +65,9 @@ pub(super) const KEY_COMM: &str = AGENT_DISPATCH_INPUT_KEYS[21];
 pub(super) const KEY_DIRECT_SPAWN: &str = AGENT_DISPATCH_INPUT_KEYS[22];
 /// FIX 11592: who queued the dispatch, and what his request stood on.
 pub(super) const KEY_REQUESTER: &str = AGENT_DISPATCH_INPUT_KEYS[23];
+pub(super) const KEY_TASK_TYPE_PARENTS: &str = AGENT_DISPATCH_INPUT_KEYS[24];
 /// FIX 7766: the owner's agent Grant an unmetered lineage is funded by.
-pub(super) const KEY_FUNDING: &str = AGENT_DISPATCH_INPUT_KEYS[24];
+pub(super) const KEY_FUNDING: &str = AGENT_DISPATCH_INPUT_KEYS[25];
 
 /// The depth a lineage with no explicit slice once stopped at. Such a
 /// lineage spends no depth (FIX 9560): past this many ancestors its walk
@@ -118,6 +119,9 @@ pub struct AgentDispatchInput {
     /// spawn carries a `typeRef`, and an unsure placement is the root —
     /// never an absent/untyped spawn.
     pub type_ref: crate::task_type::TaskTypeRef,
+    /// Nearest-parent-first lineage frozen from the placement tree.
+    /// `None` means unknown; an empty chain is a known root placement.
+    pub type_parents: Option<Vec<crate::learning::TypeRef>>,
     /// The spawn's requested `budget` (OF-532): a hard carve under the parent's
     /// cap, in the parent scope's unit.
     pub budget: Option<u64>,
@@ -181,6 +185,7 @@ impl AgentDispatchInput {
             spawn_intent: None,
             scope: None,
             type_ref: crate::task_type::TaskTypeRef::seeded_root(),
+            type_parents: None,
             budget: None,
             launch: None,
             room: None,
@@ -221,6 +226,10 @@ pub struct AgentSpawnContext {
     /// under the parent's cap the child can never pass. Unset, the child holds
     /// its calibrated expected spend and may top up to the ancestor's cap.
     pub budget: Option<u64>,
+    /// A token-denominated task reservation. Under a token parent it bounds
+    /// a soft hold without demanding the whole ceiling up front. Unmetered
+    /// work gets its own pinned token scope; other units keep their tree.
+    pub token_ceiling: Option<u64>,
     /// A ROOT launch's spend scope. A child spends under its parent's and
     /// never names one. A root without one runs unmetered by any lease tree.
     pub spend: Option<super::SpawnSpend>,
@@ -292,6 +301,12 @@ impl AgentSpawnContext {
     #[must_use]
     pub const fn with_budget(mut self, budget: u64) -> Self {
         self.budget = Some(budget);
+        self
+    }
+
+    #[must_use]
+    pub(crate) const fn with_token_ceiling(mut self, units: u64) -> Self {
+        self.token_ceiling = Some(units);
         self
     }
 

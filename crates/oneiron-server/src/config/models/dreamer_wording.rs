@@ -32,6 +32,8 @@ const DEFAULT_CONFESSION_INSTRUCTION: &str = "When your result is complete, end 
      objective, in order. Say plainly what you did not meet, any flaw and any doubt: a \
      confession never costs the score. Nothing follows the closing fence.";
 
+const DEFAULT_COACH_SESSION_DISTILL: &str =
+    include_str!("../../../prompts/coach-session-distill.md");
 const DEFAULT_COACH_SKILL_WORKFLOW_ANSWER: &str =
     include_str!("../../../prompts/coach-skill-workflow-answer.md");
 const DEFAULT_COACH_SKILL_DRAFT: &str = include_str!("../../../prompts/coach-skill-draft.md");
@@ -53,6 +55,8 @@ pub(super) struct DreamerWordingFile {
     code_fix_export_safe_prompt_file: Option<PathBuf>,
     confession_prompt: Option<String>,
     confession_prompt_file: Option<PathBuf>,
+    coach_session_distill_prompt: Option<String>,
+    coach_session_distill_prompt_file: Option<PathBuf>,
     coach_skill_workflow_answer_prompt: Option<String>,
     coach_skill_workflow_answer_prompt_file: Option<PathBuf>,
     coach_skill_draft_prompt: Option<String>,
@@ -157,6 +161,13 @@ impl DreamerWordingFile {
             base,
         )?
         .unwrap_or_else(default_reminder_instruction);
+        let coach_session_distill = super::levels::prompt_text(
+            "models.dreamer.wording.coach_session_distill_prompt",
+            self.coach_session_distill_prompt,
+            self.coach_session_distill_prompt_file,
+            base,
+        )?
+        .unwrap_or_else(|| DEFAULT_COACH_SESSION_DISTILL.to_owned());
         let coach_heal_route = super::levels::prompt_text(
             "models.dreamer.wording.coach_heal_route_prompt",
             self.coach_heal_route_prompt,
@@ -176,6 +187,7 @@ impl DreamerWordingFile {
             code_fix_fixed,
             code_fix_export_safe,
             confession,
+            coach_session_distill,
             coach_skill_workflow_answer,
             coach_skill_draft,
             coach_skill_cause,
@@ -197,6 +209,7 @@ pub struct DreamerWording {
     code_fix_fixed: String,
     code_fix_export_safe: String,
     confession: String,
+    coach_session_distill: String,
     coach_skill_workflow_answer: String,
     coach_skill_draft: String,
     coach_skill_cause: String,
@@ -233,6 +246,12 @@ impl DreamerWording {
     #[must_use]
     pub fn confession(&self) -> &str {
         &self.confession
+    }
+
+    /// The Coach's system instruction for distilling an ended sitting.
+    #[must_use]
+    pub fn coach_session_distill(&self) -> &str {
+        &self.coach_session_distill
     }
 
     /// The answer instructions appended to the loaded skill-optimization workflow.
@@ -302,6 +321,7 @@ impl Default for DreamerWording {
             code_fix_fixed: DEFAULT_CODE_FIX_FIXED.to_owned(),
             code_fix_export_safe: DEFAULT_CODE_FIX_EXPORT_SAFE.to_owned(),
             confession: DEFAULT_CONFESSION_INSTRUCTION.to_owned(),
+            coach_session_distill: DEFAULT_COACH_SESSION_DISTILL.to_owned(),
             coach_skill_workflow_answer: DEFAULT_COACH_SKILL_WORKFLOW_ANSWER.to_owned(),
             coach_skill_draft: DEFAULT_COACH_SKILL_DRAFT.to_owned(),
             coach_skill_cause: DEFAULT_COACH_SKILL_CAUSE.to_owned(),
