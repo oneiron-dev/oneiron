@@ -53,6 +53,7 @@ heed.workspace = true
 arc-swap.workspace = true
 base64 = "0.22"
 oneiron = { version = "0.1.0", path = "../oneiron", features = ["sync", "microvm-firecracker"] }
+oneiron-store = { version = "0.1.0", path = "../oneiron-store" }
 # `[models.code_mode.check]`: the type checkers shadow mode runs.
 oneiron-code-check = { version = "0.1.0", path = "../oneiron-code-check" }
 oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
