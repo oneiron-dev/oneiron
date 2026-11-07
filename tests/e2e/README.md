@@ -400,7 +400,9 @@ Providers, sockets and engines register end-of-flow cleanup automatically.
 On failure/deadline/interruption the runner kills owned groups, including groups
 left by an exited file process. Temp vaults are removed unless a test explicitly
 calls `engine.close({retainVault:true})`; retained private roots stay local,
-are listed in a redacted retention artifact, and are never uploaded.
+are listed in a redacted retention artifact, and are never uploaded. For the
+MEMORY project-question diagnostic only, `E2E_MEMORY_RETAIN_VAULT=1` makes those
+five cases retain their vaults, including a setup barrier failure.
 
 No engine constants changed. Harness constants are 10s health/readiness and
 normal request bounds, 30s normal flow budget, 2s stop grace, 25ms bounded

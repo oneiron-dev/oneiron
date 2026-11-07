@@ -721,12 +721,14 @@ suite.test(test, "RETRIEVAL-05", "Retrieval effort and deadline should work", as
       query: "retrievaleffortlantern", effort: "high", scope: { kinds: ["CLAIM"] },
       limit: 10, deadline_ms: fixture.deadlineMs,
     };
-    const delivery = reader.request<FacadeResult<"vault.recall">>(
+    const delivery = engine.client.request<FacadeResult<"vault.recall">>(
       "POST", "/v1/core/facade/vault.recall", request);
     void delivery.catch(() => {}); // The main await below still propagates transport failure.
+    // The whole HyDE leg uses one unrestricted owner credential: pending work
+    // is filtered by the same caller key that started the deadline recall.
     // Observe real work, but do not complete it until after delivery. The
     // engine owns the clock, timeout and pending receipt throughout.
-    const work = await awaitPublic(() => reader.call("vault.retrieval.hyde.pending", { limit: 10 }),
+    const work = await awaitPublic(() => engine.client.call("vault.retrieval.hyde.pending", { limit: 10 }),
       pending => pending.some(row => row.input.stage === "expansion"),
       { label: "public expansion-response-held work item" });
     const held = work.find(row => row.input.stage === "expansion")!;
@@ -739,7 +741,7 @@ suite.test(test, "RETRIEVAL-05", "Retrieval effort and deadline should work", as
     expect(reply.raw).not.toContain(fixture.lateAnswer);
     const bytes = new Uint8Array(reply.bytes);
     const delivered = JSON.stringify(reply.body);
-    const completion = await reader.call("vault.retrieval.hyde.complete", {
+    const completion = await engine.client.call("vault.retrieval.hyde.complete", {
       request_id: held.request_id, answer: { stage: "expansion", expansion: {
         grounded_query: held.input.request.query, hypothetical_answer: fixture.lateAnswer,
         embedding: [1, 0, 0, 0], subqueries: ["unrelated garden"],
@@ -748,7 +750,7 @@ suite.test(test, "RETRIEVAL-05", "Retrieval effort and deadline should work", as
     expect(completion.status).toBe("discarded_deadline");
     expect(completion.received_bytes).toBeGreaterThan(0);
     expect(completion.completed_at_ms!).toBeGreaterThanOrEqual(completion.deadline_at_ms!);
-    expect(await reader.call("vault.retrieval.hyde.receipt", { request_id: held.request_id })).toEqual(completion);
+    expect(await engine.client.call("vault.retrieval.hyde.receipt", { request_id: held.request_id })).toEqual(completion);
     expect(reply.bytes).toEqual(bytes);
     expect(new TextDecoder().decode(reply.bytes)).toBe(reply.raw);
     expect(JSON.stringify(reply.body)).toBe(delivered);
@@ -791,10 +793,11 @@ suite.test(test, "RETRIEVAL-06", "Evidence abstention not invented recall should
   const fixture = await catalog.readJson<EvidenceFixture>("retrieval-evidence");
   const provider = startVectorTable(fixture);
   const engine = await EngineFixture.start({ id: "RETRIEVAL-06", profile,
+    initArgs: endpointInitArgs(provider.endpoint),
     // Explicit reconciler cadence: an empty pass sleeps 500 ms, not the
     // 15 s default, so a row written after a partial pass is filled
     // inside the unchanged readiness budget.
-    initArgs: [...endpointInitArgs(provider.endpoint), "--embedder-idle-interval-ms", "500"],
+    embedderIdleIntervalMs: 500,
     embedder: { endpoint: provider.endpoint, modelKey: fixture.embedder.modelKey,
       modelId: fixture.embedder.modelId, dimensions: fixture.embedder.dimensions,
       egress: { allowAll: true } } });
