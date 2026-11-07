@@ -72,6 +72,7 @@ pub(crate) fn refresh_staged_request(
                     erased: false,
                 };
                 capsule.exposures = stored_slots(update.exposures, update.request, &admitted);
+                capsule.console = stored_console(update.console, update.request, &admitted);
             }
             Err(Error::Gate(GateError::GateWriteRejected { reason_codes, .. }))
                 if capsule.start.is_some() =>
@@ -90,6 +91,7 @@ pub(crate) fn refresh_staged_request(
                         ..slot.clone()
                     })
                     .collect();
+                capsule.console = unstored_console(update.console);
             }
             Err(error) => return Err(error.into()),
         }
