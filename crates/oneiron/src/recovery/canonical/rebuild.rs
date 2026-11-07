@@ -7,12 +7,12 @@ use loro::LoroDoc;
 
 use super::{
     CanonicalSnapshot, asset_body_refs, id, insert, pack, peer_origins, row_births,
-    withdrawn_cutoffs,
+    source_audiences, withdrawn_cutoffs,
 };
 use crate::error::Result;
 
 /// How many sections a rebuild files, in [`insert_row`]'s order.
-const SECTIONS: usize = 18;
+const SECTIONS: usize = 19;
 
 /// Where a paged rebuild stands: the section, and the row within it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -97,6 +97,7 @@ fn section_len(snapshot: &CanonicalSnapshot, section: usize) -> usize {
         15 => snapshot.note_forks.len(),
         16 => snapshot.note_proposals.len(),
         17 => snapshot.asset_body_refs.len(),
+        18 => snapshot.source_audiences.len(),
         _ => 0,
     }
 }
@@ -200,7 +201,8 @@ fn insert_row(
             let row = &snapshot.note_proposals[at];
             insert(doc, "note_proposals", &row.id.to_hex(), &pack(row)?)
         }
-        _ => asset_body_refs::rebuild_row(doc, &snapshot.asset_body_refs[at]),
+        17 => asset_body_refs::rebuild_row(doc, &snapshot.asset_body_refs[at]),
+        _ => source_audiences::rebuild_row(doc, &snapshot.source_audiences[at]),
     }
 }
 
