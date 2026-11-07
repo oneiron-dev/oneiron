@@ -458,7 +458,7 @@ suite.test(test, "RETRIEVAL-01", "Five-channel recall and stable rank should wor
 suite.test(test, "RETRIEVAL-02", "Multilingual lexical retrieval should work", async () => {
   const fixture = await scenario<{
     texts: { label: string; text: string; queries: string[] }[];
-    names: { label: string; name: string; queries: string[] }[];
+    names: { label: string; name: string; queries: string[]; evidence: string }[];
   }>("RETRIEVAL-02");
   const engine = await EngineFixture.start({ id: "RETRIEVAL-02", profile });
   let primaryFailed: boolean = false;
@@ -492,8 +492,11 @@ suite.test(test, "RETRIEVAL-02", "Multilingual lexical retrieval should work", a
       "cross-script": ["romaji:kuomo"], "misheard": ["en:soundex:R163"],
     };
     for (const row of fixture.names) {
+      // A name alone is not identity evidence: each person cites its own
+      // witnessed statement, as memory.test.ts's person() does.
+      const evidence = await witnessedText(engine, row.evidence, at);
       const person = await engine.client.call("vault.people.create", {
-        identity: { name: row.name }, identity_evidence_refs: [], occurred_at: at, learned_at: at,
+        identity: { name: row.name }, identity_evidence_refs: [evidence.message.id_hex], occurred_at: at, learned_at: at,
       });
       for (const query of row.queries) {
         const lexical = await engine.client.call("vault.search.bm25", { query, limit: 20 });
