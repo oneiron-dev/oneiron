@@ -199,10 +199,9 @@ pub struct BackupHolds {
 /// purpose (FIX 9500): no order, issuer, count, date or ordering.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BackupHoldVisibility {
-    /// A hold the owner may see stands, whatever else stands beside it.
+    /// A hold the owner may see stands. Only customer holds keep backups, and
+    /// the owner sees each one.
     Visible,
-    /// Only host orders whose silence still runs stand.
-    SilentOnly,
 }
 
 impl BackupHolds {
@@ -222,21 +221,11 @@ impl BackupHolds {
 }
 
 fn backup_holds_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<BackupHolds> {
-    let now = vault.store.clock.now_recorded_at();
-    let mut standing = 0_u64;
-    let mut visible = false;
-    for hold in crate::store::legal_hold::holds_in_txn(&vault.store, txn)?
+    let standing = crate::store::legal_hold::holds_in_txn(&vault.store, txn)?
         .iter()
         .filter(|hold| hold.keeps_vault_data())
-    {
-        standing = standing.saturating_add(1);
-        visible |= hold.owner_may_see(now);
-    }
-    let held_visibility = (standing > 0).then_some(if visible {
-        BackupHoldVisibility::Visible
-    } else {
-        BackupHoldVisibility::SilentOnly
-    });
+        .count() as u64;
+    let held_visibility = (standing > 0).then_some(BackupHoldVisibility::Visible);
     Ok(BackupHolds {
         standing,
         held_visibility,
