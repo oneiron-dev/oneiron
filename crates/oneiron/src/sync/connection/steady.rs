@@ -250,6 +250,9 @@ impl SyncConnection {
                                 Err(error) => return LoopExit::Disconnected(error.to_string()),
                             };
                             let withheld = client.frame_withheld(&frame);
+                            // FIX 10872: a marked source's own edit, withheld, leaves
+                            // as its copy lineage's operations under its copy id.
+                            let released = if withheld { client.copy_release_frames(id) } else { Vec::new() };
                             let subscribed = (|| -> crate::error::Result<bool> {
                                 let rtxn = client.vault.store.env.read_txn()?;
                                 Ok(DS_E.contains(&client.vault.store, &rtxn, &HexId(id))? && !withheld)
@@ -257,6 +260,11 @@ impl SyncConnection {
                             match subscribed {
                                 Ok(true) => {
                                     document_buffer.push(frame);
+                                    debounce_deadline.get_or_insert_with(||
+                                        Instant::now() + Duration::from_millis(debounce_ms));
+                                }
+                                Ok(false) if !released.is_empty() => {
+                                    document_buffer.extend(released);
                                     debounce_deadline.get_or_insert_with(||
                                         Instant::now() + Duration::from_millis(debounce_ms));
                                 }

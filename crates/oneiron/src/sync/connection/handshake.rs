@@ -396,7 +396,14 @@ impl SyncConnection {
             self.config.client_config.mesh_dialer.as_deref(),
         )
         .await
-        .map_err(|e| format!("WS connect failed: {e}"))?;
+        .map_err(|e| {
+            // A refused credential may mean a removed membership: the host
+            // asks the home, and this socket decides nothing (FIX 12442).
+            if crate::sync::carrier::upgrade_unauthorized(&e) {
+                let _ = event_tx.send(SyncEvent::UpgradeUnauthorized);
+            }
+            format!("WS connect failed: {e}")
+        })?;
         // Every send on this socket is judged for the machine the home
         // proved over this upgrade's own proof (OF-534 G6), before the first.
         client.home_peer =
