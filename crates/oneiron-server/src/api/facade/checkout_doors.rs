@@ -34,9 +34,7 @@ impl CheckoutPresence<'_> {
             }
         };
         let payload = scratch.encode(key);
-        if payload.len() > server.config.max_ephemeral_payload_bytes
-            || !charge.fit(scratch.encode_all().len())
-        {
+        if !charge.fit(scratch.encode_all().len()) {
             return Err(CheckoutError::RepoOps(
                 "checkout presence memory line is full".into(),
             ));

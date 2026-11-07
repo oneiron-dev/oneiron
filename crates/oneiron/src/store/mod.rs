@@ -301,6 +301,7 @@ pub(crate) mod known_value_index;
 pub(crate) use oneiron_store::l2_evidence;
 pub mod owned_body;
 pub(crate) mod pending_custody_revoke;
+pub(crate) mod pending_import_mark;
 pub use oneiron_store::receipt_identity;
 pub mod receipt_row;
 pub mod reference_refusal;
@@ -423,14 +424,14 @@ pub(crate) use backup_change::{BackupWriteClass, backup_content_txn_in_txn};
 #[cfg(unix)]
 pub(crate) use body_envelope::{
     BODY_FILE_SHRED_SCOPE, BODY_FILE_WRAP_CONTEXT, BODY_INSTANCES, BODY_KEYS, BodyFile, BodyKeyRow,
-    BodyMint, BodySeal, BodySealSlot, BodySpill, DirSeal, FileKey, INLINE_ASSETS, KeyScope,
-    SealedStream, SealingStream, SpilledBody, StagedBodyKey, bind_body_key_in_txn,
-    body_instances_in_rows, body_key_in, body_key_row_in_txn, body_mint_in, custody_unavailable,
-    erase_bodies_in_txn, instance_id, journal_restored_body_key_in_txn,
-    keep_promoted_body_key_in_txn, pin_body_custody_in_txn, prune_retired_bodies_in_rows,
-    release_body_in_txn, remember_body_instances_in_txn, remembered_body_instance_rows_in_txn,
-    remembered_body_instances_in_txn, require_body_instances, retire_body_key_in_txn,
-    sealed_body_file_name,
+    BodyMint, BodySeal, BodySealSlot, BodySpill, DirSeal, FileKey, FrozenSpill, INLINE_ASSETS,
+    KeyScope, LiveSpillRetention, LiveSpillSources, SealedStream, SealingStream, SpilledBody,
+    StagedBodyKey, bind_body_key_in_txn, body_instances_in_rows, body_key_in, body_key_row_in_txn,
+    body_mint_in, custody_unavailable, erase_bodies_in_txn, instance_id,
+    journal_restored_body_key_in_txn, keep_promoted_body_key_in_txn, pin_body_custody_in_txn,
+    prune_retired_bodies_in_rows, release_body_in_txn, remember_body_instances_in_txn,
+    remembered_body_instance_rows_in_txn, remembered_body_instances_in_txn, require_body_instances,
+    retire_body_key_in_txn, sealed_body_file_name,
 };
 // FIX 6225: a step response's ASSET under its claim's erase, and the debt
 // a shared one's final teardown settles.
@@ -439,6 +440,9 @@ pub(crate) use body_envelope::{
     erase_bodies_for_owner_in_txn, governed_body_instances_in_txn, note_settled_inline_in_txn,
     settle_inline_asset_in_txn,
 };
+// The erase debts a kept body carries through a leave's purge (FIX 3679).
+#[cfg(all(unix, feature = "sync"))]
+pub(crate) use body_envelope::owed_erase_side_keys_in_txn;
 // KS-2B1: row-held responses under body custody.
 #[cfg(unix)]
 pub(crate) use body_envelope::{
