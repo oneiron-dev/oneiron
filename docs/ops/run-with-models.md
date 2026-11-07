@@ -1358,7 +1358,9 @@ also queues the Dreamer's check of it, in the same write. The check reads
 the summary against the run's retained steps for exactly its span and
 records a finding: `supported`, `mismatch`, `stale_evidence` or
 `unreadable_evidence`, with the hashes, revisions and the steps a conflict
-cites. A mismatch also reaches the agent's inbox. The check never rewrites
+cites. To reword its built-in rubric, set
+`models.dreamer.compaction_check_prompt` or `compaction_check_prompt_file`.
+A mismatch also reaches the agent's inbox. The check never rewrites
 the summary, never changes its byline and never writes in the agent's
 voice. A summary that stays in an off-record room's overlay is not checked:
 nothing of the room reaches the vault, where the Dreamer reads.

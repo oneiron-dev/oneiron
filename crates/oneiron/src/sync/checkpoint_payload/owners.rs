@@ -45,6 +45,7 @@ use crate::sync::selector::{HELD_EDIT_CAUSALITY_KEY, HELD_EDIT_CAUSALITY_MAP};
 use crate::sync::source_audiences::SOURCE_AUDIENCES_MAP;
 use crate::sync::withdrawn_cutoffs::{
     CarriedCutoff, EPOCH_FLOOR, WITHDRAWN_CUTOFFS_MAP, admit_withdrawn_cutoff_carrier,
+    epoch_floor_scope,
 };
 
 /// Every window root map an adapter here reads: the roots a capture admits.
@@ -154,9 +155,12 @@ pub(crate) fn root_entry(
             Ok(CarriedCutoff::Withdrawn(artifact, _)) => {
                 structure(vec![OwnerRef::entity(&artifact)])
             }
-            Ok(CarriedCutoff::EpochFloor(session, _, _)) => {
-                structure(vec![OwnerRef::entity(&session)])
-            }
+            Ok(CarriedCutoff::EpochFloor(scope, _, _)) => structure(
+                std::iter::once(scope.session)
+                    .chain(scope.conversation)
+                    .map(|id| OwnerRef::entity(&id))
+                    .collect(),
+            ),
             Err(_) => undecodable(),
         },
         "documents" | "document_heads" | "head_move_receipts" | "note_forks" | "note_proposals" => {
@@ -258,7 +262,13 @@ pub(super) fn key_refusal(root: &str, key: &str) -> Option<SyncUnclassified> {
             }
             _ => KeyClass::Payload,
         },
-        WITHDRAWN_CUTOFFS_MAP => id_key(key.strip_prefix(EPOCH_FLOOR).unwrap_or(key)),
+        // A conversation's floor names its session, then its conversation
+        // (FIX 5029).
+        WITHDRAWN_CUTOFFS_MAP => match key.strip_prefix(EPOCH_FLOOR) {
+            Some(filed) if epoch_floor_scope(filed).is_ok() => KeyClass::Opaque,
+            Some(_) => KeyClass::Payload,
+            None => id_key(key),
+        },
         "documents" | "document_heads" | "head_move_receipts" | "note_forks" | "note_proposals" => {
             crate::sync::note::checkpoint::key_class(root, key)
         }
