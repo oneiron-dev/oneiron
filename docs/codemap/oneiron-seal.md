@@ -17,19 +17,19 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/buffers.rs` | src | m | 2 struct · 6 fn · 2 type · 12 crate-vis | AdmittedBytes, AdmittedStr | Shared output buffers; native accounting constructors are feature-gated |
 | `src/error.rs` | src | s | 5 enum · 1 fn | FatalCode, InputInvalidCode, RetryableCode, SealError, SealStage | Stable seal error classes and codes (ONE-1837 §6) |
 | `src/lib.rs` | src | s | 2 mod · 7 re-export | — | Native Rust PAdES seal and verification engine (ONE-1837) |
-| `src/memory.rs` | src | m | 1 struct · 1 enum · 1 trait · 2 fn · 21 crate-vis | SealMemory, SealMemoryProvider, SealMemoryRefusal | Memory the native seal reserves before its PDF decodes allocate it (FIX 7654) |
+| `src/memory.rs` | src | m | 1 struct · 1 enum · 1 trait · 2 fn · 24 crate-vis | SealMemory, SealMemoryProvider, SealMemoryRefusal | Memory the native seal reserves before its PDF decodes allocate it (FIX 7654) |
 | `src/native/cms/assemble.rs` | src | s | 9 crate-vis | — | Signed-attribute builders and detached SignedData assembly |
 | `src/native/cms/der.rs` | src | s | 11 crate-vis | — | Strict-DER TLV writer/reader plus the shared sha256 helper |
 | `src/native/cms/mod.rs` | src | s | 7 crate-vis | — | CMS/CAdES SignedData assembly and parsing with exact byte control (§7.3) |
 | `src/native/cms/oids.rs` | src | s | 14 crate-vis | — | Canonical CMS, suite, and attribute OID constants |
-| `src/native/cms/parse.rs` | src | s | 8 crate-vis | — | Strict CMS ContentInfo/SignerInfo parsing with version gating |
+| `src/native/cms/parse.rs` | src | m | 7 crate-vis | — | Strict CMS ContentInfo/SignerInfo parsing with version gating |
 | `src/native/cms/policy.rs` | src | s | 10 crate-vis | — | Attribute/ESS binding and frozen signature-suite verification gates |
 | `src/native/cms/tests.rs` | test | m | — | — | CMS assembly/parsing round-trip, canonicality, and version-gating tests |
 | `src/native/engine.rs` | src | m | 1 struct · 3 fn | NativeSealEngine | `NativeSealEngine`: composition of config, backend, fetcher, and clock |
 | `src/native/fetch.rs` | src | m | 1 struct · 1 fn · 1 re-export · 2 crate-vis | SsrfGuardedHttpFetcher | SSRF-guarded fetcher (§5) |
 | `src/native/held_bytes.rs` | src | s | 7 crate-vis | — | What the seal's own copies and decodes allocate, for the holds that admit them to the operation's memory… |
 | `src/native/mod.rs` | src | s | 2 re-export · 6 crate-vis | — | Native implementation modules (feature `native`) |
-| `src/native/pdf/admitted.rs` | src | s | 7 crate-vis | — | — |
+| `src/native/pdf/admitted.rs` | src | s | 10 crate-vis | — | — |
 | `src/native/pdf/decode.rs` | src | s | 3 crate-vis | — | Strict loads with every stream decoded whole (Rule 5), each decode's memory reserved before it is allocated… |
 | `src/native/pdf/incremental.rs` | src | m | 5 crate-vis | — | Byte-exact incremental append: xref table/stream emitters, EOF glue, ByteRange/Contents patch, hash and… |
 | `src/native/pdf/lex.rs` | src | m | 12 crate-vis | — | PDF structural tokens |
@@ -51,7 +51,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/profile/assembly.rs` | src | m | 6 crate-vis | — | B-B/B-T/B-LTA orchestration: backend signing, TSA failover, capacity ladder, DocTimeStamp, degrade warnings |
 | `src/native/profile/dss.rs` | src | s | 3 crate-vis | — | DSS serialization: stream objects, global Certs/OCSPs/CRLs arrays, DSS revision append |
 | `src/native/profile/material.rs` | src | m | 4 crate-vis | — | B-LT validation material: working CRLs first, then OCSP for uncovered certificates |
-| `src/native/profile/material/ocsp.rs` | src | s | 1 crate-vis | — | OCSP fallback for a certificate not covered by a working CRL |
+| `src/native/profile/material/ocsp.rs` | src | s | 3 crate-vis | — | OCSP fallback for a certificate not covered by a working CRL |
 | `src/native/profile/mod.rs` | src | s | 3 crate-vis | — | PAdES profile assembly: B-B / B-T / B-LT / B-LTA (§7.2, §7.4–§7.6) |
 | `src/native/profile/tests.rs` | test | m | — | — | Profile assembly tests: operation ids, error mapping, DSS bounds, CRL freshness and gather rows |
 | `src/native/tsp.rs` | src | m | 8 crate-vis | — | RFC 3161 timestamp requests and token validation (§7.4, §7.6) |
