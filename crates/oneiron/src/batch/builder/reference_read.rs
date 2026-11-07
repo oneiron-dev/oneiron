@@ -21,7 +21,7 @@ use crate::store::gate_reason::GateReasonCode;
 use crate::write_envelope::claim_body::ClaimBody;
 
 /// One CLAIM body the batch's preflight gates, as it gates it.
-pub(super) struct GatedClaim {
+pub(in crate::batch) struct GatedClaim {
     id: EntityId,
     body: ClaimBody,
     envelope: Option<crate::WriteEnvelope>,
@@ -30,7 +30,7 @@ pub(super) struct GatedClaim {
 /// What `reader` admits of `ops` in `txn`, before any op stages: `None` when
 /// a put would take a row it does not read (FIX 6068); else the CLAIMs whose
 /// record refs it judges once the batch is staged.
-pub(super) fn admit_before_staging(
+pub(in crate::batch) fn admit_before_staging(
     vault: &Vault,
     reader: &ScopedRead<'_>,
     txn: &RoTxn<'_>,
@@ -64,7 +64,7 @@ fn put_targets_admitted(
 }
 
 /// The same target judgment for the actual heads a projector will mutate.
-pub(super) fn head_targets_admitted(
+pub(in crate::batch) fn head_targets_admitted(
     vault: &Vault,
     reader: &ScopedRead<'_>,
     txn: &RoTxn<'_>,
@@ -83,7 +83,7 @@ pub(super) fn head_targets_admitted(
 }
 
 /// Typed references of actual written heads, read after the whole batch stages.
-pub(super) fn projected_head_claims(
+pub(in crate::batch) fn projected_head_claims(
     vault: &Vault,
     txn: &RoTxn<'_>,
     ids: &BTreeSet<EntityId>,
@@ -100,6 +100,49 @@ pub(super) fn projected_head_claims(
             })
         })
         .collect()
+}
+
+/// The committing terminal's lane rule for a caller-owned writer, before
+/// routing or any operation can change the rows being judged.
+pub(in crate::batch) fn admit_lane_before_staging(
+    vault: &Vault,
+    lane: crate::core_write::CoreWriteLaneRef<'_>,
+    txn: &RoTxn<'_>,
+    ops: &[BatchOp],
+) -> Result<Vec<GatedClaim>> {
+    match lane {
+        crate::core_write::CoreWriteLaneRef::Read(reader) => {
+            admit_before_staging(vault, reader, txn, ops)?.ok_or(Error::EntityNotFound)
+        }
+        crate::core_write::CoreWriteLaneRef::Target(_) => {
+            let ids: Vec<_> = ops
+                .iter()
+                .filter_map(|op| match op {
+                    BatchOp::Put { id, .. } | BatchOp::ClaimCandidate { id, .. } => Some(*id),
+                    _ => None,
+                })
+                .collect();
+            if !lane.admits_puts_in(txn, &ids)? {
+                return Err(Error::EntityNotFound);
+            }
+            Ok(Vec::new())
+        }
+        crate::core_write::CoreWriteLaneRef::Unbound => Ok(Vec::new()),
+    }
+}
+
+/// A caller-owned transaction aborts with its denial. Unlike the committing
+/// terminal, it cannot retain a receipt after its owner rolls it back.
+pub(in crate::batch) fn check_staged_references(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    reader: &ScopedRead<'_>,
+    claims: &[GatedClaim],
+) -> Result<()> {
+    match staged_reference_denial(vault, txn, reader, claims)? {
+        Some(denial) => Err(denial.err),
+        None => Ok(()),
+    }
 }
 
 /// Every CLAIM body the preflight gates, in op order, derived in `txn` as the
