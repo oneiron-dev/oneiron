@@ -526,7 +526,7 @@ impl RecordingJsHost<'_, '_> {
     /// read's does.
     ///
     /// With `child`, a readable result is also checked as a spawn's source
-    /// would be, writing nothing: the run's own result, then the seat, the
+    /// would be, writing nothing: its own or inherited source, then the seat, the
     /// clock and the scope. The verdict names the children's cutoff and the
     /// meter they spend on (`scope`, with what it may still spend, or
     /// `host`, the host's own meter, with no figure), or why a spawn would be
@@ -543,7 +543,9 @@ impl RecordingJsHost<'_, '_> {
         if !child || verdict["can"] != json!(true) {
             return Ok(json!({"output": verdict}));
         }
-        if self.resolve_result(&target.reference).is_none() {
+        if self.resolve_result(&target.reference).is_none()
+            && !self.is_inherited_reader_source(&target.reference)
+        {
             return Ok(json!({"output": {"can": false, "reason": "unknown_handle"}}));
         }
         match self
