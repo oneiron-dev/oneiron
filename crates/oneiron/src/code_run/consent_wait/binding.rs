@@ -27,7 +27,7 @@ const WAITS: SideTable<EntityId, CodeConsentWaitRow, Named> =
 const CODE_CONSENT_WAIT_DOMAIN: &[u8] = crate::entity_id::derived_domains::CODE_CONSENT_WAIT;
 
 /// The hash domain of a binding digest.
-const CODE_CONSENT_BINDING_DOMAIN: &[u8] = b"oneiron:code-consent-binding:v2";
+const CODE_CONSENT_BINDING_DOMAIN: &[u8] = b"oneiron:code-consent-binding:v3";
 
 /// Whether a code-mode call of `verb` binds a code consent wait when its
 /// effect is held for consent alone (CALLS: first adapter). 1a binds
@@ -137,6 +137,8 @@ pub(crate) struct CodeConsentDraft {
     pub(crate) principal: CodeConsentPrincipal,
     pub(crate) pending: CodeConsentPendingEffect,
     pub(crate) frozen_input_digest: [u8; 32],
+    pub(crate) holder_settlement:
+        Option<crate::consent::code_settlement::FrozenCodeConsentSettlement>,
     pub(crate) hold_reasons: Vec<String>,
     pub(crate) remember_offer: Option<CodeConsentRememberOffer>,
 }
@@ -178,7 +180,12 @@ pub(crate) fn mint_code_consent_wait_in_txn(
     let owners: BTreeSet<EntityId> = crate::policy_model::owners_in_txn(vault, txn)?
         .into_iter()
         .collect();
-    if owners.is_empty() {
+    if owners.is_empty()
+        && draft
+            .holder_settlement
+            .as_ref()
+            .is_none_or(|settlement| settlement.holders.is_empty())
+    {
         return Ok(None);
     }
     let question = CodeConsentQuestion {
@@ -202,6 +209,7 @@ pub(crate) fn mint_code_consent_wait_in_txn(
         verb_row: draft.verb.as_str().to_owned(),
         request_digest: draft.site.request_digest,
         frozen_input_digest: draft.frozen_input_digest,
+        holder_settlement: draft.holder_settlement,
         binding_digest: [0; 32],
         effect_digest: [0; 32],
         original: principal,
@@ -215,7 +223,7 @@ pub(crate) fn mint_code_consent_wait_in_txn(
         // sealed with the wait by the parked step's commit.
         origin: draft.site.origin,
     };
-    binding.binding_digest = binding_digest(&binding);
+    binding.binding_digest = binding_digest(&binding)?;
     let Some(effect_digest) = approval_digest(&binding.binding_digest) else {
         return Ok(None);
     };
@@ -241,7 +249,7 @@ pub(crate) fn mint_code_consent_wait_in_txn(
 /// computed from it later feeds back into it. It covers the admitted MCP
 /// caller's origin too (FIX 4606), so the seal binds the caller a re-entry
 /// is made for.
-pub(super) fn binding_digest(binding: &CodeConsentBinding) -> [u8; 32] {
+pub(super) fn binding_digest(binding: &CodeConsentBinding) -> Result<[u8; 32]> {
     let origin = binding.origin.as_ref().map(CodeConsentRunOrigin::digest);
     let mut hasher = blake3::Hasher::new();
     let mut field = |bytes: &[u8]| {
@@ -260,6 +268,15 @@ pub(super) fn binding_digest(binding: &CodeConsentBinding) -> [u8; 32] {
     field(binding.verb_row.as_bytes());
     field(&binding.request_digest);
     field(&binding.frozen_input_digest);
+    match &binding.holder_settlement {
+        Some(settlement) => {
+            field(&[1]);
+            let bytes = rmp_serde::to_vec_named(settlement)
+                .map_err(|error| Error::InvalidConfig(error.to_string()))?;
+            field(&bytes);
+        }
+        None => field(&[0]),
+    }
     field(&(binding.question.owners.len() as u64).to_le_bytes());
     for owner in &binding.question.owners {
         field(owner.as_bytes());
@@ -382,7 +399,7 @@ pub(super) fn binding_digest(binding: &CodeConsentBinding) -> [u8; 32] {
     }
     field(&[u8::from(origin.is_some())]);
     field(origin.as_ref().map_or(&[][..], |origin| &origin[..]));
-    *hasher.finalize().as_bytes()
+    Ok(*hasher.finalize().as_bytes())
 }
 
 /// Whether wait `wait_id` is bound to the held call `call_ref` and still
