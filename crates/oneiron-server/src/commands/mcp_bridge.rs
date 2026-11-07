@@ -497,7 +497,9 @@ impl Bridge {
             .and_then(Value::as_str)
             .map(str::to_owned);
         let reply = self.post(body, until, deadline, tool);
-        let id = message.get("id").cloned()?;
+        let id = message.get_mut("id").map(Value::take);
+        drop(message);
+        let id = id?;
         Some(match reply.and_then(|reply| reply.answer_to(&id)) {
             Ok(answer) => {
                 if let Some(key) = key {
@@ -766,6 +768,16 @@ impl Bridge {
     }
 }
 
+fn reply_body_text(body: Vec<u8>) -> String {
+    match String::from_utf8(body) {
+        Ok(text) => text,
+        Err(error) => {
+            let body = error.into_bytes();
+            String::from_utf8_lossy(&body).into_owned()
+        }
+    }
+}
+
 /// What the server sent back for one request.
 struct Reply {
     /// The HTTP status, when there was one.
@@ -778,8 +790,10 @@ impl Reply {
     /// it came with; anything else is the bridge's error for that request, so
     /// the client is never handed a line that answers nothing it sent.
     fn answer_to(self, id: &Value) -> Result<Value, Refusal> {
-        let body = serde_json::from_slice::<Value>(&self.body)
-            .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&self.body).into_owned()));
+        let body = match serde_json::from_slice::<Value>(&self.body) {
+            Ok(body) => body,
+            Err(_) => Value::String(reply_body_text(self.body)),
+        };
         let answers = body.get("jsonrpc").and_then(Value::as_str) == Some("2.0")
             && body.get("id") == Some(id)
             && match (body.get("result"), body.get("error")) {
@@ -846,14 +860,14 @@ enum Refusal {
 impl Refusal {
     /// The JSON-RPC error for request `id`; an auth refusal's advice is
     /// `auth`'s own.
-    fn rpc_error(&self, id: &Value, auth: &bridge_auth::Auth) -> String {
+    fn rpc_error(self, id: &Value, auth: &bridge_auth::Auth) -> String {
         match self {
             Self::Auth(body) => rpc_error(
                 id,
                 -32001,
                 "mcp_auth_required",
                 auth.refused_advice(),
-                Some(body.clone()),
+                Some(body),
             ),
             Self::Refused(answer) => match answer.get("error") {
                 Some(error) => json!({ "jsonrpc": "2.0", "id": id, "error": error }).to_string(),
@@ -862,11 +876,11 @@ impl Refusal {
                     -32000,
                     "server_error",
                     "the server's /mcp initialize held no result, so no endpoint was picked; pass --surface to name one",
-                    Some(answer.clone()),
+                    Some(answer),
                 ),
             },
             Self::Server(message, body) => {
-                rpc_error(id, -32000, "server_error", message, Some(body.clone()))
+                rpc_error(id, -32000, "server_error", &message, Some(body))
             }
             Self::Unreachable(message) => rpc_error(
                 id,

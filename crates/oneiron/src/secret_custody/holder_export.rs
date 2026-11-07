@@ -299,6 +299,7 @@ impl Vault {
             holder: asked.executor,
             recipient: work.recipient.machine,
             status,
+            marked_imported: fold.export_supplement_imported(&request),
             digest: output
                 .map(|output| blake3::Hash::from_bytes(output.digest).to_hex().to_string()),
             bytes: output.map(|output| output.bytes),
