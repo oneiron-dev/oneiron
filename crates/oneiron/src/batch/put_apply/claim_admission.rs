@@ -140,16 +140,25 @@ pub(super) fn validate_witness_message_body(
     // Placed BEFORE any store mutation in this function, so a refusal on
     // either road leaves nothing partial behind for the caller's
     // quarantine-and-continue to clean up.
-    if replicated && let Some(machine) = own_device.and_then(|lane| lane.machine_for(id, data)) {
+    if replicated
+        && let Some((machine, authored_by)) = own_device.and_then(|lane| {
+            lane.machine_for(id, data)
+                .map(|machine| (machine, lane.authored_by()))
+        })
+    {
         // FIX 9600, FIX 12113: one of the owner's own machines wrote these
         // exact bytes at this id, as its writer proof showed, and an own
         // machine's proven connection sent them. The own-device door admits
         // the author buckets this store can bind and refuses the rest as the
         // door below does. A lane that vouches for another row or other bytes
         // is no lane: the row meets the door below.
-        store
-            .gate_hooks
-            .validate_own_device_witness_message_body(store, txn, machine, data)?;
+        store.gate_hooks.validate_own_device_witness_message_body(
+            store,
+            txn,
+            machine,
+            authored_by,
+            data,
+        )?;
     } else if replicated {
         // The REPLICATED road has no actor to run the ceiling against and,
         // without a lane, no verified sender: a federated, recovered or
@@ -158,6 +167,13 @@ pub(super) fn validate_witness_message_body(
         crate::store::witness_message_body::validate_replicated_witness_message_body(data)?;
     } else {
         crate::store::witness_message_body::validate_canonical_witness_message_body(data)?;
+    }
+    // ABC rows 53 and 56 (FIX 104, 107): every put of a MESSAGE that stores
+    // it, local or from an own device, measures its metadata once here; past
+    // the `witness_metadata_nodes` or `witness_metadata_bytes` row it asks
+    // whether everything is okay, and the metadata is stored whole.
+    if let Some(measure) = crate::store::witness_message_body::witness_metadata_measure(data) {
+        measure.report(&store.limit_watch);
     }
     Ok(())
 }

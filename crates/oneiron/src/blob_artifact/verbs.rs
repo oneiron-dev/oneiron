@@ -25,7 +25,7 @@ use crate::edge::EdgeActorClass;
 use crate::edit_roundtrip::pptx::{PptxAuthor, PptxCommentPatch, PptxCommentTarget};
 use crate::edit_roundtrip::slides_review::{
     SlideAbstention, SlideJudgment, SlideReviewError, SlideReviewImage, SlideReviewLabels,
-    SlideReviewRequest, SlideReviewUnit,
+    SlideReviewRequest, SlideReviewSnapshot, SlideReviewUnit,
 };
 use crate::edit_roundtrip::{
     ArtifactAsk, DeckEditOutcome, EditOp, FolderAsk, FolderItem, ParagraphAsk, SheetRowsAsk,
@@ -657,33 +657,24 @@ impl Memory<'_> {
         Ok(self.vault().pending_proposals_scoped(&lane, &artifact)?)
     }
 
-    /// `slides` of the artifact's head as `renderer` draws them, each with the
-    /// renderer's name, in order, beside the bytes admitted to `renderer` for
-    /// the copy the review makes of each (FIX 8244). `None` when the head
-    /// cannot be read, the render fails or comes back short, or the machine
-    /// cannot hold those copies: those units are read for their structure
-    /// only.
+    /// `slides`, numbered as `snapshot`'s shown deck numbers them, as
+    /// `renderer` draws them, each
+    /// with the renderer's name, in order, beside the bytes admitted to
+    /// `renderer` for the copy the review makes of each (FIX 8244). They are
+    /// drawn from the deck the review reads the units' text from, the live
+    /// body's where it has one, so the review judges pixels and text of one
+    /// head (FIX 9624). `None` when the render fails or comes back short, or
+    /// the machine cannot hold those copies: those units are read for their
+    /// structure only.
     fn render_head_slides(
         &self,
-        artifact: &EntityId,
+        snapshot: &SlideReviewSnapshot,
         renderer: &dyn SlideRenderer,
         slides: &[u64],
     ) -> Option<(Vec<(Vec<u8>, String)>, u64)> {
-        let rendered = self
-            .vault()
-            .blob_artifact_head(artifact)
-            .and_then(|head| {
-                let head = head.ok_or(Error::EntityNotFound)?;
-                let (deck, rows) = self
-                    .vault()
-                    .read_blob_artifact_version_listing(artifact, head.version)?
-                    .ok_or(Error::EntityNotFound)?;
-                // The head it draws is read for the review (FIX 5455).
-                self.produced_from(rows);
-                Ok(deck)
-            })
-            .and_then(|deck| renderer.render(&deck, slides));
-        match rendered {
+        // The head it draws is read for the review (FIX 5455).
+        self.produced_from(snapshot.read_rows.iter().copied());
+        match renderer.render(snapshot.shown_deck(), slides) {
             Ok(images) if images.len() == slides.len() => {
                 let copies = review_copy_bytes(&images);
                 if let Err(error) = renderer.admit(copies) {
@@ -773,14 +764,27 @@ impl Memory<'_> {
             })
             .collect::<MemoryResult<Vec<_>>>()?;
         drop(lane);
+        // One head for the images it renders, the units' text and the
+        // judgment's version (FIX 9624).
+        let snapshot = self
+            .vault()
+            .slide_review_snapshot(&artifact)
+            .map_err(slide_review_error)?;
         let unrendered: Vec<u64> = units
             .iter()
             .filter(|(_, image, _)| image.is_none())
             .map(|(target, _, _)| target.slide)
             .collect();
+        // Each is drawn at its own slide's place in the deck its text is read
+        // from; one that deck no longer holds is drawn nowhere and abstains.
+        let shown_numbers = self
+            .vault()
+            .slide_review_shown_numbers(&snapshot, &unrendered);
+        let drawn: Vec<u64> = shown_numbers.iter().flatten().copied().collect();
+        let mut shown = shown_numbers.into_iter();
         let (renders, admitted) = match renderer {
-            Some(renderer) if !unrendered.is_empty() => {
-                self.render_head_slides(&artifact, renderer, &unrendered)
+            Some(renderer) if !drawn.is_empty() => {
+                self.render_head_slides(&snapshot, renderer, &drawn)
             }
             _ => None,
         }
@@ -796,7 +800,10 @@ impl Memory<'_> {
                 },
                 // An empty image abstains after the unit's structure is read.
                 None => {
-                    let (image, renderer) = renders.next().unwrap_or_default();
+                    let (image, renderer) = match shown.next().flatten() {
+                        Some(_) => renders.next().unwrap_or_default(),
+                        None => Default::default(),
+                    };
                     SlideReviewUnit {
                         target,
                         image: SlideReviewImage::Rendered(image),
@@ -837,15 +844,12 @@ impl Memory<'_> {
         };
         let run = self
             .vault()
-            .review_blob_artifact_slides(&artifact, &request);
+            .review_blob_artifact_slides_pinned(&artifact, snapshot, &request);
         // The review's copies are gone with it: their room goes back (FIX 8244).
         if let Some(renderer) = renderer {
             renderer.materialized(admitted, 0);
         }
-        let run = run.map_err(|error| match error {
-            SlideReviewError::Vault(error) => MemoryError::from(error),
-            other => MemoryError::from(Error::InvalidConfig(other.to_string())),
-        })?;
+        let run = run.map_err(slide_review_error)?;
         // The head version the review read (FIX 5455).
         self.produced_from(run.read_rows.iter().copied());
         // What the review read beside its base, its evidence and each stored
@@ -1135,15 +1139,19 @@ impl Memory<'_> {
     }
 
     /// `vault.artifacts.release_wait`: lets one held organ call go, by its
-    /// run ref (`proposal_ref`), under the consent a Discard needs.
+    /// run ref (`proposal_ref`), under the consent a Discard needs, judged
+    /// in the writer that drops it (FIX 9621).
     pub fn artifacts_release_wait(
         &self,
         input: &ProposalSettleRequest,
     ) -> MemoryResult<ReleasedWait> {
-        self.artifact_consent(input.brief_ref.clone())?;
-        let released = self
-            .vault()
-            .release_organ_wait(&entity(&input.artifact_ref)?, &input.proposal_ref)?;
+        let consent = self.artifact_consent(input.brief_ref.clone())?;
+        let released = self.vault().release_organ_wait_as(
+            &entity(&input.artifact_ref)?,
+            &input.proposal_ref,
+            &consent,
+            self.artifact_actor(),
+        )?;
         Ok(ReleasedWait { released })
     }
 
@@ -1283,5 +1291,14 @@ impl Memory<'_> {
             version: ArtifactVersionView::from(&outcome.version),
             reattached: outcome.reanchor.remapped.len(),
         })
+    }
+}
+
+/// A slide review's refusal as the verb reports it: the vault's own error,
+/// else its reason as an invalid configuration.
+fn slide_review_error(error: SlideReviewError) -> MemoryError {
+    match error {
+        SlideReviewError::Vault(error) => MemoryError::from(error),
+        other => MemoryError::from(Error::InvalidConfig(other.to_string())),
     }
 }

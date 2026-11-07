@@ -345,15 +345,22 @@ pub(crate) async fn list_core_sub_sessions(
     auth.require_unrestricted_record_scope()?;
     let turn = parse_entity_id_param(&turn_id, "turn_id")?;
     // A turn the TURN routes do not serve the caller, one of a private thread
-    // it does not read above all, lists no sub-sessions either (FIX 5869).
+    // it does not read above all, lists no sub-sessions either (FIX 5869). One
+    // they serve lists them from the snapshot that admitted it (FIX 10782).
     let read = super::scoped_auth::scoped_read_for_core_auth(&server.vault, &auth)?;
-    if !super::conversations::core_turn_served(&server.vault, &read, &turn)? {
-        return Err(ApiError::not_found("turn", Some(&turn_id)).into());
-    }
-    let sessions = server
-        .vault
-        .sub_sessions(&turn)
-        .map_err(|e| core_engine_error("sub-session read failed", e))?;
+    let sessions = read
+        .with_grant_read_snapshot(|txn| {
+            let served = super::conversations::core_turn_served(&server.vault, &read, txn, &turn);
+            Ok::<_, oneiron::Error>(match served {
+                Ok(true) => server
+                    .vault
+                    .sub_sessions_in_txn(txn, &turn)
+                    .map_err(|e| core_engine_error("sub-session read failed", e)),
+                Ok(false) => Err(ApiError::not_found("turn", Some(&turn_id))),
+                Err(refused) => Err(refused),
+            })
+        })
+        .map_err(super::conversations::core_turn_snapshot_error)??;
     Ok(Json(DagSessionsResponse {
         sessions: ids(sessions),
     }))

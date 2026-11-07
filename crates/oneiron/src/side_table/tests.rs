@@ -605,6 +605,8 @@ fn pre_move_fixture_coverage_is_explicit() {
         "SKILL_RESIDENT_LOADED_SKILL",
         "SKILL_RESIDENT_OWNER",
         "SKILL_RESIDENT_RECEIPT",
+        "SYNC_ASSET_BODY_FROM_HOME",
+        "SYNC_BASE_WINDOW_DISCARD",
         "SYNC_CALENDAR_ORIGIN_PENDING",
         "SYNC_DISCARDED_WORLD_ROW",
         "SYNC_MESSAGE_WRITER",
