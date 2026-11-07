@@ -16,6 +16,7 @@ pub mod mailbox_cursor;
 pub mod mailbox_skipped;
 pub(crate) mod member_mail;
 mod shared_validate;
+pub mod sheets;
 mod slack_adapter;
 mod slack_personas;
 mod slack_validate;
