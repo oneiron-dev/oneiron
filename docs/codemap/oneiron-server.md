@@ -101,7 +101,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/scoped_child.rs` | src | m | 2 struct · 12 fn · 4 crate-vis | ReaderParentClock, ReaderParentHost | Scoped children at the host (FIX 7507 PR2): the door a scoped child runs behind, the binding of its lent… |
 | `src/ai_host/self_heal_detectors.rs` | src | m | 1 crate-vis | — | The host's scheduled T2/T3 detector pass (ARCH-0066 #tiers, OF-418) |
 | `src/ai_host/shadow_runner/arm_store.rs` | src | s | 9 crate-vis | — | A shadow arm's bodies at its host (PR-S1), kept for the caller under an opaque lease: one directory per arm… |
-| `src/ai_host/shadow_runner/mod.rs` | src | m | 1 struct · 6 fn · 1 type · 3 crate-vis | ServerShadowRunner | The host's shadow runner (PR-S1; FIX 1661/2144, the runner side of L07-B's B2b): [`ServerShadowRunner`] runs… |
+| `src/ai_host/shadow_runner/mod.rs` | src | m | 1 struct · 7 fn · 1 type · 3 crate-vis | ServerShadowRunner | The host's shadow runner (PR-S1; FIX 1661/2144, the runner side of L07-B's B2b): [`ServerShadowRunner`] runs… |
 | `src/ai_host/shadow_runner/model.rs` | src | m | 3 crate-vis | — | The arm's model gateway (PR-S1): one strict call of a captured step's request, by the pattern of the… |
 | `src/ai_host/shadow_runner/runtimes.rs` | src | s | 6 crate-vis | — | The checked-in QuickJS component's runtimes (FIX 1661, 2144, 3607): the component is compiled and… |
 | `src/ai_host/skill_author.rs` | src | m | 2 crate-vis | — | The Coach's skill-edit author (OF-214) |
@@ -1049,7 +1049,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/models/decisions.rs` | src | m | 8 struct · 1 enum · 2 crate-vis | BigReply, BigSettings, BookingParseSettings, ConnectorSlateSettings, DecisionsSettings, ImagePickSettings, ImportAudienceSettings, SeatPickSettings +1 | `[models.decisions]`: the host's own typed questions and the System One seat on its decision ladder |
 | `src/config/models/drafter_trainers.rs` | src | s | 1 struct · 2 crate-vis | DrafterTrainerSettings | `[models.training.drafters]`: the trainer connectors that train a vault's own drafter (FIX 14974) |
 | `src/config/models/drafting.rs` | src | s | 5 crate-vis | — | `[models.dreamer.drafting]`: the role and the budget a stewardship follow-up draft is written on (FIX 1002) |
-| `src/config/models/dreamer_wording.rs` | src | m | 1 struct · 15 fn · 2 crate-vis | DreamerWording | `[models.dreamer.wording]`: the host's wording of what the engine asks a model in its own words today (FIX… |
+| `src/config/models/dreamer_wording.rs` | src | m | 1 struct · 17 fn · 2 crate-vis | DreamerWording | `[models.dreamer.wording]`: the host's wording of what the engine asks a model in its own words today (FIX… |
 | `src/config/models/levels.rs` | src | s | 2 struct · 2 fn · 1 const · 7 crate-vis | ModelRef, Rung | The three config levels and their expansion into per-role ladders |
 | `src/config/models/media.rs` | src | s | 3 struct · 2 crate-vis | LiveAsrOptions, MediaSeatConfig, MediaSettings | `[models.media]`: the media seats (ODM-004: image, video and the rest are seats outside the tiers) |
 | `src/config/models/mod.rs` | src | m | 7 struct · 2 enum · 2 fn · 2 mod · 13 re-export · 6 crate-vis | BrokerConfig, ChatSettings, CodeCheckSettings, CodeModeSettings, DreamerSettings, ModelsConfig, RecallModelSettings, TurnOpener +1 | `[models]`: which model serves each role, at three levels of detail |
@@ -1225,6 +1225,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/handler/message_stream_tests.rs` | test | s | — | — | Streaming text stays on the existing opaque, budgeted ephemeral hub lane |
 | `src/handler/mod.rs` | src | s | 7 crate-vis | — | WebSocket upgrade handler and connection lifecycle |
 | `src/handler/note_socket_tests.rs` | test | L | — | — | Real websocket NOTE commands: actor binding, durable pins, reviewed edits |
+| `src/handler/peer_serve.rs` | src | s | 10 crate-vis | — | FIX 4748: this machine serving another machine of its vault while their home is down (owner RULING B… |
 | `src/handler/protocol_close.rs` | src | s | 9 crate-vis | — | A socket the server closes on a protocol rejection (FIX 3303, OF-538): a hello it refused, a frame it would… |
 | `src/handler/residence_socket_tests.rs` | test | XL | — | — | A real enrol: root + thin index, one opened item, remote search and offline honesty |
 | `src/handler/sealed_updates.rs` | src | s | 3 crate-vis | — | The home's side of the sealed world-update relay (DEC-0005 fix 8: "The cloud relays its sealed updates… |
@@ -1262,7 +1263,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/linear_host/push.rs` | src | s | 3 crate-vis | — | A caller's own push of one TASK to Linear (FIX 8788, FIX 9382) |
 | `src/linear_host/tests.rs` | test | s | — | — | — |
 | `src/linear_host/webhook.rs` | src | s | 6 crate-vis | — | `POST /v1/hooks/linear`: the signed Linear webhook door (OF-427 C1–C4, C11) |
-| `src/livequery.rs` | src | m | 37 crate-vis | — | App-tier framing and coarse live-query state, separate from WindowSync |
+| `src/livequery.rs` | src | m | 38 crate-vis | — | App-tier framing and coarse live-query state, separate from WindowSync |
 | `src/livequery/ask_option_link.rs` | src | s | 3 crate-vis | — | Bearer option-link dispatch off the socket loop |
 | `src/livequery/budget.rs` | src | s | 7 crate-vis | — | Retained app state is charged to the server's retained-memory line (`limits.retained_memory_bytes`), never… |
 | `src/livequery/connection.rs` | src | L | 22 crate-vis | — | Socket attachment and bounded reconnect retention |
@@ -1542,7 +1543,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/native_exl3/updates.rs` | src | s | 4 crate-vis | — | In-flight native schedule updates for one device |
 | `src/models/native_exl3/wire.rs` | src | s | 15 crate-vis | — | Codec v1 of the house EXL3 worker's native channel (`exl3_ipc.py`): each frame is a u64 big-endian payload… |
 | `src/models/offer.rs` | src | s | 1 struct · 1 enum · 2 fn · 7 crate-vis | OfferEndpoint, ServedOffer | What a run admission binds a model call to: one model at one provider, the route it goes out on, who pays… |
-| `src/models/openai.rs` | src | m | 7 crate-vis | — | The OpenAI-compatible transport: any `/v1/chat/completions` server |
+| `src/models/openai.rs` | src | m | 11 crate-vis | — | The OpenAI-compatible transport: any `/v1/chat/completions` server |
 | `src/models/outbound_wait.rs` | src | s | 2 crate-vis | — | Server policy for shedding during a long journaled model wait |
 | `src/models/output_cap.rs` | src | s | 2 crate-vis | — | A provider's output ceiling on the wire |
 | `src/models/raw.rs` | src | s | 11 crate-vis | — | The raw `/v1/llm` routes' models and their own meter |
@@ -1588,6 +1589,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/worker_host/process.rs` | src | m | 7 crate-vis | — | One running worker process in its supervisor's custody: started in a process group of its own, reaped by one… |
 | `src/models/worker_host/process/guarded.rs` | src | s | 1 crate-vis | — | The registered Mac CLI keeps W direct and delegates only parent-death watching to G |
 | `src/models/worker_host/process/guarded/controller.rs` | src | m | 2 crate-vis | — | One native thread owns each private G child, independently of Tokio teardown |
+| `src/models/worker_host/replacement.rs` | src | s | 2 crate-vis | — | Replacement cleanup outlives the serving runtime that configured it |
 | `src/models/worker_host/reporting.rs` | src | s | 9 crate-vis | — | Worker device reports and runtime status snapshots |
 | `src/models/worker_host/routes.rs` | src | s | 6 crate-vis | — | Configured worker lookups and launch evidence |
 | `src/models/worker_host/session.rs` | src | s | 15 crate-vis | — | Exact conversation sessions on this process's managed EXL3 workers (DESIGN-V2 §3.2, R2), host side: the… |
@@ -1698,7 +1700,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/projection.rs` | src | m | 1 struct · 1 enum · 7 fn · 12 crate-vis | InvalidView, View | — |
 | `src/projection/tests.rs` | test | s | — | — | — |
 | `src/protocol.rs` | src | m | 35 crate-vis | — | Custom Oneiron sync protocol — server-side extensions |
-| `src/replay_judge.rs` | src | m | 3 struct · 9 fn · 1 const · 1 re-export | JournalRow, PersonTime, ServeReplayJudge | The serve host's skill judge (OF-495) |
+| `src/replay_judge.rs` | src | m | 3 struct · 10 fn · 1 const · 1 re-export | JournalRow, PersonTime, ServeReplayJudge | The serve host's skill judge (OF-495) |
 | `src/replay_judge/axis_bandit.rs` | src | s | 1 struct · 2 fn | ServeAxisBandit | The goal-axis bandit's live arm attribution for one open optimizer proposal, on the serve judge's arms: each… |
 | `src/replay_judge/replays.rs` | src | m | 4 crate-vis | — | The serve judge's replay evidence: each reserved receipt's task and response, read whole from its attempt… |
 | `src/residence_machines.rs` | src | s | 2 crate-vis | — | The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a… |
@@ -1821,7 +1823,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/web_fetch.rs` | src | s | 1 fn · 1 crate-vis | — | The host owns renderer configuration; acquisition itself stays in the engine |
 | `src/server/web_fetch/headless.rs` | src | m | 2 crate-vis | — | The host's headless browser rung (FIX 7122): one fresh browser guest per render, from the host's `[browser]`… |
 | `src/server/web_fetch/headless/body.rs` | src | s | 6 crate-vis | — | A headless answer's decoded body, held inline up to a small bound and in an anonymous temporary file past it |
-| `src/server/web_fetch/headless/handler.rs` | src | s | 4 crate-vis | — | A render's custody of its pages' requests (FIX 7122, FIX 7332): each HTTP(S) request the browser pauses (a… |
+| `src/server/web_fetch/headless/handler.rs` | src | m | 4 crate-vis | — | A render's custody of its pages' requests (FIX 7122, FIX 7332): each HTTP(S) request the browser pauses (a… |
 | `src/server/web_fetch/headless/relay.rs` | src | s | 2 crate-vis | — | A render's relay (FIX 7333): every connection and datagram the guest's sockets reach for off the guest's own… |
 | `src/server/windows.rs` | src | s | 9 crate-vis | — | Window serving: snapshots, exports, and the local-change broadcast bridge |
 | `src/server/windows/tests.rs` | test | s | — | — | — |
