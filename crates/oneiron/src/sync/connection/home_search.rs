@@ -18,6 +18,7 @@ pub struct HomeSearch {
     vault: Arc<Vault>,
     config: SyncClientConfig,
     mode: watch::Receiver<SyncResidenceMode>,
+    claim_vector_cursor: std::sync::Mutex<Option<Vec<u8>>>,
 }
 
 /// The vault's hold on its own sync connection's home search: the live
@@ -58,6 +59,7 @@ impl HomeSearch {
             vault: Arc::clone(vault),
             config,
             mode,
+            claim_vector_cursor: std::sync::Mutex::new(None),
         });
         let mut slot = vault
             .home_search
@@ -180,6 +182,21 @@ impl Vault {
             .unwrap_or_else(PoisonError::into_inner)
             .search
             .upgrade()
+    }
+}
+
+impl HomeSearch {
+    pub(crate) fn next_claim_vector_job(
+        &self,
+    ) -> crate::Result<Option<crate::sync::queue::EmbedQueueRow>> {
+        let mut cursor = self
+            .claim_vector_cursor
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let queue = crate::sync::queue::SyncQueue::new(Arc::clone(&self.vault))?;
+        let row = queue.next_embed_job(cursor.as_deref())?;
+        *cursor = row.as_ref().map(|row| row.key.clone());
+        Ok(row)
     }
 }
 

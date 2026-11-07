@@ -19087,6 +19087,7 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
+      "host_door_paced": true,
       "openapi": true
     },
     {
@@ -19102,6 +19103,7 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
+      "host_door_paced": true,
       "openapi": true
     },
     {
@@ -19132,6 +19134,7 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
+      "host_door_paced": true,
       "openapi": true
     },
     {
@@ -19147,6 +19150,7 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
+      "host_door_paced": true,
       "openapi": true
     },
     {
@@ -19162,6 +19166,7 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
+      "host_door_paced": true,
       "openapi": true
     },
     {
