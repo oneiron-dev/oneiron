@@ -388,6 +388,7 @@ async function anonymousPolicy(engine: EngineFixture, policyRow: string): Promis
 }
 
 const SUMMARY_PROMPT = "Summarize the admitted source text and retain its location fact.";
+const PERSON_ABOUT_PROMPT = "You write the one-line `about` of a person on an agent's roster of people. The facts below are everything you may use, one per line as `predicate: value`. Write one plain sentence of at most 25 words that says who this person is. Never add, guess or imply a fact that is not listed, and never say that facts are missing. A fact marked (observed) was read from what the person did; where it disagrees with a fact marked (stated), go by the stated one. No markup and no quotes.";
 
 function dreamerConfig(providers: ScriptedProviders, summary = false): string {
   return `
@@ -708,6 +709,15 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
       readings: [{ span: 1, kind: "name", novel: true, confidence: 50 }],
     }), { inputTokens: 128, outputTokens: 32 }),
   }, {
+    // The extracted person's roster About producer shares the narrative origin,
+    // but is not the declared source SUMMARY. GRANT 5's rejected bodies were
+    // this prompt with no response_format; answer it separately and strictly.
+    id: "source-person-about", origin: "summary", role: "dreamer_current", purpose: "summarize extracted person for roster About",
+    standing: true,
+    request: { method: "POST", path: "/v1/chat/completions", model: "privacy-summary", system: PERSON_ABOUT_PROMPT },
+    response: openaiText("source-person-about", "privacy-summary", "Mira has a stated fact.",
+      { inputTokens: 128, outputTokens: 16 }),
+  }, {
     id: "source-summary", origin: "summary", role: "dreamer_current", purpose: "summarize declared source",
     standing: true,
     request: { method: "POST", path: "/v1/chat/completions", model: "privacy-summary", system: SUMMARY_PROMPT, fields: { response_format: { type: "json_schema" } } },
@@ -882,6 +892,7 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
     expect(sweep.deadline_at - sweep.requested_at).toBeLessThanOrEqual(spec.expected.historicalSweepMaxSeconds);
     await finishHistoricalSweep(engine);
     expect(providers.seenFixtureCalls.filter(call => call.fixtureId === "source-claim")).toHaveLength(1);
+    expect(providers.seenFixtureCalls.filter(call => call.fixtureId === "source-person-about").length).toBeGreaterThanOrEqual(1);
     expect(providers.seenFixtureCalls.filter(call => call.fixtureId === "source-summary").length).toBeGreaterThanOrEqual(1);
     expect(providers.seenFixtureCalls.filter(call => call.fixtureId === "source-summary").every(call => (call.body as any)?.response_format?.json_schema?.schema?.required?.join(",") === "text,keep")).toBe(true);
   } catch (error) {
