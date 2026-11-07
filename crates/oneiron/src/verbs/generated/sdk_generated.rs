@@ -3815,6 +3815,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.corrections",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_run_doors::CodeRunCorrectionsRequest,
+                >(),
+            ),
+            (
                 "vault.code.type_diagnostics",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::code_run_doors::CodeRunTypeDiagnosticsRequest,
@@ -7855,6 +7861,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.proposal_settlement",
     "execute_code",
     "vault.code.model_heal_count",
+    "vault.code.corrections",
     "vault.code.type_diagnostics",
     "vault.code.waits.resolve",
     "vault.code.waits.receipt",
@@ -9762,6 +9769,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.code.model_heal_count" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_run_doors::CodeRunModelHealCountView,
+        >(),
+        "vault.code.corrections" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_run_doors::CodeRunCorrectionsView,
         >(),
         "vault.code.type_diagnostics" => crate::code_run::vault_read::request_schema::<
             Option<crate::code_run::ProgramStepFeedbackRelease>,
@@ -15814,6 +15824,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.corrections" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.code.type_diagnostics" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -20850,6 +20867,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.code.oplog" => validate_input_vault_code_oplog(value)?,
         "execute_code" => validate_input_execute_code(value)?,
         "vault.code.model_heal_count" => validate_input_vault_code_model_heal_count(value)?,
+        "vault.code.corrections" => validate_input_vault_code_corrections(value)?,
         "vault.code.type_diagnostics" => validate_input_vault_code_type_diagnostics(value)?,
         "vault.code.waits.resolve" => validate_input_vault_code_waits_resolve(value)?,
         "vault.code.waits.receipt" => validate_input_vault_code_waits_receipt(value)?,
@@ -25362,6 +25380,11 @@ fn validate_input_vault_code_model_heal_count(value: &serde_json::Value) -> Memo
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_code_corrections(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::memory::code_run_doors::CodeRunCorrectionsRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_vault_code_type_diagnostics(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::memory::code_run_doors::CodeRunTypeDiagnosticsRequest =
         decode(value.clone())?;
@@ -29675,6 +29698,7 @@ pub fn invoke(
         "vault.code.oplog" => invoke_vault_code_oplog(memory, value),
         "execute_code" => invoke_execute_code(memory, value),
         "vault.code.model_heal_count" => invoke_vault_code_model_heal_count(memory, value),
+        "vault.code.corrections" => invoke_vault_code_corrections(memory, value),
         "vault.code.type_diagnostics" => invoke_vault_code_type_diagnostics(memory, value),
         "vault.code.waits.resolve" => invoke_vault_code_waits_resolve(memory, value),
         "vault.code.waits.receipt" => invoke_vault_code_waits_receipt(memory, value),
@@ -35400,6 +35424,13 @@ fn invoke_vault_code_model_heal_count(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_code_model_heal_count(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_code_corrections(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_code_corrections(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_code_type_diagnostics(
@@ -45619,6 +45650,12 @@ pub fn vault_code_model_heal_count(
         &memory.embedded_owner("vault.code.model_heal_count")?,
         input,
     )
+}
+pub fn vault_code_corrections(
+    memory: &Memory<'_>,
+    input: crate::memory::code_run_doors::CodeRunCorrectionsRequest,
+) -> MemoryResult<crate::memory::code_run_doors::CodeRunCorrectionsView> {
+    memory.code_run_corrections_as(&memory.embedded_owner("vault.code.corrections")?, input)
 }
 pub fn vault_code_type_diagnostics(
     memory: &Memory<'_>,
