@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1289 facade rows, 4668 generated types.
+// UniFFI census: 1289 facade rows, 4670 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1241.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -42637,6 +42637,43 @@ pub enum OriginMirrorReadiness {
     },
 }
 
+/// `oneiron::origin::mirror::OriginMirrorLfsRoute`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OriginMirrorLfsRoute {
+    #[serde(rename = "broker")]
+    Broker,
+    #[serde(rename = "daemon")]
+    Daemon,
+}
+
+/// `oneiron_model::llm::backend::BrokerIsolation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum BrokerIsolation {
+    #[serde(rename = "separate_user")]
+    SeparateUser,
+    #[serde(rename = "same_user")]
+    SameUser,
+}
+
+/// `oneiron::origin::mirror::OriginMirrorLfsTransfer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OriginMirrorLfsTransfer {
+    #[serde(rename = "route")]
+    pub route: OriginMirrorLfsRoute,
+    #[serde(
+        rename = "broker_isolation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub broker_isolation: Option<BrokerIsolation>,
+    #[serde(
+        rename = "credential_rewrites",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub credential_rewrites: Option<u64>,
+}
+
 /// `oneiron::origin::mirror::OriginMirrorRun`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OriginMirrorRun {
@@ -42650,6 +42687,12 @@ pub struct OriginMirrorRun {
     pub failure: Option<String>,
     #[serde(rename = "readiness", default, skip_serializing_if = "Option::is_none")]
     pub readiness: Option<OriginMirrorReadiness>,
+    #[serde(
+        rename = "lfs_transfer",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub lfs_transfer: Option<OriginMirrorLfsTransfer>,
 }
 
 /// `oneiron_store::origin::mirror_strategy::OriginMirrorSyncStrategy`.
@@ -42978,6 +43021,12 @@ pub struct OriginMirrorPlanBatchView {
     pub refs: Vec<u32>,
     #[serde(rename = "detail", default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    #[serde(
+        rename = "broker_isolation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub broker_isolation: Option<BrokerIsolation>,
 }
 
 /// `oneiron::origin::publish::types::OriginPublishReviewItem`.
@@ -43256,15 +43305,6 @@ pub struct OriginPublishRefusal {
     pub changed_fields: Vec<String>,
     #[serde(rename = "detail", default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
-}
-
-/// `oneiron_model::llm::backend::BrokerIsolation`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum BrokerIsolation {
-    #[serde(rename = "separate_user")]
-    SeparateUser,
-    #[serde(rename = "same_user")]
-    SameUser,
 }
 
 /// `oneiron::origin::publish::types::OriginPublishRequestView`.

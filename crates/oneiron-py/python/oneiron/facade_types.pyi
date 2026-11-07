@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1289 facade rows, 4672 declarations.
+Census: 1289 facade rows, 4674 declarations.
 Inputs: 1218 of 1289 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1118 of 1289 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -13510,12 +13510,19 @@ class OriginMirrorReadinessNotReady(TypedDict):
     objects: list[OriginMirrorLfsObject]
     omitted_objects: int
 OriginMirrorReadiness = OriginMirrorReadinessReady | OriginMirrorReadinessNotReady
+OriginMirrorLfsRoute = Literal["broker", "daemon"]
+BrokerIsolation = Literal["separate_user", "same_user"]
+class OriginMirrorLfsTransfer(TypedDict):
+    route: OriginMirrorLfsRoute
+    broker_isolation: NotRequired[BrokerIsolation | None]
+    credential_rewrites: NotRequired[int]
 class OriginMirrorRun(TypedDict):
     at: int
     refs: int
     deleted: int
     failure: NotRequired[str | None]
     readiness: NotRequired[OriginMirrorReadiness | None]
+    lfs_transfer: NotRequired[OriginMirrorLfsTransfer | None]
 OriginMirrorSyncStrategy = Literal["ask_me", "schedule", "full_auto"]
 OriginMirrorHoldCause = Literal["storage", "decode", "review", "remote_read"]
 class OriginMirrorHold(TypedDict):
@@ -13611,6 +13618,7 @@ class OriginMirrorPlanBatchView(TypedDict):
     claim: MirrorBatchClaim
     refs: list[int]
     detail: NotRequired[str | None]
+    broker_isolation: NotRequired[BrokerIsolation | None]
 class OriginPublishReviewItemCommit(TypedDict):
     kind: Literal["commit"]
     commit: str
@@ -13694,7 +13702,6 @@ class OriginPublishRefusal(TypedDict):
     observed: NotRequired[OriginPublishRemote | None]
     changed_fields: list[str]
     detail: NotRequired[str | None]
-BrokerIsolation = Literal["separate_user", "same_user"]
 class OriginPublishRequestView(TypedDict):
     request_id: EntityId
     repo: str
