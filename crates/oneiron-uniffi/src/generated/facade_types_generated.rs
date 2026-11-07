@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1274 facade rows, 4613 generated types.
+// UniFFI census: 1274 facade rows, 4614 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1226.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -23341,6 +23341,31 @@ pub struct ConnectWindow {
     pub update: Vec<u8>,
 }
 
+/// `oneiron_authority::share_travel::BornWithField`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum BornWithField {
+    #[serde(rename = "prompt")]
+    Prompt,
+    #[serde(rename = "why")]
+    Why,
+    #[serde(rename = "keep")]
+    Keep,
+    #[serde(rename = "intent_prompt")]
+    IntentPrompt,
+}
+
+/// `oneiron::share_travel::guest_window::GuestWindowTravelNote`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GuestWindowTravelNote {
+    #[serde(rename = "content_hash")]
+    pub content_hash: String,
+    #[serde(rename = "travelled")]
+    pub travelled: std::collections::HashMap<String, Vec<BornWithField>>,
+    #[serde(rename = "receipt_owed")]
+    pub receipt_owed: bool,
+}
+
 /// `oneiron::connect_delivery::ConnectDelivery`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -23349,6 +23374,12 @@ pub struct ConnectDelivery {
     pub body: ConnectWindow,
     #[serde(rename = "signature")]
     pub signature: String,
+    #[serde(
+        rename = "travel_receipt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub travel_receipt: Option<GuestWindowTravelNote>,
 }
 
 /// `oneiron::sync::federation_burst::types::FederationBurstDisposition`.
@@ -24399,6 +24430,12 @@ pub struct GuestDocumentEnvelope {
     pub signer: String,
     #[serde(rename = "signature")]
     pub signature: Vec<u8>,
+    #[serde(
+        rename = "travel_receipt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub travel_receipt: Option<GuestWindowTravelNote>,
 }
 
 /// `oneiron::verbs::guest_revoke::GuestRevokeRequest`.
@@ -37097,19 +37134,6 @@ pub struct LensListPage {
         skip_serializing_if = "Option::is_none"
     )]
     pub next_after: Option<String>,
-}
-
-/// `oneiron_authority::share_travel::BornWithField`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum BornWithField {
-    #[serde(rename = "prompt")]
-    Prompt,
-    #[serde(rename = "why")]
-    Why,
-    #[serde(rename = "keep")]
-    Keep,
-    #[serde(rename = "intent_prompt")]
-    IntentPrompt,
 }
 
 /// `oneiron_authority::share_travel::TravelChoice`.
