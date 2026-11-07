@@ -20,7 +20,7 @@ use crate::http_listener::ConnectionLimits;
 mod machine_floors;
 mod override_keys;
 
-use machine_floors::{descriptor_floor, memory_floor, request_body_floor};
+use machine_floors::{memory_floor, request_body_floor};
 pub(super) use override_keys::LimitsConfigOverride;
 
 /// `limits.task_work`'s default: past ten times the fleet's 200 agents, as
@@ -37,7 +37,11 @@ pub struct LimitsConfig {
     /// Connections the listener holds open at once, from every peer together:
     /// the descriptor floor. Past it, new sockets wait in the backlog. Guests'
     /// network work draws on the same floor; past it, a guest's socket call
-    /// waits or gets EAGAIN (FIX 5978, FIX 5979).
+    /// waits or gets EAGAIN (FIX 5978, FIX 5979). By default half the
+    /// process's open-file limit, at least 64; the other half stays for the
+    /// vault, spools and git children, and the transfer rows are held to
+    /// what it leaves (`Transfers::new`). One floor per process: the serving
+    /// host's value sizes it (FIX 6299).
     pub max_connections: usize,
     /// Connections one off-device peer address may hold before any of them
     /// has authenticated, and never more than half of `max_connections`. A
@@ -91,6 +95,8 @@ pub struct LimitsConfig {
     pub task_work: usize,
     /// Deck and slide renders at once (FIX 7653): past it each caller's render
     /// waits its fair turn, then answers `render_deadline`. Never a refusal.
+    /// LibreOffice's workbook recalculations (FIX 2462) take the host's own
+    /// turns in the same line, behind every caller.
     pub renderer_work: usize,
     /// Bytes stored LFS objects may come to, counting what uploads in flight
     /// have reserved: each reserves its declared size, or the per-object row
@@ -203,7 +209,7 @@ pub struct LimitsConfig {
 impl Default for LimitsConfig {
     fn default() -> Self {
         Self {
-            max_connections: descriptor_floor(),
+            max_connections: oneiron::host_descriptors::descriptor_floor(),
             max_unauthenticated_connections_per_peer: 256,
             header_read_timeout_ms: 30_000,
             body_idle_timeout_ms: 60_000,
