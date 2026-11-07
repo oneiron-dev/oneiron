@@ -1,14 +1,5 @@
 use super::*;
 
-/// Maximum bytes read from a FAILING response before parsing is attempted.
-///
-/// Far smaller than the success ceiling and for a different reason: an error
-/// body is a small JSON envelope, and anything large arriving on an error
-/// status is a proxy's HTML apology. Reading 64 KiB is enough to parse the
-/// envelope and little enough that a hostile endpoint cannot make the client
-/// buffer a response it will refuse anyway.
-const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
-
 /// The server's error envelope, exactly as `api/facade.rs` serializes it:
 /// the error, and beside it the read receipt a refused read carries
 /// (FIX 8631).
@@ -75,13 +66,18 @@ pub(super) fn serialize_whole<Q: Serialize>(request: &Q) -> Result<Vec<u8>, Memo
 
 /// `body`, when it is within the 64 MiB request ceiling.
 pub(super) fn within_ceiling(body: Vec<u8>) -> Result<Vec<u8>, MemoryError> {
-    if body.len() > MAX_REMOTE_REQUEST_BYTES {
+    check_request_length(body.len() as u64)?;
+    Ok(body)
+}
+
+pub(super) fn check_request_length(length: u64) -> Result<(), MemoryError> {
+    if length > MAX_REMOTE_REQUEST_BYTES as u64 {
         return Err(bad_request(
             format!("the request body exceeds the {MAX_REMOTE_REQUEST_BYTES}-byte ceiling"),
             &["Send less in one call; blob versions cap at 32 MiB of raw content."],
         ));
     }
-    Ok(body)
+    Ok(())
 }
 
 /// The bytes a serialized request crosses as (ARCH-0081 §8): zstd at 16 KiB or
@@ -97,30 +93,25 @@ pub(super) fn encode_request(body: Vec<u8>, headers: &mut HeaderMap) -> Vec<u8> 
     }
 }
 
-/// Why a read stopped short.
-pub(super) enum ReadFailure {
-    /// The body was still going at the ceiling.
-    TooLarge,
-    /// The connection failed mid-body.
-    Io(String),
-}
-
-/// Reads at most `limit` bytes, and reports overrun rather than truncating.
-///
-/// `take(limit + 1)` is the whole trick: reading one byte past the ceiling
-/// distinguishes "exactly at the limit" from "over it" without ever buffering
-/// the excess, so the refusal happens BEFORE any JSON or base64 decode
-/// allocates against an attacker-chosen length.
-pub(super) fn read_capped<B: Read>(body: B, limit: usize) -> Result<Vec<u8>, ReadFailure> {
-    let mut buffer = Vec::new();
-    let mut reader = body.take(limit as u64 + 1);
-    reader
-        .read_to_end(&mut buffer)
-        .map_err(|error| ReadFailure::Io(error.to_string()))?;
-    if buffer.len() > limit {
-        return Err(ReadFailure::TooLarge);
-    }
-    Ok(buffer)
+/// Decodes a success body straight from the wire into its typed result
+/// (ABC transport row T19): a reply of any length, with no whole-body buffer
+/// and no fixed ceiling (rule 5). A connection that fails mid-body is a
+/// truncated reply; bytes that do not decode as `R`, a body that ends early
+/// included, are named as such with `what`, the call.
+pub(super) fn read_reply<R: DeserializeOwned, B: Read>(
+    body: B,
+    status: reqwest::StatusCode,
+    what: &str,
+) -> Result<R, MemoryError> {
+    serde_json::from_reader(std::io::BufReader::new(body)).map_err(|error| {
+        if error.is_io() {
+            transport_error(format!("the server's response was truncated: {error}"))
+        } else {
+            transport_error(format!(
+                "the server answered {status} for {what} with a body this call could not decode: {error}"
+            ))
+        }
+    })
 }
 
 /// Decodes an export straight from the wire.
@@ -142,21 +133,25 @@ pub(super) fn read_export<R: DeserializeOwned, B: Read>(
 
 /// Rebuilds the engine's refusal from a failing response, losslessly.
 ///
-/// A body that does not parse as the envelope becomes a transport error whose
-/// message names the status and nothing else. The foreign bytes are dropped on
-/// purpose: an HTML error page rendered into a `message` or a `suggestion`
-/// becomes text a caller displays, logs, or — in the worst case — executes.
+/// The envelope decodes straight from the wire, whatever its length (ABC
+/// transport row T20): a large refusal is read whole, and anything else stops
+/// the decode at its first byte that is not the envelope, so a proxy's HTML
+/// apology is never buffered. A body that does not parse as the envelope
+/// becomes a transport error whose message names the status and nothing else.
+/// The foreign bytes are dropped on purpose: an HTML error page rendered into
+/// a `message` or a `suggestion` becomes text a caller displays, logs, or —
+/// in the worst case — executes.
 pub(super) fn read_error_envelope<B: Read>(body: B, status: reqwest::StatusCode) -> MemoryError {
-    let Ok(bytes) = read_capped(body, MAX_ERROR_BODY_BYTES) else {
-        return transport_error(format!(
-            "the server answered {status} with an unreadable or oversized error body"
-        ));
-    };
-    parse_error_envelope(&bytes).unwrap_or_else(|| {
-        transport_error(format!(
-            "the server answered {status} with a body that is not an Oneiron error envelope"
-        ))
-    })
+    match serde_json::from_reader::<_, ApiErrorEnvelope>(std::io::BufReader::new(body)) {
+        Err(error) if error.is_io() => transport_error(format!(
+            "the server answered {status} with an unreadable error body"
+        )),
+        decoded => decoded.ok().and_then(error_of_envelope).unwrap_or_else(|| {
+            transport_error(format!(
+                "the server answered {status} with a body that is not an Oneiron error envelope"
+            ))
+        }),
+    }
 }
 
 /// Rebuilds a [`MemoryError`] from envelope bytes, or `None` if they are not
@@ -165,7 +160,14 @@ pub(super) fn read_error_envelope<B: Read>(body: B, status: reqwest::StatusCode)
 /// Split out from the response handling so the lossless-mapping property can
 /// be tested against bytes rather than against a live server.
 pub(super) fn parse_error_envelope(bytes: &[u8]) -> Option<MemoryError> {
-    let envelope = serde_json::from_slice::<ApiErrorEnvelope>(bytes).ok()?;
+    serde_json::from_slice::<ApiErrorEnvelope>(bytes)
+        .ok()
+        .and_then(error_of_envelope)
+}
+
+/// The [`MemoryError`] a decoded envelope carries, or `None` when it names no
+/// code.
+fn error_of_envelope(envelope: ApiErrorEnvelope) -> Option<MemoryError> {
     if envelope.error.code.is_empty() {
         // An envelope-shaped body with no code is not an Oneiron refusal; it
         // is something else that happened to have an `error` key.

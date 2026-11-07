@@ -11,12 +11,9 @@ use crate::error::{Error, SecretError};
 
 /// Current schema version for device-local outbound intent rows.
 ///
-/// v4 keeps the payload in its stored form: bare, or an envelope that names
-/// the admitting actor and keeps the request clear, sealed under the row's
-/// own custody key, or erased (FIX 9283, 9372, 2328). These rows are
-/// device-local and pre-release, so v4 is read exclusively: there is no
-/// old-schema reader.
-pub const INTENT_LEDGER_SCHEMA_VERSION: u64 = 5;
+/// v6 keeps the original Gate-minted pinned approval in the Pending row that
+/// commits its spend. Only this canonical format is accepted.
+pub const INTENT_LEDGER_SCHEMA_VERSION: u64 = 6;
 
 /// Binding format emitted and accepted by this greenfield ledger.
 pub const OUTBOUND_BINDING_VERSION: u64 = 2;
@@ -181,6 +178,11 @@ pub enum IntentEscalationReason {
     /// The provider reported that the remote task it accepted the send as
     /// failed or was cancelled (FIX 7960).
     RemoteTaskFailed,
+    /// This machine does not hold its connector-send TASK's send executor
+    /// lease (FIX 4747): it stood down, and its local send, which certainly
+    /// never went, stops here and gives its reserved budget back. The shared
+    /// TASK stays the lease holder's to send.
+    SendExecutorStoodDown,
 }
 
 impl IntentEscalationReason {
@@ -200,6 +202,7 @@ impl IntentEscalationReason {
             Self::RecipientErased => "recipient_erased",
             Self::OwnerErased => "owner_erased",
             Self::RemoteTaskFailed => "remote_task_failed",
+            Self::SendExecutorStoodDown => "send_executor_stood_down",
         }
     }
 
@@ -219,6 +222,7 @@ impl IntentEscalationReason {
             "recipient_erased" => Some(Self::RecipientErased),
             "owner_erased" => Some(Self::OwnerErased),
             "remote_task_failed" => Some(Self::RemoteTaskFailed),
+            "send_executor_stood_down" => Some(Self::SendExecutorStoodDown),
             _ => None,
         }
     }
@@ -553,6 +557,44 @@ pub(crate) trait OutboundSender {
 }
 
 pub(crate) use crate::consent::approval_proof::AdmittedApproval;
+use crate::consent::approval_proof::PinnedApproval;
+
+/// What a call's ledger row keeps outside the call's checkpoint compartment
+/// (KS7-5, FIX 12117): its budget marker, recorded outcome, sticky delivery
+/// uncertainty, state and clocks, the record's own entries for them. A
+/// restore that cannot open the call keeps this, never its request, server,
+/// tool, binding or proof, so the call is known as admitted and is never
+/// asked or paid for again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CallAccounting {
+    pub(crate) budget_accounting: BudgetChargeMarker,
+    pub(crate) recorded_outcome: Option<RecordedOutboundOutcome>,
+    pub(crate) delivery_uncertain: bool,
+    pub(crate) state: IntentState,
+    pub(crate) created_ms: u64,
+    pub(crate) updated_ms: u64,
+}
+
+impl CallAccounting {
+    /// This accounting as the owner's erase of the call's request leaves
+    /// a row (`erase_call_request_in_txn`, KS7-4b): a restore that cannot
+    /// open the call's compartment holds it after that erase. A send still
+    /// Pending or Deferred stops for [`IntentEscalationReason::OwnerErased`],
+    /// keeping that it may have crossed the wire; a settled send stays as it
+    /// settled.
+    #[must_use]
+    pub(crate) fn erased(mut self) -> Self {
+        if matches!(self.state, IntentState::Pending | IntentState::Deferred) {
+            self.delivery_uncertain |=
+                self.recorded_outcome.is_none() || self.state == IntentState::Deferred;
+            self.state = IntentState::Abandoned;
+            self.recorded_outcome = Some(RecordedOutboundOutcome::Abandoned(
+                IntentEscalationReason::OwnerErased,
+            ));
+        }
+        self
+    }
+}
 
 /// Device-local durable record and audit receipt for one effectful call.
 #[derive(Clone, PartialEq, Eq)]
@@ -568,6 +610,7 @@ pub struct IntentLedgerRecord {
     pub idempotency_supported: bool,
     pub authorization_binding: Option<OutboundAuthorizationBinding>,
     pub(crate) admitted_approval: Option<AdmittedApproval>,
+    pub(crate) pinned_approval: Option<PinnedApproval>,
     pub binding_version: u64,
     pub resolved_endpoint: Option<String>,
     /// Typed per-grant capability identity, or `None` for every ordinary
@@ -631,6 +674,7 @@ impl IntentLedgerRecord {
             idempotency_supported,
             authorization_binding: request.authorization_binding,
             admitted_approval: None,
+            pinned_approval: None,
             binding_version: OUTBOUND_BINDING_VERSION,
             resolved_endpoint: request.resolved_endpoint,
             capability_provenance: request.capability_provenance,

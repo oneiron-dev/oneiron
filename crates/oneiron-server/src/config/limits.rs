@@ -31,7 +31,11 @@ pub struct LimitsConfig {
     /// Connections the listener holds open at once, from every peer together:
     /// the descriptor floor. Past it, new sockets wait in the backlog. Guests'
     /// network work draws on the same floor; past it, a guest's socket call
-    /// waits or gets EAGAIN (FIX 5978, FIX 5979).
+    /// waits or gets EAGAIN (FIX 5978, FIX 5979). By default half the
+    /// process's open-file limit, at least 64; the other half stays for the
+    /// vault, spools and git children, and the transfer rows are held to
+    /// what it leaves (`Transfers::new`). One floor per process: the serving
+    /// host's value sizes it (FIX 6299).
     pub max_connections: usize,
     /// Connections one off-device peer address may hold before any of them
     /// has authenticated, and never more than half of `max_connections`. A
@@ -82,6 +86,8 @@ pub struct LimitsConfig {
     pub task_work: usize,
     /// Deck and slide renders at once (FIX 7653): past it each caller's render
     /// waits its fair turn, then answers `render_deadline`. Never a refusal.
+    /// LibreOffice's workbook recalculations (FIX 2462) take the host's own
+    /// turns in the same line, behind every caller.
     pub renderer_work: usize,
     /// Bytes stored LFS objects may come to, counting what uploads in flight
     /// have reserved: each reserves its declared size, or the per-object row
@@ -113,6 +119,10 @@ pub struct LimitsConfig {
     /// How long work may wait for its turn, in milliseconds: a request
     /// timeout, not a limit. A wait that reaches it ends with nothing started.
     pub queue_wait_timeout_ms: u64,
+    /// How long a verb call a budget window paced waits in its caller's
+    /// line for its turn, in seconds, counted from its hold; past it the
+    /// call ends unrun (FIX 8753, ARCH-0044 C5). A week by default.
+    pub paced_verb_wait_secs: u64,
     /// Free bytes the disk holding the vault keeps. An upload that would take
     /// the disk below it, counting the room every other upload in flight has
     /// claimed, is refused: before a byte is read when it declares its size,
@@ -159,6 +169,15 @@ pub struct LimitsConfig {
     /// a GET link's query. A memory floor: a longer note is refused with 413
     /// before it is stored. Room for any v1 feedback bundle.
     pub feedback_inbox_bytes: u64,
+    /// Bytes one request body may carry where its route reads it whole and
+    /// sets no bound of its own: the API's request floor (ABC transport rows
+    /// T1, T3, T4), in place of axum's implicit 2 MiB and the LLM routes'
+    /// 64 MiB and 16 KiB. The idempotency layer reads a keyed body up to it
+    /// too. A memory floor sized from the machine for a body read into a
+    /// typed request: a 1024th of its memory, never under 64 MiB (the
+    /// facade's own body bound), and 64 MiB when memory cannot be read. A
+    /// body that declares more is refused with a 413 naming this row.
+    pub request_body_bytes: u64,
     /// Failed pairing redemptions one client address may make before it
     /// waits (FIX 12477): each attempt past these waits twice as long as the
     /// one before, from one second, up to `pairing_redeem_wait_ceiling_ms`.
@@ -181,7 +200,7 @@ pub struct LimitsConfig {
 impl Default for LimitsConfig {
     fn default() -> Self {
         Self {
-            max_connections: descriptor_floor(),
+            max_connections: oneiron::host_descriptors::descriptor_floor(),
             max_unauthenticated_connections_per_peer: 256,
             header_read_timeout_ms: 30_000,
             body_idle_timeout_ms: 60_000,
@@ -205,6 +224,7 @@ impl Default for LimitsConfig {
             git_scan_blob_bytes: ScanBounds::machine_blob_bytes(),
             git_scan_disk_floor_bytes: ScanBounds::default_disk_floor_bytes(),
             queue_wait_timeout_ms: 300_000,
+            paced_verb_wait_secs: oneiron::runtime_hooks::verb::PACED_VERB_WAIT_DEFAULT_SECS,
             disk_reserve_bytes: 2 * 1024 * 1024 * 1024,
             live_sessions: 4_096,
             live_subscriptions: 65_536,
@@ -214,6 +234,7 @@ impl Default for LimitsConfig {
             media_reply_bytes: memory_floor(),
             chat_reply_bytes: memory_floor(),
             feedback_inbox_bytes: 128 * 1024,
+            request_body_bytes: request_body_floor(),
             // Room for an owner's typos; past them, a 40-bit code guessed at
             // one try an hour per address (FIX 12477, CALLS row).
             pairing_redeem_free_failures: 5,
@@ -224,18 +245,18 @@ impl Default for LimitsConfig {
     }
 }
 
-/// Half the descriptors this process may open, for sockets; the other half
-/// stays for the vault, spools and git children, and the transfer rows are
-/// held to what it leaves (`Transfers::new`). Raising the open-file limit
-/// (`LimitNOFILE=`) raises it.
-fn descriptor_floor() -> usize {
-    let limit = crate::machine::open_file_limit().unwrap_or(8_192);
-    usize::try_from(limit / 2).unwrap_or(usize::MAX).max(64)
-}
-
 /// An eighth of the machine's memory for what LFS transfers hold in memory,
 /// and as much for app-tier state kept between frames and for media replies,
 /// each at least 256 MiB; 2 GiB when the platform does not say.
+/// `limits.request_body_bytes`'s default: a 1024th of the machine's memory
+/// (the least of its RAM and its container limit), the share the input-caps
+/// plan gives one body read into a typed request, never under 64 MiB, the
+/// facade's own body bound; 64 MiB when memory cannot be read.
+fn request_body_floor() -> u64 {
+    const FLOOR: u64 = 64 * 1024 * 1024;
+    crate::machine::memory_bytes().map_or(FLOOR, |memory| (memory / 1024).max(FLOOR))
+}
+
 fn memory_floor() -> u64 {
     const MIB: u64 = 1024 * 1024;
     crate::machine::memory_bytes().map_or(2_048 * MIB, |memory| (memory / 8).max(256 * MIB))
@@ -250,6 +271,7 @@ impl LimitsConfig {
             header_read_timeout: Duration::from_millis(self.header_read_timeout_ms),
             body_idle_timeout: Duration::from_millis(self.body_idle_timeout_ms),
             queue_wait: self.queue_wait(),
+            max_read_buffer_bytes: None,
         }
     }
 
@@ -280,6 +302,7 @@ impl LimitsConfig {
             git_scan_blob_bytes,
             git_scan_disk_floor_bytes,
             queue_wait_timeout_ms,
+            paced_verb_wait_secs,
             disk_reserve_bytes,
             live_sessions,
             live_subscriptions,
@@ -289,10 +312,26 @@ impl LimitsConfig {
             media_reply_bytes,
             chat_reply_bytes,
             feedback_inbox_bytes,
+            request_body_bytes,
             pairing_redeem_free_failures,
             pairing_redeem_wait_ceiling_ms,
             pairing_redeem_quiet_ms,
             keyed_filter_json_bytes,
+            keyed_namespace_segments,
+            keyed_namespace_bytes,
+            keyed_key_bytes,
+            booking_email_bytes,
+            booking_intake_answers,
+            booking_intake_value_bytes,
+            booking_local_time_windows,
+            claim_input_json_bytes,
+            core_batch_entities,
+            legacy_batch_entities,
+            blob_content_bytes,
+            booking_availability_calls_per_minute,
+            booking_hold_calls_per_minute,
+            booking_write_calls_per_minute,
+            booking_quarantine_calls_per_minute,
             code_result_inline_bytes,
             code_result_disk_floor_bytes,
             code_result_scan_bytes,
@@ -312,6 +351,8 @@ impl LimitsConfig {
             import_folder_notes,
             import_decoded_messages,
             import_decoded_bytes,
+            witness_metadata_nodes,
+            witness_metadata_bytes,
             signature_decode_bytes,
             pptx_comment_patches,
             import_xlsx_live_cells,
@@ -463,6 +504,7 @@ impl LimitsConfig {
             git_scan_disk_floor_bytes,
         );
         set(&mut self.queue_wait_timeout_ms, queue_wait_timeout_ms);
+        set(&mut self.paced_verb_wait_secs, paced_verb_wait_secs);
         set(&mut self.disk_reserve_bytes, disk_reserve_bytes);
         set(&mut self.live_sessions, live_sessions);
         set(&mut self.live_subscriptions, live_subscriptions);
@@ -472,6 +514,7 @@ impl LimitsConfig {
         set(&mut self.media_reply_bytes, media_reply_bytes);
         set(&mut self.chat_reply_bytes, chat_reply_bytes);
         set(&mut self.feedback_inbox_bytes, feedback_inbox_bytes);
+        set(&mut self.request_body_bytes, request_body_bytes);
         set(
             &mut self.pairing_redeem_free_failures,
             pairing_redeem_free_failures,
@@ -483,6 +526,42 @@ impl LimitsConfig {
         set(&mut self.pairing_redeem_quiet_ms, pairing_redeem_quiet_ms);
         for (row, bound) in [
             (EngineLimit::KeyedFilterJsonBytes, keyed_filter_json_bytes),
+            (
+                EngineLimit::KeyedNamespaceSegments,
+                keyed_namespace_segments,
+            ),
+            (EngineLimit::KeyedNamespaceBytes, keyed_namespace_bytes),
+            (EngineLimit::KeyedKeyBytes, keyed_key_bytes),
+            (EngineLimit::BookingEmailBytes, booking_email_bytes),
+            (EngineLimit::BookingIntakeAnswers, booking_intake_answers),
+            (
+                EngineLimit::BookingIntakeValueBytes,
+                booking_intake_value_bytes,
+            ),
+            (
+                EngineLimit::BookingLocalTimeWindows,
+                booking_local_time_windows,
+            ),
+            (EngineLimit::ClaimInputJsonBytes, claim_input_json_bytes),
+            (EngineLimit::CoreBatchEntities, core_batch_entities),
+            (EngineLimit::LegacyBatchEntities, legacy_batch_entities),
+            (EngineLimit::BlobContentBytes, blob_content_bytes),
+            (
+                EngineLimit::BookingAvailabilityCallsPerMinute,
+                booking_availability_calls_per_minute,
+            ),
+            (
+                EngineLimit::BookingHoldCallsPerMinute,
+                booking_hold_calls_per_minute,
+            ),
+            (
+                EngineLimit::BookingWriteCallsPerMinute,
+                booking_write_calls_per_minute,
+            ),
+            (
+                EngineLimit::BookingQuarantineCallsPerMinute,
+                booking_quarantine_calls_per_minute,
+            ),
             (EngineLimit::CodeResultInlineBytes, code_result_inline_bytes),
             (
                 EngineLimit::CodeResultDiskFloorBytes,
@@ -508,6 +587,8 @@ impl LimitsConfig {
             (EngineLimit::ImportFolderNotes, import_folder_notes),
             (EngineLimit::ImportDecodedMessages, import_decoded_messages),
             (EngineLimit::ImportDecodedBytes, import_decoded_bytes),
+            (EngineLimit::WitnessMetadataNodes, witness_metadata_nodes),
+            (EngineLimit::WitnessMetadataBytes, witness_metadata_bytes),
             (EngineLimit::SignatureDecodeBytes, signature_decode_bytes),
             (EngineLimit::PptxCommentPatches, pptx_comment_patches),
             (EngineLimit::ImportXlsxLiveCells, import_xlsx_live_cells),
@@ -745,6 +826,7 @@ impl LimitsConfig {
             ("git_scan_blob_bytes", self.git_scan_blob_bytes),
             ("git_scan_disk_floor_bytes", self.git_scan_disk_floor_bytes),
             ("queue_wait_timeout_ms", self.queue_wait_timeout_ms),
+            ("paced_verb_wait_secs", self.paced_verb_wait_secs),
             ("live_sessions", self.live_sessions as u64),
             ("live_subscriptions", self.live_subscriptions as u64),
             ("message_streams", self.message_streams as u64),
@@ -753,6 +835,7 @@ impl LimitsConfig {
             ("media_reply_bytes", self.media_reply_bytes),
             ("chat_reply_bytes", self.chat_reply_bytes),
             ("feedback_inbox_bytes", self.feedback_inbox_bytes),
+            ("request_body_bytes", self.request_body_bytes),
             (
                 "pairing_redeem_wait_ceiling_ms",
                 self.pairing_redeem_wait_ceiling_ms,

@@ -45,6 +45,7 @@ fn mcp_facade_refusal(mut error: oneiron::MemoryError) -> McpGatewayError {
         | oneiron::workspace_roster::MEMORY_CODE_AGENT_THREAD_WALK_IN_FORBIDDEN
         | oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR
         | oneiron_contracts::memory::MEMORY_CODE_MODEL_PIN_UNAVAILABLE
+        | oneiron::memory::MEMORY_CODE_PACED_HOLD
         | oneiron::MEMORY_CODE_INVALID_STATE => -32020,
         // A row's world setting, a frozen vault and a render that met its
         // deadline or a machine floor are typed refusals too, never an
@@ -80,6 +81,9 @@ fn mcp_facade_refusal(mut error: oneiron::MemoryError) -> McpGatewayError {
         oneiron_contracts::memory::MEMORY_CODE_MODEL_PIN_UNAVAILABLE => {
             Some("model_pin_unavailable")
         }
+        // FIX 8753: a call its budget window paced waits in its caller's
+        // line; the agent reads the name and `resets_at`, not the sentence.
+        oneiron::memory::MEMORY_CODE_PACED_HOLD => Some("paced_hold"),
         // FIX 6547: an agent thread's walk-in its room's audience does not
         // admit, named as the facade's 409 names it.
         oneiron::workspace_roster::MEMORY_CODE_AGENT_THREAD_WALK_IN_FORBIDDEN => {

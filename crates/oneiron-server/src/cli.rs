@@ -13,7 +13,7 @@ mod deployment_args;
 pub use deployment_args::HostRelayArgs;
 mod files_args;
 pub use files_args::{
-    FilesAttachArgs, FilesCommand, FilesListArgs, FilesPathArgs, FilesRescanArgs,
+    FilesAttachArgs, FilesCommand, FilesConvertArgs, FilesListArgs, FilesPathArgs, FilesRescanArgs,
 };
 mod graph_fs_args;
 mod hook_args;
@@ -21,6 +21,8 @@ mod hosted_args;
 pub use graph_fs_args::GraphFsCommand;
 pub use hosted_args::{HostedCommand, HostedLoginArgs, HostedLogoutArgs, HostedSelectArgs};
 mod learning_setting_args;
+mod model_workers_args;
+pub use model_workers_args::ModelWorkersArgs;
 mod owner_args;
 mod recovery_kit_args;
 mod reminder_route_args;
@@ -68,7 +70,8 @@ pub use owner_args::{
 pub use recovery_kit_args::{
     KitPieceArgs, RecoveryKitAnchorArgs, RecoveryKitAuthorityArgs, RecoveryKitCommand,
     RecoveryKitConfirmArgs, RecoveryKitIssueArgs, RecoveryKitPadAccessArgs, RecoveryKitPinArgs,
-    RecoveryKitRestoreArgs, RecoveryKitRootsArgs, RecoveryKitStatusArgs, RunningServerArgs,
+    RecoveryKitRecoverAuthorityArgs, RecoveryKitRestoreArgs, RecoveryKitRootsArgs,
+    RecoveryKitStatusArgs, RunningServerArgs,
 };
 pub use reminder_route_args::{
     ReminderRouteClearArgs, ReminderRouteCommand, ReminderRouteGetArgs, ReminderRouteSetArgs,
@@ -114,6 +117,8 @@ pub enum Command {
     /// flags ride [`ServeArgs`] so both the bare and the explicit `serve`
     /// forms accept them; the mode is selected in `commands::serve`.
     Serve(Box<ServeArgs>),
+    /// Supervise configured model workers without opening a vault.
+    ModelWorkers(ModelWorkersArgs),
     /// Revoke an existing device lease binding.
     Revoke(Box<RevokeArgs>),
     /// Print or locate the agentskills-compatible skill pack.
@@ -222,6 +227,9 @@ pub enum Command {
     Account(AccountCommand),
     /// Make short curl-shaped calls against the existing HTTP API.
     Api(ApiArgs),
+    /// The git credential helper an official CLI seat runs (FIX 10624 step
+    /// 2): git calls it; it answers the context the seat host bound.
+    CredentialHelper(CredentialHelperArgs),
     /// Serve MCP on stdio for an agent that spawns a command (Claude Code,
     /// Codex), forwarding each message to a running server with a paired
     /// credential and a fresh holder proof, or as the vault's owner by the
@@ -609,6 +617,21 @@ pub struct TokenRevokeArgs {
 
     #[command(flatten)]
     pub serve: ServeArgs,
+}
+
+/// `oneiron credential-helper`: the git credential helper an official CLI
+/// seat runs (FIX 10624 step 2). The seat host names it in the CLI's git
+/// configuration; git runs it with the operation appended and the context on
+/// stdin. The seat-child slip, its seed and the origin come from the seat
+/// host's variables, never from an argument.
+#[derive(Args, Clone, Debug)]
+pub struct CredentialHelperArgs {
+    /// The helper destination the seat host named for this git context.
+    #[arg(long)]
+    pub destination: String,
+    /// The operation git asks for: `get` asks the host; `store` and `erase`
+    /// keep nothing.
+    pub operation: String,
 }
 
 /// `oneiron api …` is a curl-shaped façade over the routes this server already
@@ -1010,6 +1033,7 @@ pub async fn run() -> anyhow::Result<()> {
 pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
     match cli.into_command() {
         Command::Serve(args) => commands::serve(*args).await,
+        Command::ModelWorkers(args) => commands::model_workers(args).await,
         Command::Revoke(args) => commands::revoke(*args).await,
         Command::SkillsPack(args) => commands::skills_pack(args),
         Command::Init(args) => {
@@ -1060,6 +1084,8 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
             crate::logging::off_runtime("account", move || commands::account(command)).await?
         }
         Command::Api(args) => commands::api(args).await,
+        // Blocking: one curl call for git, which waits on this process.
+        Command::CredentialHelper(args) => commands::credential_helper(args),
         Command::Mcp(args) => commands::mcp(args),
         Command::Wake(args) => crate::wake_adapters::command(args),
         Command::Hook(args) => {

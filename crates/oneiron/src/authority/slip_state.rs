@@ -62,7 +62,7 @@ impl SlipAuthorityState {
                 self.revoked.insert(*slip_id);
                 self.explicit_revoked.insert(*slip_id);
             }
-            AuthorityOp::SlipGrantRevoke { grant_ref } => {
+            AuthorityOp::SlipGrantRevoke { grant_ref, .. } => {
                 self.revoke_grant(grant_ref.to_hex());
             }
             AuthorityOp::SlipConsume { slip_id } => {
@@ -86,6 +86,20 @@ impl SlipAuthorityState {
                     parent = mint.action.claims.parent_id;
                 }
                 self.consumed.extend(burn);
+            }
+            AuthorityOp::RemovalArchiveConsume { slip_id, member } => {
+                // FIX 11862: the removal-archive door serves a slip whatever
+                // its standing, revoked and expired ones included, so this
+                // burn asks no live ancestry. It needs the slip's logged mint,
+                // and that mint must name `member`, the removed person whose
+                // archives were served, as its holder.
+                let mint = self.mints.get(slip_id).ok_or_else(invalid_authority)?;
+                if crate::entity_id::EntityId::from_hex(&mint.action.claims.holder_ref).ok()
+                    != Some(*member)
+                {
+                    return Err(invalid_authority());
+                }
+                self.consumed.insert(*slip_id);
             }
             _ => return Err(invalid_authority()),
         }

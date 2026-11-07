@@ -36,17 +36,31 @@ pub(super) async fn facade_invocation_claim(
     // A custody value's body arrives redacted from the outer layer; its claim
     // states the arrival's own digest (FIX 11442).
     let verb = parts.uri.path().trim_start_matches('/').to_owned();
-    let (bytes, redacted) =
-        super::secret_body::read_middleware_body(body, &verb, &mut parts.extensions).await;
-    let digest = match parts
+    let cached_digest = parts
         .extensions
         .get::<super::secret_body::FacadeOriginalDigest>()
-    {
-        Some(stored) => stored.digest().to_owned(),
-        None => match redacted {
-            Some(value) => oneiron::receipt::call_json_digest(&value),
-            None => oneiron::receipt::call_bytes_digest(&bytes),
-        },
+        .map(|stored| stored.digest().to_owned());
+    let (body, digest) = if let Some(digest) = cached_digest {
+        (body, digest)
+    } else {
+        let (bytes, redacted) = super::secret_body::read_middleware_body(
+            body,
+            &verb,
+            &mut parts.extensions,
+            crate::api::request_floor::request_floor(&server),
+        )
+        .await;
+        let digest = match parts
+            .extensions
+            .get::<super::secret_body::FacadeOriginalDigest>()
+        {
+            Some(stored) => stored.digest().to_owned(),
+            None => match redacted {
+                Some(value) => oneiron::receipt::call_json_digest(&value),
+                None => oneiron::receipt::call_bytes_digest(&bytes),
+            },
+        };
+        (Body::from(bytes), digest)
     };
     let header = |name: &str| {
         parts
@@ -68,7 +82,7 @@ pub(super) async fn facade_invocation_claim(
     match claim_door_invocation(&server, invocation, call, auth.principal_entity()).await {
         DoorClaim::Run(claim) => {
             let response = claim
-                .run(next.run(Request::from_parts(parts, Body::from(bytes))))
+                .run(next.run(Request::from_parts(parts, body)))
                 .await;
             finish_door_claim(claim, response).await
         }
@@ -250,12 +264,13 @@ impl DoorInvocationClaim {
         }
     }
 
-    /// Saves a successful JSON outcome, releases a failed or hook-pending
-    /// one, and wakes the live waiters in either case. A pending ask is not
-    /// an accepted asynchronous job: the next same-id retry must reach the
-    /// hook again. A storage error leaves the durable intent standing.
+    /// Saves a successful JSON outcome, releases a failed or held one, and
+    /// wakes the live waiters in either case. A pending ask or a paced hold
+    /// is not an accepted asynchronous job: the next same-id retry must
+    /// reach the held call again. A storage error leaves the durable intent
+    /// standing.
     pub(crate) fn finish(self, outcome: InvocationOutcome) {
-        if FacadeApiError::is_pending_ask(outcome.status, &outcome.body) {
+        if FacadeApiError::is_held_call(outcome.status, &outcome.body) {
             self.finish_failed(outcome);
             return;
         }

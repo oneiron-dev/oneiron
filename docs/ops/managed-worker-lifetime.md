@@ -87,8 +87,42 @@ drop use the captured launch context. A retiring session keeps its original
 context; it does not look up a replacement worker by name. Content-free activity
 and drain controls retain their existing UID check.
 
-This native transport check does not change provider locality, model offers,
-admission, charging or the device-only reranking guard. In particular, the
-existing HTTP fallback remains an OwnServer route. Other Unix targets retain
-their existing transport semantics; the child-PID check described here is for
-Linux and macOS.
+On Linux and macOS this check is what makes a managed EXL3 worker's native
+channel an on-device transport (I2-LOCAL): its models get an on-device offer
+whose backend holds the routes captured when the runtime was built and no HTTP
+sender, so a call it cannot send natively is not sent. The provider's own
+offer is unchanged: native when the current launch has a socket, HTTP
+otherwise, an OwnServer route either way. A call takes the on-device offer
+only when its route is on device; it never falls back to HTTP. The on-device
+offer keeps the provider offer's payer, key custody and rates, so charging is
+unchanged: free work (a local payer, no key) stays free, and a paid
+provider's call is charged to its payer under its run's budget line, as its
+own-server call is. A local-payer keyless provider at locality `third_party`
+gets no on-device offer, because on device its paid calls would turn free.
+The reranker keeps its HTTP route, so the device-only reranking guard still
+sends it a device-only row empty. Other Unix targets retain their existing
+transport semantics: no PID check, no on-device offer.
+
+## Non-vault model worker controller
+
+`oneiron model-workers --config /absolute/path/oneiron.toml` runs the configured
+`[models.workers]` in a separate process, without opening a vault or starting a
+vault listener. It reads that file's `[models]` section with the normal provider,
+worker, artifact, and prompt resolution. Relative paths use the config file's
+parent directory. This command does not layer serve environment variables or an
+owner settings file over it.
+
+The controller uses the existing process-wide worker host, supervisors, launch
+records, and device ledgers. Managed rows install, launch, and qualify through
+that host. External rows are only probed. Configured endpoints, idle-stop policy,
+lease draining, and stop grace are unchanged. Ctrl-C or SIGTERM retires all of
+this process's supervisors, waits for their existing drain and stop paths, and
+removes only those same supervisor instances from the host.
+
+This is startup and shutdown ownership, not a remote request-lease protocol.
+Managed vault processes still never launch model workers. They call their
+configured provider endpoints as before. They do not yet acquire this
+controller's native request leases, wake a worker that its configured idle-stop
+policy has stopped, or gain an on-device native transport through this command.
+Shared-vault demand, lease, and native-channel integration remain follow-up
+work. The command does not start Hypnos or adopt its vault child processes.

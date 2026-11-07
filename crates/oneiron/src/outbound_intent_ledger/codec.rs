@@ -4,10 +4,10 @@ use std::io::Cursor;
 
 use rmpv::Value;
 
-use super::store::validate_record;
+use super::store::{validate_accounting, validate_record};
 use super::types::{
-    INTENT_LEDGER_SCHEMA_VERSION, IntentLedgerError, IntentLedgerRecord, IntentLedgerResult,
-    IntentState, OutboundAuthorizationBinding, RecordedOutboundOutcome,
+    CallAccounting, INTENT_LEDGER_SCHEMA_VERSION, IntentLedgerError, IntentLedgerRecord,
+    IntentLedgerResult, IntentState, OutboundAuthorizationBinding, RecordedOutboundOutcome,
 };
 use crate::attempt_queue::AttemptId;
 use crate::error::Error;
@@ -17,8 +17,8 @@ mod nested;
 
 use self::nested::{
     decode_admitted_approval, decode_budget_accounting, decode_capability_provenance,
-    decode_recorded_outcome, expect_binary, expect_binary_array, expect_string, expect_u64,
-    required,
+    decode_pinned_approval, decode_recorded_outcome, expect_binary, expect_binary_array,
+    expect_string, expect_u64, required,
 };
 
 /// The whole hand-rolled row codec, wrapped for the typed `outbound:intent_ledger:v2:` side
@@ -39,7 +39,7 @@ impl RawValue for IntentLedgerRecord {
 }
 
 /// Pinned MessagePack key set for device-local outbound intent rows.
-pub const INTENT_LEDGER_VALUE_KEYS: [&str; 22] = [
+pub const INTENT_LEDGER_VALUE_KEYS: [&str; 23] = [
     "schema_version",
     "id",
     "attempt_id",
@@ -61,6 +61,7 @@ pub const INTENT_LEDGER_VALUE_KEYS: [&str; 22] = [
     "created_ms",
     "updated_ms",
     "admitted_approval",
+    "pinned_approval",
     "content_digest",
 ];
 
@@ -121,11 +122,13 @@ pub(super) const KEY_UPDATED_MS: &str = INTENT_LEDGER_VALUE_KEYS[19];
 
 pub(super) const KEY_ADMITTED_APPROVAL: &str = INTENT_LEDGER_VALUE_KEYS[20];
 
-pub(super) const KEY_CONTENT_DIGEST: &str = INTENT_LEDGER_VALUE_KEYS[21];
+pub(super) const KEY_PINNED_APPROVAL: &str = INTENT_LEDGER_VALUE_KEYS[21];
+
+pub(super) const KEY_CONTENT_DIGEST: &str = INTENT_LEDGER_VALUE_KEYS[22];
 
 /// The canonical intent body used as the digest preimage.
 ///
-/// Entries are exactly `INTENT_LEDGER_VALUE_KEYS[0..21]`, in that order, with
+/// Entries are exactly `INTENT_LEDGER_VALUE_KEYS[0..22]`, in that order, with
 /// `KEY_CONTENT_DIGEST` absent. This is the single source of every stored body
 /// value — raw payload, authorization binding, nested budget accounting, typed
 /// capability provenance, recorded outcome, state, and timestamps — so the
@@ -265,25 +268,36 @@ fn record_entries_without_digest(record: &IntentLedgerRecord) -> Vec<(Value, Val
         (Value::from(KEY_UPDATED_MS), Value::from(record.updated_ms)),
         (
             Value::from(KEY_ADMITTED_APPROVAL),
-            record.admitted_approval.map_or(Value::Nil, |proof| {
+            record.admitted_approval.map_or(Value::Nil, approval_value),
+        ),
+        (
+            Value::from(KEY_PINNED_APPROVAL),
+            record.pinned_approval.map_or(Value::Nil, |approval| {
                 Value::Map(vec![
-                    (
-                        Value::from("intent_id"),
-                        Value::Binary(proof.intent_id().to_vec()),
-                    ),
-                    (
-                        Value::from("effect_digest"),
-                        Value::Binary(proof.effect_digest().as_bytes().to_vec()),
-                    ),
+                    (Value::from("family"), Value::from(approval.family.tag())),
+                    (Value::from("proof"), approval_value(approval.proof)),
                 ])
             }),
         ),
     ]
 }
 
+fn approval_value(proof: super::types::AdmittedApproval) -> Value {
+    Value::Map(vec![
+        (
+            Value::from("intent_id"),
+            Value::Binary(proof.intent_id().to_vec()),
+        ),
+        (
+            Value::from("effect_digest"),
+            Value::Binary(proof.effect_digest().as_bytes().to_vec()),
+        ),
+    ])
+}
+
 /// Encodes `Value::Map(record_entries_without_digest(record))`.
 ///
-/// The 21-entry MessagePack map header is part of the preimage, and so are the
+/// The 22-entry MessagePack map header is part of the preimage, and so are the
 /// raw `payload` bytes: the preimage is definitionally the stored body minus
 /// the digest key, and carving `payload` out would reintroduce a second body
 /// representation. The O(payload) cost per encode/decode is accepted;
@@ -332,7 +346,7 @@ pub(super) fn id_from_ledger_key(key: &[u8]) -> Option<[u8; 32]> {
     key[INTENT_LEDGER_PRIVATE_PREFIX.len()..].try_into().ok()
 }
 
-/// Encodes the canonical 22-entry row: the digest preimage body plus the
+/// Encodes the canonical 23-entry row: the digest preimage body plus the
 /// content digest computed over exactly those bytes, appended as the final
 /// `content_digest` entry.
 pub(super) fn encode_record(record: &IntentLedgerRecord) -> IntentLedgerResult<Vec<u8>> {
@@ -398,6 +412,7 @@ fn decode_record_fields(raw: &[u8]) -> IntentLedgerResult<IntentLedgerRecord> {
     let mut updated_ms = None;
     let mut content_digest = None;
     let mut admitted_approval = None;
+    let mut pinned_approval = None;
     let mut seen = [false; INTENT_LEDGER_VALUE_KEYS.len()];
 
     for (entry_key, value) in entries {
@@ -481,6 +496,9 @@ fn decode_record_fields(raw: &[u8]) -> IntentLedgerResult<IntentLedgerRecord> {
             KEY_ADMITTED_APPROVAL => {
                 admitted_approval = Some(decode_admitted_approval(&value)?);
             }
+            KEY_PINNED_APPROVAL => {
+                pinned_approval = Some(decode_pinned_approval(&value)?);
+            }
             KEY_CONTENT_DIGEST => content_digest = Some(expect_binary_array::<32>(&value)?),
             _ => {
                 return Err(IntentLedgerError::InvalidRecord(
@@ -517,6 +535,7 @@ fn decode_record_fields(raw: &[u8]) -> IntentLedgerResult<IntentLedgerRecord> {
             admitted_approval,
             "missing outbound intent admitted_approval",
         )?,
+        pinned_approval: required(pinned_approval, "missing outbound intent pinned_approval")?,
         binding_version: required(binding_version, "missing outbound intent binding_version")?,
         resolved_endpoint: required(
             resolved_endpoint,
@@ -546,4 +565,101 @@ fn decode_record_fields(raw: &[u8]) -> IntentLedgerResult<IntentLedgerRecord> {
         ));
     }
     Ok(record)
+}
+
+/// A call's accounting and state as a checkpoint keeps them outside the
+/// call's compartment (KS7-5, FIX 12117): a MessagePack map of exactly the
+/// record's `budget_accounting`, `recorded_outcome`, `delivery_uncertain`,
+/// `state`, `created_ms` and `updated_ms` entries, each once and read as the
+/// record codec reads it, under the record's own accounting rules.
+///
+/// # Errors
+///
+/// [`IntentLedgerError::InvalidRecord`] for any other shape.
+pub(super) fn decode_call_accounting(raw: &[u8]) -> IntentLedgerResult<CallAccounting> {
+    let mut cursor = Cursor::new(raw);
+    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| {
+        IntentLedgerError::InvalidRecord("outbound call accounting MessagePack decode failed")
+    })?;
+    if cursor.position() != raw.len() as u64 {
+        return Err(IntentLedgerError::InvalidRecord(
+            "outbound call accounting has trailing bytes",
+        ));
+    }
+    let Value::Map(entries) = value else {
+        return Err(IntentLedgerError::InvalidRecord(
+            "outbound call accounting must be a MessagePack map",
+        ));
+    };
+    let mut budget_accounting = None;
+    let mut recorded_outcome = None;
+    let mut delivery_uncertain = None;
+    let mut state = None;
+    let mut created_ms = None;
+    let mut updated_ms = None;
+    for (entry_key, value) in entries {
+        let entry_key = entry_key.as_str().ok_or(IntentLedgerError::InvalidRecord(
+            "outbound call accounting keys must be strings",
+        ))?;
+        let repeated = match entry_key {
+            KEY_BUDGET_ACCOUNTING => budget_accounting
+                .replace(decode_budget_accounting(&value)?)
+                .is_some(),
+            KEY_RECORDED_OUTCOME => recorded_outcome
+                .replace(decode_recorded_outcome(&value)?)
+                .is_some(),
+            KEY_DELIVERY_UNCERTAIN => delivery_uncertain
+                .replace(value.as_bool().ok_or(IntentLedgerError::InvalidRecord(
+                    "outbound call accounting delivery_uncertain must be boolean",
+                ))?)
+                .is_some(),
+            KEY_STATE => state
+                .replace(
+                    IntentState::parse(value.as_str().ok_or(IntentLedgerError::InvalidRecord(
+                        "outbound call accounting state must be a string",
+                    ))?)
+                    .ok_or(IntentLedgerError::InvalidRecord(
+                        "unknown outbound call accounting state",
+                    ))?,
+                )
+                .is_some(),
+            KEY_CREATED_MS => created_ms.replace(expect_u64(&value)?).is_some(),
+            KEY_UPDATED_MS => updated_ms.replace(expect_u64(&value)?).is_some(),
+            _ => {
+                return Err(IntentLedgerError::InvalidRecord(
+                    "outbound call accounting key is not pinned",
+                ));
+            }
+        };
+        if repeated {
+            return Err(IntentLedgerError::InvalidRecord(
+                "duplicate outbound call accounting key",
+            ));
+        }
+    }
+    let accounting = CallAccounting {
+        budget_accounting: required(
+            budget_accounting,
+            "missing outbound call accounting budget_accounting",
+        )?,
+        recorded_outcome: required(
+            recorded_outcome,
+            "missing outbound call accounting recorded_outcome",
+        )?,
+        delivery_uncertain: required(
+            delivery_uncertain,
+            "missing outbound call accounting delivery_uncertain",
+        )?,
+        state: required(state, "missing outbound call accounting state")?,
+        created_ms: required(created_ms, "missing outbound call accounting created_ms")?,
+        updated_ms: required(updated_ms, "missing outbound call accounting updated_ms")?,
+    };
+    validate_accounting(
+        &accounting.budget_accounting,
+        accounting.state,
+        accounting.recorded_outcome,
+        accounting.created_ms,
+        accounting.updated_ms,
+    )?;
+    Ok(accounting)
 }

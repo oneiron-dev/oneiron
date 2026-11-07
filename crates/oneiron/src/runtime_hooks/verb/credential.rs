@@ -15,6 +15,12 @@
 //! reference names the person, and the host checks at settlement that the
 //! vault records him as its live owner then. Nothing is minted or kept for
 //! him, so nothing of his expires or is revoked.
+//!
+//! A self-hosted root's own call reads through its host action, with no
+//! person's proof (FIX 4744). Its reference names the root slip like any
+//! slip's, and its witness is the action's durable identity: ids alone, no
+//! signed binding. At settlement the host proves that identity again and
+//! verifies the root it retains as that same root.
 
 use std::cell::RefCell;
 use std::marker::PhantomData;
@@ -23,7 +29,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::authority::InvocationSlipBinding;
+use crate::authority::{HostActionIdentity, InvocationSlipBinding};
 use crate::memory::{MEMORY_CODE_OWNER_BINDING_REQUIRED, MemoryError, MemoryResult};
 use crate::receipt::{ActionInputs, CallOutcome, CallReceiptInput, CallTransport};
 use crate::side_table::{self, Named, SideTable};
@@ -88,8 +94,9 @@ impl VerbAskInstrument {
 }
 
 /// The instrument a credential call's request was admitted on, pinned beside
-/// its stopped call: a slip's signed binding, or the attested owner's person
-/// alone, which is provenance and grants nothing.
+/// its stopped call: a slip's signed binding, the attested owner's person
+/// alone, or a self-hosted root's recorded host action, which are
+/// provenance and grant nothing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VerbAskCredentialWitness {
@@ -97,15 +104,24 @@ pub enum VerbAskCredentialWitness {
     Slip(InvocationSlipBinding),
     /// The attested owner the call was admitted for.
     AttestedOwner { holder: EntityId },
+    /// The host action a self-hosted root's call acted through, as its
+    /// durable identity (FIX 4744): the posture, the owner and the root by
+    /// its mint. It carries no token, challenge or signature; the host
+    /// proves it again and verifies the root it retains.
+    HostAction(HostActionIdentity),
 }
 
 impl VerbAskCredentialWitness {
     /// Whether this witness backs `source`: a slip's binding a slip, the
-    /// same person an attested owner.
+    /// same person an attested owner, a recorded host action the very root
+    /// slip it acts under (FIX 4744).
     #[must_use]
     pub fn backs(&self, source: &VerbAskCredentialSource) -> bool {
         match (self, source) {
             (Self::Slip(_), VerbAskCredentialSource::Slip { .. }) => true,
+            (Self::HostAction(identity), VerbAskCredentialSource::Slip { slip, .. }) => {
+                identity.root_slip_id() == Some(*slip)
+            }
             (
                 Self::AttestedOwner { holder },
                 VerbAskCredentialSource::AttestedOwner { holder: named },
@@ -119,8 +135,42 @@ impl VerbAskCredentialWitness {
     pub const fn slip(&self) -> Option<&InvocationSlipBinding> {
         match self {
             Self::Slip(binding) => Some(binding),
-            Self::AttestedOwner { .. } => None,
+            Self::AttestedOwner { .. } | Self::HostAction(_) => None,
         }
+    }
+}
+
+/// The MCP registration a paused call was admitted under. This is a ceiling
+/// record, not a credential; the host still resolves and proves the live one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VerbAskMcpCeiling {
+    pub actor_ref: EntityId,
+    #[serde(with = "mcp_actor_class")]
+    pub actor_class: EdgeActorClass,
+    pub world: Option<EntityId>,
+    pub facets: crate::federation::ScopeAxis<crate::federation::ScopeId>,
+    pub write_facet: Option<EntityId>,
+    pub bound_verbs: Option<std::collections::BTreeSet<String>>,
+}
+
+mod mcp_actor_class {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    use crate::EdgeActorClass;
+
+    pub(super) fn serialize<S: Serializer>(
+        class: &EdgeActorClass,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        serializer.serialize_u8(*class as u8)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<EdgeActorClass, D::Error> {
+        let byte = u8::deserialize(deserializer)?;
+        EdgeActorClass::try_from_u8(byte)
+            .ok_or_else(|| serde::de::Error::custom("invalid MCP actor class"))
     }
 }
 
@@ -132,11 +182,11 @@ pub enum VerbAskDoor {
     /// A facade row, in the room turn the call named, if any.
     Facade { room: Option<EntityId> },
     /// A tool-first MCP row, through the connector registration whose STREAM
-    /// connection is `connection`, admitted under that registration's
-    /// `ceiling` (BLAKE3).
+    /// connection is `connection`, capped by both that registration's saved
+    /// `ceiling` and its live authority at settlement.
     Mcp {
         connection: String,
-        ceiling: [u8; 32],
+        ceiling: VerbAskMcpCeiling,
     },
     /// A tool-first MCP row the managed vault's console owner called on his
     /// own STREAM `connection`, which no connector registration stands
@@ -320,8 +370,28 @@ pub struct VerbAskSavedCall {
 pub enum VerbAskResumed {
     /// The door ran the call: what it returned, or its error.
     Ran(MemoryResult<Value>),
+    /// The door ran the call and listed the rows its answer was derived
+    /// from, as an MCP door does (FIX 1435, FIX 21054). They are saved with
+    /// the answer, and the door that answers the caller's retry releases it
+    /// by them.
+    RanWithProducers {
+        result: MemoryResult<Value>,
+        producers: Vec<EntityId>,
+    },
     /// The call was refused before it ran.
     Refused(VerbAskRefusal),
+}
+
+impl VerbAskResumed {
+    /// What the call returned, or its refusal as its error, beside the rows
+    /// its answer was derived from when its door listed them (FIX 1435).
+    pub(super) fn into_outcome(self) -> (MemoryResult<Value>, Option<Vec<EntityId>>) {
+        match self {
+            Self::Ran(ran) => (ran, None),
+            Self::RanWithProducers { result, producers } => (result, Some(producers)),
+            Self::Refused(refusal) => (Err(refusal.error()), None),
+        }
+    }
 }
 
 /// The host's check for credential calls (ARCH-0080 §3 Ask): only it verifies
@@ -354,16 +424,47 @@ pub trait VerbAskCredentialCheck: Send + Sync {
 #[derive(Debug, Clone)]
 pub struct VerbAskDrainPermit {
     invocation: InvocationId,
+    credential_door: Option<VerbAskDoor>,
+    /// The call is a paced call's turn (FIX 8753): its verb runs it rather
+    /// than holding it again.
+    paced: bool,
 }
 
 impl VerbAskDrainPermit {
-    const fn new(invocation: InvocationId) -> Self {
-        Self { invocation }
+    /// `pub(super)`: the plain drain mints one for its own call too (FIX
+    /// 2183); nothing outside the verb-hook drain paths may.
+    pub(super) const fn new(invocation: InvocationId) -> Self {
+        Self {
+            invocation,
+            credential_door: None,
+            paced: false,
+        }
+    }
+
+    /// The leave for a paced call's turn.
+    pub(super) const fn paced(invocation: InvocationId) -> Self {
+        Self {
+            invocation,
+            credential_door: None,
+            paced: true,
+        }
     }
 
     #[must_use]
     pub const fn invocation(&self) -> InvocationId {
         self.invocation
+    }
+
+    /// The original door of this drain's credential call, not authority to
+    /// run it. A host uses it only for this permit's invocation identity.
+    #[must_use]
+    pub const fn credential_door(&self) -> Option<&VerbAskDoor> {
+        self.credential_door.as_ref()
+    }
+
+    pub(super) fn with_credential_door(mut self, door: VerbAskDoor) -> Self {
+        self.credential_door = Some(door);
+        self
     }
 
     /// Marks this thread as the drain's run of the call until the scope
@@ -372,6 +473,9 @@ impl VerbAskDrainPermit {
     pub fn enter(&self) -> VerbAskDrainScope {
         VerbAskDrainScope {
             _scope: DrainScope::enter(self.invocation),
+            _turn: self
+                .paced
+                .then(|| super::paced::PacedTurnScope::enter(self.invocation)),
         }
     }
 }
@@ -380,6 +484,7 @@ impl VerbAskDrainPermit {
 #[must_use]
 pub struct VerbAskDrainScope {
     _scope: DrainScope,
+    _turn: Option<super::paced::PacedTurnScope>,
 }
 
 /// The witness the pre chain on this thread pins if its call asks, while held.
@@ -405,7 +510,8 @@ pub(super) fn witness_on_thread() -> Option<VerbAskCredentialWitness> {
 
 /// One credential call's pinned witness: the ask it waits on, the reference
 /// it backs and the instrument itself. No secret: a slip, its holder's
-/// challenge and that signature, or the attested owner's person.
+/// challenge and that signature, the attested owner's person, or a
+/// self-hosted root's host action by ids (FIX 4744).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct VerbAskWitness {
     #[serde(with = "crate::serialize::entity_ref")]
@@ -496,7 +602,9 @@ pub(super) fn resume(
         witness: witness.binding,
     };
     let _draining = DrainScope::enter(invocation);
-    Ok(check.resume(call, VerbAskDrainPermit::new(invocation)))
+    let drain =
+        VerbAskDrainPermit::new(invocation).with_credential_door(call.reference.door.clone());
+    Ok(check.resume(call, drain))
 }
 
 /// What one ended credential call's refusal receipt names: the call, its

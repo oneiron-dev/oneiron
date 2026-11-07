@@ -55,7 +55,10 @@ pub fn op_value(op: &AuthorityOp) -> Value {
             (Value::from(SLIP_KEY_SLIP_ID), binary_value(*slip_id)),
         ]),
         // `grant_ref` rides as 32-hex, as a slip's claims name it.
-        AuthorityOp::SlipGrantRevoke { grant_ref } => Value::Map(vec![
+        AuthorityOp::SlipGrantRevoke {
+            grant_ref,
+            membership_receipt,
+        } => Value::Map(vec![
             (
                 Value::from(OP_KEY_KIND),
                 Value::from(OP_KIND_SLIP_GRANT_REVOKE),
@@ -63,6 +66,24 @@ pub fn op_value(op: &AuthorityOp) -> Value {
             (
                 Value::from(SLIP_KEY_GRANT_REF),
                 Value::from(grant_ref.to_hex()),
+            ),
+            (
+                Value::from(SLIP_KEY_MEMBERSHIP_RECEIPT),
+                membership_receipt
+                    .as_deref()
+                    .map_or(Value::Nil, Value::from),
+            ),
+        ]),
+        // `member` rides as 32-hex, as a slip's `holder_ref` names it.
+        AuthorityOp::RemovalArchiveConsume { slip_id, member } => Value::Map(vec![
+            (
+                Value::from(OP_KEY_KIND),
+                Value::from(OP_KIND_REMOVAL_ARCHIVE_CONSUME),
+            ),
+            (Value::from(SLIP_KEY_SLIP_ID), binary_value(*slip_id)),
+            (
+                Value::from(REMOVAL_ARCHIVE_CONSUME_KEY_MEMBER),
+                Value::from(member.to_hex()),
             ),
         ]),
         AuthorityOp::Genesis {
@@ -290,6 +311,9 @@ pub fn op_value(op: &AuthorityOp) -> Value {
         AuthorityOp::OriginCut(cut) => super::origin_cut::origin_cut_value(cut),
         AuthorityOp::DeviceSuccession(succession) => {
             super::device_succession::device_succession_value(succession)
+        }
+        AuthorityOp::MembershipExecution(record) => {
+            super::membership_execution::membership_execution_value(record)
         }
     }
 }
