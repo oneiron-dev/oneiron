@@ -6915,6 +6915,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.files.sources.convert",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::FilesSourceConvertRequest,
+                >(),
+            ),
+            (
                 "connector.answer",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ConnectorAnswerRequest,
@@ -8158,6 +8164,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.identity.events.get",
     "vault.identity.proposals.resolve",
     "vault.identity.proposals.for_pair",
+    "vault.files.sources.convert",
     "self.browser.open",
     "self.browser.observe",
     "self.browser.find",
@@ -10747,6 +10754,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.identity.proposals.for_pair" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::IdentityPairProposals,
+        >(),
+        "vault.files.sources.convert" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::FilesSourceAttachAnswer,
         >(),
         "self.browser.open" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::BrowserObservationPage,
@@ -19574,6 +19584,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.files.sources.convert" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "connector.answer" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -21479,6 +21496,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.mail.inbox" => validate_input_vault_mail_inbox(value)?,
         "vault.mail.threads.read" => validate_input_vault_mail_threads_read(value)?,
         "vault.mail.compliance.search" => validate_input_vault_mail_compliance_search(value)?,
+        "vault.files.sources.convert" => validate_input_vault_files_sources_convert(value)?,
         "connector.answer" => validate_input_connector_answer(value)?,
         "self.browser.open" => validate_input_self_browser_open(value)?,
         "self.browser.observe" => validate_input_self_browser_observe(value)?,
@@ -28254,6 +28272,11 @@ fn validate_input_vault_mail_compliance_search(value: &serde_json::Value) -> Mem
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_files_sources_convert(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::FilesSourceConvertRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_connector_answer(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::task_verb::sdk::ConnectorAnswerRequest = decode(value.clone())?;
     Ok(())
@@ -30250,6 +30273,7 @@ pub fn invoke(
         "vault.mail.inbox" => invoke_vault_mail_inbox(memory, value),
         "vault.mail.threads.read" => invoke_vault_mail_threads_read(memory, value),
         "vault.mail.compliance.search" => invoke_vault_mail_compliance_search(memory, value),
+        "vault.files.sources.convert" => invoke_vault_files_sources_convert(memory, value),
         "connector.answer" => invoke_connector_answer(memory, value),
         "self.browser.open" => invoke_self_browser_open(memory, value),
         "self.browser.observe" => invoke_self_browser_observe(memory, value),
@@ -39116,6 +39140,13 @@ fn invoke_vault_mail_compliance_search(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_mail_compliance_search(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_files_sources_convert(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_files_sources_convert(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_connector_answer(
@@ -50080,6 +50111,12 @@ pub fn vault_mail_compliance_search(
     input: crate::mail_pack::MailComplianceSearchRequest,
 ) -> MemoryResult<crate::mail_pack::MailComplianceSearchReply> {
     memory.mail_compliance_search(&input)
+}
+pub fn vault_files_sources_convert(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::FilesSourceConvertRequest,
+) -> MemoryResult<crate::task_verb::sdk::FilesSourceAttachAnswer> {
+    crate::task_verb::sdk::convert_files_source_embedded(memory, input)
 }
 pub fn connector_answer(
     memory: &Memory<'_>,
