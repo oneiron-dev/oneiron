@@ -1,14 +1,14 @@
 //! Joining a wide causal frontier (FIX 7908 and its duplicates, Phase2 B;
 //! CALLS "Phase2 frontier join"). An act whose main-log frontier is wider
-//! than one entry names is preceded, in its own writer, by signed
-//! [`FrontierJoin`] rows over canonical groups of the heads, repeated over
-//! the join tips until the act fits. Every head stays in the act's causal
-//! past; nothing is dropped and nothing is refused.
+//! than one entry names is preceded, in its own writer, by one signed
+//! [`FrontierJoin`] that names every head of that frontier (FIX 8527, Engine
+//! call A2), and the act names the join. Every head stays in the act's
+//! causal past; nothing is dropped and nothing is refused for the count.
 //!
-//! The writer stages the joins in its own transaction
+//! The writer stages the join in its own transaction
 //! ([`Vault::prepare_authority_frontier_in_txn`]) and then allocates the
 //! act's sequence and parents from the fold it reads back, so the act's
-//! sequence follows the joins'. The act's seen or revision basis is the one
+//! sequence follows the join's. The act's seen or revision basis is the one
 //! it read before: a join moves no state any basis reads, and the fold judges
 //! the act on its parents' merge, which is the heads' merge, so no current
 //! answer turns stale. A frontier that fits keeps today's path and bytes.
@@ -24,21 +24,31 @@
 //! owner roster key, or an anchor the fold
 //! recorded for a stored root, never a key the join names for itself. A join
 //! signed by any other key folds as every unvouched row does: invalid, with
-//! no sequence slot, so it never forks or blocks the act's sequence. Every
-//! group names the frontier's admission tip. The writer prefers the
-//! lowest-hash admitting head whose planned groups also admit the signer
-//! after merging their states (FIX 8499); if none is proven, it keeps the
-//! old lowest-hash tip and fold/readback decision. It reads no role,
+//! no sequence slot, so it never forks or blocks the act's sequence. The fold
+//! judges the signer on the join's parent state, the merge of every head's
+//! state, so a signer whose standing is split across heads (a carrier's
+//! chain revision on one head, a sibling it needs on another) joins them
+//! (FIX 8527). The writer stages a join only when that merge admits the
+//! signer; when it does not, or the head states cannot be read, the act
+//! keeps today's width refusal and nothing is written. It reads no role,
 //! clearance or owner act beyond that, and grants nothing.
 //!
 //! A writer whose own side heads alone fill one entry joins them the same
-//! way first, by the same key, in the scope of the branch they ride (FIX
-//! 11868): an anchor its own heads ([`FrontierJoinScope::AnchorSide`]), a
-//! carrier a world's side leaves ([`FrontierJoinScope::World`]). Its fold is
-//! the main join's; an anchor's side join also records itself among the
-//! anchor's own rows, so it retires their heads and no main door names it.
+//! way first, in one join, by the same key, in the scope of the branch they
+//! ride (FIX 11868): an anchor its own heads
+//! ([`FrontierJoinScope::AnchorSide`]), a carrier a world's side leaves
+//! ([`FrontierJoinScope::World`]). Its fold is the main join's; an anchor's
+//! side join also records itself among the anchor's own rows, so it retires
+//! their heads and no main door names it.
+//!
+//! A wide join costs the fold one [`merge_states`] per head, each a clone of
+//! the merged state so far, beside the per-parent wait and the
+//! ancestor-index walk; the writer runs the same merge once more on its
+//! capture before it stages. Each head adds its 32-byte hash to the signed
+//! entry, to the join's checkpoint row and its required body, and to each
+//! transfer of the entry.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use ed25519_dalek::SigningKey;
 
@@ -162,29 +172,6 @@ fn admits_join_signer(
     }
 }
 
-/// One level of a frontier's joins: `tips` in hash order, in groups of
-/// [`AUTHORITY_FRONTIER_JOIN_ARITY`]. On the first level every group names
-/// the admission tip `tip` and at most one fewer other heads; above it, a
-/// last group of one join is left a tip. Canonical: the groups read the
-/// tips' immutable hashes alone, never a clock, an arrival order or a
-/// signer.
-pub(super) fn plan_frontier_joins(
-    tips: &BTreeSet<AuthorityEntryHash>,
-    tip: Option<AuthorityEntryHash>,
-) -> Vec<BTreeSet<AuthorityEntryHash>> {
-    let others: Vec<AuthorityEntryHash> = tips
-        .iter()
-        .copied()
-        .filter(|head| Some(*head) != tip)
-        .collect();
-    let arity = AUTHORITY_FRONTIER_JOIN_ARITY - usize::from(tip.is_some());
-    others
-        .chunks(arity)
-        .map(|group| group.iter().copied().chain(tip).collect::<BTreeSet<_>>())
-        .filter(|group| group.len() > 1)
-        .collect()
-}
-
 /// The `FrontierJoin` transition, after the shape, signature, retired,
 /// sequence-floor, parent-merge and vault checks and before any roster
 /// check: its signer must be one [`admits_join_signer`] admits in the join's
@@ -246,21 +233,20 @@ impl PreparedAuthorityFrontierJoins {
 impl Vault {
     /// Joins `fold`'s main-log heads in `txn` when an act would name more of
     /// them than `room`, the heads it may name beside its other rows (one
-    /// entry's [`MAX_PARENTS`] for an act that names the heads alone). Each
-    /// level of [`plan_frontier_joins`] is signed by `signer`, at the
-    /// sequences its act would take, until the tips fit, and every first-level
-    /// group names the admission tip; the joins land in one put, and the fold
-    /// read back is returned, for the act's sequence and parents. `None` when
-    /// the heads fit, or when no single head admits the signer: today's path,
-    /// nothing written. A wide frontier is measured on Phase2 A's
-    /// `authority_record_items` row, which asks past it and never waits or
-    /// refuses.
+    /// entry's [`MAX_PARENTS`] for an act that names the heads alone). One
+    /// join names every head, signed by `signer` at the sequence its act
+    /// would take (FIX 8527), and the fold read back is returned, for the
+    /// act's sequence and parents. `None` when the heads fit, or when the
+    /// merge of every head's state does not admit the signer or cannot be
+    /// read: today's path, nothing written. A wide frontier is measured on
+    /// Phase2 A's `authority_record_items` row, which asks past it and never
+    /// waits or refuses.
     ///
     /// # Errors
-    /// [`crate::error::RecordError::AuthorityRefused`] when a join did not
+    /// [`crate::error::RecordError::AuthorityRefused`] when the join did not
     /// fold valid, which leaves the frontier as wide as today's refusal of it;
     /// signing, store-door and storage errors. A caller's transaction that
-    /// fails after this aborts the joins with the act.
+    /// fails after this aborts the join with the act.
     pub(crate) fn prepare_authority_frontier_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -274,7 +260,7 @@ impl Vault {
     /// [`Self::prepare_authority_frontier_in_txn`] over `heads`, the part of
     /// `fold`'s main-log heads an act names (FIX 8497: a world key record
     /// names the heads no side leaf of its world holds beneath it). The
-    /// other heads stay heads, and stay out of the joins.
+    /// other heads stay heads, and stay out of the join.
     ///
     /// # Errors
     /// As [`Self::prepare_authority_frontier_in_txn`].
@@ -291,8 +277,8 @@ impl Vault {
 
     /// [`Self::join_authority_heads_in_txn`] over `heads` of `scope`: the
     /// main log's, or the signer's own side heads that alone fill one entry
-    /// (FIX 11868), each join signed in that scope, so it rides the branch
-    /// it joins.
+    /// (FIX 11868), the join signed in that scope, so it rides the branch it
+    /// joins.
     ///
     /// # Errors
     /// As [`Self::prepare_authority_frontier_in_txn`].
@@ -309,8 +295,8 @@ impl Vault {
             .map(|(joined, _)| joined))
     }
 
-    /// [`Self::join_scoped_heads_in_txn`], with the rows of the joins it
-    /// staged, for a writer that marks and announces them with its act (FIX
+    /// [`Self::join_scoped_heads_in_txn`], with the row of the join it
+    /// staged, for a writer that marks and announces it with its act (FIX
     /// 11993).
     ///
     /// # Errors
@@ -344,87 +330,55 @@ impl Vault {
             return Ok(None);
         }
         measure_authority_work(self.limit_watch(), heads.len());
-        let Some(tip) = self.admission_tip_in_txn(txn, heads, signer)? else {
+        if !self.heads_merge_admits_in_txn(txn, heads, signer)? {
             return Ok(None);
-        };
+        }
         let now = self.instant_in_txn(txn)?.secs();
         let at = TimeRange {
             start: now,
             end: now,
         };
-        let mut seq = signer.first_sequence(fold)?;
-        let mut tips = heads.clone();
-        let mut level_tip = Some(tip);
-        let mut rows = Vec::new();
-        let mut joins = Vec::new();
-        while tips.len() > room {
-            for group in plan_frontier_joins(&tips, level_tip) {
-                let join = signer.sign(fold, scope, seq, group.clone(), now)?;
-                seq = seq.checked_add(1).ok_or_else(invalid_authority)?;
-                let hash = authority_entry_hash(&join)?;
-                tips.retain(|tip| !group.contains(tip));
-                tips.insert(hash);
-                joins.push(hash);
-                rows.push((join, at, now));
-            }
-            level_tip = None;
-        }
-        Ok(Some(PreparedAuthorityFrontierJoins { rows, joins }))
+        let seq = signer.first_sequence(fold)?;
+        let join = signer.sign(fold, scope, seq, heads.clone(), now)?;
+        let hash = authority_entry_hash(&join)?;
+        Ok(Some(PreparedAuthorityFrontierJoins {
+            rows: vec![(join, at, now)],
+            joins: vec![hash],
+        }))
     }
 
-    /// The lowest-hash admitting head whose planned first-level groups also
-    /// admit `signer` on their merged states (FIX 8499), read from the same
-    /// capture as the causal points. A divergent head can conflict with an
-    /// older tip's carrier revision while a newer tip heals that conflict.
-    /// If no candidate proves its groups, keep today's lowest admitting tip
-    /// and fold/readback decision. `None` when no head admits or the capture
-    /// is unavailable ([`AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT`]); split
-    /// admission evidence needing more than one carrying head stays open.
-    fn admission_tip_in_txn(
+    /// Whether the merge of every one of `heads`' states admits `signer` to
+    /// sign their join: the parent state the fold judges the join on (FIX
+    /// 8527), read from the same capture as the causal points. Merged in
+    /// hash order, one head at a time. `false` when a head has no state
+    /// there, as the join would then never fold, and when the capture is
+    /// unavailable ([`AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT`]).
+    fn heads_merge_admits_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         heads: &BTreeSet<AuthorityEntryHash>,
         signer: FrontierSigner<'_>,
-    ) -> Result<Option<AuthorityEntryHash>> {
-        let states: Option<BTreeMap<AuthorityEntryHash, Option<FoldState>>> =
-            match super::act_standing::head_states_in_txn(&self.store, txn, heads) {
-                Ok(states) => states,
-                Err(_) if AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT => None,
-                Err(error) => return Err(error),
-            };
+    ) -> Result<bool> {
+        let states = match super::act_standing::head_states_in_txn(&self.store, txn, heads) {
+            Ok(states) => states,
+            Err(_) if AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT => None,
+            Err(error) => return Err(error),
+        };
         let Some(states) = states else {
-            return Ok(None);
+            return Ok(false);
         };
-        let key = signer.key();
-        let admits = |state: &FoldState| {
-            admits_join_signer(state, signer.family(), &key, (None, &every_chain))
-        };
-        let candidates: Vec<_> = states
-            .iter()
-            .filter_map(|(head, state)| state.as_ref().filter(|state| admits(state)).map(|_| *head))
-            .collect();
-        for tip in &candidates {
-            let groups_admit = plan_frontier_joins(heads, Some(*tip))
-                .into_iter()
-                .all(|group| {
-                    let mut merged: Option<FoldState> = None;
-                    for head in group {
-                        let Some(state) = states.get(&head).and_then(Option::as_ref) else {
-                            return false;
-                        };
-                        merged = Some(match merged {
-                            Some(merged) => merge_states(&merged, state),
-                            None => state.clone(),
-                        });
-                    }
-                    merged.as_ref().is_some_and(&admits)
-                });
-            if groups_admit {
-                return Ok(Some(*tip));
-            }
+        let mut merged: Option<FoldState> = None;
+        for head in heads {
+            let Some(state) = states.get(head).and_then(Option::as_ref) else {
+                return Ok(false);
+            };
+            merged = Some(match merged {
+                Some(merged) => merge_states(&merged, state),
+                None => state.clone(),
+            });
         }
-        // Incomplete evidence or no better partition keeps today's tip and
-        // the existing fold/readback decision, never a new refusal here.
-        Ok(candidates.first().copied())
+        Ok(merged.is_some_and(|state| {
+            admits_join_signer(&state, signer.family(), &signer.key(), (None, &every_chain))
+        }))
     }
 }
