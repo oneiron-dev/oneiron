@@ -470,6 +470,8 @@ export class Oneiron {
       create: (input: Facade.CommitmentCreateRequest): Facade.CommitmentCreateReceipt => this.#call(() => this.#client.vaultCommitmentsCreate(input) as Facade.CommitmentCreateReceipt),
       /** Reads a commitment with its schedule, birth provenance, separate occurrence and learning times, and lifecycle receipt. */
       get: (input: Facade.CommitmentRefRequest): Facade.CommitmentView => this.#call(() => this.#client.vaultCommitmentsGet(input) as Facade.CommitmentView),
+      /** Reads due-sorted open obligations owed by and to one counterparty contact, with their current commitment views. */
+      ledger: (input: Facade.CommitmentLedgerRequest): Facade.CommitmentLedgerView => this.#call(() => this.#client.vaultCommitmentsLedger(input) as Facade.CommitmentLedgerView),
       /** Lists the materialized occurrences of a commitment series, including closed obligations. */
       instances: (input: Facade.CommitmentRefRequest): Facade.CommitmentView[] => this.#call(() => this.#client.vaultCommitmentsInstances(input) as Facade.CommitmentView[]),
       /** Observes real timer-wake reminder proposals and their run approval keys without authorizing delivery. */
@@ -1095,6 +1097,10 @@ export class Oneiron {
       import: (input: Facade.HubImportRequest): Facade.HubSkillImported => this.#call(() => this.#client.vaultSkillsImport(input) as Facade.HubSkillImported),
       /** The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities. */
       sync: (input: Facade.HubSkillRequest): Facade.HubSkillSyncReceipt => this.#call(() => this.#client.vaultSkillsSync(input) as Facade.HubSkillSyncReceipt),
+      proposal: {
+        /** The owner accepts the exact package in a pending hub update, or rejects only its proposal without changing the working skill. */
+        settle: (input: Facade.HubSkillProposalSettleRequest): Facade.HubSkillProposalSettled => this.#call(() => this.#client.vaultSkillsProposalSettle(input) as Facade.HubSkillProposalSettled),
+      },
       /** Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner. */
       receipts: (input: Facade.HubSkillRequest): Facade.HubSkillReceipts => this.#call(() => this.#client.vaultSkillsReceipts(input) as Facade.HubSkillReceipts),
       /** Converts selected messages through the configured refiner; user initiation approves conversion, never admission. */
@@ -1588,6 +1594,14 @@ export class Oneiron {
         wait: {
           /** The owner sets one retained-work queue's wait in seconds, or resets it to its existing default, and receives the effective wait. */
           set: (input: Facade.RetainedWorkWaitSetRequest): number => this.#call(() => this.#client.vaultSyncRetainedWorkWaitSet(input) as number),
+        },
+      },
+      repo_manifests: {
+        conflict: {
+          /** The owner reviews one durable repo-manifest conflict and its exact held/carried manifests; return the opaque binding to discard that reviewed carrier. */
+          review: (input: Facade.RepoManifestConflictReviewRequest): Facade.RepoManifestConflictReviewView | null => this.#call(() => this.#client.vaultSyncRepoManifestsConflictReview(input) as Facade.RepoManifestConflictReviewView | null),
+          /** The owner discards exactly the reviewed carrier, keeping the held manifest; report Stale or WindowLive, or the actual delta and queue acceptance, never delivery. */
+          discard: (input: Facade.RepoManifestConflictDiscardRequest): Facade.RepoManifestConflictDiscardView => this.#call(() => this.#client.vaultSyncRepoManifestsConflictDiscard(input) as Facade.RepoManifestConflictDiscardView),
         },
       },
     },
@@ -2801,11 +2815,11 @@ export class Oneiron {
       manifest: {
         /** Reads the owner-pinned v2 model manifest, or none when no manifest is configured. */
         read: (input: Facade.EmptyRequest): Facade.ModelManifest | null => this.#call(() => this.#client.vaultModelsManifestRead(input) as Facade.ModelManifest | null),
-        /** Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically clearing resident route overrides. */
+        /** Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically retaining resident route overrides that remain admitted. */
         replace: (input: Facade.ModelManifestReplace): Facade.ModelManifest => this.#call(() => this.#client.vaultModelsManifestReplace(input) as Facade.ModelManifest),
       },
       oneironer: {
-        /** Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and clearing resident route overrides. */
+        /** Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and retaining resident route overrides that remain admitted. */
         bind: (input: Facade.OneironerBind): Facade.ModelManifest => this.#call(() => this.#client.vaultModelsOneironerBind(input) as Facade.ModelManifest),
       },
       routes: {
@@ -2882,6 +2896,8 @@ export class Oneiron {
       create: (input: Facade.QuestionCreateRequest): Facade.QuestionRecord => this.#call(() => this.#client.vaultQuestionsCreate(input) as Facade.QuestionRecord),
       edit: (input: Facade.QuestionEditRequest): Facade.QuestionRecord => this.#call(() => this.#client.vaultQuestionsEdit(input) as Facade.QuestionRecord),
       pause: (input: Facade.QuestionPauseRequest): Facade.QuestionPaused => this.#call(() => this.#client.vaultQuestionsPause(input) as Facade.QuestionPaused),
+      prepare: (input: Facade.QuestionPrepareRequest): Facade.QuestionPrepared => this.#call(() => this.#client.vaultQuestionsPrepare(input) as Facade.QuestionPrepared),
+      admit: (input: Facade.QuestionAdmitRequest): Facade.AnswerRecord => this.#call(() => this.#client.vaultQuestionsAdmit(input) as Facade.AnswerRecord),
       backfill: (input: Facade.QuestionBackfillRequest): Facade.ScheduledBackfill => this.#call(() => this.#client.vaultQuestionsBackfill(input) as Facade.ScheduledBackfill),
       read: (input: Facade.QuestionReadRequest): Facade.QuestionRecord | null => this.#call(() => this.#client.vaultQuestionsRead(input) as Facade.QuestionRecord | null),
       /** Reads the caller's standing question closed outcome windows, across its versions, each naming its answer with how it closed. */
@@ -3678,6 +3694,8 @@ export class Oneiron {
       abort: (input: Facade.ModelStreamAbort): Facade.ModelStreamTerminal => this.#call(() => this.#client.aiStreamsAbort(input) as Facade.ModelStreamTerminal),
       /** Read the one durable terminal of the caller's model stream by key (its ordered ContentParts, usage and finish reason, or its recorded failure) after any restart, without calling a model. */
       terminal: (input: Facade.ModelStreamTerminalRequest): Facade.ModelStreamTerminal => this.#call(() => this.#client.aiStreamsTerminal(input) as Facade.ModelStreamTerminal),
+      /** Explicitly discard this credential's model-stream replay and revoke its handles; the producer and durable terminal stay. Later subscribers get only future events; never-released replay stays unchanged. */
+      release: (input: Facade.ModelStreamRelease): Facade.ModelStreamReleased => this.#call(() => this.#client.aiStreamsRelease(input) as Facade.ModelStreamReleased),
     },
     /** Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs. */
     reply: (input: Facade.AiReplyRequest): Facade.AiReply => this.#call(() => this.#client.aiReply(input) as Facade.AiReply),
@@ -3694,11 +3712,11 @@ export class Oneiron {
       },
       /** Opens an owner-bound live media session on the configured voice routes, using the caller credential, room audience and existing budget gates. */
       start: (input: Facade.LiveVoiceStartRequest): Facade.LiveVoiceSession => this.#call(() => this.#client.aiVoiceStart(input) as Facade.LiveVoiceSession),
-      /** Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech retires old output through the shared cancellation path. */
+      /** Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech, or words that are not a backchannel, retire old output through the shared cancellation path, and a backchannel starts no reply. */
       audio: (input: Facade.LiveVoiceAudioRequest): Facade.LiveVoiceProcessed => this.#call(() => this.#client.aiVoiceAudio(input) as Facade.LiveVoiceProcessed),
-      /** Reads ordered utterance and epoch events, PCM, flushes, playout stops, safeguard receipts and notices; advancing the cursor releases consumed events. */
+      /** Reads ordered utterance and epoch events, PCM, flushes, playout stops, safeguard receipts, notices and heard-playback records; advancing the cursor releases consumed events. */
       events: (input: Facade.LiveVoiceEventsRequest): Facade.LiveVoiceEvents => this.#call(() => this.#client.aiVoiceEvents(input) as Facade.LiveVoiceEvents),
-      /** Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed. */
+      /** Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed, with the samples it played, which the epoch's heard-playback record rests on. */
       ack: (input: Facade.LiveVoiceAckRequest): Facade.LiveVoiceProcessed => this.#call(() => this.#client.aiVoiceAck(input) as Facade.LiveVoiceProcessed),
       /** Observes actual voice-brain run settlements and a terminal boundary after producer teardown, epoch retirement, TTS cancel and client playout acknowledgment. */
       usage: (input: Facade.LiveVoiceUsageRequest): Facade.LiveVoiceUsage => this.#call(() => this.#client.aiVoiceUsage(input) as Facade.LiveVoiceUsage),
