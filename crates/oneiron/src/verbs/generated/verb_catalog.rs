@@ -14339,7 +14339,7 @@ impl AgentVerb {
                 "The owner imports one exact uploaded ICS version through the existing UID diff and imported-claim gate; the receipt exposes pending claim refs without granting consent."
             }
             Self::VaultCalendarOccurrences => {
-                "Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions."
+                "Expands an admitted stored master in an inclusive UTC window under the caller's read scope, masking detached exceptions, as one page: an optional deadline_ms, and resume_from to continue."
             }
             Self::VaultCalendarInstancesMove => {
                 "The owner applies one uploaded detached-instance amendment matching its UID, original start and new interval, through the import gate without changing other instances."
@@ -14348,10 +14348,10 @@ impl AgentVerb {
                 "Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt."
             }
             Self::VaultCalendarSearch => {
-                "Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt."
+                "Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, as one page in time order: an optional deadline_ms, and resume_from to continue."
             }
             Self::VaultCalendarFreebusy => {
-                "Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt."
+                "Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals, one page of the covered prefix: an optional deadline_ms, and resume_from to continue."
             }
             Self::VaultCalendarPrep => {
                 "Builds a fresh caller-scoped meeting PrepPack with commitments first and a 250-word ceiling, or deliberately returns no pack."
@@ -14906,7 +14906,7 @@ impl AgentVerb {
                 "The owner asserts two identities are distinct through one symmetric claim that suppresses merge re-proposals."
             }
             Self::VaultIdentityPropose => {
-                "The owner parks a nominated merge or split candidate with no topology effects; distinct pairs suppress merge proposals."
+                "The owner parks a nominated merge, split or facet candidate with no topology effects; distinct pairs suppress merge proposals."
             }
             Self::VaultIdentityUndo => {
                 "The owner undoes one current topology event by appending a counter-event under its observed revision."
