@@ -240,11 +240,7 @@ pub(crate) fn put_unclear_in_txn(
         if crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, &*wtxn, id)?.deleted
         {
             UNCLEAR.delete(&vault.store, wtxn, &key)?;
-            crate::dreamer_runner::maintenance::forget_unclear_notes_in_txn(
-                &vault.store,
-                wtxn,
-                &key,
-            )?;
+            crate::dreamer_runner::maintenance::forget_unclear_notes_in_txn(vault, wtxn, &key)?;
             return Ok(());
         }
     }
@@ -267,12 +263,27 @@ pub(crate) fn put_unclear_in_txn(
         context: StoredContext::new(&row.context),
         at: row.at,
     };
+    // A re-judgment that changed the row withdraws the label proposals that
+    // quoted its notes while they wait on their owner (FIX 21885); the same
+    // row again changes nothing. A held row that does not decode counts as
+    // changed.
+    let unchanged = UNCLEAR
+        .get(&vault.store, &*wtxn, &key)
+        .ok()
+        .flatten()
+        .is_some_and(|held| held.to_raw().ok() == stored.to_raw().ok());
+    if !unchanged {
+        crate::dreamer_runner::maintenance::withdraw_label_proposals_quoting_in_txn(
+            vault, wtxn, &key,
+        )?;
+    }
     UNCLEAR.put(&vault.store, wtxn, &key, &stored)?;
     Ok(())
 }
 
 /// Withdraws the outcome's row: a re-judgment that left nothing unclear. The
-/// Coach's clustering stops counting its notes in the same write.
+/// Coach's clustering stops counting its notes in the same write, and a label
+/// proposal that quoted one and waits on its owner is withdrawn (FIX 21885).
 pub(crate) fn delete_unclear_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -281,7 +292,7 @@ pub(crate) fn delete_unclear_in_txn(
 ) -> Result<()> {
     let key = unclear_key(lane, reference);
     UNCLEAR.delete(&vault.store, wtxn, &key)?;
-    crate::dreamer_runner::maintenance::forget_unclear_notes_in_txn(&vault.store, wtxn, &key)
+    crate::dreamer_runner::maintenance::forget_unclear_notes_in_txn(vault, wtxn, &key)
 }
 
 /// Drops every unclear row whose context names erased `entity` — its actor,
