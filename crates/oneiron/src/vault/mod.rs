@@ -141,6 +141,12 @@ pub struct Vault {
     retrieval_trace_key: self::retrieval_trace_key::RetrievalTraceKey,
     // Declared after Store: LMDB closes before process ownership is released.
     writer_lease: Option<VaultWriterLease>,
+    /// T1 `self.use` operations the host registered, by operation name: the
+    /// second table beside `SECRET_USE_OPERATIONS` (FIX 2616). Empty until
+    /// the server registers its callbacks; unknown names refuse as unknown.
+    pub(crate) secret_use_t1_operations: std::sync::Mutex<
+        std::collections::HashMap<String, crate::secret_custody::SecretUseT1Operation>,
+    >,
     /// The page-seal mirror read the last settle fused with its file
     /// identity, consumed by the next ready check instead of a second
     /// under-lease mirror read (FIX 12272). Set only by the settle's write
@@ -217,10 +223,10 @@ pub struct Vault {
     /// ([`Vault::set_lfs_read_room`]); none until it lends one.
     pub(crate) lfs_read_room:
         std::sync::RwLock<Option<std::sync::Arc<dyn crate::origin::lfs::LfsReadRoom>>>,
-    /// The floor a host lends its guests' network work
-    /// ([`Vault::lend_host_net_floor`]); none until it lends one.
-    pub(crate) host_net_floor:
-        std::sync::OnceLock<std::sync::Arc<dyn oneiron_container::HostNetFloor>>,
+    /// The floor its guests' network work charges: the one its serving host
+    /// attached ([`Vault::attach_host_net_floor`]), else the process's
+    /// descriptor line (FIX 6299).
+    pub(crate) host_net_floor: std::sync::Arc<crate::code_sandbox::egress::VaultHostFloor>,
     /// The measured disk floor a host lends its guests' proposal spools
     /// ([`Vault::lend_proposal_spool`], FIX 7650); none until it lends one.
     pub(crate) proposal_spool:
@@ -273,6 +279,10 @@ pub struct Vault {
     /// green landing starts a full-auto pass at once. In memory only and
     /// never shared across vaults; each lifecycle tick repairs a missed one.
     pub(crate) origin_mirror_wake: crate::origin::OriginMirrorWake,
+    /// The relayed ask intents that landed for asks this vault admitted and
+    /// wait for their consumption (FIX 7494). In memory only: it drops with
+    /// the vault, and the next open reads the stored intents again.
+    pub(crate) ask_forward_arrivals: std::sync::Mutex<crate::task_verb::AskForwardArrivals>,
     /// The served host's transport an exact publish's mirror git goes
     /// through, its credential broker installing the credential (FIX 19083),
     /// installed once per open vault
