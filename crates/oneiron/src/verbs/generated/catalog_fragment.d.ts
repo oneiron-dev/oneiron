@@ -748,8 +748,9 @@ declare namespace Sdk {
   type HolderExportUnassigned = "no_owner_act" | "owner_not_live" | "no_recipient" | "recipient_not_linked" | "no_holder" | "no_carrier";
   type HolderExportState = { kind: "recorded"; request: string; holder: EntityId; status: OwnerWorkStatus } | { kind: "unassigned"; reason: HolderExportUnassigned } | { kind: "unrecorded" };
   type HolderExportRequest = { secret: EntityId; generation: number; state: HolderExportState };
-  type MemoryExport = { format: string; archive: string; digest: string; holder_requests?: HolderExportRequest[] };
-  type ExportTransfer = { transfer_ref: string; format: string; bytes: number; digest: string; holder_requests?: HolderExportRequest[] };
+  type WorldRecipientNotice = { notice_type: string; channel: string; voice: string; audience: string; world_ref?: string | null; world_name?: string | null; reason: string; body: string };
+  type MemoryExport = { format: string; archive: string; digest: string; holder_requests?: HolderExportRequest[]; notices?: WorldRecipientNotice[] };
+  type ExportTransfer = { transfer_ref: string; format: string; bytes: number; digest: string; holder_requests?: HolderExportRequest[]; notices?: WorldRecipientNotice[] };
   type ExportAnswer = MemoryExport | ExportTransfer;
   type ExportTransferReadRequest = { transfer_ref: string; offset?: number; length?: number | null };
   type ExportTransferPiece = { transfer_ref: string; offset: number; bytes_base64: string; length: number; total_bytes: number; digest: string; end: boolean };
@@ -1121,7 +1122,6 @@ declare namespace Sdk {
   type AuthorityLaneRef = string;
   type BudgetPolicyRef = string;
   type PackSection = { section_id: string; state_family: StateFamilyRef; verbs: SectionVerbRef[]; authority_lane: AuthorityLaneRef; budget_policy: BudgetPolicyRef };
-  type WorldRecipientNotice = { notice_type: string; channel: string; voice: string; audience: string; world_ref?: string | null; world_name?: string | null; reason: string; body: string };
   type PackInstallReceipt = { source_id: string; pack_name: string; content_hash: string; kind: PackKind; adapter?: PackAdapter | null; engine_version?: string | null; status: PackInstallStatus; candidate_reason?: PackCandidateReason | null; hub_id: string; hub_ref: string; pin_type: string; pin_value: string; publisher: string; permissions: PackPermissions; qualification_report_hash?: string | null; connector_qualification?: PackConnectorReceipt | null; runtime?: PackRuntimeRecipe | null; sections: PackSection[]; predicates: string[]; kinds: string[]; skills: string[]; agent?: string | null; installed_at: number; notices?: WorldRecipientNotice[]; owner_activated?: PackCandidateReason[] };
   type PackPutReceipt = { outcome: PackPutOutcome; reason?: string | null; receipt?: PackInstallReceipt | null };
   type HubPackRequest = { name: string };
