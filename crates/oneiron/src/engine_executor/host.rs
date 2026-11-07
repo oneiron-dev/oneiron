@@ -65,6 +65,7 @@ pub(super) struct RecordingJsHost<'a, 's> {
     determinism: CodeRunDeterminism,
     legibility: Option<ExecutorLegibility<'a>>,
     storage: Option<&'s ExecutorStorage<'a>>,
+    output_step: Option<u64>,
     /// The run's share of the result-memory pool, which a callable skill's
     /// answer check holds its buffers on (FIX 10149).
     result_share: Option<&'s crate::result_memory::ResultShare>,
@@ -189,6 +190,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             determinism,
             legibility,
             storage: None,
+            output_step: None,
             result_share: None,
             recoverable: Vec::new(),
             streamed: StreamedOutputs::default(),
@@ -220,6 +222,12 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             deadline_replay: None,
             guest_calls: Vec::new(),
         }
+    }
+
+    /// Names the step whose runtime files the REPL will publish.
+    pub(super) fn with_file_output_step(mut self, seq: u64) -> Self {
+        self.output_step = Some(seq);
+        self
     }
 
     /// Names the run's executor, as the callable skills its program calls
@@ -353,7 +361,8 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor result storage unavailable".into(),
         ))?;
-        self.streamed.write(storage, self.run_id, stream, frame)?;
+        self.streamed
+            .write(storage, self.run_id, self.output_step, stream, frame)?;
         self.gated_write.activity_streamed(frame);
         Ok(true)
     }

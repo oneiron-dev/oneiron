@@ -270,8 +270,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // ONE-1441: the facade projection is its own nest, not an arm inside
         // `core_routes`. Nesting expands each row into a concrete
         // `/v1/core/facade/<verb>` path, so it neither shadows nor is shadowed
-        // by the storage-shaped `/v1/core` routes above, and its 64 MiB body
-        // limit stays a property of this nest alone.
+        // by the storage-shaped `/v1/core` routes above. Its bodies read up to
+        // the request floor this router sets (ABC transport row T2).
         .nest(
             "/v1/core/facade",
             self::facade::recorded_facade_routes(server.clone()),
@@ -294,6 +294,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .merge(self::report::routes())
         // OF-495: an agent role holder's skill tradeoff asks and picks.
         .merge(self::facade::role_picks::routes())
+        // FIX 11694: a person's MFA step-up with a passkey, on their own slip.
+        .merge(self::facade::step_up_doors::routes())
         // OF-516: a role holder's door to the ladder's person asks.
         .merge(self::facade::decision_role_asks::routes())
         .route("/v1/usage/events", post(record_usage_event))

@@ -56,6 +56,8 @@ use crate::{ClaimSource, Vault, WriteActor};
 
 use self::admission::{admit_recorded_answer, gate_rejection};
 pub(crate) use self::agent_verb::recorded_call as recorded_verb_call;
+pub(crate) use self::agent_verb::write_receipt_may_have_run;
+pub(crate) use self::coordination::agent_attempt_run_ref;
 pub(crate) use self::envelope::check_write_gate_against_vault;
 #[cfg(test)]
 pub(super) use self::envelope::{SELF_PROVENANCE_CALL_KEY, edge_operation_gate_id};
