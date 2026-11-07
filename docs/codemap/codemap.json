@@ -26001,13 +26001,15 @@
      "kind": "src",
      "notable": [
       "HostLegalChannel",
-      "HostLegalConnection"
+      "HostLegalConnection",
+      "HostLegalConnectionRole"
      ],
      "path": "src/deletion/legal_hold/clone/auth.rs",
      "purpose": "The inherited manager-created listener is the native transport authority",
      "surface": {
-      "fn": 3,
-      "struct": 2
+      "crate-vis": 1,
+      "fn": 6,
+      "struct": 3
      }
     },
     {
@@ -26028,7 +26030,7 @@
      "purpose": "Exact HOST order standing for a live entry, independent of any one socket",
      "surface": {
       "crate-vis": 7,
-      "fn": 1
+      "fn": 3
      }
     },
     {
@@ -26054,13 +26056,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/deletion/legal_hold/clone/outbox.rs",
      "purpose": "The connection half of a HOST order's prospective capture (FIX 13866): stands the order, then streams its…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -125087,7 +125089,7 @@
      "path": "src/managed/host_legal.rs",
      "purpose": "The manager's inherited legal-copy channel and its joined blocking workers",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -125504,7 +125506,7 @@
      "path": "src/managed/state_serve/admission.rs",
      "purpose": "The reap freeze's write admission (FIX 6902): what a served write and a background pass take, held until…",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 31
      }
     },
     {
