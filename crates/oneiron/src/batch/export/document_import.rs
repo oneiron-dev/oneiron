@@ -947,6 +947,7 @@ fn put_run_results_in_txn<R: Read + Seek>(
             .map(|restored| restored.output.clone())
             .collect();
         record.bindings = bindings;
+        record.birth_world = run.birth_world.as_deref().map(parse_id).transpose()?;
         record.callable_rows = None;
         let existing = {
             let rtxn: &heed::RoTxn<'_> = wtxn;
@@ -954,6 +955,7 @@ fn put_run_results_in_txn<R: Read + Seek>(
         };
         let same = existing.as_ref().is_some_and(|current| {
             current.determinism == record.determinism
+                && current.birth_world == record.birth_world
                 && current
                     .outputs
                     .iter()
@@ -974,6 +976,9 @@ fn put_run_results_in_txn<R: Read + Seek>(
         match existing {
             None => {
                 vault.put_code_run_replay_record_in_txn(wtxn, &record)?;
+                crate::code_run::invalidate_imported_read_world_capture_in_txn(
+                    vault, wtxn, run_id,
+                )?;
                 records_rebuilt += 1;
             }
             Some(_) if same => records_skipped += 1,

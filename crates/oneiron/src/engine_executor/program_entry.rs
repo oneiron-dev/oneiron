@@ -308,7 +308,8 @@ impl<'a> EngineNativeExecutor<'a> {
             let generation = record.generation()?;
             return Ok((record, Some(generation)));
         }
-        let record = CodeRunReplayRecord::new(config.run_id, config.determinism);
+        let mut record = CodeRunReplayRecord::new(config.run_id, config.determinism);
+        record.birth_world = self.gated_write.birth_world();
         // The program's replies are its actor's (FIX 5718).
         let actor = self.gated_write.actor().entity_ref();
         let generation =

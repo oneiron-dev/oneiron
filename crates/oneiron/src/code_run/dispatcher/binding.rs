@@ -106,6 +106,7 @@ impl<'a> HostSelfDispatcher<'a> {
             reader_child: None,
             scoped_ports: None,
             bound_run: None,
+            birth_world: None,
             planner: None,
             slip_issuer: None,
             replay_exposures: Vec::new(),
@@ -207,6 +208,22 @@ impl<'a> HostSelfDispatcher<'a> {
             .chain(claims.parent_id)
             .collect();
         self
+    }
+
+    /// Binds the accepted write placement from this run's host entry. An
+    /// explicitly bound default position is base reality; an entry that never
+    /// calls this method keeps its birth unknown. No guest payload reaches it.
+    #[must_use]
+    pub fn with_birth_position(
+        mut self,
+        position: crate::federation::record_scope::BirthPosition,
+    ) -> Self {
+        self.birth_world = Some(position.world.unwrap_or_else(crate::claim::base_world_id));
+        self
+    }
+
+    pub(crate) fn birth_world(&self) -> Option<EntityId> {
+        self.birth_world
     }
 
     /// Records what this run's effect history already contains.
