@@ -14344,7 +14344,7 @@ impl AgentVerb {
             Self::VaultDecisionsAsksConfirmGrant => "",
             Self::SelfDecisionsAsks => "",
             Self::ConnectorList => {
-                "Every live catalogued connector whose name or summary matches the query."
+                "Every matching live catalogued connector and first-party web interface, distinguished by source."
             }
             Self::ConnectorStatus => "One catalogued connector by name, removed ones included.",
             Self::ConnectorCall => {

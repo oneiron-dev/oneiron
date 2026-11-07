@@ -3767,7 +3767,7 @@ export class Oneiron {
   /** Waits on an ask, or on a world-privacy request its caller opened, at a step with no other work: pending, changed, ready with its result or the request's applied or declined state, or a park for code mode. */
   wait(handle: TaskAskHandle, stepKey = "sdk.wait"): Facade.TaskAskWait { return this.#call(() => this.#client.wait({handle, step_key: stepKey}) as Facade.TaskAskWait) }
   readonly connector = {
-    /** Every live catalogued connector whose name or summary matches the query. */
+    /** Every matching live catalogued connector and first-party web interface, distinguished by source. */
     list: (input: Facade.ConnectorListRequest): Facade.ConnectorEntry[] => this.#call(() => this.#client.connectorList(input) as Facade.ConnectorEntry[]),
     /** One catalogued connector by name, removed ones included. */
     status: (input: Facade.ConnectorNameRequest): Facade.ConnectorView | null => this.#call(() => this.#client.connectorStatus(input) as Facade.ConnectorView | null),
