@@ -6,7 +6,7 @@
 
 use crate::code_run::{AdmittedLiveFork, LiveCompactionFork};
 use crate::compaction::{CompactionBackend, CompactionDriver, SelfCompactionUnavailable};
-use crate::{LlmRequest, WriteActor};
+use crate::{EntityId, LlmRequest, WriteActor};
 
 /// What one breakpoint captured of the run's `live` request (FIX 4465 C):
 /// nothing when the flight is written from the retained turns (a row on
@@ -15,16 +15,21 @@ use crate::{LlmRequest, WriteActor};
 /// may fill: what the live model leaves beside the captured prefix (for
 /// `auto`, no more than its cheap writer takes), else what the backend
 /// takes. The span is sized on the model the flight is sent on, before any
-/// of it is sealed.
+/// of it is sealed. `prefix_sources` is every row `live` was read from,
+/// `None` when the run did not witness them all: no fork is captured then
+/// (FIX 9463).
 pub(in crate::engine_executor) fn capture(
     driver: &CompactionDriver,
     live: &LlmRequest,
+    prefix_sources: Option<Vec<EntityId>>,
 ) -> (
     Option<Result<LiveCompactionFork, SelfCompactionUnavailable>>,
     Option<u64>,
 ) {
     let budget = driver.summary_token_budget();
-    let captured = driver.backend().capture_live_fork(live, budget);
+    let captured = driver
+        .backend()
+        .capture_live_fork(live, prefix_sources, budget);
     let room = match &captured {
         Some(Ok(fork)) => Some(fork.input_room()),
         _ => driver.backend().input_token_limit(budget),
