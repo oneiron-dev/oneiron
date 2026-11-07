@@ -205,6 +205,25 @@ impl MailboxLineage {
         }
     }
 
+    /// [`Self::folds`]'s verdict for a source the copy does not write (an OKF
+    /// envelope emits only its evidence, not an archived receipt's carrier):
+    /// judged the same, but nothing counts as carried when `row` ships.
+    ///
+    /// # Errors
+    ///
+    /// Storage failures.
+    pub(super) fn folds_unwritten(
+        &self,
+        judge: Option<&mut ExportJudge<'_, '_, '_>>,
+        source: Option<&EntityId>,
+    ) -> Result<bool> {
+        let (Some(judge), Some(source)) = (judge, source) else {
+            return Ok(true);
+        };
+        let carried = judge.carries(*source, None)?;
+        Ok(self.recorded.admitted(judge, *source)?.is_some() && carried)
+    }
+
     /// Why the pass's `judge`, when it has one, keeps home a saved output
     /// made from exactly the rows `inputs`, if it does: one row of a
     /// member's mailbox the copy leaves out, or rows not all known.
