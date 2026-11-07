@@ -33,8 +33,8 @@ pub(crate) use attendee_entry::{
 };
 pub(super) use consult_answer::record_answer;
 pub(super) use link_proof::{
-    mint_key as mint_link_key, sign_settlement as sign_link_settlement,
-    verify_settlement as verify_link_settlement,
+    mint_key as mint_link_key, sign_forward_result, sign_settlement as sign_link_settlement,
+    verify_forward_result, verify_settlement as verify_link_settlement,
 };
 pub(super) use word_admission::{admit_link_word, admit_word};
 

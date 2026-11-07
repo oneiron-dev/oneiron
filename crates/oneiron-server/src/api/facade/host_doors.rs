@@ -63,6 +63,8 @@ pub(crate) use super::git_push_doors::*;
 // The public run repo doors (FIX 6867, G1 PR3b): no owner proof, so none is
 // in the owner preflight below.
 pub(crate) use super::repo_doors::*;
+// Manifest-conflict decisions take the owner proof in their own doors.
+pub(crate) use super::repo_manifest_conflict_doors::*;
 pub(crate) use super::shared_act_doors::*;
 pub(crate) use super::shared_admin_doors::*;
 // The shared-vault invitation doors (OF-531) too.
@@ -268,6 +270,7 @@ pub(crate) use super::code_run_doors::*;
 // The owner's code consent wait answer and receipt doors (DOOR-079), likewise.
 pub(crate) use super::code_wait_doors::*;
 // The owner's hook regeneration due, record and adopt doors (DOOR-077), likewise.
+pub(crate) use super::hook_check_doors::*;
 pub(crate) use super::hook_regen_doors::*;
 pub(crate) use super::host_trigger_doors::*;
 // The owner's speculative merge queue doors (DOOR-132), likewise.

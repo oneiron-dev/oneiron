@@ -2,7 +2,7 @@
 
 use super::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, id, invalid, strict};
 use crate::error::Result;
-use crate::note::NoteBody;
+use crate::note::NoteCore;
 use crate::recovery::canonical::{CanonicalEntity, CanonicalSnapshot};
 use crate::recovery::document::{CanonicalDocument, CanonicalHead, CanonicalHeadMove};
 use std::collections::{BTreeMap, BTreeSet};
@@ -15,7 +15,7 @@ pub(in crate::recovery) struct DocumentRows {
     previous_document: Option<([u8; 16], [u8; 16])>,
     previous_id: Option<[u8; 16]>,
     last_core: Option<[u8; 16]>,
-    cores: BTreeMap<[u8; 16], NoteBody>,
+    cores: BTreeMap<[u8; 16], NoteCore>,
     docs: BTreeSet<([u8; 16], [u8; 16])>,
     heads: BTreeMap<[u8; 16], [u8; 16]>,
     retained: BTreeSet<([u8; 16], [u8; 16])>,
@@ -257,9 +257,7 @@ impl DocumentRows {
                 crate::note::NoteActor::Imported(_) => crate::note::NoteActor::Erased,
                 author => author,
             };
-            if birth.actor != birth_author
-                || birth.actor_class != "ledger"
-                || birth.grant.is_some()
+            if birth.actor != birth_author || birth.actor_class != "ledger" || birth.grant.is_some()
             {
                 return Err(invalid("NOTE birth provenance binding"));
             }

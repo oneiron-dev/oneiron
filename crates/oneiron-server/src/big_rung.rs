@@ -292,11 +292,11 @@ impl BigModel {
         content.push(ContentPart::Text {
             text: format!(
                 "Question: {}\n{}\n{rubric}State (JSON): {state}\n{reply}",
-                call.question.text,
+                call.question_text(),
                 contract_line(&call.question.contract),
             ),
         });
-        Ok(LlmRequest {
+        let mut request = LlmRequest {
             model,
             envelope: CallEnvelope {
                 seat_effort: None,
@@ -307,6 +307,7 @@ impl BigModel {
                 response_format: ResponseFormat::Text,
                 locality,
                 host_keyless: false,
+                host_paid: false,
             },
             messages: vec![
                 message(LlmMessageRole::System, self.wording.clone()),
@@ -319,7 +320,11 @@ impl BigModel {
             params: joint.map_or_else(BTreeMap::new, |_| JointRead::params()),
             provider_options: BTreeMap::new(),
             host_segments: None,
-        })
+        };
+        if let Some(labels) = call.labels {
+            labels.bind(&mut request);
+        }
+        Ok(request)
     }
 }
 
