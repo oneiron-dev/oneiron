@@ -288,7 +288,7 @@ fn parse_responses_usage(usage: &JsonValue) -> LlmUsage {
     let reasoning = usage
         .get("output_tokens_details")
         .map_or(0, |details| field(details, "reasoning_tokens"));
-    LlmUsage {
+    let mut measured = LlmUsage {
         input: LlmInputUsage {
             total: input,
             cache_read: cached,
@@ -301,7 +301,12 @@ fn parse_responses_usage(usage: &JsonValue) -> LlmUsage {
         },
         raw_provider: usage.clone(),
         call_metadata: None,
-    }
+    };
+    measured.set_provider_token_measurement(oneiron::llm::ProviderTokenMeasurement {
+        input: usage.get("input_tokens").and_then(JsonValue::as_u64),
+        output: usage.get("output_tokens").and_then(JsonValue::as_u64),
+    });
+    measured
 }
 
 /// An `error` event or a failed response as the error a status would be.

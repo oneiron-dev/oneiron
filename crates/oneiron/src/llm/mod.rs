@@ -103,6 +103,7 @@ pub use oneiron_model::llm::{
 };
 pub(crate) use oneiron_model::llm::{BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable};
 
+pub use oneiron_model::llm::ProviderTokenMeasurement;
 pub use oneiron_model::llm::{
     LabelReadFailure, LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet,
     joint_marginals,
