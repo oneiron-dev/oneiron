@@ -464,6 +464,9 @@ pub struct RetrievalRunRecord {
     /// is never stamped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub query_expander_id: Option<String>,
+    /// Stable `Reranker::id` label of the scorer actually applied for this
+    /// recorded attempt, NOT a validated model revision or checkpoint hash.
+    pub reranker_id: Option<String>,
     pub signals: Vec<RetrievalSignal>,
     pub result_ids: Vec<[u8; 16]>,
     pub score_breakdown: Vec<RetrievalScoreBreakdown>,
@@ -528,6 +531,7 @@ impl RetrievalRunRecord {
             replay_inputs: None,
             turn: None,
             query_expander_id: None,
+            reranker_id: None,
             score_breakdown,
             total_in_scope,
             claims_suppressed,

@@ -165,6 +165,13 @@ pub const COACH_LAYOUT_SUGGESTIONS_FACET: &str = "coach.layout_suggestions";
 /// ask is handed to the leader of every project board it reached, to ask on
 /// one of that project's TASKs.
 pub const COACH_TRADEOFF_ROUTE_FACET: &str = "coach.tradeoff_route";
+/// The post-hoc review of automatic topology (FIX 7817, ARCH-0055 §8): each
+/// pending candidate a local `Auto` merge, split or facet kept, selected by
+/// the host's revision-pinned topology-audit recipe and reviewed on the
+/// host's decision ladder under this job's own line and clock, through
+/// [`Vault::run_coach_topology_audits`]. One fixed key: the apply door and
+/// the nightly pass both queue the one drain.
+pub const COACH_TOPOLOGY_AUDIT_FACET: &str = "coach.topology_audit";
 /// The unclear-note clustering (ARCH-0056 §5 #unclear, FIX 7824): each
 /// recurring `no_label_fits` note put to the host's ladder as a same-pattern
 /// choice within its scope, and a Proposed label for a pattern whose notes
@@ -196,7 +203,7 @@ pub(crate) fn room_upkeep_nudge_in_txn(
 /// Producer name of a pending training offer's inbox NOTIFICATION.
 pub const TRAINING_OFFER_NOTIFICATION_PRODUCER: &str = "coach.training_offer";
 
-const HOST_FACETS: [&str; 21] = [
+const HOST_FACETS: [&str; 22] = [
     COACH_SKILL_DISTILL_FACET,
     COACH_SKILL_DISCOVERY_FACET,
     COACH_PERSON_THRESHOLD_FACET,
@@ -221,6 +228,9 @@ const HOST_FACETS: [&str; 21] = [
     COACH_FEEDBACK_DELIVERY_FACET,
     // FIX 12569: one pending retrain per vault, under the fixed facet key.
     COACH_DRAFTER_RETRAIN_FACET,
+    // FIX 7817: the nightly drain of topology-audit candidates any earlier
+    // drain left pending, under the key the apply door queues it by.
+    COACH_TOPOLOGY_AUDIT_FACET,
 ];
 /// The Coach's closed-form nightly jobs, which the wake driver runs.
 const MAINTENANCE_FACETS: [&str; 12] = [
