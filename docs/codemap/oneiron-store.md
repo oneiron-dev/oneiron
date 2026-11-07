@@ -232,7 +232,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate_decision/vet.rs` | src | s | 3 fn · 1 const | — | Gate-decision record, notice, and receipt-reason validators |
 | `src/gate_decision/write_mode.rs` | src | s | 1 struct | GateWriteMode | Claim-write decision recording and pending-consent mode |
 | `src/gate_reason.rs` | src | m | 3 enum · 7 fn · 2 const | GateMetricReasonClass, GateOutcome, GateReasonCode | Gate outcomes, stable reason codes, and pure metric classification |
-| `src/git_wire.rs` | src | s | 22 mod | — | Store-layer modules of core `git_wire`; core re-exports each one at its old path |
+| `src/git_wire.rs` | src | s | 23 mod | — | Store-layer modules of core `git_wire`; core re-exports each one at its old path |
 | `src/git_wire/argv.rs` | src | s | 6 fn | — | Frozen typed argv: one constructor per git verb plus the token validators |
 | `src/git_wire/bridge.rs` | src | s | 3 fn | — | `repo_mutation` migration bridge: validated arbitrary-argv entry plus failure redaction |
 | `src/git_wire/bundle_tree.rs` | src | s | 1 struct · 2 fn · 1 static | BundleTreeEdit | Exact bundle bytes and modes staged through the existing Git bridge |
@@ -243,11 +243,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/git_wire/hub_read.rs` | src | s | 4 fn | — | Fixed network-read profile for a private disposable hub object store |
 | `src/git_wire/ids.rs` | src | s | 4 struct · 1 enum · 16 fn | GitOid, GitRefExpectation, GitRefName, GitRefPublication, ObservedGitRef | Validated git identity newtypes: ref names, object ids, observations, expectations, publications |
 | `src/git_wire/import_fetch.rs` | src | s | 1 mod | — | Store-layer modules of core `git_wire::import_fetch`; core re-exports each one at its old path |
-| `src/git_wire/import_fetch/profile.rs` | src | s | 1 struct · 5 fn · 1 const | ImportProcessProfile | The fixed process profile of an outside import's Git legs (FIX 6871) |
+| `src/git_wire/import_fetch/profile.rs` | src | s | 1 struct · 5 fn · 1 const · 3 crate-vis | ImportProcessProfile | The fixed process profile of an outside import's Git legs (FIX 6871) |
 | `src/git_wire/mirror_push.rs` | src | s | 1 struct · 3 fn · 3 const | MirrorEgress | Fixed outbound push profile for an origin's mirror (ARCH-0068 RA8). https only, no redirects, no proxy, no… |
 | `src/git_wire/mutation_commands.rs` | src | s | 6 fn | — | Repository scope identity and the existing redacted Git command bridge |
 | `src/git_wire/objects.rs` | src | s | 3 struct · 7 fn | GitCommitHeader, GitCommitRequest, GitTreeEntry | Commit and tree object model: tree entries, commit headers, commit-request bytes, tree parsers |
 | `src/git_wire/operation.rs` | src | s | 2 enum · 6 fn · 1 const | GitWireEffectClass, GitWireOperation | Operation enum, effect classes, and the stable wire-name mapping |
+| `src/git_wire/origin_relay.rs` | src | s | 1 struct · 4 fn | OriginRelayEgress | The fixed process profile of an exact publish's Git legs on a served host (ARCH-0069 OSH-3, FIX 19083) |
 | `src/git_wire/path_text.rs` | src | s | 5 fn · 1 const | — | The text form of a Git path (FIX 21326) |
 | `src/git_wire/plan.rs` | src | s | 1 struct · 1 enum · 1 fn | GitWirePlannedOid, PlannedPublication | Two-phase plan assembly: object writes plus the ref publications they authorize |
 | `src/git_wire/process.rs` | src | s | 7 fn | — | The crate's single git child-process constructor plus its bounded IO and thread-pump helpers |
@@ -314,10 +315,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/merge_queue/tested_types.rs` | src | s | 6 struct · 5 enum · 3 fn | CodePushProjectionSourceLink, CodePushSourceLink, QueueAppliedSource, QueueExportHold, QueueExportHoldReason, QueueGreenExportView, QueueRevisionIntent, QueueRevisionLink +3 | The tested-revision seal's records, links and holds (FIX 6868, G2 PR3) |
 | `src/merge_queue/types.rs` | src | s | 8 struct · 3 enum · 7 fn | BatchState, CheckReport, EffectIntent, LandingPermit, MergeFile, MergeFileExpected, MergeProposal, MergeQueuePointers +3 | Persisted queue records and sealed landing/check boundaries |
 | `src/model_decision/answer_actor.rs` | src | s | 1 enum · 4 fn | AnswerActor | An answer actor identity, including its erased state |
-| `src/model_decision/catalogue.rs` | src | m | 1 struct · 1 fn · 50 const | QuestionFamily | The engine's registered typed-question families, in one place |
+| `src/model_decision/catalogue.rs` | src | m | 1 struct · 1 fn · 51 const | QuestionFamily | The engine's registered typed-question families, in one place |
 | `src/model_decision/codec.rs` | src | s | 7 fn · 3 mod | — | Canonical entity references for typed-decision wire records |
 | `src/model_decision/mod.rs` | src | s | 3 mod · 9 re-export | — | Model-independent typed decision vocabulary and pure policy values |
-| `src/model_decision/policy.rs` | src | s | 7 struct · 2 enum · 11 fn · 1 const | BandMode, DecisionBandEnforceRequest, DecisionBandLearnRequest, DecisionBandPolicy, DecisionBandReadRequest, LearnedBand, PersonThreshold, Reversibility +1 | Question- and reversibility-scoped escalation bands; learning starts in shadow |
+| `src/model_decision/policy.rs` | src | s | 7 struct · 2 enum · 11 fn · 1 re-export | BandMode, DecisionBandEnforceRequest, DecisionBandLearnRequest, DecisionBandPolicy, DecisionBandReadRequest, LearnedBand, PersonThreshold, Reversibility +1 | Question- and reversibility-scoped escalation bands; learning starts in shadow |
 | `src/model_decision/provider.rs` | src | s | 3 struct · 7 fn · 3 const | PairedAnswer, ProviderCapability, ProviderDecision | Provider answer values, capabilities, and score-level rules |
 | `src/model_decision/questions/mod.rs` | src | s | 2 re-export | — | Graph-question recipe and outcome vocabulary |
 | `src/model_decision/questions/recipe.rs` | src | s | 2 struct | GraphQuestionInput, GraphQuestionRef | Graph-question identities and explicit evidence joins |
@@ -611,11 +612,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/write_envelope/identity_reputation.rs` | src | m | 3 struct · 4 enum · 16 fn · 17 const | EmailReputationWebhookSignal, IdentityAttestationTier, IdentityReputation, IdentityReputationSignal, IdentityReputationStatus, IdentitySendRateClamp, IdentityWarmupStage | Sender reputation values, wire predicates, and pure claim validation |
 | `src/write_envelope/learning_predicate.rs` | src | s | 1 fn · 5 const · 1 re-export | — | The measured-state claim family and its namespace classifier |
 | `src/write_envelope/person_identity.rs` | src | s | 3 fn | — | Identity-bearing facet classification and canonical PERSON body maps |
-| `src/write_envelope/profile_snapshot/codec.rs` | src | s | 11 fn · 1 re-export | — | Canonical MessagePack encode/decode and field validation helpers |
+| `src/write_envelope/profile_snapshot/codec.rs` | src | s | 1 enum · 12 fn · 1 re-export | PsychProfileBodyEnvelope | Canonical MessagePack encode/decode and field validation helpers |
 | `src/write_envelope/profile_snapshot/codec/source_pages.rs` | src | s | 1 const · 4 crate-vis | — | The paged source frames of a PSYCH_PROFILE body (FIX 10054, Rule 5): a size bound is a codec frame, never a… |
 | `src/write_envelope/profile_snapshot/keys.rs` | src | s | 1 struct · 1 fn | PsychProfileKey | Stable Person x Facet x World addressing and entity-id derivation |
 | `src/write_envelope/profile_snapshot/mod.rs` | src | s | 3 mod · 5 re-export | — | Profile snapshot records, addressing and canonical MessagePack codec |
-| `src/write_envelope/profile_snapshot/record.rs` | src | s | 3 struct · 3 enum · 6 fn · 18 const · 2 crate-vis | PsychProfile, PsychProfileConfidence, PsychProfileSnapshotStatus, PsychProfileSource, PsychProfileStaleReason, PsychProfileState | Snapshot record types, projections, and constructors/validators |
+| `src/write_envelope/profile_snapshot/record.rs` | src | m | 4 struct · 6 enum · 8 fn · 19 const · 2 crate-vis | PsychProfile, PsychProfileByteRange, PsychProfileConfidence, PsychProfileSnapshotStatus, PsychProfileSource, PsychProfileSourceWords, PsychProfileSpanText, PsychProfileStaleReason +2 | Snapshot record types, projections, and constructors/validators |
 | `src/write_envelope/provenance/actor_stamp.rs` | src | s | 1 struct | ActorStamp | Opaque actor stamp identity |
 | `src/write_envelope/provenance/actor_substrate.rs` | src | s | 6 fn · 1 const | — | Actor-class validation and model substrate codec |
 | `src/write_envelope/provenance/codec.rs` | src | m | 1 struct · 5 fn | EdgeProvenanceClaimBody | Edge-provenance value record and its fail-closed MessagePack gate |

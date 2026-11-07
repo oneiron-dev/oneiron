@@ -100,7 +100,7 @@ mod walk;
 mod worker_host;
 
 pub use broker::{BROKER_EFFECTOR, KeyDoor, VaultKeyDoor};
-pub(crate) use broker_context::BrokerContext;
+pub(crate) use broker_context::{BrokerContext, WeakBrokerContext};
 use cooldown::FallbackRung;
 pub use cooldown::{OfferCooldowns, QuotaChoice, QuotaFallback, QuotaQuestion};
 pub use decision_read::DecisionReadDoor;
