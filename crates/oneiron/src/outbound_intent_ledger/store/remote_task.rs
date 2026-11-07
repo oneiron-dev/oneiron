@@ -120,7 +120,7 @@ pub(crate) fn abandon_unconfirmed_remote_task(
         RecordedOutboundOutcome::Abandoned(IntentEscalationReason::RemoteTaskFailed),
         now_ms,
     )? {
-        Transitioned::Moved(record) | Transitioned::Replayed(record) => record.state,
+        Transitioned::Moved(record, _) | Transitioned::Replayed(record) => record.state,
     };
     wtxn.commit().map_err(Error::from)?;
     let synced = force_sync(vault);
