@@ -158,6 +158,8 @@ impl Vault {
                 repo_ref.clone(),
             )
             .with_registration(Some(registration.clone()));
+            // The edge read ends here: the record time takes the writer.
+            let belongs = in_project(&repo)?;
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             let mut batch = self.batch_in();
             let mut changed = false;
@@ -174,7 +176,7 @@ impl Vault {
                 );
                 changed = true;
             }
-            if !in_project(&repo)? {
+            if !belongs {
                 batch = batch.edge(&repo, EdgeKind::BelongsTo, &project, 1.0);
                 changed = true;
             }
