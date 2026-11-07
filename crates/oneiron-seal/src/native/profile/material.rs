@@ -269,6 +269,8 @@ pub(super) async fn gather_validation_material(
     let mut ocsps_der = Vec::new();
     let mut covered = 0usize;
     let mut need = 0usize;
+    // Admitted once, when a certificate first falls to OCSP (FIX 13657).
+    let mut ocsp_context = None;
     for chain in [signer_chain_ders.as_slice(), tsa_chain] {
         for cert in chain {
             if ctx.config.trust_anchors_der.iter().any(|a| a == cert) {
@@ -293,8 +295,20 @@ pub(super) async fn gather_validation_material(
                         break;
                     }
                 }
+                if !crl_covered && ocsp_context.is_none() {
+                    ocsp_context = Some(
+                        ocsp::OcspContext::admitted(
+                            &certs_der,
+                            &ctx.config.trust_anchors_der,
+                            &memory,
+                        )
+                        .map_err(|refusal| refusal.seal_error(SealStage::Revocation))?,
+                    );
+                }
                 if !crl_covered
-                    && let Some(ocsp) = ocsp::fetch_valid_ocsp(ctx, cert, issuer, &memory).await?
+                    && let Some(context) = &ocsp_context
+                    && let Some(ocsp) =
+                        ocsp::fetch_valid_ocsp(ctx, cert, issuer, context, &memory).await?
                 {
                     if ocsps_der.is_empty() {
                         let slots = signer_chain_ders.len().saturating_add(tsa_chain.len());
