@@ -15,7 +15,9 @@
 //! store, else by its whole bytes' BLAKE3 in any store (the same bytes are
 //! the same blob). Opaque residue gives the sealed-file placeholder without
 //! a byte read; span marks give the 2a masked copy, which falls to the
-//! placeholder when it does not rebuild clean. Every other object keeps its
+//! placeholder when it does not rebuild clean. A blob no mark names is
+//! masked all the same where its mask row or a value custody knows now
+//! reads in it (FIX 8966), with no mark minted. Every other object keeps its
 //! payload (CALL P2), so the copy store holds it at its original id.
 //!
 //! A recipient copy (FIX 9328, CALL GIT-REVEAL-OCCURRENCES) walks the same
@@ -44,6 +46,7 @@ use crate::git_wire::{
     GitObjectEdge, GitObjectKind, GitOid, GitProjectedPayload, GitRetainedObject, GitWire,
     GitWireRepo, git_object_edges,
 };
+use crate::store::known_value_index::KnownValues;
 
 /// One copied object: its original id, its copy's, and what changed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -119,7 +122,8 @@ impl Frame {
 /// Copies the closure of `tips` from `canonical` into `copy_store`, every
 /// object children first, each marked blob masked and each object above a
 /// changed one re-encoded (module docs). `release` names a recipient
-/// copy's released files; `None` is the masked copy.
+/// copy's released files; `None` is the masked copy. `known` is the values
+/// custody knows now, `None` when it knows none.
 ///
 /// # Errors
 /// An object the canonical store lacks, a loop, a malformed object, a
@@ -134,6 +138,7 @@ pub(crate) fn copy_repo_projection_objects(
     facts: &RepoMarkFacts,
     store_id: EntityId,
     release: Option<&RepoProjectionRelease>,
+    known: Option<&KnownValues>,
 ) -> Result<RepoProjectionCopy> {
     let mut copy = RepoProjectionCopy::default();
     let mut copied: HashSet<ObjectKey> = HashSet::new();
@@ -145,6 +150,7 @@ pub(crate) fn copy_repo_projection_objects(
         facts,
         store_id,
         release,
+        known,
     };
     for tip in tips {
         let root = (tip.clone(), None);
@@ -189,6 +195,7 @@ struct Walk<'a, 'w> {
     facts: &'a RepoMarkFacts,
     store_id: EntityId,
     release: Option<&'a RepoProjectionRelease>,
+    known: Option<&'a KnownValues>,
 }
 
 /// A walk level for `original` at `occurrence`: what it names, its bytes
@@ -269,9 +276,14 @@ impl Walk<'_, '_> {
             {
                 (self.wire.project_blob(&object, None)?, Vec::new())
             }
-            (GitObjectKind::Blob, _) => {
-                project_blob(self.vault, self.wire, self.facts, self.store_id, &object)?
-            }
+            (GitObjectKind::Blob, _) => project_blob(
+                self.vault,
+                self.wire,
+                self.facts,
+                self.store_id,
+                &object,
+                self.known,
+            )?,
             (GitObjectKind::Tree, Some(_)) => {
                 let names: HashMap<Vec<u8>, GitOid> = children
                     .iter()
@@ -329,23 +341,23 @@ impl Walk<'_, '_> {
     }
 }
 
-/// A blob's copy: masked when a readable mark names it, else its payload.
+/// A blob's copy: masked where a readable mark names it, its mask row
+/// places a span, or a value `known` holds reads in it (FIX 8966), else its
+/// payload.
 fn project_blob(
     vault: &Vault,
     wire: &GitWire<'_>,
     facts: &RepoMarkFacts,
     store_id: EntityId,
     object: &GitRetainedObject,
+    known: Option<&KnownValues>,
 ) -> Result<(GitProjectedPayload, Vec<EntityId>)> {
     let marks = blob_marks(facts, store_id, object);
-    if marks.is_empty() {
-        return Ok((wire.project_blob(object, None)?, Vec::new()));
-    }
     let bytes = if marks.opaque() {
         REPO_OPAQUE_FILE_BYTES.to_vec()
     } else {
         let txn = vault.store.env.read_txn()?;
-        project_repo_bytes_in_txn(vault, &txn, &marks, object.read_bytes()?, None)?.into_bytes()
+        project_repo_bytes_in_txn(vault, &txn, &marks, object.read_bytes()?, known)?.into_bytes()
     };
     Ok((
         wire.project_blob(object, Some(bytes.as_slice()))?,

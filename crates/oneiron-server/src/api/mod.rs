@@ -230,11 +230,11 @@ pub(crate) use self::mcp_gateway::{
     MCP_PROTOCOL_VERSION, McpBoardOmissions, mcp_admit_scoped_call, resolve_mcp_gateway_actor,
 };
 pub(crate) use self::mcp_gateway::{
-    McpCallContext, ReaderChildDoor, RunGuests, VerdictAsker, WorkflowPreflight,
-    deliver_run_board_hooks, drop_run_board, execute_run_board_verb,
+    McpCallContext, McpCodeRunContinuations, ReaderChildDoor, RunGuests, VerdictAsker,
+    WorkflowPreflight, deliver_run_board_hooks, drop_run_board, execute_run_board_verb,
     execute_run_board_verb_in_session, mcp_gateway, mcp_stream_reads_task, mcp_stream_task_row,
-    mcp_tool_first_gateway, person_socket_admits, preflight_task_workflow, resolve_mcp_caller,
-    ride_run_carrier, run_session_reads,
+    mcp_tool_first_gateway, person_socket_admits, preflight_task_workflow,
+    reenter_ready_mcp_code_runs, resolve_mcp_caller, ride_run_carrier, run_session_reads,
 };
 pub(crate) use self::memory::*;
 pub(crate) use self::memory_reason::*;
