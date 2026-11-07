@@ -493,6 +493,7 @@ both bindings and their export-census tests in one change.
 - `vault.coach.training_offers.pilots.complete`
 - `vault.coach.training_offers.pilots.get`
 - `vault.coach.training_offers.sources`
+- `vault.coach.training_runs.cancel`
 - `vault.drafters.list`
 - `vault.drafters.list_as`
 - `vault.drafters.status`
@@ -648,6 +649,7 @@ both bindings and their export-census tests in one change.
 - `host.compact`
 - `host.wake`
 - `host.budget.hit`
+- `vault.hooks.checks`
 - `vault.hooks.replay`
 - `vault.hooks.regen.due`
 - `vault.hooks.regen.get`
@@ -700,6 +702,7 @@ both bindings and their export-census tests in one change.
 - `vault.code.oplog`
 - `execute_code`
 - `vault.code.model_heal_count`
+- `vault.code.corrections`
 - `vault.code.type_diagnostics`
 - `vault.code.waits.resolve`
 - `vault.code.waits.receipt`
@@ -846,6 +849,9 @@ both bindings and their export-census tests in one change.
 - `ask`
 - `wait`
 - `tasks.answer`
+- `tasks.answer.forward.challenge`
+- `tasks.answer.forward`
+- `tasks.answer.forward.status`
 - `tasks.outcomes`
 - `vault.rooms.list`
 - `vault.rooms.messages`
@@ -1241,3 +1247,4 @@ both bindings and their export-census tests in one change.
 - `vault.mail.inbox`
 - `vault.mail.threads.read`
 - `vault.mail.compliance.search`
+- `vault.files.sources.convert`
