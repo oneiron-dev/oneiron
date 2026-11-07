@@ -923,14 +923,19 @@ fn rpc_error(
     message: &str,
     server_error: Option<Value>,
 ) -> String {
-    let mut data = json!({ "kind": kind, "error_code": kind, "human_message": message });
-    if let (Some(server_error), Some(data)) = (server_error, data.as_object_mut()) {
-        data.insert("server_error".to_owned(), server_error);
-    }
-    json!({
+    let mut response = json!({
         "jsonrpc": "2.0",
         "id": id,
-        "error": { "code": code, "message": message, "data": data },
-    })
-    .to_string()
+        "error": {
+            "code": code,
+            "message": message,
+            "data": { "kind": kind, "error_code": kind, "human_message": message },
+        },
+    });
+    if let (Some(server_error), Some(data)) =
+        (server_error, response["error"]["data"].as_object_mut())
+    {
+        data.insert("server_error".to_owned(), server_error);
+    }
+    response.to_string()
 }
