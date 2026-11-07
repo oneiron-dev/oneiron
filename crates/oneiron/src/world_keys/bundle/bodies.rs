@@ -5,8 +5,8 @@
 use super::{
     BTreeSet, BUNDLE_LABEL, Cursor, EntityId, GENERATION_LEN, KEY_ID_LEN, Kek, OpenedBundleSection,
     OpenedVaultBundle, PADS_LABEL, REQUEST_TAG, Result, SECTION_KEY_CONTEXT, SECTION_LABEL,
-    SealedBundleGeneration, SealedWorldAuthority, WorldKey, WorldKeyId, Zeroizing, refused,
-    section_padded_len, signed_digest,
+    SealedBundleGeneration, SealedBundleSection, SealedWorldAuthority, WorldKey, WorldKeyId,
+    Zeroizing, refused, section_padded_len, signed_digest,
 };
 pub(super) fn decode_bundle_body(
     vault_id: &[u8; 32],
