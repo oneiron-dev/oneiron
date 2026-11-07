@@ -591,6 +591,19 @@ pub enum EngineLimit {
     /// (FIX 5218). Past it the row asks whether everything is okay and
     /// the merge scores over every receipt.
     SharedMergeEvidenceRows,
+    /// Third-party interlocutors one context-pack request names: the
+    /// submitted `interlocutors.third_parties` list whole, label-only
+    /// parties included, measured after its shape checks and before contact
+    /// resolution (physical65 ABC14). Past it the row asks whether
+    /// everything is okay and every party is resolved and served whole.
+    ContextThirdParties,
+    /// Explicit pinned refs one board or pack request names: the submitted
+    /// `pinned_refs` list, measured where it is read and before its
+    /// resolution (physical68 ABC17). Manifest, hook and voice pins are
+    /// separate policies and are not counted here. Past it the row asks
+    /// whether everything is okay and every ref is resolved and served
+    /// whole.
+    MemoryPinnedRefs,
     /// Files one legacy codebase snapshot manifest names (FIX 74). Past
     /// it the row asks whether everything is okay and the manifest is
     /// kept whole.
