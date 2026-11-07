@@ -287,11 +287,8 @@ fn confirm_in_writer(
     // Every answer is kept; only each one's shape is checked.
     let mut intake_keys = std::collections::BTreeSet::new();
     for answer in &spec.intake {
-        if answer.field_key.trim().is_empty()
-            || answer.field_key.len() > 64
-            || answer.value.len() > 4096
-            || !intake_keys.insert(&answer.field_key)
-        {
+        // A key and value of any length (ABC rows 71, 72).
+        if answer.field_key.trim().is_empty() || !intake_keys.insert(&answer.field_key) {
             return Err(refused(
                 "booking confirm intake answer is malformed or duplicated",
             ));

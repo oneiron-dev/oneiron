@@ -116,6 +116,8 @@ side_tables! {
     /// Retired consult fan-out policy carrier; the policy manifest now governs.
     /// Declared so bytes written by older engines stay owned. Key: ().
     TASK_FANOUT_POLICY: VaultMeta b"tasks/fanout_policy/v1" Named;
+    /// One participant's explicit team choice. Key: caller attempt hex, `:`, team reference.
+    TEAM_BALLOT: VaultMeta b"team:ballot:v1:" Named;
     /// A team deliverable's owner review: team, leader, root TASK, output revision, reviewed
     /// claim fingerprint and what the review asks. Key: id16 (reviewed claim).
     TEAM_DELIVERABLE: VaultMeta b"team:deliverable:v1:" Named;
@@ -225,6 +227,10 @@ side_tables! {
     /// One recorded vault-cleanup decision (accepted/auto), listing archived and skipped candidates.
     /// Key: id16.
     VAULT_CLEANUP_DIGEST: VaultMeta b"vault_cleanup.digest.v1:" Raw;
+    /// Which cleanup proposal, digest and run rows name an id, so an erase reads only those
+    /// (FIX 7616). Key: the named id16, the listing's tag byte (`p`, `d` or `r`), then the
+    /// listing row's id16. Value: empty.
+    VAULT_CLEANUP_ENTITY_ROW: VaultMeta b"vault_cleanup.entity_row.v1:" Raw;
     /// Mint-time evidence pinning a PERSON as extraction-produced and eligible for the claimless-
     /// person cleanup arm. Key: id16 (PERSON id).
     VAULT_CLEANUP_EXTRACTION_PERSON: VaultMeta b"vault_cleanup.extraction_person.v1:" Raw;

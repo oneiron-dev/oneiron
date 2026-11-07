@@ -93,7 +93,9 @@ impl EngineNativeExecutor<'_> {
         let generation = self
             .storage
             .put_code_run_wait_resume_record(record, expected, key, seq, &path)?;
-        self.storage.clear_wait(key)?;
+        if let crate::code_run::ExecutorStorage::Session(_) = &self.storage {
+            self.storage.clear_wait(key)?;
+        }
         Ok(Some(generation))
     }
 

@@ -9,31 +9,15 @@
 //! from the run itself: the agent, the person its subject anchor names, the
 //! line the run's entry spends on, the clock and the skills the run's own
 //! session loaded. Every field no host resolves is left out of the brief
-//! and named on one unavailable line, never stated as a value.
+//! and named on one unavailable line
+//! ([`oneiron::context_board::SelfBrief::render`]), never stated as a value.
 
-use oneiron::context_board::{
-    CommunicationLimits, SelfBrief, SelfBriefState, SessionReadSet, StreamConnectionId,
-};
+use oneiron::context_board::{SelfBriefState, SessionReadSet, StreamConnectionId};
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::DescribeRequest;
 
 use crate::server::SyncServer;
-
-/// The brief fields no host resolves for a run (FIX-LIST: the self-brief
-/// producers), each by its identity key and the name its unavailable line
-/// gives it: left out of a resolved brief and named on that line.
-const RUN_BRIEF_UNRESOLVED: [(&str, &str); 6] = [
-    ("grant_revision", "grant_revision"),
-    ("cast", "cast"),
-    ("communication", "communication limits"),
-    ("classes", "class verdicts"),
-    ("working_set", "working set"),
-    ("effective_scope", "effective scope"),
-];
-
-/// The head of a resolved brief's unavailable line.
-const RUN_BRIEF_UNAVAILABLE: &str = "unavailable (no producer yet)";
 
 /// Answers a pumped run's `describe(self)` for its agent `actor`, over the
 /// run's own board `connection`, its entry spending on `line`: the run's
@@ -63,90 +47,40 @@ pub(crate) async fn describe_self_for_run(
         .await
         .get(&(actor.entity_ref(), connection.0.clone()))
         .map(|run| run.state.clone());
-    let (brief, tail) = match installed {
-        Some(state) => {
-            let brief = state.describe(&server.vault, &reads, Some(&people))?;
-            let tail = brief.render();
-            (brief, tail)
-        }
-        None => {
-            let (state, unavailable) = resolved_state(server, actor, line, &reads)?;
-            let brief = state.describe(&server.vault, &reads, Some(&people))?;
-            let tail = render_resolved(&brief, &unavailable);
-            (brief, tail)
-        }
+    let state = match installed {
+        Some(state) => state,
+        None => resolved_state(server, actor.entity_ref(), line, &reads)?,
     };
+    let brief = state.describe(&server.vault, &reads, Some(&people))?;
+    let tail = brief.render();
     let sources = brief.sources(&server.vault, Some(&people))?;
     let value = serde_json::to_value(oneiron::task_verb::TaskDescription::SelfCard { tail })
         .map_err(|_| internal("self brief encoding failed"))?;
     Ok((value, sources))
 }
 
-/// [`SelfBrief::render`]'s sections for a resolved brief: each field
-/// `unavailable` names (its identity key, its name) is left out of
-/// identity, and one line after the sections names them all, so no
-/// placeholder reads as a resolved fact. Escaped as the renderer escapes.
-fn render_resolved(brief: &SelfBrief, unavailable: &[(&str, &str)]) -> String {
-    let mut identity = serde_json::to_value(brief).unwrap_or_default();
-    let skills = identity
-        .as_object_mut()
-        .and_then(|fields| {
-            for (key, _) in unavailable {
-                fields.remove(*key);
-            }
-            fields.remove("skills")
-        })
-        .unwrap_or_default();
-    let safe = |value: &serde_json::Value| {
-        value
-            .to_string()
-            .replace('&', "\\u0026")
-            .replace('<', "\\u003c")
-            .replace('>', "\\u003e")
-    };
-    let mut out = format!(
-        "<skills>{}</skills>\n<identity>{}</identity>",
-        safe(&skills),
-        safe(&identity)
-    );
-    if let Some(people) = &brief.people {
-        out.push('\n');
-        out.push_str(&people.render());
-    }
-    let names: Vec<&str> = unavailable.iter().map(|(_, name)| *name).collect();
-    out.push_str(&format!("\n{RUN_BRIEF_UNAVAILABLE}: {}", names.join(", ")));
-    out
-}
-
-/// The run's brief state as the run itself resolves it, and the fields it
-/// could not: [`RUN_BRIEF_UNRESOLVED`] always, the principal when no subject
-/// anchor names the person behind the agent, and the budget when no line
-/// binds the run's entry. Each unresolved field holds a value
-/// [`render_resolved`] leaves out.
-fn resolved_state(
+/// The run's brief state as the run itself resolves it for its agent
+/// `self_ref`. Each field no host produces for a run (FIX-LIST: the
+/// self-brief producers) is `None`; so is the principal when no subject
+/// anchor names the person behind the agent, and so are the budget lease and
+/// budget when no line binds the run's entry.
+/// [`oneiron::context_board::SelfBrief::render`] leaves each `None` field out
+/// and names it unavailable. A credentialed agent's describe(self) with no
+/// installed snapshot resolves its brief here too, over its own session's
+/// reads and with no line (FIX 11461).
+pub(super) fn resolved_state(
     server: &SyncServer,
-    actor: oneiron::WriteActor,
+    self_ref: oneiron::EntityId,
     line: Option<&RunAdmission>,
     reads: &SessionReadSet,
-) -> MemoryResult<(SelfBriefState, Vec<(&'static str, &'static str)>)> {
-    let mut unavailable = RUN_BRIEF_UNRESOLVED.to_vec();
-    let self_ref = actor.entity_ref();
+) -> MemoryResult<SelfBriefState> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
+    let clock_ms = u64::try_from(now.as_millis()).unwrap_or(u64::MAX);
+    // Subject anchors are dated in milliseconds, as PEOPLE reads them.
     let principal =
-        oneiron::subject_model::actor_subject_anchor(&server.vault, &self_ref, now.as_secs())?
-            .unwrap_or_else(|| {
-                unavailable.push(("principal", "principal"));
-                self_ref
-            });
-    let (budget_lease_id, budget) = match line {
-        Some(line) => (line.run().to_owned(), line.read()),
-        None => {
-            unavailable.extend([("budget_lease_id", "budget lease"), ("budget", "budget")]);
-            (String::new(), unresolved_budget())
-        }
-    };
+        oneiron::subject_model::actor_subject_anchor(&server.vault, &self_ref, clock_ms)?;
     // The skills the run's own session loaded, each one whose record
     // stands: a brief describes a skill from its record.
     let mut skill_index = Vec::new();
@@ -158,41 +92,20 @@ fn resolved_state(
             skill_index.push(id);
         }
     }
-    Ok((
-        SelfBriefState {
-            self_ref,
-            principal,
-            cast: Vec::new(),
-            grant_revision: 0,
-            effective_scope: oneiron::federation::Scope::default(),
-            communication: CommunicationLimits {
-                scope: oneiron::federation::Scope::default(),
-                recipients: Vec::new(),
-                max_messages: None,
-            },
-            classes: Vec::new(),
-            budget_lease_id,
-            budget,
-            clock_ms: u64::try_from(now.as_millis()).unwrap_or(u64::MAX),
-            skill_index,
-            working_set: Vec::new(),
-        },
-        unavailable,
-    ))
-}
-
-/// The empty budget an unmetered run's brief holds and never renders.
-fn unresolved_budget() -> oneiron::llm::BudgetRead {
-    oneiron::llm::BudgetRead {
-        attempt_id: String::new(),
-        limit_units: 0,
-        cap_units: 0,
-        used_units: 0,
-        reserved_units: 0,
-        remaining_units: 0,
-        on_budget_exhausted: oneiron::BudgetExhaustionPolicy::Suspend,
-        fired_thresholds: Vec::new(),
-    }
+    Ok(SelfBriefState {
+        self_ref,
+        principal,
+        cast: None,
+        grant_revision: None,
+        effective_scope: None,
+        communication: None,
+        classes: None,
+        budget_lease_id: line.map(|line| line.run().to_owned()),
+        budget: line.map(RunAdmission::read),
+        clock_ms,
+        skill_index,
+        working_set: None,
+    })
 }
 
 /// The vault's people as the agent's own lane on this device reads them,

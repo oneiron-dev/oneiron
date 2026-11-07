@@ -367,6 +367,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.members.projection", post(facade_route))
         .route("/vault.members.add", post(facade_route))
         .route("/vault.members.invitation_slip", post(facade_route))
+        .route("/vault.members.invitation_code", post(facade_route))
         .route("/vault.members.change", post(facade_route))
         .route("/vault.members.remove", post(facade_route))
         .route("/vault.members.leave", post(facade_route))

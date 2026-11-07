@@ -100,11 +100,6 @@ pub(super) fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> 
     if config.ephemeral_timeout_ms <= 0 {
         return Err(invalid_sync_config(SyncConfigField::EphemeralTimeoutMs));
     }
-    if config.max_ephemeral_payload_bytes == 0 {
-        return Err(invalid_sync_config(
-            SyncConfigField::MaxEphemeralPayloadBytes,
-        ));
-    }
     if config.max_ephemeral_snapshot_bytes == 0 {
         return Err(invalid_sync_config(
             SyncConfigField::MaxEphemeralSnapshotBytes,

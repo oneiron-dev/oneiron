@@ -131,6 +131,7 @@ impl VmGuestHost {
         }
         let ledger = bind_unix_socket(&self.hypnos_socket)?;
         spawn_outbound(ledger, VM_LEDGER_PORT);
+        super::vm_source_control::register(self.ctl_socket.clone());
         Ok(())
     }
 }

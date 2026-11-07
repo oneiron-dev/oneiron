@@ -48,6 +48,13 @@ impl<'v> RoomTurnHandle<'v> {
             .room
     }
 
+    /// The credential reference a hook's ask can retain for this turn's
+    /// original door, under the same checks as [`Memory::verb_ask_credential`].
+    #[must_use]
+    pub fn verb_ask_credential(&self) -> Option<crate::runtime_hooks::verb::VerbAskCredential> {
+        self.memory.verb_ask_credential()
+    }
+
     /// The Scope this turn reads inside now.
     pub fn scope(&self) -> MemoryResult<oneiron_authority::federation::Scope> {
         self.memory.room_read_scope(self.room())

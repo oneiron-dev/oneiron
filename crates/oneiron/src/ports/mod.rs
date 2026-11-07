@@ -108,3 +108,4 @@ pub(crate) use time::{
     persist_id_floor_in_txn, recorded_at_in_txn,
 };
 pub use time::{Clock, IdGen, StoreClock};
+pub(crate) use time::{PreparedRecordingClock, RecordingClockProjection};

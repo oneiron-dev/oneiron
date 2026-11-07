@@ -417,6 +417,31 @@ impl BatchBuilder<'_> {
         self
     }
 
+    /// The archive NOTE put (FIX 7777): stages the bytes an
+    /// [`ArchivedNoteAdmission`] carries, and only those. Its one
+    /// constructor, in the NOTE archive import owner, proves them a NOTE body
+    /// whose author is no local actor, so a restored NOTE is imported
+    /// evidence and never this vault's actor's note. The kind registry and
+    /// the immutable birth bytes are checked at apply, as for every NOTE.
+    ///
+    /// [`ArchivedNoteAdmission`]: crate::note::ArchivedNoteAdmission
+    pub(crate) fn put_archived_note(
+        mut self,
+        id: &EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+        admission: &crate::note::ArchivedNoteAdmission,
+    ) -> Self {
+        self.ops.push(plain_put_op(
+            id,
+            crate::registry::ENTITY_TYPE_NOTE,
+            occurred,
+            learned_at,
+            admission.body(),
+        ));
+        self
+    }
+
     /// Adds a type-0 (CLAIM) put whose predicate may live in the reserved
     /// `edge.*` namespace (D17 reserved-namespace door).
     ///

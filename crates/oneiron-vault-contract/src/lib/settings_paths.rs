@@ -71,6 +71,7 @@ pub const OWNER_PATHS: &[&str] = &[
     "models.dreamer.wording.coach_skill_draft_prompt_file",
     "models.dreamer.wording.coach_skill_cause_prompt_file",
     "models.dreamer.wording.coach_producer_fix_prompt_file",
+    "models.dreamer.wording.coach_prompt_repair_prompt_file",
     "models.roles.*.prompt_file",
     "models.roles.*.rungs.prompt_file",
     "models.dreamer.wording.code_fix_reproduced_prompt_file",

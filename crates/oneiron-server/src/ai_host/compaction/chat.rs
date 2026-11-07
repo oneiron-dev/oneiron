@@ -119,13 +119,21 @@ impl LiveAdmission for AnswerAdmission {
 impl AiHandle {
     /// The self mode `agent` answers chat in (FIX 4465 D), when its
     /// definition's profile names `self` and the vault's row reads the live
-    /// context, on `live_fork` or `auto` (FIX 6029). `None` keeps the chat
-    /// path as it was. A host whose writer
+    /// context, on `live_fork` or `auto` (FIX 6029). A definition that
+    /// carries no profile names `self` on the host's window (FIX 7744), while
+    /// this host's writer compaction is live. `None` keeps the chat path as
+    /// it was. A host whose writer
     /// factory is off still reads the agent's log this way; its breakpoint
     /// names why no flight runs.
     pub(crate) fn chat_self_mode(&self, vault: &Vault, agent: EntityId) -> Option<ChatSelfMode> {
         let definition = vault.get_agent_definition(&agent).ok().flatten()?;
-        let profile = definition.memory_profile.clone()?;
+        let profile = match definition.memory_profile.clone() {
+            Some(profile) => profile,
+            None => match self.writer_compaction.get() {
+                Some(CodeModeCompaction::Live(live)) => live.profile.clone().as_self_writer(),
+                _ => return None,
+            },
+        };
         let row = vault
             .purpose_default_table()
             .ok()?

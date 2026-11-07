@@ -95,6 +95,10 @@ pub enum ConversationCompactionUnavailable {
     Unmetered,
     /// A blocking host.compact hook saved an ask/Pending stop (FIX 10085).
     Pending(VerbHookStop),
+    /// The first turn past the hot tail holds the agent's own pins, and they
+    /// do not fit one summary or the backend's input beside it (FIX 9837):
+    /// a pin is never dropped, so the log stays raw.
+    PinsDoNotFit,
 }
 
 impl ConversationCompactionUnavailable {
@@ -110,6 +114,7 @@ impl ConversationCompactionUnavailable {
             Self::LogUnreadable => "log_unreadable",
             Self::Unmetered => "unmetered",
             Self::Pending(_) => "pending",
+            Self::PinsDoNotFit => "pins_do_not_fit",
         }
     }
 }
@@ -190,6 +195,15 @@ pub fn seal_conversation_flight<'a>(
         driver.abandon();
         return Err(Why::NoWindow);
     };
+    // The agent's own pins the window holds word for word are mandatory
+    // (FIX 9837): the window keeps the whole turns whose pins fit with them.
+    let Some((window, mut pins)) =
+        window_with_pins(window, &driver.memory_profile().verbatim_pins, budget, room)
+    else {
+        driver.backend().end_flight();
+        driver.abandon();
+        return Err(Why::PinsDoNotFit);
+    };
     let turn_start = window.messages.first().map_or(0, |message| message.turn);
     let fits = |pins: &[String]| {
         crate::tokenizer::count_context_pack_tokens(&pins.join("\n")) as u64 <= budget
@@ -197,22 +211,7 @@ pub fn seal_conversation_flight<'a>(
                 compaction_input_tokens(turn_start, &window.messages, pins, None, budget) <= room
             })
     };
-    // The agent's own pins the window holds word for word, while they fit,
-    // then the lines a `host.compact` hook pins.
-    let mut pins: Vec<String> = Vec::new();
-    for pin in &driver.memory_profile().verbatim_pins {
-        let held = !pin.trim().is_empty()
-            && window
-                .messages
-                .iter()
-                .any(|message| message.content.contains(pin.as_str()));
-        if held && !pins.contains(pin) {
-            pins.push(pin.clone());
-            if !fits(&pins) {
-                pins.pop();
-            }
-        }
-    }
+    // Then the lines a `host.compact` hook pins, while they fit.
     let last = window.messages.last().map_or(0, |message| message.turn);
     let hooks = vault.pre_compact_hooks(
         compact_invocation(log.conversation.as_bytes(), last),
@@ -285,17 +284,77 @@ fn window_within(window: &ChatLogWindow, budget: u64, room: Option<u64>) -> Opti
     if held == 0 {
         return None;
     }
+    Some(window_prefix(window, held))
+}
+
+/// The first `held` whole turns of `window`, with the sources they name.
+fn window_prefix(window: &ChatLogWindow, held: usize) -> ChatLogWindow {
     let spans = window.spans[..held].to_vec();
     let sources = spans
         .iter()
         .flat_map(|span| std::iter::once(span.turn).chain(span.messages.iter().copied()))
         .collect();
-    Some(ChatLogWindow {
+    ChatLogWindow {
         session: window.session,
         messages: window.messages[..held].to_vec(),
         sources,
         spans,
-    })
+    }
+}
+
+/// The agent's own literal pins `messages` hold word for word, each once, in
+/// the profile's order.
+fn profile_pins(messages: &[super::CompactionWindowMessage], profile: &[String]) -> Vec<String> {
+    let mut pins: Vec<String> = Vec::new();
+    for pin in profile {
+        let held = !pin.trim().is_empty()
+            && messages
+                .iter()
+                .any(|message| message.content.contains(pin.as_str()));
+        if held && !pins.contains(pin) {
+            pins.push(pin.clone());
+        }
+    }
+    pins
+}
+
+/// The longest whole-turn prefix of `window` whose own profile pins fit one
+/// summary and the backend's input beside it, with those pins (FIX 9837): a
+/// pin is never dropped, so a turn that brings one that does not fit ends
+/// the window before it. `None` when not even the first turn's fit.
+fn window_with_pins(
+    window: ChatLogWindow,
+    profile: &[String],
+    budget: u64,
+    room: Option<u64>,
+) -> Option<(ChatLogWindow, Vec<String>)> {
+    let fits = |turns: usize| {
+        let messages = &window.messages[..turns];
+        let turn_start = messages.first()?.turn;
+        let pins = profile_pins(messages, profile);
+        (crate::tokenizer::count_context_pack_tokens(&pins.join("\n")) as u64 <= budget
+            && room.is_none_or(|room| {
+                compaction_input_tokens(turn_start, messages, &pins, None, budget) <= room
+            }))
+        .then_some(pins)
+    };
+    if let Some(pins) = fits(window.messages.len()) {
+        return Some((window, pins));
+    }
+    // Whole turns only: the largest count whose pins fit, by halves.
+    let (mut held, mut over, mut kept) = (0, window.messages.len(), None);
+    while over - held > 1 {
+        let mid = held + (over - held) / 2;
+        match fits(mid) {
+            Some(pins) => {
+                held = mid;
+                kept = Some(pins);
+            }
+            None => over = mid,
+        }
+    }
+    let pins = kept?;
+    Some((window_prefix(&window, held), pins))
 }
 
 /// How a conversation flight ended.

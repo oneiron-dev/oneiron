@@ -49,7 +49,10 @@ use serde::{Deserialize, Serialize};
 
 pub(super) use self::actors::{opened_content, unavailable};
 pub(super) use self::capture::{project_image, seal_image};
-pub(super) use self::restore::{OpenedPayload, open_image_payload, restore_opened_in_txn};
+pub(super) use self::restore::{
+    OpenedPayload, SelectedPayload, open_image_payload, open_selected_payload,
+    restore_opened_in_txn,
+};
 use self::rows::{Class, DbClass, Families};
 use self::seal::Bundle;
 pub(super) use self::seal::open_bundle;

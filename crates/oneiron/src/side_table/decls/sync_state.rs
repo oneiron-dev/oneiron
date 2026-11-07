@@ -312,6 +312,11 @@ side_tables! {
     /// Durable receipt for one applied/rejected NOTE-operation request, kept for reconnect/reopen.
     /// Key: hex32 (entity id) ":" hex32 (request id).
     SYNC_NC_E: SyncState b"nc:e:" LegacyJson;
+    /// Marks a replica's NOTE fork its authority sent (FIX 12789): the
+    /// authority's fork set settles it, and a fork made here carries no mark.
+    /// Key: hex32(note) ":" hex32(fork); value: BLAKE3 of the fork document
+    /// as sent.
+    NOTE_FORK_AUTHORITY: SyncState b"note_fork_authority:v1:" Raw;
     /// Marks a window whose peer-authored NOTE inbox residue was staged, consulted by the note
     /// module's erasure sweep. Key: yyyy-mm (window key).
     SYNC_NOTE_INBOX: SyncState b"note_inbox:v1:" Raw;
@@ -563,15 +568,20 @@ side_tables! {
     /// Aggregated usage-metering rollup totals (cost/units) for one owner/vault pair. Key: hex ":"
     /// hex (owner, vault).
     USAGE_VAULT_ROLLUP: SyncState b"usage:rollup:vault:" Named;
-    /// Admitted foreign-import payload retained only while its receipt is Pending, so recovery
-    /// survives losing the in-memory stage. Key: hex64.
+    /// The by-reference ASSET bodies a confirmed staged import still owes (FIX 12408): each owed
+    /// body's admitted window and row, and every row its kept content carries. No body bytes.
+    /// Key: hex64 (receipt).
+    VAULT_IMPORT_BODY_WORK: SyncState b"vault_import_body_work:v1:" Raw;
+    /// Admitted foreign-import payload retained while its receipt is Pending, so recovery
+    /// survives losing the in-memory stage, and after its confirmation while it owes bodies.
+    /// Key: hex64.
     VAULT_IMPORT_CONTENT: SyncState b"vault_import_content:v1:" Raw;
     /// Terminal/pending status receipt (hand-rolled MessagePack map) for one foreign vault-import
     /// artifact, keyed by its content-derived receipt id. Key: hex64.
     VAULT_IMPORT_RECEIPT: SyncState b"vault_import_receipt:v1:" Raw;
     /// The facet stamps a foreign artifact staged ahead of their rows, kept with its receipt while
-    /// it is Pending and bound to it by the receipt's digest, so its confirmation holds every one
-    /// of them again. Key: hex64.
+    /// it is Pending, and after its confirmation while it owes bodies, bound to it by the
+    /// receipt's digest, so its confirmation holds every one of them again. Key: hex64.
     VAULT_IMPORT_STAMPS: SyncState b"vault_import_stamps:v1:" Raw;
     /// A BASE row the owner's discard of a world copy took as that world's alone (FIX 14534):
     /// the world's id (16 bytes), the ingest ladder's cue to judge the row's body again before

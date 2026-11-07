@@ -270,7 +270,8 @@ impl Memory<'_> {
             annotations.insert("sensitivity".into(), band.into());
         }
         let scope = serde_json::Value::Object(annotations);
-        super::super::caps::check_claim_input(&ClaimInput {
+        // ABC row 22: the claim is measured whole, never refused for size.
+        let bytes = super::super::caps::claim_input_json_bytes(&ClaimInput {
             id: input.id.clone(),
             predicate: input.predicate.clone(),
             subject_ref: input.subject_ref.clone(),
@@ -289,6 +290,9 @@ impl Memory<'_> {
             salience: input.salience,
             confidence_details: None,
         })?;
+        let _ = self
+            .vault
+            .measure_limit(crate::limit_ask::EngineLimit::ClaimInputJsonBytes, bytes);
         self.verified_actor_class()?;
         let id = id_from_optional_hex(self.vault, input.id.as_deref())?;
         // A run's door opened the room's view for its caller: the subject

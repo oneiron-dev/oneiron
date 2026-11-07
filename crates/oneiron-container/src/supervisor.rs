@@ -118,9 +118,23 @@ impl Supervisor {
         relay: Arc<dyn EgressRelay>,
     ) -> Result<(FenceProof, Guard)> {
         let deadline = Instant::now() + self.config.startup_timeout;
-        let (mut stream, _) = loop {
+        // FIX 747: any local user can reach the socket, so each connection's
+        // peer is checked against the container's own process before a byte
+        // is read. Another peer is dropped and the next connection waited
+        // for, so none can take the one handshake or end the startup.
+        let mut container_pid = None;
+        let mut stream = loop {
             match self.listener.accept() {
-                Ok(pair) => break pair,
+                Ok((stream, _)) => {
+                    if from_container(&runtime, &name, &stream, &mut container_pid) {
+                        break stream;
+                    }
+                    if Instant::now() >= deadline {
+                        return Err(Error::Fence(io::Error::other(
+                            "fence launcher did not prove readiness",
+                        )));
+                    }
+                }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                     if child.try_wait().map_err(Error::Fence)?.is_some()
                         || Instant::now() >= deadline
@@ -262,6 +276,38 @@ fn network_none(e: &serde_json::Value) -> bool {
         && e[0]["Config"]["User"]
             .as_str()
             .is_some_and(|s| !s.is_empty() && !s.starts_with("0:"))
+}
+/// Whether `stream`'s peer is the container's own process (FIX 747), read
+/// from the socket before any byte of it. The container's PID comes from the
+/// runtime once it names one, and is kept. A peer that is not it, or a
+/// container the runtime cannot name a process for yet, is no handshake.
+fn from_container(
+    runtime: &Path,
+    name: &str,
+    stream: &UnixStream,
+    container_pid: &mut Option<u64>,
+) -> bool {
+    let Ok(peer) = peer_pid(stream) else {
+        return false;
+    };
+    if peer <= 0 {
+        return false;
+    }
+    let expected = match *container_pid {
+        Some(pid) => pid,
+        None => {
+            let Some(pid) = inspect(runtime, name)
+                .ok()
+                .and_then(|evidence| evidence[0]["State"]["Pid"].as_u64())
+                .filter(|pid| *pid != 0)
+            else {
+                return false;
+            };
+            *container_pid = Some(pid);
+            pid
+        }
+    };
+    peer as u64 == expected
 }
 fn peer_pid(stream: &UnixStream) -> io::Result<i32> {
     // SAFETY: ucred is a plain C value filled by getsockopt with its exact size.
@@ -547,7 +593,7 @@ fn datagram_writer(socket: Arc<Socket>, state: Arc<State>) {
                         && let Some(_room) = relay_workers::reserve(&state, &socket)
                         && let Ok(answer) = state.relay.datagram(target, &bytes[..n])
                     {
-                        let _ = host.send(&answer);
+                        relay_workers::deliver(&state, &socket, host, &answer);
                     }
                 }
                 Err(e)
