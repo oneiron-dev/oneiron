@@ -34,7 +34,13 @@
 //!   runs no hook again, so a hook's ask is never entered twice: it answers
 //!   the kept view, and a view never settled reads withheld. What each hook
 //!   did rides the answer (FIX 5425); the run's record keeps the staged
-//!   answer, never a hook's changed view, as for every hooked call.
+//!   answer, never a hook's changed view, as for every hooked call. A stop
+//!   in the pre chain keeps on the receipt what the canonical path keeps
+//!   (FIX 18654): a hidden result is the write's kept answer, and any other
+//!   stop keeps the never-ran mark (`VERB_HOOK_STOPPED`) and goes to the
+//!   dispatcher. A resumed step makes a never-ran write again under the
+//!   mark's generation, as the canonical path does. A mark whose receipt
+//!   cannot be kept is the run's error.
 //!
 //! Its rows ride no turn of the room (`SESSION_WRITES_RIDE_NO_TURN`, CALLS-7,
 //! unchanged). Nothing here asks where the caller or the vault runs.
@@ -51,18 +57,20 @@ use crate::code_run::types::{
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::memory::{HostWriteOrigin, MemoryError};
+use crate::runtime_hooks::VerbHookStop;
 use crate::session_overlay::RouteTarget;
 use crate::task_verb::sdk::AgentVerb;
 
 use super::super::{ExecutorCallSite, HostSelfDispatcher};
-use super::{KeptWrite, answered};
+use super::{KeptWrite, VERB_HOOK_HIDDEN, VERB_HOOK_STOPPED, answered, never_ran_mark};
 
 impl HostSelfDispatcher<'_> {
     /// `call`, a `vault.notes.create` or `vault.claims.upsert` call of a run
     /// bound to an off-record session, staged in its room: its kept answer
     /// when the step already made it, else admitted, prepared and staged
     /// with its receipt in one segment of the run's captured route. A
-    /// refusal is kept on the same receipt (FIX 5299).
+    /// refusal is kept on the same receipt (FIX 5299), and so is a hook
+    /// stop's canonical mark (FIX 18654).
     pub(super) fn dispatch_session_write(
         &self,
         call: SelfAgentVerbCall,
@@ -95,7 +103,8 @@ impl HostSelfDispatcher<'_> {
         };
         // FIX 5299: a refused write keeps its refusal on its receipt, in a
         // second segment of the captured route once its own rolled back. A
-        // refusal whose receipt is not kept so is the run's error.
+        // hook's stop keeps its mark the same way (FIX 18654). A refusal or
+        // mark whose receipt is not kept so is the run's error.
         let refuse = |refused: SelfDispatchOutcome| -> Result<SelfDispatchOutcome> {
             if let Some((receipt, stopped)) = &receipt {
                 binding.keep_session_write_refusal(&call, (receipt, *stopped), &refused)?;
@@ -120,7 +129,23 @@ impl HostSelfDispatcher<'_> {
             .transpose()?;
         // The row's verb hooks, in the room, before the write is prepared: a
         // stop is the answer, and a rewrite is what the write prepares.
-        let (pre, mut hooks) = self.session_write_pre(&call, key, site)?;
+        let (pre, mut hooks) = match self.session_write_pre(&call, key, site) {
+            Ok(entered) => entered,
+            // FIX 18654: a stop keeps on the receipt what the canonical path
+            // keeps. A hidden result is the write's kept answer.
+            Err(Error::VerbHook(stop)) if matches!(*stop, VerbHookStop::Hidden { .. }) => {
+                return refuse(answered(Err(AgentVerbRefusal {
+                    code: VERB_HOOK_HIDDEN.to_owned(),
+                })));
+            }
+            // A skip or an ask stopped the write before it ran: the receipt
+            // keeps the never-ran mark, and the stop goes to the dispatcher.
+            Err(Error::VerbHook(stop)) => {
+                refuse(never_ran_mark(VERB_HOOK_STOPPED))?;
+                return Err(Error::VerbHook(stop));
+            }
+            Err(error) => return Err(error),
+        };
         let stage = match binding.session.prepare_session_write(
             &binding.route,
             self.actor,
