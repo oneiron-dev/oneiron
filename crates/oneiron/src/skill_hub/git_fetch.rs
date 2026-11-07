@@ -24,6 +24,9 @@ pub struct GitEndpointSkillHubAdapter {
     hub_id: EntityId,
     endpoint: String,
     commit: String,
+    /// Reads under the local-only profile of a local folder hub (FIX 21922):
+    /// the configured commit only, from objects already on this host.
+    local_only: bool,
 }
 impl GitEndpointSkillHubAdapter {
     pub fn new(hub_id: EntityId, endpoint: &str, expected_commit: &str) -> Result<Self> {
@@ -34,6 +37,28 @@ impl GitEndpointSkillHubAdapter {
             hub_id,
             endpoint: normalize_endpoint(endpoint)?,
             commit: expected_commit.to_ascii_lowercase(),
+            local_only: false,
+        })
+    }
+    /// The transport of a local folder hub (FIX 21922): `endpoint` is an
+    /// absolute directory holding a Git object database, and only
+    /// `expected_commit` is read from it. No network, no checkout and no
+    /// working-tree file: a commit or object it lacks fails the read.
+    pub(super) fn new_local(
+        hub_id: EntityId,
+        endpoint: &str,
+        expected_commit: &str,
+    ) -> Result<Self> {
+        if !is_oid(expected_commit) {
+            return Err(config_invalid(
+                "a local folder hub requires a full commit pin",
+            ));
+        }
+        Ok(Self {
+            hub_id,
+            endpoint: normalize_local_endpoint(endpoint)?,
+            commit: expected_commit.to_ascii_lowercase(),
+            local_only: true,
         })
     }
     /// Follows a tag to the commit it names now (a pinned-ref sync). The commit
@@ -44,11 +69,12 @@ impl GitEndpointSkillHubAdapter {
             return Err(invalid("invalid Git tag"));
         }
         let endpoint = normalize_endpoint(endpoint)?;
-        let (_, commit) = fetch_revision(&endpoint, &format!("refs/tags/{tag}"))?;
+        let (_, commit) = fetch_revision(&endpoint, &format!("refs/tags/{tag}"), false)?;
         Ok(Self {
             hub_id,
             endpoint,
             commit,
+            local_only: false,
         })
     }
     /// Immutable resolved revision to attach to host tracking/provenance.
@@ -64,6 +90,11 @@ impl GitEndpointSkillHubAdapter {
             HubPin::Commit(commit) if commit.eq_ignore_ascii_case(&self.commit) => {
                 self.commit.clone()
             }
+            _ if self.local_only => {
+                return Err(config_invalid(
+                    "a local folder hub reads only its configured commit pin",
+                ));
+            }
             HubPin::ContentHash(_) => self.commit.clone(),
             HubPin::Tag(tag) | HubPin::Semver(tag) if valid_tag(tag) => format!("refs/tags/{tag}"),
             _ => {
@@ -76,7 +107,7 @@ impl GitEndpointSkillHubAdapter {
         if subtree != "." {
             crate::skill::canonical_skill_tree_hash([(subtree.as_str(), &[][..])])?;
         }
-        let (repo, resolved) = fetch_revision(&self.endpoint, &revision)?;
+        let (repo, resolved) = fetch_revision(&self.endpoint, &revision, self.local_only)?;
         if resolved != self.commit {
             return Err(invalid("Git tag or commit drift"));
         }
@@ -138,18 +169,21 @@ impl SkillHubAdapter for GitEndpointSkillHubAdapter {
     /// lists every skill; a folder whose tree or frontmatter does not import is
     /// left out, and an import of it refuses with the reason. A discovery in
     /// which every folder read is kept for its commit; one in which a folder's
-    /// read failed is read again next time.
+    /// read failed is read again next time. A local folder hub reads its own
+    /// objects every time: no network discovery stands in for that read.
     fn discover(&self) -> Result<Vec<HubIndexEntry>> {
-        let kept = DISCOVERED
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(&self.endpoint)
-            .filter(|(commit, _)| *commit == self.commit)
-            .map(|(_, entries)| entries.clone());
-        if let Some(entries) = kept {
-            return Ok(entries);
+        if !self.local_only {
+            let kept = DISCOVERED
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .get(&self.endpoint)
+                .filter(|(commit, _)| *commit == self.commit)
+                .map(|(_, entries)| entries.clone());
+            if let Some(entries) = kept {
+                return Ok(entries);
+            }
         }
-        let (repo, resolved) = fetch_revision(&self.endpoint, &self.commit)?;
+        let (repo, resolved) = fetch_revision(&self.endpoint, &self.commit, self.local_only)?;
         if resolved != self.commit {
             return Err(invalid("Git tag or commit drift"));
         }
@@ -201,7 +235,7 @@ impl SkillHubAdapter for GitEndpointSkillHubAdapter {
                 ref_string: folder,
             });
         }
-        if complete {
+        if complete && !self.local_only {
             DISCOVERED
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
@@ -287,42 +321,78 @@ pub(super) fn normalize_endpoint(endpoint: &str) -> Result<String> {
     }
     Ok(url.to_string())
 }
-/// One shallow, blob-less fetch into a fresh scratch store. Returns the store
-/// and the commit the revision resolved to.
-fn fetch_revision(endpoint: &str, revision: &str) -> Result<(GitScratch, String)> {
-    let repo = GitScratch::new()?;
+/// A local folder hub's endpoint (FIX 21922): an existing absolute directory
+/// on the engine host, canonicalized, in UTF-8. A URL, a `file://` URL, the
+/// `owner/repo` shorthand and a relative path all refuse.
+pub(super) fn normalize_local_endpoint(endpoint: &str) -> Result<String> {
+    if !std::path::Path::new(endpoint).is_absolute() {
+        return Err(config_invalid(
+            "a local folder hub requires an absolute directory on the engine host",
+        ));
+    }
+    let path = std::fs::canonicalize(endpoint).map_err(|_| {
+        config_invalid("a local folder hub directory does not exist or cannot be read")
+    })?;
+    if !path.is_dir() {
+        return Err(config_invalid(
+            "a local folder hub endpoint is not a directory",
+        ));
+    }
+    Ok(path
+        .to_str()
+        .ok_or_else(|| config_invalid("a local folder hub path is not UTF-8"))?
+        .to_owned())
+}
+/// A local folder hub's configuration refusal.
+fn config_invalid(reason: &str) -> crate::error::Error {
+    crate::error::Error::InvalidConfig(reason.to_owned())
+}
+/// One shallow fetch into a fresh scratch store. Returns the store and the
+/// commit the revision resolved to. The network fetch is blob-less with a
+/// promisor origin; a local-only fetch (FIX 21922) takes every blob of the
+/// commit from the local repository under the file transport alone.
+fn fetch_revision(
+    endpoint: &str,
+    revision: &str,
+    local_only: bool,
+) -> Result<(GitScratch, String)> {
+    let repo = if local_only {
+        GitScratch::new_local()?
+    } else {
+        GitScratch::new()?
+    };
     repo.run(
         &["--git-dir=repo", "config", "remote.origin.url", endpoint],
         4096,
     )?;
-    repo.run(
-        &["--git-dir=repo", "config", "remote.origin.promisor", "true"],
-        4096,
-    )?;
-    repo.run(
-        &[
-            "--git-dir=repo",
-            "config",
-            "remote.origin.partialclonefilter",
-            "blob:none",
-        ],
-        4096,
-    )?;
-    repo.run(
-        &[
-            "--git-dir=repo",
-            "fetch",
-            "--quiet",
-            "--no-tags",
-            "--no-recurse-submodules",
-            "--depth=1",
-            "--filter=blob:none",
-            "--",
-            "origin",
-            revision,
-        ],
-        4096,
-    )?;
+    if !local_only {
+        repo.run(
+            &["--git-dir=repo", "config", "remote.origin.promisor", "true"],
+            4096,
+        )?;
+        repo.run(
+            &[
+                "--git-dir=repo",
+                "config",
+                "remote.origin.partialclonefilter",
+                "blob:none",
+            ],
+            4096,
+        )?;
+    }
+    let mut fetch = vec![
+        "--git-dir=repo",
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        "--no-recurse-submodules",
+        "--depth=1",
+    ];
+    if !local_only {
+        fetch.push("--filter=blob:none");
+    }
+    fetch.extend(["--", "origin", revision]);
+    repo.run(&fetch, 4096)?;
     let resolved = repo.run(
         &[
             "--git-dir=repo",

@@ -470,6 +470,8 @@ export class Oneiron {
       create: (input: Facade.CommitmentCreateRequest): Facade.CommitmentCreateReceipt => this.#call(() => this.#client.vaultCommitmentsCreate(input) as Facade.CommitmentCreateReceipt),
       /** Reads a commitment with its schedule, birth provenance, separate occurrence and learning times, and lifecycle receipt. */
       get: (input: Facade.CommitmentRefRequest): Facade.CommitmentView => this.#call(() => this.#client.vaultCommitmentsGet(input) as Facade.CommitmentView),
+      /** Reads due-sorted open obligations owed by and to one counterparty contact, with their current commitment views. */
+      ledger: (input: Facade.CommitmentLedgerRequest): Facade.CommitmentLedgerView => this.#call(() => this.#client.vaultCommitmentsLedger(input) as Facade.CommitmentLedgerView),
       /** Lists the materialized occurrences of a commitment series, including closed obligations. */
       instances: (input: Facade.CommitmentRefRequest): Facade.CommitmentView[] => this.#call(() => this.#client.vaultCommitmentsInstances(input) as Facade.CommitmentView[]),
       /** Observes real timer-wake reminder proposals and their run approval keys without authorizing delivery. */
@@ -1095,6 +1097,10 @@ export class Oneiron {
       import: (input: Facade.HubImportRequest): Facade.HubSkillImported => this.#call(() => this.#client.vaultSkillsImport(input) as Facade.HubSkillImported),
       /** The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities. */
       sync: (input: Facade.HubSkillRequest): Facade.HubSkillSyncReceipt => this.#call(() => this.#client.vaultSkillsSync(input) as Facade.HubSkillSyncReceipt),
+      proposal: {
+        /** The owner accepts the exact package in a pending hub update, or rejects only its proposal without changing the working skill. */
+        settle: (input: Facade.HubSkillProposalSettleRequest): Facade.HubSkillProposalSettled => this.#call(() => this.#client.vaultSkillsProposalSettle(input) as Facade.HubSkillProposalSettled),
+      },
       /** Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner. */
       receipts: (input: Facade.HubSkillRequest): Facade.HubSkillReceipts => this.#call(() => this.#client.vaultSkillsReceipts(input) as Facade.HubSkillReceipts),
       /** Converts selected messages through the configured refiner; user initiation approves conversion, never admission. */
@@ -1590,6 +1596,14 @@ export class Oneiron {
           set: (input: Facade.RetainedWorkWaitSetRequest): number => this.#call(() => this.#client.vaultSyncRetainedWorkWaitSet(input) as number),
         },
       },
+      repo_manifests: {
+        conflict: {
+          /** The owner reviews one durable repo-manifest conflict and its exact held/carried manifests; return the opaque binding to discard that reviewed carrier. */
+          review: (input: Facade.RepoManifestConflictReviewRequest): Facade.RepoManifestConflictReviewView | null => this.#call(() => this.#client.vaultSyncRepoManifestsConflictReview(input) as Facade.RepoManifestConflictReviewView | null),
+          /** The owner discards exactly the reviewed carrier, keeping the held manifest; report Stale or WindowLive, or the actual delta and queue acceptance, never delivery. */
+          discard: (input: Facade.RepoManifestConflictDiscardRequest): Facade.RepoManifestConflictDiscardView => this.#call(() => this.#client.vaultSyncRepoManifestsConflictDiscard(input) as Facade.RepoManifestConflictDiscardView),
+        },
+      },
     },
     trusted_contacts: {
       /** A live person names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again. */
@@ -2061,6 +2075,11 @@ export class Oneiron {
         /** Replaces the owner's web connector switch under the owner proof. Only Tavily runs on the backend key; other providers run on the owner's own secret (effector connector:web) or a hub connector. */
         replace: (input: Facade.WebConnectorSetting): Facade.WebConnectorSetting => this.#call(() => this.#client.vaultSettingsWebConnectorReplace(input) as Facade.WebConnectorSetting),
       }),
+      /** Reads the owner's model pack setting: follow the latest pack (the default), a pinned season or a pinned pack, the pack it selects now, the last change and the pack before it, and every installed model pack. */
+      model_pack: Object.assign((input: Facade.EmptyRequest): Facade.ModelPackSetting => this.#call(() => this.#client.vaultSettingsModelPack(input) as Facade.ModelPackSetting), {
+        /** Replaces the owner's model pack preference under the owner proof: auto_upgrade follows the latest pack; pinned names a season, pinned_pack one pack, installed and still served. A move of the active pack sends its change notice. */
+        replace: (input: Facade.ModelPackPreference): Facade.ModelPackSetting => this.#call(() => this.#client.vaultSettingsModelPackReplace(input) as Facade.ModelPackSetting),
+      }),
     },
     secrets: {
       /** The owner lists value-free code-result secret lift proposals. With dismiss, one exact handle and occurrence is dismissed with a receipt first; secret and taint marks, body redaction and exports remain unchanged. */
@@ -2338,6 +2357,12 @@ export class Oneiron {
       proposal_settlement: (input: Facade.CodeProposalSettlementRequest): Facade.CodeProposalSettlementView => this.#call(() => this.#client.vaultCodeProposalSettlement(input) as Facade.CodeProposalSettlementView),
       /** Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal. */
       oplog: (input: Facade.CodeRepoRequest): Facade.CodeMutationLog => this.#call(() => this.#client.vaultCodeOplog(input) as Facade.CodeMutationLog),
+      secrets: {
+        /** Read one repository's marked secrets and linked remediations, value-free: each mark's blob, path, detector kind, where the push saw it and its custody handle. Owner only. */
+        get: (input: Facade.CodeRepoRequest): Facade.CodeRepoSecretsView => this.#call(() => this.#client.vaultCodeSecretsGet(input) as Facade.CodeRepoSecretsView),
+        /** Stage one remediation of a repository's current code: marked keys become secret references, committed .env files go, .gitignore and .env.example follow. Owner only. It only proposes. */
+        propose: (input: Facade.CodeRepoSecretProposeRequest): Facade.CodeRepoSecretRemediation => this.#call(() => this.#client.vaultCodeSecretsPropose(input) as Facade.CodeRepoSecretRemediation),
+      },
       /** Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy. */
       model_heal_count: (input: Facade.CodeRunModelHealCountRequest): Facade.CodeRunModelHealCountView => this.#call(() => this.#client.vaultCodeModelHealCount(input) as Facade.CodeRunModelHealCountView),
       /** Read one code run's durable correction records as the owner, oldest first: per model response its model, repairs, outcome and committed checkpoint, with the repair policy. Canonical runs only. */
@@ -2345,9 +2370,9 @@ export class Oneiron {
       /** Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref. */
       type_diagnostics: (input: Facade.CodeRunTypeDiagnosticsRequest): Facade.ProgramStepFeedbackRelease | null => this.#call(() => this.#client.vaultCodeTypeDiagnostics(input) as Facade.ProgramStepFeedbackRelease | null),
       waits: {
-        /** Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken. */
+        /** Answer a sealed code consent wait as its authenticated owner or current policy-admitted power holder, on their own word. First answer wins; the effect meets its current gate once. No raw reply, grant or consumption. */
         resolve: (input: Facade.CodeWaitResolveRequest): Facade.CodeWaitReceiptView => this.#call(() => this.#client.vaultCodeWaitsResolve(input) as Facade.CodeWaitReceiptView),
-        /** Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait. */
+        /** Read a code consent wait as its authenticated owner or current policy-admitted power holder: effect, answer, settlement and replay-consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait. */
         receipt: (input: Facade.CodeWaitReceiptRequest): Facade.CodeWaitReceiptView | null => this.#call(() => this.#client.vaultCodeWaitsReceipt(input) as Facade.CodeWaitReceiptView | null),
       },
       /** Every file changed between two trees of a repository, unit by unit, with the operations that wrote each. */
@@ -2421,6 +2446,10 @@ export class Oneiron {
         publications: (input: Facade.OriginPublicationsRequest): Facade.OriginPublicationsView => this.#call(() => this.#client.vaultCodeOriginPublications(input) as Facade.OriginPublicationsView),
       },
       checkout: {
+        holder: {
+          /** Materialize the caller's own live checkout without a run. One current repo read Grant must cover the full ref at the lease's pinned commit and every path of that tree. Returns the lease-bound remote URL, not a host path; no lease is minted. */
+          bind: (input: Facade.RepoCheckoutBindInput): Facade.RepoCheckoutBindOutput => this.#call(() => this.#client.vaultCodeCheckoutHolderBind(input) as Facade.RepoCheckoutBindOutput),
+        },
         /** Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential. */
         bind: (input: Facade.CheckoutDoorBindRequest): Facade.CheckoutDoorBinding => this.#call(() => this.#client.vaultCodeCheckoutBind(input) as Facade.CheckoutDoorBinding),
         /** Claim the caller's checkout on an assigned task, with a bounded TTL and declared idempotence. */
@@ -2799,11 +2828,11 @@ export class Oneiron {
       manifest: {
         /** Reads the owner-pinned v2 model manifest, or none when no manifest is configured. */
         read: (input: Facade.EmptyRequest): Facade.ModelManifest | null => this.#call(() => this.#client.vaultModelsManifestRead(input) as Facade.ModelManifest | null),
-        /** Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically clearing resident route overrides. */
+        /** Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically retaining resident route overrides that remain admitted. */
         replace: (input: Facade.ModelManifestReplace): Facade.ModelManifest => this.#call(() => this.#client.vaultModelsManifestReplace(input) as Facade.ModelManifest),
       },
       oneironer: {
-        /** Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and clearing resident route overrides. */
+        /** Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and retaining resident route overrides that remain admitted. */
         bind: (input: Facade.OneironerBind): Facade.ModelManifest => this.#call(() => this.#client.vaultModelsOneironerBind(input) as Facade.ModelManifest),
       },
       routes: {
@@ -2853,6 +2882,10 @@ export class Oneiron {
         deny: (input: Facade.ModelBindingProposalRef): Facade.ModelBindingProposal => this.#call(() => this.#client.vaultModelsBindingsDeny(input) as Facade.ModelBindingProposal),
       },
     },
+    model_pack: {
+      /** Reverts a model pack change, its notice's one tap: pins the pack before it while the change is the vault's last and that pack is installed at its bytes and served; else answers why it cannot run now and changes nothing. */
+      revert: (input: Facade.ModelPackRevertRequest): Facade.ModelPackRevert => this.#call(() => this.#client.vaultModelPackRevert(input) as Facade.ModelPackRevert),
+    },
     voices: {
       packs: {
         /** A person banks one immutable reference pack of their own voice, or a designed voice's creator of that voice: the first source pack makes its identity, a captured pack cites the subject's current render grant, and a retry is a no-op. */
@@ -2880,6 +2913,8 @@ export class Oneiron {
       create: (input: Facade.QuestionCreateRequest): Facade.QuestionRecord => this.#call(() => this.#client.vaultQuestionsCreate(input) as Facade.QuestionRecord),
       edit: (input: Facade.QuestionEditRequest): Facade.QuestionRecord => this.#call(() => this.#client.vaultQuestionsEdit(input) as Facade.QuestionRecord),
       pause: (input: Facade.QuestionPauseRequest): Facade.QuestionPaused => this.#call(() => this.#client.vaultQuestionsPause(input) as Facade.QuestionPaused),
+      prepare: (input: Facade.QuestionPrepareRequest): Facade.QuestionPrepared => this.#call(() => this.#client.vaultQuestionsPrepare(input) as Facade.QuestionPrepared),
+      admit: (input: Facade.QuestionAdmitRequest): Facade.AnswerRecord => this.#call(() => this.#client.vaultQuestionsAdmit(input) as Facade.AnswerRecord),
       backfill: (input: Facade.QuestionBackfillRequest): Facade.ScheduledBackfill => this.#call(() => this.#client.vaultQuestionsBackfill(input) as Facade.ScheduledBackfill),
       read: (input: Facade.QuestionReadRequest): Facade.QuestionRecord | null => this.#call(() => this.#client.vaultQuestionsRead(input) as Facade.QuestionRecord | null),
       /** Reads the caller's standing question closed outcome windows, across its versions, each naming its answer with how it closed. */
@@ -3668,6 +3703,8 @@ export class Oneiron {
       abort: (input: Facade.ModelStreamAbort): Facade.ModelStreamTerminal => this.#call(() => this.#client.aiStreamsAbort(input) as Facade.ModelStreamTerminal),
       /** Read the one durable terminal of the caller's model stream by key (its ordered ContentParts, usage and finish reason, or its recorded failure) after any restart, without calling a model. */
       terminal: (input: Facade.ModelStreamTerminalRequest): Facade.ModelStreamTerminal => this.#call(() => this.#client.aiStreamsTerminal(input) as Facade.ModelStreamTerminal),
+      /** Explicitly discard this credential's model-stream replay and revoke its handles; the producer and durable terminal stay. Later subscribers get only future events; never-released replay stays unchanged. */
+      release: (input: Facade.ModelStreamRelease): Facade.ModelStreamReleased => this.#call(() => this.#client.aiStreamsRelease(input) as Facade.ModelStreamReleased),
     },
     /** Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs. */
     reply: (input: Facade.AiReplyRequest): Facade.AiReply => this.#call(() => this.#client.aiReply(input) as Facade.AiReply),
@@ -3684,11 +3721,11 @@ export class Oneiron {
       },
       /** Opens an owner-bound live media session on the configured voice routes, using the caller credential, room audience and existing budget gates. */
       start: (input: Facade.LiveVoiceStartRequest): Facade.LiveVoiceSession => this.#call(() => this.#client.aiVoiceStart(input) as Facade.LiveVoiceSession),
-      /** Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech retires old output through the shared cancellation path. */
+      /** Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech, or words that are not a backchannel, retire old output through the shared cancellation path, and a backchannel starts no reply. */
       audio: (input: Facade.LiveVoiceAudioRequest): Facade.LiveVoiceProcessed => this.#call(() => this.#client.aiVoiceAudio(input) as Facade.LiveVoiceProcessed),
-      /** Reads ordered utterance and epoch events, PCM, flushes, playout stops, safeguard receipts and notices; advancing the cursor releases consumed events. */
+      /** Reads ordered utterance and epoch events, PCM, flushes, playout stops, safeguard receipts, notices and heard-playback records; advancing the cursor releases consumed events. */
       events: (input: Facade.LiveVoiceEventsRequest): Facade.LiveVoiceEvents => this.#call(() => this.#client.aiVoiceEvents(input) as Facade.LiveVoiceEvents),
-      /** Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed. */
+      /** Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed, with the samples it played, which the epoch's heard-playback record rests on. */
       ack: (input: Facade.LiveVoiceAckRequest): Facade.LiveVoiceProcessed => this.#call(() => this.#client.aiVoiceAck(input) as Facade.LiveVoiceProcessed),
       /** Observes actual voice-brain run settlements and a terminal boundary after producer teardown, epoch retirement, TTS cancel and client playout acknowledgment. */
       usage: (input: Facade.LiveVoiceUsageRequest): Facade.LiveVoiceUsage => this.#call(() => this.#client.aiVoiceUsage(input) as Facade.LiveVoiceUsage),
@@ -3773,7 +3810,7 @@ export class Oneiron {
   /** Waits on an ask, or on a world-privacy request its caller opened, at a step with no other work: pending, changed, ready with its result or the request's applied or declined state, or a park for code mode. */
   wait(handle: TaskAskHandle, stepKey = "sdk.wait"): Facade.TaskAskWait { return this.#call(() => this.#client.wait({handle, step_key: stepKey}) as Facade.TaskAskWait) }
   readonly connector = {
-    /** Every live catalogued connector whose name or summary matches the query. */
+    /** Every matching live catalogued connector and first-party web interface, distinguished by source. */
     list: (input: Facade.ConnectorListRequest): Facade.ConnectorEntry[] => this.#call(() => this.#client.connectorList(input) as Facade.ConnectorEntry[]),
     /** One catalogued connector by name, removed ones included. */
     status: (input: Facade.ConnectorNameRequest): Facade.ConnectorView | null => this.#call(() => this.#client.connectorStatus(input) as Facade.ConnectorView | null),
