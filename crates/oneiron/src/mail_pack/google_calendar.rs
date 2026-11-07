@@ -293,6 +293,7 @@ impl MailCalendarWire for HttpGoogleCalendarWire<'_> {
             ),
             complete,
             covers: None,
+            vacated: Vec::new(),
         }))
     }
 }

@@ -59,3 +59,19 @@ company server), connect it with provider `imap`:
   the provider and follows the delete setting.
 - An mbox export of the same mailbox, imported before or after, lands each
   message once.
+
+## A CalDAV calendar
+
+For a calendar on iCloud, Fastmail, Nextcloud or another CalDAV server,
+connect it with provider `caldav` and kind `calendar`:
+
+- The person stores, through the owner secrets form, a JSON credential for
+  effector `connector:caldav_calendar`: `url` (the CalDAV server over HTTPS,
+  for example `https://caldav.icloud.com/` or `https://caldav.fastmail.com/`),
+  `username`, `password` (an app password where the provider offers one),
+  and `calendar` (the calendar's name as the person sees it; the first
+  calendar that holds events when absent).
+- The provider account is `<username>@<host>`, the host the URL's, exactly as
+  stored.
+- One source reads one calendar. Connect another source for each other
+  calendar the person wants counted.
