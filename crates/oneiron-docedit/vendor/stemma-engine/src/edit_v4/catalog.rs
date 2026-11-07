@@ -70,7 +70,7 @@ fn group_of(op: &str) -> &'static str {
         "set_image_attrs" | "delete_image" | "insert_image" | "replace_image"
         | "set_image_layout" => "images",
         "comment_create" | "comment_reply" | "comment_resolve" | "comment_delete" => "comments",
-        "insert_note" | "edit_note" | "delete_note" => "notes",
+        "insert_note" | "edit_note" | "edit_note_runs" | "delete_note" => "notes",
         "set_page_setup" | "set_section_type" | "insert_section_break" => "sections",
         "edit_header"
         | "edit_footer"
@@ -155,6 +155,9 @@ fn cue_of(op: &str) -> &'static str {
         "comment_delete" => "Delete a comment and its anchor range markers.",
         "insert_note" => "Insert a footnote/endnote reference and its story body.",
         "edit_note" => "Edit one note body by its note_id from the current notes index.",
+        "edit_note_runs" => {
+            "Tracked marked-runs redline of one note paragraph by note_id and story-local id."
+        }
         "delete_note" => "Delete one note and its body-side reference by note_id.",
         "set_page_setup" => "Change page geometry for the body or a paragraph's section.",
         "set_section_type" => {
@@ -269,6 +272,9 @@ fn shapes_of(op: &str) -> &'static [&'static str] {
         // notes index.
         "edit_note" => &[
             r#"{"op":"edit_note","note_id":"<note_id>","note_kind":"footnote","body":"<new note body text>"}"#,
+        ],
+        "edit_note_runs" => &[
+            r#"{"op":"edit_note_runs","note_id":"<note_id>","note_kind":"footnote","target":"<block_id>","expect":"<substring currently in the note paragraph>","content":[{"type":"text","text":"<new note text>"}]}"#,
         ],
         // Delete a note and its body-side reference run, by `note_id`.
         "delete_note" => &[r#"{"op":"delete_note","note_id":"<note_id>","note_kind":"footnote"}"#],

@@ -1371,6 +1371,33 @@ pub enum EditStep {
         /// Optional audit metadata from the schema envelope.
         rationale: Option<String>,
     },
+    /// Edit one paragraph WITHIN a footnote/endnote story as marked runs
+    /// (§17.11): a whole-paragraph tracked redline over the story-local
+    /// `block_id`, addressed by the actual `note_id` + `note_kind`. The
+    /// paragraph-scoped sibling of `EditNote` (which keeps its plaintext
+    /// single-paragraph contract byte-unchanged): this step edits the chosen
+    /// top-level paragraph only — including later paragraphs of a
+    /// multi-paragraph note — preserving every other note block, the
+    /// auto-number decoration, and the opaque/comment structural markers.
+    /// `expect` is the current-text precondition (header/footer substring
+    /// law); `content` is the complete new paragraph content; empty content
+    /// empties the paragraph. New `Inserted` runs carry the exact six marks.
+    EditNoteRuns {
+        /// The note id (`w:id`) whose story holds the paragraph.
+        note_id: String,
+        /// Footnote vs endnote (selects the collection to address).
+        note_kind: verbs::footnotes::NoteKind,
+        /// Story-local paragraph block id (never a body id).
+        block_id: NodeId,
+        /// Substring that must appear in the paragraph's current visible text.
+        expect: String,
+        /// Optional full-block semantic-hash precondition.
+        semantic_hash: Option<String>,
+        /// The complete new content for the paragraph.
+        content: ParagraphContent,
+        /// Optional audit metadata from the schema envelope.
+        rationale: Option<String>,
+    },
     // ─── add new authoring verbs above ───────────────────────────────────────
     // Keep each verb's validate/apply logic in `edit/verbs/<verb>.rs` and make
     // the `apply_transaction` arm a one-line delegate. See `edit/AGENTS.md`.
@@ -8431,6 +8458,116 @@ fn set_mark_surface(marks: &mut Vec<Mark>, style_props: &mut StyleProps, target:
     }
 }
 
+/// Keep each structural marker once between the old and replacement readings.
+/// The caller supplies an all-Normal paragraph to the segment builder and
+/// applies exact replacement marks before this pass can split its text runs.
+fn reposition_segment_replacement_markers(
+    para: &mut ParagraphNode,
+    marker_source: &[TrackedSegment],
+) {
+    let Some(pos) = para
+        .segments
+        .iter()
+        .position(|segment| matches!(segment.status, TrackingStatus::Inserted(_)))
+    else {
+        return;
+    };
+    let mut replacement = vec![para.segments.remove(pos)];
+    crate::tracked_model::inject_structural_markers_at_offsets(
+        &mut replacement,
+        marker_source,
+        None,
+    );
+    let replacement = replacement.pop().expect("one replacement segment");
+    let replacement_status = replacement.status;
+    let mut replacement_inlines = replacement.inlines.into_iter();
+    let mut rebuilt = Vec::new();
+    for segment in std::mem::take(&mut para.segments) {
+        if segment.status != TrackingStatus::Normal {
+            rebuilt.push(segment);
+            continue;
+        }
+        for marker in segment.inlines {
+            let inlines: Vec<_> = replacement_inlines
+                .by_ref()
+                .take_while(|inline| !is_structural_marker(inline))
+                .collect();
+            if !inlines.is_empty() {
+                rebuilt.push(TrackedSegment {
+                    status: replacement_status.clone(),
+                    inlines,
+                });
+            }
+            rebuilt.push(TrackedSegment {
+                status: TrackingStatus::Normal,
+                inlines: vec![marker],
+            });
+        }
+    }
+    let inlines: Vec<_> = replacement_inlines.collect();
+    if !inlines.is_empty() {
+        rebuilt.push(TrackedSegment {
+            status: replacement_status,
+            inlines,
+        });
+    }
+    para.segments = rebuilt;
+}
+
+/// The shared segment builder emits one inline per fragment in its single
+/// Inserted segment. Set only those new text nodes; Deleted source runs and
+/// preserved opaque/break nodes keep their original formatting and history.
+fn set_exact_replacement_marks(para: &mut ParagraphNode, content: &ParagraphContent) {
+    for segment in &mut para.segments {
+        if !matches!(segment.status, TrackingStatus::Inserted(_)) {
+            continue;
+        }
+        for (inline, fragment) in segment.inlines.iter_mut().zip(&content.fragments) {
+            let InlineNode::Text(node) = inline else {
+                continue;
+            };
+            let target = match fragment {
+                ContentFragment::Text(_) => InlineMarkSet::default(),
+                ContentFragment::StyledText { marks, .. } => *marks,
+                _ => continue,
+            };
+            set_mark_surface(&mut node.marks, &mut node.style_props, target);
+            if target.underline
+                && node.style_props.underline_style == Some(crate::domain::UnderlineStyle::None)
+            {
+                node.style_props.underline_style = None;
+            }
+            // Absence is explicit OFF, not inheritance from the paragraph or
+            // character style. All unrelated run properties stay as built.
+            node.rpr_authored.bold = true;
+            node.rpr_authored.bold_off = !target.bold;
+            node.rpr_authored.italic = true;
+            node.rpr_authored.italic_off = !target.italic;
+            node.rpr_authored.bold_cs = true;
+            node.rpr_authored.italic_cs = true;
+            node.style_props.bold_cs = if target.bold {
+                MarkValue::On
+            } else {
+                MarkValue::Off
+            };
+            node.style_props.italic_cs = if target.italic {
+                MarkValue::On
+            } else {
+                MarkValue::Off
+            };
+            node.rpr_authored.underline = true;
+            node.rpr_authored.underline_off = !target.underline;
+            node.rpr_authored.vert_align = true;
+            node.rpr_authored.strike = true;
+            node.style_props.strike = if target.strike {
+                MarkValue::On
+            } else {
+                MarkValue::Off
+            };
+        }
+    }
+}
+
 fn next_revision(base: &RevisionInfo, counter: &mut u32) -> RevisionInfo {
     let rev = RevisionInfo {
         revision_id: *counter,
@@ -12033,6 +12170,29 @@ pub(crate) fn apply_transaction_with_notes(
                     &mut doc,
                     note_id,
                     *note_kind,
+                    &transaction.revision,
+                    transaction.materialization_mode,
+                    &mut rev_counter,
+                    step_index,
+                )?;
+            }
+            EditStep::EditNoteRuns {
+                note_id,
+                note_kind,
+                block_id,
+                expect,
+                semantic_hash,
+                content,
+                rationale: _,
+            } => {
+                verbs::footnotes::apply_edit_runs(
+                    &mut doc,
+                    note_id,
+                    *note_kind,
+                    block_id,
+                    expect,
+                    semantic_hash.as_deref(),
+                    content,
                     &transaction.revision,
                     transaction.materialization_mode,
                     &mut rev_counter,
