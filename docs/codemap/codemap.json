@@ -6913,7 +6913,7 @@
      "path": "src/batch/builder/puts.rs",
      "purpose": "Entity-put builder doors: the public put, the typed crate doors, and the sync/test replicated door",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 2
      }
     },
@@ -26001,13 +26001,15 @@
      "kind": "src",
      "notable": [
       "HostLegalChannel",
-      "HostLegalConnection"
+      "HostLegalConnection",
+      "HostLegalConnectionRole"
      ],
      "path": "src/deletion/legal_hold/clone/auth.rs",
      "purpose": "The inherited manager-created listener is the native transport authority",
      "surface": {
-      "fn": 3,
-      "struct": 2
+      "crate-vis": 1,
+      "fn": 6,
+      "struct": 3
      }
     },
     {
@@ -26028,7 +26030,7 @@
      "purpose": "Exact HOST order standing for a live entry, independent of any one socket",
      "surface": {
       "crate-vis": 7,
-      "fn": 1
+      "fn": 3
      }
     },
     {
@@ -26054,13 +26056,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/deletion/legal_hold/clone/outbox.rs",
      "purpose": "The connection half of a HOST order's prospective capture (FIX 13866): stands the order, then streams its…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -38824,6 +38826,16 @@
      "purpose": "The expiry walk's backoff for a timeout demotion that keeps failing (FIX 12079)",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/confirm/lifetime.rs",
+     "purpose": "A locally attached critical confirmation's lifetime as a policy value (FIX 8760): the vault-scope…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -52814,8 +52826,8 @@
      "path": "src/note.rs",
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
-      "crate-vis": 54,
-      "re-export": 20
+      "crate-vis": 55,
+      "re-export": 21
      }
     },
     {
@@ -52825,6 +52837,20 @@
      "path": "src/note/adapter_tests.rs",
      "purpose": "Canonical program adapter laws; no native snapshot grants authority",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ImportedNoteRead"
+     ],
+     "path": "src/note/archive_import.rs",
+     "purpose": "Whole-vault archive import of NOTE rows (FIX 7777)",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1,
+      "struct": 1
+     }
     },
     {
      "bucket": "s",
@@ -74748,7 +74774,7 @@
       "const": 1,
       "crate-vis": 4,
       "enum": 4,
-      "fn": 7,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -84362,6 +84388,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/typed_body/mask.rs",
+     "purpose": "A typed-body call that would write a new secret (FIX 2372; OF-067)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/typed_body/receipts.rs",
      "purpose": "Who made each typed-body commit, kept beside the body (FIX 4513)",
      "surface": {
@@ -92691,7 +92727,7 @@
      "purpose": "Value-free file-mask paths, read visibility, and byte-span transformations"
     },
     "gate": {
-     "files": 197,
+     "files": 198,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92964,7 +93000,7 @@
      "purpose": "Durable model-step failure and reply-check contracts"
     },
     "note": {
-     "files": 75,
+     "files": 76,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -93531,7 +93567,7 @@
      "purpose": "OF-382: a consented corpus, pinned training job, checked checkpoint and owner-approved role swap"
     },
     "typed_body": {
-     "files": 8,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -93638,7 +93674,7 @@
    },
    "over_bar": 181,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6610,
+   "source_files": 6613,
    "test_files": 895
   },
   "oneiron-android": {
@@ -125087,7 +125123,7 @@
      "path": "src/managed/host_legal.rs",
      "purpose": "The manager's inherited legal-copy channel and its joined blocking workers",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -125504,7 +125540,7 @@
      "path": "src/managed/state_serve/admission.rs",
      "purpose": "The reap freeze's write admission (FIX 6902): what a served write and a background pass take, held until…",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 31
      }
     },
     {
