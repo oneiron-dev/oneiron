@@ -390,12 +390,14 @@ fn _indirect_object<'a>(
     Ok((object_id, object))
 }
 
-pub fn header(input: ParserInput, strict: bool) -> Option<String> {
+pub fn header(
+    input: ParserInput, strict: bool, admission: Option<&dyn DecodeAdmission>,
+) -> crate::Result<Option<String>> {
     // Parse version digits (e.g. "1.7") separately from any trailing bytes
     // before the newline.  Some PDF generators (e.g. ImageMill) place binary
     // marker bytes on the header line which would fail UTF-8 validation.
     // In strict mode we reject such trailing bytes; in lenient mode we skip them.
-    let (_, (version_raw, trailing)) = delimited(
+    let Ok((_, (version_raw, trailing))) = delimited(
         tag(&b"%PDF-"[..]),
         pair(
             take_while(|c: u8| c.is_ascii_digit() || c == b'.'),
@@ -403,29 +405,43 @@ pub fn header(input: ParserInput, strict: bool) -> Option<String> {
         ),
         pair(eol, many0_count(comment)),
     )
-    .parse(input)
-    .ok()?;
+    .parse(input) else {
+        return Ok(None);
+    };
 
     if strict && !trailing.is_empty() {
-        return None;
+        return Ok(None);
     }
 
-    let version = str::from_utf8(version_raw).ok()?.to_string();
-    Some(version)
+    let Ok(version) = str::from_utf8(version_raw) else {
+        return Ok(None);
+    };
+    let version = if let Some(admission) = admission {
+        String::from_utf8(decode_admission::copy(admission, version.as_bytes())?)
+            .expect("the parsed PDF version is valid UTF-8")
+    } else {
+        version.to_string()
+    };
+    Ok(Some(version))
 }
 
-pub fn binary_mark(input: ParserInput) -> Option<Vec<u8>> {
-    strip_nom(
-        map_res(
-            delimited(
-                tag(&b"%"[..]),
-                take_while(|c: u8| !b"\r\n".contains(&c)),
-                pair(eol, many0_count(comment)),
-            ),
-            |v: ParserInput| Ok::<Vec<u8>, ()>(v.to_vec()),
+pub fn binary_mark(input: ParserInput, admission: Option<&dyn DecodeAdmission>) -> crate::Result<Option<Vec<u8>>> {
+    let Some(mark) = strip_nom(
+        delimited(
+            tag(&b"%"[..]),
+            take_while(|c: u8| !b"\r\n".contains(&c)),
+            pair(eol, many0_count(comment)),
         )
         .parse(input),
-    )
+    ) else {
+        return Ok(None);
+    };
+    let mark = if let Some(admission) = admission {
+        decode_admission::copy(admission, mark)?
+    } else {
+        mark.to_vec()
+    };
+    Ok(Some(mark))
 }
 
 /// Decode CrossReferenceTable
