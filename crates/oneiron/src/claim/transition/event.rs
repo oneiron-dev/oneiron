@@ -1,4 +1,11 @@
-//! Canonical bounded MessagePack and Ed25519 proof for claim transition events.
+//! Canonical MessagePack and Ed25519 proof for claim transition events.
+//!
+//! An event names its complete prior frontier, however many tips (FIX 8673).
+//! The frontier travels in pages of [`FRONTIER_PAGE_TIPS`] tips: a frontier
+//! of one page is the version-1 wire, its parent list that page, byte for
+//! byte as every event signed before the paged wire; a wider frontier is the
+//! version-2 wire, a list of pages, every page full but the last. Each tip
+//! is in the signed transcript, and each page decodes and checks on its own.
 
 use std::io::Cursor;
 
@@ -10,9 +17,13 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 const DOMAIN: &[u8] = b"oneiron/machine-claim-transition/v1";
-const MAX_WIRE_BYTES: usize = 8192;
-const MAX_PARENTS: usize = 64;
-const VERSION: u64 = 1;
+/// Tips one frontier page carries. A frontier of at most one page signs the
+/// inline wire; a wider one signs the paged wire.
+const FRONTIER_PAGE_TIPS: usize = 64;
+/// The wire whose parent list is the one frontier page itself.
+const VERSION_INLINE: u64 = 1;
+/// The wire whose parent list is a list of more than one frontier page.
+const VERSION_PAGED: u64 = 2;
 
 pub(crate) type TransitionEventHash = [u8; 32];
 
@@ -60,6 +71,8 @@ pub(crate) enum TransitionDelta {
 
 /// Signed event binds one exact birth and one historical authority state.
 /// An empty predecessor set means a direct child of birth. No clock field exists.
+/// `predecessors` is the complete prior frontier, however wide: the codec
+/// pages it, and no count of tips refuses an event.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SignedClaimTransitionEvent {
     pub vault_id: [u8; 32],
@@ -95,8 +108,7 @@ fn integer(value: &Value) -> Result<u64> {
 }
 
 fn validate(event: &SignedClaimTransitionEvent) -> Result<()> {
-    if event.predecessors.len() > MAX_PARENTS
-        || event.predecessors.windows(2).any(|pair| pair[0] >= pair[1])
+    if event.predecessors.windows(2).any(|pair| pair[0] >= pair[1])
         || event.predecessors.contains(&[0; 32])
         || event.vault_id == [0; 32]
         || event.birth_digest == [0; 32]
@@ -127,7 +139,76 @@ fn validate(event: &SignedClaimTransitionEvent) -> Result<()> {
     Ok(())
 }
 
+fn page_value(page: &[TransitionEventHash]) -> Value {
+    Value::Array(page.iter().map(|hash| bin(hash)).collect())
+}
+
+/// The wire version and parent list for `frontier`: one page inline, else
+/// the pages in order, each full but the last.
+fn frontier_value(frontier: &[TransitionEventHash]) -> (u64, Value) {
+    if frontier.len() <= FRONTIER_PAGE_TIPS {
+        return (VERSION_INLINE, page_value(frontier));
+    }
+    (
+        VERSION_PAGED,
+        Value::Array(
+            frontier
+                .chunks(FRONTIER_PAGE_TIPS)
+                .map(page_value)
+                .collect(),
+        ),
+    )
+}
+
+/// One page's tips: at most [`FRONTIER_PAGE_TIPS`] 32-byte hashes.
+fn decode_page(value: &Value) -> Result<Vec<TransitionEventHash>> {
+    let Value::Array(page) = value else {
+        return Err(invalid());
+    };
+    if page.len() > FRONTIER_PAGE_TIPS {
+        return Err(invalid());
+    }
+    page.iter().map(sized::<32>).collect()
+}
+
+/// The complete frontier the parent list of a `version` wire names, read
+/// page by page. A paged wire has more than one page and every page full
+/// but the last, nonempty one; the caller's exact re-encode then refuses
+/// any other paging and any frontier the inline wire would carry.
+fn decode_frontier(version: u64, value: &Value) -> Result<Vec<TransitionEventHash>> {
+    match version {
+        VERSION_INLINE => decode_page(value),
+        VERSION_PAGED => {
+            let Value::Array(pages) = value else {
+                return Err(invalid());
+            };
+            let Some((last, full)) = pages.split_last() else {
+                return Err(invalid());
+            };
+            if full.is_empty() {
+                return Err(invalid());
+            }
+            let mut frontier = Vec::new();
+            for page in full {
+                let page = decode_page(page)?;
+                if page.len() != FRONTIER_PAGE_TIPS {
+                    return Err(invalid());
+                }
+                frontier.extend(page);
+            }
+            let last = decode_page(last)?;
+            if last.is_empty() {
+                return Err(invalid());
+            }
+            frontier.extend(last);
+            Ok(frontier)
+        }
+        _ => Err(invalid()),
+    }
+}
+
 fn unsigned_value(event: &SignedClaimTransitionEvent) -> Value {
+    let (version, frontier) = frontier_value(&event.predecessors);
     let delta = match event.delta {
         TransitionDelta::None => Value::Nil,
         TransitionDelta::ValidTo(end) => Value::from(end),
@@ -136,11 +217,11 @@ fn unsigned_value(event: &SignedClaimTransitionEvent) -> Value {
         TransitionDelta::ScopeBand(band) => Value::from(band),
     };
     Value::Array(vec![
-        Value::from(VERSION),
+        Value::from(version),
         bin(&event.vault_id),
         bin(event.target.as_bytes()),
         bin(&event.birth_digest),
-        Value::Array(event.predecessors.iter().map(|hash| bin(hash)).collect()),
+        frontier,
         bin(&event.authority_head),
         bin(event.actor.as_bytes()),
         Value::from(event.actor_class as u8),
@@ -153,9 +234,6 @@ fn unsigned_value(event: &SignedClaimTransitionEvent) -> Value {
 fn encode_value(value: &Value) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, value).map_err(|_| invalid())?;
-    if bytes.len() > MAX_WIRE_BYTES {
-        return Err(invalid());
-    }
     Ok(bytes)
 }
 
@@ -185,33 +263,20 @@ pub(crate) fn encode_machine_claim_transition_event(
 }
 
 /// Decodes only exact canonical MessagePack; trailing bytes, alternate integer
-/// widths, aliases, duplicate or unsorted parent hashes all fail closed.
+/// widths, aliases, duplicate or unsorted parent hashes, and a frontier paged
+/// any other way than [`frontier_value`] pages it all fail closed. The whole
+/// event decodes, however wide its frontier: no byte or tip count refuses it.
 pub(crate) fn decode_machine_claim_transition_event(
     bytes: &[u8],
 ) -> Result<SignedClaimTransitionEvent> {
-    if bytes.len() > MAX_WIRE_BYTES {
-        return Err(invalid());
-    }
     let mut cursor = Cursor::new(bytes);
     let Value::Array(fields) = rmpv::decode::read_value(&mut cursor).map_err(|_| invalid())? else {
         return Err(invalid());
     };
-    if fields.len() != 12
-        || cursor.position() != bytes.len() as u64
-        || integer(&fields[0])? != VERSION
-    {
+    if fields.len() != 12 || cursor.position() != bytes.len() as u64 {
         return Err(invalid());
     }
-    let Value::Array(parents) = &fields[4] else {
-        return Err(invalid());
-    };
-    if parents.len() > MAX_PARENTS {
-        return Err(invalid());
-    }
-    let predecessors = parents
-        .iter()
-        .map(sized::<32>)
-        .collect::<Result<Vec<_>>>()?;
+    let predecessors = decode_frontier(integer(&fields[0])?, &fields[4])?;
     let actor_class =
         EdgeActorClass::try_from_u8(u8::try_from(integer(&fields[7])?).map_err(|_| invalid())?)
             .ok_or_else(invalid)?;

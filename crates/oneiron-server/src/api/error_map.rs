@@ -19,10 +19,7 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
     }
     // A held first write names the consents it waits on and the join that
     // files them; the generic conversation-state answer would drop both.
-    if matches!(
-        error,
-        oneiron::Error::Record(oneiron::error::RecordError::RoomJoinHeld(_))
-    ) {
+    if let oneiron::Error::Record(oneiron::error::RecordError::RoomJoinHeld(hold)) = &error {
         return ApiError::new(
             error.to_string(),
             ApiErrorDetails::InvalidState {
@@ -31,7 +28,8 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
             [
                 "File the join with vault.rooms.join and the intent_key named here; the write goes through once those parties consent.",
             ],
-        );
+        )
+        .with_room_join_hold(hold.clone());
     }
     // A room's assembly held on a live voice call names the room and the
     // call; the generic conversation-state answer would drop both.
