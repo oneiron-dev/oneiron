@@ -1,11 +1,13 @@
 //! The scoped export door.
+use std::collections::BTreeSet;
+
 use super::{Scope, ScopedRecord, disclosure_scope_for_stored_row, note_world};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::CallerLocality;
 use crate::provenance::birth::{WithheldKey, row_birth_in_txn};
 use crate::settings::ReadDestination;
 use crate::{
-    Vault,
+    EntityId, Vault,
     error::{Error, Result},
 };
 
@@ -19,7 +21,7 @@ impl Vault {
     /// a text written from one, nor a row whose own words are withdrawn.
     /// The export goes to a recipient nobody proved; see
     /// [`Self::export_records_in_scope_for`].
-    pub fn export_records_in_scope(
+    pub(crate) fn export_records_in_scope(
         &self,
         selector: &Scope,
         slip: &Scope,
@@ -34,29 +36,55 @@ impl Vault {
     /// snapshot (mesh PR2b). An export always leaves this device, so an
     /// on-device destination is read as one nobody proved. Selector, slip,
     /// channel, epoch and text fences stay conjuncts.
-    pub fn export_records_in_scope_for(
+    ///
+    /// A scoped door: neither it nor [`Self::export_records_in_scope`] is an
+    /// Owner's copy of the vault, whatever scopes it is given. The Owner's
+    /// own copy of every record is [`Self::export_owner_records`], which
+    /// also judges each row by the members' mailbox rule (fix list row
+    /// 15416).
+    pub(crate) fn export_records_in_scope_for(
         &self,
         selector: &Scope,
         slip: &Scope,
         channel: &Scope,
         destination: &ReadDestination,
     ) -> Result<Vec<ScopedRecord>> {
+        let txn = self.store.env.read_txn()?;
+        self.export_records_in_txn(&txn, [selector, slip, channel], destination, |_, _, _| {
+            Ok(true)
+        })
+        .map(|(records, _)| records)
+    }
+
+    /// [`Self::export_records_in_scope_for`] in the snapshot `txn`, through
+    /// the door `[selector, slip, channel]`: `carries` judges each row every
+    /// other check admits, by its id, its type and its stored bytes, before
+    /// its body is read, and a row it refuses stays home. An Owner's own copy
+    /// judges by the members' mailbox rule there (fix list row 15416); a
+    /// scoped export carries every such row. Answers the records, and the
+    /// stored row each stands for (a marked item's copy by its source).
+    pub(crate) fn export_records_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        [selector, slip, channel]: [&Scope; 3],
+        destination: &ReadDestination,
+        mut carries: impl FnMut(EntityId, u8, &[u8]) -> Result<bool>,
+    ) -> Result<(Vec<ScopedRecord>, BTreeSet<EntityId>)> {
         let recipient = if destination.is_off_device() {
             destination.clone()
         } else {
             ReadDestination::from(CallerLocality::OffDevice)
         };
-        let txn = self.store.env.read_txn()?;
         // FIX 7608 slice 4: a marked repo row leaves as its masked copy.
-        let copies = super::secret_projection::ExportProjection::read_in_txn(self, &txn)?;
-        let device_only = crate::settings::device_local_worlds_for(self, &txn, &recipient)?;
-        let withheld = |source: &crate::EntityId| {
-            crate::settings::device_only_withholds(&self.store, &txn, &device_only, source)
+        let copies = super::secret_projection::ExportProjection::read_in_txn(self, txn)?;
+        let device_only = crate::settings::device_local_worlds_for(self, txn, &recipient)?;
+        let withheld = |source: &EntityId| {
+            crate::settings::device_only_withholds(&self.store, txn, &device_only, source)
         };
         let mut out = Vec::new();
-        for row in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, &txn)? {
+        for row in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, txn)? {
             let (id, raw) = row?;
-            if withheld(&id)? || !crate::ports::raw_readable_in_txn(&self.store, &txn, &id, &raw)? {
+            if withheld(&id)? || !crate::ports::raw_readable_in_txn(&self.store, txn, &id, &raw)? {
                 continue;
             }
             let h =
@@ -64,14 +92,14 @@ impl Vault {
             if h.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
                 || (crate::secret_custody::holds_masked_keys_in_txn(
                     &self.store,
-                    &txn,
+                    txn,
                     &id,
                     h.entity_type,
                     &raw[ENTITY_METADATA_HEADER_LEN..],
                 )? && !copies.carries_copy(&id, &raw))
                 || crate::origin::lfs::unpublished_lfs_chunk_in_txn(
                     &self.store,
-                    &txn,
+                    txn,
                     &id,
                     h.entity_type,
                 )?
@@ -80,35 +108,35 @@ impl Vault {
             }
             // A row secret exhaust tainted stays home, as a whole-vault
             // export nulls its body (FIX 8742).
-            if !crate::secret_rotation::exhaust_taint_refs_in_txn(&self.store, &txn, &id)?
-                .is_empty()
+            if !crate::secret_rotation::exhaust_taint_refs_in_txn(&self.store, txn, &id)?.is_empty()
             {
                 continue;
             }
             if let Some(scope) = disclosure_scope_for_stored_row(
                 &self.store,
-                &txn,
+                txn,
                 id,
                 h.entity_type,
                 &raw[ENTITY_METADATA_HEADER_LEN..],
             )? && note_world::admits_at(
                 &self.store,
-                &txn,
+                txn,
                 id,
                 h.entity_type,
                 &scope,
                 [selector, slip, channel],
                 "export",
-            ) && crate::authority::row_causal_admitted(self, &txn, &id, &raw)?
-                && self.epoch_fence_in(&txn, id, &raw, [selector, slip, channel], "export")?
+            ) && crate::authority::row_causal_admitted(self, txn, &id, &raw)?
+                && self.epoch_fence_in(txn, id, &raw, [selector, slip, channel], "export")?
                 && self.text_fence_in(
-                    &txn,
+                    txn,
                     id,
                     &raw,
                     [selector, slip, channel],
                     "export",
                     &withheld,
                 )?
+                && carries(id, h.entity_type, raw.as_slice())?
             {
                 // A pad row is key material, never memory text: a reference
                 // leaves as the carrier the world-key door builds and a pad
@@ -123,7 +151,7 @@ impl Vault {
                 let filtered = carrier.is_none() && !pad;
                 let bytes = match carrier {
                     Some(carrier) => carrier,
-                    None => self.materialized_row_in_txn(&txn, &id, raw)?,
+                    None => self.materialized_row_in_txn(txn, &id, raw)?,
                 };
                 let (id, bytes) = copies.released(id, bytes);
                 let bytes = if filtered {
@@ -145,18 +173,18 @@ impl Vault {
         }
         // A birth leaves naming only the rows this export carries; one key
         // per export, so its handles link to no other copy.
-        let ships: std::collections::BTreeSet<crate::EntityId> = out
+        let ships: BTreeSet<EntityId> = out
             .iter()
             .map(|record| copies.source_of(&record.id))
             .collect();
         let key = WithheldKey::for_export();
         for record in &mut out {
             record.birth =
-                row_birth_in_txn(&self.store, &txn, &copies.source_of(&record.id))?.map(|birth| {
+                row_birth_in_txn(&self.store, txn, &copies.source_of(&record.id))?.map(|birth| {
                     copies.translated_birth(birth.masked(|row| ships.contains(row), &key))
                 });
         }
-        Ok(out)
+        Ok((out, ships))
     }
 
     /// The position each of `ids`, records an export carries, stands at in

@@ -42,12 +42,16 @@ use crate::workspace_roster::ExportThreadRoots;
 const EXPORT_FORMAT_OFF_RECORD_TALK: &str = "off_record_talk";
 /// The `format` of the whole-vault JSON bundle a raw `Vault` door writes.
 const EXPORT_FORMAT_JSON: &str = "json";
+/// The `format` of the Owner's own copy of every record, which a raw `Vault`
+/// door answers as a vector of records (fix list row 15416).
+const EXPORT_FORMAT_RECORDS: &str = "records";
 
 /// What an export copied (FIX 6427).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExportAuditScope {
-    /// The whole vault: the archive, the OKF bundle or the JSON bundle.
+    /// The whole vault: the archive, the OKF bundle, the JSON bundle or the
+    /// Owner's copy of every record.
     WholeVault,
     /// An off-record room's talk, as its Owner's membership shows it.
     OffRecordRoom,
@@ -358,6 +362,24 @@ pub(crate) fn raw_export_copy(
         digest: Some(digest.to_owned()),
         holder_requests: std::mem::take(&mut receipt.holder_requests),
         ..ExportCopy::raw(exporter, format, receipt.diary_reads.clone(), roots)
+    }
+}
+
+/// The audit of the Owner `exporter`'s own copy of every record, which a raw
+/// `Vault` door made for the embedded owner, before it answers it (fix list
+/// row 15416): no act and no diary read, the length `bytes` and BLAKE3
+/// `digest` of its records as their one encoding reads, and the root of each
+/// thread a TURN it carries is of, `thread_roots`.
+pub(crate) fn raw_records_copy(
+    exporter: EntityId,
+    bytes: u64,
+    digest: String,
+    thread_roots: ExportThreadRoots,
+) -> ExportCopy {
+    ExportCopy {
+        bytes: Some(bytes),
+        digest: Some(digest),
+        ..ExportCopy::raw(exporter, EXPORT_FORMAT_RECORDS, Vec::new(), thread_roots)
     }
 }
 

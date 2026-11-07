@@ -181,6 +181,33 @@ impl WholeVaultExport {
     }
 }
 
+/// The Owner's own copy of every record (fix list row 15416), answered once
+/// its export audit recorded it: the records it carries, and each other
+/// member's personal mailbox it left out, named to the Owner. Fields are
+/// private: only the copy's own door produces one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OwnerRecordExport {
+    pub(crate) records: Vec<crate::federation::record_scope::ScopedRecord>,
+    /// As [`WholeVaultExportReceipt::mailbox_notices`].
+    pub(crate) mailbox_notices: Vec<crate::mail_pack::MailboxExportNotice>,
+}
+
+impl OwnerRecordExport {
+    /// The records the copy carries, each as an export of records carries
+    /// it.
+    pub fn records(&self) -> &[crate::federation::record_scope::ScopedRecord] {
+        &self.records
+    }
+    /// The records the copy carries, taken whole.
+    pub fn into_records(self) -> Vec<crate::federation::record_scope::ScopedRecord> {
+        self.records
+    }
+    /// As [`WholeVaultExportReceipt::mailbox_notices`].
+    pub fn mailbox_notices(&self) -> &[crate::mail_pack::MailboxExportNotice] {
+        &self.mailbox_notices
+    }
+}
+
 /// Twelve sections. Entities occur once. Derived evidence is an index into
 /// claim evidence, not a second authoritative body. Structural graph edges live
 /// beside the evidence ledger and carry full value metadata. The embedding
