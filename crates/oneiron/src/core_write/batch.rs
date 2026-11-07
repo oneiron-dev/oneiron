@@ -29,6 +29,25 @@ pub enum CoreWriteLane<'v> {
     Unbound,
 }
 
+/// A caller-transaction view of the write lane. It borrows the actual reader,
+/// including its room and destination bounds, rather than rebuilding its key.
+#[derive(Clone, Copy)]
+pub(crate) enum CoreWriteLaneRef<'v> {
+    Read(&'v ScopedRead<'v>),
+    Target(&'v ScopedRead<'v>),
+    Unbound,
+}
+
+impl CoreWriteLane<'_> {
+    pub(crate) fn as_ref(&self) -> CoreWriteLaneRef<'_> {
+        match self {
+            Self::Read(reader) => CoreWriteLaneRef::Read(reader),
+            Self::Target(reader) => CoreWriteLaneRef::Target(reader),
+            Self::Unbound => CoreWriteLaneRef::Unbound,
+        }
+    }
+}
+
 impl CoreWriteLane<'_> {
     /// Whether this lane's caller may put at every id of `ids` in `txn`
     /// (FIX 6068, 10781): a fresh id always; a stored row only when the
@@ -37,6 +56,16 @@ impl CoreWriteLane<'_> {
     /// anywhere, as before.
     pub(crate) fn admits_puts_in(
         &self,
+        txn: &heed::RoTxn<'_>,
+        ids: &[crate::EntityId],
+    ) -> crate::Result<bool> {
+        self.as_ref().admits_puts_in(txn, ids)
+    }
+}
+
+impl CoreWriteLaneRef<'_> {
+    pub(crate) fn admits_puts_in(
+        self,
         txn: &heed::RoTxn<'_>,
         ids: &[crate::EntityId],
     ) -> crate::Result<bool> {
