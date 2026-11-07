@@ -854,7 +854,7 @@ suite.test(test, "MEMORY-05", "Bitemporal entity history should work", async () 
  * original clocks/data, current_streak=1 and longest_streak=1; task readback.
  */
 suite.skip(test, "MEMORY-06",
-  "waits on merged real oneiron.productivity hub pack and engine pin PRs supplying the exact HubImportRequest/pin/publisher; role/tree/check-in calls exist [FIX 3961; qualif 17747]");
+  "waits on merged engine pin PR #6668 and qualification of the complete authored oneiron.productivity fixture: canonical projects, stable check-in id and valid routedTask spec; real hub pack commit 5407656fbe1e94241bf3e4b15defbfb9ff259166 is merged, and install/role/tree/check-in calls exist [FIX 3961; qualif 17747]");
 
 // ARCH-0055 redirect shells, evidence-guided split, masks and counter-events.
 suite.test(test, "MEMORY-07", "Identity merge split and undo should work", async () => {
