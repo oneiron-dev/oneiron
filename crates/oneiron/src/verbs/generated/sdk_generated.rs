@@ -7202,6 +7202,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.code.proposal_resolve",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::repo_doors::RepoProposalResolveInput,
+                >(),
+            ),
+            (
                 "self.code.merge_queue.enqueue",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::repo_doors::RepoMergeQueueEnqueueInput,

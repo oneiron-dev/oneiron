@@ -42640,6 +42640,7 @@ async fn call_verb_row(
         | "self.code.symbols.renew"
         | "self.code.symbols.release"
         | "self.code.proposal_submit"
+        | "self.code.proposal_resolve"
         | "self.code.merge_queue.enqueue"
         | "self.code.checkout.bind"
         | "self.code.export"
