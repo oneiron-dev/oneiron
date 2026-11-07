@@ -43,7 +43,6 @@ pub enum VerifyFindingCode {
     InvalidByteRange,
     InvalidUnsignedGap,
     InvalidCms,
-    UnsupportedSignatureHandler,
     InvalidSignedAttributes,
     #[serde(rename = "HASH_FAILURE")]
     DigestMismatch,
