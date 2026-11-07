@@ -27,6 +27,7 @@ fn outbound_passport_value(
         uid,
         last_sequence: sequence,
         content_hash,
+        source: None,
         direction: CalendarPassportDirection::Outbound,
         last_seen_at: recorded_at,
         presence: CalendarPassportPresence::Live,
