@@ -29,7 +29,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/attempt_inputs.rs` | src | s | 7 struct · 2 enum · 2 fn | AttemptEvent, AttemptInterventionEffect, AttemptInterventionKind, ClaimAttempt, CompleteAttempt, EnqueueAttempt, FailAttempt, RetryAttempt +1 | Queue admission inputs and durable intervention vocabulary |
 | `src/attempt_lease.rs` | src | s | 1 fn | — | Lease-owner validation for queued-work storage ports |
 | `src/attempt_payload_route.rs` | src | s | 1 struct · 1 const | Routing | The routing probe that tells an agent dispatch's attempt row apart without the strict reader: its record… |
-| `src/attempt_read_producer.rs` | src | s | 1 struct · 1 fn · 14 const | ReadSetProducer | Named producers of a queued attempt's recorded input rows |
+| `src/attempt_read_producer.rs` | src | s | 1 struct · 1 fn · 15 const | ReadSetProducer | Named producers of a queued attempt's recorded input rows |
 | `src/attempt_record_codec.rs` | src | s | 1 mod | — | Store-layer modules of core `store::attempt_record_codec`; core re-exports each one at its old path |
 | `src/attempt_record_codec/field_validators.rs` | src | s | 10 fn · 51 const | — | The attempt record's field validators and their length caps and error literals: every check the strict… |
 | `src/attempt_result.rs` | src | s | 1 struct · 4 fn · 5 const | AttemptResultRef | Validated durable result references for queued work |
