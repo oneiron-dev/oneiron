@@ -1796,6 +1796,11 @@ export_facade! {
     let output = client.vault_members_accept(&input)?;
     crate::codec::lift_record("vault.members.accept", &output)
 };
+"vault.members.accept_with_credential" => fn vault_members_accept_with_credential(&self, input: SharedInvitationAcceptWithCredentialRequest) -> SharedInvitationAcceptedWithCredential = |client| {
+    let input: oneiron::task_verb::sdk::SharedInvitationAcceptWithCredentialRequest = crate::codec::lower_record("vault.members.accept_with_credential", input)?;
+    let output = client.vault_members_accept_with_credential(&input)?;
+    crate::codec::lift_record("vault.members.accept_with_credential", &output)
+};
 "vault.members.decline" => fn vault_members_decline(&self, input: SharedInvitationRequest) -> SharedActExecutionReceipt = |client| {
     let input: oneiron::task_verb::sdk::SharedInvitationRequest = crate::codec::lower_record("vault.members.decline", input)?;
     let output = client.vault_members_decline(&input)?;

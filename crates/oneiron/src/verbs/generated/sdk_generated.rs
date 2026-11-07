@@ -1851,6 +1851,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.members.accept_with_credential",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedInvitationAcceptWithCredentialRequest,
+                >(),
+            ),
+            (
                 "vault.members.decline",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::SharedInvitationRequest,
@@ -13659,6 +13665,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.members.accept_with_credential" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.members.decline" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -20604,6 +20617,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.members.leave" => validate_input_vault_members_leave(value)?,
         "vault.members.invitations" => validate_input_vault_members_invitations(value)?,
         "vault.members.accept" => validate_input_vault_members_accept(value)?,
+        "vault.members.accept_with_credential" => {
+            validate_input_vault_members_accept_with_credential(value)?
+        }
         "vault.members.decline" => validate_input_vault_members_decline(value)?,
         "vault.members.withdraw_invitation" => {
             validate_input_vault_members_withdraw_invitation(value)?
@@ -23796,6 +23812,14 @@ fn validate_input_vault_members_invitations(value: &serde_json::Value) -> Memory
 #[inline(never)]
 fn validate_input_vault_members_accept(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::task_verb::sdk::SharedInvitationRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_members_accept_with_credential(
+    value: &serde_json::Value,
+) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::SharedInvitationAcceptWithCredentialRequest =
+        decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -29537,6 +29561,9 @@ pub fn invoke(
         "vault.members.leave" => invoke_vault_members_leave(memory, value),
         "vault.members.invitations" => invoke_vault_members_invitations(memory, value),
         "vault.members.accept" => invoke_vault_members_accept(memory, value),
+        "vault.members.accept_with_credential" => {
+            invoke_vault_members_accept_with_credential(memory, value)
+        }
         "vault.members.decline" => invoke_vault_members_decline(memory, value),
         "vault.members.withdraw_invitation" => {
             invoke_vault_members_withdraw_invitation(memory, value)
@@ -33341,6 +33368,16 @@ fn invoke_vault_members_accept(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_members_accept(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_members_accept_with_credential(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_members_accept_with_credential(
+        memory,
+        decode(value)?,
+    )?)
 }
 #[inline(never)]
 fn invoke_vault_members_decline(
@@ -43294,6 +43331,12 @@ pub fn vault_members_accept(
         &memory.embedded_owner("vault.members.accept")?,
         input,
     )
+}
+pub fn vault_members_accept_with_credential(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedInvitationAcceptWithCredentialRequest,
+) -> MemoryResult<crate::task_verb::sdk::SharedInvitationAcceptedWithCredential> {
+    crate::task_verb::sdk::accept_shared_invitation_with_credential_embedded(memory, input)
 }
 pub fn vault_members_decline(
     memory: &Memory<'_>,
