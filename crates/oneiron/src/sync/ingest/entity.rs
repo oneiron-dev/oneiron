@@ -112,6 +112,10 @@ pub(in crate::sync) enum EntityStep {
     Skip,
     /// The replicated row was written.
     Materialized(EntityId),
+    /// The local row already holds the bytes the remote value carries, byte
+    /// for byte or as one of their echo forms: nothing is written, and the
+    /// row stands here as delivered (FIX 4312).
+    Unchanged(EntityId),
     /// A carrier whose body moves by reference and is not here yet (FIX 5489): nothing is
     /// written, and nothing its landing discharges is discharged, until the body comes.
     Pending,
@@ -474,7 +478,7 @@ fn admit(
             if let Some(doc) = ctx.carrier_doc() {
                 super::carried_origin_in_txn(vault, wtxn, doc, ctx.window_key, &id, blob)?;
             }
-            return Ok(EntityStep::Skip);
+            return Ok(EntityStep::Unchanged(id));
         }
         // SoftErase shell guard: `user_delete` truncates the local record to the 25 B header
         // shell and writes NO CRDT record (contracts.ts deleteReasons user_delete; cross-device
