@@ -241,13 +241,6 @@
           "omit": "scopeProjectId"
         },
         {
-          "case": "invalid-value",
-          "value": {
-            "kind": "number",
-            "value": "not-a-number"
-          }
-        },
-        {
           "case": "invalid-confidence",
           "confidence": 1.1
         },
@@ -270,6 +263,32 @@
           }
         }
       ],
+      "opaqueControl": {
+        "case": "opaque-value",
+        "replaces": "invalid-value",
+        "predicate": "profile.name",
+        "subjectId": "@person-b",
+        "worldId": "@base",
+        "scopeFacetId": "@facet-work",
+        "scopeRelationshipId": "all",
+        "scopeProjectId": "@project-north",
+        "value": {
+          "kind": "number",
+          "value": "not-a-number"
+        },
+        "confidence": 1,
+        "source": "user_stated",
+        "evidenceTurnIds": [
+          "@name-statement"
+        ],
+        "note": "Eighth oracle corrected per Engine 10:14 YES: generic val is opaque (no typed value contract); this object lands as a positive control, not a refusal.",
+        "canon": [
+          "ARCH-0003:90 app-layer ClaimValue view only",
+          "ARCH-0003:223-225 valueKind tuple is extractor/consolidator guidance, not an engine contract",
+          "ARCH-0003:92,94 D18 structural body + required scope only",
+          "predicate_validators.rs:294 val opaque MessagePack"
+        ]
+      },
       "expected": {
         "scopeOmissionError": "InvalidClaimBody",
         "malformedClaimsStored": 0,

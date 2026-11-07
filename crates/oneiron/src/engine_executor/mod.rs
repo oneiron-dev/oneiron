@@ -21,6 +21,7 @@ mod host;
 mod program_entry;
 mod record;
 mod repl;
+mod self_brief;
 mod shadow_step;
 mod skill_call;
 mod stack_floor;
@@ -38,19 +39,25 @@ pub use self::code_check::TypeFeedback;
 pub(crate) use self::code_check::{CheckedDoor, LatestFeedback, RowsCheck};
 pub use self::compaction::{CompactionReport, CompactionSpawn, RunCompaction, WindowFullReason};
 pub use self::driver::EngineNativeExecutor;
+pub(crate) use self::host::ACT_GATES_COUNT_CALLABLE_ROWS;
 // DOOR-141 PR3b: a turn program's pinned entry, for its runtime alone.
 pub(crate) use self::program_entry::{PinnedProgramEntry, PinnedProgramRun};
 #[cfg(test)]
 use self::record::step_state_hash;
 pub use self::record::{EnteredRun, entered_run};
 pub(crate) use self::record::{code_run_complete_in_txn, parked_wait_now};
+// FIX 17594: the host's self-brief port a native run's requests carry.
+pub use self::self_brief::{
+    BriefBoundary, BriefCandidateToken, BriefPrefix, FoldBoundary, SelfBriefPort,
+};
 pub(crate) use self::shadow_step::shadow_readable_outputs;
 pub use self::shadow_step::{ArmTypeFeedback, run_shadow_step};
 pub use self::skill_call::{execute_live_skill_call, execute_live_skill_call_listing};
 pub(crate) use self::store::{
     RESULT_READ_ROOT, RESULT_REPLY_INLINE_BYTES, bridge_result_output_path, clean_for_context,
     holds_reply_content, is_result_output_path, mask_known_text, parse_result_read_path,
-    result_handle_json, result_read_path_for, store_ordinal_base, store_result_output_path,
+    result_handle_json, result_read_path_for, store_agent_verb_write_answer, store_ordinal_base,
+    store_result_output_path, write_receipt_result_output_path,
 };
 pub use self::types::{
     CallableProgram, ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME, ENGINE_EXECUTOR_FALLBACK_NAME,

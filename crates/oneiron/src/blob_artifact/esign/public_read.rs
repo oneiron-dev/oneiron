@@ -12,6 +12,7 @@ use sha2::{Digest, Sha256};
 /// inline ASSET bytes reserve memory before their output allocation. UTF-8
 /// record-head output reserves before its final text conversion; native loading
 /// and other record-head projections remain outside that preallocation admission.
+/// Other record-head bytes lease their returned capacity after the read.
 #[derive(Debug)]
 pub enum EsignLeasedReadError {
     Vault(crate::Error),
@@ -223,8 +224,10 @@ impl Vault {
     /// from this machine's memory: file-plane and plain inline ASSET bodies
     /// reserve their exact output length before allocating it. UTF-8 record-head
     /// output reserves before its final text conversion; native document loading
-    /// and other projections still allocate before admission. The lease rides
-    /// through inspection.
+    /// and other projections still allocate before admission. The lease then
+    /// names the returned buffer's reported capacity as allocated. Other record-head
+    /// projections lease that capacity after reading and name it allocated as well.
+    /// The lease rides through inspection.
     pub fn esign_preview_for_capability_leased_as(
         &self,
         token: &EsignCapability,
@@ -278,7 +281,7 @@ impl Vault {
                 })
             },
         )?;
-        let actual = u64::try_from(pair.0.len()).unwrap_or(u64::MAX);
+        let actual = u64::try_from(pair.0.capacity()).unwrap_or(u64::MAX);
         let (bytes, guard) = pair;
         match guard {
             Some((mut lease, reserved)) => {
@@ -286,9 +289,10 @@ impl Vault {
                 Ok((page, bytes, lease))
             }
             None => {
-                let lease = memory
+                let mut lease = memory
                     .lease(actual, deadline)
                     .map_err(EsignLeasedReadError::Refused)?;
+                lease.materialized(actual, actual);
                 Ok((page, bytes, lease))
             }
         }

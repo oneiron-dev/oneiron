@@ -9,6 +9,11 @@
 //! only force, so a mirror whose branch moved since the read refuses it, and
 //! a protected branch the mirror guards stays guarded. A read that cannot
 //! prove what the mirror holds is an error, never an absent branch.
+//!
+//! On a served host both go instead to its loopback mirror relay
+//! (`*_via_relay`, FIX 19083), which sends each exchange through the
+//! credential broker: the child carries the relay's ticket in its
+//! environment and no credential at all.
 
 use std::path::Path;
 use std::time::Duration;
@@ -17,6 +22,7 @@ use super::argv::FrozenGitArgv;
 use super::execution_context::GitCommandSpec;
 use super::failure::{classify_failure, invalid};
 use super::mirror_push::MirrorEgress;
+use super::origin_relay::OriginRelayEgress;
 use super::process::{GitWireProcessOutput, spawn_git};
 use super::{GitOid, GitRefName, GitWire, GitWireOperation, GitWireProcessEnv, GitWireRepo};
 use crate::error::Result;
@@ -77,21 +83,32 @@ impl GitWire<'_> {
         let env = self.egress_env(repo, url, authorization, REMOTE_READ_TIMEOUT)?;
         let argv = FrozenGitArgv::remote_ref(url, name)?;
         let output = spawn_git(&env, &GitCommandSpec::wire(&repo.repo_root, &argv))?;
-        if !output.success {
-            return Err(classify_failure(&output).error(GitWireOperation::RemoteRefs));
-        }
-        let text = std::str::from_utf8(&output.stdout)
-            .map_err(|_| invalid("git remote listing must be UTF-8"))?;
-        for line in text.lines() {
-            let mut fields = line.split('\t');
-            let (Some(oid), Some(listed)) = (fields.next(), fields.next()) else {
-                return Err(invalid("git remote listing line is malformed"));
-            };
-            if listed == name.as_str() {
-                return Ok(GitRemoteTip::At(GitOid::parse_hex(oid)?));
-            }
-        }
-        Ok(GitRemoteTip::Absent)
+        remote_tip(&output, name)
+    }
+
+    /// Reads `name` as [`Self::read_remote_branch`] does, from the served
+    /// host's loopback mirror relay `relay_url` (FIX 19083), each request
+    /// carrying the relay's `ticket` in a header the child's environment
+    /// holds, never its argv. The relay sends each exchange through the
+    /// credential broker, which alone installs the mirror's credential, so
+    /// the child carries none.
+    ///
+    /// # Errors
+    /// A URL that is not a loopback relay, a malformed ticket, a changed
+    /// repository binding, or a read that cannot prove what the mirror
+    /// holds, naming its class and exit.
+    pub fn read_remote_branch_via_relay(
+        &self,
+        repo: &GitWireRepo,
+        relay_url: &str,
+        ticket: &str,
+        name: &GitRefName,
+    ) -> Result<GitRemoteTip> {
+        let egress = OriginRelayEgress::read(relay_url, ticket)?;
+        let env = self.relay_env(repo, egress, REMOTE_READ_TIMEOUT)?;
+        let argv = FrozenGitArgv::remote_ref(relay_url, name)?;
+        let output = spawn_git(&env, &GitCommandSpec::wire(&repo.repo_root, &argv))?;
+        remote_tip(&output, name)
     }
 
     /// Pushes exactly `commit` to `name` at the https mirror `url`, only
@@ -120,6 +137,59 @@ impl GitWire<'_> {
         Ok(push_outcome(&output, commit, name))
     }
 
+    /// Pushes exactly `commit` to `name` as [`Self::push_publish`] does, the
+    /// same refspec, lease and inherited hold, to the served host's loopback
+    /// mirror relay `relay_url` (FIX 19083), each request carrying the
+    /// relay's `ticket` in a header the child's environment holds, never
+    /// its argv. The relay sends each exchange through the credential
+    /// broker, which alone installs the mirror's credential, so the child
+    /// carries none; the child runs with no wall-clock bound (Rule 5). Run
+    /// once: the caller never sends it again.
+    ///
+    /// # Errors
+    /// A URL that is not a loopback relay, a malformed ticket, a changed
+    /// repository binding, or a process failure.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one exact push names its repository, relay, ticket, branch, commit, lease and hold"
+    )]
+    pub fn push_publish_via_relay(
+        &self,
+        repo: &GitWireRepo,
+        relay_url: &str,
+        ticket: &str,
+        name: &GitRefName,
+        commit: &GitOid,
+        expected: Option<&GitOid>,
+        hold: &Path,
+    ) -> Result<GitPublishPushOutcome> {
+        let egress = OriginRelayEgress::push(relay_url, ticket)?;
+        let env = self.relay_env(repo, egress, PUBLISH_PUSH_TIMEOUT)?;
+        let argv = FrozenGitArgv::publish_push(relay_url, name, commit, expected)?;
+        let command = GitCommandSpec::wire(&repo.repo_root, &argv).holding(hold);
+        let output = spawn_git(&env, &command)?;
+        Ok(push_outcome(&output, commit, name))
+    }
+
+    /// The relay profile of one call through the served host's mirror relay,
+    /// bound to `repo`.
+    fn relay_env(
+        &self,
+        repo: &GitWireRepo,
+        egress: OriginRelayEgress,
+        timeout: Duration,
+    ) -> Result<GitWireProcessEnv> {
+        if self.canonical_common_dir(&repo.repo_root)? != repo.common_dir {
+            return Err(invalid("git wire repository binding changed"));
+        }
+        let mut env = self
+            .process_env
+            .clone()
+            .with_limits(timeout, PUBLISH_OUTPUT_BYTES)?;
+        env.origin_relay = Some(egress);
+        Ok(env)
+    }
+
     /// The outbound profile of one call to `url`, bound to `repo`.
     pub(super) fn egress_env(
         &self,
@@ -144,6 +214,26 @@ impl GitWire<'_> {
         env.mirror_egress = Some(MirrorEgress::with_authorization(authorization));
         Ok(env)
     }
+}
+
+/// What a successful `ls-remote` child listed at exactly `name`; a child
+/// that failed is an error naming its class and exit.
+fn remote_tip(output: &GitWireProcessOutput, name: &GitRefName) -> Result<GitRemoteTip> {
+    if !output.success {
+        return Err(classify_failure(output).error(GitWireOperation::RemoteRefs));
+    }
+    let text = std::str::from_utf8(&output.stdout)
+        .map_err(|_| invalid("git remote listing must be UTF-8"))?;
+    for line in text.lines() {
+        let mut fields = line.split('\t');
+        let (Some(oid), Some(listed)) = (fields.next(), fields.next()) else {
+            return Err(invalid("git remote listing line is malformed"));
+        };
+        if listed == name.as_str() {
+            return Ok(GitRemoteTip::At(GitOid::parse_hex(oid)?));
+        }
+    }
+    Ok(GitRemoteTip::Absent)
 }
 
 /// The outcome a `push --porcelain` child reports for `commit` at `name`.
