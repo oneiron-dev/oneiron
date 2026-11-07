@@ -171,7 +171,7 @@ pub(crate) async fn classify_request(
         return Ok((request, None));
     }
     let (parts, body) = request.into_parts();
-    let limit = oneiron::memory::caps::MAX_REMOTE_REQUEST_BYTES;
+    let limit = crate::api::request_floor::request_floor(server);
     let bytes = axum::body::to_bytes(body, limit)
         .await
         .map_err(|_| clock_corrupt_refusal())?;
@@ -184,7 +184,12 @@ pub(crate) async fn classify_request(
     }
     // This door runs outside the body codec, so a content-encoded body is
     // classified on a decoded copy (FIX 11520) and handed back raw.
-    let decoded = crate::api::body_codec::decode_copy(&parts.headers, parts.uri.path(), &bytes);
+    let decoded = crate::api::body_codec::decode_copy(
+        &parts.headers,
+        parts.uri.path(),
+        &bytes,
+        crate::api::request_floor::request_floor(server),
+    );
     let probe: &[u8] = decoded.as_deref().unwrap_or(bytes.as_ref());
     let call = serde_json::from_slice::<Value>(probe)
         .ok()
