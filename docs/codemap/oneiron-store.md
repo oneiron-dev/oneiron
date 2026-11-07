@@ -29,7 +29,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/attempt_inputs.rs` | src | s | 7 struct · 2 enum · 2 fn | AttemptEvent, AttemptInterventionEffect, AttemptInterventionKind, ClaimAttempt, CompleteAttempt, EnqueueAttempt, FailAttempt, RetryAttempt +1 | Queue admission inputs and durable intervention vocabulary |
 | `src/attempt_lease.rs` | src | s | 1 fn | — | Lease-owner validation for queued-work storage ports |
 | `src/attempt_payload_route.rs` | src | s | 1 struct · 1 const | Routing | The routing probe that tells an agent dispatch's attempt row apart without the strict reader: its record… |
-| `src/attempt_read_producer.rs` | src | s | 1 struct · 1 fn · 14 const | ReadSetProducer | Named producers of a queued attempt's recorded input rows |
+| `src/attempt_read_producer.rs` | src | s | 1 struct · 1 fn · 15 const | ReadSetProducer | Named producers of a queued attempt's recorded input rows |
 | `src/attempt_record_codec.rs` | src | s | 1 mod | — | Store-layer modules of core `store::attempt_record_codec`; core re-exports each one at its old path |
 | `src/attempt_record_codec/field_validators.rs` | src | s | 10 fn · 51 const | — | The attempt record's field validators and their length caps and error literals: every check the strict… |
 | `src/attempt_result.rs` | src | s | 1 struct · 4 fn · 5 const | AttemptResultRef | Validated durable result references for queued work |
@@ -177,7 +177,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/core_write/dag.rs` | src | s | 3 struct · 1 enum · 1 fn | CoreDagAddressMode, CoreDagQuoteInput, DagRecordAppendInput, DagRecordAppendReceipt | The `vault.conversations.records.append` row's input and receipt types (OF-181) and the append door's input… |
 | `src/core_write/mod.rs` | src | s | 1 mod · 4 re-export | — | Core entity writes as typed rows (OF-181): the rows' inputs and receipts, and the shape every write stages… |
 | `src/core_write/shape.rs` | src | m | 2 struct · 2 enum · 14 fn · 5 const | AnnouncementAuthority, CoreWriteRefusal, CoreWriteTextField, CoreWriteTimes | The shape every core entity write shares: its id, its interval, its announcement-normalized body and its… |
-| `src/critic_lens.rs` | src | s | 2 struct · 9 fn · 7 const | CriticLens, LensCatalog | Critic lens catalogue vocabulary, seed catalogue and pure shape checks |
+| `src/critic_lens.rs` | src | s | 2 struct · 9 fn · 6 const | CriticLens, LensCatalog | Critic lens catalogue vocabulary, seed catalogue and pure shape checks |
 | `src/critical_confirm_record.rs` | src | s | 5 const | — | The critical-confirm pending record: its reason codes, its deadline, and the deterministic binding the… |
 | `src/critical_confirm_retry.rs` | src | s | 2 struct · 3 fn · 1 type · 2 const | ConfirmDemotionRetries, ConfirmDemotionRetry | The expiry walk's backoff state for a timeout demotion that keeps failing (FIX 12079): a row whose demotion… |
 | `src/custody_retirement_status.rs` | src | s | 1 const | — | Completion marker for acknowledged custody retirement |
@@ -570,7 +570,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/window_key.rs` | src | s | 1 struct · 15 fn · 1 crate-vis | WindowKey | Monthly CRDT window keys and their timestamp conversion |
 | `src/window_protocol.rs` | src | s | 2 enum · 1 fn · 2 const | FederationAdmissionRole, ImportTier | Window payload bounds and local commit origin values |
 | `src/window_rows.rs` | src | s | 5 struct · 1 enum · 2 const | CarrierRemoval, HexSeqKey, WindowEntityHexKey, WindowEntityKey, WindowUpdateKey, WindowUpdateSeq | Typed `sync_state` tables for the window/root plane rows: one window's persisted CRDT snapshot, state… |
-| `src/witness_message_body.rs` | src | m | 1 struct · 2 enum · 4 fn · 5 const | StoredMessagePart, WitnessMessageBodyAuthor, WitnessMessageEnvelope | Canonical MESSAGE body vocabulary, encoding, and structural validation |
+| `src/witness_message_body.rs` | src | m | 2 struct · 2 enum · 6 fn · 5 const | StoredMessagePart, WitnessMessageBodyAuthor, WitnessMessageEnvelope, WitnessMetadataMeasure | Canonical MESSAGE body vocabulary, encoding, and structural validation |
 | `src/workflow_definition.rs` | src | s | 1 struct · 6 fn | WorkflowDefinition | A saved ordered agent composition (`WORKFLOW` entities): its value, wire codec and put admission |
 | `src/world_pad_codec.rs` | src | s | 1 struct · 1 enum · 17 fn | PadBody, WorldKeyPad | The world-key pad row codec (KS-5, FIX 5686): a pad, a pad row's deterministic id, and a pad row body in its… |
 | `src/world_registration_keys.rs` | src | s | 2 const | — | Storage keys for foreign-world registration and stale markers |
