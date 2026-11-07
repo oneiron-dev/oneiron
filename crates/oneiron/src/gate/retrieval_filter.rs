@@ -40,6 +40,11 @@ pub(crate) struct ResolvedRetrievalFilter {
     pub(crate) min_confidence: f32,
     pub(crate) min_salience: f32,
     pub(crate) deny_all: bool,
+    /// Whether the read's bound caller filter names `include_stale = false`
+    /// (FIX 3977, `ScopedRead::under_caller_filter`). A record lane reads
+    /// stale claims whatever the floor says, but never past the caller's own
+    /// exclusion. Narrowing never sets this; only the lane marks it.
+    pub(crate) caller_excludes_stale: bool,
     /// The verified credential a scoped read retrieves under, if any. A TASK
     /// the pipeline denies outside its worlds or facets adds to no
     /// suppression count (ARCH-0067 §5, DEC-0005).
@@ -63,10 +68,11 @@ impl ResolvedRetrievalFilter {
 
     /// The rows this filter reads and the rows `other` reads, as one
     /// prefilter (FIX 7528): kinds joined, the higher band, staleness if
-    /// either reads it, the lower minima. A deny-all side adds nothing. It
-    /// is a candidate envelope, never an authorization: each row it lets
-    /// through must still pass one whole alternative's own check. Both sides
-    /// retrieve under the same key, so this filter's credential is kept.
+    /// either reads it (a caller's stale exclusion only if both carry it),
+    /// the lower minima. A deny-all side adds nothing. It is a candidate
+    /// envelope, never an authorization: each row it lets through must
+    /// still pass one whole alternative's own check. Both sides retrieve
+    /// under the same key, so this filter's credential is kept.
     #[must_use]
     pub(crate) fn union_envelope(&self, other: &Self) -> Self {
         if other.deny_all {
@@ -89,6 +95,7 @@ impl ResolvedRetrievalFilter {
             min_confidence: self.min_confidence.min(other.min_confidence),
             min_salience: self.min_salience.min(other.min_salience),
             deny_all: false,
+            caller_excludes_stale: self.caller_excludes_stale && other.caller_excludes_stale,
             credential: self.credential.clone(),
         }
     }
@@ -540,6 +547,7 @@ pub(crate) fn narrow_retrieval_filter(
         min_confidence: narrowed.min_confidence,
         min_salience: narrowed.min_salience,
         deny_all: narrowed.deny_all,
+        caller_excludes_stale: false,
         credential: None,
     })
 }

@@ -337,7 +337,7 @@ impl ScopedRead<'_> {
         // The bound caller filter meets the door's request after the floor
         // loads, before any plan, alternative or receipt reads it (FIX 3977).
         let requested = self.asked_request(requested);
-        let filter = self.filter_under(&policy, requested.as_deref())?;
+        let filter = self.under_caller_filter(self.filter_under(&policy, requested.as_deref())?);
         Ok((filter, policy))
     }
 
@@ -368,6 +368,22 @@ impl ScopedRead<'_> {
             (Some(bound), None) => Some(Cow::Borrowed(bound)),
             (Some(bound), Some(requested)) => Some(Cow::Owned(bound.meet(requested))),
         }
+    }
+
+    /// `filter`, resolved from what this read asked, marked with whether
+    /// its bound caller filter excludes stale claims (FIX 3977): a record
+    /// lane reads stale claims past the floor, never past the caller's own
+    /// `include_stale = false`. A door's own request never marks it, so a
+    /// receipt's applied scope met again leaves record reads as they were.
+    pub(super) fn under_caller_filter(
+        &self,
+        mut filter: ResolvedRetrievalFilter,
+    ) -> ResolvedRetrievalFilter {
+        filter.caller_excludes_stale = self
+            .read_filter
+            .as_ref()
+            .is_some_and(|bound| bound.include_stale == Some(false));
+        filter
     }
 
     /// The held authority of one serving txn whose rows this read judges
