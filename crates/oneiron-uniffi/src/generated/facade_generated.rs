@@ -1041,6 +1041,41 @@ export_facade! {
     let output = client.vault_weave_owner_item_wrong(&input)?;
     crate::codec::lift_record("vault.weave.owner.item.wrong", &output)
 };
+"vault.weave.admin.report" => fn vault_weave_admin_report(&self, input: WeaveAdminReportRequest) -> WeaveReportView = |client| {
+    let input: oneiron::authority::WeaveAdminReportRequest = crate::codec::lower_record("vault.weave.admin.report", input)?;
+    let output = client.vault_weave_admin_report(&input)?;
+    crate::codec::lift_record("vault.weave.admin.report", &output)
+};
+"vault.weave.admin.lens" => fn vault_weave_admin_lens(&self, input: WeaveAdminLensRequest) -> LensFrameCard = |client| {
+    let input: oneiron::authority::WeaveAdminLensRequest = crate::codec::lower_record("vault.weave.admin.lens", input)?;
+    let output = client.vault_weave_admin_lens(&input)?;
+    crate::codec::lift_record("vault.weave.admin.lens", &output)
+};
+"vault.weave.admin.digest" => fn vault_weave_admin_digest(&self, input: WeaveAdminDigestRequest) -> Option<WeaveDigestView> = |client| {
+    let input: oneiron::authority::WeaveAdminDigestRequest = crate::codec::lower_record("vault.weave.admin.digest", input)?;
+    let output = client.vault_weave_admin_digest(&input)?;
+    crate::codec::lift_record("vault.weave.admin.digest", &output)
+};
+"vault.weave.admin.link.wrong" => fn vault_weave_admin_link_wrong(&self, input: WeaveAdminLinkWrongRequest) -> WeaveLinkCorrectionView = |client| {
+    let input: oneiron::authority::WeaveAdminLinkWrongRequest = crate::codec::lower_record("vault.weave.admin.link.wrong", input)?;
+    let output = client.vault_weave_admin_link_wrong(&input)?;
+    crate::codec::lift_record("vault.weave.admin.link.wrong", &output)
+};
+"vault.weave.admin.item.wrong" => fn vault_weave_admin_item_wrong(&self, input: WeaveAdminItemWrongRequest) -> WeaveItemCorrectionView = |client| {
+    let input: oneiron::authority::WeaveAdminItemWrongRequest = crate::codec::lower_record("vault.weave.admin.item.wrong", input)?;
+    let output = client.vault_weave_admin_item_wrong(&input)?;
+    crate::codec::lift_record("vault.weave.admin.item.wrong", &output)
+};
+"vault.step_up.passkeys.reset" => fn vault_step_up_passkeys_reset(&self, input: StepUpPasskeysResetRequest) -> StepUpPasskeysReset = |client| {
+    let input: oneiron::authority::StepUpPasskeysResetRequest = crate::codec::lower_record("vault.step_up.passkeys.reset", input)?;
+    let output = client.vault_step_up_passkeys_reset(&input)?;
+    crate::codec::lift_record("vault.step_up.passkeys.reset", &output)
+};
+"vault.step_up.totp.reset" => fn vault_step_up_totp_reset(&self, input: StepUpTotpResetRequest) -> StepUpTotpReset = |client| {
+    let input: oneiron::authority::StepUpTotpResetRequest = crate::codec::lower_record("vault.step_up.totp.reset", input)?;
+    let output = client.vault_step_up_totp_reset(&input)?;
+    crate::codec::lift_record("vault.step_up.totp.reset", &output)
+};
 "vault.weave.enqueue" => fn vault_weave_enqueue(&self, input: WeaveEnqueueRequest) -> DreamerAttemptRef = |client| {
     let input: oneiron::task_verb::sdk::WeaveEnqueueRequest = crate::codec::lower_record("vault.weave.enqueue", input)?;
     let output = client.vault_weave_enqueue(&input)?;
@@ -2396,6 +2431,11 @@ export_facade! {
     let output = client.vault_coach_training_offers_sources(&input)?;
     crate::codec::lift_record("vault.coach.training_offers.sources", &output)
 };
+"vault.coach.training_runs.cancel" => fn vault_coach_training_runs_cancel(&self, input: TrainingRunRef) -> PendingEmbedderBinding = |client| {
+    let input: oneiron::skill_optimize::offer_doors::TrainingRunRef = crate::codec::lower_record("vault.coach.training_runs.cancel", input)?;
+    let output = client.vault_coach_training_runs_cancel(&input)?;
+    crate::codec::lift_record("vault.coach.training_runs.cancel", &output)
+};
 "vault.drafters.list" => fn vault_drafters_list(&self, input: DrafterListRequest) -> Vec<DrafterVersionView> = |client| {
     let input: oneiron::drafter::DrafterListRequest = crate::codec::lower_record("vault.drafters.list", input)?;
     let output = client.vault_drafters_list(&input)?;
@@ -3170,6 +3210,11 @@ export_facade! {
     let input: oneiron::runtime_hooks::host_doors::HostBudgetHitRequest = crate::codec::lower_record("host.budget.hit", input)?;
     let output = client.host_budget_hit(&input)?;
     crate::codec::lift_record("host.budget.hit", &output)
+};
+"vault.hooks.checks" => fn vault_hooks_checks(&self) -> Vec<HookCheck> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.hooks.checks")?;
+    let output = client.vault_hooks_checks(&input)?;
+    crate::codec::lift_record("vault.hooks.checks", &output)
 };
 "vault.hooks.replay" => fn vault_hooks_replay(&self, input: HooksReplayRequest) -> HooksReplayPage = |client| {
     let input: oneiron::task_verb::sdk::HooksReplayRequest = crate::codec::lower_record("vault.hooks.replay", input)?;
@@ -5056,8 +5101,8 @@ export_facade! {
     let output = client.vault_calendar_ics_import(&input)?;
     crate::codec::lift_record("vault.calendar.ics.import", &output)
 };
-"vault.calendar.occurrences" => fn vault_calendar_occurrences(&self, input: CalendarOccurrencesRequest) -> ScopedReadResultCalendarOccurrenceViewList = |client| {
-    let input: oneiron::calendar::query::CalendarOccurrencesRequest = crate::codec::lower_record("vault.calendar.occurrences", input)?;
+"vault.calendar.occurrences" => fn vault_calendar_occurrences(&self, input: CalendarOccurrencesPageRequest) -> ScopedReadResultCalendarOccurrencesPage = |client| {
+    let input: oneiron::calendar::query::CalendarOccurrencesPageRequest = crate::codec::lower_record("vault.calendar.occurrences", input)?;
     let output = client.vault_calendar_occurrences(&input)?;
     crate::codec::lift_record("vault.calendar.occurrences", &output)
 };
@@ -5071,13 +5116,13 @@ export_facade! {
     let output = client.vault_calendar_read(&input)?;
     crate::codec::lift_record("vault.calendar.read", &output)
 };
-"vault.calendar.search" => fn vault_calendar_search(&self, input: CalendarSearchRequest) -> ScopedReadResultCalendarEventViewList = |client| {
-    let input: oneiron::calendar::CalendarSearchRequest = crate::codec::lower_record("vault.calendar.search", input)?;
+"vault.calendar.search" => fn vault_calendar_search(&self, input: CalendarSearchPageRequest) -> ScopedReadResultCalendarSearchPage = |client| {
+    let input: oneiron::calendar::query::CalendarSearchPageRequest = crate::codec::lower_record("vault.calendar.search", input)?;
     let output = client.vault_calendar_search(&input)?;
     crate::codec::lift_record("vault.calendar.search", &output)
 };
-"vault.calendar.freebusy" => fn vault_calendar_freebusy(&self, input: CalendarFreebusyRequest) -> ScopedReadResultCalendarFreebusyDto = |client| {
-    let input: oneiron::task_verb::sdk::CalendarFreebusyRequest = crate::codec::lower_record("vault.calendar.freebusy", input)?;
+"vault.calendar.freebusy" => fn vault_calendar_freebusy(&self, input: CalendarFreebusyPageRequest) -> ScopedReadResultCalendarFreebusyPage = |client| {
+    let input: oneiron::calendar::query::CalendarFreebusyPageRequest = crate::codec::lower_record("vault.calendar.freebusy", input)?;
     let output = client.vault_calendar_freebusy(&input)?;
     crate::codec::lift_record("vault.calendar.freebusy", &output)
 };
@@ -6135,6 +6180,11 @@ export_facade! {
     let input: oneiron::mail_pack::MailComplianceSearchRequest = crate::codec::lower_record("vault.mail.compliance.search", input)?;
     let output = client.vault_mail_compliance_search(&input)?;
     crate::codec::lift_record("vault.mail.compliance.search", &output)
+};
+"vault.files.sources.convert" => fn vault_files_sources_convert(&self, input: FilesSourceConvertRequest) -> FilesSourceAttachAnswer = |client| {
+    let input: oneiron::task_verb::sdk::FilesSourceConvertRequest = crate::codec::lower_record("vault.files.sources.convert", input)?;
+    let output = client.vault_files_sources_convert(&input)?;
+    crate::codec::lift_record("vault.files.sources.convert", &output)
 };
 "connector.answer" => fn connector_answer(&self, input: ConnectorAnswerRequest) -> ConnectorCallReply = |client| {
     let input: oneiron::task_verb::sdk::ConnectorAnswerRequest = crate::codec::lower_record("connector.answer", input)?;

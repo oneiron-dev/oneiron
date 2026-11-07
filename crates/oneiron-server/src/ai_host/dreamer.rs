@@ -28,6 +28,7 @@ use oneiron::dreamer_runner::maintenance::ContributionReplayHost;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::llm::{HostInferenceContext, WorkCancel, WorkClass, WorkContext};
+use oneiron::settings::ReadDestination;
 use oneiron::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
 use oneiron::{
     DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor,
@@ -46,6 +47,7 @@ use super::policy::{DreamerRoute, dreamer_role_purpose, dreamer_route, extractio
 
 mod claim_authoring;
 mod compaction_check;
+mod destination_bound;
 mod free_time;
 mod pause;
 mod request_sources;
@@ -327,6 +329,10 @@ async fn supervise(
         settings.urgent_digest_question.clone(),
         admission.clone(),
     ));
+    // The deadline read's writes take the passes' gate (FIX 7441).
+    let deadline_gate = admission
+        .as_ref()
+        .map(|control| Arc::clone(&control.admission));
     let built = (|| -> anyhow::Result<_> {
         let node_id = claim_home_node(&vault, device)?;
         // The nightly harness audit reads this; a failed record never stops
@@ -391,7 +397,8 @@ async fn supervise(
                     TimerTick::new(
                         AttemptQueueDeadlines::new(&vault, node_id)
                             .for_worker(LEASE_OWNER)
-                            .with_idle(Arc::clone(&idle)),
+                            .with_idle(Arc::clone(&idle))
+                            .with_write_gate(deadline_gate),
                     ),
                     push,
                 ),
@@ -548,7 +555,10 @@ impl PassAttachment for AdmittedPass {
 }
 
 impl ObservedFactory {
-    fn prepare(&mut self, guard: &oneiron::BudgetGuard) -> oneiron::Result<()> {
+    /// Builds this pass's consolidation factory, and returns the destination
+    /// every leg of the executors it vends sends inside (FIX 12735): read
+    /// here, at the vend, from the routes this very build sends on.
+    fn prepare(&mut self, guard: &oneiron::BudgetGuard) -> oneiron::Result<ReadDestination> {
         let routes = match role_routes(&self.runtime, &self.vault, &self.seat) {
             Ok(routes) => routes,
             Err((role, refusal)) => {
@@ -606,9 +616,14 @@ impl ObservedFactory {
             oneiron::BudgetExhaustionPolicy::Suspend,
             self.actor,
         )?;
+        let host = self.decisions.get();
+        // Where every leg of this pass sends (FIX 12735), and the ladder
+        // each route sends on under it: held on this device when every route
+        // can be and no decision slot lends a model, else each as it is.
+        let bound = destination_bound::pass_bound(&routes, host);
         let mut roles = RoleBackends::default();
         let mut runs = BTreeMap::new();
-        for (role, route) in &routes {
+        for ((role, route), ladder) in routes.iter().zip(&bound.ladders) {
             let run = self
                 .runtime
                 .undeclared_run(
@@ -629,15 +644,17 @@ impl ObservedFactory {
                     cancel: self.device_cancel.clone().unwrap_or_default(),
                     ..Default::default()
                 });
-            runs.insert(*role, (Arc::clone(&route.ladder), run.clone()));
+            runs.insert(*role, (Arc::clone(ladder), run.clone()));
             // Each call the engine knows the rows of sends under them, on
             // this same run (FIX 6998).
-            let backend = Arc::new(SourcedRunBackend::new(Arc::clone(&route.ladder), run));
+            let backend = Arc::new(SourcedRunBackend::new(Arc::clone(ladder), run));
             roles = roles.with(
                 *role,
                 RoleBackend {
                     backend: Arc::clone(&backend) as Arc<dyn LlmBackend>,
                     model: route.model.clone(),
+                    // The host's statement of the route as it resolved:
+                    // holding it on the device narrows its fallbacks alone.
                     binding: route.ladder.host_binding(
                         route.model.clone(),
                         route.locality,
@@ -665,15 +682,15 @@ impl ObservedFactory {
         // code host, its own generation on the extraction route (FIX 7508).
         let thing_route = routes
             .iter()
-            .find(|(role, _)| *role == DREAMER_EXTRACTION_ROLE)
-            .map(|(_, route)| super::dreamer_thing::ThingRoute {
-                ladder: Arc::clone(&route.ladder),
+            .zip(&bound.ladders)
+            .find(|((role, _), _)| *role == DREAMER_EXTRACTION_ROLE)
+            .map(|((_, route), ladder)| super::dreamer_thing::ThingRoute {
+                ladder: Arc::clone(ladder),
                 model: route.model.clone(),
                 locality: route.locality,
                 window: self.windows.get(&route.model).copied(),
             });
         let selected = routes.iter().map(|(_, route)| route.model.clone());
-        let host = self.decisions.get();
         let sink = AttemptPromotionSink::new(Arc::clone(&self.vault))
             .with_checker(host.and_then(DecisionHost::auto_checker).cloned());
         let mut factory = ConsolidationExecutorFactory::new(
@@ -728,7 +745,7 @@ impl ObservedFactory {
             ));
         }
         self.inner = Some(factory);
-        Ok(())
+        Ok(bound.destination)
     }
 }
 
@@ -753,7 +770,7 @@ impl PassExecutorFactory for ObservedFactory {
         &'p mut self,
         guard: &'p oneiron::BudgetGuard,
     ) -> oneiron::Result<Self::Exec<'p>> {
-        self.prepare(guard)?;
+        let destination = self.prepare(guard)?;
         let resident = match (&self.weaver, self.resident_instruction.as_deref()) {
             (Some(weaver), Some(instruction)) => Some(ResidentLend {
                 vault: &self.vault,
@@ -795,6 +812,7 @@ impl PassExecutorFactory for ObservedFactory {
                 .as_mut()
                 .expect("prepared factory")
                 .executor(guard)?,
+            destination,
             status: &self.status,
             resident,
             task,
@@ -818,7 +836,7 @@ impl PassExecutorFactory for ObservedFactory {
         guard: &'p oneiron::BudgetGuard,
         buckets: usize,
     ) -> oneiron::Result<Vec<Self::Exec<'p>>> {
-        self.prepare(guard)?;
+        let destination = self.prepare(guard)?;
         let status = self.status.as_ref();
         let decisions = &self.decisions;
         let coach_heal = self
@@ -875,6 +893,7 @@ impl PassExecutorFactory for ObservedFactory {
                     .into_iter()
                     .map(|inner| ObservedExecutor {
                         inner,
+                        destination: destination.clone(),
                         status,
                         resident,
                         task,
@@ -1095,6 +1114,9 @@ fn settle_parked(
 
 struct ObservedExecutor<'p, E> {
     inner: E,
+    /// Where every leg it sends on sends what it reads, as the factory's
+    /// build at this vend stated it (FIX 12735).
+    destination: ReadDestination,
     status: &'p StatusCell,
     /// What a resident's own dreaming borrows; none without an instruction.
     resident: Option<ResidentLend<'p>>,
@@ -1499,6 +1521,16 @@ impl Drop for DreamerRunning<'_> {
 }
 
 impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, E> {
+    /// The bound its factory's build stated at this vend (FIX 12735). Only
+    /// the consolidation and NOTE review it hands on read the wake the pass
+    /// lists, and their every model call goes out on the role routes and the
+    /// decision ladder that bound was read from, each route held inside it.
+    /// Its resident, TASK, check, Coach and connector legs never read that
+    /// wake: each reads under its own run.
+    fn destination_bound(&self) -> Option<ReadDestination> {
+        Some(self.destination.clone())
+    }
+
     fn runs_coach_host_jobs(&self) -> bool {
         self.coach_host.is_some() || self.inner.runs_coach_host_jobs()
     }

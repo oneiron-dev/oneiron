@@ -36,13 +36,12 @@ impl Vault {
         contacts: &[EntityId],
         scope: Scope,
     ) -> Result<Vec<DisclosureConfirmationReceipt>> {
+        // No count of contacts refuses a trusted set (FIX 8198, 9739): each
+        // is checked and receipted on its own, in this one writer.
         let distinct: std::collections::BTreeSet<_> = contacts.iter().collect();
-        if contacts.is_empty()
-            || contacts.len() > MAX_PRECLEAR_CONTACTS
-            || distinct.len() != contacts.len()
-        {
+        if contacts.is_empty() || distinct.len() != contacts.len() {
             return Err(Error::Gate(GateError::InvalidConsentBound(
-                "a trusted set names 1..=256 distinct contacts",
+                "a trusted set names at least one contact, each once",
             )));
         }
         self.with_write_txn_grouped(|txn| {

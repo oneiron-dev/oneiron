@@ -2,7 +2,7 @@
 
 use std::io::Cursor;
 
-use rmpv::Value;
+use rmpv::{Value, ValueRef};
 
 use super::record::{
     CONFIDENCE_KEYS, KEY_COMPACT, KEY_CONFIDENCE, KEY_NARRATIVE, KEY_SCHEMA_VERSION,
@@ -18,9 +18,49 @@ mod source_pages;
 pub use self::source_pages::PSYCH_PROFILE_SOURCE_IDS_PER_CODEC_PAGE;
 use self::source_pages::{decode_pages, decode_source, encode_pages, encode_source};
 
-/// Encodes a PsychProfile body in canonical MessagePack field order.
+/// What a stored PSYCH_PROFILE body's envelope says, read before its payload
+/// is decoded (FIX 11766).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PsychProfileBodyEnvelope {
+    /// The current schema: every source carries the exact words it was
+    /// read from.
+    Current,
+    /// An earlier schema, whose sources carry no exact words. No reader
+    /// decodes its payload.
+    WithoutSourceWords,
+}
+
+/// The schema `bytes`, a stored PSYCH_PROFILE body, names, judged from its
+/// `schemaVersion` alone: no other field is decoded or validated. A body
+/// with no single integer `schemaVersion`, or one past the current schema,
+/// is refused.
+pub fn psych_profile_body_envelope(bytes: &[u8]) -> Result<PsychProfileBodyEnvelope> {
+    let mut cursor = bytes;
+    let Ok(ValueRef::Map(entries)) = rmpv::decode::read_value_ref(&mut cursor) else {
+        return Err(invalid_profile("body must be a MessagePack map"));
+    };
+    let mut versions = entries.iter().filter_map(|(key, value)| match key {
+        ValueRef::String(key) if key.as_str() == Some(KEY_SCHEMA_VERSION) => Some(value),
+        _ => None,
+    });
+    let (Some(ValueRef::Integer(version)), None) = (versions.next(), versions.next()) else {
+        return Err(invalid_profile("missing required profile field"));
+    };
+    match version.as_u64() {
+        Some(PSYCH_PROFILE_SCHEMA_VERSION) => Ok(PsychProfileBodyEnvelope::Current),
+        Some(version) if version < PSYCH_PROFILE_SCHEMA_VERSION => {
+            Ok(PsychProfileBodyEnvelope::WithoutSourceWords)
+        }
+        _ => Err(invalid_profile("unsupported schemaVersion")),
+    }
+}
+
+/// Encodes a PsychProfile body in canonical MessagePack field order. A
+/// profile any of whose source revisions lacks the exact words it was read
+/// from is refused (FIX 11766).
 pub fn encode_psych_profile_body(profile: &PsychProfile) -> Result<Vec<u8>> {
     profile.validate()?;
+    profile.validate_source_words()?;
     let value = Value::Map(vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
@@ -82,6 +122,11 @@ fn decode_psych_profile_value(value: &Value) -> Result<PsychProfile> {
         return Err(invalid_profile("body must be a MessagePack map"));
     };
     validate_keys(entries, &PSYCH_PROFILE_BODY_KEYS)?;
+    // The schema is judged before any other field: an earlier schema's
+    // payload is never decoded (FIX 11766).
+    if required_value(entries, KEY_SCHEMA_VERSION)?.as_u64() != Some(PSYCH_PROFILE_SCHEMA_VERSION) {
+        return Err(invalid_profile("unsupported schemaVersion"));
+    }
 
     let profile = PsychProfile {
         subject_ref: decode_entity_ref(required_value(entries, KEY_SUBJECT_REF)?)?,
@@ -112,16 +157,13 @@ fn decode_psych_profile_value(value: &Value) -> Result<PsychProfile> {
             .ok_or_else(|| invalid_profile("status must be typed code 1 or 2"))?,
         sources: decode_pages(
             required_value(entries, KEY_SOURCE_PAGES)?,
-            "sourcePages must be full pages of source placements",
+            "sourcePages must be full pages of sources",
             decode_source,
         )?,
     };
 
-    if required_value(entries, KEY_SCHEMA_VERSION)?.as_u64() != Some(PSYCH_PROFILE_SCHEMA_VERSION) {
-        return Err(invalid_profile("unsupported schemaVersion"));
-    }
-
     profile.validate()?;
+    profile.validate_source_words()?;
     Ok(profile)
 }
 
