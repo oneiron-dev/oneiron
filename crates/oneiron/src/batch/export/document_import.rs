@@ -25,7 +25,8 @@ use crate::error::{Error, Result};
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM,
     ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_EVENT,
-    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SKILL, ENTITY_TYPE_TURN, ENTITY_TYPE_WORKFLOW,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE, ENTITY_TYPE_SKILL, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_WORKFLOW,
 };
 use crate::serialize::{ExportBody, ExportBodyFile};
 use crate::temporal::TimeRange;
@@ -75,10 +76,12 @@ impl Vault {
     /// `import.archive`, marked `metadata.import.source = "archive"`, with the
     /// source's type and `AuthoredBy` bylines inert in that metadata and no
     /// local author edge; the TURN and CONVERSATION they join are stamped
-    /// `import_source = "archive"`.
+    /// `import_source = "archive"`. A NOTE keeps its source author as an
+    /// imported one, which matches no local writer, and no `AuthoredBy`
+    /// edge; a stored NOTE compares as its live body, as the export reads it.
     ///
     /// Same-ID divergent rows are refused, never overwritten. Other maintenance rows,
-    /// notes, other reserved claims and owned/provenanced edges need
+    /// other reserved claims and owned/provenanced edges need
     /// their owning import adapter and fail through the existing public doors.
     /// Such a failure aborts the entire transaction, not a partial import.
     /// The manifest explicitly marks hub configuration and foreign skill signals
@@ -240,6 +243,7 @@ impl Vault {
                 // A file-plane ASSET compares as its body, never the manifest
                 // its row keeps (FIX 3677).
                 let existing = self.materialized_row_in_txn(&wtxn, &id, existing)?;
+                let existing = live_note_row(self, &wtxn, &id, existing)?;
                 if matches_row(&row, &existing, &row.body) {
                     validate_existing_source(self, &wtxn, &row, &archive, &at)?;
                     if row.entity_type == ENTITY_TYPE_MESSAGE {
@@ -312,7 +316,10 @@ impl Vault {
             // facet's put lands first and the masked initial put below finds
             // a stored FACET. A facet the archive does not carry blocks
             // nothing (it is never Waiting); the put then fails fail-closed.
-            if matches!(row.entity_type, ENTITY_TYPE_EVENT | ENTITY_TYPE_TURN) {
+            if matches!(
+                row.entity_type,
+                ENTITY_TYPE_EVENT | ENTITY_TYPE_TURN | ENTITY_TYPE_NOTE
+            ) {
                 if let Some(facet) = archived_birth_facet(&archive, &id)?
                     && !waits_on.contains(&facet)
                 {
@@ -395,10 +402,10 @@ impl Vault {
                     continue;
                 }
                 let edge = super::provenance_import::mapped_edge(&edge, &archive.index)?;
-                // FIX 7777: an archived MESSAGE's byline rides inert in its
-                // body; an archive never makes a local author.
+                // FIX 7777: an archived MESSAGE's or NOTE's byline rides
+                // inert in its body; an archive never makes a local author.
                 if let Some(kind) = EdgeKind::try_from_u8(edge.kind)
-                    && super::evidence_import::is_message_byline(
+                    && super::evidence_import::is_evidence_byline(
                         &archive,
                         &parse_id(&edge.source)?,
                         kind,
@@ -611,6 +618,17 @@ fn insert_ready_row<R: Read + Seek>(
             &body,
             occurred,
             row.learned_at,
+        ),
+        // FIX 7777: the NOTE archive import owner writes the row with its
+        // source author kept as an imported one, born under its archived
+        // facet like an EVENT/TURN.
+        ENTITY_TYPE_NOTE => vault.restore_archived_note_in_txn(
+            wtxn,
+            &id,
+            &body,
+            occurred,
+            row.learned_at,
+            archived_birth_facet(archive, &id)?,
         ),
         ENTITY_TYPE_SKILL => {
             let record = crate::write_envelope::skill_record::decode_skill_record(&body)?;
@@ -1499,6 +1517,36 @@ fn fill(read: &mut dyn Read, buf: &mut [u8]) -> Result<usize> {
     Ok(at)
 }
 
+/// FIX 7777: stored NOTE row `raw` as the export reads it, its markdown
+/// projected from its live document. A NOTE row's birth bytes are
+/// immutable while its document moves on, so a NOTE whose export the
+/// archive holds compares by its live body, never its birth. Any other row
+/// comes back as it is.
+fn live_note_row(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: Vec<u8>,
+) -> Result<Vec<u8>> {
+    if EntityMetadataHeader::parse(&raw).map(|header| header.entity_type) != Some(ENTITY_TYPE_NOTE)
+    {
+        return Ok(raw);
+    }
+    let Some(body) = raw.get(ENTITY_METADATA_HEADER_LEN..) else {
+        return Ok(raw);
+    };
+    let live = match crate::note::live_body_in_txn(&vault.store, txn, id, ENTITY_TYPE_NOTE, body)? {
+        std::borrow::Cow::Owned(live) => Some(live),
+        std::borrow::Cow::Borrowed(_) => None,
+    };
+    let Some(live) = live else {
+        return Ok(raw);
+    };
+    let mut row = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
+    row.extend_from_slice(&live);
+    Ok(row)
+}
+
 /// The stored row's type and times are the archived row's.
 fn matches_header(row: &ExportEntity, raw: &[u8]) -> bool {
     EntityMetadataHeader::parse(raw).is_some_and(|header| {
@@ -1569,6 +1617,7 @@ fn imported_body(
             )?;
             crate::memory::archived_message_body(&bytes, &bylines)
         }
+        ENTITY_TYPE_NOTE => crate::note::archived_note_body(&bytes),
         ENTITY_TYPE_TURN | ENTITY_TYPE_CONVERSATION
             if index.contains(Tag::MessageContainer, parse_id(&row.id)?.as_bytes())? =>
         {
