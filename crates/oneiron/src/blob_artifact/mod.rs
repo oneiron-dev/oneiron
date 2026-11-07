@@ -106,6 +106,7 @@ pub use self::verbs::{
     NativeOutputRequest, ProposalSettleRequest, ReleasedWait, SlideReviewOutcome,
     SlideReviewSubmit, SlideReviewUnitInput, SlideUnitRefused, UndoneKeep,
 };
+pub(crate) use self::versions::RoomResponseVersion;
 pub(crate) use self::versions::archive_version_tables;
 pub(crate) use self::versions::read_blob_artifact_head_in_txn;
 // FIX 7227: the queue-check completion writer (token-only, no raw bytes/ids),
