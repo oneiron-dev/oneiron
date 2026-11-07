@@ -22,6 +22,7 @@ mod peer_origins;
 mod rebuild;
 mod row_births;
 mod snapshot_ops;
+mod source_audiences;
 mod validation_work;
 mod vocabulary;
 mod withdrawn_cutoffs;
@@ -40,6 +41,7 @@ pub use rebuild::rebuild_vault_window_from_canonical;
 #[cfg(feature = "sync")]
 pub(crate) use rebuild::{RebuildAt, rebuild_page, rebuild_start};
 pub use row_births::CanonicalRowBirth;
+pub use source_audiences::CanonicalSourceAudience;
 pub(crate) use validation_work::CanonicalValidation;
 pub use vocabulary::{
     CanonicalBaseEdge, CanonicalContainerManifest, CanonicalCustodyTransition,

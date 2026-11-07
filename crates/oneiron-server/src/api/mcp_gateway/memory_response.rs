@@ -1,7 +1,7 @@
 //! Tool-first projections of the engine-owned typed read table.
 
 use super::{McpGatewayError, mcp_engine_error, mcp_scoped_read};
-use crate::mcp::{McpResolvedActor, McpVerbToolArgs};
+use crate::mcp::McpResolvedActor;
 use crate::server::SyncServer;
 use oneiron::claim::ScopedReadReceipt;
 use oneiron::code_run::vault_read::{
@@ -16,13 +16,15 @@ use std::sync::Arc;
 /// All observations are staged from typed, post-limit results. No failed
 /// adapter call, encoding failure, or partial batch commits a read-set event.
 /// Beside the output it returns every row the read derived it from, the ones
-/// a query counts past its page among them (DEC-0005).
+/// a query counts past its page among them (DEC-0005). The read runs on
+/// `body`, the request its verb-hook boundary left (FIX 1435).
 pub(super) async fn execute(
     server: &Arc<SyncServer>,
-    args: &McpVerbToolArgs,
+    method: VaultReadMethod,
+    body: Value,
     actor: &McpResolvedActor,
 ) -> Result<(Value, Vec<CapabilityHit>, Vec<oneiron::EntityId>), McpGatewayError> {
-    let media = memory_read_media(server, args, actor).await?;
+    let media = memory_read_media(server, method, &body, actor).await?;
     let (mut media_memory, media) = (server.memory.empty_lease(), media);
     media_memory.materialized(
         0,
@@ -43,7 +45,7 @@ pub(super) async fn execute(
             )
         }),
     );
-    let mut produced = execute_read(server, args, actor, media.as_deref())?;
+    let mut produced = execute_read(server, method, body, actor, media.as_deref())?;
     if !produced.served.is_empty() {
         let mut target = super::board_observations::read_set(server, actor).await;
         let reader = mcp_scoped_read(&server.vault, actor)?;
@@ -138,17 +140,11 @@ fn image_pick<'a>(
 
 fn execute_read(
     server: &SyncServer,
-    args: &McpVerbToolArgs,
+    method: VaultReadMethod,
+    body: Value,
     actor: &McpResolvedActor,
     media: Option<&[EmbeddedMediaSeed]>,
 ) -> Result<MemoryRead, McpGatewayError> {
-    let Some(method) = args.tool.memory_method() else {
-        return Err(super::mcp_verb_family_error(args));
-    };
-    let body = args.payload.arguments.request.clone().ok_or_else(|| {
-        McpGatewayError::new(-32602, "tool_args_invalid", "native request is required")
-            .with_field("arguments.request")
-    })?;
     check_query_bound(server, actor, method, &body)?;
     let reader = mcp_scoped_read(&server.vault, actor)?;
     let producers = oneiron::memory::ProducerRows::default();
@@ -289,17 +285,16 @@ fn check_query_bound(
 /// request that seeds nothing, embeds nothing.
 async fn memory_read_media(
     server: &SyncServer,
-    args: &McpVerbToolArgs,
+    method: VaultReadMethod,
+    body: &Value,
     actor: &McpResolvedActor,
 ) -> Result<Option<Vec<EmbeddedMediaSeed>>, McpGatewayError> {
-    let Some(method @ (VaultReadMethod::Query | VaultReadMethod::ContextPack)) =
-        args.tool.memory_method()
-    else {
+    if !matches!(
+        method,
+        VaultReadMethod::Query | VaultReadMethod::ContextPack
+    ) {
         return Ok(None);
-    };
-    let Some(body) = args.payload.arguments.request.as_ref() else {
-        return Ok(None);
-    };
+    }
     let names_media = !body.get("media").is_none_or(Value::is_null);
     let names_query = body
         .get("query")
