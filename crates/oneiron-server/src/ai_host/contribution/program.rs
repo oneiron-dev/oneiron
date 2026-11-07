@@ -115,7 +115,8 @@ impl LentProgram<'_> {
         let lease = ShadowArmLease::mint();
         let actor = step.source_actor();
         let source = (actor, step.step().run);
-        let arm = arms.open_arm(lease, source, source_hold(vault, actor), vault)?;
+        let hold = source_hold(vault, actor);
+        let arm = arms.open_arm(lease, source, hold, step.release_source(), vault)?;
         let runtime: &mut dyn JsCodeModeRuntime = &mut *runtime;
         let cancel = StepCancellation::new();
         let ran = run(runtime, runtime_pin, arm.store(), &cancel);

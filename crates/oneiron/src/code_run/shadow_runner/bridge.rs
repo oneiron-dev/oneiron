@@ -27,6 +27,11 @@
 //! the arm started. A read of another run's result (a reader child's
 //! source, a child's finding) answers as the step's live read did, from the
 //! step's read context (FIX 6352).
+//!
+//! Each read of a result frozen from the step's source takes the taint its
+//! source occurrence reads under now, at its worst with the frozen one (FIX
+//! 9468): a result that went tainted after the freeze is withheld, as a
+//! run's read of a tainted result is.
 
 use serde_json::Value;
 
@@ -50,7 +55,7 @@ use crate::secret_rotation::ArtifactTaintState;
 use crate::{EntityId, Error, Result};
 
 /// The taint a result reads under: its state and the secret scan's reason.
-type Taint = (ArtifactTaintState, Option<String>);
+pub(super) type Taint = (ArtifactTaintState, Option<String>);
 
 mod callable;
 mod results;
@@ -281,6 +286,7 @@ impl JsCodeModeHost for ShadowBridgeHost<'_> {
         let offset = canonical_offset(&offset).ok_or_else(|| {
             Error::InvalidConfig("invalid recoverable output reference".to_owned())
         })?;
+        let clean = clean && self.source_clean(&output)?;
         self.read_chunk(&output, clean, offset)
     }
 

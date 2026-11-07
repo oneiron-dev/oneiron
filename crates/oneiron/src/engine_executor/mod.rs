@@ -21,6 +21,7 @@ mod host;
 mod program_entry;
 mod record;
 mod repl;
+mod self_brief;
 mod shadow_step;
 mod skill_call;
 mod stack_floor;
@@ -44,6 +45,10 @@ pub(crate) use self::program_entry::{PinnedProgramEntry, PinnedProgramRun};
 use self::record::step_state_hash;
 pub use self::record::{EnteredRun, entered_run};
 pub(crate) use self::record::{code_run_complete_in_txn, parked_wait_now};
+// FIX 17594: the host's self-brief port a native run's requests carry.
+pub use self::self_brief::{
+    BriefBoundary, BriefCandidateToken, BriefPrefix, FoldBoundary, SelfBriefPort,
+};
 pub use self::shadow_step::{ArmTypeFeedback, run_shadow_step};
 pub(crate) use self::shadow_step::{run_shadow_callable_branch, shadow_readable_outputs};
 pub use self::skill_call::{execute_live_skill_call, execute_live_skill_call_listing};

@@ -138,6 +138,15 @@ impl BookingSolver<'_> {
         utc_to_wall(self.now_utc, &req.visitor_tz).map_err(visitor_zone_error)?;
         if let Some(constraint) = &req.constraint {
             constraint.validate()?;
+            // ABC row 74: every solve, whatever door asked it (the lifecycle,
+            // public availability, the constraint front), measures its
+            // canonical constraint's local windows (strictly ascending, so
+            // distinct); past `booking_local_time_windows` it asks whether
+            // everything is okay, and every window is solved.
+            let _ = self.vault.measure_limit(
+                crate::limit_ask::EngineLimit::BookingLocalTimeWindows,
+                constraint.local_time_windows.len() as u64,
+            );
         }
 
         let requested = half_open(req.window)?;
