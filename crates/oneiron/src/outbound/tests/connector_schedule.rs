@@ -41,7 +41,7 @@ pub(super) fn delivered_send_idempotency_survives_attempt_completion() -> crate:
     let task_ref = unsettled.task_ref;
     // Discriminating: additive absent fields must hydrate as outcome unknown,
     // not as a fabricated successful terminal state.
-    assert_eq!(unsettled.attempt_started_node_id, None);
+    assert_eq!(unsettled.send_executor_lease, None);
     assert_eq!(unsettled.outcome, None);
     assert_eq!(unsettled.intent.target, "transport:shared-inbox");
     assert_eq!(
@@ -61,7 +61,7 @@ pub(super) fn delivered_send_idempotency_survives_attempt_completion() -> crate:
     let settled = vault
         .connector_send_task(&task_ref)?
         .expect("settled connector task");
-    assert!(settled.attempt_started_node_id.is_some());
+    assert!(settled.send_executor_lease.is_some());
     // The Delivered projection is strictly after receipt durability: a crash
     // before the receipt must leave the task outcome unknown, never Delivered.
     assert_eq!(
@@ -233,7 +233,7 @@ fn failed_send_receipt_is_audit_only_and_same_task_can_retry() -> crate::Result<
     let failed_task = vault
         .connector_send_task(&task_ref)?
         .expect("failed connector task");
-    assert!(failed_task.attempt_started_node_id.is_some());
+    assert!(failed_task.send_executor_lease.is_some());
     assert_eq!(failed_task.outcome, Some(ConnectorSendTaskOutcome::Failed));
     let failed_receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?;
     assert_eq!(failed_receipts.len(), 1);
@@ -327,7 +327,7 @@ fn failed_send_receipt_is_audit_only_and_same_task_can_retry() -> crate::Result<
     let delivered_task = vault
         .connector_send_task(&task_ref)?
         .expect("retried connector task");
-    assert!(delivered_task.attempt_started_node_id.is_some());
+    assert!(delivered_task.send_executor_lease.is_some());
     assert_eq!(
         delivered_task.outcome,
         Some(ConnectorSendTaskOutcome::Delivered)
@@ -1183,7 +1183,7 @@ fn maybe_delivered_non_idempotent_send_is_ambiguously_terminal() -> crate::Resul
     assert_eq!(executor.calls.len(), 1);
     assert_eq!(executor.idempotency_keys, vec![None]);
     let task = vault.connector_send_task(&task_ref)?.expect("synced task");
-    assert!(task.attempt_started_node_id.is_some());
+    assert!(task.send_executor_lease.is_some());
     assert_eq!(task.outcome, Some(ConnectorSendTaskOutcome::Ambiguous));
     let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?;
     assert_eq!(receipts.len(), 1);

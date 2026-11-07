@@ -193,6 +193,10 @@ pub struct MicroVmExit {
     pub status: i32,
     pub overlay_dirty: bool,
     pub result_json: Option<String>,
+    /// A failed run's program error, as its guest sent it, header included
+    /// (FIX 9209). It is not masked; the caller masks it before it leaves
+    /// the host. `None` for a run that succeeded or sent no error.
+    pub guest_error: Option<String>,
 }
 
 /// Resource ceiling applied to one guest run.
