@@ -119,8 +119,9 @@ impl TokenRatios {
     /// Storage errors.
     pub fn measure_missing_blocking(&self, vault: &Vault) -> oneiron::Result<usize> {
         std::thread::scope(|scope| {
-            scope
-                .spawn(|| self.runtime.block_on(self.measure_missing(vault)))
+            crate::engine_thread("token-ratio".into())
+                .spawn_scoped(scope, || self.runtime.block_on(self.measure_missing(vault)))
+                .expect("failed to spawn thread")
                 .join()
         })
         .unwrap_or_else(|_| {
