@@ -47418,6 +47418,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/mail_pack/header_retire.rs",
+     "purpose": "A mail's header-only revisions go once its body lands (FIX 15413)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -47538,7 +47548,7 @@
      "path": "src/mail_pack/state.rs",
      "purpose": "What the importer keeps per source and per provider message: where its listing and its change feed stand…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "enum": 2,
       "struct": 1
      }
@@ -65181,6 +65191,7 @@
       "VerbAskDrainPermit",
       "VerbAskDrainScope",
       "VerbAskInstrument",
+      "VerbAskMcpCeiling",
       "VerbAskRefusal",
       "VerbAskResumed",
       "VerbAskSavedCall"
@@ -65188,10 +65199,10 @@
      "path": "src/runtime_hooks/verb/credential.rs",
      "purpose": "A credential caller's call a verb hook's ask stopped, resumed through the door it came in by (ARCH-0080 §3…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 18,
       "enum": 5,
-      "fn": 9,
-      "struct": 6,
+      "fn": 10,
+      "struct": 7,
       "trait": 1
      }
     },
@@ -93408,7 +93419,7 @@
      "purpose": "Machine destinations and folded read-location values"
     },
     "mail_pack": {
-     "files": 12,
+     "files": 13,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -94138,7 +94149,7 @@
    },
    "over_bar": 184,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6651,
+   "source_files": 6652,
    "test_files": 895
   },
   "oneiron-android": {
@@ -118214,6 +118225,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/mcp_gateway/verb_hooks/ceiling.rs",
+     "purpose": "A paused MCP call stays within both its original and live registration",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/mcp_gateway/wakes.rs",
      "purpose": "The authenticated host handoff",
      "surface": {
@@ -132075,7 +132096,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 705,
+     "files": 706,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -132609,7 +132630,7 @@
    },
    "over_bar": 57,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1691,
+   "source_files": 1692,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
