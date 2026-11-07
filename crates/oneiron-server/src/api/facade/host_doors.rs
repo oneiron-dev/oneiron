@@ -88,6 +88,7 @@ pub(crate) use super::live_voice_doors::*;
 pub(crate) use super::mesh_doors::*;
 pub(crate) use super::model_catalog_doors::*;
 pub(crate) use super::model_manifest_doors::*;
+pub(crate) use super::model_pack_doors::*;
 pub(crate) use super::model_step_doors::*;
 pub(crate) use super::model_stream_doors::*;
 pub(crate) use super::outbox_diverged_doors::*;
@@ -214,6 +215,7 @@ pub(crate) use super::comm_widen_doors::*;
 // The generic connector call's door (ONE-2510), likewise.
 pub(crate) use super::connector_call_doors::*;
 pub(crate) use super::connector_pack_doors::*;
+pub(crate) use super::connector_reply_doors::*;
 pub(crate) use super::connector_revision_doors::*;
 pub(crate) use super::connector_slate_doors::*;
 // The owner's witness-read grant revoke (FIX 10895), likewise.

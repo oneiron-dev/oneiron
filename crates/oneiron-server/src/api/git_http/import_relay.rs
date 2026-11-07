@@ -363,6 +363,7 @@ async fn relay_info_refs(
         Body::empty(),
         push_caller(&auth),
         relay_read_context(),
+        None,
     )
     .await;
     relay.observed(response)
@@ -404,6 +405,7 @@ async fn relay_receive_pack(
         body,
         push_caller(&auth),
         relay_read_context(),
+        None,
     )
     .await;
     relay.observed(response)
