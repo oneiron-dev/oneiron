@@ -42,8 +42,10 @@ use crate::memory::{
 use crate::workspace_roster::RoomRegenerationPermit;
 use crate::{EntityId, Error, Vault};
 
+mod hook_wait;
 mod rebind;
 mod standing;
+pub use hook_wait::{turn_action_hook_parent, turn_action_resumed_from_hook};
 pub use rebind::{TurnActionRebindReceipt, TurnActionRebindRequest};
 pub use standing::TurnActionAuthority;
 
