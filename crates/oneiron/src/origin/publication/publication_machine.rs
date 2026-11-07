@@ -113,6 +113,23 @@ impl Vault {
         request: &OriginPublicationRequest,
         publication_id: EntityId,
     ) -> Result<OriginAdmission> {
+        match self.admit_origin_publication_checked(git, request, publication_id, |_| {
+            Ok(Ok::<(), std::convert::Infallible>(()))
+        })? {
+            Ok(admission) => Ok(admission),
+            Err(never) => match never {},
+        }
+    }
+
+    /// [`Self::admit_origin_publication`], with `check` judged again as the
+    /// first act of the staging writer (FIX 7179): a refusal creates no staging rows.
+    pub(super) fn admit_origin_publication_checked<R>(
+        &self,
+        git: &GitWire<'_>,
+        request: &OriginPublicationRequest,
+        publication_id: EntityId,
+        check: impl Fn(&heed::RoTxn<'_>) -> Result<std::result::Result<(), R>>,
+    ) -> Result<std::result::Result<OriginAdmission, R>> {
         let _guard = lock_repository(request.repo.common_dir())?;
         let provenance =
             self.get_claim(&request.provenance_claim_id)?
@@ -189,9 +206,9 @@ impl Vault {
                     return Err(Error::ConcurrentWrite("origin CAS intent already owned"));
                 }
                 Some(row) if row.status == OriginPublicationStatus::Published => {
-                    return self
-                        .resolve_to_published_owner(git, request, row)
-                        .map(OriginAdmission::Resolved);
+                    return Ok(Ok(OriginAdmission::Resolved(
+                        self.resolve_to_published_owner(git, request, row)?,
+                    )));
                 }
                 _ => {}
             }
@@ -227,7 +244,10 @@ impl Vault {
         count.finish(self);
         let row = OriginPublicationRow::from_record(&record);
         PUBLICATIONS.encode_value(&row)?;
-        self.with_write_txn_grouped(|wtxn| {
+        let staged = self.with_write_txn_grouped(|wtxn| {
+            if let Err(refused) = check(wtxn)? {
+                return Ok(Err(refused));
+            }
             if CAS_INTENT.contains(&self.store, wtxn, &intent_key)?
                 || PUBLICATIONS.contains(&self.store, wtxn, &publication_id)?
             {
@@ -235,9 +255,12 @@ impl Vault {
             }
             CAS_INTENT.put(&self.store, wtxn, &intent_key, &publication_id)?;
             PUBLICATIONS.put(&self.store, wtxn, &publication_id, &row)?;
-            Ok(())
+            Ok(Ok(()))
         })?;
-        Ok(OriginAdmission::Staged(record))
+        if let Err(refused) = staged {
+            return Ok(Err(refused));
+        }
+        Ok(Ok(OriginAdmission::Staged(record)))
     }
 
     /// Answers a request for a move a `Published` publication already made,

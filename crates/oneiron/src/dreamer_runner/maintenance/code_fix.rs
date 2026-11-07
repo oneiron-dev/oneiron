@@ -72,7 +72,7 @@ mod instruction;
 mod publisher;
 mod publisher_refs;
 mod work;
-pub(crate) use self::admission::{CaptureRefs, CoachReplayAdmission};
+pub(crate) use self::admission::{CaptureRefs, CoachReplayAdmission, admitting_grant_in};
 pub use self::candidate_run::CandidateRun;
 pub use self::publisher::{
     CodeFixShadowHost, EngineAdmission, EngineArm, EngineArmStatus, EngineArmSummary,
