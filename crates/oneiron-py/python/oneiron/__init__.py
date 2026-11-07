@@ -663,6 +663,9 @@ class Oneiron:
         def weave(self) -> "Oneiron._VaultWeaveVerbs":
             return Oneiron._VaultWeaveVerbs(self._client)
         @property
+        def step_up(self) -> "Oneiron._VaultStepUpVerbs":
+            return Oneiron._VaultStepUpVerbs(self._client)
+        @property
         def inbox(self) -> "Oneiron._VaultInboxVerbs":
             return Oneiron._VaultInboxVerbs(self._client)
         @property
@@ -1116,7 +1119,7 @@ class Oneiron:
             """The owner asserts two identities are distinct through one symmetric claim that suppresses merge re-proposals."""
             return json.loads(_translate(lambda: self._client.vault_identity_assert_distinct(json.dumps(spec))))
         def propose(self, spec):
-            """The owner parks a nominated merge or split candidate with no topology effects; distinct pairs suppress merge proposals."""
+            """The owner parks a nominated merge, split or facet candidate with no topology effects; distinct pairs suppress merge proposals."""
             return json.loads(_translate(lambda: self._client.vault_identity_propose(json.dumps(spec))))
         def undo(self, spec):
             """The owner undoes one current topology event by appending a counter-event under its observed revision."""
@@ -1808,6 +1811,9 @@ class Oneiron:
         @property
         def item(self) -> "Oneiron._VaultWeaveItemVerbs":
             return Oneiron._VaultWeaveItemVerbs(self._client)
+        @property
+        def admin(self) -> "Oneiron._VaultWeaveAdminVerbs":
+            return Oneiron._VaultWeaveAdminVerbs(self._client)
         def enqueue(self, spec):
             """Admits a generated candidate weave recipe under the owner's proof and queues its pinned execution; poll vault.consolidation.status for completion."""
             return json.loads(_translate(lambda: self._client.vault_weave_enqueue(json.dumps(spec))))
@@ -1874,6 +1880,36 @@ class Oneiron:
         def wrong(self, spec):
             """A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays."""
             return json.loads(_translate(lambda: self._client.vault_weave_item_wrong(json.dumps(spec))))
+    class _VaultWeaveAdminVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def report(self, spec):
+            """A weave Admin's live report of the shared vault, inside the Admin membership grant's Scope, after the person stepped up with a passkey on this credential (MFA-1 A); never an Owner read."""
+            return json.loads(_translate(lambda: self._client.vault_weave_admin_report(json.dumps(spec))))
+        def lens(self, spec):
+            """A weave Admin's live report rendered into its lens on the server's model, under the stepped-up Admin proof; the server holds its frame for the card's events."""
+            return json.loads(_translate(lambda: self._client.vault_weave_admin_lens(json.dumps(spec))))
+        def digest(self, spec):
+            """One of a weave Admin's saved digests, or the newest, under the stepped-up Admin proof and the current read policy."""
+            return json.loads(_translate(lambda: self._client.vault_weave_admin_digest(json.dumps(spec))))
+        @property
+        def link(self) -> "Oneiron._VaultWeaveAdminLinkVerbs":
+            return Oneiron._VaultWeaveAdminLinkVerbs(self._client)
+        @property
+        def item(self) -> "Oneiron._VaultWeaveAdminItemVerbs":
+            return Oneiron._VaultWeaveAdminItemVerbs(self._client)
+    class _VaultWeaveAdminLinkVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def wrong(self, spec):
+            """A weave Admin labels a link its Admin report shows as wrong, under the stepped-up Admin proof, with the grant on the label; the link stays."""
+            return json.loads(_translate(lambda: self._client.vault_weave_admin_link_wrong(json.dumps(spec))))
+    class _VaultWeaveAdminItemVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def wrong(self, spec):
+            """A weave Admin labels a claim, project, budget or sieve audit row its Admin report shows as wrong, under the stepped-up Admin proof; the row stays."""
+            return json.loads(_translate(lambda: self._client.vault_weave_admin_item_wrong(json.dumps(spec))))
     class _VaultWeaveSchedulesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1904,6 +1940,27 @@ class Oneiron:
         def put(self, spec):
             """Tells the Coach the owner's own digest preference: a rhythm, a section to lead with, or keep the settings as they are."""
             return json.loads(_translate(lambda: self._client.vault_weave_digest_feedback_put(json.dumps(spec))))
+    class _VaultStepUpVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def passkeys(self) -> "Oneiron._VaultStepUpPasskeysVerbs":
+            return Oneiron._VaultStepUpPasskeysVerbs(self._client)
+        @property
+        def totp(self) -> "Oneiron._VaultStepUpTotpVerbs":
+            return Oneiron._VaultStepUpTotpVerbs(self._client)
+    class _VaultStepUpPasskeysVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def reset(self, spec):
+            """The vault owner removes every passkey a person enrolled for step-up, and that person's step-ups, so a person who lost each passkey can enroll a first one again; under the owner's own credential."""
+            return json.loads(_translate(lambda: self._client.vault_step_up_passkeys_reset(json.dumps(spec))))
+    class _VaultStepUpTotpVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def reset(self, spec):
+            """The vault owner removes a person's authenticator-app enrollments and their TOTP step-ups; passkeys and passkey step-ups remain unchanged."""
+            return json.loads(_translate(lambda: self._client.vault_step_up_totp_reset(json.dumps(spec))))
     class _VaultInboxVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2673,11 +2730,14 @@ class Oneiron:
             """Read a member's visible role grants, scopes, expiry and person/relationship through the caller's own scoped read; relationship labels confer no additional authority."""
             return json.loads(_translate(lambda: self._client.vault_members_projection(json.dumps(spec))))
         def add(self, spec):
-            """An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending."""
+            """An Admin invites a live person into a shared vault at a non-root role; they join when they accept. It names no key: the invitee binds a key of their own to the invitation."""
             return json.loads(_translate(lambda: self._client.vault_members_add(json.dumps(spec))))
         def invitation_slip(self, spec):
-            """An Admin mints a pending invitation's slip for the public key the invitee generated on their own device: a founding invitation's, or one whose slip was lost."""
+            """The invitee binds their own pending invitation to the key of the independent human credential the request came on, and gets the invitation's slip: good only at that invitation's doors while it is pending and that key stays bound."""
             return json.loads(_translate(lambda: self._client.vault_members_invitation_slip(json.dumps(spec))))
+        def invitation_code(self, spec):
+            """The owner mints a single-use pairing code for a pending invitation, passed to the invitee by any channel; redeemed at the pairing door with the invitee's own key, it binds the invitation to that key."""
+            return json.loads(_translate(lambda: self._client.vault_members_invitation_code(json.dumps(spec))))
         def change(self, spec):
             """An Admin assigns another non-root role to a member who is not an Owner."""
             return json.loads(_translate(lambda: self._client.vault_members_change(json.dumps(spec))))
@@ -5193,7 +5253,7 @@ class Oneiron:
         def ics(self) -> "Oneiron._VaultCalendarIcsVerbs":
             return Oneiron._VaultCalendarIcsVerbs(self._client)
         def occurrences(self, spec):
-            """Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions."""
+            """Expands an admitted stored master in an inclusive UTC window under the caller's read scope, masking detached exceptions, as one page: an optional deadline_ms, and resume_from to continue."""
             return json.loads(_translate(lambda: self._client.vault_calendar_occurrences(json.dumps(spec))))
         @property
         def instances(self) -> "Oneiron._VaultCalendarInstancesVerbs":
@@ -5202,10 +5262,10 @@ class Oneiron:
             """Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt."""
             return json.loads(_translate(lambda: self._client.vault_calendar_read(json.dumps(spec))))
         def search(self, spec):
-            """Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt."""
+            """Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, as one page in time order: an optional deadline_ms, and resume_from to continue."""
             return json.loads(_translate(lambda: self._client.vault_calendar_search(json.dumps(spec))))
         def freebusy(self, spec):
-            """Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt."""
+            """Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals, one page of the covered prefix: an optional deadline_ms, and resume_from to continue."""
             return json.loads(_translate(lambda: self._client.vault_calendar_freebusy(json.dumps(spec))))
         def prep(self, spec):
             """Builds a fresh caller-scoped meeting PrepPack with commitments first and a 250-word ceiling, or deliberately returns no pack."""
