@@ -400,10 +400,31 @@ pub(super) fn upsert_branch_gap_queue(
     gaps: Vec<ReflectionGap>,
     now: u64,
 ) -> Result<GapQueueDelta> {
-    let resource = branch_gap_projection(branch, scope);
+    upsert_origin_gap_queue(
+        vault,
+        scope,
+        branch_gap_projection(branch, scope),
+        branch.axes(),
+        fence,
+        gaps,
+        now,
+    )
+}
+
+/// A conversation branch or a typed root owns one gap namespace and the
+/// same live write fence. Neither may refresh or decay the other's gaps.
+pub(super) fn upsert_origin_gap_queue(
+    vault: &Vault,
+    scope: &oneiron_model::llm::Scope,
+    resource: oneiron_model::llm::ScopeResource,
+    axes: super::branch::BranchAxes,
+    fence: &super::resources::ConsolidationFence,
+    gaps: Vec<ReflectionGap>,
+    now: u64,
+) -> Result<GapQueueDelta> {
     if !scope.allows_write(&resource)
-        || scope.world != branch.world_ref
-        || scope.facet != branch.facet_ref
+        || scope.world != axes.world_ref
+        || scope.facet != axes.facet_ref
     {
         return Err(invalid_consolidation("branch gap projection write refused"));
     }

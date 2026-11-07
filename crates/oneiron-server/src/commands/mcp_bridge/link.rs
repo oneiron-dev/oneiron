@@ -213,9 +213,12 @@ impl HttpLink {
             .header(BINDING_HEADER, binding);
         // OF-604: a large body crosses zstd, as the remote SDK's does.
         let request = match oneiron::sync::transport::encode_http_body(&body) {
-            Some(encoded) => request
-                .header(reqwest::header::CONTENT_ENCODING, "zstd")
-                .body(encoded),
+            Some(encoded) => {
+                drop(body);
+                request
+                    .header(reqwest::header::CONTENT_ENCODING, "zstd")
+                    .body(encoded)
+            }
             None => request.body(body),
         };
         self.runtime.block_on(async move {
