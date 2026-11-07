@@ -718,6 +718,15 @@ fn settle_one(
             }
             storage::drop_document(&vault.store, txn, &old_document)?;
             record.status = ForkStatus::Switched;
+            // The switched head reaches a loaded window once this writer
+            // commits, as any MESSAGE write does; a rollback mirrors nothing
+            // (FIX 5132). Only a build with sync mirrors.
+            #[cfg(feature = "sync")]
+            crate::batch::queue_committed_rows(
+                vault,
+                txn,
+                std::collections::BTreeSet::from([entity]),
+            );
             live.frontier()
         }
     };
