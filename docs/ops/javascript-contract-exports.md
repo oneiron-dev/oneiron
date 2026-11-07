@@ -61,18 +61,20 @@ chains such as `module.exports = exports = {a: 1}` and
 `exports = module.exports = {a: 1}` also contribute the literal's static own keys.
 Every link must be a plain assignment to either the native `module.exports` slot or
 the wrapper `exports` binding, both kinds must occur, and the terminal must be an
-object literal. Both slots receive that same literal value, so later `exports.b`
-assignments refer to the new module value. References are collected before applying
+object literal, function expression, arrow function or class expression. Both slots
+receive that same value, so later `exports.b` assignments refer to the new module
+value. Only object literals contribute interior declared keys; function and class
+members are not inferred. References are collected before applying
 the chain; no admitted link rebinds `module` or targets a property of the replaced
 value. The literal uses the ordinary own-key, spread and `__proto__` rules.
 
 Mixed chains can also contain eligible named properties of the current module value.
 Each property receiver is captured before the right-hand side, and all stores use
-the same terminal object literal in inner-to-outer order. For
+the same fresh terminal value in inner-to-outer order. For
 `exports.a = (exports = {})`, `a` remains on the original module value while later
 `exports.b` is detached. For `exports.a = (module.exports = {x: 1})`, the `a` write
 targets the old object, so only `x` belongs to the new module value. Repeated whole
-stores receive that same literal, rather than inventing another replacement object.
+stores receive that same value, rather than inventing another replacement object.
 These chains require at least one eligible static named-property reference and one
 whole-slot or wrapper-binding assignment. A property reference must resolve to the
 current module value at capture time; detached `exports` properties, `__proto__`
@@ -81,7 +83,9 @@ property assignments and unknown computed receivers retain the ordinary fallback
 Other whole-module or wrapper-identifier chains, unknown computed keys, `__proto__`
 property assignments, compound operators and sequence-valued terminals keep the
 ordinary outer-only handling and unresolved sites. Terminal values are not executed;
-their unknown wrapper references still produce unresolved sites. No conditional
+their unknown wrapper references still produce unresolved sites, including references
+inside function bodies, class heritage, computed class keys and static initializers
+or blocks. Those sites do not supply inferred runtime properties. No conditional
 expressions are evaluated.
 Uninitialized root `var module` and `var exports` redeclare the CommonJS wrapper
 parameters, including hoisted or repeated redeclarations. Direct simple `var`
