@@ -3,9 +3,15 @@
 
 use super::{EngineLimit, memory_share};
 
+macro_rules! engine_limit_rows {
+    ($($row:expr),+ $(,)?) => {
+        /// Every engine row.
+        pub const ALL: [Self; [$(stringify!($row)),+].len()] = [$($row),+];
+    };
+}
+
 impl EngineLimit {
-    /// Every engine row.
-    pub const ALL: [Self; 157] = [
+    engine_limit_rows![
         Self::KeyedFilterJsonBytes,
         Self::KeyedNamespaceSegments,
         Self::KeyedNamespaceBytes,
@@ -17,6 +23,11 @@ impl EngineLimit {
         Self::ClaimInputJsonBytes,
         Self::CoreBatchEntities,
         Self::LegacyBatchEntities,
+        Self::BlobContentBytes,
+        Self::BookingAvailabilityCallsPerMinute,
+        Self::BookingHoldCallsPerMinute,
+        Self::BookingWriteCallsPerMinute,
+        Self::BookingQuarantineCallsPerMinute,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
         Self::CodeResultScanBytes,
@@ -160,6 +171,7 @@ impl EngineLimit {
         Self::EmbeddingDimensions,
         Self::MemoryReasonEvidenceRows,
         Self::MemoryReasonTokens,
+        Self::DecisionQuestionsPerCall,
         Self::ContextEdgeHops,
         Self::ContextNeighbors,
         Self::ContextSelectedEdges,
@@ -179,6 +191,13 @@ impl EngineLimit {
             Self::ClaimInputJsonBytes => "limits.claim_input_json_bytes",
             Self::CoreBatchEntities => "limits.core_batch_entities",
             Self::LegacyBatchEntities => "limits.legacy_batch_entities",
+            Self::BlobContentBytes => "limits.blob_content_bytes",
+            Self::BookingAvailabilityCallsPerMinute => {
+                "limits.booking_availability_calls_per_minute"
+            }
+            Self::BookingHoldCallsPerMinute => "limits.booking_hold_calls_per_minute",
+            Self::BookingWriteCallsPerMinute => "limits.booking_write_calls_per_minute",
+            Self::BookingQuarantineCallsPerMinute => "limits.booking_quarantine_calls_per_minute",
             Self::CodeResultInlineBytes => "limits.code_result_inline_bytes",
             Self::CodeResultDiskFloorBytes => "limits.code_result_disk_floor_bytes",
             Self::CodeResultScanBytes => "limits.code_result_scan_bytes",
@@ -322,6 +341,7 @@ impl EngineLimit {
             Self::EmbeddingDimensions => "limits.embedding_dimensions",
             Self::MemoryReasonEvidenceRows => "limits.memory_reason_evidence_rows",
             Self::MemoryReasonTokens => "limits.memory_reason_tokens",
+            Self::DecisionQuestionsPerCall => "limits.decision_questions_per_call",
             Self::ContextEdgeHops => "limits.context_edge_hops",
             Self::ContextNeighbors => "limits.context_neighbors",
             Self::ContextSelectedEdges => "limits.context_selected_edges",
@@ -342,6 +362,11 @@ impl EngineLimit {
             Self::ClaimInputJsonBytes => 67_108_864,
             Self::CoreBatchEntities => 1_048_576,
             Self::LegacyBatchEntities => 1_048_576,
+            Self::BlobContentBytes => memory_share(16),
+            Self::BookingAvailabilityCallsPerMinute => 1_000_000,
+            Self::BookingHoldCallsPerMinute => 1_000_000,
+            Self::BookingWriteCallsPerMinute => 1_000_000,
+            Self::BookingQuarantineCallsPerMinute => 1_000_000,
             Self::CodeResultInlineBytes => 1 << 20,
             Self::CodeResultDiskFloorBytes => 1 << 30,
             Self::CodeResultScanBytes => 256 << 20,
@@ -565,6 +590,7 @@ impl EngineLimit {
             // question served in ordinary use. Past it the row asks, and the
             // whole question is served.
             Self::MemoryReasonTokens => 16_777_216,
+            Self::DecisionQuestionsPerCall => super::DEFAULT_DECISION_QUESTIONS_PER_CALL as u64,
             // Owner-ruled ABC row 11 (FIX 62).
             Self::ContextEdgeHops => 1_024,
             // Owner-ruled ABC row 12 (FIX 63).

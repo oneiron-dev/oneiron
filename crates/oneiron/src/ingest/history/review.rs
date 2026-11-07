@@ -20,7 +20,8 @@ use crate::error::Result;
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 use crate::ports::EdgeDirection;
 use crate::registry::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE,
+    ENTITY_TYPE_TURN,
 };
 
 /// The review id of the import of `source` that ran at `imported_at`.
@@ -103,6 +104,16 @@ pub(crate) fn imported_evidence_in_txn(
                 // review of its own, so the Dreamer run's review holds it.
                 imported |=
                     evidence_source_from_row(ENTITY_TYPE_CLAIM, &body)? == ClaimSource::Imported;
+                continue;
+            }
+            // A NOTE an archive import kept with its source author is
+            // imported words (FIX 7777); it names no review of its own.
+            ENTITY_TYPE_NOTE => {
+                imported |= crate::store::note_body::decode_note_body_using(
+                    &body,
+                    crate::store::note_body::NoteKind::wire,
+                )
+                .is_ok_and(|note| note.author_ref.imported().is_some());
                 continue;
             }
             // An imported conversation carries its turns' stamp, and names no

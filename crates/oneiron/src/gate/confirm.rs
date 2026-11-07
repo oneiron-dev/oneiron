@@ -15,6 +15,7 @@ use super::decision::GateReasonCode;
 use super::input::{GateContentKind, GateEvaluatorInput};
 
 mod demotion_retry;
+mod lifetime;
 mod status_grant;
 
 pub(super) use self::status_grant::{

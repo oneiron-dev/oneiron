@@ -40,6 +40,7 @@ pub(crate) use summary::{
 pub mod review_explainer;
 use oneiron_store::entity_doc::side_keys;
 mod storage;
+mod succession;
 #[cfg(feature = "sync")]
 mod sweep;
 mod token_uses;
@@ -88,8 +89,8 @@ pub use storage::TextField;
 pub(crate) use storage::{
     body_with_document, document_text_fields, erase_in_txn, guard_record_put, has_record_head,
     pointer_field_in, record_bodies_at_in_txn, record_body_at, record_body_history_in_txn,
-    record_document, record_head_bytes, record_head_row_in_txn, reindex_repo_document_in_txn,
-    resolve_record_body,
+    record_document, record_head_bytes, record_head_key, record_head_row_in_txn, record_head_slot,
+    reindex_repo_document_in_txn, resolve_record_body,
 };
 #[cfg(feature = "sync")]
 pub(crate) use sweep::{compact_entity_doc_for_sweep, entity_doc_slots_in};

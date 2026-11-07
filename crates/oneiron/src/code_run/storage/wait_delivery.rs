@@ -69,6 +69,15 @@ const WAITERS: SideTable<([u8; 1], EntityId, EntityId), u64, Raw> =
 const TRAPS: SideTable<(EntityId, EntityId, u64), TrapRef, Raw> =
     SideTable::new(&side_table::CODE_RUN_WAIT_TRAP);
 
+fn retire_wait_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>, key: &WaitKey) -> Result<()> {
+    if WAITERS.get(&vault.store, txn, &key.waiter())? == Some(key.generation) {
+        WAITERS.delete(&vault.store, txn, &key.waiter())?;
+    }
+    DELIVERIES.delete(&vault.store, txn, &key.row())?;
+    TRAPS.delete(&vault.store, txn, &key.row())?;
+    Ok(())
+}
+
 fn reply_text(reply: &serde_json::Value) -> Result<String> {
     serde_json::to_string(reply)
         .map_err(|_| Error::InvalidConfig("a code-run wait reply is not JSON".to_owned()))
@@ -467,14 +476,9 @@ impl ExecutorStorage<'_> {
     /// captured route. The resumed record already names the next generation.
     pub(crate) fn clear_wait(&self, key: &WaitKey) -> Result<()> {
         match self {
-            Self::Canonical(vault) => vault.with_write_txn_grouped(|txn| {
-                if WAITERS.get(&vault.store, txn, &key.waiter())? == Some(key.generation) {
-                    WAITERS.delete(&vault.store, txn, &key.waiter())?;
-                }
-                DELIVERIES.delete(&vault.store, txn, &key.row())?;
-                TRAPS.delete(&vault.store, txn, &key.row())?;
-                Ok(())
-            }),
+            Self::Canonical(vault) => {
+                vault.with_write_txn_grouped(|txn| retire_wait_in_txn(vault, txn, key))
+            }
             Self::Session(binding) => binding.answered(|| {
                 binding
                     .session
@@ -735,11 +739,13 @@ impl ExecutorStorage<'_> {
     /// in the same transaction, so a failed append acknowledges nothing. A
     /// bound code consent wait's settlement is consumed in it (DOOR-079 1b):
     /// its reply must be delivered and verify, or the record does not
-    /// commit. Retiring the wait's rows afterwards consumes nothing and
-    /// deletes no consumption. Once an erase of the run's actor took its
-    /// replies, nothing commits and nothing is consumed: a typed unavailable
-    /// (FIX 5718). A room's record commits as any other append does, along
-    /// its route, and the same check runs in that writer (FIX 6586).
+    /// commit. A canonical wait's rows retire in that same writer, after
+    /// consumption and the observed-change cursor; a room retires them after
+    /// the commit. Retirement consumes nothing and deletes no consumption.
+    /// Once an erase of the run's actor took its replies, nothing commits
+    /// and nothing is consumed: a typed unavailable (FIX 5718). A room's
+    /// record commits as any other append does, along its route, and the
+    /// same check runs in that writer (FIX 6586).
     pub(crate) fn put_code_run_wait_resume_record(
         &self,
         record: &crate::code_run::CodeRunReplayRecord,
@@ -771,17 +777,17 @@ impl ExecutorStorage<'_> {
                     if crate::code_run::consume_code_consent_wait_in_txn(
                         vault, txn, &resume, delivered,
                     )? {
-                        return Ok(());
+                        return retire_wait_in_txn(vault, txn, key);
                     }
                     let Some(delivery) = delivery else {
-                        return Ok(());
+                        return retire_wait_in_txn(vault, txn, key);
                     };
                     if let Ok(crate::task_verb::TaskAskStatus::Changed { generation, .. }) =
                         serde_json::from_str::<crate::task_verb::TaskAskStatus>(&delivery.reply)
                     {
                         raise_observed_change_in(vault, txn, key.run, key.wait_id, generation)?;
                     }
-                    Ok(())
+                    retire_wait_in_txn(vault, txn, key)
                 },
             ),
             Self::Session(binding) => {
