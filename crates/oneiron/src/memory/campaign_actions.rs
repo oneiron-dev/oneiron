@@ -132,7 +132,7 @@ impl Memory<'_> {
                     .into());
                 }
                 for prior in &intake.supersedes {
-                    content.update_claim(*prior, |txn| {
+                    content.update_claim(*prior, |txn, _lane| {
                         self.vault.supersede_claim_in_txn_as(
                             txn,
                             &id,

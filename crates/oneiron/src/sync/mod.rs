@@ -74,6 +74,7 @@ pub mod schema;
 pub mod selector;
 pub mod server_state;
 pub mod shared_leave;
+pub(crate) mod source_audiences;
 mod sweep_fence;
 #[cfg(test)]
 mod tests;
@@ -90,8 +91,9 @@ pub use carrier::{SyncDial, SyncDialer, SyncIo, SyncStream};
 pub use client::{
     ConnectDelivery, ConnectExportRequest, ConnectRejoinStatus, ConnectRejoined,
     EphemeralChangeOrigin, OpenedItem, ResidenceHit, ResidenceHomeRoute, ResidenceIndexWindow,
-    ResidenceSearch, ResidenceSearchPage, SealedBundleRelay, SearchSource, SyncClient,
-    SyncClientConfig, SyncEvent, SyncResidenceMode, SyncStatus, SyncTransportCredential, ThinItem,
+    ResidenceSearch, ResidenceSearchPage, SealedBundleRelay, SearchSource, StagedImportBodySource,
+    SyncClient, SyncClientConfig, SyncEvent, SyncResidenceMode, SyncStatus,
+    SyncTransportCredential, ThinItem,
 };
 pub use connection::{
     ConnectionConfig, DeviceResidence, HomeNodeTopology, HomeRoute, HomeSearch, LocalUpdate,
