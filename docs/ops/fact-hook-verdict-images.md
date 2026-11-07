@@ -24,7 +24,22 @@ budget line. Its payer, deadline, settlement capture, and evidence grant
 filter are unchanged. Ordinary SDK image lanes and held browser images
 keep their existing paths.
 
-This implements only the image-read residue of FIX 1656 / OF-580. It does
+This image path implements the image-read residue of FIX 1656 / OF-580. It does
 not change hook grant storage, evidence predicate/world matching, session
 hook resumptions, or transcript-import hook behavior. No new configuration,
 credential setup, timer, or operating limit is required.
+
+## Evidence revision and grant
+
+For text evidence, the hook's predicate and world lists are checked against
+the exact raw CLAIM revision that the reader projects to the verdict. A
+pinned ref is judged at its retained revision, not against the current live
+body. A concurrent claim update cannot make a previously hydrated body pass
+a different revision's predicate or world check.
+
+Ordinary reader admission, legal-order refusals, secret masking, provenance
+and served-form receipts still use the native hydration path. Absent or
+reader-withheld refs keep their ordinary errors; additional hook-grant
+denials are returned by id to the host log without their bodies.
+Unrestricted grants and non-hook verdicts keep ordinary hydration. No new
+refusal policy, timer, limit, configuration or credential is introduced.

@@ -122,11 +122,10 @@ pub(super) fn evidence_views(
     if evidence.is_empty() {
         return Ok(Vec::new());
     }
-    let views = reader.hydrate(evidence)?.value;
     let Some(grant) = current_grant() else {
-        return Ok(views);
+        return Ok(reader.hydrate(evidence)?.value);
     };
-    let (shown, withheld) = hook_evidence_views(reader, &grant, views)?;
+    let (shown, withheld) = hook_evidence_views(reader, &grant, evidence)?;
     if !withheld.is_empty() {
         let withheld: Vec<String> = withheld.iter().map(EntityId::to_hex).collect();
         tracing::debug!(

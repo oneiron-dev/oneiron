@@ -458,7 +458,8 @@ fn isolated(result: &ShadowRunResult, pin: EngineArtifactPin) -> bool {
 
 /// What reads an arm's bodies: the host's runner, under the pair's gate
 /// to the captured step they came from, read again before each body
-/// (FIX 7027, 8704).
+/// (FIX 7027, 8704). Each body comes through the host's model release (FIX
+/// 9468), which proves the gate again with the source's taint now.
 struct ArmBodies<'a> {
     shadow: &'a dyn CodeFixShadowHost,
     vault: &'a Vault,
@@ -529,6 +530,8 @@ impl ArmBodies<'_> {
     /// The body `body` of the arm `arm`, read whole under its `lease` while
     /// the pair's Grant still admits its captured step: one its producer did
     /// not finish is partial, and one the runner cannot read now says why.
+    /// The host releases it through its model release (FIX 9468), under the
+    /// same gate.
     fn whole(
         &self,
         lease: &ShadowArmLease,
@@ -552,7 +555,7 @@ impl ArmBodies<'_> {
         }
         Ok(self
             .shadow
-            .read_arm_body(lease, body.body)?
+            .read_arm_body_for_model(lease, body, self.gate)?
             .map_err(|unavailable| EngineNotRun::Unavailable { arm, unavailable }))
     }
 
