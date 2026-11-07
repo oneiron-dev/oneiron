@@ -4,7 +4,8 @@
 pub(crate) use oneiron_store::batch::secret_scan::container::retained_iterative::*;
 
 use super::{
-    Budget, Kind, Stop, Walked, archive, classify, gzip, over_budget, pdf, tar, writes_handles, xz,
+    Budget, Kind, Stop, Walked, archive, classify, gzip, over_budget, pdf, sevenz, tar,
+    writes_handles, xz,
 };
 use crate::error::Error;
 use crate::file_secret_marks::{KeyPlaces, MemberStep, PlaceHandles, filled, filled_with};
@@ -266,6 +267,8 @@ fn reader_rebuilt(
         // FIX 2471: a tar or xz container is rebuilt around its masked members.
         Kind::Tar => tar::rebuilt(bytes, budget, each),
         Kind::Xz => xz::rebuilt(bytes, budget, each),
+        // FIX 11575: a 7z archive is rebuilt around its masked members.
+        Kind::SevenZip => sevenz::rebuilt(bytes, budget, each),
         Kind::Pdf => pdf::rebuilt(bytes, budget, each),
     }
 }
@@ -295,6 +298,8 @@ fn members(
         // FIX 2471: a tar's files and an xz payload are members.
         Kind::Tar => tar::members(bytes, budget, each),
         Kind::Xz => xz::members(bytes, budget, each),
+        // FIX 11575: a 7z archive's entries with data are members.
+        Kind::SevenZip => sevenz::members(bytes, budget, each),
         Kind::Pdf => pdf::members(bytes, budget, each),
     }
 }
