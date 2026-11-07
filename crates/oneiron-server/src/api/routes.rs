@@ -239,8 +239,22 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // Registration reflects this server's verified host binding. A bound
         // QuickJS provider enables durable execute_code on both endpoints;
         // without one, admission returns code_host_unbound before any run.
-        .route("/mcp", post(mcp_gateway))
-        .route("/mcp/tool-first", post(mcp_tool_first_gateway))
+        //
+        // Each is MCP Streamable HTTP (FIX 4902): a POST carries every
+        // message, and GET and DELETE answer 405, since the server opens no
+        // stream of its own and holds no session.
+        .route(
+            "/mcp",
+            post(mcp_gateway)
+                .get(mcp_method_not_allowed)
+                .delete(mcp_method_not_allowed),
+        )
+        .route(
+            "/mcp/tool-first",
+            post(mcp_tool_first_gateway)
+                .get(mcp_method_not_allowed)
+                .delete(mcp_method_not_allowed),
+        )
         .route("/api/core/discover", get(discover))
         .route("/api/search/vector", get(search_vector))
         .route(
@@ -330,6 +344,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // FIX 922: a kit-only restore's read of the sealed cloud bundle.
         // Keyless; each request is signed with the kit's owner anchor.
         .merge(self::recovery_bundle::routes())
+        .merge(self::owner_routes::recovery_kit_target_routes::authority_recovery_routes())
         // ARCH-0052 D5: everyone in a room keeps their own copy of an
         // off-record talk. Its own nest, outside the idempotency layer and
         // the wire receipts: nothing of the stretch may outlive it. The

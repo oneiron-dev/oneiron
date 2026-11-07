@@ -130,6 +130,7 @@ impl Vault {
             critiques: Vec::new(),
             policy_critiques: Vec::new(),
             queue_review: None,
+            contract_reviews: Vec::new(),
             status: RepoProposalStatus::Proposed,
             resolves: None,
             settlement: None,

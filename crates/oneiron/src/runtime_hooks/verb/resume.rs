@@ -5,7 +5,8 @@
 //! proceed and resumes after the asking hook. The saved args are checked
 //! again and the verb's own gate runs as on any call. What the call returned
 //! waits in the saved row for the caller's retry, up to 64 KiB of JSON; past
-//! it the row keeps only that the call completed.
+//! it the row keeps only that the call completed. A result keeps beside it
+//! the rows its door listed it derived from (FIX 1435).
 //!
 //! Only a call the drain can make as its caller made it has a target: a
 //! credential caller's row its host can run again through the door it came
@@ -28,7 +29,7 @@ use crate::runtime_hooks::filter;
 use crate::task_verb::TaskAskResult;
 use crate::{EntityId, Error, Result, Vault};
 
-use super::credential::{RefusalReceipt, VerbAskCredentialRef, VerbAskResumed};
+use super::credential::{RefusalReceipt, VerbAskCredentialRef};
 use super::plain_resume::{self, PlainRowResume};
 use super::{InvocationId, VerbHookStop, ask, credential};
 
@@ -184,33 +185,34 @@ impl Vault {
             return Ok(false);
         }
         let mut receipt = None;
-        let ran = match resume {
-            VerbResume::Row(plain) => plain_resume::run(
-                self,
-                invocation,
-                &verb,
-                actor,
-                filter::edge_class(class),
-                args,
-                plain,
-            )?,
+        // A credential call's door may list the rows its answer was derived
+        // from: they are saved with it (FIX 1435).
+        let (ran, producers) = match resume {
+            VerbResume::Row(plain) => (
+                plain_resume::run(
+                    self,
+                    invocation,
+                    &verb,
+                    actor,
+                    filter::edge_class(class),
+                    args,
+                    plain,
+                )?,
+                None,
+            ),
             VerbResume::Credential { reference } => {
                 let class = filter::edge_class(class);
                 receipt = Some(RefusalReceipt::new(
                     &reference, &verb, actor, class, &args, inputs,
                 ));
-                let resumed =
-                    credential::resume(self, key, group, verb, actor, class, args, reference)?;
-                match resumed {
-                    VerbAskResumed::Ran(ran) => ran,
-                    VerbAskResumed::Refused(refusal) => Err(refusal.error()),
-                }
+                credential::resume(self, key, group, verb, actor, class, args, reference)?
+                    .into_outcome()
             }
         };
         let failed = ran.is_err();
         let (outcome, transient) = match ran {
             // A result over the cap saves that it completed, not the result.
-            Ok(value) => (ask::SavedOutcome::result(&value)?, false),
+            Ok(value) => (ask::SavedOutcome::result(&value, producers)?, false),
             Err(error) => match error.hook.as_deref() {
                 // A later hook asked: its own ask now stands under the key,
                 // or this one no longer reads as settled.
