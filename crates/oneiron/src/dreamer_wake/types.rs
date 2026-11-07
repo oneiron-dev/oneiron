@@ -14,6 +14,7 @@ use crate::dreamer_runner::DreamerAttemptProgressProducer;
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerConsolidationScope, DreamerParkCause};
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::settings::ReadDestination;
 #[cfg(feature = "sync")]
 use crate::sync::EphemeralStore;
 use crate::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
@@ -73,6 +74,13 @@ pub struct RunWakePass {
     /// Exact caller attenuation for this wake. It is prepared once at the
     /// root, never inferred from a decorated executor's optional metadata.
     pub host_scope: Option<oneiron_model::llm::Scope>,
+    /// Where every leg of this pass's executors sends what it reads, as
+    /// the vended executors state it ([`DreamerAttemptExecutor::destination_bound`],
+    /// FIX 12735): the wake lists its sources, and each NOTE review its
+    /// entities, for it. Read once the executors are vended, never before.
+    /// `None` when an executor states no bound: the pass lists for a
+    /// destination nobody proved, as every pass did before.
+    pub destination_bound: Option<ReadDestination>,
 }
 
 /// Why the pass stopped.
@@ -488,6 +496,15 @@ pub trait DreamerAttemptExecutor {
     /// of host-job support: `execute` must handle heals before opting in.
     fn runs_coach_heals(&self) -> bool {
         false
+    }
+
+    /// Where every model call this vended executor makes sends its input,
+    /// every fallback included (FIX 12735): each of its legs holds its
+    /// sends inside it and fails closed rather than go past it, so the pass
+    /// lists its sources for it. `None`, the default, states no bound, and
+    /// the pass lists for a destination nobody proved.
+    fn destination_bound(&self) -> Option<ReadDestination> {
+        None
     }
 }
 
