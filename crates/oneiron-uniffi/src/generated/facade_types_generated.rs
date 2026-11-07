@@ -61494,8 +61494,8 @@ pub struct EsignSigningRequest {
 pub enum FieldControl {
     #[serde(rename = "text")]
     Text {
-        #[serde(rename = "max_bytes")]
-        max_bytes: u32,
+        #[serde(rename = "max_bytes", default, skip_serializing_if = "Option::is_none")]
+        max_bytes: Option<u32>,
         #[serde(rename = "server_computed")]
         server_computed: bool,
     },

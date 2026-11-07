@@ -7679,7 +7679,7 @@ export type SigningAction = { action: "load" } | { action: "save_field"; field: 
 /** `oneiron::blob_artifact::esign::door::EsignSigningRequest` */
 export type EsignSigningRequest = { token: string; action: SigningAction }
 /** `oneiron::blob_artifact::esign::render::presentation::FieldControl` */
-export type FieldControl = { kind: "text"; max_bytes: number; server_computed: boolean } | { kind: "checkbox" } | { kind: "select"; options: string[] } | { kind: "signature" }
+export type FieldControl = { kind: "text"; max_bytes?: number | null; server_computed: boolean } | { kind: "checkbox" } | { kind: "select"; options: string[] } | { kind: "signature" }
 /** `oneiron::blob_artifact::esign::render::presentation::FieldPresentation` */
 export type FieldPresentation = { id: string; item: number; geometry: FieldGeometry; required: boolean; control: FieldControl; value?: FieldValue | null }
 /** `oneiron::blob_artifact::esign::ceremony::SigningPage` */

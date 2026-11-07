@@ -19607,7 +19607,7 @@ class EsignSigningRequest(TypedDict):
     action: SigningAction
 class FieldControlText(TypedDict):
     kind: Literal["text"]
-    max_bytes: int
+    max_bytes: NotRequired[int | None]
     server_computed: bool
 class FieldControlCheckbox(TypedDict):
     kind: Literal["checkbox"]
