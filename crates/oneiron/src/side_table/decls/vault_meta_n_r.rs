@@ -280,6 +280,10 @@ side_tables! {
     /// status word; the session and credential choice stay in the settlement's handle. Key:
     /// hash32 (intent id).
     OUTBOUND_REMOTE_TASK_POLL: VaultMeta b"outbound:remote_task_poll:v1:" Named;
+    /// An MCP session a remote task's polls kept open, owed its end once its handle went before
+    /// the session ended (an erase; FIX 16028): where it is and the credential that opens it.
+    /// Key: hash32 (intent id).
+    OUTBOUND_REMOTE_TASK_SESSION_END: VaultMeta b"outbound:remote_task_session_end:v1:" Named;
     /// Deterministic receipt id -> intent id. Key: id16.
     OUTBOUND_SUPPRESSION_INDEX: VaultMeta b"outbound:suppression_index:v1:" Raw;
     /// Device-local receipt body, `rmp_serde::to_vec_named`. Key: hash32 (intent id).

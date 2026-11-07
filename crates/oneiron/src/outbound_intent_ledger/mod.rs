@@ -20,6 +20,7 @@ pub use self::codec::INTENT_LEDGER_VALUE_KEYS;
 pub use self::dispatch::{derive_intent_id, intent_ledger_records};
 pub use self::remote_task_poll::{
     DueRemoteTask, MIN_REMOTE_TASK_POLL_MS, RemoteTaskCredential, RemoteTaskEnd, RemoteTaskPoll,
+    RemoteTaskSessionEnd,
 };
 pub use self::settlement::{
     BudgetReservation, ProviderRetryDirective, ProviderWait, ProviderWaitKind, RemoteTaskHandle,
