@@ -167,6 +167,7 @@ mod window {
         "room_turns",
         "row_born_with",
         "row_births",
+        "source_audiences",
         "tombstones",
         "withdrawn_cutoffs",
     ];

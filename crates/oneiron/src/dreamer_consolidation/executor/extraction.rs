@@ -50,6 +50,7 @@ impl ConsolidationExecutor<'_> {
             crate::Error::InvalidConfig("consolidation host binding needs locality".into())
         })?;
         let keyless = call.inference.selected_keyless();
+        let paid = call.inference.selected_paid();
         let prompt: ExtractionPrompt = serde_json::from_str(include_str!("extraction_prompt.json"))
             .map_err(|_| invalid_consolidation("shipped extraction prompt is not readable"))?;
         let text = |role, text: String| LlmMessage {
@@ -88,6 +89,7 @@ impl ConsolidationExecutor<'_> {
                 response_format: ResponseFormat::Text,
                 locality,
                 host_keyless: keyless,
+                host_paid: paid,
             }.with_purpose_defaults(),
             messages,
             tools: Vec::new(),

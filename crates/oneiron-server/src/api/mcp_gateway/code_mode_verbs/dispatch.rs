@@ -3,6 +3,7 @@
 //! The code_mode_verbs root defines `McpCodeModeVerbs`; `oneiron::code_run` owns the verb records.
 
 use super::*;
+use oneiron::runtime_hooks::VerbHookStop;
 
 impl McpCodeModeVerbs {
     /// Binds the door to the server runtime the `execute_code` call arrived on.
@@ -433,7 +434,7 @@ pub(super) async fn run_code_mode_verb(
     // A media call spends on the run's own line, as its steps do (FIX 780).
     let line = media_line(server, tool.name, run.run_id);
     // The verb table's fan-out, on the heap (FIX 12072).
-    let (output, ..) = crate::api::facade::host_doors::support::with_calling_origin(
+    let executed = crate::api::facade::host_doors::support::with_calling_origin(
         origin,
         crate::api::facade::host_doors::with_calling_line(
             line,
@@ -448,7 +449,17 @@ pub(super) async fn run_code_mode_verb(
             )),
         ),
     )
-    .await?;
+    .await;
+    let (output, ..) = match executed {
+        // A retry of a call its drain already ran gets what that call
+        // returned, never a stop (FIX 21054). Nothing runs again.
+        Err(McpGatewayError {
+            hook: Some(stop), ..
+        }) if matches!(*stop, VerbHookStop::Completed { .. }) => {
+            return completed_answer(server, actor, *stop, &mut served);
+        }
+        executed => executed?,
+    };
     // A board read answers the run here: the receipt its hook rows owe is
     // recorded and their blocks spent as the answer returns (OF-579).
     if let Some(mut hooks) = board_hooks {
@@ -458,6 +469,35 @@ pub(super) async fn run_code_mode_verb(
     // An act whose rows are unknown answers off this device only that it
     // ran (FIX 5988); a read releases as before.
     super::served_rows::unknown_act_answer(tool.name, actor, output, served)
+}
+
+/// The answer a guest call gets when its verb hook `stop` is Completed
+/// (FIX 21054): the result the call's drain saved, not a stop. The release
+/// check runs before the guest reads it, by the rows the saved answer was
+/// derived from. A held result keeps the release's withheld error. A result
+/// saved with no row set is released on this device only. Any other stop is
+/// the refusal it was.
+fn completed_answer(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+    stop: VerbHookStop,
+    served: &mut McpServed,
+) -> Result<(Value, Option<Vec<oneiron::EntityId>>), McpGatewayError> {
+    let rows = super::served_rows::stop_release_rows(server, actor, &stop, served)
+        .map(<[oneiron::EntityId]>::to_vec);
+    // The drain read that answer, not this guest call (FIX 21614).
+    if super::served_rows::drained_rows_lapsed(server, actor, &stop, rows.as_deref()) {
+        let ran = oneiron::task_verb::sdk::ActAnswer::<()>::details_on_device();
+        return Ok((serde_json::json!(ran), Some(Vec::new())));
+    }
+    match stop {
+        VerbHookStop::Completed { result, .. } => {
+            let released =
+                super::super::mcp_release_listed(server, actor, rows.as_deref(), false, result)?;
+            Ok((released, rows))
+        }
+        stop => Err(super::tasks_response::mcp_hook_stop(stop)),
+    }
 }
 
 /// The `ai.*` media verbs a code-mode run's line pays for (FIX 780), and
@@ -474,10 +514,10 @@ const LINE_VERBS: [&str; 9] = [
     "connector.call",
 ];
 
-/// The line a code-mode run's `ai.*` media call spends on (FIX 780): code
-/// mode's own meter, the one the run's steps spend on, under the run's own
-/// name. `None` for any other verb, or where code mode lends no meter: that
-/// call takes the owner's door, as a direct tool call does.
+/// The line a code-mode run's `ai.*` media call spends on (FIX 780): the
+/// run's code-mode line ([`code_mode_line`]). `None` for any other verb, or
+/// where code mode lends no meter: that call takes the owner's door, as a
+/// direct tool call does.
 fn media_line(
     server: &SyncServer,
     verb: &str,
@@ -486,6 +526,17 @@ fn media_line(
     if !LINE_VERBS.contains(&verb) {
         return None;
     }
+    code_mode_line(server, run_id)
+}
+
+/// Code-mode durable run `run_id`'s line: code mode's own meter, the one the
+/// run's steps spend on, under the run's own name. Its media calls spend on
+/// it, and its self brief states its budget from it (FIX 17594 D5). `None`
+/// where code mode lends no meter.
+pub(crate) fn code_mode_line(
+    server: &SyncServer,
+    run_id: oneiron::EntityId,
+) -> Option<oneiron::llm::run_admission::RunAdmission> {
     let meter = server
         .code_execution_host()?
         .engine_native()?
