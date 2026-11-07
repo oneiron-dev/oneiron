@@ -45351,7 +45351,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DecisionCall",
@@ -45364,7 +45364,7 @@
      "path": "src/llm/decision/ladder/providers.rs",
      "purpose": "Decision ladder providers and the calls they answer",
      "surface": {
-      "fn": 5,
+      "fn": 6,
       "re-export": 1,
       "struct": 4,
       "trait": 2
@@ -45398,7 +45398,7 @@
      "purpose": "Decision ladder runner",
      "surface": {
       "crate-vis": 3,
-      "fn": 8
+      "fn": 9
      }
     },
     {
@@ -46502,6 +46502,16 @@
       "crate-vis": 2,
       "struct": 1,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/routing/decisions/fitness_labels.rs",
+     "purpose": "One route-grading call's question names, shared by its state and every rung",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -93334,7 +93344,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 173,
+     "files": 174,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94085,7 +94095,7 @@
    },
    "over_bar": 184,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6647,
+   "source_files": 6648,
    "test_files": 895
   },
   "oneiron-android": {
