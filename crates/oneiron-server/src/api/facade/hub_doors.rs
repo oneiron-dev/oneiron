@@ -239,6 +239,25 @@ pub(crate) async fn vault_skills_sync(
     .await
 }
 
+/// `vault.skills.proposal.settle`: the owner accepts an exact hub update or
+/// rejects its proposal without changing the working package.
+pub(crate) async fn vault_skills_proposal_settle(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: HubSkillProposalSettleRequest,
+) -> Listed<HubSkillProposalSettled> {
+    owner_call(
+        server,
+        auth,
+        "vault.skills.proposal.settle",
+        move |server, owner| {
+            let answer = sdk::hub_skill_proposal_settle_as_owner(server.vault(), owner, &input)?;
+            Ok((answer, vec![input.entity, input.proposal]))
+        },
+    )
+    .await
+}
+
 /// `vault.skills.receipts`: Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner.
 pub(crate) async fn vault_skills_receipts(
     server: &Arc<SyncServer>,
