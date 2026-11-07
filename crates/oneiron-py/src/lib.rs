@@ -11314,6 +11314,34 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_mail_reply_draft(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.mail.reply.draft")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.mail.reply.draft", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_mail_reply_drafts(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.mail.reply.drafts")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.mail.reply.drafts", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_mail_reply_discard(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.mail.reply.discard")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.mail.reply.discard", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_mail_reply_approve(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.mail.reply.approve")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.mail.reply.approve", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_mail_compliance_setting(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.mail.compliance.setting")?;
         let output = py

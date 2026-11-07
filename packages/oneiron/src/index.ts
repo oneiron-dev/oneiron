@@ -3352,6 +3352,16 @@ export class Oneiron {
         /** One mail thread's messages, oldest first, to a reader of its source or someone it was shared with. */
         read: (input: Facade.MailThreadRequest): Facade.MailThreadView => this.#call(() => this.#client.vaultMailThreadsRead(input) as Facade.MailThreadView),
       },
+      reply: {
+        /** Drafts a plain-text reply to a mail thread the caller reads, or its next revision under the same key. It sends nothing: the mailbox owner approves that exact revision first. */
+        draft: (input: Facade.MailReplyDraftRequest): Facade.MailReplyDraftView => this.#call(() => this.#client.vaultMailReplyDraft(input) as Facade.MailReplyDraftView),
+        /** The drafted replies on the mail threads the caller reads, newest first, each with its words, recipient, frozen plan and state. */
+        drafts: (input: Facade.MailReplyDraftsRequest): Facade.MailReplyDraftPage => this.#call(() => this.#client.vaultMailReplyDrafts(input) as Facade.MailReplyDraftPage),
+        /** Discards a drafted reply that was not approved; its drafter or the mailbox owner may. It never sends. */
+        discard: (input: Facade.MailReplyDraftRef): Facade.MailReplyDraftView => this.#call(() => this.#client.vaultMailReplyDiscard(input) as Facade.MailReplyDraftView),
+        /** The mailbox owner approves one reviewed revision of a drafted reply from their own mailbox, and it sends threaded on the provider; approving again replays the ledger, never sending twice. */
+        approve: (input: Facade.MailReplyApproveRequest): Facade.MailReplyDraftView => this.#call(() => this.#client.vaultMailReplyApprove(input) as Facade.MailReplyDraftView),
+      },
       compliance: {
         /** Whether org compliance search across mailboxes is on; off by default. */
         setting: (input: Facade.EmptyRequest = {}): Facade.MailComplianceSettingView => this.#call(() => this.#client.vaultMailComplianceSetting(input) as Facade.MailComplianceSettingView),

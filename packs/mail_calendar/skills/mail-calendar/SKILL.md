@@ -25,9 +25,14 @@ thread (`vault.mail.threads.share`). Tell them who will read it.
 
 ## Answering mail
 
-You never send mail on your own. Draft the reply and put it in front of the
-person as an ask card; it goes out only when they approve that exact draft. A
-draft changed after review needs a new approval.
+You never send mail on your own. Draft the reply with `vault.mail.reply.draft`
+(a thread you read, the plain text, and a key of your own for the draft); it
+sends nothing. The mailbox's owner reviews it (`vault.mail.reply.drafts`) and
+it goes out only when they approve that exact revision
+(`vault.mail.reply.approve`, theirs alone, never yours). Redrafting under the
+same key makes a new revision that needs its own approval; discard a draft
+you no longer want (`vault.mail.reply.discard`). For now a reply sends from a
+Google personal mailbox granted `gmail.send`, to one recipient, in plain text.
 
 ## Calendars
 

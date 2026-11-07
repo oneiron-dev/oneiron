@@ -101,7 +101,7 @@ const MAX_FOLDER_READS_PER_PAGE: usize = 100;
 /// The longest Graph id read.
 const MAX_GRAPH_ID_BYTES: usize = 512;
 /// What a header stage selects.
-const MESSAGE_FIELDS: &str = "id,conversationId,internetMessageId,subject,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,parentFolderId,isDraft,categories,internetMessageHeaders";
+const MESSAGE_FIELDS: &str = "id,conversationId,internetMessageId,subject,from,toRecipients,ccRecipients,replyTo,receivedDateTime,sentDateTime,parentFolderId,isDraft,categories,internetMessageHeaders";
 
 /// A source's change anchor: one delta link per folder.
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -736,6 +736,7 @@ fn headers_of(message: &Value, tree: &FolderTree) -> Result<MailHeaders> {
         from: message.pointer("/from/emailAddress").map(mailbox_text),
         to: recipients(message, "toRecipients"),
         cc: recipients(message, "ccRecipients"),
+        reply_to: recipients(message, "replyTo"),
         subject: text_of(message.get("subject")),
         date: message
             .get("sentDateTime")

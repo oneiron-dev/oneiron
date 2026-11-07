@@ -57,6 +57,7 @@ mod microsoft365_calendar;
 mod mime;
 mod pack;
 mod provider_delete;
+mod reply;
 mod rest;
 mod share;
 mod source;
@@ -96,6 +97,11 @@ pub use microsoft365_calendar::{
 };
 pub use pack::{
     MAIL_CALENDAR_PACK_NAME, install_mail_calendar_pack_embedded, mail_calendar_pack_files,
+};
+pub(crate) use reply::erase_reply_drafter_in_txn;
+pub use reply::{
+    MailReplyApproveRequest, MailReplyDraftPage, MailReplyDraftRef, MailReplyDraftRequest,
+    MailReplyDraftState, MailReplyDraftView, MailReplyDraftsRequest,
 };
 pub use share::{MailThreadShareReceipt, MailThreadShareRequest};
 pub use source::{
