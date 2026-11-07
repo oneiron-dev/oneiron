@@ -194,12 +194,14 @@ impl SyncServer {
         let pass = tokio::spawn(async move {
             let _admission = admission;
             let host = Arc::clone(&server);
-            match tokio::task::spawn_blocking(move || {
+            // The shadow arms a stopped host left go with the first admitted
+            // pass, whether or not a shadow runner ever opens (FIX 6353).
+            let upkeep = move || {
+                crate::ai_host::shadow_runner::sweep_stopped_runners();
                 let access = host.model_pack_access();
                 host.vault().housekeeping_with_access(budget, &access)
-            })
-            .await
-            {
+            };
+            match tokio::task::spawn_blocking(upkeep).await {
                 Ok(Ok(report)) => log_report(&report),
                 Ok(Err(error)) => {
                     tracing::warn!(kind = ?error.kind(), "housekeeping pass could not read its schedule");
