@@ -3,8 +3,10 @@
 //! `oneiron device enrol` recorded ([`enrolment`]), or one its `[device_sync]`
 //! section names by hand. It dials over the paired mesh, on the mesh
 //! listener's own endpoint, when the home has a paired mesh address and a
-//! listener runs here; otherwise at the home's URL, over `wss` (or `ws` to a
-//! loopback host). Either way it presents the paired owner-grade credential.
+//! mesh transport runs here; an app-only device uses its explicitly configured
+//! outbound endpoint instead of a serving listener. Otherwise it uses the
+//! home's URL, over `wss` (or `ws` to a loopback host). Either way it presents
+//! the paired owner-grade credential.
 //!
 //! One connection runs at a time, for the server's life. Its own loop
 //! reconnects with backoff; the loop here only rebuilds it when the paired
@@ -179,6 +181,10 @@ impl DeviceSyncHost {
         // imports admitted under the same freeze as the connection (FIX 12038),
         // and those the freeze refused taken in again at its thaw (FIX 12154).
         let vault = Arc::clone(host.vault());
+        #[cfg(feature = "mesh")]
+        let removal =
+            removal_delivery::Receiver::start(&dial, host.transport(mesh), &vault, freeze.clone());
+        #[cfg(not(feature = "mesh"))]
         let removal = removal_delivery::Receiver::start(&dial, mesh, &vault, freeze.clone());
         match open(host, dial, mesh, freeze).await {
             Ok(host) => {
@@ -278,10 +284,10 @@ async fn open(
     // on the listener's transport, whether the home itself rides the mesh or
     // its URL (FIX 4748); no listener here, no peer.
     let listener = mesh;
-    // Over the mesh when the home has a paired address and a listener runs
-    // here; otherwise at the home's URL.
-    let mesh = mesh.filter(|_| paired);
-    if mesh.is_none() {
+    // Over the mesh when the home has a paired address and this host has a
+    // transport; otherwise at the home's URL.
+    let transport = host.transport(mesh).filter(|_| paired);
+    if transport.is_none() {
         direct(&url)?;
     }
     let credential =
@@ -295,7 +301,10 @@ async fn open(
             .map(oneiron::sync::HomeNodeTopology::home_route)
     };
     let resolve = route::resolver(Arc::clone(host.vault()), home, machine, routes());
-    let moves = route::RouteChanges::new(mesh.and_then(|_| routes()), Arc::clone(&resolve));
+    let moves = route::RouteChanges::new(
+        transport.as_ref().and_then(|_| routes()),
+        Arc::clone(&resolve),
+    );
     let peer_dialer = listener.map(|listener| {
         Arc::new(MeshPeerDialer::new(
             listener.transport(),
@@ -304,9 +313,10 @@ async fn open(
             Arc::clone(&resolve),
         )) as Arc<dyn SyncPeerDialer>
     });
-    let mesh_dialer = match mesh {
-        Some(mesh) => Some(
-            Arc::new(MeshSyncDialer::resolving(mesh.transport(), resolve)) as Arc<dyn SyncDialer>,
+    let mesh_dialer = match transport.as_ref() {
+        Some(transport) => Some(
+            Arc::new(MeshSyncDialer::resolving(Arc::clone(transport), resolve))
+                as Arc<dyn SyncDialer>,
         ),
         None => url::dialer(&url)?,
     };
@@ -332,8 +342,8 @@ async fn open(
     );
     let (stop, stop_rx) = oneshot::channel();
     let home = home.to_hex();
-    let over = if mesh.is_some() { "mesh" } else { "url" };
-    let catalog = host.catalog(mesh, &freeze);
+    let over = if transport.is_some() { "mesh" } else { "url" };
+    let catalog = host.catalog(mesh.filter(|_| paired), &freeze);
     tracing::info!(machine = %machine.to_hex(), %home, over, "device sync started");
     let task = tokio::spawn(async move {
         // The observer is synchronous, so each status goes to the catalog

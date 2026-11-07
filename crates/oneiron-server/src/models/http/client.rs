@@ -1,5 +1,7 @@
 //! Shared provider HTTP client execution.
 
+use futures_util::{StreamExt, TryStreamExt};
+
 use super::*;
 
 impl ProviderHttp {
@@ -282,6 +284,33 @@ impl ProviderHttp {
         json_reply(status, headers, &bytes)
     }
 
+    /// A JSON call whose lease is checked at each physical request send.
+    pub(in crate::models) async fn post_json_leased(
+        &self,
+        path: &str,
+        headers: &BTreeMap<String, String>,
+        body: &JsonValue,
+        lease: &BudgetLease,
+    ) -> Result<JsonReply, HttpReleaseError> {
+        if !lease.has_dispatch_release() {
+            return self
+                .post_json(path, headers, body)
+                .await
+                .map_err(HttpReleaseError::Transport);
+        }
+        let plain = serde_json::to_vec(body).unwrap_or_default();
+        let release = || lease.check_dispatch_release();
+        let response = self
+            .send_body_released(path, || self.request(path, headers), plain, &release, lease)
+            .await?;
+        let status = response.status().as_u16();
+        let headers = reply_headers(&response);
+        let (bytes, _held) = read_whole(response)
+            .await
+            .map_err(HttpReleaseError::Transport)?;
+        json_reply(status, headers, &bytes).map_err(HttpReleaseError::Transport)
+    }
+
     /// [`Self::post_json`], with a reply bound of the caller's own protocol.
     pub(in crate::models) async fn post_json_within(
         &self,
@@ -373,6 +402,35 @@ impl ProviderHttp {
         })
     }
 
+    pub(in crate::models) async fn send_multipart_released(
+        &self,
+        path: &str,
+        form: reqwest::multipart::Form,
+        release: DispatchRelease<'_>,
+        lease: &BudgetLease,
+    ) -> Result<BytesReply, HttpReleaseError> {
+        let url = self.url(path);
+        let request = self.client.post(url.as_str()).multipart(form);
+        release().map_err(HttpReleaseError::Release)?;
+        lease.begin_physical_attempt();
+        let response = request
+            .send()
+            .await
+            .map_err(HttpFailure::from)
+            .map_err(HttpReleaseError::Transport)?;
+        let status = response.status().as_u16();
+        let headers = reply_headers(&response);
+        let (body, held) = read_booked(response)
+            .await
+            .map_err(HttpReleaseError::Transport)?;
+        Ok(BytesReply {
+            status,
+            headers,
+            body,
+            held,
+        })
+    }
+
     /// [`Self::send_media`], its 2xx reply's body left for the caller to
     /// take as it arrives ([`MediaStream::chunk`]), never held whole here
     /// (FIX 6122). Any other status's body is read whole, as `send_media`
@@ -383,6 +441,10 @@ impl ProviderHttp {
         send: MediaSend,
     ) -> Result<StreamedReply, HttpFailure> {
         let response = self.media_response(path, send).await?;
+        Self::streamed_response(response).await
+    }
+
+    async fn streamed_response(response: reqwest::Response) -> Result<StreamedReply, HttpFailure> {
         if response.status().is_success() {
             return Ok(StreamedReply::Body(MediaStream(response)));
         }
@@ -395,6 +457,35 @@ impl ProviderHttp {
             body,
             held,
         }))
+    }
+
+    /// A reference upload whose bank and call-local release both hold at every send.
+    pub(in crate::models) async fn send_octets_streamed_released(
+        &self,
+        path: &str,
+        octets: Vec<u8>,
+        admission: &UploadAdmission,
+        release: DispatchRelease<'_>,
+        lease: &BudgetLease,
+    ) -> Result<StreamedReply, HttpReleaseError> {
+        let url = self.url(path);
+        let request = || {
+            self.client
+                .post(url.as_str())
+                .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+        };
+        let dispatch = || {
+            if !admission() {
+                return Err(oneiron::FatalLlmError::InvalidRequest.into());
+            }
+            release()
+        };
+        let response = self
+            .send_body_released(path, request, octets, &dispatch, lease)
+            .await?;
+        Self::streamed_response(response)
+            .await
+            .map_err(HttpReleaseError::Transport)
     }
 
     /// Sends one media exchange at `path`: its answer, its body unread.
@@ -552,4 +643,42 @@ impl ProviderHttp {
         let sending = self.post(path, headers, body);
         futures_util::stream::unfold(SseState::Start(sending), next_sse)
     }
+
+    /// A streamed call whose lease is checked at each physical request send.
+    pub(in crate::models) fn post_sse_leased<'a>(
+        &'a self,
+        path: &str,
+        headers: &BTreeMap<String, String>,
+        body: &JsonValue,
+        lease: &'a BudgetLease,
+    ) -> Pin<Box<dyn Stream<Item = Result<SseItem, HttpReleaseError>> + Send + 'a>> {
+        if !lease.has_dispatch_release() {
+            return Box::pin(
+                self.post_sse(path, headers, body)
+                    .map(|item| item.map_err(HttpReleaseError::Transport)),
+            );
+        }
+        let path = path.to_owned();
+        let headers = headers.clone();
+        let plain = serde_json::to_vec(body).unwrap_or_default();
+        let opening = futures_util::stream::once(async move {
+            let release = || lease.check_dispatch_release();
+            let response = self
+                .send_body_released(
+                    &path,
+                    || self.request(&path, &headers),
+                    plain,
+                    &release,
+                    lease,
+                )
+                .await?;
+            let sending: Sending = Box::pin(std::future::ready(Ok(response)));
+            Ok::<_, HttpReleaseError>(
+                futures_util::stream::unfold(SseState::Start(sending), next_sse)
+                    .map(|item| item.map_err(HttpReleaseError::Transport)),
+            )
+        });
+        Box::pin(opening.try_flatten())
+    }
+
 }
