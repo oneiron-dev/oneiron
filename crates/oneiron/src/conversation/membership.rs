@@ -189,6 +189,25 @@ impl Vault {
                 .collect(),
         )
     }
+    /// [`Self::members_in_txn`] in the order the room's typed body lists its
+    /// members (FIX 10567). The local ledger alone decides who is a member;
+    /// the body only orders them. A ledger member the body does not list (a
+    /// replica's body carries no membership authority) follows, by id.
+    pub(crate) fn members_in_record_order_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        conversation: EntityId,
+    ) -> Result<Vec<EntityId>> {
+        let body = body::body_in(self, txn, conversation)?;
+        let mut ledger = members_at_rows(&rows_in(&self.store, txn, conversation)?, u64::MAX);
+        let mut members: Vec<EntityId> = body
+            .member_ids
+            .into_iter()
+            .filter(|member| ledger.remove(member))
+            .collect();
+        members.extend(ledger);
+        Ok(members)
+    }
     /// [`Self::membership_at`] in the caller's snapshot: who sat in
     /// `conversation` at `at` (FIX 8209).
     pub(crate) fn membership_at_in_txn(

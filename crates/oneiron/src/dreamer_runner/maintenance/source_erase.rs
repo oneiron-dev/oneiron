@@ -2,7 +2,8 @@
 //! (`deletion::derived_rows`): each copy of an erased record's bytes a
 //! maintenance facet keeps goes in the erase's own transaction, before the
 //! record's body and edges do. Identity's open asks, saved hints and
-//! inverses, and the Coach drafts on live agent-health cards (FIX 9221).
+//! inverses, the Coach drafts on live agent-health cards (FIX 9221), and the
+//! Coach's topology-audit candidates (FIX 7817).
 use crate::store::Store;
 use crate::{EntityId, Result};
 
@@ -14,5 +15,7 @@ pub(crate) fn erase_source_copies_in_txn(
     id: &EntityId,
 ) -> Result<()> {
     super::identity::erase_sources_in_txn(store, txn, id)?;
-    super::agent_health::erase_sources_in_txn(store, txn, id)
+    super::agent_health::erase_sources_in_txn(store, txn, id)?;
+    // FIX 7817: the Coach's topology-audit candidates naming it.
+    crate::identity_topology::erase_topology_audit_sources_in_txn(store, txn, id)
 }

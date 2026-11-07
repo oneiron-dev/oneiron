@@ -86,13 +86,7 @@ impl UsageLedger {
                 let Some(raw) = self.vault.sync_state_get_in_write_txn(txn, key)? else {
                     continue;
                 };
-                let stored = match decode_entry(&raw).and_then(|stored| {
-                    stored.event.validate()?;
-                    if stored.event.vault_id != vault_id || pending_key(&stored)? != *key {
-                        return Err(oneiron::Error::CorruptedIndex("pending usage scope").into());
-                    }
-                    Ok(stored)
-                }) {
+                let stored = match decode_pending(key, &raw, vault_id) {
                     Ok(stored) => stored,
                     Err(error) => {
                         tracing::warn!(%key, ?error, "a pending usage settlement needs repair; its bytes remain");
@@ -124,6 +118,20 @@ impl UsageLedger {
         }
         Ok(())
     }
+}
+
+/// The same validity check used by redelivery and a reviewed pending repair.
+pub(super) fn decode_pending(
+    key: &str,
+    raw: &[u8],
+    vault_id: &str,
+) -> Result<StoredUsageEvent, UsageError> {
+    let stored = decode_entry(raw)?;
+    stored.event.validate()?;
+    if stored.event.vault_id != vault_id || pending_key(&stored)? != key {
+        return Err(oneiron::Error::CorruptedIndex("pending usage scope").into());
+    }
+    Ok(stored)
 }
 
 fn pending_key(stored: &StoredUsageEvent) -> Result<String, UsageError> {

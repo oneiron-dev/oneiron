@@ -1328,6 +1328,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<HubSkillRequest>(),
             ),
             (
+                "vault.skills.proposal.settle",
+                crate::code_run::vault_read::request_schema::<HubSkillProposalSettleRequest>(),
+            ),
+            (
                 "vault.skills.receipts",
                 crate::code_run::vault_read::request_schema::<HubSkillRequest>(),
             ),
@@ -6950,6 +6954,20 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                     crate::task_verb::sdk::FilesSourceConvertRequest,
                 >(),
             ),
+            #[cfg(feature = "sync")]
+            (
+                "vault.sync.repo_manifests.conflict.review",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RepoManifestConflictReviewRequest,
+                >(),
+            ),
+            #[cfg(feature = "sync")]
+            (
+                "vault.sync.repo_manifests.conflict.discard",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RepoManifestConflictDiscardRequest,
+                >(),
+            ),
             (
                 "connector.answer",
                 crate::code_run::vault_read::request_schema::<
@@ -7523,6 +7541,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.packs.get",
     "vault.skills.import",
     "vault.skills.sync",
+    "vault.skills.proposal.settle",
     "vault.skills.receipts",
     "vault.skills.convert",
     "vault.skills.get",
@@ -8197,6 +8216,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.identity.proposals.resolve",
     "vault.identity.proposals.for_pair",
     "vault.files.sources.convert",
+    "vault.sync.repo_manifests.conflict.review",
+    "vault.sync.repo_manifests.conflict.discard",
     "self.browser.open",
     "self.browser.observe",
     "self.browser.find",
@@ -8725,6 +8746,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.skills.sync" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::HubSkillSyncReceipt,
+        >(),
+        "vault.skills.proposal.settle" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::HubSkillProposalSettled,
         >(),
         "vault.skills.receipts" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::HubSkillReceipts>()
@@ -10796,6 +10820,18 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.files.sources.convert" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::FilesSourceAttachAnswer,
         >(),
+        #[cfg(feature = "sync")]
+        "vault.sync.repo_manifests.conflict.review" => {
+            crate::code_run::vault_read::request_schema::<
+                Option<crate::task_verb::sdk::RepoManifestConflictReviewView>,
+            >()
+        }
+        #[cfg(feature = "sync")]
+        "vault.sync.repo_manifests.conflict.discard" => {
+            crate::code_run::vault_read::request_schema::<
+                crate::task_verb::sdk::RepoManifestConflictDiscardView,
+            >()
+        }
         "self.browser.open" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::BrowserObservationPage,
         >(),
@@ -12754,6 +12790,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.skills.sync" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.proposal.settle" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19664,6 +19707,22 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        #[cfg(feature = "sync")]
+        "vault.sync.repo_manifests.conflict.review" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        #[cfg(feature = "sync")]
+        "vault.sync.repo_manifests.conflict.discard" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "connector.answer" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -20203,6 +20262,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.packs.get" => validate_input_vault_packs_get(value)?,
         "vault.skills.import" => validate_input_vault_skills_import(value)?,
         "vault.skills.sync" => validate_input_vault_skills_sync(value)?,
+        "vault.skills.proposal.settle" => validate_input_vault_skills_proposal_settle(value)?,
         "vault.skills.receipts" => validate_input_vault_skills_receipts(value)?,
         "vault.skills.convert" => validate_input_vault_skills_convert(value)?,
         "vault.skills.get" => validate_input_vault_skills_get(value)?,
@@ -21577,6 +21637,14 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.mail.threads.read" => validate_input_vault_mail_threads_read(value)?,
         "vault.mail.compliance.search" => validate_input_vault_mail_compliance_search(value)?,
         "vault.files.sources.convert" => validate_input_vault_files_sources_convert(value)?,
+        #[cfg(feature = "sync")]
+        "vault.sync.repo_manifests.conflict.review" => {
+            validate_input_vault_sync_repo_manifests_conflict_review(value)?
+        }
+        #[cfg(feature = "sync")]
+        "vault.sync.repo_manifests.conflict.discard" => {
+            validate_input_vault_sync_repo_manifests_conflict_discard(value)?
+        }
         "connector.answer" => validate_input_connector_answer(value)?,
         "self.browser.open" => validate_input_self_browser_open(value)?,
         "self.browser.observe" => validate_input_self_browser_observe(value)?,
@@ -22943,6 +23011,11 @@ fn validate_input_vault_skills_import(value: &serde_json::Value) -> MemoryResult
 #[inline(never)]
 fn validate_input_vault_skills_sync(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: HubSkillRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_skills_proposal_settle(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: HubSkillProposalSettleRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -28381,6 +28454,22 @@ fn validate_input_vault_files_sources_convert(value: &serde_json::Value) -> Memo
     let _input: crate::task_verb::sdk::FilesSourceConvertRequest = decode(value.clone())?;
     Ok(())
 }
+#[cfg(feature = "sync")]
+#[inline(never)]
+fn validate_input_vault_sync_repo_manifests_conflict_review(
+    value: &serde_json::Value,
+) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::RepoManifestConflictReviewRequest = decode(value.clone())?;
+    Ok(())
+}
+#[cfg(feature = "sync")]
+#[inline(never)]
+fn validate_input_vault_sync_repo_manifests_conflict_discard(
+    value: &serde_json::Value,
+) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::RepoManifestConflictDiscardRequest = decode(value.clone())?;
+    Ok(())
+}
 #[inline(never)]
 fn validate_input_connector_answer(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::task_verb::sdk::ConnectorAnswerRequest = decode(value.clone())?;
@@ -29034,6 +29123,7 @@ pub fn invoke(
         "vault.packs.get" => invoke_vault_packs_get(memory, value),
         "vault.skills.import" => invoke_vault_skills_import(memory, value),
         "vault.skills.sync" => invoke_vault_skills_sync(memory, value),
+        "vault.skills.proposal.settle" => invoke_vault_skills_proposal_settle(memory, value),
         "vault.skills.receipts" => invoke_vault_skills_receipts(memory, value),
         "vault.skills.convert" => invoke_vault_skills_convert(memory, value),
         "vault.skills.get" => invoke_vault_skills_get(memory, value),
@@ -30386,6 +30476,14 @@ pub fn invoke(
         "vault.mail.threads.read" => invoke_vault_mail_threads_read(memory, value),
         "vault.mail.compliance.search" => invoke_vault_mail_compliance_search(memory, value),
         "vault.files.sources.convert" => invoke_vault_files_sources_convert(memory, value),
+        #[cfg(feature = "sync")]
+        "vault.sync.repo_manifests.conflict.review" => {
+            invoke_vault_sync_repo_manifests_conflict_review(memory, value)
+        }
+        #[cfg(feature = "sync")]
+        "vault.sync.repo_manifests.conflict.discard" => {
+            invoke_vault_sync_repo_manifests_conflict_discard(memory, value)
+        }
         "connector.answer" => invoke_connector_answer(memory, value),
         "self.browser.open" => invoke_self_browser_open(memory, value),
         "self.browser.observe" => invoke_self_browser_observe(memory, value),
@@ -32168,6 +32266,13 @@ fn invoke_vault_skills_sync(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_skills_sync(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_skills_proposal_settle(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_skills_proposal_settle(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_skills_receipts(
@@ -39295,6 +39400,28 @@ fn invoke_vault_files_sources_convert(
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_files_sources_convert(memory, decode(value)?)?)
 }
+#[cfg(feature = "sync")]
+#[inline(never)]
+fn invoke_vault_sync_repo_manifests_conflict_review(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_sync_repo_manifests_conflict_review(
+        memory,
+        decode(value)?,
+    )?)
+}
+#[cfg(feature = "sync")]
+#[inline(never)]
+fn invoke_vault_sync_repo_manifests_conflict_discard(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_sync_repo_manifests_conflict_discard(
+        memory,
+        decode(value)?,
+    )?)
+}
 #[inline(never)]
 fn invoke_connector_answer(
     memory: &Memory<'_>,
@@ -41928,6 +42055,16 @@ pub fn vault_skills_sync(
     crate::task_verb::sdk::hub_skill_sync_as_owner(
         memory.vault(),
         &memory.embedded_owner("vault.skills.sync")?,
+        &input,
+    )
+}
+pub fn vault_skills_proposal_settle(
+    memory: &Memory<'_>,
+    input: HubSkillProposalSettleRequest,
+) -> MemoryResult<crate::task_verb::sdk::HubSkillProposalSettled> {
+    crate::task_verb::sdk::hub_skill_proposal_settle_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.proposal.settle")?,
         &input,
     )
 }
@@ -50312,6 +50449,28 @@ pub fn vault_files_sources_convert(
     input: crate::task_verb::sdk::FilesSourceConvertRequest,
 ) -> MemoryResult<crate::task_verb::sdk::FilesSourceAttachAnswer> {
     crate::task_verb::sdk::convert_files_source_embedded(memory, input)
+}
+#[cfg(feature = "sync")]
+pub fn vault_sync_repo_manifests_conflict_review(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RepoManifestConflictReviewRequest,
+) -> MemoryResult<Option<crate::task_verb::sdk::RepoManifestConflictReviewView>> {
+    crate::task_verb::sdk::repo_manifest_conflict_review_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sync.repo_manifests.conflict.review")?,
+        input,
+    )
+}
+#[cfg(feature = "sync")]
+pub fn vault_sync_repo_manifests_conflict_discard(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RepoManifestConflictDiscardRequest,
+) -> MemoryResult<crate::task_verb::sdk::RepoManifestConflictDiscardView> {
+    crate::task_verb::sdk::repo_manifest_conflict_discard_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sync.repo_manifests.conflict.discard")?,
+        input,
+    )
 }
 pub fn connector_answer(
     memory: &Memory<'_>,

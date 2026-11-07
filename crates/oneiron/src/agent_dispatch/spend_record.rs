@@ -52,7 +52,8 @@ impl SpendCalibrationSample {
 /// One node of a launch's lease tree.
 ///
 /// `cap_units` is a hard scope's cap, or what a soft scope holds from its
-/// parent (it grows when the scope tops up). `held_units` is what this scope's
+/// parent (it grows when the scope tops up). `ceiling_units`, when present,
+/// independently bounds that subtree without reserving it all. `held_units` is what this scope's
 /// open children hold from it. What the scope may spend itself, before any top
 /// up, is `cap_units - spent_units - held_units`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -62,6 +63,9 @@ pub struct SpendScope {
     pub parent: Option<SpendScopeId>,
     pub unit: LeaseUnit,
     pub cap_units: u64,
+    /// An admitted task's own subtree ceiling, separate from the amount
+    /// currently held from its parent. It does not grant funds or consent.
+    pub ceiling_units: Option<u64>,
     /// A root, or a child spawned with `budget`: it never draws past its cap.
     /// A soft child tops up from its parent chain to the nearest hard ancestor.
     pub hard: bool,
@@ -97,6 +101,33 @@ impl SpendScope {
     pub fn local_available(&self) -> u64 {
         self.cap_units
             .saturating_sub(self.spent_units.saturating_add(self.held_units))
+    }
+
+    pub(super) fn is_boundary(&self) -> bool {
+        self.hard || self.ceiling_units.is_some()
+    }
+
+    pub(super) fn limit_units(&self) -> u64 {
+        self.ceiling_units.map_or(self.cap_units, |ceiling| {
+            if self.hard {
+                ceiling.min(self.cap_units)
+            } else {
+                ceiling
+            }
+        })
+    }
+
+    /// A closed boundary retains its ceiling, not the hold already released
+    /// into its parent at settlement.
+    pub(super) fn boundary_available(&self) -> u64 {
+        self.limit_units()
+            .saturating_sub(self.spent_units.saturating_add(self.held_units))
+    }
+
+    pub(super) fn clamp_available(&self, available: u64) -> u64 {
+        self.ceiling_units.map_or(available, |ceiling| {
+            available.min(ceiling.saturating_sub(self.spent_units.saturating_add(self.held_units)))
+        })
     }
 }
 
@@ -160,7 +191,7 @@ pub struct SpendRead {
     /// What the scope may still spend, walking soft scopes up to the nearest
     /// hard ancestor.
     pub available_units: u64,
-    /// The nearest hard scope and its cap.
+    /// The nearest hard scope or admitted task ceiling and its limit.
     pub cap_scope: SpendScopeId,
     pub cap_units: u64,
     pub signal: Option<SpendSignal>,
