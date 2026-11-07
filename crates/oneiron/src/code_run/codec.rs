@@ -55,7 +55,7 @@ pub const CODE_RUN_BRIDGE_CALL_KEYS: [&str; 10] = [
     "hook_view_served",
     "rewritten_request",
 ];
-pub const CODE_RUN_RAW_OUTPUT_KEYS: [&str; 9] = [
+pub const CODE_RUN_RAW_OUTPUT_KEYS: [&str; 10] = [
     "handle",
     "path",
     "raw_blake3",
@@ -65,6 +65,7 @@ pub const CODE_RUN_RAW_OUTPUT_KEYS: [&str; 9] = [
     "complete",
     "preview",
     "input_rows",
+    "producing_step_start",
 ];
 pub const CODE_RUN_OUTPUT_PREVIEW_KEYS: [&str; 3] = ["codec", "text", "truncated"];
 pub const CODE_RUN_ABI_LAYOUT_CHECK_KEYS: [&str; 4] =
@@ -115,6 +116,7 @@ const KEY_LINES: &str = CODE_RUN_RAW_OUTPUT_KEYS[5];
 const KEY_COMPLETE: &str = CODE_RUN_RAW_OUTPUT_KEYS[6];
 const KEY_PREVIEW: &str = CODE_RUN_RAW_OUTPUT_KEYS[7];
 const KEY_INPUT_ROWS: &str = CODE_RUN_RAW_OUTPUT_KEYS[8];
+const KEY_PRODUCING_STEP_START: &str = CODE_RUN_RAW_OUTPUT_KEYS[9];
 
 const KEY_CODEC: &str = CODE_RUN_OUTPUT_PREVIEW_KEYS[0];
 const KEY_TEXT: &str = CODE_RUN_OUTPUT_PREVIEW_KEYS[1];
@@ -400,6 +402,10 @@ pub(super) fn encode_raw_output(output: &CodeRunRawOutput) -> Value {
             Value::from(KEY_INPUT_ROWS),
             encode_optional_entity_rows(&output.input_rows),
         ),
+        (
+            Value::from(KEY_PRODUCING_STEP_START),
+            output.producing_step_start.map_or(Value::Nil, Value::from),
+        ),
     ])
 }
 
@@ -420,6 +426,10 @@ pub(super) fn decode_raw_output(value: &Value) -> Result<CodeRunRawOutput> {
         preview: decode_output_preview(required(fields[7], "missing output preview")?)?,
         // A pre-carrier output has no witnessed input set.
         input_rows: decode_optional_entity_rows(fields[8])?,
+        producing_step_start: match required(fields[9], "missing output producing_step_start")? {
+            Value::Nil => None,
+            value => Some(u64_value(value)?),
+        },
     };
     validate_raw_output(&output)?;
     Ok(output)

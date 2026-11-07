@@ -22,6 +22,9 @@
 //! (CONNECTOR_PRESENT_BY_RECORD_ID).
 
 use oneiron::limit_ask::EngineLimit;
+use oneiron::outbound_consent::{
+    ConnectorSentClearer, SentGeneration, SentGenerations, replace_spans,
+};
 use oneiron::secret_lease::ConnectorGrantRedemption;
 use zeroize::Zeroizing;
 
@@ -125,10 +128,15 @@ impl Presenting {
             }
         }
         let Some(door) = self.door else {
-            return exchange.run(None, None);
+            // A live exchange it opens presented nothing (fix list row
+            // 10550).
+            return exchange
+                .run(None, None)
+                .presenting(SentGenerations::CredentialFree);
         };
         let mut sent = None;
         let mut held = None;
+        let mut trimmed = false;
         let mut present = |value: &[u8]| -> oneiron::Result<()> {
             if let Some((key_ref, tool)) = row {
                 held = vault.connector_issuer_hold(key_ref, tool)?;
@@ -136,6 +144,7 @@ impl Presenting {
                     return Ok(());
                 }
             }
+            trimmed = reads_trimmed(value);
             let header = authorization_header(value)?;
             let value = SentValue::new(value, &self.text);
             sent = Some(exchange.run(Some(header), Some(&value)).cleared(&value));
@@ -198,14 +207,33 @@ impl Presenting {
         // The record a door that presented its value resolved (FIX 5455),
         // and the generation it released.
         *presented = door.ok().flatten();
+        // A live exchange keeps what its send presented, as the door's
+        // receipt names it (fix list row 10550): a value no record names is
+        // unknown, and that exchange is never resumed.
+        let presentation = match *presented {
+            Some(presentation) => SentGenerations::of(Some(SentGeneration {
+                custody: presentation.custody,
+                generation: presentation.generation,
+                trimmed,
+            })),
+            None => SentGenerations::Unknown,
+        };
         // Once the exchange ran, what the connector said is the delivery
         // fact, whatever the door reports after it.
-        sent.unwrap_or_else(|| match refused {
-            // A stale grant and its siblings refuse, they do not fail delivery (FIX 6673).
-            Some(secret) => Sent::refused(secret),
-            None => Sent::not_sent(OutboundFailureKind::TransportNotStarted, None),
-        })
+        sent.map_or_else(
+            || match refused {
+                // A stale grant and its siblings refuse, they do not fail delivery (FIX 6673).
+                Some(secret) => Sent::refused(secret),
+                None => Sent::not_sent(OutboundFailureKind::TransportNotStarted, None),
+            },
+            |sent| sent.presenting(presentation),
+        )
     }
+}
+
+/// Whether the presented bytes read the same trimmed (fix list row 10550).
+fn reads_trimmed(value: &[u8]) -> bool {
+    std::str::from_utf8(value).is_ok_and(|text| text.trim() == text)
 }
 
 /// What a credential presents again for a live exchange taken up after a
@@ -214,6 +242,9 @@ impl Presenting {
 pub(super) struct Presented {
     pub(super) auth: Option<HeaderValue>,
     pub(super) kept: Option<KeptSentValue>,
+    /// The presentation the door's receipt names, when it presented a
+    /// value under a record (fix list row 10550).
+    pub(super) sent: Option<SentGeneration>,
 }
 
 impl Presenting {
@@ -242,19 +273,29 @@ impl Presenting {
             return Some(Presented {
                 auth: None,
                 kept: None,
+                sent: None,
             });
         };
         let mut presented = None;
+        let mut trimmed = false;
         let mut present = |value: &[u8]| -> oneiron::Result<()> {
+            trimmed = reads_trimmed(value);
             presented = Some(Presented {
                 auth: Some(authorization_header(value)?),
                 kept: Some(SentValue::new(value, &self.text).keep()),
+                sent: None,
             });
             Ok(())
         };
         let effector = self.effector.as_str();
-        let opened = match door {
-            Door::Grant { grant, target, .. } => match row {
+        // The record and the generation the door released, as its receipt
+        // names them; `None` when it opened no door.
+        let opened: Option<Option<(EntityId, u32)>> = match door {
+            Door::Grant {
+                grant,
+                target,
+                custody,
+            } => match row {
                 Some((key_ref, tool)) => {
                     match vault.redeem_connector_grant_at_door(
                         &grant,
@@ -263,30 +304,40 @@ impl Presenting {
                         tool,
                         &mut present,
                     ) {
-                        Ok(ConnectorGrantRedemption::Redeemed(_)) => true,
+                        Ok(ConnectorGrantRedemption::Redeemed(redeemed)) => {
+                            Some(custody.map(|custody| (custody, redeemed.generation)))
+                        }
                         Ok(ConnectorGrantRedemption::Held { .. }) => return None,
-                        Err(_) => false,
+                        Err(_) => None,
                     }
                 }
                 None => vault
                     .redeem_secret_grant_at_door(&grant, &target, &mut present)
-                    .is_ok(),
+                    .ok()
+                    .map(|redeemed| custody.map(|custody| (custody, redeemed.generation))),
             },
             Door::Record(custody) => vault
                 .inject_secret_record_at_door(&custody, effector, &mut present)
-                .is_ok(),
-            Door::Run(_, holder) => vault
+                .ok()
+                .map(|receipt| Some((custody, receipt.value_generation))),
+            Door::Run(custody, holder) => vault
                 .with_run_secret_for(&holder, &self.text, effector, &mut present)
-                .is_ok(),
+                .ok()
+                .map(|receipt| Some((custody, receipt.value_generation))),
             Door::Route(custody) => vault
                 .present_resolved_secret_at_door(&custody, effector, &mut present)
-                .is_ok(),
-            Door::Unresolved => false,
+                .ok()
+                .map(|receipt| Some((custody, receipt.value_generation))),
+            Door::Unresolved => None,
         };
-        if !opened {
-            return None;
-        }
-        presented
+        let released = opened?;
+        let mut presented = presented?;
+        presented.sent = released.map(|(custody, generation)| SentGeneration {
+            custody,
+            generation,
+            trimmed,
+        });
+        Some(presented)
     }
 }
 
@@ -309,6 +360,15 @@ fn authorization_header(value: &[u8]) -> oneiron::Result<HeaderValue> {
 }
 
 impl Sent {
+    /// This send with what it presented kept beside its first round's
+    /// resume state, when it keeps one (fix list row 10550).
+    fn presenting(mut self, presented: SentGenerations) -> Self {
+        if let Some(resume) = self.resume.as_mut() {
+            resume.sent = presented;
+        }
+        self
+    }
+
     /// This send's answer cleared of the value `value` it presented: its
     /// reply and failure label. Its raw body was cleared before the send
     /// was acknowledged; its questions before the registry took them.
@@ -417,9 +477,89 @@ impl KeyAliases {
     }
 }
 
+/// What clears what a connector says of what its exchange presented: the
+/// value a door released for this send, the earlier presentations of a
+/// resumed exchange (fix list row 10550), or both.
+pub(super) trait Clears {
+    fn clear_json(&self, json: &mut Value);
+    fn clear_string(&self, string: &mut String);
+}
+
+impl Clears for SentValue<'_> {
+    fn clear_json(&self, json: &mut Value) {
+        SentValue::clear_json(self, json);
+    }
+
+    fn clear_string(&self, string: &mut String) {
+        SentValue::clear_string(self, string);
+    }
+}
+
+impl Clears for ConnectorSentClearer {
+    fn clear_json(&self, json: &mut Value) {
+        ConnectorSentClearer::clear_json(self, json);
+    }
+
+    fn clear_string(&self, string: &mut String) {
+        ConnectorSentClearer::clear_string(self, string);
+    }
+}
+
+/// The value presented now, then the presentations made before, each
+/// when there is one.
+pub(super) struct Both<'n, 'b> {
+    pub(super) now: Option<SentValue<'n>>,
+    pub(super) before: Option<&'b ConnectorSentClearer>,
+}
+
+impl Clears for Both<'_, '_> {
+    fn clear_json(&self, json: &mut Value) {
+        if self.before.is_none() {
+            if let Some(now) = &self.now {
+                now.clear_json(json);
+            }
+            return;
+        }
+        match json {
+            Value::String(string) => self.clear_string(string),
+            Value::Array(items) => items.iter_mut().for_each(|item| self.clear_json(item)),
+            Value::Object(fields) => {
+                let taken = std::mem::take(fields);
+                for (mut key, mut field) in taken {
+                    self.clear_string(&mut key);
+                    self.clear_json(&mut field);
+                    fields.insert(key, field);
+                }
+            }
+            Value::Null | Value::Bool(_) | Value::Number(_) => {}
+        }
+    }
+
+    /// The value now and the earlier ones are matched against the untouched
+    /// text and replaced together, so a value that contains another, or
+    /// that another contains, goes whole.
+    fn clear_string(&self, string: &mut String) {
+        let Some(before) = self.before else {
+            if let Some(now) = &self.now {
+                now.clear_string(string);
+            }
+            return;
+        };
+        let data = string.as_bytes();
+        let mut spans = before.spans(data);
+        if let Some(now) = &self.now {
+            spans.extend(now.spans(data));
+        }
+        if let Some(bytes) = replace_spans(data, spans) {
+            *string = String::from_utf8(bytes)
+                .unwrap_or_else(|error| String::from_utf8_lossy(&error.into_bytes()).into_owned());
+        }
+    }
+}
+
 /// A tool's reply cleared of `value`: its content (an `isError` reply's
 /// too), structured content and JSON-RPC error.
-fn clear_reply(reply: &mut UntrustedToolResult, value: &SentValue<'_>) {
+fn clear_reply(reply: &mut UntrustedToolResult, value: &dyn Clears) {
     value.clear_json(&mut reply.content);
     if let Some(structured) = reply.structured_content.as_mut() {
         value.clear_json(structured);
@@ -436,7 +576,7 @@ fn clear_reply(reply: &mut UntrustedToolResult, value: &SentValue<'_>) {
 /// clearing did not change stays byte for byte.
 pub(super) fn clear_questions(
     questions: &mut [ConnectorQuestion],
-    value: &SentValue<'_>,
+    value: &dyn Clears,
 ) -> KeyAliases {
     let mut changed = Vec::new();
     for (at, question) in questions.iter_mut().enumerate() {
@@ -478,7 +618,7 @@ fn unique_key(questions: &[ConnectorQuestion], at: usize) -> String {
 
 /// A live exchange worker's event cleared of `value`: a next round's
 /// questions, or the terminal reply.
-pub(super) fn clear_event(event: &mut WorkerEvent, value: &SentValue<'_>) {
+pub(super) fn clear_event(event: &mut WorkerEvent, value: &dyn Clears) {
     match event {
         // A terminal event carries no round to answer; a round's questions
         // take their aliases in the worker.
