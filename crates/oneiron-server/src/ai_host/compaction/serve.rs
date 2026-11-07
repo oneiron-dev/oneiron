@@ -19,9 +19,9 @@ use oneiron::compaction::{
 use oneiron::engine_executor::ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME;
 use oneiron::llm::run_admission::PayerPerson;
 use oneiron::llm::{
-    CallClass, CallEnvelope, CallPurpose, ContentPart, FatalLlmError, LlmCapability, LlmError,
-    LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
-    TierPrecedence, WorkClass, WorkContext,
+    BudgetDenied, CallClass, CallEnvelope, CallPurpose, ContentPart, FatalLlmError, LlmCapability,
+    LlmError, LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef,
+    ResponseFormat, TierPrecedence, WorkClass, WorkContext,
 };
 use oneiron::skill_optimize::union_source_rows;
 use oneiron::{BudgetGuard, EntityId, LlmResponse};
@@ -56,6 +56,7 @@ impl ServedCompactionBackend {
                 },
                 locality: self.locality,
                 host_keyless: false,
+                host_paid: false,
             },
             messages: vec![
                 LlmMessage {
@@ -203,6 +204,19 @@ impl ServedCompactionBackend {
                 Err(_) if matches!(dispatch, Dispatch::WhileWarm(_)) => return Ok(None),
                 Err(refusal) => return Err(refusal),
             };
+        // Admit on the original generation before sending. The owned ticket
+        // also settles zero if unwinding drops this call before a response.
+        let generation = match &self.meter {
+            CompactionMeter::Profiled { generation, .. } => {
+                Some(generation.admit().ok_or_else(|| {
+                    refused(
+                        CompactionSuppression::NoCredit,
+                        LlmError::BudgetDenied(BudgetDenied::AdmissionDenied).to_string(),
+                    )
+                })?)
+            }
+            _ => None,
+        };
         let step_hash = call.request.canonical_hash().ok();
         let sent = if matches!(dispatch, Dispatch::Walk) {
             None
@@ -213,9 +227,12 @@ impl ServedCompactionBackend {
         let run = self
             .models
             .funded_run(COMPACTION_RUN, guard.clone(), payer)
-            .with_work_context(WorkContext {
-                class: WorkClass::Foreground,
-                ..Default::default()
+            .with_work_context(match &self.meter {
+                CompactionMeter::Profiled { generation, .. } => generation.work_context(),
+                _ => WorkContext {
+                    class: WorkClass::Foreground,
+                    ..Default::default()
+                },
             })
             .sourced(union_source_rows([sources, home_rows]));
         // A run's scope lends this call a live lease, as a reader child's
@@ -232,7 +249,9 @@ impl ServedCompactionBackend {
                     0,
                 ))
             }
-            CompactionMeter::CodeMode(_) | CompactionMeter::Chat { .. } => None,
+            CompactionMeter::CodeMode(_)
+            | CompactionMeter::Chat { .. }
+            | CompactionMeter::Profiled { .. } => None,
         };
         if let Some(live) = &live {
             live.book_and_revise();
@@ -259,6 +278,20 @@ impl ServedCompactionBackend {
             && let Err(error) = live.book_rest()
         {
             tracing::error!(%error, "a compaction call's spend did not book on its run's scope");
+        }
+        if let Some(generation) = generation {
+            let units = reply
+                .as_ref()
+                .ok()
+                .and_then(Option::as_ref)
+                .map_or(0, |response| {
+                    response
+                        .usage
+                        .input
+                        .total
+                        .saturating_add(response.usage.output.total)
+                });
+            generation.settle(units);
         }
         match reply {
             Ok(Some(response)) => Ok(Some(Served {
@@ -336,7 +369,9 @@ impl ServedCompactionBackend {
         // and one the owners must first approve holds it until they say yes
         // (FIX 3740).
         let (guard, payer) = match &self.meter {
-            CompactionMeter::CodeMode(guard) => (guard.clone(), None),
+            CompactionMeter::CodeMode(guard) | CompactionMeter::Profiled { guard, .. } => {
+                (guard.clone(), None)
+            }
             // A chat turn's flight bills the payer its turn resolved, on its
             // own guard on the chat actor's line (FIX 4465 D).
             CompactionMeter::Chat { guard, payer } => (guard.clone(), payer.clone()),
@@ -396,7 +431,9 @@ impl CompactionBackend for ServedCompactionBackend {
     fn funded(&self) -> bool {
         match &self.meter {
             CompactionMeter::Scope(scope) => scope_funding(&self.vault, Some(scope), false).is_ok(),
-            CompactionMeter::CodeMode(_) | CompactionMeter::Chat { .. } => true,
+            CompactionMeter::CodeMode(_)
+            | CompactionMeter::Chat { .. }
+            | CompactionMeter::Profiled { .. } => true,
         }
     }
 
