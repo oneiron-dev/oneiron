@@ -71,8 +71,8 @@ mod safe_read;
 mod time;
 mod vault_read;
 pub(crate) use safe_read::{
-    BodyStale, body_is_stale, body_readable_in_txn, raw_readable_apart_from_use_in_txn,
-    raw_readable_in_txn, withdrawn_in_txn,
+    BodyStale, body_is_stale, body_readable_in_txn, raw_exportable_in_txn,
+    raw_readable_apart_from_use_in_txn, raw_readable_in_txn, withdrawn_in_txn,
 };
 pub use safe_read::{safe_read_asset_text, safe_read_text};
 #[cfg(test)]
