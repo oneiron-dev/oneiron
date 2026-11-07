@@ -132359,7 +132359,7 @@
      "path": "src/usage/keys.rs",
      "purpose": "Owner/vault keys and validation for the durable meter queue",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -132461,7 +132461,7 @@
      "path": "src/usage/pending.rs",
      "purpose": "Durable redelivery of the same frozen automatic settlement (FIX 737)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -132475,7 +132475,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/usage/repair.rs",
