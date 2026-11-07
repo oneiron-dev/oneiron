@@ -1763,6 +1763,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.members.invitation_code",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::InvitationCodeRequest,
+                >(),
+            ),
+            (
                 "vault.members.change",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::SharedMemberRoleRequest,
@@ -3171,6 +3177,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.secrets.code_run_lifts",
                 crate::code_run::vault_read::request_schema::<
                     crate::code_run::CodeRunSecretLiftRequest,
+                >(),
+            ),
+            (
+                "vault.secrets.code_run_room_lifts",
+                crate::code_run::vault_read::request_schema::<
+                    crate::code_run::CodeRunRoomSecretLiftRequest,
                 >(),
             ),
             (
@@ -5686,7 +5698,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.calendar.occurrences",
                 crate::code_run::vault_read::request_schema::<
-                    crate::calendar::query::CalendarOccurrencesRequest,
+                    crate::calendar::query::CalendarOccurrencesPageRequest,
                 >(),
             ),
             (
@@ -5702,13 +5714,14 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             ),
             (
                 "vault.calendar.search",
-                crate::code_run::vault_read::request_schema::<crate::calendar::CalendarSearchRequest>(
-                ),
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::query::CalendarSearchPageRequest,
+                >(),
             ),
             (
                 "vault.calendar.freebusy",
                 crate::code_run::vault_read::request_schema::<
-                    crate::task_verb::sdk::CalendarFreebusyRequest,
+                    crate::calendar::query::CalendarFreebusyPageRequest,
                 >(),
             ),
             (
@@ -7231,6 +7244,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "self.team.record",
                 crate::code_run::vault_read::request_schema::<crate::team::TeamRecordInput>(),
+            ),
+            (
+                "self.team.vote",
+                crate::code_run::vault_read::request_schema::<crate::team::TeamVoteInput>(),
             ),
             (
                 "self.team.submit",
@@ -10259,7 +10276,7 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::calendar::ingest::door::CalendarIcsImportReceipt,
         >(),
         "vault.calendar.occurrences" => crate::code_run::vault_read::request_schema::<
-            crate::claim::ScopedReadResult<Vec<crate::calendar::query::CalendarOccurrenceView>>,
+            crate::claim::ScopedReadResult<crate::calendar::query::CalendarOccurrencesPage>,
         >(),
         "vault.calendar.instances.move" => crate::code_run::vault_read::request_schema::<
             crate::calendar::ingest::door::CalendarIcsImportReceipt,
@@ -10268,10 +10285,10 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::claim::ScopedReadResult<Option<crate::calendar::CalendarEventView>>,
         >(),
         "vault.calendar.search" => crate::code_run::vault_read::request_schema::<
-            crate::claim::ScopedReadResult<Vec<crate::calendar::CalendarEventView>>,
+            crate::claim::ScopedReadResult<crate::calendar::query::CalendarSearchPage>,
         >(),
         "vault.calendar.freebusy" => crate::code_run::vault_read::request_schema::<
-            crate::claim::ScopedReadResult<crate::memory::CalendarFreebusyDto>,
+            crate::claim::ScopedReadResult<crate::calendar::query::CalendarFreebusyPage>,
         >(),
         "vault.calendar.prep" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Option<crate::calendar::PrepPack>>,
@@ -13292,6 +13309,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.members.invitation_code" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.members.change" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -14931,6 +14955,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.secrets.code_run_lifts" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.secrets.code_run_room_lifts" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -20115,6 +20146,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.members.projection" => validate_input_vault_members_projection(value)?,
         "vault.members.add" => validate_input_vault_members_add(value)?,
         "vault.members.invitation_slip" => validate_input_vault_members_invitation_slip(value)?,
+        "vault.members.invitation_code" => validate_input_vault_members_invitation_code(value)?,
         "vault.members.change" => validate_input_vault_members_change(value)?,
         "vault.members.remove" => validate_input_vault_members_remove(value)?,
         "vault.members.leave" => validate_input_vault_members_leave(value)?,
@@ -20498,6 +20530,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.settings.learning.put" => validate_input_vault_settings_learning_put(value)?,
         "vault.settings.learning.clear" => validate_input_vault_settings_learning_clear(value)?,
         "vault.secrets.code_run_lifts" => validate_input_vault_secrets_code_run_lifts(value)?,
+        "vault.secrets.code_run_room_lifts" => {
+            validate_input_vault_secrets_code_run_room_lifts(value)?
+        }
         "vault.secrets.lift_history" => validate_input_vault_secrets_lift_history(value)?,
         "vault.secrets.register" => validate_input_vault_secrets_register(value)?,
         "vault.secrets.rotate" => validate_input_vault_secrets_rotate(value)?,
@@ -23206,6 +23241,11 @@ fn validate_input_vault_members_invitation_slip(value: &serde_json::Value) -> Me
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_members_invitation_code(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::InvitationCodeRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_vault_members_change(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::task_verb::sdk::SharedMemberRoleRequest = decode(value.clone())?;
     Ok(())
@@ -24535,6 +24575,11 @@ fn validate_input_vault_settings_learning_clear(value: &serde_json::Value) -> Me
 #[inline(never)]
 fn validate_input_vault_secrets_code_run_lifts(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::code_run::CodeRunSecretLiftRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_secrets_code_run_room_lifts(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::code_run::CodeRunRoomSecretLiftRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -26902,7 +26947,8 @@ fn validate_input_vault_calendar_ics_import(value: &serde_json::Value) -> Memory
 }
 #[inline(never)]
 fn validate_input_vault_calendar_occurrences(value: &serde_json::Value) -> MemoryResult<()> {
-    let _input: crate::calendar::query::CalendarOccurrencesRequest = decode(value.clone())?;
+    let input: crate::calendar::query::CalendarOccurrencesPageRequest = decode(value.clone())?;
+    crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
     Ok(())
 }
 #[inline(never)]
@@ -26917,12 +26963,14 @@ fn validate_input_vault_calendar_read(value: &serde_json::Value) -> MemoryResult
 }
 #[inline(never)]
 fn validate_input_vault_calendar_search(value: &serde_json::Value) -> MemoryResult<()> {
-    let _input: crate::calendar::CalendarSearchRequest = decode(value.clone())?;
+    let input: crate::calendar::query::CalendarSearchPageRequest = decode(value.clone())?;
+    crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
     Ok(())
 }
 #[inline(never)]
 fn validate_input_vault_calendar_freebusy(value: &serde_json::Value) -> MemoryResult<()> {
-    let _input: crate::task_verb::sdk::CalendarFreebusyRequest = decode(value.clone())?;
+    let input: crate::calendar::query::CalendarFreebusyPageRequest = decode(value.clone())?;
+    crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
     Ok(())
 }
 #[inline(never)]
@@ -27318,12 +27366,7 @@ fn validate_input_vault_artifacts_body_deck_preview(value: &serde_json::Value) -
 }
 #[inline(never)]
 fn validate_input_vault_artifacts_append(value: &serde_json::Value) -> MemoryResult<()> {
-    let input: AppendBlobVersionRequest = decode(value.clone())?;
-    if input.content_base64.len() > crate::memory::caps::MAX_BLOB_BASE64_LEN {
-        return Err(MemoryError::bad_request(
-            "blob base64 exceeds the content ceiling",
-        ));
-    }
+    let _input: AppendBlobVersionRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -28848,6 +28891,7 @@ pub fn invoke(
         "vault.members.projection" => invoke_vault_members_projection(memory, value),
         "vault.members.add" => invoke_vault_members_add(memory, value),
         "vault.members.invitation_slip" => invoke_vault_members_invitation_slip(memory, value),
+        "vault.members.invitation_code" => invoke_vault_members_invitation_code(memory, value),
         "vault.members.change" => invoke_vault_members_change(memory, value),
         "vault.members.remove" => invoke_vault_members_remove(memory, value),
         "vault.members.leave" => invoke_vault_members_leave(memory, value),
@@ -29231,6 +29275,9 @@ pub fn invoke(
         "vault.settings.learning.put" => invoke_vault_settings_learning_put(memory, value),
         "vault.settings.learning.clear" => invoke_vault_settings_learning_clear(memory, value),
         "vault.secrets.code_run_lifts" => invoke_vault_secrets_code_run_lifts(memory, value),
+        "vault.secrets.code_run_room_lifts" => {
+            invoke_vault_secrets_code_run_room_lifts(memory, value)
+        }
         "vault.secrets.lift_history" => invoke_vault_secrets_lift_history(memory, value),
         "vault.secrets.register" => invoke_vault_secrets_register(memory, value),
         "vault.secrets.rotate" => invoke_vault_secrets_rotate(memory, value),
@@ -32520,6 +32567,13 @@ fn invoke_vault_members_invitation_slip(
     encode(vault_members_invitation_slip(memory, decode(value)?)?)
 }
 #[inline(never)]
+fn invoke_vault_members_invitation_code(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_members_invitation_code(memory, decode(value)?)?)
+}
+#[inline(never)]
 fn invoke_vault_members_change(
     memory: &Memory<'_>,
     value: serde_json::Value,
@@ -34295,6 +34349,13 @@ fn invoke_vault_secrets_code_run_lifts(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_secrets_code_run_lifts(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_secrets_code_run_room_lifts(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_secrets_code_run_room_lifts(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_secrets_lift_history(
@@ -42218,11 +42279,10 @@ pub fn vault_members_projection(
 pub fn vault_members_add(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::SharedMemberAddRequest,
-) -> MemoryResult<crate::task_verb::sdk::SharedMemberInvited> {
+) -> MemoryResult<crate::federation::SharedActExecutionReceipt> {
     crate::task_verb::sdk::add_shared_member_as(
         memory.vault(),
         &memory.embedded_owner("vault.members.add")?,
-        None,
         input,
     )
 }
@@ -42231,6 +42291,12 @@ pub fn vault_members_invitation_slip(
     input: crate::task_verb::sdk::InvitationSlipRequest,
 ) -> MemoryResult<crate::task_verb::sdk::InvitationSlip> {
     crate::task_verb::sdk::mint_invitation_slip_embedded(memory, input)
+}
+pub fn vault_members_invitation_code(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::InvitationCodeRequest,
+) -> MemoryResult<crate::task_verb::sdk::InvitationCode> {
+    crate::task_verb::sdk::issue_invitation_code_embedded(memory, input)
 }
 pub fn vault_members_change(
     memory: &Memory<'_>,
@@ -44342,6 +44408,18 @@ pub fn vault_secrets_code_run_lifts(
         .vault()
         .code_run_secret_lifts_as_owner(
             &memory.embedded_owner("vault.secrets.code_run_lifts")?,
+            &input,
+        )
+        .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_secrets_code_run_room_lifts(
+    memory: &Memory<'_>,
+    input: crate::code_run::CodeRunRoomSecretLiftRequest,
+) -> MemoryResult<Vec<crate::code_run::CodeRunSecretLiftProposalView>> {
+    memory
+        .vault()
+        .code_run_room_secret_lifts_as_owner(
+            &memory.embedded_owner("vault.secrets.code_run_room_lifts")?,
             &input,
         )
         .map_err(crate::memory::MemoryError::from)
@@ -47851,10 +47929,10 @@ pub fn vault_calendar_ics_import(
 }
 pub fn vault_calendar_occurrences(
     memory: &Memory<'_>,
-    input: crate::calendar::query::CalendarOccurrencesRequest,
-) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::calendar::query::CalendarOccurrenceView>>>
-{
-    memory.calendar_occurrences(&input)
+    input: crate::calendar::query::CalendarOccurrencesPageRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::calendar::query::CalendarOccurrencesPage>> {
+    crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
+    memory.calendar_occurrences_page(&input)
 }
 pub fn vault_calendar_instances_move(
     memory: &Memory<'_>,
@@ -47870,15 +47948,17 @@ pub fn vault_calendar_read(
 }
 pub fn vault_calendar_search(
     memory: &Memory<'_>,
-    input: crate::calendar::CalendarSearchRequest,
-) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::calendar::CalendarEventView>>> {
-    memory.calendar_search(&input)
+    input: crate::calendar::query::CalendarSearchPageRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::calendar::query::CalendarSearchPage>> {
+    crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
+    memory.calendar_search_page(&input)
 }
 pub fn vault_calendar_freebusy(
     memory: &Memory<'_>,
-    input: crate::task_verb::sdk::CalendarFreebusyRequest,
-) -> MemoryResult<crate::claim::ScopedReadResult<crate::memory::CalendarFreebusyDto>> {
-    memory.calendar_freebusy(&input.calendars, input.range.to_time_range())
+    input: crate::calendar::query::CalendarFreebusyPageRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::calendar::query::CalendarFreebusyPage>> {
+    crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
+    memory.calendar_freebusy_page(&input)
 }
 pub fn vault_calendar_prep(
     memory: &Memory<'_>,
@@ -48579,11 +48659,6 @@ pub fn vault_artifacts_append(
     memory: &Memory<'_>,
     input: AppendBlobVersionRequest,
 ) -> MemoryResult<crate::memory::BlobVersionAppendOutcome> {
-    if input.content_base64.len() > crate::memory::caps::MAX_BLOB_BASE64_LEN {
-        return Err(MemoryError::bad_request(
-            "blob base64 exceeds the content ceiling",
-        ));
-    }
     memory_requests::append_blob(memory, input)
 }
 pub fn vault_artifacts_read(
