@@ -152,8 +152,14 @@ impl MicroVmSandboxAdapter {
                 "guest execution is forbidden after overlay export is sealed",
             ));
         }
-        self.backend
-            .run_with_proxy_cancellable(&self.vm, image, budget, &self.proxy, cancel, output)
+        self.backend.run_with_proxy_cancellable(
+            &self.vm,
+            image,
+            budget,
+            &self.proxy,
+            cancel,
+            output,
+        )
     }
 
     /// Drains the overlay into proposal deltas.

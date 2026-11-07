@@ -272,8 +272,10 @@ impl Memory<'_> {
             workspace.path(),
             workspace.path(),
         );
-        let mut streamed = crate::code_sandbox::microvm::MicroVmOutputSpool::new(std::sync::Arc::clone(&spool));
-        let outcome = execute_foreign_code(prepared, mounts, artifact, budget, spool, &mut streamed)?;
+        let mut streamed =
+            crate::code_sandbox::microvm::MicroVmOutputSpool::new(std::sync::Arc::clone(&spool));
+        let outcome =
+            execute_foreign_code(prepared, mounts, artifact, budget, spool, &mut streamed)?;
         let mut output: StepOutput = serde_json::from_str(&outcome.result_json)
             .map_err(|_| MemoryError::bad_request("foreign step returned invalid typed output"))?;
         outputs::merge(streamed, &mut output)?;

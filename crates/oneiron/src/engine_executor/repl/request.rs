@@ -2,7 +2,7 @@
 //! Entry: `EngineNativeExecutor::build_llm_request`.
 //! Executor state belongs to `engine_executor::driver`; replay rows belong to `code_run`.
 
-use super::super::store::load_script_context;
+use super::super::store::{load_script_context, mask_known_text};
 use super::*;
 
 impl EngineNativeExecutor<'_> {
@@ -182,7 +182,15 @@ impl EngineNativeExecutor<'_> {
         for (seq, view) in views.iter().enumerate() {
             messages.extend(self.fold_tail(&epochs, record, seq)?);
             match super::compaction::epoch_frame(&epochs, record.run_id, seq, &views)? {
-                Some(Some(frame)) => {
+                Some(Some(mut frame)) => {
+                    // An epoch frame or a whole-step fold stub keeps a
+                    // summary, ids and a note: each is masked at every
+                    // render, so a value custody learns later is masked too.
+                    for part in &mut frame.content {
+                        if let ContentPart::Text { text } = part {
+                            *text = mask_known_text(&self.storage, text)?;
+                        }
+                    }
                     messages.push(frame);
                     swapped = true;
                     continue;
@@ -199,10 +207,15 @@ impl EngineNativeExecutor<'_> {
             let console = match folded {
                 // A fold by kind keeps the program and its say() messages;
                 // the console shows the fold's stub, which keeps the
-                // output's handles (ARCH-0067 §2.2, fold by kind).
-                Some(fold) => fold
-                    .output_stub(seq as u64, noted.insert(fold.fold))
-                    .unwrap_or_default(),
+                // output's handles (ARCH-0067 §2.2, fold by kind). Every
+                // literal it keeps is masked at each render, so a value
+                // custody learns after the fold lands is masked too.
+                Some(fold) => mask_known_text(
+                    &self.storage,
+                    &fold
+                        .output_stub(seq as u64, noted.insert(fold.fold))
+                        .unwrap_or_default(),
+                )?,
                 None => match view.tier {
                     OutputTier::Full | OutputTier::Overview => String::from_utf8(view.bytes)
                         .map_err(|_| Error::CorruptedIndex("executor observation encoding"))?,
@@ -213,15 +226,36 @@ impl EngineNativeExecutor<'_> {
                     }))?,
                 },
             };
-            let turn = CodeRunHistoryTurn {
-                code: load_script_context(
+            // A program fold keeps the console and its stub stands in the
+            // exec frame, as comment lines that keep what the step said.
+            let code = match epochs
+                .folds
+                .kind_covering(crate::compaction::FoldKind::Program, seq as u64)
+            {
+                // Each speech text is read from the run's record and
+                // masked before it is quoted, never kept in the fold; the
+                // whole stub (its ids and note too) is masked again at
+                // each render, so later custody values are masked as well.
+                Some(fold) => mask_known_text(
+                    &self.storage,
+                    &fold
+                        .program_stub(seq as u64, noted.insert(fold.fold), |speech| {
+                            let call = record
+                                .bridge_calls
+                                .get(usize::try_from(speech.call).ok()?)?;
+                            let text = super::compaction::speech_call_text(call)?;
+                            mask_known_text(&self.storage, text).ok()
+                        })
+                        .unwrap_or_default(),
+                )?,
+                None => load_script_context(
                     &self.storage,
                     record,
                     &script_output_path(seq as u64),
                     None,
                 )?,
-                console,
             };
+            let turn = CodeRunHistoryTurn { code, console };
             messages.push(LlmMessage {
                 role: LlmMessageRole::Assistant,
                 content: vec![ContentPart::Text {
@@ -266,6 +300,23 @@ impl EngineNativeExecutor<'_> {
                 text: executor_turn_instruction(completed_steps, wire_prompt),
             }],
         });
+        // FIX 15011: a run an event started opens with the wake opener after
+        // the turn instruction, on its opening request only, its clock read
+        // here at the request's final boundary. A later step and a resumed
+        // wait are no new birth, and the task text never holds the time.
+        if completed_steps == 0
+            && let Some(wake) = config.wake
+        {
+            messages.push(LlmMessage {
+                role: LlmMessageRole::User,
+                content: vec![ContentPart::Text {
+                    text: crate::context_board::turn_wake_line(
+                        self.storage.now_recorded_ms(),
+                        wake,
+                    ),
+                }],
+            });
+        }
 
         let mut request = LlmRequest {
             model: config.model.clone(),
@@ -362,15 +413,18 @@ impl EngineNativeExecutor<'_> {
     }
 }
 
-/// Bound results a post-swap brief lists, newest first.
+/// Bound results a post-swap brief gives a card line, newest first; every
+/// older one is still named (FIX 9843).
 pub(super) const BRIEF_BINDINGS: usize = 64;
 
 /// Characters of a result's preview a brief line carries.
 pub(super) const BRIEF_PREVIEW_CHARS: usize = 120;
 
 impl EngineNativeExecutor<'_> {
-    /// The run's live result names, newest first, a line each from its
-    /// manifest and taint sidecars alone: no body is read.
+    /// The run's live result names, newest first, from their manifests and
+    /// taint sidecars alone: no body is read. The newest [`BRIEF_BINDINGS`]
+    /// get a line each; every older one is named on a line of names, so the
+    /// model can still name each result it holds (FIX 9843).
     pub(super) fn bindings_brief(
         &self,
         record: &CodeRunReplayRecord,
@@ -432,10 +486,17 @@ impl EngineNativeExecutor<'_> {
                 },
             ));
         }
-        if record.bindings.len() > BRIEF_BINDINGS {
+        let older: Vec<&str> = record
+            .bindings
+            .iter()
+            .rev()
+            .skip(BRIEF_BINDINGS)
+            .map(|binding| binding.name.as_str())
+            .collect();
+        if !older.is_empty() {
             lines.push(format!(
-                "\u{2026}and {} more",
-                record.bindings.len() - BRIEF_BINDINGS
+                "Older results, newest first (describe(name) gives a card): {}",
+                older.join(", ")
             ));
         }
         Ok(Some(lines.join("\n")))

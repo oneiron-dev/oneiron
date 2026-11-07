@@ -27,7 +27,6 @@ use std::{
 };
 
 const MAX_FRAME: usize = oneiron_sandbox_contract::MAX_FRAME_BYTES;
-const MAX_REQUESTS: usize = oneiron_sandbox_contract::MAX_REQUESTS;
 
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -323,25 +322,13 @@ fn receive_proposals_cancellable(
     // The snapshot tree (empty directories included) with every accepted
     // proposal applied, under the same rules as the guest and the walker.
     let mut shape = base.shape.clone();
-    // The file streaming in, if any. Its frames are not requests: a file's
-    // size never spends the request budget.
+    // The file streaming in, if any.
     let mut open: Option<(SandboxVirtualPath, SandboxProposalBodyWriter)> = None;
-    let mut requests = 0;
+    // No frame count ends a run: cancellation and the deadline bound it, and
+    // each frame is checked as it comes (FIX 8026).
     loop {
         cancel.check()?;
         let frame = read_frame(&mut stream, deadline)?;
-        if !matches!(
-            frame,
-            GuestFrame::WriteChunk { .. }
-                | GuestFrame::OutputText { .. }
-                | GuestFrame::OutputBytes { .. }
-                | GuestFrame::StoreBytes { .. }
-        ) {
-            if requests == MAX_REQUESTS {
-                return Err(refused("guest protocol request budget exhausted"));
-            }
-            requests += 1;
-        }
         if open.is_some()
             && !matches!(
                 frame,
@@ -517,14 +504,25 @@ fn receive_proposals_cancellable(
                     deadline,
                 )?;
             }
-            GuestFrame::OutputText { target, start, frame } => {
+            GuestFrame::OutputText {
+                target,
+                start,
+                frame,
+            } => {
                 let target = match target.as_str() {
                     "console" => crate::engine_executor::JsCodeModeStream::Console,
                     "finish" => crate::engine_executor::JsCodeModeStream::Finish { start },
                     "store" => crate::engine_executor::JsCodeModeStream::Store { start },
                     _ => return Err(refused("unknown streamed output target")),
                 };
-                receive_output(&mut stream, deadline, cancel, output, target, frame.into_bytes())?;
+                receive_output(
+                    &mut stream,
+                    deadline,
+                    cancel,
+                    output,
+                    target,
+                    frame.into_bytes(),
+                )?;
             }
             GuestFrame::OutputBytes { path, frame } => {
                 let path = SandboxVirtualPath::try_new(path)?;
@@ -605,9 +603,14 @@ fn receive_output(
             };
             if write_frame(
                 stream,
-                &HostFrame::Failure { code, detail: &error.to_string() },
+                &HostFrame::Failure {
+                    code,
+                    detail: &error.to_string(),
+                },
                 deadline,
-            ).is_ok() {
+            )
+            .is_ok()
+            {
                 cancel.check()?;
                 let _ = read_frame(stream, deadline);
             }

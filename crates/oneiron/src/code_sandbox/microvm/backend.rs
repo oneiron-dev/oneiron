@@ -12,8 +12,8 @@ use crate::engine_executor::StepCancellation;
 use crate::{Error, Result};
 
 use super::credential::CredentialResolver;
-use super::output::MicroVmOutputSink;
 use super::handle::{ExecutionBudget, GuestImage, MicroVmExit, MicroVmHandle};
+use super::output::MicroVmOutputSink;
 #[cfg(any(test, debug_assertions, feature = "microvm-dev"))]
 use super::overlay::{
     collect_overlay_writes, overlay_error, overlay_io_detail, prepare_overlay_handle,

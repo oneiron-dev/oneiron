@@ -31,6 +31,40 @@ pub enum EngineLimit {
     /// Serialized bytes of one keyed-memory search filter
     /// (`vault.kv.search`).
     KeyedFilterJsonBytes,
+    /// Segments of one keyed-memory namespace, prefix or suffix a caller
+    /// names (`vault.kv`). Past it the namespace is kept and served whole.
+    KeyedNamespaceSegments,
+    /// UTF-8 bytes of one keyed-memory namespace, prefix or suffix, its
+    /// segments together. Past it the namespace is kept and served whole.
+    KeyedNamespaceBytes,
+    /// UTF-8 bytes of one keyed-memory key. Past it the key is kept and
+    /// served whole.
+    KeyedKeyBytes,
+    /// UTF-8 bytes of the booker email one authenticated booking confirm
+    /// carries. Past it the address is kept and served whole.
+    BookingEmailBytes,
+    /// Intake answers one authenticated booking confirm carries. Past it
+    /// every answer is kept.
+    BookingIntakeAnswers,
+    /// UTF-8 bytes of the largest intake answer value one authenticated
+    /// booking confirm carries. Past it the answer is kept whole.
+    BookingIntakeValueBytes,
+    /// Distinct local time windows one booking constraint carries once
+    /// canonical (sorted, duplicates gone). Past it every window is solved.
+    BookingLocalTimeWindows,
+    /// Serialized JSON bytes of one claim input as it reaches the vault's
+    /// claim door, scope and refs included. Past it the claim is written
+    /// whole.
+    ClaimInputJsonBytes,
+    /// Entities one core batch write carries (`POST /v1/core/batch` and the
+    /// vault's core batch door). Past it every entity is written in the same
+    /// one atomic batch.
+    CoreBatchEntities,
+    /// Entities one legacy `batch_put_entities` call carries (N-API, or the
+    /// C FFI's `oneiron_vault_batch_put_entities`), counted before any
+    /// element is read. Past it every entity is written in the same one
+    /// atomic transaction.
+    LegacyBatchEntities,
     /// Bytes of one code-mode result kept inline in its LMDB row. A body past
     /// it is written to the vault's file-backed body store instead; the row
     /// picks where a result lives and never refuses one.
@@ -106,6 +140,16 @@ pub enum EngineLimit {
     /// Bytes those decoded messages hold, ids and titles included. Past it
     /// the import lands whole.
     ImportDecodedBytes,
+    /// Metadata nodes one MESSAGE carries, keys and values together, counted
+    /// apart for each of its three metadata parts (an import's provenance and
+    /// the source row's own carried apart from the rest). Measured at every
+    /// put of the row, local or replicated; past it the metadata is kept
+    /// whole.
+    WitnessMetadataNodes,
+    /// Canonical MessagePack bytes of one MESSAGE's metadata, each of its
+    /// three parts counted apart. Measured at every put of the row; past it
+    /// the metadata is kept whole.
+    WitnessMetadataBytes,
     /// Bytes one signature image decode (`POST /sign/image`) may allocate,
     /// its decoded raster included: the decoder's own alloc bound is set from
     /// it. An image whose header declares a raster past it asks whether
