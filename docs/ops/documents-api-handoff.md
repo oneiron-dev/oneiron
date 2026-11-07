@@ -13,7 +13,7 @@ Documents edit in-engine through docedit and the formula engine. They need no or
 
 | The crate (`oneiron_docedit::contract`) | The cloud service (oneiron-cloud) |
 |---|---|
-| The op table, its version (`CONTRACT_SCHEMA = 3`), and the call, reply and error JSON schemas | Authentication, accounts and API keys |
+| The op table, its version (`CONTRACT_SCHEMA = 4`), and the call, reply and error JSON schemas | Authentication, accounts and API keys |
 | Every native read, edit, check and projection | Metering and billing units |
 | Refusals with a closed code and bounded detail | Hosting, scaling, timeouts, queues and async jobs |
 | The checks that every op runs against the caller's limits | Per-plan limits: the values it passes in each call |
@@ -36,7 +36,7 @@ let done = execute_json(call_json, &[&docx_bytes], Ports { recalc: Some(&engine)
 let manifest = done.manifest(); // name, media type, size and BLAKE3 of each output
 ```
 
-- **A call** is `{"schema": 3, "op": "<name>", "args": {...}}`, plus a list of byte inputs. The
+- **A call** is `{"schema": 4, "op": "<name>", "args": {...}}`, plus a list of byte inputs. The
   args name each input by its index in that list. The hosted API maps its multipart parts or
   upload handles to that list, in order.
 - **A reply** is `Done { reply, outputs }`. `reply` is a typed `Reply`, tagged by `"reply"`.
@@ -48,7 +48,7 @@ let manifest = done.manifest(); // name, media type, size and BLAKE3 of each out
   and port. It also returns `call_schema`, `reply_schema` and `error_schema`, generated with
   schemars 0.8. The hosted API serves this reply as its discovery document.
 
-## Ops, schema 3
+## Ops, schema 4
 
 | Op | Inputs | Args besides inputs | Reply | Output | Native door |
 |---|---|---|---|---|---|
@@ -56,7 +56,7 @@ let manifest = done.manifest(); // name, media type, size and BLAKE3 of each out
 | `docx.read` | `document` | `limits` (DOCX) | `docx_blocks`: body `blocks` (id, kind, role, text, runs, cells, lock) and scoped `stories` | none | `read_docx_body` |
 | `docx.revise` | `document` | `transaction` (stemma tracked-change grammar), `limits` | `docx_revised`: the transaction with its date pinned, notes | `document` | `prepare_revision_transaction`, `revise_with_notes` |
 | `docx.validate` | `document` | optional `transaction`, `limits` | `checked` | none | `validate_revision_transaction`, `validate_blocking_with_limits` |
-| `docx.project` | `source` | `changes` (set_text, set_runs, set_cell, move, insert, delete; a mark change on kept text lands as a tracked formatting change), `revision` (author, RFC 3339 date, group), `limits` | `written` | `document` | `project_docx` |
+| `docx.project` | `source` | `changes` (set_text, set_runs, set_cell, move, insert, delete; set_story_text, set_story_runs for header/footer/footnote/endnote stories with an explicit scope; a mark change on kept body text lands as a tracked formatting change, header/footer runs land as one whole-paragraph redline, notes take plain text only), `revision` (author, RFC 3339 date, group), `limits` | `written` | `document` | `project_docx` |
 | `xlsx.read` | `workbook` | `limits` (package) | `xlsx_book`: sheets, cells, names, styles, locks | none | `read_xlsx_cells` |
 | `xlsx.project` | `source` | `changes` (cell, set_name, delete_name, conditional_formats: a range, a cell-value or formula rule, and the differential look written to `dxfs`), `limits`, optional `location` (directory, file_name: an external link naming it is the workbook's own and follows a sheet rename or deletion) | `written` | `workbook` | `project_xlsx` |
 | `xlsx.mark_full_calc` | `workbook` | `limits` | `written` | `workbook` | `mark_full_calc` |
@@ -74,9 +74,25 @@ beside the main body. Each story carries its native scope and its own ordered lo
 and are not listed. Story roles are absent: body role tokens cannot be looked up by colliding
 story-local ids. The same text/run/cell/lock projection is used for both.
 
-This is a native read surface, not shared Loro story editing. The vault's existing
-`read_docx_blocks` remains body-only. Story import into the shared body and faithful story
-edit/export operations remain open under FIX 594; `docx.project` still addresses body blocks.
+`docx.project` writes story text statelessly through the same native tracked
+transaction: `set_story_text` covers authored headers/footers plus footnote/endnote
+bodies, `set_story_runs` covers authored headers/footers only. Each change names its
+explicit story scope and its story-local block id; a header's `p_1` never addresses
+the body's `p_1`. Header/footer runs land as one whole-paragraph tracked
+redline with exactly the requested six text marks, including empty mark sets and
+same-text edits. Absent marks are explicitly off on new runs, including the
+complex-script bold/italic slots; script selectors, source deletion history and
+unrelated run properties remain intact. Ordinary `set_story_text`
+keeps native formatting inheritance. This is not the body's granular formatting
+pass. Notes take plain text at
+native granularity (surviving marks on unchanged words only); marked runs on a note
+refuse instead of silently dropping marks. Comment stories stay read-only: comment
+text has no native write verb. Story move/insert/delete/table ops do not exist.
+The vault's existing `read_docx_blocks` remains body-only, and shared-Loro story
+import/edit/export remains open under FIX 594 (whole 594 stays PART). Filling an
+empty header/footer paragraph supplies its actual semantic guard with an empty
+`expect`. Native expectations are substring matches; a blank expectation without
+a guard retains its prior refusal.
 
 A deck step targets a shape by its slide part, its `p:cNvPr` id and its content fingerprint. All
 three come from `deck.read`. A transaction's `base` is the BLAKE3 hash of the deck input.
@@ -177,7 +193,7 @@ This includes nonterminal or mixed-operation groups, moves, inserted blocks, non
 labels, and an empty live body. The stateless `docx.project` call and all contract schemas are
 unchanged.
 
-## Not on schema 3
+## Not on schema 4
 
 - **Live office bodies:** the shared Loro bodies, forks, landing and export projection (OF-505,
   OF-510). They are vault state, not a stateless file op.
