@@ -10,8 +10,10 @@ use rmpv::Value;
 use crate::dreamer_runner::{DreamerTurnRole, dreamer_turn_role};
 
 /// A TURN's speaker aliases: the witness door's `speaker` and the scanner's
-/// `spkr`, which the Dreamer reads first-wins (`decode_turn_body`).
-const TURN_SPEAKER_ALIASES: [&str; 2] = ["speaker", "spkr"];
+/// `spkr`, which the Dreamer reads first-wins (`decode_turn_body`), and the
+/// `role` and `author` the chat and workflow projections also read a speaker
+/// under (`model_context`, `context_projection`).
+const TURN_SPEAKER_ALIASES: [&str; 4] = ["speaker", "spkr", "role", "author"];
 
 /// A native TURN's PERSON byline, and the inert key an import keeps it under.
 pub(super) const TURN_KEY_ACTOR: &str = "actor";
@@ -35,7 +37,7 @@ pub(crate) enum ForeignTurn {
 }
 
 /// Makes the entries of a TURN body brought in from outside this vault speak
-/// as a counterparty. Each speaker alias (`speaker`, `spkr`) that this vault
+/// as a counterparty. Each speaker alias ([`TURN_SPEAKER_ALIASES`]) that this vault
 /// reads as its own user or assistant (`dreamer_turn_role`, with the host's
 /// `assistant_display_names`) becomes `counterparty`; the first original is
 /// kept inert as `import_speaker`, unless the body already keeps one. A
