@@ -38,33 +38,11 @@ type Parts = (
 pub(super) fn restrictive(vault: &Vault, verb: &str, args: &Value) -> Option<Parts> {
     match verb {
         "vault.batch" => {
-            let puts: Vec<Value> = args
-                .get("entities")?
-                .as_array()?
-                .iter()
-                .filter(|put| withdraws_a_grant(put))
-                .cloned()
-                .collect();
+            let puts = batch_puts(args);
             (!puts.is_empty()).then_some(("vault.batch", Vec::new(), None, puts))
         }
         "vault.packs.connector.accept" => {
-            let mut pins = vec![pinned(&["basis"], basis)];
-            if let Some(rows) = args.get("rows").and_then(Value::as_object) {
-                pins.extend(
-                    rows.iter()
-                        .filter(|(_, setting)| {
-                            setting.as_str() == Some(SlateDisposition::NeverAllow.as_str())
-                        })
-                        .map(|(row, _)| Pinned {
-                            path: vec!["rows".to_owned(), row.clone()],
-                            parse: disposition,
-                        }),
-                );
-            }
-            let all_manual = args.get("all_manual") == Some(&Value::Bool(true));
-            if all_manual {
-                pins.push(pinned(&["all_manual"], Value::is_boolean));
-            }
+            let pins = connector_accept_pins(args);
             (pins.len() > 1).then_some(("vault.packs.connector.accept", pins, None, Vec::new()))
         }
         "vault.shared.execute" => {
@@ -125,6 +103,45 @@ fn pinned(path: &[&str], parse: fn(&Value) -> bool) -> Pinned {
         path: path.iter().map(|key| (*key).to_owned()).collect(),
         parse,
     }
+}
+
+/// A `vault.batch` call's kept grant withdrawals, as its caller sent them:
+/// the same pure filter the live landing judges (FIX 5137), so a replay
+/// rebuilds the batch landing from the saved original args without a vault.
+pub(super) fn batch_puts(args: &Value) -> Vec<Value> {
+    args.get("entities")
+        .and_then(Value::as_array)
+        .map(|entities| {
+            entities
+                .iter()
+                .filter(|put| withdraws_a_grant(put))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// A `vault.packs.connector.accept` call's pins, as its caller sent them:
+/// the same pure parts the live landing judges (FIX 5138), so a replay
+/// rebuilds the accept landing from the saved original args without a vault.
+pub(super) fn connector_accept_pins(args: &Value) -> Vec<Pinned> {
+    let mut pins = vec![pinned(&["basis"], basis)];
+    if let Some(rows) = args.get("rows").and_then(Value::as_object) {
+        pins.extend(
+            rows.iter()
+                .filter(|(_, setting)| {
+                    setting.as_str() == Some(SlateDisposition::NeverAllow.as_str())
+                })
+                .map(|(row, _)| Pinned {
+                    path: vec!["rows".to_owned(), row.clone()],
+                    parse: disposition,
+                }),
+        );
+    }
+    if args.get("all_manual") == Some(&Value::Bool(true)) {
+        pins.push(pinned(&["all_manual"], Value::is_boolean));
+    }
+    pins
 }
 
 /// A put that withdraws an access grant: the grant type, an existing id and

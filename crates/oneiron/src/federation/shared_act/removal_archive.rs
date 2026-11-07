@@ -167,6 +167,11 @@ impl StoredRemovalExport {
         }
     }
 
+    /// The file the archive's bytes are.
+    pub(super) const fn file(&self) -> &ArchiveFile {
+        &self.file
+    }
+
     /// BLAKE3 of the archive as kept, lowercase hex.
     pub(super) fn digest(&self) -> String {
         self.file.digest()

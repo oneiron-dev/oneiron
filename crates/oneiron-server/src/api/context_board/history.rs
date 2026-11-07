@@ -1,6 +1,8 @@
 //! Board history on the board's own surface (ARCH-0067 §3). A hydration that
 //! names its TURN records that turn's board, delta-only; a past turn's board
-//! is reconstructed at the frontier it recorded, or refused explicitly.
+//! is reconstructed at the frontier it recorded, or refused explicitly. A
+//! chat turn a conversation's compaction folded reads as the epoch summary
+//! that stands for it (FIX 5038): a separate answer, never a board.
 
 use super::super::core_engine_error;
 use super::super::parse_entity_id_param;
@@ -17,8 +19,7 @@ use axum::response::IntoResponse;
 use axum::response::Json;
 use base64::Engine;
 use oneiron::EntityId;
-use oneiron::context_board::BoardHistoryError;
-use oneiron::context_board::BoardLayoutCandidate;
+use oneiron::context_board::{BoardHistoryError, BoardLayoutCandidate, BoardTurnHistory};
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -61,20 +62,48 @@ pub(crate) struct ContextBoardSelectionView {
     top_snippet: Vec<String>,
 }
 
-/// A past turn's board, folded at the frontier that turn recorded.
+/// A past turn's history: its board, folded at the frontier that turn
+/// recorded, or, for a chat turn a conversation's compaction folded, the
+/// epoch summary that stands for it (FIX 5038).
 #[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct ContextBoardTurnHistory {
-    /// Hex TURN entity id.
-    turn: String,
-    /// Hex id of the board owner.
-    owner: String,
-    /// The turn's position on its owner's board timeline.
-    at: u64,
-    /// Hex history reference of the frontier this turn recorded.
-    source_revision_ref: String,
-    selection: ContextBoardSelectionView,
-    /// Base64 body bytes of each selected document as it stood at the turn.
-    documents: BTreeMap<String, String>,
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum ContextBoardTurnHistory {
+    /// The turn's board, reconstructed exactly.
+    Board {
+        /// Hex TURN entity id.
+        turn: String,
+        /// Hex id of the board owner.
+        owner: String,
+        /// The turn's position on its owner's board timeline.
+        at: u64,
+        /// Hex history reference of the frontier this turn recorded.
+        source_revision_ref: String,
+        selection: ContextBoardSelectionView,
+        /// Base64 body bytes of each selected document as it stood at the
+        /// turn.
+        documents: BTreeMap<String, String>,
+    },
+    /// The turn's board was folded into a conversation's epoch; its summary
+    /// stands for the turn. No board, selection or document is given.
+    Epoch {
+        /// Hex TURN entity id.
+        turn: String,
+        /// Hex SUMMARY entity id.
+        summary: String,
+        /// Hex SESSION entity id of the epoch's lineage.
+        session: String,
+        /// Hex CONVERSATION entity id of the epoch's lineage.
+        conversation: String,
+        /// The epoch's number in its lineage.
+        epoch: u64,
+        /// The conversation's first turn number within the session the
+        /// epoch covers.
+        turn_start: u64,
+        /// Its last covered turn number.
+        turn_end: u64,
+        /// The summary's words, as the caller may read them now.
+        text: String,
+    },
 }
 
 /// The board owner and TURN a hydration records, checked before any work.
@@ -328,17 +357,19 @@ pub(super) fn record_board_turn_with_layout(
 /// Reconstruct the caller's board as it stood at one past turn: the
 /// selection and document bytes at the frontier that turn recorded. Never a
 /// current-board stand-in: a turn beyond the compaction horizon is refused.
+/// A chat turn a conversation's compaction folded answers its standing
+/// epoch summary instead (FIX 5038), or is refused when none stands.
 #[utoipa::path(
     get,
     path = "/v1/core/context-board/turns/{turn}",
     params(("turn" = String, Path, description = "Hex TURN entity id")),
     responses(
-        (status = 200, description = "The turn's board, reconstructed.", body = ContextBoardTurnHistory, content_type = "application/json"),
+        (status = 200, description = "The turn's board, reconstructed; or, for a chat turn a conversation's compaction folded, the epoch summary that stands for it.", body = ContextBoardTurnHistory, content_type = "application/json"),
         (status = 400, description = "Malformed turn id.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "No board history for this turn and caller.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 409, description = "The turn predates the board's compaction horizon, or a selected document is no longer readable or disclosable to the caller.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 409, description = "The turn predates the board's compaction horizon or was folded with no epoch the caller may read, or a selected document is no longer readable or disclosable to the caller.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Board reconstruction failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
@@ -366,13 +397,28 @@ pub(crate) async fn context_board_turn_history(
     // stand now, the ones a new board would apply: a past board never hands
     // back a document the caller can no longer read or be shown.
     let (read, disclosure) = current_board_authority(&server.vault, &auth, None)?;
-    let board = server
+    let history = server
         .vault
-        .reconstruct_board_for(&id, &read, disclosure.as_ref())
+        .board_turn_history_for(&id, &read, disclosure.as_ref())
         .map_err(|error| board_history_error(&id, error))?;
+    let board = match history {
+        BoardTurnHistory::Board(board) => board,
+        BoardTurnHistory::Epoch(epoch) => {
+            return Ok(Json(ContextBoardTurnHistory::Epoch {
+                turn: epoch.turn.to_hex(),
+                summary: epoch.summary.to_hex(),
+                session: epoch.session.to_hex(),
+                conversation: epoch.conversation.to_hex(),
+                epoch: epoch.epoch,
+                turn_start: epoch.turn_start,
+                turn_end: epoch.turn_end,
+                text: epoch.text,
+            }));
+        }
+    };
     let ids = |set: &BTreeSet<EntityId>| set.iter().map(EntityId::to_hex).collect();
     let engine = base64::engine::general_purpose::STANDARD;
-    Ok(Json(ContextBoardTurnHistory {
+    Ok(Json(ContextBoardTurnHistory::Board {
         turn: board.turn.to_hex(),
         owner: board.owner.to_hex(),
         at: board.at,
