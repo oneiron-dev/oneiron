@@ -178,6 +178,11 @@ pub enum IntentEscalationReason {
     /// The provider reported that the remote task it accepted the send as
     /// failed or was cancelled (FIX 7960).
     RemoteTaskFailed,
+    /// This machine does not hold its connector-send TASK's send executor
+    /// lease (FIX 4747): it stood down, and its local send, which certainly
+    /// never went, stops here and gives its reserved budget back. The shared
+    /// TASK stays the lease holder's to send.
+    SendExecutorStoodDown,
 }
 
 impl IntentEscalationReason {
@@ -197,6 +202,7 @@ impl IntentEscalationReason {
             Self::RecipientErased => "recipient_erased",
             Self::OwnerErased => "owner_erased",
             Self::RemoteTaskFailed => "remote_task_failed",
+            Self::SendExecutorStoodDown => "send_executor_stood_down",
         }
     }
 
@@ -216,6 +222,7 @@ impl IntentEscalationReason {
             "recipient_erased" => Some(Self::RecipientErased),
             "owner_erased" => Some(Self::OwnerErased),
             "remote_task_failed" => Some(Self::RemoteTaskFailed),
+            "send_executor_stood_down" => Some(Self::SendExecutorStoodDown),
             _ => None,
         }
     }
