@@ -50,6 +50,7 @@ pub mod doors;
 mod erase;
 pub(crate) use erase::{erase_eval_source_in_txn, forget_eval_case_source_rows, forget_source_row};
 mod measurement;
+mod repair_task;
 mod replay_input;
 mod sufficiency;
 
@@ -83,6 +84,10 @@ pub use measurement::{
     EvalMeasurement, EvalMeasurementRequest, FloorSlicePolicy, JUDGE_SCORE_AXIS, JUDGE_SCORE_UNITS,
     MeasurementMethodPin, MeasurementState, MeasurementUnavailable, ScoreDirection,
     eval_seat_canary,
+};
+pub use repair_task::{
+    EvalRepairAction, EvalRepairGrader, EvalRepairPrecondition, EvalRepairTask, EvalRepairTaskRead,
+    EvalRepairTaskSource, EvalRepairTaskSpec, EvalRepairWorld,
 };
 pub use replay_input::EvalTaskInput;
 pub use sufficiency::{
