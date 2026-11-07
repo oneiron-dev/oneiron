@@ -69,6 +69,8 @@ mod reap;
 mod refusal;
 /// The relay delete ctl requests (FIX 6826).
 mod relay_delete;
+/// Generic original-usage export over ctl (LC191311).
+mod usage_export;
 
 #[cfg(target_os = "linux")]
 pub(super) use self::carrier_watch::carrier_recipients_snapshot;
@@ -249,9 +251,10 @@ pub(crate) struct ManagedIngress;
 /// as anyone's authority. The upgrade's own admission ends with its
 /// handshake, so the socket holds none while it idles. Each call it carries
 /// is admitted as the served request it becomes ([`Self::admit_requests`]),
-/// and each receipt it writes outside a call alone
-/// ([`Self::admit_receipt`]), on the one count of served writes in flight a
-/// reap waits for.
+/// each call a socket answers itself on its own ([`Self::admit_call`], a
+/// stale owner sign-in's app-tier booking socket, FIX 11712), and each
+/// receipt it writes outside a call alone ([`Self::admit_receipt`]), on the
+/// one count of served writes in flight a reap waits for.
 #[derive(Clone)]
 pub(crate) struct ManagedCarrierContext(Arc<ManagedState>);
 
@@ -274,6 +277,15 @@ impl CarrierPaused {
     pub(crate) fn body(&self) -> serde_json::Value {
         writes_frozen_body(&self.0)
     }
+}
+
+/// The reap admission one call a held socket answers itself ran under
+/// ([`ManagedCarrierContext::admit_call`], FIX 11712), handed back beside its
+/// answer: the socket keeps it while it judges that answer at its send door,
+/// and the place it holds among served writes in flight is released as it
+/// drops.
+pub(crate) struct CarrierAdmission {
+    _admitted: admission::Admitted,
 }
 
 /// The vault owner a held MCP socket serves (FIX 5128): the person his
@@ -591,7 +603,10 @@ impl ManagedState {
 /// Failure is logged and stepped over. A supervisor that has already died must
 /// not be able to hold this exit open.
 pub async fn final_ledger_push(state: &ManagedState, server: &SyncServer) {
-    let ledger = state.ledger();
+    final_ledger_push_from(state.ledger(), server).await;
+}
+
+pub(super) async fn final_ledger_push_from(ledger: &WakeLedger, server: &SyncServer) {
     match ledger.push_if_changed(server).await {
         Ok(accepted) => {
             tracing::info!(
