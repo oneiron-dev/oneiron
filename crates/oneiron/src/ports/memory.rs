@@ -182,18 +182,9 @@ impl EntityStore for Memory {
             .filter(|(source, _)| source.document == *id)
             .flat_map(|(_, ids)| ids.iter().copied())
             .collect();
+        // The dependents go stale; none is queued for regeneration (FIX 12327).
         for dependent in deps {
             self.port_retrieval_mark_stale(txn, &dependent)?;
-            self.port_job_enqueue(
-                txn,
-                EnqueueAttempt {
-                    kind: "derived.regenerate".into(),
-                    payload: [id.as_bytes().as_slice(), dependent.as_bytes()].concat(),
-                    dedupe_key: Some(format!("{}:{}", id.to_hex(), dependent.to_hex())),
-                    run_id: None,
-                    now: 0,
-                },
-            )?;
         }
         txn.edges.retain(|(s, _, d), _| s != id && d != id);
         txn.shorts.remove(id);

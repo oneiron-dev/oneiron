@@ -1,7 +1,9 @@
 //! Typed code snapshot doors (DOOR-118): committed Git import and current-folder
 //! capture, pinned manifests, frozen source bytes and exact-name Rust symbols.
-//! None registers a repository, enforces an editable whitelist, grants repo
-//! membership, mints a receipt or answers a calls, imports or refs query.
+//! Each projects an engine path that exists. None registers a repository,
+//! enforces an editable whitelist, grants repo membership or answers a calls,
+//! imports or refs query. An owner's import retains a capture receipt with its
+//! snapshot.
 //!
 //! Authority is the owner's live proof alone (`Memory::codebase_owner`),
 //! checked before any id resolves, so a refusal is no existence oracle.

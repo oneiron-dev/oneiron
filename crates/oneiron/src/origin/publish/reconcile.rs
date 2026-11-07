@@ -2,17 +2,19 @@
 //! 6866 retry" and "FIX 6866 unknown remote tip").
 //!
 //! The mirror's token leaves custody only through the custody door, bound to
-//! the mirror push effector, and reaches git only as one child's header.
-//! Each request is pushed at most once. A push that did not prove its own
-//! outcome is settled from an authenticated read of the branch, never by a
-//! second send: the commit there is `observed_published`; the leased tip
-//! there is `rejected` after the mirror's own refusal, else
+//! the mirror push effector. On a served host it goes only to the credential
+//! broker, which installs it on each exchange of the host's mirror relay
+//! (`git_transport`, FIX 19083), so no Git child holds it; on an embedded
+//! vault it reaches git as one child's header. Each request is pushed at
+//! most once. A push that did not prove its own outcome is settled from an
+//! authenticated read of the branch, never by a second send, even when it
+//! failed before the broker sent it (its detail says `not sent`; one that
+//! failed after says `unproven`): the commit there is `observed_published`;
+//! the leased tip there is `rejected` after the mirror's own refusal, else
 //! `outcome_unknown`; anything else is `remote_moved`. A branch that cannot
 //! be read leaves the request dispatching until a later call reads it. A
 //! claimed request is settled by another call only once the mirror's push
 //! hold, which its push's child inherits, is free (FIX 7045).
-
-use std::path::Path;
 
 use base64::Engine as _;
 
@@ -28,6 +30,8 @@ use crate::git_wire::{
     GitOid, GitPublishPushOutcome, GitRefName, GitRemoteTip, GitWire, GitWireRepo,
     try_lock_repository,
 };
+use crate::llm::BrokerIsolation;
+use crate::origin::git_transport::{OriginGitPublishPush, OriginGitPushReport};
 use crate::origin::mirror::ORIGIN_MIRROR_PUSH_EFFECTOR;
 use crate::origin::mirror_run::mirror_hold_dir;
 use crate::origin::publication::OriginKeepRefKind;
@@ -36,7 +40,9 @@ use crate::origin::publication::OriginKeepRefKind;
 const MAX_DETAIL_BYTES: usize = 256;
 
 impl Vault {
-    /// Reads `name` at the request's mirror with the mirror's credential.
+    /// Reads `name` at the request's mirror with the mirror's credential:
+    /// through the served host's transport when one is installed, which
+    /// never falls back to the direct read.
     pub(super) fn read_publish_remote(
         &self,
         wire: &GitWire<'_>,
@@ -44,6 +50,9 @@ impl Vault {
         destination: &OriginPublishDestination,
         name: &GitRefName,
     ) -> Result<GitRemoteTip> {
+        if let Some(transport) = self.served_origin_git_transport() {
+            return transport.read_remote_branch(wire, handle, destination, name);
+        }
         let mut answer = Err(Error::InvariantViolation("publish remote read never ran"));
         self.with_publish_credential(destination, &mut |header| {
             answer = wire.read_remote_branch(handle, &destination.url, name, header);
@@ -51,39 +60,46 @@ impl Vault {
         answer
     }
 
-    /// The request's one push: exactly `commit` to `name`, leased on
-    /// `expected`, in a child that inherits the mirror's push hold `hold`.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "one exact push binds its repository, mirror, branch, commit, lease and hold"
-    )]
+    /// The request's one push: exactly `push.commit` to `push.name`, leased
+    /// on `push.expected`, in a child that inherits the mirror's push hold
+    /// `push.hold`: through the served host's transport when one is
+    /// installed, which never falls back to the direct push.
     pub(super) fn push_publish_once(
         &self,
         wire: &GitWire<'_>,
         handle: &GitWireRepo,
-        destination: &OriginPublishDestination,
-        name: &GitRefName,
-        commit: &GitOid,
-        expected: Option<&GitOid>,
-        hold: &Path,
-    ) -> Result<GitPublishPushOutcome> {
+        push: &OriginGitPublishPush<'_>,
+    ) -> OriginGitPushReport {
+        if let Some(transport) = self.served_origin_git_transport() {
+            return transport.push_publish(wire, handle, push);
+        }
+        let destination = push.destination;
         let mut answer = Err(Error::InvariantViolation("publish push never ran"));
-        self.with_publish_credential(destination, &mut |header| {
+        let door = self.with_publish_credential(destination, &mut |header| {
             answer = wire.push_publish(
                 handle,
                 &destination.url,
-                name,
-                commit,
-                expected,
-                hold,
+                push.name,
+                push.commit,
+                push.expected,
+                push.hold,
                 header,
             );
-        })?;
-        answer
+        });
+        OriginGitPushReport {
+            outcome: door.and(answer),
+            broker_isolation: None,
+        }
     }
 
-    /// Runs `apply` with the mirror's basic-auth header, inside the door.
-    pub(super) fn with_publish_credential(
+    /// Runs `apply` with the mirror's basic-auth header for `destination`,
+    /// inside the custody door (effector `origin:mirror-push`). A served
+    /// host's mirror relay hands it to the credential broker this way, after
+    /// the broker acknowledged an exchange's body (FIX 19083).
+    ///
+    /// # Errors
+    /// The custody door's refusal of the destination's record.
+    pub fn with_publish_credential(
         &self,
         destination: &OriginPublishDestination,
         apply: &mut dyn FnMut(&str),
@@ -109,28 +125,31 @@ impl Vault {
         Ok(())
     }
 
-    /// Settles a claimed request from its one push's outcome.
+    /// Settles a claimed request from its one push's outcome, recording the
+    /// isolation of the credential broker that carried it, if one did.
     pub(super) fn settle_publish_push(
         &self,
         scope: &PublishScope<'_>,
         handle: &GitWireRepo,
         view: &OriginPublishRequestView,
-        outcome: Result<GitPublishPushOutcome>,
+        pushed: OriginGitPushReport,
     ) -> Result<OriginPublishRequestView> {
-        let (rejected, detail) = match outcome {
+        let isolation = pushed.broker_isolation;
+        let (rejected, detail) = match pushed.outcome {
             Ok(GitPublishPushOutcome::Applied) => {
-                return self.settle_publish(
+                return self.settle_publish_with_isolation(
                     view,
                     &[OriginPublishState::Dispatching],
                     OriginPublishState::Published,
                     None,
+                    isolation,
                 );
             }
             Ok(GitPublishPushOutcome::Rejected(detail)) => (true, detail),
             Ok(GitPublishPushOutcome::Unknown(detail)) => (false, detail),
             Err(error) => (false, error.to_string()),
         };
-        self.settle_from_mirror(scope, handle, view, rejected, Some(detail))
+        self.settle_from_mirror(scope, handle, view, rejected, Some(detail), isolation)
     }
 
     /// A dispatching request settled from the mirror once its push has
@@ -151,7 +170,7 @@ impl Vault {
         let Some(_held) = try_lock_repository(&mirror_hold_dir(&handle)?)? else {
             return Ok(view);
         };
-        self.settle_from_mirror(scope, &handle, &view, false, None)
+        self.settle_from_mirror(scope, &handle, &view, false, None, None)
     }
 
     /// A proven handle for a request's IO: pinned at its commit, else, once
@@ -169,7 +188,9 @@ impl Vault {
         self.mirror_handle(&scope.wire, scope.repo_id, &scope.root)
     }
 
-    /// Reads the branch and settles the claimed request from what it holds.
+    /// Reads the branch and settles the claimed request from what it holds,
+    /// after a push the mirror refused or not (`rejected`, with its redacted
+    /// `detail`), recording the broker isolation its push went through.
     fn settle_from_mirror(
         &self,
         scope: &PublishScope<'_>,
@@ -177,6 +198,7 @@ impl Vault {
         view: &OriginPublishRequestView,
         rejected: bool,
         detail: Option<String>,
+        isolation: Option<BrokerIsolation>,
     ) -> Result<OriginPublishRequestView> {
         let name = GitRefName::parse_full(view.ref_name.clone())?;
         let Ok(observed) = self.read_publish_remote(&scope.wire, handle, &view.destination, &name)
@@ -186,7 +208,13 @@ impl Vault {
         let expected = expected_oid(&view.expected_remote)?;
         let from = [OriginPublishState::Dispatching];
         if observed.oid().map(GitOid::as_str) == Some(view.commit.as_str()) {
-            return self.settle_publish(view, &from, OriginPublishState::ObservedPublished, None);
+            return self.settle_publish_with_isolation(
+                view,
+                &from,
+                OriginPublishState::ObservedPublished,
+                None,
+                isolation,
+            );
         }
         let reason = if observed.oid() != expected.as_ref() {
             OriginPublishRefusalReason::RemoteMoved
@@ -196,7 +224,13 @@ impl Vault {
             OriginPublishRefusalReason::OutcomeUnknown
         };
         let refusal = refusal(reason, Some(&observed), Vec::new(), detail);
-        self.settle_publish(view, &from, OriginPublishState::Refused, Some(refusal))
+        self.settle_publish_with_isolation(
+            view,
+            &from,
+            OriginPublishState::Refused,
+            Some(refusal),
+            isolation,
+        )
     }
 
     /// Pins the request's commit behind its own keep-ref owner, before the
