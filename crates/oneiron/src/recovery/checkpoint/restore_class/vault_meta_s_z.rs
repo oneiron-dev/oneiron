@@ -30,6 +30,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SECRET_CUSTODY_INPUT, LIVE),
     (&t::SECRET_CUSTODY_NAME_INDEX, SECRET_CUSTODY),
     (&t::SECRET_CUSTODY_OUTPUT, LIVE),
+    // An owed import mark stands with the custody whose relay it ends (FIX 12291).
+    (&t::SECRET_CUSTODY_PENDING_IMPORT_MARK, LIVE),
     (&t::SECRET_CUSTODY_PENDING_REVOKE, LIVE),
     (&t::SECRET_CUSTODY_REBIND, LIVE),
     // A restore's pending credentials stand with the custody they wait on (FIX-LIST 10671).
@@ -257,6 +259,13 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SPAWN_PLANNED_INTENT_ASKER_ERASED, LIVE),
     (&t::STANDING_BLOCK, STANDING_BLOCKS),
     (&t::AFFECT_STATE_COMPOSITE_PRODUCER, CONTENT),
+    // A person's passkeys, open ceremonies and step-ups stand with the live credentials they
+    // protect (FIX 11694).
+    (&t::STEP_UP_CHALLENGE, LIVE),
+    (&t::STEP_UP_PASSKEY, LIVE),
+    (&t::STEP_UP_RECORD, LIVE),
+    (&t::STEP_UP_TOTP, LIVE),
+    (&t::STEP_UP_TOTP_PENDING, LIVE),
     (&t::STORAGE_ABI_VERSION, CONTENT),
     (&t::MESSAGE_STREAM_RECEIPT_BY_REF, CONTENT),
     (&t::SYNC_BORN_WITH_CARRIED, CONTENT),
@@ -302,6 +311,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::TASK_FANOUT_LAUNCH, LIVE),
     (&t::TASK_FANOUT_RUN, CONTENT),
     (&t::TASK_FANOUT_POLICY, CONTENT),
+    (&t::TEAM_BALLOT, CONTENT),
     (&t::TEAM_DELIVERABLE, CONTENT),
     (&t::TEAM_MARKET, CONTENT),
     (&t::TEAM_PATTERN_SKILL, CONTENT),
@@ -343,6 +353,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::AFFECT_VAD_ANNOTATION_META, CONTENT),
     (&t::VAULT_CLEANUP_ATTEMPT_ARCHIVE, CONTENT),
     (&t::VAULT_CLEANUP_DIGEST, CONTENT),
+    (&t::VAULT_CLEANUP_ENTITY_ROW, CONTENT),
     (&t::VAULT_CLEANUP_EXTRACTION_PERSON, CONTENT),
     (&t::VAULT_CLEANUP_POSTURE, LIVE),
     (&t::VAULT_CLEANUP_PROPOSAL, CONTENT),

@@ -5,6 +5,12 @@
 use super::*;
 
 impl ModelRuntime {
+    /// Current verified files for this captured managed model, not evidence
+    /// that a registry backend is loaded or has the same serving revision.
+    pub(crate) fn stock_weights(&self, model: &str) -> Option<serde_json::Value> {
+        self.stock_weights.get(model)?.read()
+    }
+
     /// No `[models]`: no seat, no router.
     #[must_use]
     pub fn unconfigured() -> Self {
@@ -21,6 +27,7 @@ impl ModelRuntime {
             rests: OfferCooldowns::unkept(),
             token_ratios: None,
             training: Default::default(),
+            stock_weights: BTreeMap::new(),
             budgets: ModelHostBudgets::unhosted(),
             responses: ResponsesContext::default(),
         }
@@ -476,6 +483,7 @@ impl ModelRuntime {
             rests,
             token_ratios,
             training: config.training.clone(),
+            stock_weights: worker_host::stock_weights(&config.workers, &config.providers),
             budgets: budgets.clone(),
             responses,
         }
