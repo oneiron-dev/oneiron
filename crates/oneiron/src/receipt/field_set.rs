@@ -34,6 +34,9 @@ pub const FIELD_EXECUTOR_ROLE: &str = "executor_role";
 /// settled under, frozen at the terminal seal. Absent on receipts sealed
 /// before the stamp existed.
 pub const FIELD_LEASE_GENERATION: &str = "lease_generation";
+/// FIX 12306: the calling principal of an agent-dispatch or turn-program
+/// attempt, frozen on its pack receipt as canonical 32-lowercase-hex.
+pub(crate) const FIELD_ATTEMPT_CALLER: &str = "attempt.caller";
 /// OF-540: the exact `TeamReceipt.team_ref` of the attempt's team run.
 pub const FIELD_LEARNING_TEAM_REF: &str = "learning.team_ref";
 /// OF-540: the run's pattern token (`ceo_decides|committee|vote|market|rotation`).
@@ -470,6 +473,17 @@ impl ReceiptRecord {
     #[must_use]
     pub fn lease_generation(&self) -> Option<u32> {
         self.fields.get(FIELD_LEASE_GENERATION)?.parse().ok()
+    }
+
+    /// The calling principal frozen on an attempt's pack receipt (FIX 12306),
+    /// as a canonical entity id; `None` when it is absent or not canonical hex.
+    pub(crate) fn attempt_caller(&self) -> Option<EntityId> {
+        let spelled = self.fields.get(FIELD_ATTEMPT_CALLER)?;
+        let id = EntityId::from_hex(spelled).ok()?;
+        if id.to_hex() != spelled.as_str() {
+            return None;
+        }
+        Some(id)
     }
 
     /// The spawn/task receipt law: a missing `typeRef` is invalid, never

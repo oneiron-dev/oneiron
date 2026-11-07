@@ -105,7 +105,7 @@ side_tables! {
     /// Terminal PACK RECEIPT for one attempt run under a skill pack, cited by receipt_ref lookups.
     /// Key: string ("attempt:" + hex32 attempt id).
     ATTEMPT_PACK_RECEIPT: VaultMeta b"attempt_receipt:v1:" Named
-        => crate::learning::erase_receipt_scope_in_txn;
+        => crate::receipt::erase_attempt_receipt_actor_in_txn;
     /// The store-order index over AUTHORITY_LOG rows (FIX 12369): the sequence a row took when
     /// first stored here, to the row's entity id, so a resumed fold range-scans only the rows
     /// stored past its continuation. Derived in the storing write transaction; runtime-tier.
