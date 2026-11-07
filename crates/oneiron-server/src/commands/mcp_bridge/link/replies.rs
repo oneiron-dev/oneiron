@@ -71,3 +71,38 @@ pub(super) fn route(data: &[u8], waiting: &mut HashMap<u64, ReplyWaiter>) -> Res
     }
     Ok(())
 }
+
+pub(super) struct ReplyChunks {
+    chunks: std::vec::IntoIter<Vec<u8>>,
+    current: Option<std::io::Cursor<Vec<u8>>>,
+}
+
+impl ReplyChunks {
+    pub(super) fn new(chunks: Vec<Vec<u8>>) -> Self {
+        Self {
+            chunks: chunks.into_iter(),
+            current: None,
+        }
+    }
+}
+
+impl std::io::Read for ReplyChunks {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        loop {
+            if let Some(cursor) = self.current.as_mut() {
+                let n = std::io::Read::read(cursor, buf)?;
+                if n != 0 {
+                    return Ok(n);
+                }
+                self.current = None;
+            }
+            self.current = Some(std::io::Cursor::new(match self.chunks.next() {
+                Some(chunk) => chunk,
+                None => return Ok(0),
+            }));
+        }
+    }
+}
