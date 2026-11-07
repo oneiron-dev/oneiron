@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1279 facade rows, 4627 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1231.
+// UniFFI census: 1280 facade rows, 4634 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1232.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -40472,6 +40472,122 @@ pub struct CodeRunModelHealCountView {
     pub model_id: String,
     #[serde(rename = "healed_turns")]
     pub healed_turns: u64,
+}
+
+/// `oneiron::memory::code_run_doors::types::CodeRunCorrectionsRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeRunCorrectionsRequest {
+    #[serde(rename = "run_ref")]
+    pub run_ref: String,
+    #[serde(
+        rename = "after_step",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub after_step: Option<u64>,
+    #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+/// `oneiron::code_run::correction::CodeRunCorrectionPolicy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeRunCorrectionPolicy {
+    #[serde(rename = "normalization_passes")]
+    pub normalization_passes: u32,
+    #[serde(rename = "model_repair_retries")]
+    pub model_repair_retries: u32,
+}
+
+/// `oneiron::code_run::correction::ExecutorWireRepairs`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutorWireRepairs {
+    #[serde(rename = "trimmed_transport_whitespace")]
+    pub trimmed_transport_whitespace: bool,
+    #[serde(rename = "stripped_code_fence")]
+    pub stripped_code_fence: bool,
+    #[serde(rename = "stripped_exec_wrapper")]
+    pub stripped_exec_wrapper: bool,
+    #[serde(rename = "discarded_console_blocks")]
+    pub discarded_console_blocks: u32,
+}
+
+/// `oneiron::code_run::correction::CodeRunCorrectionOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum CodeRunCorrectionOutcome {
+    #[serde(rename = "clean")]
+    Clean,
+    #[serde(rename = "normalized")]
+    Normalized,
+    #[serde(rename = "rejected")]
+    Rejected {
+        #[serde(rename = "reason")]
+        reason: String,
+    },
+}
+
+/// `oneiron::code_run::correction::CodeRunCorrectionCheckpoint`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeRunCorrectionCheckpoint {
+    #[serde(rename = "step")]
+    pub step: u64,
+    #[serde(rename = "state_hash")]
+    pub state_hash: String,
+}
+
+/// `oneiron::code_run::correction::CodeRunCorrection`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeRunCorrection {
+    #[serde(rename = "schema")]
+    pub schema: u8,
+    #[serde(rename = "run_id")]
+    pub run_id: String,
+    #[serde(rename = "step")]
+    pub step: u64,
+    #[serde(rename = "attempt")]
+    pub attempt: u64,
+    #[serde(rename = "recorded_at_ms")]
+    pub recorded_at_ms: u64,
+    #[serde(rename = "model_id")]
+    pub model_id: String,
+    #[serde(rename = "repairs")]
+    pub repairs: ExecutorWireRepairs,
+    #[serde(rename = "outcome")]
+    pub outcome: CodeRunCorrectionOutcome,
+    #[serde(rename = "policy")]
+    pub policy: CodeRunCorrectionPolicy,
+    #[serde(rename = "model_repair_retries_used")]
+    pub model_repair_retries_used: u32,
+    #[serde(rename = "exhausted")]
+    pub exhausted: bool,
+    #[serde(
+        rename = "checkpoint",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub checkpoint: Option<CodeRunCorrectionCheckpoint>,
+}
+
+/// `oneiron::memory::code_run_doors::types::CodeRunCorrectionsView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeRunCorrectionsView {
+    #[serde(rename = "run_ref")]
+    pub run_ref: String,
+    #[serde(rename = "policy")]
+    pub policy: CodeRunCorrectionPolicy,
+    #[serde(rename = "records")]
+    pub records: Vec<CodeRunCorrection>,
+    #[serde(
+        rename = "next_after_step",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub next_after_step: Option<u64>,
 }
 
 /// `oneiron::memory::code_run_doors::types::CodeRunTypeDiagnosticsRequest`.
