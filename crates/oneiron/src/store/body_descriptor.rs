@@ -68,6 +68,41 @@ pub struct OwnedBody {
     /// `None` on every other holder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<RetainedResultProvenance>,
+    /// Where a code-run output occurrence is (FIX 7365), set by the one
+    /// factory every code-run holder publishes through. An erase of the
+    /// run's actor classifies a body its replay row does not list, such as a
+    /// raw put's, by this path. `None` on every other family's body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code_run_output: Option<CodeRunOutputOrigin>,
+}
+
+impl OwnedBody {
+    /// Whether `self` and `other` are the same descriptor for a
+    /// re-publication (FIX 7365): every field but `code_run_output`. The
+    /// owner and the occurrence already fix that origin, so a stored
+    /// descriptor without it, or with it, stays as it is.
+    #[must_use]
+    pub(crate) fn eq_ignoring_origin(&self, other: &Self) -> bool {
+        let Self {
+            owner,
+            occurrence,
+            state,
+            result,
+            code_run_output: _,
+        } = self;
+        *owner == other.owner
+            && *occurrence == other.occurrence
+            && *state == other.state
+            && *result == other.result
+    }
+}
+
+/// A code-run output occurrence's native output path (FIX 7365): the path
+/// its occurrence id derives from, with its owner.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CodeRunOutputOrigin {
+    pub path: String,
 }
 
 /// A result hold's source: the producer run, its occurrence of the body and
