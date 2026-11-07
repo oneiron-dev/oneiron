@@ -12,7 +12,15 @@ impl ReaderChildDoor {
         Self {
             vault,
             caller: caller.into(),
+            nested_readers: false,
         }
+    }
+
+    /// Enables only the spawn/wait bridge ports beside the native Read
+    /// job's own derived seat; this flag lends no credential or scope.
+    pub(crate) fn with_nested_readers(mut self) -> Self {
+        self.nested_readers = true;
+        self
     }
 }
 
@@ -39,6 +47,11 @@ impl AgentVerbDoor for ReaderChildDoor {
         match call {
             RunCall::RecordedOutput
             | RunCall::Bridge(SelfEffect::ReaderReport | SelfEffect::Context | SelfEffect::Think) => {
+                Ok(None)
+            }
+            RunCall::Bridge(SelfEffect::ReaderSpawn | SelfEffect::TasksWaitSet)
+                if self.nested_readers =>
+            {
                 Ok(None)
             }
             _ => Err(read_only()),

@@ -3,6 +3,7 @@ use super::memories::{MemoriesSection, MemoryRow, MemorySource, MemoryTier};
 use super::memories_projection::{
     constraint_predicate, finish_projection, foreign_row, memory_asset_ref, memory_slot,
 };
+use super::self_brief::BriefWorkingHandle;
 use crate::Result;
 use crate::claim::{PointRead, ScopedRead, ScopedReadReceipt, decode_claim_body};
 use crate::ports::ShortIdStoreRead;
@@ -96,6 +97,30 @@ impl MemoriesSection {
         self.refinish();
         self.fence_fiction_worlds(reader)?;
         Ok(receipts)
+    }
+
+    /// The working set's admitted pins (FIX 17594, WORKING SET A): each
+    /// PINNED row this section holds, by its entity id, with the revision
+    /// its read served it at, taken in that read's own snapshot, or `None`
+    /// where the read pinned no revision. Only rows the section's reads
+    /// admitted and disclosed are here, so a withheld pin is absent; a
+    /// snippet or index-only row is no pin. It reads nothing, writes nothing
+    /// and confers no authority.
+    ///
+    /// # Errors
+    ///
+    /// A PINNED row whose id is no entity id.
+    pub fn brief_pin_handles(&self) -> Result<Vec<BriefWorkingHandle>> {
+        self.rows
+            .iter()
+            .filter(|row| row.tier == MemoryTier::Pinned)
+            .map(|row| -> Result<BriefWorkingHandle> {
+                Ok(BriefWorkingHandle::BoardPin {
+                    entity: crate::EntityId::from_hex(&row.id)?,
+                    served_revision: row.source_revision,
+                })
+            })
+            .collect()
     }
 
     /// Re-runs the projection's ordering and budget over the current rows.
