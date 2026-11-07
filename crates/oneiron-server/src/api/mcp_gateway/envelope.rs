@@ -150,6 +150,8 @@ pub(crate) struct McpGatewayError {
     pub(super) reason_codes: Vec<String>,
     /// The typed legal-hold notice, surfaced as `error.data.legal_hold`.
     pub(super) legal_hold: Option<Box<oneiron::error::LegalHoldNotice>>,
+    /// The held room join, surfaced as `error.data.room_join_hold`.
+    pub(super) room_join_hold: Option<Box<oneiron::workspace_roster::RoomJoinHold>>,
 }
 
 impl McpGatewayError {
@@ -173,6 +175,7 @@ impl McpGatewayError {
             program_steps: None,
             reason_codes: Vec::new(),
             legal_hold: None,
+            room_join_hold: None,
         }
     }
 

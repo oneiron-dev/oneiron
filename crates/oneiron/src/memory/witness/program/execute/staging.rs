@@ -65,12 +65,13 @@ impl Memory<'_> {
                 .map(|planned| (planned.id, planned.message.content.as_str()))
                 .collect();
             held.outcome
-                .set(Some(crate::tagging::settle_held_tags_in_txn(
+                .set(Some(crate::tagging::settle_held_tags_scoped_in_txn(
                     self.vault,
                     wtxn,
                     &plan.turn_id,
                     held.tags,
                     Some(&sent),
+                    write.held_hint_lane,
                 )?));
         }
         // Read here: a body put after this commit is not its receipt.

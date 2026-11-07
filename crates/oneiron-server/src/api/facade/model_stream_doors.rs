@@ -3,15 +3,16 @@
 //! door, as SDK and MCP do. The engine bus owns all event fanout; only its
 //! ContentPart terminal is durable, never its transient event history.
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::task::{Context, Poll, Waker};
 
 use futures_util::StreamExt;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::llm::model_stream::{
     self, ModelStreamAbort, ModelStreamDetach, ModelStreamDetached, ModelStreamEvents,
-    ModelStreamEventsRequest, ModelStreamOpen, ModelStreamOpened, ModelStreamStatus,
-    ModelStreamSubscribe, ModelStreamSubscribed, ModelStreamTerminal, ModelStreamTerminalRequest,
+    ModelStreamEventsRequest, ModelStreamOpen, ModelStreamOpened, ModelStreamRelease,
+    ModelStreamReleased, ModelStreamStatus, ModelStreamSubscribe, ModelStreamSubscribed,
+    ModelStreamTerminal, ModelStreamTerminalRequest,
 };
 use oneiron::llm::{LlmEventBus, StreamSubscription};
 use oneiron::memory::{
@@ -25,14 +26,18 @@ use super::host_doors::support::{internal, owner_proof};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
+type StreamEntries = Mutex<HashMap<String, Arc<Entry>>>;
+
 #[derive(Default)]
 pub(crate) struct ModelStreams {
-    entries: Mutex<HashMap<String, Arc<Entry>>>,
+    entries: Arc<StreamEntries>,
 }
 
 struct Entry {
     auth: CoreAuth,
+    stream_key: String,
     stream_ref: String,
+    registry: Weak<StreamEntries>,
     state: Mutex<StreamState>,
     stop: Notify,
 }
@@ -74,6 +79,17 @@ impl ModelStreams {
         stream_key: &str,
     ) -> MemoryResult<Arc<Entry>> {
         let mut entries = self.entries.lock().map_err(|_| internal("ai.streams"))?;
+        self.attach_in(&mut entries, server, auth, owner, stream_key)
+    }
+
+    fn attach_in(
+        &self,
+        entries: &mut HashMap<String, Arc<Entry>>,
+        server: &SyncServer,
+        auth: &CoreAuth,
+        owner: AuthenticatedOwner,
+        stream_key: &str,
+    ) -> MemoryResult<Arc<Entry>> {
         if let Some(entry) = entries.get(stream_key) {
             return if entry.auth.same_authority(auth) {
                 Ok(Arc::clone(entry))
@@ -81,20 +97,91 @@ impl ModelStreams {
                 Err(missing())
             };
         }
+        let terminal =
+            model_stream::retained_terminal_status_as_owner(&server.vault, &owner, stream_key)?;
         let sink = model_stream::sink(Arc::clone(&server.vault), owner, stream_key)?;
+        let stream_ref = sink.stream_ref();
+        let mut bus = LlmEventBus::new(Box::new(sink));
+        if terminal.is_some() {
+            bus.close_without_terminal();
+        }
         let entry = Arc::new(Entry {
             auth: auth.clone(),
-            stream_ref: sink.stream_ref(),
+            stream_key: stream_key.to_owned(),
+            stream_ref,
+            registry: Arc::downgrade(&self.entries),
             state: Mutex::new(StreamState {
-                status: ModelStreamStatus::Pending,
+                status: terminal.unwrap_or(ModelStreamStatus::Pending),
                 opening: false,
-                bus: LlmEventBus::new(Box::new(sink)),
+                bus,
                 subs: HashMap::new(),
             }),
             stop: Notify::new(),
         });
         entries.insert(stream_key.to_owned(), Arc::clone(&entry));
         Ok(entry)
+    }
+
+    fn subscribe(
+        &self,
+        server: &SyncServer,
+        auth: &CoreAuth,
+        owner: AuthenticatedOwner,
+        input: ModelStreamSubscribe,
+    ) -> MemoryResult<ModelStreamSubscribed> {
+        // Lookup and insertion share cleanup's registry -> state order, so a
+        // release cannot evict this entry between the two operations.
+        let mut entries = self
+            .entries
+            .lock()
+            .map_err(|_| internal("ai.streams.subscribe"))?;
+        let entry = self.attach_in(&mut entries, server, auth, owner, &input.stream_key)?;
+        let mut state = entry
+            .state
+            .lock()
+            .map_err(|_| internal("ai.streams.subscribe"))?;
+        let handle = EntityId::now().to_hex();
+        let subscription = state.bus.subscribe();
+        state.subs.insert(handle.clone(), subscription);
+        Ok(ModelStreamSubscribed {
+            stream_ref: entry.stream_ref.clone(),
+            stream_key: input.stream_key,
+            handle,
+            status: state.status,
+        })
+    }
+}
+
+impl Entry {
+    fn reclaim_released(&self) {
+        let Some(registry) = self.registry.upgrade() else {
+            return;
+        };
+        let Ok(mut entries) = registry.lock() else {
+            return;
+        };
+        let Some(current) = entries.get(&self.stream_key) else {
+            return;
+        };
+        if !std::ptr::eq(current.as_ref(), self) {
+            return;
+        }
+        let reclaim = {
+            let Ok(state) = self.state.lock() else {
+                return;
+            };
+            state.bus.replay_released()
+                && state.subs.is_empty()
+                && matches!(
+                    state.status,
+                    ModelStreamStatus::Finished | ModelStreamStatus::Failed
+                )
+        };
+        if reclaim {
+            let removed = entries.remove(&self.stream_key);
+            drop(entries);
+            drop(removed);
+        }
     }
 }
 
@@ -192,6 +279,8 @@ async fn open(
         state.bus.close_without_terminal();
         state.status = opened.status;
         state.opening = false;
+        drop(state);
+        entry.reclaim_released();
         return Ok(opened);
     }
     // Identical owner, inference policy, route-selector refusal, model
@@ -258,7 +347,10 @@ async fn produce(
     loop {
         let item = tokio::select! {
             biased;
-            _ = entry.stop.notified() => return,
+            _ = entry.stop.notified() => {
+                entry.reclaim_released();
+                return;
+            },
             item = source.next() => item,
         };
         let event = match item {
@@ -284,6 +376,8 @@ async fn produce(
                 return;
             };
             if state.status != ModelStreamStatus::Live {
+                drop(state);
+                entry.reclaim_released();
                 return;
             }
             let result = state.bus.publish(event);
@@ -293,7 +387,10 @@ async fn produce(
             result
         };
         match published {
-            Ok(()) if done => return,
+            Ok(()) if done => {
+                entry.reclaim_released();
+                return;
+            }
             Ok(()) => {}
             Err(error) => {
                 close_failed(&entry, &vault, &owner, &stream_key, &format!("{error:?}"));
@@ -317,12 +414,16 @@ fn close_failed(
         state.status,
         ModelStreamStatus::Finished | ModelStreamStatus::Failed
     ) {
+        drop(state);
+        entry.reclaim_released();
         return;
     }
     state.bus.close_without_terminal();
     let _ = model_stream::fail_as_owner(vault, owner, stream_key, failure);
     state.status = ModelStreamStatus::Failed;
     state.opening = false;
+    drop(state);
+    entry.reclaim_released();
 }
 
 pub(crate) async fn ai_streams_subscribe(
@@ -332,19 +433,7 @@ pub(crate) async fn ai_streams_subscribe(
 ) -> MemoryResult<ModelStreamSubscribed> {
     const VERB: &str = "ai.streams.subscribe";
     let owner = owner_proof(auth, server, VERB)?;
-    let entry = server
-        .model_streams
-        .attach(server, auth, owner, &input.stream_key)?;
-    let handle = EntityId::now().to_hex();
-    let mut state = entry.state.lock().map_err(|_| internal(VERB))?;
-    let subscription = state.bus.subscribe();
-    state.subs.insert(handle.clone(), subscription);
-    Ok(ModelStreamSubscribed {
-        stream_ref: entry.stream_ref.clone(),
-        stream_key: input.stream_key,
-        handle,
-        status: state.status,
-    })
+    server.model_streams.subscribe(server, auth, owner, input)
 }
 
 pub(crate) async fn ai_streams_events(
@@ -404,6 +493,7 @@ pub(crate) async fn ai_streams_detach(
     if !detached {
         return Err(no_subscription());
     }
+    entry.reclaim_released();
     Ok(ModelStreamDetached {
         stream_ref: entry.stream_ref.clone(),
         stream_key: input.stream_key,
@@ -439,6 +529,7 @@ pub(crate) async fn ai_streams_abort(
             entry.stop.notify_one();
         }
     }
+    entry.reclaim_released();
     durable(server, VERB, move |vault| {
         model_stream::terminal_as_owner(
             vault,
@@ -495,8 +586,36 @@ pub(crate) async fn ai_streams_terminal(
             let mut state = entry.state.lock().map_err(|_| internal(VERB))?;
             state.bus.close_without_terminal();
             state.status = terminal.status;
+            drop(state);
+            entry.reclaim_released();
         }
         return Ok(terminal);
     }
     Ok(read)
+}
+
+/// Explicitly releases this credential's transient replay and handles. A
+/// live producer keeps running; only released, terminal, empty entries leave
+/// the registry. Pending identities stay until a native terminal as well.
+pub(crate) async fn ai_streams_release(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ModelStreamRelease,
+) -> MemoryResult<ModelStreamReleased> {
+    const VERB: &str = "ai.streams.release";
+    owner_proof(auth, server, VERB)?;
+    let entry = server.model_streams.get(auth, &input.stream_key)?;
+    let status = {
+        let mut state = entry.state.lock().map_err(|_| internal(VERB))?;
+        state.subs.clear();
+        state.bus.release_replay();
+        state.status
+    };
+    entry.reclaim_released();
+    Ok(ModelStreamReleased {
+        stream_ref: entry.stream_ref.clone(),
+        stream_key: input.stream_key,
+        status,
+        released: true,
+    })
 }
