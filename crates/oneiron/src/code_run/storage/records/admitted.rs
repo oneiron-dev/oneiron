@@ -160,6 +160,19 @@ impl Vault {
         complete: bool,
         owner: EntityId,
     ) -> Result<ReplyBody> {
+        self.publish_admitted_code_run_output_and(path, spool, complete, owner, |_, _| Ok(()))
+    }
+
+    /// Publishes the admitted occurrence and `also`'s rows in the SAME writer.
+    /// The callback runs once, after mint retries and only for a placed body.
+    pub(crate) fn publish_admitted_code_run_output_and(
+        &self,
+        path: String,
+        spool: BodySink,
+        complete: bool,
+        owner: EntityId,
+        also: impl FnOnce(&mut heed::RwTxn<'_>, &CodeRunRawOutput) -> Result<()>,
+    ) -> Result<ReplyBody> {
         let reply = ReplySpool::of(spool, owner, &path, self.code_result_inline_bytes())?;
         let mut reserved = reply.reserves();
         loop {
@@ -180,6 +193,7 @@ impl Vault {
                 self.pin_result_body(digest)
             })?;
             self.put_code_run_output_in_txn(&mut wtxn, &finished, &finished.output, Some(owner))?;
+            also(&mut wtxn, &finished.output)?;
             wtxn.commit()?;
             return Ok(ReplyBody::Published(finished.output));
         }

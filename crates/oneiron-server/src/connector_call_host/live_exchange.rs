@@ -48,7 +48,7 @@ pub(super) fn hand_over(
     round: KeptRound,
     mut continuation: Continuation,
     live: &mut Option<LiveSession>,
-    body: Vec<u8>,
+    body: RawOutboundBody,
     kept: Option<KeptSentValue>,
 ) -> Sent {
     let KeptRound {
@@ -770,17 +770,14 @@ impl Worker {
                     Ok(message) => message,
                     Err(event) => return Next::Over(event),
                 };
-                let next = match retry_questions(&message) {
+                match retry_questions(&message) {
                     Some((questions, state)) => {
                         *request_state = state;
+                        zeroize_json(message);
                         Next::Asked(questions)
                     }
-                    None => Next::Over(terminal(&message)),
-                };
-                // The round's questions are read out; the reply is wiped
-                // (FIX 11861).
-                zeroize_json(message);
-                next
+                    None => Next::Over(terminal(message)),
+                }
             }
         }
     }

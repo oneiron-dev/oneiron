@@ -238,6 +238,7 @@ impl RecordingJsHost<'_, '_> {
             seq,
             step_start: self.step_start,
             earlier: &self.bridge_calls,
+            reply_publisher: None,
         };
         let lease = match self
             .gated_write
@@ -492,6 +493,18 @@ impl RecordingJsHost<'_, '_> {
         // The call, a callable skill's or a reader's included, holds the
         // attempt's tool witness open until it is answered (OF-568 L5).
         let _tool = self.gated_write.activity_tool();
+        // The ordinary dispatcher cannot mutate this host's bindings. Its
+        // result name is fixed now; the native descriptor is adopted only
+        // after the dispatch and its inner receipt have succeeded.
+        let reply_publisher = self.storage.map(|storage| {
+            reply::CallReplyPublisher::new(
+                storage,
+                self.result_share,
+                self.run_id,
+                seq,
+                self.next_auto_name(),
+            )
+        });
         let dispatched = match (&call, runtime) {
             (SelfCall::SkillsCall(skill), Some((runtime, parent))) => {
                 let skill = skill.clone();
@@ -515,11 +528,33 @@ impl RecordingJsHost<'_, '_> {
                     seq,
                     step_start: self.step_start,
                     earlier: &self.bridge_calls,
+                    reply_publisher: reply_publisher
+                        .as_ref()
+                        .map(|publisher| publisher as &dyn crate::code_run::ExecutorReplyPublisher),
                 };
                 self.gated_write
                     .dispatch_for_executor_run(site, call.clone())
             }
         };
+        if dispatched.is_ok()
+            && let Some(reply) = reply_publisher
+                .as_ref()
+                .and_then(|publisher| publisher.take())
+        {
+            self.bind(
+                reply.name,
+                reply.output.handle.clone(),
+                reply.output.path.clone(),
+            );
+            if !self
+                .results
+                .iter()
+                .chain(&self.captured)
+                .any(|held| held.path == reply.output.path)
+            {
+                self.captured.push(reply.output);
+            }
+        }
         // A verb hook's view of this call's result, taken whatever came of
         // the call: the guest reads it, the row keeps the outcome and whether
         // a view was served (the view's own read rows stay unwitnessed).

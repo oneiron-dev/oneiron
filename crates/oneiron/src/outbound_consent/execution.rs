@@ -17,7 +17,8 @@ use crate::outbound_intent_ledger::{
 use super::authority::{OutboundBindingAuthority, observed_freeze_events_since};
 use super::connector_call::escalation_code;
 use super::connector_elicitation_asks::ConnectorElicitationAnswer;
-use super::result_scrub::{OutboundResultSender, scrub_outbound_result};
+use super::raw_body::RawOutboundBody;
+use super::result_scrub::{OutboundResultSender, scrub_outbound_result_with_body};
 use super::scope::{
     ScopedMcpCall, ScopedMcpCallContext, ScopedMcpConsentDecision, ScopedMcpEscalationReason,
     evaluate_scoped_mcp_call,
@@ -506,7 +507,7 @@ pub(super) struct ScopedResultTransport<'a, S> {
     pub(super) checked_bytes: Vec<u8>,
     /// The body the last authorized send returned, handed on to that send's
     /// own terminal bridge only (DOOR-141 PR2), never counted or logged.
-    settled_body: Option<Vec<u8>>,
+    settled_body: Option<RawOutboundBody>,
 }
 
 impl<'a, S> ScopedResultTransport<'a, S> {
@@ -530,15 +531,16 @@ impl<S: OutboundResultSender> crate::outbound_chokepoint::OutboundTransport
         let transport = self.inner.send(call);
         self.effectful_sends = self.effectful_sends.saturating_add(1);
         let scrubbable = transport.raw_result.scrubbable_field_count();
-        self.settled_body = transport.raw_result.body().map(<[u8]>::to_vec);
-        let scrubbed = scrub_outbound_result(transport.raw_result).scrubbed_field_count();
+        let (body, scrubbed) = scrub_outbound_result_with_body(transport.raw_result);
+        self.settled_body = body;
+        let scrubbed = scrubbed.scrubbed_field_count();
         self.scrubbable_result_fields = self.scrubbable_result_fields.saturating_add(scrubbable);
         self.scrubbed_result_fields = self.scrubbed_result_fields.saturating_add(scrubbed);
         transport.outcome
     }
 
-    fn settled_result(&self) -> Option<&[u8]> {
-        self.settled_body.as_deref()
+    fn take_settled_result(&mut self) -> Option<RawOutboundBody> {
+        self.settled_body.take()
     }
 
     fn remote_task(&self) -> Option<crate::outbound_intent_ledger::RemoteTaskHandle> {

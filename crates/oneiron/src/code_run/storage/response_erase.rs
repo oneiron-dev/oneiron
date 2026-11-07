@@ -78,7 +78,7 @@ pub(crate) fn erase_actor_responses_in_txn(
     let records = actor_records_in_txn(store, wtxn, actor, &scope)?;
     for (&record_id, &run) in &records {
         if let Some(record) = REPLAY_RECORDS.get_lenient(store, wtxn, &record_id)? {
-            release_reply_outputs_in_txn(store, wtxn, &record)?;
+            release_reply_outputs_in_txn(store, wtxn, &record, run)?;
             REPLAY_RECORDS.put_erased(store, wtxn, &record_id, Erased::of(record)?)?;
         } else if unreadable_record_in_txn(store, wtxn, &record_id)? {
             // Its bodies are held by its owner row's run (a decoded
@@ -126,7 +126,7 @@ pub(crate) fn fence_replay_in_txn<'r>(
         return Ok(record);
     }
     let run = owner.map_or(record.run_id, |owner| owner.run);
-    release_reply_outputs_in_txn(&vault.store, wtxn, &record)?;
+    release_reply_outputs_in_txn(&vault.store, wtxn, &record, run)?;
     erase_replies(record.to_mut())?;
     mark_response_erased_in_txn(&vault.store, wtxn, record.run_id, run)?;
     Ok(record)
@@ -192,7 +192,7 @@ pub(crate) fn retire_actor_responses_in_txn(
     let mut unreadable = Vec::new();
     for (record_id, run) in actor_records_in_txn(store, wtxn, actor, &runs)? {
         if let Some(record) = REPLAY_RECORDS.get_lenient(store, wtxn, &record_id)? {
-            held.extend(reply_occurrences(&record));
+            held.extend(reply_occurrences(&record, run));
             release_unpublished_outputs_in_txn(store, wtxn, record.run_id)?;
         } else if unreadable_record_in_txn(store, wtxn, &record_id)? {
             // Its bodies are held by its owner row's run (a decoded
@@ -281,15 +281,28 @@ fn actor_records_in_txn(
 
 /// The record's owned reply occurrences. An exact canonical native receipt
 /// keeps its original standing independently of its shared content hash.
-fn reply_occurrences(record: &CodeRunReplayRecord) -> Vec<Occurrence> {
-    record
+fn reply_occurrences(record: &CodeRunReplayRecord, run: EntityId) -> Vec<Occurrence> {
+    let mut held: Vec<_> = record
         .outputs
         .iter()
         .filter(|output| {
             holds_reply_content(&output.path) && !record.output_is_retained_receipt(output)
         })
         .map(|output| (record.run_id, output.path.clone(), output.handle.clone()))
-        .collect()
+        .collect();
+    // A write receipt can commit before the executor's checkpoint adopts its
+    // reply. The native owner row, not metadata in the answer, names its run.
+    held.extend(record.bridge_calls.iter().filter_map(|call| {
+        let reply = crate::code_run::ExecutorReply::kept(&call.outcome, run)
+            .ok()
+            .flatten()?;
+        holds_reply_content(&reply.output.path).then_some((
+            run,
+            reply.output.path,
+            reply.output.handle,
+        ))
+    }));
+    held
 }
 
 /// Releases the record's reply occurrences with each occurrence's own taint
@@ -298,9 +311,10 @@ fn release_reply_outputs_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     record: &CodeRunReplayRecord,
+    run: EntityId,
 ) -> Result<()> {
     release_unpublished_outputs_in_txn(store, wtxn, record.run_id)?;
-    for (owner, path, handle) in reply_occurrences(record) {
+    for (owner, path, handle) in reply_occurrences(record, run) {
         release_occurrence_in_txn(store, wtxn, owner, path, handle)?;
     }
     Ok(())

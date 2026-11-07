@@ -370,14 +370,11 @@ impl Sent {
     }
 
     /// This send's answer cleared of the value `value` it presented: its
-    /// reply, raw body and failure label. Its questions were cleared before
-    /// the registry took them.
+    /// reply and failure label. Its raw body was cleared before the send
+    /// was acknowledged; its questions before the registry took them.
     pub(super) fn cleared(mut self, value: &SentValue<'_>) -> Self {
         if let Some(reply) = self.reply.as_mut() {
             clear_reply(reply, value);
-        }
-        if let Some(body) = self.body.as_mut() {
-            value.clear_bytes(body);
         }
         if let Some(error) = self.error.as_mut() {
             value.clear_string(error);
