@@ -4,7 +4,9 @@
 //! exactly the evidence's turns, written by the run's byline. One write
 //! transaction re-proves the SESSION and its turns, mints the epoch with its
 //! writer, puts the durable receipt keyed by the SUMMARY and declares the
-//! Dreamer's check, so a crash loses all of them or none.
+//! Dreamer's check, so a crash loses all of them or none. The request's
+//! conversation binding must be the evidence's (FIX 5029): the mint re-proves
+//! that conversation's turn order and lands in its lineage.
 
 use super::*;
 use crate::compaction::{CompactionEvidence, CompactionExecution, ConversationEvidence};
@@ -59,9 +61,10 @@ impl CompactionDriver {
     }
 
     /// A conversation summary's packet belongs to its gated request: a
-    /// conversation window's, in its SESSION, over its turns in order, which
-    /// are the evidence's, as a digest of exactly the gated prose with the
-    /// snapshot its pass stamped, written by the byline.
+    /// conversation window's, bound to the evidence's conversation and branch
+    /// (FIX 5029), in its SESSION, over its turns in order, which are the
+    /// evidence's, as a digest of exactly the gated prose with the snapshot
+    /// its pass stamped, written by the byline.
     fn check_conversation_landing(
         gated: &GatedCompaction,
         byline: WriteActor,
@@ -77,7 +80,13 @@ impl CompactionDriver {
         }
         let declared: Vec<EntityId> = evidence.turns.iter().map(|span| span.turn).collect();
         let packet = &landing.packet;
-        if request.log != WindowLog::Conversation
+        let bound = matches!(
+            request.log,
+            WindowLog::Conversation(Some(binding))
+                if binding.conversation == evidence.conversation
+                    && binding.branch == evidence.branch
+        );
+        if !bound
             || packet.host_log().is_some()
             || packet.session() != request.session_ref
             || evidence.session != request.session_ref
