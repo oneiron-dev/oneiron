@@ -472,6 +472,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.files.sources.detach", post(facade_route))
         .route("/vault.files.sources.list", post(facade_route))
         .route("/vault.files.sources.files", post(facade_route))
+        .route("/vault.files.sources.exclude", post(facade_route))
         .route("/vault.residence.mode", post(facade_route))
         .route("/vault.residence.open", post(facade_route))
         .route("/vault.residence.index", post(facade_route))

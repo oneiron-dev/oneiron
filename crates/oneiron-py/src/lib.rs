@@ -4205,6 +4205,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_files_sources_exclude(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.files.sources.exclude")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.files.sources.exclude", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_residence_mode(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.residence.mode")?;
         let output = py

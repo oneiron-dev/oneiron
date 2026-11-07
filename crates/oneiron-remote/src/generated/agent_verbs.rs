@@ -1338,6 +1338,9 @@ impl OneironClient {
                 "vault.files.sources.files" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::FilesSourceFiles,
                 >(client, verb, &input),
+                "vault.files.sources.exclude" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::FilesSourceExcludeAnswer,
+                >(client, verb, &input),
                 "vault.residence.mode" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ResidenceModeAnswer,
                 >(client, verb, &input),
@@ -9300,6 +9303,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.files.sources.files", value)
+    }
+    pub fn vault_files_sources_exclude(
+        &self,
+        input: &oneiron::task_verb::sdk::FilesSourceExcludeRequest,
+    ) -> Result<oneiron::task_verb::sdk::FilesSourceExcludeAnswer, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.files.sources.exclude", value)
     }
     pub fn vault_residence_mode(
         &self,
