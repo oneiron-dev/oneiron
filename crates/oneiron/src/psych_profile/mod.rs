@@ -3,7 +3,9 @@
 //! PsychProfile rows are derived, engine-authored snapshots over profile and
 //! affect Claims. The record stores three render tiers plus deterministic
 //! source-revision tracking so callers can distinguish a missing profile from
-//! a stale one without stringly sentinel states.
+//! a stale one without stringly sentinel states. Every source names the exact
+//! version and words it was read from (FIX 11766); a row of an earlier
+//! schema, whose sources name none, reads as no profile.
 
 mod codec;
 mod keys;
@@ -13,7 +15,8 @@ mod record;
 mod store;
 
 pub use self::codec::{
-    PSYCH_PROFILE_SOURCE_IDS_PER_CODEC_PAGE, decode_psych_profile_body, encode_psych_profile_body,
+    PSYCH_PROFILE_SOURCE_IDS_PER_CODEC_PAGE, PsychProfileBodyEnvelope, decode_psych_profile_body,
+    encode_psych_profile_body, psych_profile_body_envelope,
 };
 pub use self::keys::{PsychProfileKey, psych_profile_entity_id};
 pub use self::mirror::{
@@ -24,8 +27,10 @@ pub use self::mirror::{
     rank_psych_mirror_sources_with_weights,
 };
 pub use self::record::{
-    PSYCH_PROFILE_BODY_KEYS, PSYCH_PROFILE_SCHEMA_VERSION, PsychProfile, PsychProfileConfidence,
-    PsychProfileSnapshotStatus, PsychProfileSource, PsychProfileStaleReason, PsychProfileState,
+    PSYCH_PROFILE_BODY_KEYS, PSYCH_PROFILE_SCHEMA_VERSION, PSYCH_PROFILE_WORDS_PIN_DOMAIN,
+    PsychProfile, PsychProfileByteRange, PsychProfileConfidence, PsychProfileSnapshotStatus,
+    PsychProfileSource, PsychProfileSourceWords, PsychProfileSpanText, PsychProfileStaleReason,
+    PsychProfileState, PsychProfileWordsPin, psych_profile_words_pin,
 };
 
 pub(crate) use self::codec::validate_psych_profile_body_bytes;

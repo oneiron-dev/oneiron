@@ -60,7 +60,7 @@ use crate::codebase::RepoRef;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::git_wire::{GitOid, GitWire, GitWireRepo, lock_repository};
+use crate::git_wire::{GitOid, GitWire, GitWireRepo, git_path_string, lock_repository};
 use crate::origin::secret_marks::{RepoMarkFacts, RepoSecretMarkLookup};
 
 /// The message a remediation bundle lands under.
@@ -318,8 +318,9 @@ fn commit_files(
     let mut pending = vec![(String::new(), commit.clone())];
     while let Some((prefix, tree)) = pending.pop() {
         for entry in wire.read_tree(repo, &tree)? {
-            let name = String::from_utf8(entry.name)
-                .map_err(|_| invalid("a repository path is not UTF-8"))?;
+            // A name outside UTF-8 keeps its bytes as a Git path's text
+            // (FIX 21326).
+            let name = git_path_string(entry.name)?;
             let path = if prefix.is_empty() {
                 name
             } else {

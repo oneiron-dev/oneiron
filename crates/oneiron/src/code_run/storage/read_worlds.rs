@@ -8,9 +8,16 @@
 //! ([`read_world_snapshot_in_txn`]); a ledger that is not complete freezes
 //! none, and its code fix reads the worlds it inferred before. Served rows
 //! also keep their Scope by bridge position; a step capsule projects that
-//! proof only when its complete input and ledger are proved (FIX 7162).
+//! proof only when its complete input and ledger are proved (FIX 7162). A
+//! row a retained result's origins hold as conflicted keeps a proof of no
+//! scope at the position it was read at (FIX 7084). A continued run's ledger
+//! begins with its source's proof of the calls it copies, at the same
+//! positions ([`seed_read_world_prefix_in_txn`], FIX 7085).
+
+mod origins;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::RangeBounds;
 
 use serde::{Deserialize, Serialize};
 
@@ -135,13 +142,21 @@ fn row_scope_prefix(run: EntityId, row: EntityId) -> Vec<u8> {
     prefix
 }
 
+/// The key bytes every scope proof served to `run` starts with.
+fn scopes_prefix(run: EntityId) -> Vec<u8> {
+    let mut prefix = run.as_bytes().to_vec();
+    prefix.push(ROW_TAG);
+    prefix
+}
+
 /// Why a run's ledger misses rows it was served (FIX 6130). Any one of them
 /// keeps the ledger from reading complete, for good.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReadWorldUnknown {
     /// The run had a record before its ledger began: a continuation's copied
-    /// prefix, or a run from before the ledger.
+    /// prefix its source's ledger does not prove (FIX 7085), or a run from
+    /// before the ledger.
     NotFromStart,
     /// The run's task is its host's, which may carry rows no capture noted.
     HostTask,
@@ -191,10 +206,12 @@ struct ReadWorldSeen {
     at: BTreeSet<u64>,
 }
 
-/// The scope of one row as the read at one bridge position proved it.
+/// The scope of one row as the read at one bridge position proved it:
+/// `None` when the read served the row through origins that hold it as
+/// conflicted (FIX 7084), which proves no scope of it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct ReadRowScope {
-    scope: Scope,
+    scope: Option<Scope>,
 }
 
 /// The capture epoch a run's host holds while every answer the run was
@@ -240,7 +257,8 @@ pub(crate) fn read_world_snapshot_in_txn(
 /// as the reads before its start proved them (FIX 7162). `None` means any
 /// input or its proof is unknown; an empty vector is only a proved empty
 /// input. A row served under two different scopes in the prefix is unknown
-/// too: choosing the latest could admit an earlier, narrower copy.
+/// too: choosing the latest could admit an earlier, narrower copy. So is a
+/// row with a proof of no scope (FIX 7084).
 pub(crate) fn captured_step_read_scopes_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -265,16 +283,16 @@ pub(crate) fn captured_step_read_scopes_in_txn(
             if key.at >= start.bridge_start {
                 continue;
             }
-            let Some(proof) = ROW_SCOPES.get(&vault.store, txn, &key)? else {
+            let Some(proved) = ROW_SCOPES
+                .get(&vault.store, txn, &key)?
+                .and_then(|proof| proof.scope)
+            else {
                 return Ok(None);
             };
-            if scope
-                .as_ref()
-                .is_some_and(|current| current != &proof.scope)
-            {
+            if scope.as_ref().is_some_and(|current| current != &proved) {
                 return Ok(None);
             }
-            scope = Some(proof.scope);
+            scope = Some(proved);
         }
         let Some(scope) = scope else {
             return Ok(None);
@@ -282,6 +300,125 @@ pub(crate) fn captured_step_read_scopes_in_txn(
         scopes.push(scope);
     }
     Ok(Some(scopes))
+}
+
+/// One run's world positions and served-row scope proofs, as one
+/// transaction reads them (FIX 7085).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct ReadWorldRows {
+    /// Each world a row was served in, with the positions it was served at.
+    worlds: BTreeMap<EntityId, BTreeSet<u64>>,
+    /// Each served row's scope, by row and position: `None` for a proof of
+    /// no scope (FIX 7084).
+    scopes: BTreeMap<(EntityId, u64), Option<Scope>>,
+}
+
+impl ReadWorldRows {
+    /// The rows of `run`'s ledger at the positions `positions` holds, as
+    /// `txn` reads them. A world keeps its entry even when none of its
+    /// positions is in `positions`.
+    fn read_in(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        run: EntityId,
+        positions: impl RangeBounds<u64>,
+    ) -> Result<Self> {
+        let mut rows = Self::default();
+        for (key, seen) in SEEN.scan_from(&vault.store, txn, &seen_prefix(run))? {
+            let mut at = seen.at;
+            at.retain(|position| positions.contains(position));
+            rows.worlds.insert(key.world, at);
+        }
+        for (key, proof) in ROW_SCOPES.scan_from(&vault.store, txn, &scopes_prefix(run))? {
+            if positions.contains(&key.at) {
+                rows.scopes.insert((key.row, key.at), proof.scope);
+            }
+        }
+        Ok(rows)
+    }
+
+    /// Whether no world or scope row is held.
+    fn is_empty(&self) -> bool {
+        self.worlds.is_empty() && self.scopes.is_empty()
+    }
+
+    /// Writes these rows as `run`'s, in `txn`.
+    fn put_in(self, vault: &Vault, txn: &mut heed::RwTxn<'_>, run: EntityId) -> Result<()> {
+        for (world, at) in self.worlds {
+            let key = SeenKey { run, world };
+            SEEN.put(&vault.store, txn, &key, &ReadWorldSeen { at })?;
+        }
+        for ((row, at), scope) in self.scopes {
+            let key = RowScopeKey { run, row, at };
+            ROW_SCOPES.put(&vault.store, txn, &key, &ReadRowScope { scope })?;
+        }
+        Ok(())
+    }
+}
+
+/// What `source`'s ledger proves of its calls before bridge position `cut`,
+/// as `txn` reads it (FIX 7085): the header a copy of those calls begins its
+/// ledger with, and their rows. A header keeps no position for its causes.
+/// So only a ledger that reads, began with the run, misses nothing and holds
+/// no epoch open proves the calls complete. Any other gives `NotFromStart`;
+/// the rows that read still copy.
+fn read_world_prefix_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    source: EntityId,
+    cut: u64,
+) -> (ReadWorldHeader, ReadWorldRows) {
+    let complete = HEADERS
+        .get(&vault.store, txn, &HeaderKey(source))
+        .ok()
+        .flatten()
+        .is_some_and(|header| header.unknown.is_empty() && header.open.is_empty());
+    let Ok(mut rows) = ReadWorldRows::read_in(vault, txn, source, ..cut) else {
+        return (ReadWorldHeader::begun(true), ReadWorldRows::default());
+    };
+    rows.worlds.retain(|_, at| !at.is_empty());
+    (ReadWorldHeader::begun(!complete), rows)
+}
+
+/// Seeds `target`'s ledger in `txn` for a run that copies `source`'s calls
+/// before bridge position `cut` (FIX 7085). It copies `source`'s proof of
+/// those calls at the positions they were served, and no open epoch: the
+/// target opens its own. A `cut` of `None` seeds a ledger that misses the
+/// copied calls. A ledger `target` already holds stays. When it is this
+/// seed it is used as it is; any other only gains `NotFromStart`. Nothing
+/// is cleared.
+///
+/// # Errors
+///
+/// Storage errors on `target`'s writes.
+pub(crate) fn seed_read_world_prefix_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    source: EntityId,
+    cut: Option<u64>,
+    target: EntityId,
+) -> Result<()> {
+    let (header, rows) = match cut {
+        Some(cut) => read_world_prefix_in_txn(vault, txn, source, cut),
+        None => (ReadWorldHeader::begun(true), ReadWorldRows::default()),
+    };
+    let key = HeaderKey(target);
+    let held_header = HEADERS.get(&vault.store, txn, &key);
+    let held_rows = ReadWorldRows::read_in(vault, txn, target, ..);
+    match (held_header, held_rows) {
+        (Ok(None), Ok(held_rows)) if held_rows.is_empty() => {
+            rows.put_in(vault, txn, target)?;
+            HEADERS.put(&vault.store, txn, &key, &header)
+        }
+        (Ok(Some(held_header)), Ok(held_rows)) if held_header == header && held_rows == rows => {
+            Ok(())
+        }
+        (held_header, _) => {
+            let mut held_header = held_header.ok().flatten().unwrap_or_default();
+            held_header.unknown.insert(ReadWorldUnknown::NotFromStart);
+            HEADERS.put(&vault.store, txn, &key, &held_header)
+        }
+    }
 }
 
 impl ExecutorStorage<'_> {
@@ -344,41 +481,34 @@ impl ExecutorStorage<'_> {
         }
     }
 
-    /// Notes each row's scope as served to `run` at bridge position `at`.
+    /// Notes each row's scope as served to `run` at bridge position `at`,
+    /// and a proof of no scope for each row of `conflicted` (FIX 7084),
+    /// whatever scope `rows` gives it.
     pub(crate) fn note_read_rows(
         &self,
         run: EntityId,
         at: u64,
         rows: &BTreeMap<EntityId, Scope>,
+        conflicted: &BTreeSet<EntityId>,
     ) -> Result<()> {
-        let key_of = |row: &EntityId| RowScopeKey { run, row: *row, at };
+        let proofs: Vec<(RowScopeKey, ReadRowScope)> = rows
+            .iter()
+            .filter(|(row, _)| !conflicted.contains(*row))
+            .map(|(row, scope)| (*row, Some(scope.clone())))
+            .chain(conflicted.iter().map(|row| (*row, None)))
+            .map(|(row, scope)| (RowScopeKey { run, row, at }, ReadRowScope { scope }))
+            .collect();
         match self {
             Self::Canonical(vault) => vault.with_write_txn_grouped(|txn| {
-                for (row, scope) in rows {
-                    let key = key_of(row);
-                    ROW_SCOPES.put(
-                        &vault.store,
-                        txn,
-                        &key,
-                        &ReadRowScope {
-                            scope: scope.clone(),
-                        },
-                    )?;
+                for (key, proof) in &proofs {
+                    ROW_SCOPES.put(&vault.store, txn, key, proof)?;
                 }
                 Ok(())
             }),
             Self::Session(binding) => binding.answered(|| {
                 let session = &binding.session;
-                for (row, scope) in rows {
-                    let key = key_of(row);
-                    session.side_table_put_routed(
-                        &binding.route,
-                        &ROW_SCOPES,
-                        &key,
-                        &ReadRowScope {
-                            scope: scope.clone(),
-                        },
-                    )?;
+                for (key, proof) in &proofs {
+                    session.side_table_put_routed(&binding.route, &ROW_SCOPES, key, proof)?;
                 }
                 Ok(())
             }),

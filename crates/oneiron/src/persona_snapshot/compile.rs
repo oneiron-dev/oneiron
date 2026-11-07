@@ -646,6 +646,22 @@ impl crate::Vault {
         rows
     }
 
+    /// Whether the shared disclosure classifier holds claim `id` at Tier A
+    /// (OF-355, FIX 10017): a live off-record member, an ambiguous band, a
+    /// Tier-A predicate prefix, or the owner's own Tier-A mark. The band
+    /// clamp ([`persona_snapshot_tier_a_clamped`]) withholds restricted
+    /// bands besides; a claim either holds back never enters a compile.
+    fn persona_snapshot_tier_a_classed(&self, id: &EntityId, body: &ClaimBody) -> Result<bool> {
+        let rtxn = self.store.env.read_txn()?;
+        Ok(crate::disclosure::disclosure_tier(
+            &self.store,
+            &rtxn,
+            id,
+            ENTITY_TYPE_CLAIM,
+            Some(body),
+        )? == crate::disclosure::DisclosureTier::TierA)
+    }
+
     /// Admissible claims about `person_ref`, none in a `kept` world; with an
     /// audience, only those the audience may read, the audience read folded
     /// into `receipt`.
@@ -682,7 +698,10 @@ impl crate::Vault {
                 continue;
             }
             let body = decode_claim_body(body_bytes, true)?;
-            if !keeps(&body) || !self.claim_critical_confirm_settled(&claim_id)? {
+            if !keeps(&body)
+                || !self.claim_critical_confirm_settled(&claim_id)?
+                || self.persona_snapshot_tier_a_classed(&claim_id, &body)?
+            {
                 continue;
             }
             candidates.push(CandidateClaim { id: claim_id, body });
@@ -711,7 +730,10 @@ impl crate::Vault {
                 let body = decode_claim_body(bytes, true)?;
                 // A claim whose owner answer came due between the two reads
                 // stays out (FIX 9603).
-                if keeps(&body) && self.claim_critical_confirm_settled(&row.id)? {
+                if keeps(&body)
+                    && self.claim_critical_confirm_settled(&row.id)?
+                    && !self.persona_snapshot_tier_a_classed(&row.id, &body)?
+                {
                     candidates.push(CandidateClaim { id: row.id, body });
                 }
             }

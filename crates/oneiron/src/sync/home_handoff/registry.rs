@@ -7,7 +7,10 @@
 //! the same tables at the same versions in one order: the free-time policy,
 //! clock, cycles and receipts, then the spend trees those cycles hold, then
 //! the items to resume, which need their cycles and their spend scopes
-//! landed before them in the one adopting transaction.
+//! landed before them in the one adopting transaction, and last the
+//! leave-notice delegations the home answers removed people with (FIX 7932)
+//! and the Coach's topology-audit section (FIX 7817), which stand on no
+//! other table.
 
 use heed::RoTxn;
 
@@ -19,7 +22,7 @@ use crate::side_table::SideTableDbs;
 /// Every table a home move carries in this build, in the order the carrier
 /// exports and adopts them (CALLS: home tables). C2's drain, its adoption
 /// and restore's live keys all walk this one list.
-pub(crate) fn home_tables() -> [HomeTableRegistration; 6] {
+pub(crate) fn home_tables() -> [HomeTableRegistration; 8] {
     [
         HomeTableRegistration::of::<crate::dreamer_runner::FreeTimePolicyRows>(),
         HomeTableRegistration::of::<crate::dreamer_runner::FreeTimeClockRows>(),
@@ -27,6 +30,10 @@ pub(crate) fn home_tables() -> [HomeTableRegistration; 6] {
         HomeTableRegistration::of::<crate::dreamer_runner::FreeTimeReceiptRows>(),
         HomeTableRegistration::of::<crate::agent_dispatch::spend_handoff::FreeTimeSpendRows>(),
         HomeTableRegistration::of::<crate::dreamer_runner::FreeTimeItemRows>(),
+        HomeTableRegistration::of::<crate::authority::LeaveNoticeDelegationRows>(),
+        // FIX 7817: the Coach's topology-audit candidates, selections and
+        // results, one section; independent of the free-time sections.
+        HomeTableRegistration::of::<crate::identity_topology::CoachTopologyAuditRows>(),
     ]
 }
 
