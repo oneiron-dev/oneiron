@@ -92,6 +92,18 @@ impl ManagedHost {
             Self::Vm(host) => host.adapter_mut().custody_anchor_credentials(anchor_url),
         }
     }
+    /// The optional public recipient, consumed before open or restore.
+    pub(super) fn checkpoint_host_holds_recipient(
+        &mut self,
+    ) -> Option<oneiron_store::checkpoint_host_recipient::HostHoldsRecipient> {
+        match self {
+            Self::Process(host) => super::checkpoint_recipient::read(
+                host.adapter_mut().checkpoint_recipient_pipe.take(),
+            ),
+            #[cfg(target_os = "linux")]
+            Self::Vm(host) => host.adapter_mut().checkpoint_host_holds_recipient(),
+        }
+    }
     /// The outbox carrier's revision a vault VM's companion reported at
     /// boot (FIX 5235); a node's process vault has none.
     pub(super) fn vm_outbox_revision(&self) -> Option<u32> {
@@ -163,6 +175,7 @@ pub(super) struct ProcessHost {
     credentials: Option<Credentials>,
     ready_fd: Option<std::os::fd::RawFd>,
     anchor_credentials_fd: Option<std::os::fd::RawFd>,
+    checkpoint_recipient_pipe: Option<std::fs::File>,
     limits: HostLimits,
     shutdown: ManagedShutdown,
 }
@@ -178,6 +191,9 @@ impl ProcessHost {
             credentials: None,
             ready_fd: Some(args.ready_fd),
             anchor_credentials_fd: args.custody_anchor_credentials_fd,
+            checkpoint_recipient_pipe: super::checkpoint_recipient::adopt(
+                args.checkpoint_host_holds_recipient_fd,
+            ),
             limits,
             shutdown,
         })

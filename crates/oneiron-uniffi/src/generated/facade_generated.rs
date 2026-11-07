@@ -1246,6 +1246,11 @@ export_facade! {
     let output = client.vault_skills_sync(&input)?;
     crate::codec::lift_record("vault.skills.sync", &output)
 };
+"vault.skills.proposal.settle" => fn vault_skills_proposal_settle(&self, input: HubSkillProposalSettleRequest) -> HubSkillProposalSettled = |client| {
+    let input: oneiron::task_verb::sdk::HubSkillProposalSettleRequest = crate::codec::lower_record("vault.skills.proposal.settle", input)?;
+    let output = client.vault_skills_proposal_settle(&input)?;
+    crate::codec::lift_record("vault.skills.proposal.settle", &output)
+};
 "vault.skills.receipts" => fn vault_skills_receipts(&self, input: HubSkillRequest) -> HubSkillReceipts = |client| {
     let input: oneiron::task_verb::sdk::HubSkillRequest = crate::codec::lower_record("vault.skills.receipts", input)?;
     let output = client.vault_skills_receipts(&input)?;
@@ -6205,6 +6210,16 @@ export_facade! {
     let input: oneiron::task_verb::sdk::FilesSourceConvertRequest = crate::codec::lower_record("vault.files.sources.convert", input)?;
     let output = client.vault_files_sources_convert(&input)?;
     crate::codec::lift_record("vault.files.sources.convert", &output)
+};
+"vault.sync.repo_manifests.conflict.review" => fn vault_sync_repo_manifests_conflict_review(&self, input: RepoManifestConflictReviewRequest) -> Option<RepoManifestConflictReviewView> = |client| {
+    let input: oneiron::task_verb::sdk::RepoManifestConflictReviewRequest = crate::codec::lower_record("vault.sync.repo_manifests.conflict.review", input)?;
+    let output = client.vault_sync_repo_manifests_conflict_review(&input)?;
+    crate::codec::lift_record("vault.sync.repo_manifests.conflict.review", &output)
+};
+"vault.sync.repo_manifests.conflict.discard" => fn vault_sync_repo_manifests_conflict_discard(&self, input: RepoManifestConflictDiscardRequest) -> RepoManifestConflictDiscardView = |client| {
+    let input: oneiron::task_verb::sdk::RepoManifestConflictDiscardRequest = crate::codec::lower_record("vault.sync.repo_manifests.conflict.discard", input)?;
+    let output = client.vault_sync_repo_manifests_conflict_discard(&input)?;
+    crate::codec::lift_record("vault.sync.repo_manifests.conflict.discard", &output)
 };
 "connector.answer" => fn connector_answer(&self, input: ConnectorAnswerRequest) -> ConnectorCallReply = |client| {
     let input: oneiron::task_verb::sdk::ConnectorAnswerRequest = crate::codec::lower_record("connector.answer", input)?;
