@@ -705,6 +705,9 @@ impl OneironClient {
                 "vault.inbox.concerns.review" => remote_agent_verb_output::<
                     oneiron::memory::DreamerAttemptRef,
                 >(client, verb, &input),
+                "vault.proactivity.digest" => remote_agent_verb_output::<
+                    Option<oneiron::dreamer_runner::maintenance::digest::ProactivityDigestView>,
+                >(client, verb, &input),
                 "vault.inbox.lens" => remote_agent_verb_output::<
                     oneiron::agent_inbox_lens::InboxLensPage,
                 >(client, verb, &input),
@@ -1079,10 +1082,13 @@ impl OneironClient {
                     oneiron::task_verb::sdk::MemberProjection,
                 >(client, verb, &input),
                 "vault.members.add" => remote_agent_verb_output::<
-                    oneiron::task_verb::sdk::SharedMemberInvited,
+                    oneiron::federation::SharedActExecutionReceipt,
                 >(client, verb, &input),
                 "vault.members.invitation_slip" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::InvitationSlip,
+                >(client, verb, &input),
+                "vault.members.invitation_code" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::InvitationCode,
                 >(client, verb, &input),
                 "vault.members.change" => remote_agent_verb_output::<
                     oneiron::federation::SharedActExecutionReceipt,
@@ -1822,6 +1828,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.secrets.code_run_lifts" => remote_agent_verb_output::<
                     oneiron::code_run::CodeRunSecretLiftStatus,
+                >(client, verb, &input),
+                "vault.secrets.code_run_room_lifts" => remote_agent_verb_output::<
+                    Vec<oneiron::code_run::CodeRunSecretLiftProposalView>,
                 >(client, verb, &input),
                 "vault.secrets.lift_history" => remote_agent_verb_output::<
                     oneiron::policy_model::SecretLiftStatus,
@@ -3129,7 +3138,7 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.calendar.occurrences" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<
-                        Vec<oneiron::calendar::query::CalendarOccurrenceView>,
+                        oneiron::calendar::query::CalendarOccurrencesPage,
                     >,
                 >(client, verb, &input),
                 "vault.calendar.instances.move" => remote_agent_verb_output::<
@@ -3139,10 +3148,12 @@ impl OneironClient {
                     oneiron::claim::ScopedReadResult<Option<oneiron::calendar::CalendarEventView>>,
                 >(client, verb, &input),
                 "vault.calendar.search" => remote_agent_verb_output::<
-                    oneiron::claim::ScopedReadResult<Vec<oneiron::calendar::CalendarEventView>>,
+                    oneiron::claim::ScopedReadResult<oneiron::calendar::query::CalendarSearchPage>,
                 >(client, verb, &input),
                 "vault.calendar.freebusy" => remote_agent_verb_output::<
-                    oneiron::claim::ScopedReadResult<oneiron::memory::CalendarFreebusyDto>,
+                    oneiron::claim::ScopedReadResult<
+                        oneiron::calendar::query::CalendarFreebusyPage,
+                    >,
                 >(client, verb, &input),
                 "vault.calendar.prep" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<Option<oneiron::calendar::PrepPack>>,
@@ -6707,6 +6718,21 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.inbox.concerns.review", value)
     }
+    pub fn vault_proactivity_digest(
+        &self,
+        input: &oneiron::memory::ProactivityDigestRequest,
+    ) -> Result<
+        Option<oneiron::dreamer_runner::maintenance::digest::ProactivityDigestView>,
+        MemoryError,
+    > {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.proactivity.digest", value)
+    }
     pub fn vault_inbox_lens(
         &self,
         input: &oneiron::agent_inbox_lens::InboxLensRequest,
@@ -8189,7 +8215,7 @@ impl OneironClient {
     pub fn vault_members_add(
         &self,
         input: &oneiron::task_verb::sdk::SharedMemberAddRequest,
-    ) -> Result<oneiron::task_verb::sdk::SharedMemberInvited, MemoryError> {
+    ) -> Result<oneiron::federation::SharedActExecutionReceipt, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -8209,6 +8235,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.members.invitation_slip", value)
+    }
+    pub fn vault_members_invitation_code(
+        &self,
+        input: &oneiron::task_verb::sdk::InvitationCodeRequest,
+    ) -> Result<oneiron::task_verb::sdk::InvitationCode, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.members.invitation_code", value)
     }
     pub fn vault_members_change(
         &self,
@@ -11107,6 +11145,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.secrets.code_run_lifts", value)
+    }
+    pub fn vault_secrets_code_run_room_lifts(
+        &self,
+        input: &oneiron::code_run::CodeRunRoomSecretLiftRequest,
+    ) -> Result<Vec<oneiron::code_run::CodeRunSecretLiftProposalView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.secrets.code_run_room_lifts", value)
     }
     pub fn vault_secrets_lift_history(
         &self,
@@ -16301,11 +16351,12 @@ impl OneironClient {
     }
     pub fn vault_calendar_occurrences(
         &self,
-        input: &oneiron::calendar::query::CalendarOccurrencesRequest,
+        input: &oneiron::calendar::query::CalendarOccurrencesPageRequest,
     ) -> Result<
-        oneiron::claim::ScopedReadResult<Vec<oneiron::calendar::query::CalendarOccurrenceView>>,
+        oneiron::claim::ScopedReadResult<oneiron::calendar::query::CalendarOccurrencesPage>,
         MemoryError,
     > {
+        oneiron::memory::caps::check_deadline_ms(input.deadline_ms)?;
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -16343,11 +16394,12 @@ impl OneironClient {
     }
     pub fn vault_calendar_search(
         &self,
-        input: &oneiron::calendar::CalendarSearchRequest,
+        input: &oneiron::calendar::query::CalendarSearchPageRequest,
     ) -> Result<
-        oneiron::claim::ScopedReadResult<Vec<oneiron::calendar::CalendarEventView>>,
+        oneiron::claim::ScopedReadResult<oneiron::calendar::query::CalendarSearchPage>,
         MemoryError,
     > {
+        oneiron::memory::caps::check_deadline_ms(input.deadline_ms)?;
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -16358,9 +16410,12 @@ impl OneironClient {
     }
     pub fn vault_calendar_freebusy(
         &self,
-        input: &oneiron::task_verb::sdk::CalendarFreebusyRequest,
-    ) -> Result<oneiron::claim::ScopedReadResult<oneiron::memory::CalendarFreebusyDto>, MemoryError>
-    {
+        input: &oneiron::calendar::query::CalendarFreebusyPageRequest,
+    ) -> Result<
+        oneiron::claim::ScopedReadResult<oneiron::calendar::query::CalendarFreebusyPage>,
+        MemoryError,
+    > {
+        oneiron::memory::caps::check_deadline_ms(input.deadline_ms)?;
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -17302,11 +17357,6 @@ impl OneironClient {
         &self,
         input: &oneiron::task_verb::sdk::AppendBlobVersionRequest,
     ) -> Result<oneiron::memory::BlobVersionAppendOutcome, MemoryError> {
-        if input.content_base64.len() > oneiron::memory::caps::MAX_BLOB_BASE64_LEN {
-            return Err(MemoryError::bad_request(
-                "blob base64 exceeds the content ceiling",
-            ));
-        }
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",

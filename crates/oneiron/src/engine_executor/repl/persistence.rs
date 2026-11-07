@@ -93,7 +93,9 @@ impl EngineNativeExecutor<'_> {
         let generation = self
             .storage
             .put_code_run_wait_resume_record(record, expected, key, seq, &path)?;
-        self.storage.clear_wait(key)?;
+        if let crate::code_run::ExecutorStorage::Session(_) = &self.storage {
+            self.storage.clear_wait(key)?;
+        }
         Ok(Some(generation))
     }
 
@@ -113,6 +115,7 @@ impl EngineNativeExecutor<'_> {
         captured: Vec<CodeRunRawOutput>,
         bound: Vec<CodeRunResultBinding>,
         receipts: Vec<ReaderFoldReceipt>,
+        context_capture: StepContextCapture,
         callable_rows: Option<Vec<EntityId>>,
         durable_wait: Option<SelfDurableWait>,
         observation: String,
@@ -177,6 +180,9 @@ impl EngineNativeExecutor<'_> {
         }
         let mut digests = StepResultDigests::of(&observation, false);
         digests.bindings = bindings;
+        // Where the failed step's calls end, and what its guest read before
+        // it failed (FIX 6354, FIX 6351, FIX 6352).
+        let (end, context) = self.step_context(config, record, bridge_start, context_capture)?;
         let checkpoint = CodeRunStepCheckpoint::new(
             completed_steps,
             checkpoint_label(completed_steps),
@@ -192,12 +198,14 @@ impl EngineNativeExecutor<'_> {
                 &digests,
                 None,
                 &record.bridge_calls[bridge_start..],
+                end,
             )?,
             config
                 .determinism
                 .frozen_unix_ms
                 .saturating_add(completed_steps),
-        )?;
+        )?
+        .ending_at(end.bridge_end);
         let bridge_end = record.bridge_calls.len();
         record
             .step_checkpoints
@@ -215,6 +223,7 @@ impl EngineNativeExecutor<'_> {
                 healed.then_some(&config.model),
                 &receipts,
                 parked.as_ref(),
+                &context,
             ) {
             Err(error) if matches!(error, Error::Storage(_) | Error::MapFull) => {
                 tracing::warn!(
@@ -227,6 +236,7 @@ impl EngineNativeExecutor<'_> {
                         healed.then_some(&config.model),
                         &receipts,
                         parked.as_ref(),
+                        &context,
                     )?
             }
             result => result?,
