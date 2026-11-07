@@ -887,6 +887,7 @@ pub enum AgentVerb {
     VaultRoomsJoin,
     VaultRoomsInvite,
     VaultRoomsConsent,
+    VaultRoomsLeave,
     VaultRoomsOffer,
     VaultRoomsOfferAnswer,
     VaultRoomsOfferVote,
@@ -2208,6 +2209,7 @@ impl AgentVerb {
         Self::VaultRoomsJoin,
         Self::VaultRoomsInvite,
         Self::VaultRoomsConsent,
+        Self::VaultRoomsLeave,
         Self::VaultRoomsOffer,
         Self::VaultRoomsOfferAnswer,
         Self::VaultRoomsOfferVote,
@@ -3558,6 +3560,7 @@ impl AgentVerb {
             Self::VaultRoomsJoin => "vault.rooms.join",
             Self::VaultRoomsInvite => "vault.rooms.invite",
             Self::VaultRoomsConsent => "vault.rooms.consent",
+            Self::VaultRoomsLeave => "vault.rooms.leave",
             Self::VaultRoomsOffer => "vault.rooms.offer",
             Self::VaultRoomsOfferAnswer => "vault.rooms.offer.answer",
             Self::VaultRoomsOfferVote => "vault.rooms.offer.vote",
@@ -4893,6 +4896,7 @@ impl AgentVerb {
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsInvite
                 | Self::VaultRoomsConsent
+                | Self::VaultRoomsLeave
                 | Self::VaultRoomsOffer
                 | Self::VaultRoomsOfferAnswer
                 | Self::VaultRoomsOfferVote
@@ -6243,6 +6247,7 @@ impl AgentVerb {
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsInvite
                 | Self::VaultRoomsConsent
+                | Self::VaultRoomsLeave
                 | Self::VaultRoomsOffer
                 | Self::VaultRoomsOfferAnswer
                 | Self::VaultRoomsOfferVote
@@ -7713,6 +7718,7 @@ impl AgentVerb {
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsInvite
                 | Self::VaultRoomsConsent
+                | Self::VaultRoomsLeave
                 | Self::VaultRoomsOffer
                 | Self::VaultRoomsOfferAnswer
                 | Self::VaultRoomsOfferVote
@@ -8635,6 +8641,7 @@ impl AgentVerb {
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsInvite
                 | Self::VaultRoomsConsent
+                | Self::VaultRoomsLeave
                 | Self::VaultRoomsOffer
                 | Self::VaultRoomsOfferAnswer
                 | Self::VaultRoomsOfferVote
@@ -9818,6 +9825,7 @@ impl AgentVerb {
             Self::VaultRoomsJoin => &["spec", "room_ref"],
             Self::VaultRoomsInvite => &["spec", "room_ref"],
             Self::VaultRoomsConsent => &["spec"],
+            Self::VaultRoomsLeave => &["spec", "room_ref"],
             Self::VaultRoomsOffer => &["spec", "room_ref"],
             Self::VaultRoomsOfferAnswer => &["spec"],
             Self::VaultRoomsOfferVote => &["spec"],
@@ -11140,6 +11148,7 @@ impl AgentVerb {
             Self::VaultRoomsJoin => &["spec", "room_ref"],
             Self::VaultRoomsInvite => &["spec", "room_ref"],
             Self::VaultRoomsConsent => &["spec"],
+            Self::VaultRoomsLeave => &["spec", "room_ref"],
             Self::VaultRoomsOffer => &["spec", "room_ref"],
             Self::VaultRoomsOfferAnswer => &["spec"],
             Self::VaultRoomsOfferVote => &["spec"],
@@ -12196,10 +12205,10 @@ impl AgentVerb {
                 "The owner labels a link in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the link stays."
             }
             Self::VaultWeaveItemWrong => {
-                "A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays."
+                "A person labels a claim, project, budget or sieve audit item in their own lens as wrong; the label teaches the loops and the record stays."
             }
             Self::VaultWeaveOwnerItemWrong => {
-                "The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays."
+                "The owner labels a claim, project, budget or sieve audit item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays."
             }
             Self::VaultWeaveAdminReport => {
                 "A weave Admin's live report of the shared vault, inside the Admin membership grant's Scope, after the person stepped up with a passkey on this credential (MFA-1 A); never an Owner read."
@@ -13654,7 +13663,7 @@ impl AgentVerb {
                 "Stage one remediation of a repository's current code: marked keys become secret references, committed .env files go, .gitignore and .env.example follow. Owner only. It only proposes."
             }
             Self::ExecuteCode => {
-                "Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal."
+                "Run foreign JavaScript or TypeScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal."
             }
             Self::VaultCodeModelHealCount => {
                 "Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy."
@@ -14180,6 +14189,9 @@ impl AgentVerb {
             }
             Self::VaultRoomsConsent => {
                 "One party's answer to a join that waits on it, after which the join is decided again."
+            }
+            Self::VaultRoomsLeave => {
+                "Ends a person's current room membership: their own leave or their principal's, or the vault owner's removal; saving that rode on it stops, and a later vault.rooms.join opens a new membership."
             }
             Self::VaultRoomsOffer => {
                 "Publishes an agent's offer card to join a room or one of its threads, with an optional fixed deadline for a room-wide card."
