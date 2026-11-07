@@ -26,7 +26,7 @@ use crate::error::Result;
 use crate::llm::run_admission::{DeclaredMaximum, JobMaximum, MaximumShown};
 use crate::llm::{BudgetExhaustionPolicy, BudgetGuard};
 
-use self::ancestry::{Host, ScopeWalk};
+use self::ancestry::Host;
 use super::AgentDispatcher;
 use super::spend_record::{
     ChildSpend, SCOPE, SpendPayer, SpendRead, SpendRefused, SpendScope, SpendScopeId,
@@ -36,6 +36,7 @@ use super::widen_record::invalid;
 
 mod ancestry;
 mod closed_scope;
+mod funding;
 mod late_spend;
 
 pub(super) use self::ancestry::observe as observe_spend_walk;
@@ -133,6 +134,7 @@ impl AgentDispatcher<'_> {
             parent: None,
             unit: maximum.unit,
             cap_units: maximum.units,
+            ceiling_units: None,
             hard: true,
             spent_units: 0,
             held_units: 0,
@@ -271,6 +273,7 @@ impl AgentDispatcher<'_> {
             parent: Some(parent.clone()),
             unit: host.unit,
             cap_units: amount,
+            ceiling_units: None,
             hard,
             spent_units: 0,
             held_units: 0,
@@ -307,6 +310,7 @@ impl AgentDispatcher<'_> {
             parent: None,
             unit,
             cap_units,
+            ceiling_units: None,
             hard: true,
             spent_units: 0,
             held_units: 0,
@@ -618,9 +622,16 @@ impl AgentDispatcher<'_> {
             host: target,
             boundaries,
         } = self.booking_in_txn(txn, scope)?;
+        let booking = Host {
+            host: target.clone(),
+            boundaries: boundaries.clone(),
+        };
         let drawn = if record_whole {
-            units.min(self.available_from_in_txn(txn, &target)?)
+            units.min(self.available_through_in_txn(txn, &booking)?)
         } else {
+            if let Some(refused) = closed_scope::boundary_refusal(&boundaries, units) {
+                return Err(refused);
+            }
             units
         };
         let mut target = self.make_local_in_txn(txn, target, drawn)?;
@@ -667,85 +678,6 @@ impl AgentDispatcher<'_> {
         let binding = self.binding_cap_in_txn(txn, &booking.host)?;
         Ok(spend_read_with(&booking.host, available, &binding))
     }
-
-    /// Makes `need` units local to `scope`, topping a soft scope up from its
-    /// open ancestors, no more through a closed hard scope than its room
-    /// (FIX 9563), and returns it for the caller to spend or hold from and
-    /// write. The ancestors' and boundaries' moves are written here, and only
-    /// once the whole chain is known to cover `need`: a refusal writes
-    /// nothing. The chain is read however long it is (rule 5).
-    fn make_local_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        scope: SpendScope,
-        need: u64,
-    ) -> std::result::Result<SpendScope, SpendRefused> {
-        // Each entry draws its deficit from the next one up, through the
-        // closed hard scopes between them.
-        let mut chain: Vec<(SpendScope, u64, Vec<SpendScope>)> = Vec::new();
-        let from = scope.scope.clone();
-        let mut hosts = std::collections::HashSet::from([from.clone()]);
-        let mut walk = ScopeWalk::default();
-        let mut current = scope;
-        let mut wanted = need;
-        let mut reachable = 0u64;
-        let drawn = loop {
-            let local = current.local_available();
-            reachable = reachable.saturating_add(local);
-            if local >= wanted {
-                chain.push((current, 0, Vec::new()));
-                break Ok(());
-            }
-            if current.hard || current.parent.is_none() {
-                break Err(SpendRefused::OverCap {
-                    scope: current.scope,
-                    available_units: reachable,
-                    asked_units: need,
-                });
-            }
-            let deficit = wanted - local;
-            let hop = match self.host_in_walk(txn, &current, &mut walk) {
-                Ok(hop) => hop,
-                Err(error) => break Err(error.into()),
-            };
-            if !hosts.insert(hop.host.scope.clone()) {
-                break Err(invalid("spend scope ancestor cycle").into());
-            }
-            if let Some(boundary) = hop
-                .boundaries
-                .iter()
-                .find(|boundary| boundary.local_available() < deficit)
-            {
-                break Err(SpendRefused::OverCap {
-                    scope: boundary.scope.clone(),
-                    available_units: reachable.saturating_add(boundary.local_available()),
-                    asked_units: need,
-                });
-            }
-            chain.push((current, deficit, hop.boundaries));
-            current = hop.host;
-            wanted = deficit;
-        };
-        walk.finish(&self.vault.store, txn, &from);
-        drawn?;
-        for index in 0..chain.len() - 1 {
-            let deficit = chain[index].1;
-            chain[index].0.cap_units = chain[index].0.cap_units.saturating_add(deficit);
-            for boundary in &mut chain[index].2 {
-                boundary.held_units = boundary.held_units.saturating_add(deficit);
-            }
-            chain[index + 1].0.held_units = chain[index + 1].0.held_units.saturating_add(deficit);
-        }
-        for (index, (scope, _, boundaries)) in chain.iter().enumerate() {
-            if index > 0 {
-                SCOPE.put(&self.vault.store, txn, &scope.scope.0, scope)?;
-            }
-            for boundary in boundaries {
-                SCOPE.put(&self.vault.store, txn, &boundary.scope.0, boundary)?;
-            }
-        }
-        Ok(chain.swap_remove(0).0)
-    }
 }
 
 /// Assembles what one booking host reports: its identity and spend, what is
@@ -753,12 +685,12 @@ impl AgentDispatcher<'_> {
 fn spend_read_with(host: &SpendScope, available: u64, binding: &SpendScope) -> SpendRead {
     let signal = if available == 0 {
         Some(SpendSignal::AtCap {
-            cap_units: binding.cap_units,
+            cap_units: binding.limit_units(),
         })
-    } else if u128::from(available) * 100 <= u128::from(binding.cap_units) * 5 {
+    } else if u128::from(available) * 100 <= u128::from(binding.limit_units()) * 5 {
         Some(SpendSignal::WrapUp {
             available_units: available,
-            cap_units: binding.cap_units,
+            cap_units: binding.limit_units(),
         })
     } else {
         None
@@ -769,7 +701,7 @@ fn spend_read_with(host: &SpendScope, available: u64, binding: &SpendScope) -> S
         spent_units: host.spent_units,
         available_units: available,
         cap_scope: binding.scope.clone(),
-        cap_units: binding.cap_units,
+        cap_units: binding.limit_units(),
         signal,
     }
 }

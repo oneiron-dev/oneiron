@@ -11,8 +11,9 @@ use crate::code_run::StepReplayCapsule;
 use crate::{Result, Vault};
 
 /// A reader's admission to a captured step's source, asked again before
-/// each raw read of it.
-pub(crate) trait ShadowSourceAdmission {
+/// each raw read of it, and before each release of an arm's body to a model
+/// (FIX 9468).
+pub trait ShadowSourceAdmission {
     /// Whether the reader is still admitted to the step's source now, read
     /// in a snapshot of its own.
     ///
@@ -40,7 +41,8 @@ pub(crate) fn prepare_admitted_shadow_step_source(
 }
 
 /// Why a step is withheld once its reader's admission lapsed: its source is
-/// withheld from that reader.
-pub(super) fn lapsed() -> ShadowUnavailable {
+/// withheld from that reader. An arm's body released to a model meets the
+/// same lapse (FIX 9468).
+pub(in crate::code_run::shadow_runner) fn lapsed() -> ShadowUnavailable {
     unavailable(Reason::SourceWithheld, "admission")
 }

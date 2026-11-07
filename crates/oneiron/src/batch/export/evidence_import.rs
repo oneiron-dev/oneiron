@@ -8,8 +8,10 @@
 //!   imported (`archived_container_body`).
 //! - A MESSAGE waits on its TURN and CONVERSATION, and its archived
 //!   `AuthoredBy` targets ride inert in its body (`archived_message_body`).
-//!   The edge pass leaves those `AuthoredBy` edges out: an archive never
-//!   makes a local author.
+//! - A NOTE keeps its source author as `NoteActor::Imported`
+//!   (`archived_note_body`).
+//! - The edge pass leaves a MESSAGE's or NOTE's archived `AuthoredBy`
+//!   edges out: an archive never makes a local author.
 use std::io::{Read, Seek};
 
 use oneiron_contracts::affect::Vad;
@@ -22,7 +24,9 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::memory::{ArchivedMessage, ArchivedMessageLink};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
-use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::registry::{
+    ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE, ENTITY_TYPE_TURN,
+};
 use crate::temporal::TimeRange;
 
 fn invalid(reason: &str) -> Error {
@@ -163,10 +167,10 @@ pub(super) fn message_dependencies<R: Read + Seek>(
     Ok([turn.target, conversation.target])
 }
 
-/// Whether the edge `source -kind->` is an archived MESSAGE's byline, which
-/// the edge pass leaves out: its target rides in the row's
-/// `metadata.import.authored_by`.
-pub(super) fn is_message_byline<R: Read + Seek>(
+/// Whether the edge `source -kind->` is an archived MESSAGE's or NOTE's
+/// byline, which the edge pass leaves out: a MESSAGE's target rides in its
+/// `metadata.import.authored_by`, a NOTE's in its imported `author_ref`.
+pub(super) fn is_evidence_byline<R: Read + Seek>(
     archive: &IndexedArchive<'_, R>,
     source: &EntityId,
     kind: EdgeKind,
@@ -174,7 +178,7 @@ pub(super) fn is_message_byline<R: Read + Seek>(
     Ok(kind == EdgeKind::AuthoredBy
         && archive
             .entity_at(source)?
-            .is_some_and(|at| at.entity_type == ENTITY_TYPE_MESSAGE))
+            .is_some_and(|at| matches!(at.entity_type, ENTITY_TYPE_MESSAGE | ENTITY_TYPE_NOTE)))
 }
 
 /// Restores archived MESSAGE `id`, its imported `body`, through the witness

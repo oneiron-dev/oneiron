@@ -12,7 +12,6 @@ use crate::deletion::{
     ErasePendingReason, EraseWithdrawal, LegalHold, LegalHoldEvent, LegalHoldTarget,
     LiftAndEraseOutcome, LiftAndEraseShownState, LiftAndEraseStatus,
 };
-use crate::error::LegalHoldBound;
 use crate::memory::MemoryResult;
 use crate::{EntityId, Vault};
 
@@ -69,22 +68,14 @@ pub enum LegalHoldEraseState {
     /// when nothing was there.
     Erased { receipt_ref: Option<String> },
     /// "erase confirmed; completion pending"
-    /// ([`crate::deletion::ERASE_COMPLETION_PENDING`]): the erase ran and
-    /// `reason` is still outstanding on `receipt_ref`, or, with neither, an
-    /// order the owner may not be told of keeps the bytes. Not erased yet.
+    /// ([`crate::deletion::ERASE_COMPLETION_PENDING`]): the erase still waits
+    /// on `reason` of `receipt_ref`, or on its shared vault's veto window. Not
+    /// erased yet.
     CompletionPending {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         receipt_ref: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<ErasePendingReason>,
-    },
-    /// A legal order binding Oneiron's hosting keeps the bytes: `bound`
-    /// names its law, and the note says what self-hosting changes. The erase
-    /// runs when the order lifts. Not erased.
-    RetainedForLaw {
-        bound: LegalHoldBound,
-        works_self_hosted: bool,
-        self_hosted_note: String,
     },
     /// The hold was lifted, then the erase failed; a plain delete retries it.
     Failed { message: String },
@@ -100,11 +91,6 @@ impl From<LiftAndEraseStatus> for LegalHoldEraseState {
             } => Self::CompletionPending {
                 receipt_ref,
                 reason,
-            },
-            LiftAndEraseStatus::RetainedForLaw(notice) => Self::RetainedForLaw {
-                bound: notice.bound,
-                works_self_hosted: notice.works_self_hosted,
-                self_hosted_note: notice.self_hosted_note,
             },
             LiftAndEraseStatus::Failed { message } => Self::Failed { message },
         }
