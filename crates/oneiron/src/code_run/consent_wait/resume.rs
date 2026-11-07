@@ -145,7 +145,10 @@ impl CodeConsentRunOrigin {
             } => {
                 field(b"mcp");
                 field(connection.as_bytes());
-                field(ceiling);
+                // The saved registration ceiling is a typed record on main
+                // (#6407), sealed by its named encoding as binding.rs seals
+                // a hook snapshot.
+                field(&rmp_serde::to_vec_named(ceiling).unwrap_or_default());
             }
             VerbAskDoor::McpOwner { connection } => {
                 field(b"mcp_owner");
