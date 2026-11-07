@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1263 facade rows, 4596 declarations.
-Inputs: 1193 of 1263 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1095 of 1263 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1264 facade rows, 4597 declarations.
+Inputs: 1194 of 1264 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1096 of 1264 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -10096,20 +10096,13 @@ class RootRequestCreateRequest(TypedDict):
     change: str
     root: NotRequired[str | None]
     machine: NotRequired[str | None]
-class OwnerWorkView(OwnerWorkReceipt):
-    manifest_text: NotRequired[str | None]
-    status_text: str
-    unassigned_text: NotRequired[str | None]
-    advice_text: NotRequired[str | None]
-    home_warning_text: NotRequired[str | None]
-    cancel_text: NotRequired[str | None]
 class RootChangeView(TypedDict):
     change: str
     root: NotRequired[str | None]
     machine: NotRequired[str | None]
 class PendingRootRequestView(TypedDict):
     change: RootChangeView
-    receipt: OwnerWorkView
+    receipt: OwnerWorkReceipt
 class OwnerWorkGetRequest(TypedDict):
     request: str
 class CleanupRunRequest(TypedDict):
@@ -10823,6 +10816,11 @@ class ConsentActReceipt(TypedDict):
 class ConnectorCallApproveOnceRequest(TypedDict):
     call_ref: str
     approval_digest: str
+class ConnectorReplyRetryRequest(TypedDict):
+    attempt_ref: str
+class ConnectorReplyRetryView(TypedDict):
+    predecessor_ref: str
+    successor_ref: str
 class DenyConsentRequest(TypedDict):
     effect_digest: str
 class ActionEnvelopeRequest(TypedDict):
