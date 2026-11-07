@@ -87,6 +87,17 @@ impl<'v> HttpGraphCalendarWire<'v> {
         url: &str,
         query: &[(&str, String)],
     ) -> Result<RestAnswer> {
+        self.get_preferring(source, url, query, PREFER)
+    }
+
+    /// [`Self::get`] with its own `Prefer` header: a read in another zone.
+    fn get_preferring(
+        &self,
+        source: &MailSyncSource,
+        url: &str,
+        query: &[(&str, String)],
+        prefer: &str,
+    ) -> Result<RestAnswer> {
         if source.provider != MailProvider::Microsoft365 {
             return Err(refused(
                 "graph_calendar_wire_reads_microsoft365_calendars_only",
@@ -122,7 +133,7 @@ impl<'v> HttpGraphCalendarWire<'v> {
                     .get(url)
                     .query(query)
                     .header(AUTHORIZATION, auth)
-                    .header("Prefer", PREFER);
+                    .header("Prefer", prefer);
                 answer = Some(rest::send(request)?);
                 Ok(())
             },
@@ -188,7 +199,8 @@ impl MailCalendarWire for HttpGraphCalendarWire<'_> {
             if event.get("type").and_then(Value::as_str) == Some("seriesMaster") {
                 continue;
             }
-            let ics = event_ics(&uid, event)?.into_bytes();
+            let days = self.all_day_days(source, event)?;
+            let ics = event_ics(&uid, event, days.as_ref())?.into_bytes();
             changes.push(RemoteCalendarChange::Upsert(RemoteCalendarObject {
                 href: id,
                 etag: text_of(event.get("@odata.etag")),
@@ -226,8 +238,103 @@ impl MailCalendarWire for HttpGraphCalendarWire<'_> {
     }
 }
 
-/// One Graph event as a `VCALENDAR` resource of one VEVENT, its times UTC.
-fn event_ics(uid: &str, event: &Value) -> Result<String> {
+impl HttpGraphCalendarWire<'_> {
+    /// The days an all-day event covers (FIX 16309), `YYYYMMDD` start and
+    /// exclusive end, in the zone it was made in. The view answers in UTC, so
+    /// its midnight-to-midnight arrives shifted by that zone's offset: a UTC
+    /// time after noon is a zone east of UTC, one before 10:00 a zone west of
+    /// it. Between them both a zone of UTC-10 to -12 and one of UTC+12 to +14
+    /// fit, and the event read again in its own zone settles which. `None`
+    /// for a timed event, or one whose days do not read: it keeps its span.
+    fn all_day_days(
+        &self,
+        source: &MailSyncSource,
+        event: &Value,
+    ) -> Result<Option<(String, String)>> {
+        if event.get("isAllDay").and_then(Value::as_bool) != Some(true) {
+            return Ok(None);
+        }
+        let at = |field: &str| {
+            event
+                .pointer(&format!("/{field}/dateTime"))
+                .and_then(Value::as_str)
+                .and_then(utc_wall_seconds)
+        };
+        let (Some(start), Some(end)) = (at("start"), at("end")) else {
+            return Ok(None);
+        };
+        let day = 24 * 3_600_u64;
+        let time = start % day;
+        let east = |offset: u64| (start + offset, end + offset);
+        let local = if time == 0 {
+            Some((start, end))
+        } else if time > 12 * 3_600 {
+            Some(east(day - time))
+        } else if time < 10 * 3_600 {
+            Some((start - time, end.saturating_sub(time)))
+        } else {
+            None
+        };
+        let Some((start, end)) = local else {
+            return self.all_day_days_in_own_zone(source, event);
+        };
+        // A day boundary the zone's daylight saving moved by an hour still
+        // names its day: the end is read at its nearest midnight.
+        let end = (end + day / 2) / day * day;
+        if start % day != 0 || end <= start {
+            return Ok(None);
+        }
+        Ok(day_digits(start).zip(day_digits(end)))
+    }
+
+    /// The days of an all-day event read again in the zone it was made in.
+    fn all_day_days_in_own_zone(
+        &self,
+        source: &MailSyncSource,
+        event: &Value,
+    ) -> Result<Option<(String, String)>> {
+        let (Some(id), Some(zone)) = (
+            text_of(event.get("id")),
+            text_of(event.get("originalStartTimeZone")),
+        ) else {
+            return Ok(None);
+        };
+        if zone
+            .chars()
+            .any(|c| c == '"' || c == '\\' || c.is_control())
+        {
+            return Ok(None);
+        }
+        let url = format!(
+            "{GRAPH_ME_URL}/events/{}",
+            super::microsoft365::path_segment(&id)
+        );
+        let prefer = format!("IdType=\"ImmutableId\", outlook.timezone=\"{zone}\"");
+        let query = [("$select", "start,end,isAllDay".to_owned())];
+        let RestAnswer::Found(own) = self.get_preferring(source, &url, &query, &prefer)? else {
+            return Ok(None);
+        };
+        let date = |field: &str| {
+            own.pointer(&format!("/{field}/dateTime"))
+                .and_then(Value::as_str)
+                .and_then(midnight_date)
+        };
+        Ok(match (date("start"), date("end")) {
+            (Some(start), Some(end)) if start < end => Some((start, end)),
+            _ => None,
+        })
+    }
+}
+
+/// The `YYYYMMDD` date of `seconds`, a midnight on the UTC carrier.
+fn day_digits(seconds: u64) -> Option<String> {
+    let at = chrono::DateTime::from_timestamp(i64::try_from(seconds).ok()?, 0)?;
+    Some(at.format("%Y%m%d").to_string())
+}
+
+/// One Graph event as a `VCALENDAR` resource of one VEVENT: an all-day
+/// event's `days`, else its times UTC.
+fn event_ics(uid: &str, event: &Value, days: Option<&(String, String)>) -> Result<String> {
     let mut ics = String::from("BEGIN:VCALENDAR\r\nVERSION:2.0\r\n");
     ics.push_str("PRODID:-//oneiron//mail-pack microsoft graph calendar//EN\r\n");
     ics.push_str("BEGIN:VEVENT\r\n");
@@ -239,13 +346,19 @@ fn event_ics(uid: &str, event: &Value) -> Result<String> {
     {
         line(&mut ics, "DTSTAMP", &utc_stamp(stamp)?);
     }
-    for (name, field) in [("DTSTART", "start"), ("DTEND", "end")] {
-        if let Some(at) = event
-            .pointer(&format!("/{field}/dateTime"))
-            .and_then(Value::as_str)
-            .and_then(utc_wall_seconds)
-        {
-            line(&mut ics, name, &utc_stamp(at)?);
+    // An all-day event lands as its days (FIX 16309), not as a UTC span.
+    if let Some((start, end)) = days {
+        line(&mut ics, "DTSTART;VALUE=DATE", &start);
+        line(&mut ics, "DTEND;VALUE=DATE", &end);
+    } else {
+        for (name, field) in [("DTSTART", "start"), ("DTEND", "end")] {
+            if let Some(at) = event
+                .pointer(&format!("/{field}/dateTime"))
+                .and_then(Value::as_str)
+                .and_then(utc_wall_seconds)
+            {
+                line(&mut ics, name, &utc_stamp(at)?);
+            }
         }
     }
     if let Some(subject) = text_of(event.get("subject")) {
@@ -335,6 +448,16 @@ fn event_ics(uid: &str, event: &Value) -> Result<String> {
 }
 
 /// A Graph `dateTime` in UTC (the wire asks for UTC): `2026-11-06T15:00:00.0000000`.
+/// The `YYYYMMDD` date of a Graph wall time at midnight; `None` for any
+/// other time, which is not a day boundary.
+fn midnight_date(value: &str) -> Option<String> {
+    let bare = value.split('.').next().unwrap_or(value);
+    let bare = bare.strip_suffix('Z').unwrap_or(bare);
+    let at = chrono::NaiveDateTime::parse_from_str(bare, "%Y-%m-%dT%H:%M:%S").ok()?;
+    bare.ends_with("T00:00:00")
+        .then(|| at.format("%Y%m%d").to_string())
+}
+
 fn utc_wall_seconds(value: &str) -> Option<u64> {
     let bare = value.split('.').next().unwrap_or(value);
     let bare = bare.strip_suffix('Z').unwrap_or(bare);
