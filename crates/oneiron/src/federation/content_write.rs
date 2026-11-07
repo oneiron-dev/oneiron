@@ -3,6 +3,7 @@
 //! this interface. Trusted provisioning and replay use separate Vault doors.
 use crate::Vault;
 use crate::batch::{BatchBuilder, EntityMetadataHeader};
+use crate::core_write::CoreWriteLaneRef;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -35,8 +36,8 @@ impl ContentOwner {
 const ACTIVE_ACTOR: SideTable<(), InflightActor, Raw> =
     SideTable::new(&side_table::FEDERATION_ACTOR_CONTENT_INFLIGHT);
 
-/// [`ACTIVE_ACTOR`]'s value: actor id16 + class byte, then the 32-byte
-/// authority frontier when the writer carries one.
+/// [`ACTIVE_ACTOR`]'s value: actor id16 + class byte, followed by the
+/// optional 32-byte authority frontier and 16-byte run attempt.
 struct InflightActor(WriteActor);
 
 impl RawValue for InflightActor {
@@ -46,11 +47,14 @@ impl RawValue for InflightActor {
         if let Some(frontier) = self.0.authority_frontier() {
             bytes.extend_from_slice(&frontier);
         }
+        if let Some(run_attempt) = self.0.run_attempt() {
+            bytes.extend_from_slice(&run_attempt);
+        }
         Ok(bytes)
     }
 
     fn from_raw(raw: &[u8]) -> std::result::Result<Self, CodecError> {
-        if raw.len() != 17 && raw.len() != 49 {
+        if !matches!(raw.len(), 17 | 33 | 49 | 65) {
             return Err(Error::CorruptedIndex("actor content in-flight binding").into());
         }
         let actor = EntityId::from_bytes(
@@ -60,16 +64,22 @@ impl RawValue for InflightActor {
         )?;
         let class = EdgeActorClass::try_from_u8(raw[16])
             .ok_or(Error::CorruptedIndex("actor content class"))?;
-        let writer = WriteActor::new(actor, class);
-        Ok(Self(if raw.len() == 49 {
-            writer.with_authority_frontier(
-                raw[17..]
+        let mut writer = WriteActor::new(actor, class);
+        if matches!(raw.len(), 49 | 65) {
+            writer = writer.with_authority_frontier(
+                raw[17..49]
                     .try_into()
                     .map_err(|_| Error::CorruptedIndex("actor content frontier"))?,
-            )
-        } else {
-            writer
-        }))
+            );
+        }
+        if matches!(raw.len(), 33 | 65) {
+            writer = writer.with_run_attempt(
+                raw[raw.len() - 16..]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("actor content run attempt"))?,
+            );
+        }
+        Ok(Self(writer))
     }
 }
 
@@ -82,6 +92,7 @@ pub(crate) fn actor_for_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Opti
 pub(crate) struct ActorContentTxn<'v, 't, 'env> {
     vault: &'v Vault,
     writer: WriteActor,
+    lane: CoreWriteLaneRef<'v>,
     txn: &'t mut heed::RwTxn<'env>,
     pending_claim_support: BTreeSet<EntityId>,
 }
@@ -90,6 +101,7 @@ impl<'v, 't, 'env> ActorContentTxn<'v, 't, 'env> {
         vault: &'v Vault,
         txn: &'t mut heed::RwTxn<'env>,
         writer: WriteActor,
+        lane: CoreWriteLaneRef<'v>,
     ) -> Result<Self> {
         if actor_for_txn(vault, txn)?.is_some() {
             return Err(Error::InvariantViolation(
@@ -101,6 +113,7 @@ impl<'v, 't, 'env> ActorContentTxn<'v, 't, 'env> {
             vault,
             txn,
             writer,
+            lane,
             pending_claim_support: BTreeSet::new(),
         })
     }
@@ -119,7 +132,7 @@ impl<'v, 't, 'env> ActorContentTxn<'v, 't, 'env> {
     /// The batch derives its semantic effect set and checks both positions
     /// before this actor's transaction can commit.
     pub(crate) fn apply_batch(&mut self, batch: BatchBuilder<'_>) -> Result<()> {
-        batch.apply_actor(self.txn, &self.writer)
+        batch.apply_actor(self.txn, &self.writer, self.lane)
     }
 
     /// Candidate admission uses the same effect collector as typed batches.
@@ -135,6 +148,7 @@ impl<'v, 't, 'env> ActorContentTxn<'v, 't, 'env> {
             self.vault,
             self.txn,
             &self.writer,
+            self.lane,
             ops,
             text_index_trusted,
             gate_mode,
@@ -209,7 +223,7 @@ impl<'v, 't, 'env> ActorContentTxn<'v, 't, 'env> {
         &mut self,
         id: EntityId,
         owner: ContentOwner,
-        write: impl FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
+        write: impl FnOnce(&mut heed::RwTxn<'_>, CoreWriteLaneRef<'v>) -> std::result::Result<T, E>,
     ) -> std::result::Result<T, E>
     where
         E: From<Error>,
@@ -217,7 +231,7 @@ impl<'v, 't, 'env> ActorContentTxn<'v, 't, 'env> {
         if self.vault.shared_vault_creation_in_txn(self.txn)?.is_some() {
             self.check_record(id, owner)?;
         }
-        let result = write(self.txn)?;
+        let result = write(self.txn, self.lane)?;
         if self.vault.shared_vault_creation_in_txn(self.txn)?.is_some() {
             self.check_record(id, owner)?;
         }
@@ -240,7 +254,7 @@ impl<'v, 't, 'env> ActorContentTxn<'v, 't, 'env> {
     pub(crate) fn update_note<T, E>(
         &mut self,
         id: EntityId,
-        write: impl FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
+        write: impl FnOnce(&mut heed::RwTxn<'_>, CoreWriteLaneRef<'v>) -> std::result::Result<T, E>,
     ) -> std::result::Result<T, E>
     where
         E: From<Error>,
@@ -252,7 +266,7 @@ impl<'v, 't, 'env> ActorContentTxn<'v, 't, 'env> {
     pub(crate) fn update_claim<T, E>(
         &mut self,
         id: EntityId,
-        write: impl FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
+        write: impl FnOnce(&mut heed::RwTxn<'_>, CoreWriteLaneRef<'v>) -> std::result::Result<T, E>,
     ) -> std::result::Result<T, E>
     where
         E: From<Error>,
@@ -265,7 +279,7 @@ impl<'v, 't, 'env> ActorContentTxn<'v, 't, 'env> {
     pub(crate) fn update_artifact<T, E>(
         &mut self,
         id: EntityId,
-        write: impl FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
+        write: impl FnOnce(&mut heed::RwTxn<'_>, CoreWriteLaneRef<'v>) -> std::result::Result<T, E>,
     ) -> std::result::Result<T, E>
     where
         E: From<Error>,
@@ -281,6 +295,7 @@ impl Vault {
     pub(crate) fn try_with_actor_content_write_txn<T, E>(
         &self,
         writer: WriteActor,
+        lane: CoreWriteLaneRef<'_>,
         write: impl FnOnce(&mut ActorContentTxn<'_, '_, '_>) -> std::result::Result<T, E>,
     ) -> std::result::Result<T, E>
     where
@@ -296,7 +311,7 @@ impl Vault {
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("actor content writer header"))?;
             crate::provenance::validate_actor_class(header.entity_type, writer.actor_class())?;
-            let mut content = ActorContentTxn::new(self, txn, writer)?;
+            let mut content = ActorContentTxn::new(self, txn, writer, lane)?;
             let result = write(&mut content)?;
             content.finish()?;
             Ok(result)

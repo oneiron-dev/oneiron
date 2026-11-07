@@ -117,6 +117,7 @@ fn limits(max_connections: usize, header_read_timeout: Duration) -> ConnectionLi
         header_read_timeout,
         body_idle_timeout: PATIENCE,
         queue_wait: PATIENCE,
+        max_read_buffer_bytes: None,
     }
 }
 
@@ -356,6 +357,7 @@ async fn an_address_sheds_strangers_past_its_share_but_never_its_authenticated_c
             header_read_timeout: PATIENCE,
             body_idle_timeout: PATIENCE,
             queue_wait: PATIENCE,
+            max_read_buffer_bytes: None,
         },
     )
     .await;
@@ -415,6 +417,7 @@ async fn strangers_from_one_address_never_fill_the_floor() {
             header_read_timeout: PATIENCE,
             body_idle_timeout: PATIENCE,
             queue_wait: PATIENCE,
+            max_read_buffer_bytes: None,
         },
     )
     .await;
@@ -539,6 +542,7 @@ async fn a_replayed_proof_leaves_its_connection_in_the_anonymous_share() {
             header_read_timeout: PATIENCE,
             body_idle_timeout: PATIENCE,
             queue_wait: PATIENCE,
+            max_read_buffer_bytes: None,
         },
         Arc::new(LimitQuestions::default()),
         std::future::pending(),

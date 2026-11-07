@@ -30,6 +30,7 @@ use crate::temporal::TimeRange;
 use crate::typed_body::{BodyActor, edit_typed_body_in_txn};
 use crate::write_envelope::WriteActor;
 use heed::RwTxn;
+use oneiron_docedit::graphic::GraphicLimits;
 use oneiron_docedit::live::deck_export::PROJECTOR_VERSION;
 use oneiron_docedit::live::{ExportOutcome, ExportProfile, HeldAssets, effect_receipt, project};
 use oneiron_docedit::retained_opc::Package;
@@ -39,11 +40,18 @@ impl Vault {
     /// source, or the version the last landed export made). Until the
     /// profile's export gate opens the result is a proposal artifact: nothing
     /// lands, and the caller proposes the bytes through the edit rails.
-    pub fn export_pptx_body(&self, artifact: &EntityId) -> Result<PptxExport> {
+    pub fn export_pptx_body(
+        &self,
+        artifact: &EntityId,
+        graphics: Option<GraphicLimits>,
+    ) -> Result<PptxExport> {
         let source = self
             .office_body_head(artifact)?
             .ok_or(Error::EntityNotFound)?;
-        let profile = ExportProfile::default();
+        let profile = ExportProfile {
+            graphics,
+            ..ExportProfile::default()
+        };
         let (head, body, gate, assets) = {
             let txn = self.store.env.read_txn()?;
             let (head, body) = self.deck_head(&txn, artifact)?;
