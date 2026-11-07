@@ -25,7 +25,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, Weak};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, RwLock, Weak};
 use std::time::{Duration, Instant};
 
 use oneiron::agent_def::{birth_under_inherited_list, ensure_inherited_model_list};
@@ -54,7 +54,7 @@ use oneiron::{
     TierPrecedence, Vault,
 };
 
-use crate::admission::Permit;
+use crate::admission::{Admission, Permit};
 use crate::ai_host::payer_funding::scope_funding;
 use crate::ai_host::scoped_child::{
     ReaderParentClock, ReaderParentHost, ScopedChildDoor, scoped_child_service,
@@ -63,6 +63,7 @@ use crate::mcp::{McpCodeExecutionHost, McpCodeModeProvider, run_seat};
 use crate::runtime::wall_clock_ms as unix_millis_now;
 
 mod child;
+mod nested;
 mod scoped;
 
 /// The window a run with no decision clock gives its children: one, fixed
@@ -169,6 +170,39 @@ impl ReaderSeats {
         }
     }
 
+    /// A Read child's own spawn seat. Its remaining clock already excludes
+    /// its parent's fold reserve; only its own fold is carved out here.
+    fn nested_seat(
+        &self,
+        job: &ReaderJob,
+        clock: ReaderParentClock,
+        now_ms: u64,
+        window_tokens: Option<u64>,
+    ) -> SpawnHostSeat {
+        let caller = self.caller(job.binding.parent_run);
+        lock(&self.callers).insert(job.run, (caller, now_ms));
+        lock(&self.clocks).insert(job.run, clock);
+        SpawnHostSeat {
+            spend: ReaderSpend::for_run_scope(
+                job.binding
+                    .spend
+                    .scope()
+                    .map(|_| SpendScopeId::for_attempt(&job.attempt)),
+            ),
+            deadline: RunDeadline::with_default_reserve(
+                now_ms
+                    .saturating_add(clock.remaining_ms())
+                    .min(job.binding.child_cutoff_unix_ms),
+                now_ms,
+            ),
+            hold_units: LAUNCH_COST_PRIOR_UNITS,
+            window_tokens: window_tokens.unwrap_or(DEFAULT_READER_WINDOW_TOKENS),
+            memory_bytes: self.child_memory_bytes,
+            listed: job.binding.listed.clone(),
+            parent_lease: None,
+        }
+    }
+
     /// The live clock `parent`'s host last lent it, if any.
     fn clock(&self, parent: EntityId) -> Option<ReaderParentClock> {
         lock(&self.clocks).get(&parent).copied()
@@ -245,6 +279,9 @@ struct Shared {
     /// Children one parent runs at once: a run's memory share over what one
     /// child holds.
     per_parent: usize,
+    /// Delivery progress is observed on the existing runner ticks and wakes.
+    progress: Mutex<u64>,
+    progressed: Condvar,
 }
 
 impl Shared {
@@ -289,6 +326,8 @@ impl ReaderRunner {
             seats: Arc::new(ReaderSeats::new(child_memory_bytes(memory, per_parent))),
             running: Mutex::default(),
             per_parent: usize::try_from(per_parent).unwrap_or(usize::MAX),
+            progress: Mutex::new(0),
+            progressed: Condvar::new(),
         });
         let recovers = {
             let mut started = lock(&STARTED);
@@ -444,6 +483,7 @@ impl Worker {
             self.resume.get_mut().remove(&Some(held.clone()));
             self.sessions.remove(&held);
         }
+        self.shared.note_progress();
         next
     }
 
@@ -521,8 +561,12 @@ impl Worker {
                                 job: *job,
                                 session: session.cloned(),
                                 provider: Arc::clone(native.provider()),
+                                shared: Arc::clone(&self.shared),
+                                runs: native.runs().clone(),
+                                permit: Mutex::new(Some(permit)),
+                                signals: self.signals.clone(),
                             };
-                            self.spawn(vault, jobs, child, permit, now);
+                            self.spawn(vault, jobs, child, now);
                         }
                         Ok(ClaimOutcome::WaitingForSpend) => {
                             held_back.insert(parent);
@@ -550,16 +594,9 @@ impl Worker {
         Ok((jobs.next_due()?, waiting))
     }
 
-    /// Runs one claimed child on its own thread, holding `permit` until it
-    /// settles.
-    fn spawn(
-        &self,
-        vault: &Arc<Vault>,
-        jobs: &ReaderJobs<'_>,
-        child: Child,
-        permit: Permit,
-        now: u64,
-    ) {
+    /// Runs one claimed child on its own thread. Its active execution
+    /// permit is released while its durable nested wait is parked.
+    fn spawn(&self, vault: &Arc<Vault>, jobs: &ReaderJobs<'_>, child: Child, now: u64) {
         let parent = child.job.binding.parent_run;
         let (task, generation) = (child.job.task, child.job.generation);
         self.shared.started(parent);
@@ -568,7 +605,7 @@ impl Worker {
         let vault = Arc::clone(vault);
         let spawned = crate::engine_thread("oneiron-code-reader".to_owned()).spawn(move || {
             child.run_and_settle(&shared, &vault);
-            drop(permit);
+            drop(child);
             shared.ended(parent);
             let _ = signals.send(Signal::Freed);
         });
@@ -590,6 +627,10 @@ struct Child {
     session: Option<SessionSeat>,
     provider: Arc<dyn McpCodeModeProvider>,
     clock: Option<ReaderParentClock>,
+    shared: Arc<Shared>,
+    runs: Admission<String>,
+    permit: Mutex<Option<Permit>>,
+    signals: Sender<Signal>,
 }
 
 /// Why a canonical job's seat, or a pinned session job's, was not born

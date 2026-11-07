@@ -268,10 +268,6 @@ side_tables! {
     /// digest of its server and tool, then its admission times. Key: id16(attempt) + u64be(call
     /// seq).
     OUTBOUND_INTENT_UNAVAILABLE: VaultMeta b"outbound:intent_unavailable:v1:" Raw;
-    /// The owner press a Linear dispatch's, a campaign leg's or (FIX 6424 part 3) a scoped-MCP
-    /// call's admission spent, kept beside its ledger row for its retry once the admission
-    /// committed (FIX 6424 part 2a): version, family tag, digest. Key: hash32 (intent id).
-    OUTBOUND_PINNED_APPROVAL: VaultMeta b"outbound:pinned_approval:v1:" Raw;
     /// A Deferred send's remote task poll (FIX 11023): its next poll time, poll count and last
     /// status word; the session and credential choice stay in the settlement's handle. Key:
     /// hash32 (intent id).
