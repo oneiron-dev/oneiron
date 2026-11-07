@@ -41,21 +41,24 @@ impl ExecutorStorage<'_> {
     /// Publishes the reply body `spool` took as run `owner`'s complete output
     /// at `path` (FIX 5718 part 3, Engine rulings 3 and 4; FIX 6647), admitted
     /// in the writer that publishes it, on the vault or along a session's
-    /// route. `Err` holds the typed unavailable content that stands in for
-    /// an answer with a secret the side-row wall cannot place, of which
-    /// nothing is stored. Off record, a reply that holds a fresh key is
-    /// withheld until room-local custody exists (FIX 5718 part 3).
+    /// route. On the vault it is admitted as a dependent of each of
+    /// `sources`, the records whose words it copies (FIX 18924); a session's
+    /// run's replay reads withhold a withdrawn fold's answer. `Err` holds the
+    /// typed unavailable content that stands in for an answer with a secret
+    /// the side-row wall cannot place, of which nothing is stored. Off
+    /// record, a reply that holds a fresh key is withheld until room-local
+    /// custody exists (FIX 5718 part 3).
     pub(crate) fn publish_code_run_reply(
         &self,
         path: String,
         spool: BodySink,
         owner: EntityId,
+        sources: &[EntityId],
         receipt: Option<(&mut CodeRunReplayRecord, &mut CodeRunReplayGeneration)>,
     ) -> Result<std::result::Result<CodeRunRawOutput, serde_json::Value>> {
         let published = match self {
-            Self::Canonical(vault) => {
-                vault.publish_admitted_code_run_output(path, spool, true, owner, receipt)?
-            }
+            Self::Canonical(vault) => vault
+                .publish_admitted_code_run_output(path, spool, true, owner, sources, receipt)?,
             Self::Session(binding) => {
                 let published = binding.publish_admitted_reply(path, spool, owner)?;
                 if let ReplyBody::Published(output) = &published

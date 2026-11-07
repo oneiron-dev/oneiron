@@ -3,6 +3,7 @@
 mod compaction;
 mod continuation;
 mod corrections;
+mod fold_answers;
 mod folds;
 mod lift;
 mod model_seat;
@@ -36,6 +37,9 @@ pub(crate) use self::continuation::{
     InheritedCompaction, StartCompaction, StoredRunContinuation, continuation_seed_body_in_txn,
     publish_continuation_output_in_txn, put_run_continuation_row_in_txn, run_continuation_in_txn,
     seed_continuation_run,
+};
+pub(crate) use self::fold_answers::{
+    WithdrawnFoldAnswer, redact_fold_answers, retire_fold_answers_in_txn,
 };
 pub use self::read_worlds::ReadWorldUnknown;
 pub(crate) use self::read_worlds::{
