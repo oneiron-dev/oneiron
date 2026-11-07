@@ -33,6 +33,7 @@
 use std::sync::Arc;
 
 use super::attempt::{self, AttemptKey};
+use super::publication_access;
 use super::work;
 use super::{
     PartSource, ResidenceRpc, fetch_generation, list_generations_for, put_object, refused,
@@ -208,7 +209,7 @@ async fn publish_one(
     };
     // A commit whose ack was lost: the newest names the request, sealed here.
     // How its outer capsules open here is kept for the owner (FIX 4785).
-    let (named, read) = match held.take() {
+    let (mut named, mut read) = match held.take() {
         None => (false, LatestRead::NoneKept),
         Some((bundle, pads)) => {
             let reading = Arc::clone(manager);
@@ -224,6 +225,26 @@ async fn publish_one(
             read.map_err(storage)?
         }
     };
+    let mut grant = None;
+    if !named
+        && publication_access::needs_grant(&read)
+        && let Some(generation) = latest
+        && let Some(supplied) = publication_access::get(rpc, generation, request).await?
+        && let Some((bundle, pads)) = held.take()
+    {
+        let reading = Arc::clone(manager);
+        let (reading_result, bundle, pads, supplied) = tokio::task::spawn_blocking(move || {
+            let reading_result = reading
+                .vault()
+                .read_latest_for_request_with_grant(&bundle, &pads, holder, request, &supplied);
+            (reading_result, bundle, pads, supplied)
+        })
+        .await
+        .map_err(stopped)?;
+        (named, read) = reading_result.map_err(storage)?;
+        held = Some((bundle, pads));
+        grant = Some(supplied);
+    }
     observe(
         vault,
         request,
@@ -234,6 +255,12 @@ async fn publish_one(
     );
     if named {
         return enact(manager, request).await;
+    }
+    if !publication_access::opened(&read)
+        && let Some(grant) = &grant
+        && let Err(error) = publication_access::invalidate(rpc, grant).await
+    {
+        tracing::warn!(%error, "an unusable publication grant remains offered");
     }
     // An asked publication goes on in a slot that has a generation already
     // (FIX 8885); only a newest of a later slot than this clock's waits.
@@ -248,13 +275,20 @@ async fn publish_one(
     };
     let assembling = Arc::clone(manager);
     let upload = turn::renewing_turn(rpc, move || {
-        assembling.assemble_sealed_bundle(
-            slot,
-            holder,
-            held.as_ref().map(|(bundle, pads)| (bundle, pads)),
-            Some(request),
-            materialize,
-        )
+        let latest = held.as_ref().map(|(bundle, pads)| (bundle, pads));
+        match &grant {
+            Some(grant) => assembling.assemble_sealed_bundle_with_publication_grant(
+                slot,
+                holder,
+                latest,
+                request,
+                materialize,
+                grant,
+            ),
+            None => {
+                assembling.assemble_sealed_bundle(slot, holder, latest, Some(request), materialize)
+            }
+        }
     })
     .await?;
     let upload = match upload {
