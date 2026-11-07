@@ -3491,11 +3491,11 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.skills.outcomes.project": { description: "Projects the owner's anchored verdict through existing attributed pack outcomes; loading or calling alone never earns a reliability win.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.skills.outcomes.get": { description: "Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.models.manifest.read": { description: "Reads the owner-pinned v2 model manifest, or none when no manifest is configured.", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "vault.models.manifest.replace": { description: "Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically clearing resident route overrides.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.models.manifest.replace": { description: "Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically retaining resident route overrides that remain admitted.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.settings.web_connector": { description: "Reads the owner's web connector switch: which provider serves connector.web.search and fetch, on the backend key, the owner's own secret or a hub connector. Unset reads as Tavily on the backend key.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.settings.web_connector.replace": { description: "Replaces the owner's web connector switch under the owner proof. Only Tavily runs on the backend key; other providers run on the owner's own secret (effector connector:web) or a hub connector.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.connectors.web.usage": { description: "Reads the web connector's usage rows, newest first: provider, tool, key source, latency, cost and its basis, provider request id and outcome per call, with the summed cost. No query, URL or result text.", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "vault.models.oneironer.bind": { description: "Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and clearing resident route overrides.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.models.oneironer.bind": { description: "Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and retaining resident route overrides that remain admitted.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.models.routes.read": { description: "Reads one independent model slot route with its manifest pin and effective resident narrowing.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.models.routes.replace": { description: "Replaces one model slot route within its manifest pin without changing any other slot or role binding.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.models.roles.read": { description: "Reads one resolved role binding with its revision-pinned model, slot, route, provider and registered catalog fingerprint; grants no execution authority.", scope: "Read", proposes: false, hostDoor: true, section: false },
@@ -6239,11 +6239,11 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         manifest: {
           /** Reads the owner-pinned v2 model manifest, or none when no manifest is configured. */
           read: (input: Facade.EmptyRequest, options?: O): FacadeReturns<"vault.models.manifest.read">[K] => invoke("vault.models.manifest.read", input, options, newInvocation()),
-          /** Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically clearing resident route overrides. */
+          /** Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically retaining resident route overrides that remain admitted. */
           replace: (input: Facade.ModelManifestReplace, options?: O): FacadeReturns<"vault.models.manifest.replace">[K] => invoke("vault.models.manifest.replace", input, options, newInvocation()),
         },
         oneironer: {
-          /** Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and clearing resident route overrides. */
+          /** Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and retaining resident route overrides that remain admitted. */
           bind: (input: Facade.OneironerBind, options?: O): FacadeReturns<"vault.models.oneironer.bind">[K] => invoke("vault.models.oneironer.bind", input, options, newInvocation()),
         },
         routes: {
