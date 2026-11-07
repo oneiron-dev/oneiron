@@ -5110,7 +5110,7 @@ export type CodeProposalReviewRequest = { proposal: EntityId; artifact_id: strin
 /** `oneiron::repo_mutation::proposal::settlement::RepoProposalDecision` */
 export type RepoProposalDecision = "approve" | "reject"
 /** `oneiron::repo_mutation::proposal::settlement::RepoProposalSettlement` */
-export type RepoProposalSettlement = { receipt: EntityId; actor: EntityId; decision: RepoProposalDecision; settled_at: number }
+export type RepoProposalSettlement = { receipt: EntityId; actor?: EntityId | null; decision: RepoProposalDecision; settled_at: number }
 /** `oneiron::memory::code_doors::conflict_types::CodeProposalSettlementView` */
 export type CodeProposalSettlementView = { proposal: EntityId; status: RepoProposalStatus; reviews: number; settlement?: RepoProposalSettlement | null; conflict?: EntityId | null; task?: EntityId | null; parents: EntityId[]; mutation_seq?: number | null; resolution?: EntityId | null }
 /** `oneiron::memory::code_doors::conflict_types::CodeProposalSettleRequest` */

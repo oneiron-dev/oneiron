@@ -12692,7 +12692,7 @@ class CodeProposalReviewRequest(TypedDict):
 RepoProposalDecision = Literal["approve", "reject"]
 class RepoProposalSettlement(TypedDict):
     receipt: EntityId
-    actor: EntityId
+    actor: NotRequired[EntityId | None]
     decision: RepoProposalDecision
     settled_at: int
 class CodeProposalSettlementView(TypedDict):

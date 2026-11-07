@@ -2573,7 +2573,7 @@ declare namespace Sdk {
   type CritiqueSeverity = "info" | "low" | "medium" | "high" | "blocking";
   type CodeProposalReviewRequest = { proposal: EntityId; artifact_id: string; run_id: string; attempt: EntityId; lens_id: string; domain: string; model_id: string; model_revision?: string | null; calibration: LearningCell; verdict: CritiqueVerdict; severity: CritiqueSeverity; hard_check_passed?: boolean | null; evidence: EntityId[]; suggested_edit?: string | null };
   type RepoProposalDecision = "approve" | "reject";
-  type RepoProposalSettlement = { receipt: EntityId; actor: EntityId; decision: RepoProposalDecision; settled_at: number };
+  type RepoProposalSettlement = { receipt: EntityId; actor?: EntityId | null; decision: RepoProposalDecision; settled_at: number };
   type CodeProposalSettlementView = { proposal: EntityId; status: RepoProposalStatus; reviews: number; settlement?: RepoProposalSettlement | null; conflict?: EntityId | null; task?: EntityId | null; parents: EntityId[]; mutation_seq?: number | null; resolution?: EntityId | null };
   type CodeProposalSettleRequest = { proposal: EntityId; decision: RepoProposalDecision };
   type CodeProposalSettlementRequest = { proposal: EntityId };

@@ -40032,8 +40032,8 @@ pub enum RepoProposalDecision {
 pub struct RepoProposalSettlement {
     #[serde(rename = "receipt")]
     pub receipt: String,
-    #[serde(rename = "actor")]
-    pub actor: String,
+    #[serde(rename = "actor", default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<String>,
     #[serde(rename = "decision")]
     pub decision: RepoProposalDecision,
     #[serde(rename = "settled_at")]
