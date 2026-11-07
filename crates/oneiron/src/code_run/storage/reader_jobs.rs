@@ -11,6 +11,7 @@
 //! (FIX 7083). Any other reply has unknown origins.
 
 mod close;
+mod coverage;
 mod findings;
 pub(crate) use self::close::settle_evaporated_reader_spend;
 mod read;
@@ -335,6 +336,8 @@ impl ReaderTxn<'_, '_> {
             ReaderJobState::Queued => {
                 self.delete_index(&queued_key(job.enqueued_at_ms, job.task))?;
                 self.delete_index(&parked_key(job.task))?;
+                // A queued job's witness is a requeued claim's: stale (FIX 7735).
+                job.delivery_witness = None;
             }
             ReaderJobState::Active => {}
             _ => return Ok(job),
@@ -695,6 +698,7 @@ impl ExecutorStorage<'_> {
                 finding: None,
                 enqueued_at_ms: now_ms,
                 settled_at_ms: None,
+                delivery_witness: None,
             };
             let ordinal = parent.next_ordinal;
             parent.next_ordinal = parent.next_ordinal.saturating_add(1);
@@ -777,6 +781,8 @@ impl ExecutorStorage<'_> {
             tx.delete_index(&queued_key(job.enqueued_at_ms, job.task))?;
             job.state = ReaderJobState::Active;
             job.generation = job.generation.saturating_add(1);
+            // Each claim's witness starts empty (FIX 7735).
+            job.delivery_witness = None;
             parent.queued = parent.queued.saturating_sub(1);
             parent.active = parent.active.saturating_add(1);
             tx.put_job(&job)?;

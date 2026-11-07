@@ -154,8 +154,9 @@ pub use self::repo_calls::RepoRunCall;
 pub use self::result_read::ResultFacet;
 pub(crate) use self::result_read::unmarked_secret;
 pub(crate) use self::result_read::{
-    Reply as ResultReply, ResultRead, cannot as result_cannot, card as result_card, read_result_in,
-    refusal as result_refusal, resolve as resolve_result, result_cards_in, unknown_handle,
+    DeliveredRanges, Reply as ResultReply, ResultRead, cannot as result_cannot,
+    card as result_card, read_result_in, refusal as result_refusal, resolve as resolve_result,
+    result_cards_in, unknown_handle,
 };
 pub use self::storage::ReadWorldUnknown;
 pub(crate) use self::storage::SessionCheckpointBody;
@@ -253,14 +254,15 @@ pub use self::reader::{
     ReaderJobWake, ReaderParent, ReaderQueueCursor, ReaderQueuePage, ReaderReportReceipt,
     ReaderRoute, ReaderRunEnd, ReaderSpawnReceipt, ReaderSpend, ResultOrigins, RunDeadline,
     SUMMARY_GROUP_EXCEEDS_WINDOW, SUMMARY_READ_BYTES_PER_TOKEN, SUMMARY_WINDOW_DIVISOR,
-    SelfReaderReportCall, SelfReaderSpawnCall, SelfSummarizeCall, SpawnHostSeat,
-    SpawnParentBinding, SummarizeEffort, SummarizeRecipe, SummarizeReply, TaskWaitFailure,
-    TaskWaitFinding, TaskWaitPolicy, TaskWaitSet, TaskWaitSetCall, TaskWaitSetResult,
-    summary_exceeds_window, summary_exceeds_window_bytes, summary_token_budget,
+    SelfReaderReportCall, SelfReaderSpawnCall, SelfSummarizeCall, SourceDeliveryWitness,
+    SpawnHostSeat, SpawnParentBinding, SummarizeEffort, SummarizeRecipe, SummarizeReply,
+    TaskWaitFailure, TaskWaitFinding, TaskWaitPolicy, TaskWaitSet, TaskWaitSetCall,
+    TaskWaitSetResult, summary_exceeds_window, summary_exceeds_window_bytes, summary_token_budget,
 };
 pub(crate) use self::reader::{
-    OriginsUnion, reader_attempt_id, reader_run_id, reader_task_id, reader_wait_id,
-    reduce_task_wait_set, summary_memo_key, summary_task_id, valid_reader_key, vault_ref,
+    OriginsUnion, merge_ranges, reader_attempt_id, reader_run_id, reader_task_id, reader_wait_id,
+    reduce_task_wait_set, subtract_ranges, summary_memo_key, summary_task_id, valid_reader_key,
+    vault_ref,
 };
 pub use self::reader_brief::reader_task_brief;
 pub(crate) use self::reader_clock::{reader_job_cutoff, reader_wait_cutoff};
