@@ -141,6 +141,11 @@ pub enum AuthorTakeTarget {
 pub struct AuthorTakeRequest {
     pub target: AuthorTakeTarget,
     pub markdown: String,
+    /// The source document revision the take was read from, as
+    /// `<document-ref>@<revision>`: each link's `edge.provenance` claim cites
+    /// it. Absent when no source document exists.
+    #[serde(default)]
+    pub source_ref: Option<String>,
 }
 
 pub(super) fn author_take(
@@ -154,7 +159,7 @@ pub(super) fn author_take(
         }
         AuthorTakeTarget::Claim(reference) => crate::note::TakeTarget::Claim(resolve(&reference)?),
     };
-    memory.author_take(target, input.markdown)
+    memory.author_take_with_source(target, input.markdown, input.source_ref.as_deref())
 }
 
 pub(super) fn forget_claims(
