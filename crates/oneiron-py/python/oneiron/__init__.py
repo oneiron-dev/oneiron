@@ -864,6 +864,9 @@ class Oneiron:
         def models(self) -> "Oneiron._VaultModelsVerbs":
             return Oneiron._VaultModelsVerbs(self._client)
         @property
+        def model_pack(self) -> "Oneiron._VaultModelPackVerbs":
+            return Oneiron._VaultModelPackVerbs(self._client)
+        @property
         def voices(self) -> "Oneiron._VaultVoicesVerbs":
             return Oneiron._VaultVoicesVerbs(self._client)
         @property
@@ -3685,6 +3688,9 @@ class Oneiron:
         @property
         def web_connector(self) -> "Oneiron._VaultSettingsWebConnectorVerbs":
             return Oneiron._VaultSettingsWebConnectorVerbs(self._client)
+        @property
+        def model_pack(self) -> "Oneiron._VaultSettingsModelPackVerbs":
+            return Oneiron._VaultSettingsModelPackVerbs(self._client)
     class _VaultSettingsLearningVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3721,6 +3727,15 @@ class Oneiron:
         def replace(self, spec):
             """Replaces the owner's web connector switch under the owner proof. Only Tavily runs on the backend key; other providers run on the owner's own secret (effector connector:web) or a hub connector."""
             return json.loads(_translate(lambda: self._client.vault_settings_web_connector_replace(json.dumps(spec))))
+    class _VaultSettingsModelPackVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Reads the owner's model pack setting: follow the latest pack (the default), a pinned season or a pinned pack, the pack it selects now, the last change and the pack before it, and every installed model pack."""
+            return json.loads(_translate(lambda: self._client.vault_settings_model_pack(json.dumps(spec))))
+        def replace(self, spec):
+            """Replaces the owner's model pack preference under the owner proof: auto_upgrade follows the latest pack; pinned names a season, pinned_pack one pack, installed and still served. A move of the active pack sends its change notice."""
+            return json.loads(_translate(lambda: self._client.vault_settings_model_pack_replace(json.dumps(spec))))
     class _VaultSecretsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -5111,6 +5126,12 @@ class Oneiron:
         def deny(self, spec):
             """Denies a pending model role-binding proposal as the owner without changing the incumbent manifest binding."""
             return json.loads(_translate(lambda: self._client.vault_models_bindings_deny(json.dumps(spec))))
+    class _VaultModelPackVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def revert(self, spec):
+            """Reverts a model pack change, its notice's one tap: pins the pack before it while the change is the vault's last and that pack is installed at its bytes and served; else answers why it cannot run now and changes nothing."""
+            return json.loads(_translate(lambda: self._client.vault_model_pack_revert(json.dumps(spec))))
     class _VaultVoicesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

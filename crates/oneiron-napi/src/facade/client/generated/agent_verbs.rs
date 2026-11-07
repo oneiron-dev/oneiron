@@ -8035,6 +8035,33 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_settings_model_pack(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.settings.model_pack", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_settings_model_pack_replace(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.settings.model_pack.replace", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_model_pack_revert(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.model_pack.revert", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_connectors_web_usage(
         &self,
         input: serde_json::Value,

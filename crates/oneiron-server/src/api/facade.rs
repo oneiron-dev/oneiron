@@ -134,6 +134,7 @@ mod merge_queue_doors;
 mod mesh_doors;
 mod model_catalog_doors;
 mod model_manifest_doors;
+mod model_pack_doors;
 mod model_step_doors;
 mod model_stream_doors;
 mod note_doors;

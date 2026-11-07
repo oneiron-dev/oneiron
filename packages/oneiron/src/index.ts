@@ -2049,6 +2049,11 @@ export class Oneiron {
         /** Replaces the owner's web connector switch under the owner proof. Only Tavily runs on the backend key; other providers run on the owner's own secret (effector connector:web) or a hub connector. */
         replace: (input: Facade.WebConnectorSetting): Facade.WebConnectorSetting => this.#call(() => this.#client.vaultSettingsWebConnectorReplace(input) as Facade.WebConnectorSetting),
       }),
+      /** Reads the owner's model pack setting: follow the latest pack (the default), a pinned season or a pinned pack, the pack it selects now, the last change and the pack before it, and every installed model pack. */
+      model_pack: Object.assign((input: Facade.EmptyRequest): Facade.ModelPackSetting => this.#call(() => this.#client.vaultSettingsModelPack(input) as Facade.ModelPackSetting), {
+        /** Replaces the owner's model pack preference under the owner proof: auto_upgrade follows the latest pack; pinned names a season, pinned_pack one pack, installed and still served. A move of the active pack sends its change notice. */
+        replace: (input: Facade.ModelPackPreference): Facade.ModelPackSetting => this.#call(() => this.#client.vaultSettingsModelPackReplace(input) as Facade.ModelPackSetting),
+      }),
     },
     secrets: {
       /** The owner lists value-free code-result secret lift proposals. With dismiss, one exact handle and occurrence is dismissed with a receipt first; secret and taint marks, body redaction and exports remain unchanged. */
@@ -2836,6 +2841,10 @@ export class Oneiron {
         /** Denies a pending model role-binding proposal as the owner without changing the incumbent manifest binding. */
         deny: (input: Facade.ModelBindingProposalRef): Facade.ModelBindingProposal => this.#call(() => this.#client.vaultModelsBindingsDeny(input) as Facade.ModelBindingProposal),
       },
+    },
+    model_pack: {
+      /** Reverts a model pack change, its notice's one tap: pins the pack before it while the change is the vault's last and that pack is installed at its bytes and served; else answers why it cannot run now and changes nothing. */
+      revert: (input: Facade.ModelPackRevertRequest): Facade.ModelPackRevert => this.#call(() => this.#client.vaultModelPackRevert(input) as Facade.ModelPackRevert),
     },
     voices: {
       packs: {

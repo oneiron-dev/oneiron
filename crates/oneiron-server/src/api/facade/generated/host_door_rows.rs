@@ -94,6 +94,9 @@
 //! - `vault.messages.react`
 //! - `vault.settings.web_connector`
 //! - `vault.settings.web_connector.replace`
+//! - `vault.settings.model_pack`
+//! - `vault.settings.model_pack.replace`
+//! - `vault.model_pack.revert`
 //! - `vault.connectors.web.usage`
 //! - `ai.anonymous_chat`
 //! - `vault.models.trials.resend_arm`
@@ -1763,6 +1766,9 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.messages.react"
                 | "vault.settings.web_connector"
                 | "vault.settings.web_connector.replace"
+                | "vault.settings.model_pack"
+                | "vault.settings.model_pack.replace"
+                | "vault.model_pack.revert"
                 | "vault.connectors.web.usage"
                 | "vault.models.trials.resend_arm"
                 | "ai.options"
