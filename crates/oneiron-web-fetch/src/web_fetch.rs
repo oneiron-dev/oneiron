@@ -20,19 +20,21 @@ use std::sync::Arc;
 
 use crate::web_acquisition::content_hash;
 pub use crate::web_acquisition::{
-    CrawlCompletion, CrawlPageBudget, CrawlPageFailure, CrawlRequest, CrawlResult, CrawlScope,
-    DEFAULT_MIN_EXTRACTED_CONTENT_BYTES, FetchResult, MinExtractedContentBytes,
-    RendererAttemptFailure, RendererError, RendererErrorKind, RendererKind, RendererResult,
-    WEB_FETCH_CONTENT_HASH_DOMAIN, WebFetchError, WebFetchResult,
+    CROSS_SITE_REDIRECT_REASON, CrawlCompletion, CrawlPageBudget, CrawlPageFailure, CrawlRequest,
+    CrawlResult, CrawlScope, DEFAULT_MIN_EXTRACTED_CONTENT_BYTES, FetchResult,
+    MinExtractedContentBytes, RendererAttemptFailure, RendererError, RendererErrorKind,
+    RendererKind, RendererResult, WEB_FETCH_CONTENT_HASH_DOMAIN, WebFetchError, WebFetchResult,
 };
 use reqwest::Url;
 
 mod client;
+mod context;
 mod door;
 mod egress;
 mod ladder;
 
-pub use client::{build_single_hop_client, build_web_fetch_client, hosted_dns_resolver};
+pub use client::{SingleHopClient, build_single_hop_client, hosted_dns_resolver};
+pub use context::{AcquisitionMode, PinnedOrigin, RenderContext};
 pub use door::{WebCrawlRequest, WebFetchRequest};
 pub use egress::{
     HOSTED_INFRASTRUCTURE_REASON, HOSTED_PRIVATE_NETWORK_REASON, HostedEgressGuard,
@@ -56,10 +58,6 @@ const DEFAULT_MAX_RESPONSE_BYTES: NonZeroUsize = match NonZeroUsize::new(8 * 102
     // A non-zero literal cannot land here.
     None => NonZeroUsize::MIN,
 };
-
-/// The exact reason literal recorded when a same-site walk lands on a foreign
-/// host through a post-fetch redirect.
-const CROSS_SITE_REDIRECT_REASON: &str = "cross_site_redirect";
 
 /// Fixed prefix of the rendered [`WebFetchError::AllRenderersFailed`] reason
 /// recorded against a non-seed crawl page.
@@ -88,21 +86,19 @@ pub struct RenderedPage {
 /// One rung of the fixed ladder.
 pub trait Renderer: Send + Sync {
     fn kind(&self) -> RendererKind;
-    fn render(&self, url: &str) -> RendererResult<RenderedPage>;
 
-    /// [`Self::render`] on a managed (hosted) node, which hands the rung its
-    /// egress guard (SCAN C447, FIX 6101): a rung that reaches the network
-    /// checks every hop and address it reaches with it, failing a refused one
-    /// with [`RendererError::hosted`]. The default renders
-    /// unchecked; the ladder still checks the requested URL before and the
+    /// Renders `url` in `context`, the page's [`RenderContext`]. A rung that
+    /// reaches the network holds every URL it contacts (the page, each
+    /// redirect hop, each navigation) to the context's pinned origin before
+    /// it resolves or sends it, failing one outside with
+    /// [`RendererError::cross_site_redirect`] (FIX 4734); and on a managed
+    /// (hosted) node checks every hop and address it reaches with the
+    /// context's egress guard, failing a refused one with
+    /// [`RendererError::hosted`] (SCAN C447, FIX 6101). A rung that cannot
+    /// do both for the work it is given refuses it before any network
+    /// activity. The ladder still checks the requested URL before and the
     /// navigation-final URL the rung hands back after.
-    fn render_guarded(
-        &self,
-        url: &str,
-        _guard: &HostedEgressGuard,
-    ) -> RendererResult<RenderedPage> {
-        self.render(url)
-    }
+    fn render(&self, url: &str, context: &RenderContext) -> RendererResult<RenderedPage>;
 }
 
 /// What a host browser returns for one navigation.
@@ -117,23 +113,19 @@ pub struct HeadlessDocument {
 
 /// Host-injected browser boundary. The engine owns no browser process or crate.
 pub trait HeadlessRenderer: Send + Sync {
-    fn render_html(&self, url: &str) -> RendererResult<HeadlessDocument>;
-
-    /// [`Self::render_html`] on a managed (hosted) node (SCAN C447,
-    /// FIX 6101): a browser that sees its own traffic checks every
-    /// navigation, redirect and request it makes, by the address it connects
-    /// to ([`HostedEgressGuard::check_request`]), and fails a refused one with
-    /// [`RendererError::hosted`]; a host that performs each
-    /// request itself can send it with [`build_single_hop_client`]. The
-    /// default navigates unchecked; the engine then checks only the requested
-    /// URL and the browser-final URL.
-    fn render_html_guarded(
-        &self,
-        url: &str,
-        _guard: &HostedEgressGuard,
-    ) -> RendererResult<HeadlessDocument> {
-        self.render_html(url)
-    }
+    /// Navigates to `url` in `context`, the page's [`RenderContext`]. The
+    /// browser holds each navigation it makes (the page's load, each
+    /// redirect hop, a script's or a meta refresh's move) to the context's
+    /// pinned origin before it is sent, failing one outside with
+    /// [`RendererError::cross_site_redirect`] (FIX 4734), and refuses an
+    /// in-page frame's document outside it unsent while the page renders on;
+    /// and on a managed (hosted) node checks every navigation, redirect and
+    /// request it makes by the address it connects to
+    /// ([`HostedEgressGuard::check_request`])
+    /// with the context's egress guard, failing a refused one with
+    /// [`RendererError::hosted`] (SCAN C447, FIX 6101). A browser that cannot
+    /// do both refuses the work before it navigates.
+    fn render_html(&self, url: &str, context: &RenderContext) -> RendererResult<HeadlessDocument>;
 }
 
 // ---------------------------------------------------------------------------
@@ -141,23 +133,25 @@ pub trait HeadlessRenderer: Send + Sync {
 // `rungs`)
 // ---------------------------------------------------------------------------
 
-/// Rung 1: one blocking GET plus native readability extraction.
+/// Rung 1: one blocking GET, each redirect hop followed by the rung itself,
+/// plus native readability extraction.
 ///
-/// The caller owns the client, and therefore owns timeout, redirect, proxy, and
-/// header policy. This adapter adds none of its own and holds no credential.
+/// The client follows no redirect ([`SingleHopClient`]), so every hop is
+/// checked here before it is sent (FIX 4734). This adapter holds no
+/// credential.
 #[derive(Clone)]
 pub struct NativeReadabilityRenderer {
-    client: reqwest::blocking::Client,
+    client: SingleHopClient,
     max_response_bytes: NonZeroUsize,
 }
 
 impl NativeReadabilityRenderer {
-    /// On a managed (hosted) node, a host that builds its own ladder builds
-    /// `client` with [`build_web_fetch_client`]`(Some(guard))`, so every
-    /// redirect hop it follows is checked too (FIX 7123). A client built
-    /// otherwise is used as handed in: this rung does not rebuild it.
+    /// A host builds `client` with [`build_single_hop_client`]: with a
+    /// managed (hosted) node's guard, every name it connects to resolves
+    /// through that guard (FIX 7123), and this rung checks every hop it
+    /// follows with the guard and a same-site crawl's pin before it sends it.
     #[must_use]
-    pub fn new(client: reqwest::blocking::Client) -> Self {
+    pub fn new(client: SingleHopClient) -> Self {
         Self {
             client,
             max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
@@ -260,7 +254,7 @@ impl WebFetcher {
     /// The readability rung is always present. Optional fallbacks stay visible
     /// as `Unavailable` attempt records when escalation reaches them. A host
     /// that supplies this ladder on a managed node builds the readability
-    /// rung's client with [`build_web_fetch_client`] (see
+    /// rung's client with [`build_single_hop_client`] (see
     /// [`NativeReadabilityRenderer::new`]).
     ///
     /// # Errors
@@ -314,7 +308,8 @@ impl WebFetcher {
     /// when no rung produced content.
     pub fn fetch(&self, url: &str, fetched_at: u64) -> WebFetchResult<FetchResult> {
         let parsed = parse_web_url(url)?;
-        let (result, _links, _final_url) = self.fetch_page(&parsed, fetched_at, false)?;
+        let (result, _links, _final_url) =
+            self.fetch_page(&parsed, fetched_at, RenderContext::single_page())?;
         Ok(result)
     }
 
@@ -323,6 +318,15 @@ impl WebFetcher {
     /// The budget counts *attempted* page fetches, not successes: a seed failure
     /// is a typed `Err`, and every non-seed failure consumes its unit, lands in
     /// [`CrawlResult::failed`], and the walk continues.
+    ///
+    /// A same-site walk holds every page after its seed to the seed's
+    /// navigation-final origin ([`PinnedOrigin`]) before any rung contacts
+    /// anything of it: a page, redirect hop or navigation outside it is
+    /// refused unsent, and the page is recorded as
+    /// [`CROSS_SITE_REDIRECT_REASON`] (FIX 4734). The seed is fetched with no
+    /// pin, so its own redirects are not held to an origin. A rung whose
+    /// redirects run on a remote service (Firecrawl) is used for no page of a
+    /// same-site walk, its seed's included.
     ///
     /// # Errors
     /// Returns [`WebFetchError::InvalidUrl`], [`WebFetchError::UnsupportedScheme`],
@@ -348,7 +352,8 @@ impl WebFetcher {
             walk.visited.insert(requested.clone());
 
             let is_seed = walk.pinned_origin.is_none();
-            match self.fetch_page(&current, request.fetched_at, true) {
+            let context = RenderContext::crawl_page(request.scope, walk.pinned_origin.clone());
+            match self.fetch_page(&current, request.fetched_at, context) {
                 Ok((page, links, final_url)) => {
                     // A URL reached through a redirect is skipped when it is
                     // later dequeued. This set also carries requested URLs
