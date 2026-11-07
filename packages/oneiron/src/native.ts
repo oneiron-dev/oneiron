@@ -423,6 +423,7 @@ vaultFederationBurstReview(input: unknown): unknown
 vaultFederationBurstReviewRelease(input: unknown): unknown
 vaultFederationBurstReviewReject(input: unknown): unknown
 vaultFederationBurstReplay(input: unknown): unknown
+vaultFederationStatus(input: unknown): unknown
 vaultFederationConnectIdentity(input: unknown): unknown
 vaultFederationConnectGrantsMint(input: unknown): unknown
 vaultFederationConnectOffer(input: unknown): unknown

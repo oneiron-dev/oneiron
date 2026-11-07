@@ -12231,6 +12231,40 @@ async fn vault_federation_burst_replay(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_federation_status(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.federation.status")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.federation.status", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.federation.status", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_federation_status(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_federation_connect_identity(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -43894,6 +43928,14 @@ fn boxed_vault_federation_burst_replay<'a>(
     Box::pin(vault_federation_burst_replay(server, call, input))
 }
 #[inline(never)]
+fn boxed_vault_federation_status<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_federation_status(server, call, input))
+}
+#[inline(never)]
 fn boxed_vault_federation_connect_identity<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
@@ -51839,6 +51881,7 @@ async fn call_verb_row(
         "vault.federation.burst.replay" => {
             boxed_vault_federation_burst_replay(server, call, input).await
         }
+        "vault.federation.status" => boxed_vault_federation_status(server, call, input).await,
         "vault.federation.connect.identity" => {
             boxed_vault_federation_connect_identity(server, call, input).await
         }

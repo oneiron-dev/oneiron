@@ -3797,6 +3797,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_federation_status(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.federation.status")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.federation.status", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_federation_connect_identity(
         &self,
         py: Python<'_>,

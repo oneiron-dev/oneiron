@@ -414,6 +414,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.federation.burst.review.release", post(facade_route))
         .route("/vault.federation.burst.review.reject", post(facade_route))
         .route("/vault.federation.burst.replay", post(facade_route))
+        .route("/vault.federation.status", post(facade_route))
         .route("/vault.federation.connect.identity", post(facade_route))
         .route("/vault.federation.connect.grants.mint", post(facade_route))
         .route("/vault.federation.connect.offer", post(facade_route))
