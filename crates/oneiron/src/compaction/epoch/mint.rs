@@ -500,7 +500,8 @@ pub(in crate::compaction) fn mint_epoch_summary_in_overlay(
 }
 
 /// What an epoch summary depends on for withdrawal: its request's sources,
-/// then each home part a self-written one's call wore that they do not name.
+/// then each home part a self-written one's call wore and each row its live
+/// fork's prefix was read from (FIX 9463) that they do not name.
 fn summary_dependencies(
     request: &CompactionRequest,
     writer: Option<&crate::compaction::CompactionExecution>,
@@ -508,7 +509,7 @@ fn summary_dependencies(
     let mut derived = request.sources.clone();
     for row in writer
         .into_iter()
-        .flat_map(crate::compaction::CompactionExecution::home_dependencies)
+        .flat_map(crate::compaction::CompactionExecution::input_dependencies)
     {
         if !derived.contains(&row) {
             derived.push(row);
