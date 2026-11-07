@@ -14,7 +14,7 @@ use super::CodeRevision;
 use crate::Vault;
 use crate::code_document::CodeDocumentFrontier;
 use crate::error::{ArtifactError, Error, Result};
-use crate::git_wire::{GitOid, GitWire, GitWireRepo};
+use crate::git_wire::{GitOid, GitWire, GitWireRepo, git_path_string};
 use crate::origin::tree::{MAX_TREE_FILE_BYTES, OriginTreeFile, start_tree_count};
 
 pub(crate) use crate::store::code_tree_blob::MODE_GITLINK;
@@ -130,8 +130,9 @@ impl CodeTreeInventoryRuntime for CodeTreeInventory {
         while let Some((prefix, oid)) = pending.pop() {
             for entry in git.read_tree(repo, &oid)? {
                 count.row();
-                let name = String::from_utf8(entry.name)
-                    .map_err(|_| invalid("tested tree paths must be UTF-8"))?;
+                // A name outside UTF-8 keeps its exact bytes as a Git
+                // path's text (FIX 21326).
+                let name = git_path_string(entry.name)?;
                 let path = if prefix.is_empty() {
                     name
                 } else {
@@ -319,7 +320,7 @@ impl CodeTreeInventory {
     /// 7349): an unchanged subtree is never read.
     ///
     /// # Errors
-    /// A missing object or a path that is not UTF-8.
+    /// A missing object, or a path holding NUL.
     pub(crate) fn changed_against(
         git: &GitWire<'_>,
         repo: &GitWireRepo,
@@ -336,8 +337,7 @@ impl CodeTreeInventory {
             })
         };
         let joined = |prefix: &str, name: Vec<u8>| -> Result<String> {
-            let name =
-                String::from_utf8(name).map_err(|_| invalid("tested tree paths must be UTF-8"))?;
+            let name = git_path_string(name)?;
             Ok(if prefix.is_empty() {
                 name
             } else {

@@ -11,12 +11,14 @@ use super::forks::{
 };
 use super::pins::{CitationPin, ENTITY_DOC_PIN, ENTITY_DOC_PURGE_RECEIPT, PurgeReceipt};
 use super::side_keys::HexPair;
+use super::succession::{Restored, Succession, origin_version};
 use super::{EntityDoc, ForkStatus, SettleVerb, storage};
 use crate::error::{ArtifactError, Error};
 use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot};
 use crate::side_table::HexId;
 use crate::store::Store;
 use crate::store::canonical_document::CanonicalDocumentFork;
+use crate::store::canonical_document::CanonicalDocumentOrigin;
 use crate::store::canonical_document::CanonicalDocumentPin;
 use crate::store::canonical_document::CanonicalDocumentPurge;
 use crate::store::canonical_document::CanonicalDocumentReceipt;
@@ -76,6 +78,7 @@ pub(crate) fn capture(
     }
     let head = storage::head(&vault.store, txn, &entity)?;
     let doc = storage::load(&vault.store, txn, &head)?;
+    let origin = origin(&head, &doc)?;
     Ok(Some(CanonicalEntityDocument {
         entity_id: bytes,
         document_id: raw(&head.document)?,
@@ -91,7 +94,28 @@ pub(crate) fn capture(
         birth_actor: raw_actor(doc.birth().actor),
         birth_at: doc.birth().at,
         history: history(&vault.store, txn, &entity, &doc)?,
+        origin,
     }))
+}
+
+/// Where `doc`, under `head`, is captured (FIX 3553): its incarnation and
+/// version here, or, while it is unchanged since a canonical restore
+/// rebuilt it, the history that restore replaced, so its recapture is the
+/// snapshot it came from. None for an incarnation that is no id.
+fn origin(head: &storage::Head, doc: &EntityDoc) -> Result<Option<CanonicalDocumentOrigin>> {
+    let version = doc.doc.oplog_vv();
+    if let Some(restored) = &head.restored
+        && VersionVector::decode(&restored.version).ok().as_ref() == Some(&version)
+    {
+        return restored.replaces.origin().map(Some);
+    }
+    Ok(EntityId::from_hex(&head.incarnation)
+        .ok()
+        .filter(|id| id.to_hex() == head.incarnation)
+        .map(|id| CanonicalDocumentOrigin {
+            incarnation: *id.as_bytes(),
+            version: origin_version(&version),
+        }))
 }
 
 /// The retained versions one capture names, one per version vector.
@@ -418,6 +442,10 @@ pub(crate) fn restore(
     ENTITY_DOC_PIN.delete_from(store, txn, &prefix(&entity))?;
     ENTITY_DOC_PURGE_RECEIPT.delete_from(store, txn, &prefix(&entity))?;
     let birth_actor = doc_actor(row.birth_actor)?;
+    // The rebuilt document names the history it replaces, the one its
+    // snapshot was captured at, so a peer holding exactly that incarnation
+    // adopts it (FIX 3553).
+    let replaces = row.origin.as_ref().map(Succession::of).transpose()?;
     let mut head = storage::Head {
         entity: entity.to_hex(),
         incarnation: EntityId::now().to_hex(),
@@ -426,6 +454,13 @@ pub(crate) fn restore(
         generation: 0,
         pending: 0,
         birth_frontier: None,
+        restored: None,
+    };
+    let restored = |doc: &EntityDoc| {
+        replaces.clone().map(|replaces| Restored {
+            replaces,
+            version: doc.doc.oplog_vv().encode(),
+        })
     };
     let slot = DocumentSlot::from_hex(&head.document)?;
     match &row.history {
@@ -434,12 +469,17 @@ pub(crate) fn restore(
             EntityDoc::replace_metadata(&doc.doc, &row.metadata)?;
             summary_meta::write(&doc.doc, &row.summary_meta)?;
             EntityDoc::set_record_fields(&doc.doc, &row.record_fields)?;
+            if let Some(replaces) = &replaces {
+                replaces.write(&doc.doc)?;
+            }
             super::document::restate_birth(&doc.doc);
+            head.restored = restored(&doc);
             storage::persist(vault, txn, &entity, &mut head, &doc, None)?;
             store.port_document_rows_delete(txn, slot, &[DocumentRow::ShallowSince])?;
         }
         Some(history) => {
-            let (doc, frontiers) = replay(entity, row, history)?;
+            let (doc, frontiers) = replay(entity, row, history, replaces.as_ref())?;
+            head.restored = restored(&doc);
             storage::persist(vault, txn, &entity, &mut head, &doc, None)?;
             if history.shallow {
                 store.port_document_shallow_since_put(
@@ -466,12 +506,18 @@ pub(crate) fn restore(
     Ok(())
 }
 
-/// Whether the live document already is `row`: its recapture is the row. A
-/// document that does not load (corrupt) is not, and is rebuilt; a storage
-/// failure is still an error.
+/// Whether the live document already is `row`: its recapture is the row,
+/// wherever either was captured (an origin is never the value). A document
+/// that does not load (corrupt) is not, and is rebuilt; a storage failure is
+/// still an error.
 fn holds(vault: &Vault, txn: &RoTxn<'_>, row: &CanonicalEntityDocument) -> Result<bool> {
     match capture(vault, txn, row.entity_id) {
-        Ok(live) => Ok(live.as_ref() == Some(row)),
+        Ok(live) => Ok(live.is_some_and(|live| {
+            CanonicalEntityDocument {
+                origin: row.origin.clone(),
+                ..live
+            } == *row
+        })),
         Err(error @ (Error::Storage(_) | Error::MapFull)) => Err(error),
         Err(_) => Ok(false),
     }
@@ -507,17 +553,22 @@ fn refuse_loss(
 }
 
 /// Replays the carried versions into fresh history: an empty birth commit,
-/// then each version as one commit on its parents, so the replayed causal
-/// order is the carried one. A purged document is cut at version 0 again.
-/// Each replayed commit restates the row's birth (FIX 10929).
+/// which holds the history `replaces` names too (FIX 3553), then each
+/// version as one commit on its parents, so the replayed causal order is
+/// the carried one. A purged document is cut at version 0 again. Each
+/// replayed commit restates the row's birth (FIX 10929).
 fn replay(
     entity: EntityId,
     row: &CanonicalEntityDocument,
     history: &CanonicalEntityDocumentHistory,
+    replaces: Option<&Succession>,
 ) -> Result<(EntityDoc, Vec<Frontiers>)> {
     let texts = history.texts()?;
     let doc = EntityDoc::rebuild_value(entity, "", doc_actor(row.birth_actor)?, row.birth_at)?;
     EntityDoc::set_record_fields(&doc.doc, &row.record_fields)?;
+    if let Some(replaces) = replaces {
+        replaces.write(&doc.doc)?;
+    }
     super::document::restate_birth(&doc.doc);
     let root = doc.doc.oplog_frontiers();
     let mut frontiers: Vec<Frontiers> = Vec::with_capacity(texts.len());

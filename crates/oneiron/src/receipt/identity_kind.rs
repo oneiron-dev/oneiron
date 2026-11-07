@@ -289,6 +289,13 @@ fn identity_topology_receipt(
             fields.insert("facet_count".to_owned(), facets.len().to_string());
             Some(format!("entity:{}", entity.to_hex()))
         }
+        // FIX 7814: a parked facet counts the masks its ruling would mint.
+        // The labels stay on the ledger event, never in the receipt.
+        StoredIdentityOpAction::ParkedFacet { entity, specs, .. } => {
+            fields.insert("entity".to_owned(), entity.to_hex());
+            fields.insert("facet_count".to_owned(), specs.len().to_string());
+            Some(format!("entity:{}", entity.to_hex()))
+        }
         // ONE-1746: the pair is the decision, and the claim is where it
         // lives — both projected so a reader can audit the assertion without
         // dereferencing the ledger event.

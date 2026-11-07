@@ -39,11 +39,10 @@ use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
 pub(crate) use events::{host_events_in_txn, log_in_txn, owner_events_in_txn};
-pub(crate) use notice::law_notice;
 pub(crate) use pending::{
     PendingErase, PendingEraseKind, drop_pending_erase_in_txn, due_erases_in_txn,
     erases_without_act_in_txn, pending_erase_in_txn, put_pending_erase_in_txn,
-    set_pending_veto_act_in_txn, use_limit_pending_privacy_in_txn, withdraw_pending_erase_in_txn,
+    set_pending_veto_act_in_txn, withdraw_pending_erase_in_txn,
 };
 pub(crate) use settlement::RefusalBatch;
 #[cfg(feature = "sync")]
@@ -76,9 +75,6 @@ const HOST_ROWS: Rows = SideTable::new(&side_table::LEGAL_HOLD_HOST_ROW);
 /// deletion receipt completes. Key: id16 (record).
 const ERASE_LINKS: SideTable<EntityId, EraseLink, Named> =
     SideTable::new(&side_table::LEGAL_HOLD_ERASE_LINK);
-/// The host orders an owner's confirmed erase met. Key: id16 (record).
-const HOST_ERASE_LINKS: SideTable<EntityId, EraseLink, Named> =
-    SideTable::new(&side_table::LEGAL_HOLD_HOST_ERASE_LINK);
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EraseLink {
@@ -162,6 +158,49 @@ impl RefusalNote {
     /// The same refusal, whenever it happened.
     fn same(&self, other: &Self) -> bool {
         self.hold == other.hold && self.target == other.target && self.actor == other.actor
+    }
+}
+
+/// A per-vault wake for a HOST order's prospective capture worker
+/// (LEGAL-HOLD-USE = B as a clone, FIX 13866). A writer that seals a new
+/// message into an outbox bumps it inside that writer; the worker records the
+/// generation, then takes the LMDB writer as a barrier before it reads, so a
+/// bump it saw is never read before its writer ended. Never persisted.
+#[derive(Debug, Default)]
+pub(crate) struct ProspectiveWake {
+    generation: Mutex<u64>,
+    changed: std::sync::Condvar,
+}
+
+impl ProspectiveWake {
+    /// The current generation.
+    pub(crate) fn generation(&self) -> u64 {
+        *self
+            .generation
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Moves the generation and wakes every waiter.
+    pub(crate) fn bump(&self) {
+        let mut generation = self
+            .generation
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        *generation = generation.wrapping_add(1);
+        self.changed.notify_all();
+    }
+
+    /// Waits until the generation is no longer `seen`, or `timeout` passes.
+    pub(crate) fn wait_past(&self, seen: u64, timeout: std::time::Duration) {
+        let generation = self
+            .generation
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let _ = self
+            .changed
+            .wait_timeout_while(generation, timeout, |generation| *generation == seen)
+            .unwrap_or_else(PoisonError::into_inner);
     }
 }
 
@@ -498,14 +537,10 @@ pub(crate) fn link_erase_in_txn(
     record: &EntityId,
     hold: &LegalHold,
 ) -> Result<()> {
-    let links = match hold.kind {
-        LegalHoldKind::Customer => ERASE_LINKS,
-        LegalHoldKind::HostOrder => HOST_ERASE_LINKS,
-    };
-    let mut link = links.get(dbs, txn, record)?.unwrap_or_default();
+    let mut link = ERASE_LINKS.get(dbs, txn, record)?.unwrap_or_default();
     if !link.holds.contains(&hold.hold_id) {
         link.holds.push(hold.hold_id);
-        links.put(dbs, txn, record, &link)?;
+        ERASE_LINKS.put(dbs, txn, record, &link)?;
     }
     Ok(())
 }
@@ -513,21 +548,18 @@ pub(crate) fn link_erase_in_txn(
 /// Drops the links `record`'s coming erase holds to the holds its confirm
 /// met, once the owner withdrew that erase (FIX 10401): no erase of it is
 /// coming, so none of them is owed an "erase completed" event. Returns those
-/// holds, customer then host-order, for their logs.
+/// holds, for their logs.
 pub(crate) fn unlink_erase_in_txn(
     dbs: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,
     record: &EntityId,
 ) -> Result<Vec<LegalHold>> {
     let mut holds = Vec::new();
-    for links in [ERASE_LINKS, HOST_ERASE_LINKS] {
-        let Some(link) = links.get(dbs, txn, record)? else {
-            continue;
-        };
+    if let Some(link) = ERASE_LINKS.get(dbs, txn, record)? {
         for id in &link.holds {
             holds.extend(hold_in_txn(dbs, txn, id)?);
         }
-        links.delete(dbs, txn, record)?;
+        ERASE_LINKS.delete(dbs, txn, record)?;
     }
     Ok(holds)
 }
@@ -549,27 +581,25 @@ pub(crate) fn note_erase_completed_in_txn(
         let Ok(record) = EntityId::from_hex(hex) else {
             continue;
         };
-        for links in [ERASE_LINKS, HOST_ERASE_LINKS] {
-            let Some(link) = links.get(dbs, txn, &record)? else {
-                continue;
-            };
-            for id in &link.holds {
-                if let Some(hold) = hold_in_txn(dbs, txn, id)? {
-                    log_in_txn(
-                        dbs,
-                        txn,
-                        &hold,
-                        LegalHoldEventKind::EraseCompleted,
-                        LegalHoldReason::ReceiptCompleted,
-                        vec![LegalHoldTarget::Record(record)],
-                        &HoldActor::TIMER,
-                        at,
-                        Some(request_id.to_owned()),
-                    )?;
-                }
+        let Some(link) = ERASE_LINKS.get(dbs, txn, &record)? else {
+            continue;
+        };
+        for id in &link.holds {
+            if let Some(hold) = hold_in_txn(dbs, txn, id)? {
+                log_in_txn(
+                    dbs,
+                    txn,
+                    &hold,
+                    LegalHoldEventKind::EraseCompleted,
+                    LegalHoldReason::ReceiptCompleted,
+                    vec![LegalHoldTarget::Record(record)],
+                    &HoldActor::TIMER,
+                    at,
+                    Some(request_id.to_owned()),
+                )?;
             }
-            links.delete(dbs, txn, &record)?;
         }
+        ERASE_LINKS.delete(dbs, txn, &record)?;
     }
     Ok(())
 }
@@ -744,21 +774,19 @@ pub(crate) fn expire_in_txn(dbs: &impl SideTableDbs, txn: &mut RwTxn<'_>, now: u
     if gone.is_empty() {
         return Ok(removed);
     }
-    for links in [ERASE_LINKS, HOST_ERASE_LINKS] {
-        let mut changed = BTreeMap::new();
-        for (record, mut link) in links.scan(dbs, txn)? {
-            let before = link.holds.len();
-            link.holds.retain(|hold| !gone.contains(hold));
-            if link.holds.len() != before {
-                changed.insert(record, link);
-            }
+    let mut changed = BTreeMap::new();
+    for (record, mut link) in ERASE_LINKS.scan(dbs, txn)? {
+        let before = link.holds.len();
+        link.holds.retain(|hold| !gone.contains(hold));
+        if link.holds.len() != before {
+            changed.insert(record, link);
         }
-        for (record, link) in changed {
-            if link.holds.is_empty() {
-                links.delete(dbs, txn, &record)?;
-            } else {
-                links.put(dbs, txn, &record, &link)?;
-            }
+    }
+    for (record, link) in changed {
+        if link.holds.is_empty() {
+            ERASE_LINKS.delete(dbs, txn, &record)?;
+        } else {
+            ERASE_LINKS.put(dbs, txn, &record, &link)?;
         }
     }
     Ok(removed)
