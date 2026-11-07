@@ -41,6 +41,7 @@ mod container_dirs;
 #[cfg(test)]
 mod ctl_shed_tests;
 mod host;
+mod host_legal;
 mod isolation;
 pub mod key_sync;
 mod ledger;
@@ -70,8 +71,8 @@ mod shed;
 pub(crate) use self::peer::UnixPeer;
 mod state_serve;
 pub(crate) use state_serve::{
-    ManagedCarrierContext, ManagedIngress, ManagedOwnerHolder, ManagedOwnerSession,
-    ManagedPersonHolder, ManagedPersonSession, ManagedWidenHolder,
+    CarrierAdmission, ManagedCarrierContext, ManagedIngress, ManagedOwnerHolder,
+    ManagedOwnerSession, ManagedPersonHolder, ManagedPersonSession, ManagedWidenHolder,
 };
 mod vault_gates;
 #[cfg(target_os = "linux")]
