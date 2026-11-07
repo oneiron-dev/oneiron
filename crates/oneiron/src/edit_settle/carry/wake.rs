@@ -42,7 +42,7 @@ impl Vault {
             if asked && let Some(read) = &read {
                 crate::llm::decision::questions::record_failed_standing_reask(
                     self,
-                    &standing_reask(wake, read, &[], now),
+                    &standing_reask(wake, read, &[], now, None),
                     error.kind(),
                 );
             }
@@ -137,7 +137,7 @@ impl Vault {
         {
             return Ok((Reasked::Nothing, reask_ref));
         }
-        let (proposal, units, read_rows) = match &wake.shape {
+        let (proposal, units, read_rows, next_sheet_row) = match &wake.shape {
             ReaskShape::SheetRows {
                 sheet,
                 answer_col,
@@ -156,6 +156,7 @@ impl Vault {
                 else {
                     return Ok((Reasked::Nothing, reask_ref));
                 };
+                let selected: SheetRowSelection = rows.iter().copied().collect();
                 let run = self.ask_blob_artifact_sheet_rows(
                     &wake.artifact,
                     &SheetRowsAsk {
@@ -174,11 +175,11 @@ impl Vault {
                         answer_col: *answer_col,
                         header_row: reads.header_row,
                         max_count_override: *max_count_override,
-                        only_rows: Some(&rows),
+                        only_rows: Some(&selected),
                     },
                 )?;
                 let units = crate::llm::decision::questions::artifact_unit_receipts(&run);
-                (run.proposal, units, run.read_rows)
+                (run.proposal, units, run.read_rows, run.next_sheet_row)
             }
             ReaskShape::FolderItems {
                 sheet,
@@ -227,7 +228,7 @@ impl Vault {
                     },
                 )?;
                 let units = crate::llm::decision::questions::artifact_unit_receipts(&run);
-                (run.proposal, units, run.read_rows)
+                (run.proposal, units, run.read_rows, run.next_sheet_row)
             }
             ReaskShape::Paragraphs { author, labels } => {
                 let blocks: Vec<String> = wake
@@ -251,7 +252,7 @@ impl Vault {
                     },
                 )?;
                 let units = crate::llm::decision::questions::artifact_unit_receipts(&run);
-                (run.proposal, units, run.read_rows)
+                (run.proposal, units, run.read_rows, run.next_sheet_row)
             }
             ReaskShape::Slides { author, labels } => {
                 let bytes = self
@@ -332,7 +333,7 @@ impl Vault {
                 })?;
                 // Standing artifact questions never ask slides, so a slide re-ask
                 // logs nowhere; it carries no unit receipts.
-                (run.proposal, Vec::new(), run.read_rows)
+                (run.proposal, Vec::new(), run.read_rows, None)
             }
         };
         Ok((
@@ -340,6 +341,7 @@ impl Vault {
                 proposal,
                 units,
                 read_rows,
+                next_sheet_row,
             },
             reask_ref,
         ))

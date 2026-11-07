@@ -293,4 +293,63 @@ impl Vault {
             }
         }
     }
+
+    /// A typed preview on the engine's document-memory operation, under the
+    /// capability and the caller's existing credential ceiling. The same
+    /// canonical/hash snapshot reader admits actual FILE/inline ASSET bodies
+    /// before allocation; record-head bodies retain their post-read admission.
+    pub(super) fn esign_preview_for_capability_admitted_within(
+        &self,
+        token: &EsignCapability,
+        item: usize,
+        caller: super::SigningCaller,
+        verified_actor: Option<EntityId>,
+        resources: &oneiron_docedit::resource::Resources,
+        ceiling: &dyn Fn(&heed::RoTxn<'_>, EntityId) -> Result<bool>,
+    ) -> Result<(super::SigningPage, Vec<u8>, oneiron_docedit::resource::Hold)> {
+        use crate::entity_doc::document_resources::machine_memory_refused;
+        let super::SigningOutcome::Page(page) = self.execute_signing_action_within(
+            token,
+            &SigningAction::Load,
+            caller,
+            verified_actor,
+            None,
+            None,
+            ceiling,
+        )?
+        else {
+            return Err(invalid("preview is unavailable"));
+        };
+        let pair =
+            self.esign_pdf_after_admission_with(token, item, ceiling, |txn, artifact, version| {
+                self.read_blob_artifact_version_in_txn_with(txn, artifact, version, |txn, hash| {
+                    let admitted = self
+                        .blob_get_with_body_admission(txn, hash, |len| {
+                            resources
+                                .reserve(len)
+                                .map(|hold| (hold, len))
+                                .map_err(machine_memory_refused)
+                        })
+                        .map_err(|error| match error {
+                            crate::ports::BodyReadError::Store(error) => error,
+                            crate::ports::BodyReadError::Admission(error) => error,
+                        })?;
+                    admitted.ok_or(crate::Error::EntityNotFound)
+                })
+            })?;
+        let (buffered, guard) = pair;
+        let actual = u64::try_from(buffered.capacity()).unwrap_or(u64::MAX);
+        let (mut hold, reserved) = match guard {
+            Some(guard) => guard,
+            None => (
+                resources.reserve(actual).map_err(machine_memory_refused)?,
+                actual,
+            ),
+        };
+        // The bytes drop before their hold if capacity settlement is refused.
+        let bytes = buffered;
+        hold.take(actual.saturating_sub(reserved))
+            .map_err(machine_memory_refused)?;
+        Ok((page, bytes, hold))
+    }
 }

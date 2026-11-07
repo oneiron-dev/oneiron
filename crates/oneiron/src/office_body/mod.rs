@@ -78,8 +78,8 @@ pub use oneiron_docedit::contract::{
 pub use oneiron_docedit::live::LandingReceipt;
 pub use oneiron_docedit::retained_opc::Limits as PackageLimits;
 pub use oneiron_docedit::xlsx_body::{
-    CachedValuesWritten, XlsxArea, XlsxBook, XlsxLock, XlsxSheetVisibility, XlsxStyle, XlsxTable,
-    XlsxValue, write_cached_values,
+    CachedValuesWritten, XlsxArea, XlsxBook, XlsxCellRecalc, XlsxLock, XlsxSheetVisibility,
+    XlsxStyle, XlsxTable, XlsxValue, write_cached_values,
 };
 pub use pptx::merge_deck_peers;
 pub use pptx::{
@@ -135,8 +135,8 @@ pub use oneiron_docedit::resource::{RESERVE_STEP, ResourcePort, ResourceRefusal,
 use records::{EXPORT_AUTHORS, EXPORTS, FORKS, OfficeBodyRead, OfficeBodySource, SOURCES};
 pub use records::{
     ForkState, OfficeBodyEdit, OfficeBodyExport, OfficeBodyExportAuthor, OfficeBodyExportRecord,
-    OfficeBodyExportRequest, OfficeBodyFork, OfficeBodyHead, OfficeBodyKind, OfficeRecalcZone,
-    XlsxPreview,
+    OfficeBodyExportRequest, OfficeBodyFork, OfficeBodyHead, OfficeBodyKind, OfficeRecalcFailure,
+    OfficeRecalcZone, XlsxPreview,
 };
 pub use resources::{
     DocumentMemory, document_resources, document_resources_until, register_document_memory,

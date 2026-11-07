@@ -178,6 +178,10 @@ pub(super) enum PlaceInput {
         slide: u64,
         shape_id: String,
     },
+    File {
+        char_start: u64,
+        char_end: u64,
+    },
 }
 
 #[derive(Deserialize)]
@@ -1089,6 +1093,13 @@ fn place_json(locator: &Locator) -> Value {
         Locator::Pptx { slide, shape_id } => {
             json!({ "pptx": { "slide": slide, "shape_id": shape_id } })
         }
+        Locator::File {
+            char_start,
+            char_end,
+        } => json!({ "file": {
+            "char_start": char_start,
+            "char_end": char_end,
+        } }),
         _ => Value::Null,
     }
 }
@@ -1102,6 +1113,10 @@ fn place_locator(place: PlaceInput) -> Result<Locator, ApiError> {
             char_end,
         } => Locator::docx(para_path, char_start, char_end),
         PlaceInput::Pptx { slide, shape_id } => Locator::pptx(slide, shape_id),
+        PlaceInput::File {
+            char_start,
+            char_end,
+        } => Locator::file(char_start, char_end),
     }
     .map_err(|_| ApiError::bad_request("place is not a valid locator", Some("place")))
 }
@@ -1169,6 +1184,9 @@ pub(super) async fn unattached(
     let threads = blocking_read(move || {
         let vault = server.vault();
         let threads = match caveat_lane(vault, &auth)? {
+            None if sight == oneiron::secret_custody::SecretSight::Masked => {
+                vault.unattached_annotation_threads_file_sighted(&id, sight)
+            }
             None => vault.unattached_annotation_threads(&id),
             // A credential with record caveats sees a thread only from rows
             // its lane admits, its words read through its sight (FIX 8063).
@@ -1223,6 +1241,9 @@ pub(super) async fn reattach_offers(
     let offers = blocking_read(move || {
         let vault = server.vault();
         let offers = match caveat_lane(vault, &auth)? {
+            None if sight == oneiron::secret_custody::SecretSight::Masked => {
+                vault.annotation_reattach_offers_file_sighted(&id, sight)
+            }
             None => vault.annotation_reattach_offers(&id),
             // Offers start from the threads the lane is served, and read the
             // head through its sight once its rows are admitted (FIX 8063).
@@ -1277,6 +1298,7 @@ pub(super) async fn reattach(
     let thread = parse_entity_id_param(&thread, "thread")?;
     let request = json_payload(payload)?;
     let locator = place_locator(request.place)?;
+    let sight = reader_sight(&auth);
     let reattached = blocking("reattach failed", move || {
         let (occurred, now) = moment(&server);
         server.vault().reattach_annotation_thread(
@@ -1284,6 +1306,7 @@ pub(super) async fn reattach(
             &thread,
             request.version,
             &locator,
+            sight,
             actor,
             occurred,
             now,

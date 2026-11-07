@@ -3343,6 +3343,9 @@ impl OneironClient {
                 "vault.esign.signing.signature" => remote_agent_verb_output::<
                     oneiron::blob_artifact::esign::EsignSigningSignatureView,
                 >(client, verb, &input),
+                "vault.esign.signing.preview" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::esign::EsignSigningPreviewView,
+                >(client, verb, &input),
                 "vault.esign.seal.get" => remote_agent_verb_output::<
                     oneiron::blob_artifact::esign::EsignSealView,
                 >(client, verb, &input),
@@ -17215,6 +17218,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.esign.signing.signature", value)
+    }
+    pub fn vault_esign_signing_preview(
+        &self,
+        input: &oneiron::blob_artifact::esign::EsignSigningPreviewRequest,
+    ) -> Result<oneiron::blob_artifact::esign::EsignSigningPreviewView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.esign.signing.preview", value)
     }
     pub fn vault_esign_seal_get(
         &self,

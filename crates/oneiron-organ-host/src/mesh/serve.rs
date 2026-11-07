@@ -465,6 +465,8 @@ impl AskHandler for Forward {
     fn answer(&self, ask: &AskRequest<'_>) -> Result<Answered, AskRefusal> {
         let remaining = ask.deadline.saturating_duration_since(Instant::now());
         let peer = PeerAsk {
+            call: ask.call,
+            id: ask.id,
             organ: ask.organ.to_owned(),
             verb: ask.verb.to_owned(),
             value: ask.value.clone(),

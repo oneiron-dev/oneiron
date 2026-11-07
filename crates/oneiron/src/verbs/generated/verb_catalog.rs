@@ -1102,6 +1102,7 @@ pub enum AgentVerb {
     VaultEsignSigningPdf,
     VaultEsignSigningImage,
     VaultEsignSigningSignature,
+    VaultEsignSigningPreview,
     VaultEsignSealGet,
     VaultConversationsCreate,
     VaultConversationsTurnsCreate,
@@ -2406,6 +2407,7 @@ impl AgentVerb {
         Self::VaultEsignSigningPdf,
         Self::VaultEsignSigningImage,
         Self::VaultEsignSigningSignature,
+        Self::VaultEsignSigningPreview,
         Self::VaultEsignSealGet,
         Self::VaultConversationsCreate,
         Self::VaultConversationsTurnsCreate,
@@ -3743,6 +3745,7 @@ impl AgentVerb {
             Self::VaultEsignSigningPdf => "vault.esign.signing.pdf",
             Self::VaultEsignSigningImage => "vault.esign.signing.image",
             Self::VaultEsignSigningSignature => "vault.esign.signing.signature",
+            Self::VaultEsignSigningPreview => "vault.esign.signing.preview",
             Self::VaultEsignSealGet => "vault.esign.seal.get",
             Self::VaultConversationsCreate => "vault.conversations.create",
             Self::VaultConversationsTurnsCreate => "vault.conversations.turns.create",
@@ -5031,6 +5034,7 @@ impl AgentVerb {
                 | Self::VaultEsignSigningPdf
                 | Self::VaultEsignSigningImage
                 | Self::VaultEsignSigningSignature
+                | Self::VaultEsignSigningPreview
                 | Self::VaultEsignSealGet
                 | Self::VaultConversationsCreate
                 | Self::VaultConversationsTurnsCreate
@@ -6364,6 +6368,7 @@ impl AgentVerb {
                 | Self::VaultEsignSigningPdf
                 | Self::VaultEsignSigningImage
                 | Self::VaultEsignSigningSignature
+                | Self::VaultEsignSigningPreview
                 | Self::VaultEsignSealGet
                 | Self::VaultConversationsCreate
                 | Self::VaultConversationsTurnsCreate
@@ -6781,6 +6786,7 @@ impl AgentVerb {
                 | Self::VaultEsignSigningPdf
                 | Self::VaultEsignSigningImage
                 | Self::VaultEsignSigningSignature
+                | Self::VaultEsignSigningPreview
                 | Self::VaultEsignSealGet
                 | Self::VaultClaimsSeed
                 | Self::VaultSummariesRead
@@ -9916,6 +9922,7 @@ impl AgentVerb {
             Self::VaultEsignSigningPdf => &["spec"],
             Self::VaultEsignSigningImage => &["spec"],
             Self::VaultEsignSigningSignature => &["spec"],
+            Self::VaultEsignSigningPreview => &["spec"],
             Self::VaultEsignSealGet => &["spec"],
             Self::VaultConversationsCreate => &["spec"],
             Self::VaultConversationsTurnsCreate => &["spec"],
@@ -11221,6 +11228,7 @@ impl AgentVerb {
             Self::VaultEsignSigningPdf => &["spec"],
             Self::VaultEsignSigningImage => &["spec"],
             Self::VaultEsignSigningSignature => &["spec"],
+            Self::VaultEsignSigningPreview => &["spec"],
             Self::VaultEsignSealGet => &["spec"],
             Self::VaultConversationsCreate => &["spec"],
             Self::VaultConversationsTurnsCreate => &["spec"],
@@ -14640,6 +14648,9 @@ impl AgentVerb {
             }
             Self::VaultEsignSigningSignature => {
                 "Reads back one stored signature image under the signing capability that uploaded it, as base64 bytes."
+            }
+            Self::VaultEsignSigningPreview => {
+                "The page geometry and field layout of one ceremony item under its signing capability, for the signing page to draw its fields."
             }
             Self::VaultEsignSealGet => {
                 "Where one signing document seal task stands: its folded status, every seal attempt receipt, its sealed manifest once sealed, and its delivery receipts. A trail that does not read answers trail unreadable with its error."

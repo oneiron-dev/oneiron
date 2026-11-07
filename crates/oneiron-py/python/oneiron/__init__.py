@@ -5477,6 +5477,9 @@ class Oneiron:
         def signature(self, spec):
             """Reads back one stored signature image under the signing capability that uploaded it, as base64 bytes."""
             return json.loads(_translate(lambda: self._client.vault_esign_signing_signature(json.dumps(spec))))
+        def preview(self, spec):
+            """The page geometry and field layout of one ceremony item under its signing capability, for the signing page to draw its fields."""
+            return json.loads(_translate(lambda: self._client.vault_esign_signing_preview(json.dumps(spec))))
     class _VaultEsignSealVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

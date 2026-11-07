@@ -5381,6 +5381,11 @@ export_facade! {
     let output = client.vault_esign_signing_signature(&input)?;
     crate::codec::lift_record("vault.esign.signing.signature", &output)
 };
+"vault.esign.signing.preview" => fn vault_esign_signing_preview(&self, input: EsignSigningPreviewRequest) -> EsignSigningPreviewView = |client| {
+    let input: oneiron::blob_artifact::esign::EsignSigningPreviewRequest = crate::codec::lower_record("vault.esign.signing.preview", input)?;
+    let output = client.vault_esign_signing_preview(&input)?;
+    crate::codec::lift_record("vault.esign.signing.preview", &output)
+};
 "vault.esign.seal.get" => fn vault_esign_seal_get(&self, input: EsignSealGetRequest) -> EsignSealView = |client| {
     let input: oneiron::blob_artifact::esign::EsignSealGetRequest = crate::codec::lower_record("vault.esign.seal.get", input)?;
     let output = client.vault_esign_seal_get(&input)?;

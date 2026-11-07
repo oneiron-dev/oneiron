@@ -729,6 +729,10 @@ fn hash_source_trust_row(hasher: &mut Sha256, row: Option<SourceTrustRow>) {
     // resolve unchanged under another.
     let actor_ref = row.actor_ref.as_ref().map(EntityId::to_hex);
     hash_opt_str(hasher, actor_ref.as_deref());
+    if let Some(checker) = row.auto_checker {
+        hash_str(hasher, "source_auto_checker");
+        hash_str(hasher, checker.as_str());
+    }
 }
 
 fn hash_owner_policy_row(hasher: &mut Sha256, row: &PolicyOwnerPolicyRow) {
