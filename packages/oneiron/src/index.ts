@@ -2435,6 +2435,10 @@ export class Oneiron {
         publications: (input: Facade.OriginPublicationsRequest): Facade.OriginPublicationsView => this.#call(() => this.#client.vaultCodeOriginPublications(input) as Facade.OriginPublicationsView),
       },
       checkout: {
+        holder: {
+          /** Materialize the caller's own live checkout without a run. One current repo read Grant must cover the full ref at the lease's pinned commit and every path of that tree. Returns the lease-bound remote URL, not a host path; no lease is minted. */
+          bind: (input: Facade.RepoCheckoutBindInput): Facade.RepoCheckoutBindOutput => this.#call(() => this.#client.vaultCodeCheckoutHolderBind(input) as Facade.RepoCheckoutBindOutput),
+        },
         /** Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential. */
         bind: (input: Facade.CheckoutDoorBindRequest): Facade.CheckoutDoorBinding => this.#call(() => this.#client.vaultCodeCheckoutBind(input) as Facade.CheckoutDoorBinding),
         /** Claim the caller's checkout on an assigned task, with a bounded TTL and declared idempotence. */

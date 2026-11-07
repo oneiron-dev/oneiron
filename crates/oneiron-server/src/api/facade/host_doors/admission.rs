@@ -730,6 +730,9 @@ pub(in crate::api::facade) fn door_admits(
         Row::VaultCodeExportPreview | Row::VaultCodeExportPreviewRead => {
             crate::api::facade::origin_doors::preview_admits(server, auth, verb)
         }
+        Row::VaultCodeCheckoutHolderBind => {
+            crate::api::facade::origin_doors::checkout_holder_admits(server, auth)
+        }
         // The vault's review policy rows (FIX 8268): a live Owner, or a bound
         // principal whose one Grant the engine door admits.
         Row::VaultCodeMergeQueueReviewPolicyGet | Row::VaultCodeMergeQueueReviewPolicySet => {
