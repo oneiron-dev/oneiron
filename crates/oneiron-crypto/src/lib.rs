@@ -14,6 +14,7 @@ mod codec;
 mod envelope;
 mod error;
 mod keys;
+pub mod legal_clone;
 mod nonce;
 mod record;
 #[cfg(all(
@@ -25,6 +26,7 @@ mod record;
 pub mod stack_probe;
 mod stretch;
 mod suite;
+pub mod totp;
 
 pub use crate::envelope::{
     Envelope, Header, Kdf, ONEV_HEADER_PREFIX_MAX, ONEV_HEADER_PREFIX_MIN, OpenKey, OpenPolicy,

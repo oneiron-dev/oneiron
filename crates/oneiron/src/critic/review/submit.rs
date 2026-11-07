@@ -67,15 +67,16 @@ pub struct CriticBinding {
     pub lens_id: String,
     /// The lens's stored SKILL, 32-hex.
     pub lens_ref: String,
-    /// The actor executing the lens, 32-hex.
+    /// The actor executing the lens, 32-hex: the review's authenticated
+    /// caller, as its credential names it.
     pub actor_ref: String,
-    /// That actor's class: 0 human, 1 agent, 2 system.
+    /// That actor's class: 0 human, 1 agent, 2 system; the caller's own.
     pub actor_class: u8,
 }
 
 /// What a review gave back: the verdict claim, the triage, each lens's
-/// artifact and one receipt per typed question asked (none when the review
-/// replayed from its cache).
+/// artifact and one receipt per typed question asked (on a replay from its
+/// cache, the first ask's; none for a review cached before they were kept).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CriticReviewOutcome {
     pub verdict_claim_ref: String,
@@ -110,10 +111,21 @@ impl CriticReviewSubmit {
             .map(|critic| {
                 let class = EdgeActorClass::try_from_u8(critic.actor_class)
                     .ok_or_else(|| invalid("a critic's actor class is 0, 1 or 2"))?;
+                let named = WriteActor::new(EntityId::from_hex(&critic.actor_ref)?, class);
+                // A lens runs as the review's authenticated caller: a critic
+                // label naming anyone else would author its critique and its
+                // dissent as them (FIX 9779).
+                if named.entity_ref() != actor.entity_ref()
+                    || named.actor_class() != actor.actor_class()
+                {
+                    return Err(invalid(
+                        "a critic runs as the review's authenticated caller and class",
+                    ));
+                }
                 Ok(ReviewCritic {
                     lens_id: critic.lens_id.clone(),
                     lens_ref: EntityId::from_hex(&critic.lens_ref)?,
-                    actor: WriteActor::new(EntityId::from_hex(&critic.actor_ref)?, class),
+                    actor,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
