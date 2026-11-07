@@ -22,7 +22,7 @@ use oneiron::runtime_hooks::VerbHookStop;
 use oneiron::skill_attribution::run_write_token_of_origin;
 use tower::ServiceExt;
 
-use super::super::host_doors::support::with_calling_run_writes;
+use super::super::host_doors::support::{with_calling_action_program, with_calling_run_writes};
 use super::super::{FacadeApiError, FacadeCallOutput};
 use crate::api::call_receipt::{
     self, CallStamp, HeldOuterAttempt, RECEIPT_REF_HEADER, attempt_collector,
@@ -291,9 +291,11 @@ impl FacadeRowDoor {
                     });
                 let _ = sender.send((stamp, answer));
             };
+            // An action program's row: a whole-vault export it calls
+            // follows the world settings (FIX 9591).
             self.runtime.spawn(with_attempt_collector(
                 self.collector.clone(),
-                with_calling_run_writes(run_writes, row),
+                with_calling_run_writes(run_writes, with_calling_action_program(row)),
             ));
             let Ok((stamp, answer)) = receiver.recv() else {
                 return Ok(Err(refused()));
@@ -334,7 +336,7 @@ impl FacadeRowDoor {
         };
         self.runtime.spawn(with_attempt_collector(
             self.collector.clone(),
-            with_calling_run_writes(run_writes, row),
+            with_calling_run_writes(run_writes, with_calling_action_program(row)),
         ));
         let Ok((stamp, answer)) = receiver.recv() else {
             return Ok(Err(refused()));

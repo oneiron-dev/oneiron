@@ -276,6 +276,7 @@ impl DecisionProvider for GrantRule {
                 paired: None,
                 person: None,
                 served: None,
+                cost_per_thousand: None,
             });
         }
         match &self.inner {
@@ -286,6 +287,7 @@ impl DecisionProvider for GrantRule {
                 paired: None,
                 person: None,
                 served: None,
+                cost_per_thousand: None,
             }),
         }
     }

@@ -29,7 +29,7 @@ use super::response_erase::{fence_replay_in_txn, response_erased_in_txn};
 mod admitted;
 mod bodies;
 
-pub(crate) use self::admitted::ReplyBody;
+pub(crate) use self::admitted::{ReplyAdmission, ReplyBody, ReplySpool};
 pub(crate) use self::bodies::{
     FinishedOutput, StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn,
     code_run_body_row_key, code_run_inline_body_of_row, lift_code_run_file_hold_in_txn,
@@ -285,6 +285,31 @@ impl Vault {
     ) -> Result<Option<CodeRunReplayRecord>> {
         let rtxn = self.store.env.read_txn()?;
         self.get_code_run_replay_record_in_txn(&rtxn, run_id)
+    }
+
+    /// Whether run `run`'s results, which an owner's own whole-vault archive
+    /// carries, still stand when that archive is released (FIX 9591): `None`
+    /// when no replay record names `run`, so it is no run source; `Some(false)`
+    /// once an erase took the run's replies; `Some(true)` otherwise. A run an
+    /// action replays may have no entity row, so its standing is its own
+    /// run's, never an entity read.
+    pub fn code_run_results_stand(&self, run: &EntityId) -> Result<Option<bool>> {
+        let rtxn = self.store.env.read_txn()?;
+        self.code_run_results_stand_in_txn(&rtxn, run)
+    }
+
+    /// [`Self::code_run_results_stand`] in the caller's snapshot.
+    pub(crate) fn code_run_results_stand_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        run: &EntityId,
+    ) -> Result<Option<bool>> {
+        if response_erased_in_txn(&self.store, rtxn, run)? {
+            return Ok(Some(false));
+        }
+        Ok(REPLAY_RECORDS
+            .contains(&self.store, rtxn, run)?
+            .then_some(true))
     }
 
     /// [`Self::get_code_run_replay_record`] in the caller's snapshot. The

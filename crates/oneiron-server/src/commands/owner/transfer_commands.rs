@@ -12,6 +12,10 @@ struct Exported<'a> {
     file: &'a Path,
     format: String,
     bytes: u64,
+    /// Owner ruling 1-EXPORT = B: each world the export carries that the
+    /// owner's recipient choice would keep from where it goes, and why.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    notices: Vec<oneiron::share_travel::WorldRecipientNotice>,
 }
 
 pub fn export(args: ExportArgs) -> anyhow::Result<()> {
@@ -40,6 +44,7 @@ pub fn export(args: ExportArgs) -> anyhow::Result<()> {
         include_secrets: Some(args.include_secrets),
         delivery: None,
         secrets_recipient,
+        in_code_run: false,
     };
     // The archive is written to a file as it is built (FIX 2766), never held
     // whole: to `--out`, or to a spool under the vault's own staging
@@ -57,9 +62,13 @@ pub fn export(args: ExportArgs) -> anyhow::Result<()> {
         let mut spool = vault
             .archive_spool_file()
             .map_err(|error| anyhow::anyhow!("export failed: {error}"))?;
-        run(&mut spool).map_err(|error| anyhow::anyhow!("export failed: {error}"))?;
+        let receipt = run(&mut spool).map_err(|error| anyhow::anyhow!("export failed: {error}"))?;
         spool.seek(io::SeekFrom::Start(0))?;
         io::copy(&mut spool, &mut io::stdout().lock())?;
+        // Stdout is the archive: the owner's notices go to stderr.
+        if !receipt.notices.is_empty() {
+            eprintln!("{}", serde_json::to_string_pretty(&receipt.notices)?);
+        }
         return Ok(());
     };
     let mut exported = None;
@@ -75,6 +84,7 @@ pub fn export(args: ExportArgs) -> anyhow::Result<()> {
         file: &out,
         format: exported.format,
         bytes: exported.bytes,
+        notices: exported.notices,
     })
 }
 

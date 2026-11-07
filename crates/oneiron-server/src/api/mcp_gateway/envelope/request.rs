@@ -81,7 +81,7 @@ pub(crate) async fn handle_mcp_request(
                 "actor": mcp_actor_result(&actor),
                 "vault_id": vault_id,
             });
-            super::device_release::mcp_release_result(server, &actor, &[], false, result)
+            super::device_release::mcp_release_result(server, &actor, &[], false, result, false)
         }
         // Actor-free, but a caller is still REQUIRED, as for every method.
         "notifications/initialized" => {
