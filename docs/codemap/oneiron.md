@@ -1421,16 +1421,19 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/consent_wait/replay.rs` | src | m | 8 crate-vis | — | The parked run's side of a code consent wait (DOOR-079 1b) |
 | `src/code_run/consent_wait/settle.rs` | src | L | 3 fn · 13 crate-vis | — | The answer and the settlement (DOOR-079 1a) |
 | `src/code_run/consent_wait/types.rs` | src | m | 4 struct · 1 re-export · 19 crate-vis | CodeConsentAnswerInput, CodeConsentBrowserAction, CodeConsentSavedCredential, CodeConsentWaitView | The shapes of one bound code consent wait: the host-only call site the dispatcher carries, the control row… |
-| `src/code_run/contribution.rs` | src | m | 5 struct · 2 enum · 2 trait · 4 fn · 3 re-export · 3 crate-vis | ContributionForkModel, ContributionForkReceipt, ContributionForkScorer, ContributionReplayUnavailable, ForkScoring, ForkScoringIdentity, ForkTreatment, ReplayAnchor +1 | The matched-fork contribution runner (FIX 3028, FIX 2870, ARCH-0037 #lineage-credit, ARCH-0053): one sampled… |
+| `src/code_run/contribution.rs` | src | m | 5 struct · 2 enum · 2 trait · 4 fn · 4 re-export · 3 crate-vis | ContributionForkModel, ContributionForkReceipt, ContributionForkScorer, ContributionReplayUnavailable, ForkScoring, ForkScoringIdentity, ForkTreatment, ReplayAnchor +1 | The matched-fork contribution runner (FIX 3028, FIX 2870, ARCH-0037 #lineage-credit, ARCH-0053): one sampled… |
 | `src/code_run/contribution/admission.rs` | src | s | 1 enum · 2 crate-vis | ForkMismatch | What a submitted pair's stored forks prove (FIX 3610, FIX 2870): the A side records a contribution check as… |
-| `src/code_run/contribution/ancestor.rs` | src | s | 2 crate-vis | — | Which captured step a contribution check regenerates (FIX 2870, OF-542): a loaded skill's check, the run's… |
-| `src/code_run/contribution/execution.rs` | src | m | 7 struct · 4 enum · 1 trait · 4 fn · 9 crate-vis | ContributionForkExecution, ContributionForkProgram, ExecutedBody, ExecutedFork, ExecutedForkView, ExecutedOutput, ExecutedStepStatus, ForkEvidenceMode +4 | A contribution fork's program, run (FIX 3607, FIX 3028), and the evidence mode its pair is scored in |
+| `src/code_run/contribution/ancestor.rs` | src | s | 5 crate-vis | — | Which captured step a contribution check regenerates (FIX 2870, OF-542): a loaded skill's check, the run's… |
+| `src/code_run/contribution/execution.rs` | src | m | 7 struct · 4 enum · 1 trait · 4 fn · 1 re-export · 10 crate-vis | ContributionForkExecution, ContributionForkProgram, ExecutedBody, ExecutedFork, ExecutedForkView, ExecutedOutput, ExecutedStepStatus, ForkEvidenceMode +4 | A contribution fork's program, run (FIX 3607, FIX 3028), and the evidence mode its pair is scored in |
+| `src/code_run/contribution/execution/callable.rs` | src | m | 1 struct · 1 fn · 3 crate-vis | CallableBranch | A callable's contribution (FIX 3608): a skill the run called as a callable, and never had in its task, is… |
 | `src/code_run/contribution/generation.rs` | src | s | 2 crate-vis | — | A pair's inputs, settled before either fork is paid for, and each fork generated once and kept before it is… |
 | `src/code_run/contribution/owner.rs` | src | m | 1 struct · 15 crate-vis | OwnerJudgment | An owner verdict's matched pair, judged by the owner (FIX 3609) |
+| `src/code_run/contribution/source_admission.rs` | src | m | 1 struct · 2 enum · 15 crate-vis | ContributionSourceConsumer, ContributionSourcePurpose, ContributionSourceReadRequest | A contribution check reads its captured source only under each reader's own admission (FIX 20607, L07-B's… |
 | `src/code_run/coordination_codec.rs` | src | m | 9 crate-vis | — | Replay encoding for the typed coordination calls |
 | `src/code_run/correction.rs` | src | s | 4 struct · 1 enum · 2 fn · 2 const · 9 crate-vis | CodeRunCorrection, CodeRunCorrectionCheckpoint, CodeRunCorrectionOutcome, CodeRunCorrectionPolicy, ExecutorWireRepairs | Durable code-run correction records (CODE-RUNTIME-02 slice 1: FIX 4411, 4412, 4413) |
 | `src/code_run/dispatcher/admission.rs` | src | s | 5 crate-vis | — | The admission of the run door and its answered dispatch bracket |
 | `src/code_run/dispatcher/agent_verb.rs` | src | L | 2 struct · 1 enum · 1 fn · 6 crate-vis | SecretUseAnswer, SecretUseRecord, SecretUseStatus | Code mode's verb-table calls: the run's write origin and the receipt a write keeps |
+| `src/code_run/dispatcher/agent_verb/connector_wait.rs` | src | s | 2 crate-vis | — | A connector call's answer as a run takes it (ONE-2510): one held or retried parks the run on the call's ref |
 | `src/code_run/dispatcher/agent_verb/scoped_port.rs` | src | s | 1 crate-vis | — | A scoped child's port calls (FIX 7507 PR2): the verbs its parent lent it, each run by the adapter its host… |
 | `src/code_run/dispatcher/agent_verb/session_write.rs` | src | m | 1 crate-vis | — | The two writes a run bound to an off-record session stages in its room (DOOR-127; WILL L11-01, S01-2a)… |
 | `src/code_run/dispatcher/agent_verb/stored_answer.rs` | src | s | 2 crate-vis | — | The write receipt owns the durable descriptor; the answer only lends it |
@@ -1457,6 +1460,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/dispatcher/routed_entry.rs` | src | s | 4 fn | — | What a host reads and binds on a run's own route as it enters the run (FIX 2594, FIX 7507): the seat its… |
 | `src/code_run/dispatcher/session_verbs.rs` | src | s | 3 crate-vis | — | The reads a run bound to an off-record session serves through the room's view (WILL L11-01, S01-1) |
 | `src/code_run/dispatcher/session_verbs/hooks.rs` | src | s | 4 crate-vis | — | The verb hooks of a call a run serves in its room (WILL L11-01 S01-2c): each forwarded read, and each of the… |
+| `src/code_run/dispatcher/skill_bodies.rs` | src | s | 3 crate-vis | — | The skill bodies a call's native producer witnessed (FIX 3608, `crate::skill`): asked for on a skill-library… |
 | `src/code_run/dispatcher/spawn_capture.rs` | src | s | 6 crate-vis | — | The targets one spawn call resolved, as its host saw them (FIX 9180, Engine C1) |
 | `src/code_run/dispatcher/summarize.rs` | src | s | 1 crate-vis | — | `summarize` at the dispatcher (code-mode-summary-sdk-v1): one summary of a run's results, memoised by its… |
 | `src/code_run/dispatcher/team_submit.rs` | src | s | 1 crate-vis | — | `self.team.submit` (OF-540): a team's leader submits one pinned output of its team for the owner's… |
@@ -1489,9 +1493,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/reader_fold.rs` | src | s | 2 fn · 3 crate-vis | — | The model call behind `summarize` (code-mode-summary-sdk-v1): the one prompt a summary job sends, by its… |
 | `src/code_run/replay.rs` | src | L | 8 struct · 19 fn · 7 const · 3 re-export · 13 crate-vis | CodeRunAbiLayoutCheck, CodeRunBridgeCall, CodeRunDeterminism, CodeRunHistoryTurn, CodeRunReplayCursor, CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunResultBinding | — |
 | `src/code_run/replay/checkpoint.rs` | src | s | 1 struct · 4 fn | CodeRunStepCheckpoint | A step's checkpoint in a code run's replay record |
-| `src/code_run/replay/position.rs` | src | s | 1 fn | — | A replay cursor that starts part way into its record (PR-S1): a shadow arm replays one captured step from… |
+| `src/code_run/replay/position.rs` | src | s | 1 fn · 1 crate-vis | — | A replay cursor that starts part way into its record (PR-S1): a shadow arm replays one captured step from… |
 | `src/code_run/replay_capsule.rs` | src | m | 1 struct · 8 fn · 2 re-export · 7 crate-vis | WorkflowCaptureHandle | Step replay capsules (FIX 3028, ARCH-0037 #lineage-credit, ARCH-0053): the exact model input of a canonical… |
-| `src/code_run/replay_context.rs` | src | s | 16 crate-vis | — | A captured step's replay context (FIX 6351): what the live guest read beside the step's bridge rows |
+| `src/code_run/replay_context.rs` | src | s | 22 crate-vis | — | A captured step's replay context (FIX 6351): what the live guest read beside the step's bridge rows |
 | `src/code_run/replay_context/reads.rs` | src | m | 22 crate-vis | — | What a captured step's result reads saw of reader state (FIX 6352): the reader binding its run read under… |
 | `src/code_run/replay_parts.rs` | src | m | 10 crate-vis | — | A replay row's and a step start's parts under checkpoint custody (FIX 9180, Engine C2; coord-b slice d) |
 | `src/code_run/repo_calls.rs` | src | s | 1 enum · 4 fn · 4 crate-vis | RepoRunCall | The run repo rows as typed calls (FIX 6867, L11 G1 PR2a, PR2b, PR3b): one variant a row, carrying that row's… |
@@ -1514,7 +1518,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/scoped_child_io.rs` | src | m | 4 struct · 14 fn | HostInput, ScopedChildHosts, ScopedChildProfile, ScopedChildStop | A host's own scoped child, end to end (FIX 7508): the inputs a host commits for it as its parent run's… |
 | `src/code_run/scoped_generation.rs` | src | s | 2 trait | ScopedChildGeneration, ScopedChildGenerationCall | A host-profiled child's original generation accounting, lent to compaction |
 | `src/code_run/shadow_runner/admit.rs` | src | s | 1 fn · 5 crate-vis | — | A shadow arm's writes, masked at write (FIX 5718 part 3; shadow items 2 and 5; CALLS C5718-21) |
-| `src/code_run/shadow_runner/bridge.rs` | src | m | 6 crate-vis | — | The bridge an arm's program calls (PR-S1): every `self.*` call the program makes joins the arm's… |
+| `src/code_run/shadow_runner/bridge.rs` | src | m | 8 crate-vis | — | The bridge an arm's program calls (PR-S1): every `self.*` call the program makes joins the arm's… |
+| `src/code_run/shadow_runner/bridge/callable.rs` | src | m | 7 crate-vis | — | A callable branch's arm at the step's recorded callables (FIX 3608): the caller's own program runs again… |
 | `src/code_run/shadow_runner/bridge/results.rs` | src | m | 11 crate-vis | — | The results of a shadow arm's run (PR-S1): their names, how a read of one resolves and is checked, what… |
 | `src/code_run/shadow_runner/bridge/streams.rs` | src | s | 4 crate-vis | — | The step's streamed result in a shadow arm (PR-S1): each frame the program writes goes into the arm's store… |
 | `src/code_run/shadow_runner/bridge/taint.rs` | src | s | 2 crate-vis | — | The taint of the values a shadow arm stores, and how its own results leave the arm (FIX 3607): a result that… |
@@ -1522,8 +1527,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/shadow_runner/mod.rs` | src | s | 1 trait · 1 type · 7 re-export · 2 crate-vis | ShadowRunner | The shadow runner (PR-S1; FIX 1661/2144, the runner side of L07-B's B2b): one captured step of a canonical… |
 | `src/code_run/shadow_runner/release.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | ShadowReleaseSource | A shadow arm's bodies as a model reads them (FIX 9468, extends FIX 6649) |
 | `src/code_run/shadow_runner/source.rs` | src | m | 1 struct · 14 fn · 1 re-export · 4 crate-vis | PreparedShadowStep | The source an arm runs from (PR-S1): one captured step of a canonical run, read from its capsule and frozen… |
-| `src/code_run/shadow_runner/source/admitted.rs` | src | s | 1 trait · 2 crate-vis | ShadowSourceAdmission | A captured step prepared for a reader admitted to its capture (FIX 8704): the reader's own admission is… |
-| `src/code_run/shadow_runner/source/context.rs` | src | s | 1 fn · 4 crate-vis | — | A captured step's replay context as an arm reads it (FIX 6351): read once, in the snapshot the step's start… |
+| `src/code_run/shadow_runner/source/admitted.rs` | src | s | 2 struct · 1 trait · 4 fn · 4 crate-vis | ShadowSourceAdmission, ShadowSourceWitness, WitnessedRelease | A captured step prepared for a reader admitted to its capture (FIX 8704): the reader's own admission is… |
+| `src/code_run/shadow_runner/source/context.rs` | src | s | 1 fn · 7 crate-vis | — | A captured step's replay context as an arm reads it (FIX 6351): read once, in the snapshot the step's start… |
 | `src/code_run/shadow_runner/source/reads.rs` | src | s | 7 crate-vis | — | A captured step's read context as an arm reads it (FIX 6352) |
 | `src/code_run/shadow_runner/store.rs` | src | m | 2 struct · 10 fn · 9 crate-vis | ShadowBodyStore, ShadowSourceHold | A shadow arm's own body store (PR-S1): one directory, outside any vault, of whole bodies, each a file named… |
 | `src/code_run/shadow_runner/types.rs` | src | s | 4 struct · 2 enum · 4 fn · 5 re-export | ShadowDeterminism, ShadowRunRequest, ShadowRunResult, ShadowStatus, ShadowStepRun, ShadowWindowFullReason | The shadow runner's request, result and their parts (PR-S1): what a caller asks an arm to run, by immutable… |
@@ -1676,6 +1681,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_sandbox/wasmtime_runtime/typed.rs` | src | m | 3 crate-vis | — | Canonical typed WIT imports over the bounded engine-host channel |
 | `src/code_sandbox/wasmtime_runtime/wire.rs` | src | L | 4 crate-vis | — | Internal bounded JSON bridge between typed WIT and the borrowed engine host |
 | `src/code_sandbox/wasmtime_runtime/wire/describe.rs` | src | s | 3 crate-vis | — | How code mode routes a raw `describe` before any typed row: a result the run holds, a secret's handle… |
+| `src/code_sandbox/wasmtime_runtime/wire/reply.rs` | src | s | 1 crate-vis | — | A dispatched call's reply as the guest gets it: its JSON measured, and stored as a result of the run when it… |
 | `src/code_sandbox/wasmtime_runtime/wire/search.rs` | src | s | 1 crate-vis | — | `vault.search`'s reply body (WILL L11-01 S01-2c): the hits, framed as the row's output, and, in an… |
 | `src/code_symbol/actor_erase.rs` | src | s | 2 crate-vis | — | An erased actor out of the symbol manifests' producing-operation chains (FIX 4476) |
 | `src/code_symbol/cjs_source.rs` | src | m | 1 crate-vis | — | Full-grammar CommonJS parsing and lexical, source-derived symbol relations |
@@ -2565,7 +2571,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/maintenance/coach_research.rs` | src | s | 1 trait · 3 fn | ResearchGoalOracle | The Coach's autoresearch jobs (OF-351, FIX 886, FIX 1331), both on the host lane: execution advances a… |
 | `src/dreamer_runner/maintenance/coach_resolution.rs` | src | s | 1 crate-vis | — | The Coach's resolution of its model issues (OF-418 L3; ARCH-0066 §6) |
 | `src/dreamer_runner/maintenance/code_fix.rs` | src | m | 6 struct · 1 trait · 3 fn · 1 const · 3 re-export · 2 crate-vis | CodeFixDecisions, CodeFixDraft, CodeFixHost, CodeFixJob, CodeFixSettled, CodeFixWork, PublisherCandidate | The Coach's code fixes (DEC-0005 FIX6, OF-380) |
-| `src/dreamer_runner/maintenance/code_fix/admission.rs` | src | m | 13 crate-vis | — | The Coach's admission to a failure's captured source (FIX 6357, 7031, 7548, 8704) |
+| `src/dreamer_runner/maintenance/code_fix/admission.rs` | src | m | 18 crate-vis | — | The Coach's admission to a failure's captured source (FIX 6357, 7031, 7548, 8704) |
 | `src/dreamer_runner/maintenance/code_fix/candidate_run.rs` | src | s | 1 struct · 4 crate-vis | CandidateRun | Candidate results and the native origin each replay carries |
 | `src/dreamer_runner/maintenance/code_fix/engine.rs` | src | m | 2 crate-vis | — | A publisher's engine candidate replayed against the real failure (FIX 1661, 2144, 6357): one matched pair on… |
 | `src/dreamer_runner/maintenance/code_fix/instruction.rs` | src | m | 9 crate-vis | — | The Coach's in-vault replay of an instruction candidate (OF-380, FIX 1662): the failing agent's call as the… |
@@ -2671,7 +2677,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/progress.rs` | src | m | 4 struct · 1 enum · 12 fn · 4 const · 5 crate-vis | DreamerAttemptProgressProducer, DreamerAttemptProgressSnapshot, DreamerAttemptProgressSource, DreamerAttemptProgressUpdate, DreamerProgressed | The live Dreamer progress lane on the ephemeral sync keyspace |
 | `src/dreamer_runner/recipe.rs` | src | s | 1 struct · 1 fn · 2 crate-vis | WeaveRecipePin | Per-vault, owner-admitted workflow skill binding for the Dreamer weave |
 | `src/dreamer_runner/shadow_values.rs` | src | m | 12 struct · 10 enum · 7 fn · 1 const · 1 crate-vis | ArtifactDigest, ArtifactDigestAlgorithm, EngineArtifactPin, ShadowArmLease, ShadowBodyRef, ShadowBridgeWindow, ShadowIsolation, ShadowIsolationRequired +14 | Immutable shadow-run artifact, request-part and evidence vocabulary |
-| `src/dreamer_runner/step_replay.rs` | src | m | 9 struct · 4 enum · 6 fn · 2 crate-vis | CapsuleContent, CapsuleHost, CapsuleRequest, CapsuleRungBinding, ExecutorStepStart, ExposureKind, ExposureSlot, ReplayRoutePin +5 | — |
+| `src/dreamer_runner/step_replay.rs` | src | m | 10 struct · 4 enum · 6 fn · 4 crate-vis | CapsuleContent, CapsuleHost, CapsuleRequest, CapsuleRungBinding, ConsoleSlot, ExecutorStepStart, ExposureKind, ExposureSlot +6 | — |
 | `src/dreamer_runner/store.rs` | src | L | 1 struct · 18 fn · 31 crate-vis | DreamerRunnerStore | The Dreamer runner store: queue lifecycle, park/resume, and readers |
 | `src/dreamer_runner/tests.rs` | test | L | — | — | — |
 | `src/dreamer_runner/types.rs` | src | m | 24 struct · 12 enum · 17 fn · 3 re-export · 4 crate-vis | AbortDreamerBudgetReservation, AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt, CompleteDreamerAttempt, CompleteDreamerAttemptOutcome, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerAttemptProgressState +28 | Dreamer runner request/outcome vocabulary and its pure impls |
@@ -2957,7 +2963,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/engine_executor/compaction_host/pending.rs` | src | s | 1 crate-vis | — | Sealing one compaction window and returning its typed hook Pending |
 | `src/engine_executor/compaction_host/self_steps.rs` | src | s | 2 crate-vis | — | A flight's self-written passes, filed before any of them lands (FIX 4465 B): every paid call, a try the gate… |
 | `src/engine_executor/compaction_host/wait.rs` | src | s | 1 fn | — | A blocking host can join the pass its full window is already waiting on |
-| `src/engine_executor/continuation.rs` | src | m | 3 struct · 1 enum · 7 fn · 3 crate-vis | ContinuationRefusal, ExecutorCheckpointRef, PreparedExecutorContinuation, RunContinuation | Prompt continuations of failed agent runs (FIX 3694, OF-568) |
+| `src/engine_executor/continuation.rs` | src | m | 3 struct · 1 enum · 7 fn · 4 crate-vis | ContinuationRefusal, ExecutorCheckpointRef, PreparedExecutorContinuation, RunContinuation | Prompt continuations of failed agent runs (FIX 3694, OF-568) |
 | `src/engine_executor/continuation/seed.rs` | src | m | 3 crate-vis | — | Child-owned frozen continuation state, kept as reply-bearing content |
 | `src/engine_executor/driver.rs` | src | m | 1 struct · 11 fn · 5 crate-vis | EngineNativeExecutor | Executor driver: struct, constructors, and the witness-turn doors |
 | `src/engine_executor/history.rs` | src | s | 3 struct · 2 fn | FoldHistory, FoldHistoryEpoch, FoldHistoryStep | Durable steps and landed compaction boundaries of an attached run |
@@ -2970,6 +2976,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/engine_executor/host/receipts.rs` | src | s | 3 crate-vis | — | Fold receipts computed from the reader jobs and result ranges of a run |
 | `src/engine_executor/host/replay_context.rs` | src | s | 5 crate-vis | — | The live half of a step's read context (FIX 6352): what the step's result reads see of reader state, kept… |
 | `src/engine_executor/host/results.rs` | src | m | 24 crate-vis | — | Stored result binding, admission and reads for one JS host |
+| `src/engine_executor/host/skill_delivery.rs` | src | s | 2 crate-vis | — | A skill body a call's answer delivered to the step's own program (FIX 3608): what the call's native producer… |
 | `src/engine_executor/host/type_feedback.rs` | src | s | 6 crate-vis | — | The type checks of the callable skills a run's program calls (FIX 10389): each admitted once, at the call's… |
 | `src/engine_executor/mod.rs` | src | s | 3 mod · 9 re-export · 7 crate-vis | — | Engine-native JS code-mode executor |
 | `src/engine_executor/program_entry.rs` | src | m | 5 crate-vis | — | A turn program's pinned entry (DOOR-141 PR3b, FIX 4382) |
@@ -2981,7 +2988,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/engine_executor/repl/request.rs` | src | m | 1 fn · 9 crate-vis | — | The model request of the REPL and its stored-output context projection |
 | `src/engine_executor/repl/speech.rs` | src | s | 3 crate-vis | — | Checkpointed implicit speech and its retry-safe delivery |
 | `src/engine_executor/self_brief.rs` | src | s | 2 struct · 2 enum · 1 trait · 8 crate-vis | BriefBoundary, BriefCandidateToken, BriefPrefix, FoldBoundary, SelfBriefPort | The host's self-brief port for a native run (FIX 17594, delivery slice D2) |
-| `src/engine_executor/shadow_step.rs` | src | m | 1 struct · 1 fn · 1 crate-vis | ArmTypeFeedback | One captured step of a shadow arm (PR-S1, FIX 1661/2144): the pinned model's answer to the step's captured… |
+| `src/engine_executor/shadow_step.rs` | src | m | 1 struct · 1 fn · 2 crate-vis | ArmTypeFeedback | One captured step of a shadow arm (PR-S1, FIX 1661/2144): the pinned model's answer to the step's captured… |
 | `src/engine_executor/skill_call.rs` | src | s | 2 fn | — | One callable bridge entry between turns of an attached, leased run |
 | `src/engine_executor/stack_floor.rs` | src | s | 2 crate-vis | — | The native stack a callable skill's call leaves its thread (FIX 600) |
 | `src/engine_executor/store.rs` | src | L | 65 crate-vis | — | Output envelope and path helpers for the routed raw-output store |
@@ -4180,6 +4187,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/shape_doors.rs` | src | s | 1 struct · 8 fn · 1 crate-vis | DescribeRequest | The vault shape on code mode and MCP (ARCH-0070): the free reads `describe(vault)`, `vault.shape.read` and… |
 | `src/memory/signal_extraction.rs` | src | s | 8 struct · 2 fn | ProspectiveQueryHint, SignalExtractionClaim, SignalExtractionMessage, SignalExtractionRequest, SignalExtractionResult, SignalExtractionResultRequest, SignalExtractionSource, SignalExtractionTicket | Typed signal extraction over the production Dreamer partition queue |
 | `src/memory/skill_authoring.rs` | src | m | 1 struct · 4 fn · 2 crate-vis | SkillAuthoringReceipt | Authored skill saves and forks over the existing skill lifecycle gate |
+| `src/memory/skill_bodies.rs` | src | s | 1 crate-vis | — | The skill bodies a code-run call's answer carries, witnessed as the answer's native producer returned it… |
 | `src/memory/speculative_limits.rs` | src | s | 2 const | — | Default speculative retrieval fire counts and result limits |
 | `src/memory/state_index.rs` | src | s | 4 struct · 3 const · 1 crate-vis | ModeGateInputs, StateIndex, StateIndexEvidence, StateWindow | Composite-state projection records and owner-authored window targets |
 | `src/memory/structural/affiliated.rs` | src | m | 5 fn · 5 crate-vis | — | Attributed takes and imported-claim admission verbs |
@@ -4195,7 +4203,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/structural/raw_prose.rs` | src | s | 1 crate-vis | — | Prose admission for a bound raw write's NOTE and keyed-value bodies (OF-063, FIX 3734): the one link read… |
 | `src/memory/structural/types.rs` | src | s | 8 struct · 1 enum · 1 re-export | AdmitImportedClaimInput, BlobArtifactInput, BlobVersionAppendOutcome, BlobVersionView, EntityRefReceipt, HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput +1 | Read-facing views and per-verb inputs for structural puts |
 | `src/memory/subscriptions.rs` | src | s | 1 struct · 1 trait · 2 fn | MemorySubscriptionOwner, ScopedView | Transport-neutral subscription verbs |
-| `src/memory/support.rs` | src | m | 3 struct · 4 fn · 1 type · 1 re-export · 13 crate-vis | HostWriteOrigin, Memory, SigningRequestTransport | Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and… |
+| `src/memory/support.rs` | src | m | 3 struct · 4 fn · 1 type · 1 re-export · 15 crate-vis | HostWriteOrigin, Memory, SigningRequestTransport | Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and… |
 | `src/memory/support/actors.rs` | src | s | 1 fn · 6 crate-vis | — | Actor verification: store-truth bindings, the folded owner binding and deletion authority |
 | `src/memory/support/builders.rs` | src | m | 23 fn · 17 crate-vis | — | Handle binders: the `with_*` methods and the accessors that read back what a binder set |
 | `src/memory/support/constructors.rs` | src | s | 5 fn · 1 crate-vis | — | Handle construction: the vault's `Memory` openers and the room-turn and task rebinders |
@@ -5679,7 +5687,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/side_table/mod.rs` | src | L | 49 crate-vis | — | One typed keyspace over the `vault_meta` and `sync_state` side tables |
 | `src/side_table/raw_reverse.rs` | src | s | 1 crate-vis | — | Descending raw side rows for readers that retain malformed values as facts |
 | `src/side_table/tests.rs` | test | L | — | — | — |
-| `src/skill/call.rs` | src | m | 1 fn · 2 re-export · 4 crate-vis | — | Callable skill execution through the caller's existing sandbox runtime and host |
+| `src/skill/call.rs` | src | m | 1 fn · 2 re-export · 6 crate-vis | — | Callable skill execution through the caller's existing sandbox runtime and host |
 | `src/skill/call/answer.rs` | src | s | 1 struct · 2 fn · 4 crate-vis | CallableSkillAnswer | A callable skill's answer, spooled to disk as it streams and checked against its return contract as it is… |
 | `src/skill/call/frozen.rs` | src | m | 2 fn · 1 re-export · 4 crate-vis | — | Frozen callable cases (FIX 12093) |
 | `src/skill/call/frozen/amend.rs` | src | s | 2 struct · 1 enum · 1 fn | CallableAmendOutcome, CallableAmendReceipt, CallableAmendRequest | A caller's correction of one callable call's answer (FIX 12214) |
@@ -5688,6 +5696,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill/call/json_tokens.rs` | src | m | 2 crate-vis | — | The streaming JSON check behind a callable skill's answer (FIX 10149) |
 | `src/skill/call/tests.rs` | test | m | — | — | — |
 | `src/skill/codec.rs` | src | s | 1 re-export · 2 crate-vis | — | Skill record vocabulary, defined below the skill behavior layer |
+| `src/skill/delivery.rs` | src | s | 10 crate-vis | — | A skill body a code-run call's answer carries, witnessed where a native producer made the answer (FIX 3608) |
 | `src/skill/doors.rs` | src | m | 6 fn · 9 crate-vis | — | Typed Vault doors for SKILL records |
 | `src/skill/graph.rs` | src | s | 6 struct · 1 fn | GraphSkillAnswerRef, GraphSkillFailure, GraphSkillInput, GraphSkillProgram, GraphSkillResult, GraphSkillStage | Run resident-authored graph workflows from the admitted skill source tree |
 | `src/skill/health_review.rs` | src | s | 1 const · 2 crate-vis | — | Agent-health reviewer skill, policy-file and receipt identifiers |
@@ -5697,7 +5706,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill/learning_judge.rs` | src | s | 1 struct · 1 enum · 1 const | DivergenceCase, TakeoverVerdict | Judge takeover results and the measured honesty axis |
 | `src/skill/lifecycle.rs` | src | s | 1 re-export | — | Skill record vocabulary, defined below the skill behavior layer |
 | `src/skill/loaded_revision.rs` | src | s | 4 crate-vis | — | The exact SKILL revision an attempt's pack loaded (FIX 10110) |
-| `src/skill/mod.rs` | src | s | 3 mod · 8 re-export · 11 crate-vis | — | SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors |
+| `src/skill/mod.rs` | src | s | 3 mod · 8 re-export · 12 crate-vis | — | SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors |
 | `src/skill/pack_load.rs` | src | m | 1 struct · 9 fn · 1 re-export · 6 crate-vis | LoadedSkillPack | Attempt-bound pack reads stamp their actual revision in the same transaction |
 | `src/skill/pack_load/measured.rs` | src | s | 1 enum · 1 fn | MeasuredSkillPack | The pack load of a paired eval measurement's skill arm (FIX 10677) |
 | `src/skill/record.rs` | src | s | 1 re-export · 1 crate-vis | — | Skill record vocabulary, defined below the skill behavior layer |

@@ -16984,7 +16984,7 @@
       "crate-vis": 3,
       "enum": 2,
       "fn": 4,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 5,
       "trait": 2
      }
@@ -17009,7 +17009,7 @@
      "path": "src/code_run/contribution/ancestor.rs",
      "purpose": "Which captured step a contribution check regenerates (FIX 2870, OF-542): a loaded skill's check, the run's…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 5
      }
     },
     {
@@ -17032,11 +17032,26 @@
      "path": "src/code_run/contribution/execution.rs",
      "purpose": "A contribution fork's program, run (FIX 3607, FIX 3028), and the evidence mode its pair is scored in",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 4,
       "fn": 4,
+      "re-export": 1,
       "struct": 7,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CallableBranch"
+     ],
+     "path": "src/code_run/contribution/execution/callable.rs",
+     "purpose": "A callable's contribution (FIX 3608): a skill the run called as a callable, and never had in its task, is…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -17059,6 +17074,22 @@
      "purpose": "An owner verdict's matched pair, judged by the owner (FIX 3609)",
      "surface": {
       "crate-vis": 15,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ContributionSourceConsumer",
+      "ContributionSourcePurpose",
+      "ContributionSourceReadRequest"
+     ],
+     "path": "src/code_run/contribution/source_admission.rs",
+     "purpose": "A contribution check reads its captured source only under each reader's own admission (FIX 20607, L07-B's…",
+     "surface": {
+      "crate-vis": 15,
+      "enum": 2,
       "struct": 1
      }
     },
@@ -17117,6 +17148,16 @@
       "enum": 1,
       "fn": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/dispatcher/agent_verb/connector_wait.rs",
+     "purpose": "A connector call's answer as a run takes it (ONE-2510): one held or retried parks the run on the call's ref",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -17399,6 +17440,16 @@
      "purpose": "The verb hooks of a call a run serves in its room (WILL L11-01 S01-2c): each forwarded read, and each of the…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/dispatcher/skill_bodies.rs",
+     "purpose": "The skill bodies a call's native producer witnessed (FIX 3608, `crate::skill`): asked for on a skill-library…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -17843,6 +17894,7 @@
      "path": "src/code_run/replay/position.rs",
      "purpose": "A replay cursor that starts part way into its record (PR-S1): a shadow arm replays one captured step from…",
      "surface": {
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -17868,7 +17920,7 @@
      "path": "src/code_run/replay_context.rs",
      "purpose": "A captured step's replay context (FIX 6351): what the live guest read beside the step's bridge rows",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 22
      }
     },
     {
@@ -18167,7 +18219,17 @@
      "path": "src/code_run/shadow_runner/bridge.rs",
      "purpose": "The bridge an arm's program calls (PR-S1): every `self.*` call the program makes joins the arm's…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/shadow_runner/bridge/callable.rs",
+     "purpose": "A callable branch's arm at the step's recorded callables (FIX 3608): the caller's own program runs again…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -18265,12 +18327,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "ShadowSourceAdmission"
+      "ShadowSourceAdmission",
+      "ShadowSourceWitness",
+      "WitnessedRelease"
      ],
      "path": "src/code_run/shadow_runner/source/admitted.rs",
      "purpose": "A captured step prepared for a reader admitted to its capture (FIX 8704): the reader's own admission is…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
+      "fn": 4,
+      "struct": 2,
       "trait": 1
      }
     },
@@ -18281,7 +18347,7 @@
      "path": "src/code_run/shadow_runner/source/context.rs",
      "purpose": "A captured step's replay context as an arm reads it (FIX 6351): read once, in the snapshot the step's start…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 7,
       "fn": 1
      }
     },
@@ -20125,6 +20191,16 @@
      "purpose": "How code mode routes a raw `describe` before any typed row: a result the run holds, a secret's handle…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/wasmtime_runtime/wire/reply.rs",
+     "purpose": "A dispatched call's reply as the guest gets it: its JSON measured, and stored as a result of the run when it…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -31367,7 +31443,7 @@
      "path": "src/dreamer_runner/maintenance/code_fix/admission.rs",
      "purpose": "The Coach's admission to a failure's captured source (FIX 6357, 7031, 7548, 8704)",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 18
      }
     },
     {
@@ -32763,6 +32839,7 @@
       "CapsuleHost",
       "CapsuleRequest",
       "CapsuleRungBinding",
+      "ConsoleSlot",
       "ExecutorStepStart",
       "ExposureKind",
       "ExposureSlot",
@@ -32776,10 +32853,10 @@
      "path": "src/dreamer_runner/step_replay.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "enum": 4,
       "fn": 6,
-      "struct": 9
+      "struct": 10
      }
     },
     {
@@ -36295,7 +36372,7 @@
      "path": "src/engine_executor/continuation.rs",
      "purpose": "Prompt continuations of failed agent runs (FIX 3694, OF-568)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 7,
       "struct": 3
@@ -36434,6 +36511,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/engine_executor/host/skill_delivery.rs",
+     "purpose": "A skill body a call's answer delivered to the step's own program (FIX 3608): what the call's native producer…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/engine_executor/host/type_feedback.rs",
      "purpose": "The type checks of the callable skills a run's program calls (FIX 10389): each admitted once, at the call's…",
      "surface": {
@@ -36565,7 +36652,7 @@
      "path": "src/engine_executor/shadow_step.rs",
      "purpose": "One captured step of a shadow arm (PR-S1, FIX 1661/2144): the pinned model's answer to the step's captured…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1,
       "struct": 1
      }
@@ -52054,6 +52141,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/skill_bodies.rs",
+     "purpose": "The skill bodies a code-run call's answer carries, witnessed as the answer's native producer returned it…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/speculative_limits.rs",
      "purpose": "Default speculative retrieval fire counts and result limits",
      "surface": {
@@ -52246,7 +52343,7 @@
      "path": "src/memory/support.rs",
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 15,
       "fn": 4,
       "re-export": 1,
       "struct": 3,
@@ -69608,7 +69705,7 @@
      "path": "src/skill/call.rs",
      "purpose": "Callable skill execution through the caller's existing sandbox runtime and host",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 1,
       "re-export": 2
      }
@@ -69702,6 +69799,16 @@
      "surface": {
       "crate-vis": 2,
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill/delivery.rs",
+     "purpose": "A skill body a code-run call's answer carries, witnessed where a native producer made the answer (FIX 3608)",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -69833,7 +69940,7 @@
      "path": "src/skill/mod.rs",
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "mod": 3,
       "re-export": 8
      }
@@ -94008,14 +94115,14 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 224,
+     "files": 229,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls"
     },
     "code_sandbox": {
-     "files": 57,
+     "files": 58,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94330,7 +94437,7 @@
      "purpose": "Embedding pipeline root: attach, decide, and reconcile under one budget dial"
     },
     "engine_executor": {
-     "files": 58,
+     "files": 59,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94631,7 +94738,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 377,
+     "files": 378,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -95037,7 +95144,7 @@
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables"
     },
     "skill": {
-     "files": 29,
+     "files": 30,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -95347,7 +95454,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6749,
+   "source_files": 6758,
    "test_files": 895
   },
   "oneiron-android": {
@@ -114685,7 +114792,7 @@
      "purpose": "The host's shadow runner (PR-S1; FIX 1661/2144, the runner side of L07-B's B2b): [`ServerShadowRunner`] runs…",
      "surface": {
       "crate-vis": 3,
-      "fn": 6,
+      "fn": 7,
       "struct": 1,
       "type": 1
      }
@@ -131411,7 +131518,7 @@
      "purpose": "The serve host's skill judge (OF-495)",
      "surface": {
       "const": 1,
-      "fn": 9,
+      "fn": 10,
       "re-export": 1,
       "struct": 3
      }
