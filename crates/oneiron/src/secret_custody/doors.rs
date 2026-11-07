@@ -345,7 +345,9 @@ pub(crate) fn register_custody_in_txn(
     }
     // Checked before the name reaches an index key.
     if rec.name.len() > SECRET_NAME_MAX_BYTES {
-        return Err(invalid_body("secret name is longer than 255 bytes"));
+        return Err(invalid_body(
+            "secret name is longer than its name-index key can hold",
+        ));
     }
     if rec.schema_version != SECRET_CUSTODY_SCHEMA_VERSION {
         return Err(invalid_body("unsupported secret custody schema version"));

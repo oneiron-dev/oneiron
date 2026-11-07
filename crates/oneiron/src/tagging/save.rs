@@ -119,6 +119,25 @@ pub(super) fn save_in_txn(
     config: &TaggingMarkerConfig,
     now: u64,
 ) -> Result<Saved> {
+    save_with_hint_read_in_txn(vault, txn, answer, config, now, HintRead::Internal)
+}
+
+/// Internal saves keep the aggregate; a caller save never substitutes it
+/// for a missing read grant.
+#[derive(Clone, Copy)]
+pub(super) enum HintRead<'r, 'v> {
+    Internal,
+    Caller(Option<&'r crate::claim::ScopedRead<'v>>),
+}
+
+pub(super) fn save_with_hint_read_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    answer: Answer<'_>,
+    config: &TaggingMarkerConfig,
+    now: u64,
+    hint_read: HintRead<'_, '_>,
+) -> Result<Saved> {
     let Answer {
         turn,
         input,
@@ -216,7 +235,15 @@ pub(super) fn save_in_txn(
             (None, None) => MentionLink::Tag,
             (None, Some(kind)) => {
                 let link = linker.link(txn, kind, text)?;
-                linker.hinted(txn, link, text, message_text, span.start, span.end)?
+                linker.hinted(
+                    txn,
+                    link,
+                    text,
+                    message_text,
+                    span.start,
+                    span.end,
+                    hint_read,
+                )?
             }
             // A pronoun, or a label the table does not map, takes its
             // antecedent's link.
@@ -250,7 +277,15 @@ pub(super) fn save_in_txn(
                         kind,
                         entities: hits,
                     };
-                    linker.hinted(txn, link, text, message_text, span.start, span.end)?
+                    linker.hinted(
+                        txn,
+                        link,
+                        text,
+                        message_text,
+                        span.start,
+                        span.end,
+                        hint_read,
+                    )?
                 }
             }
         };
@@ -517,6 +552,7 @@ impl<'v> Linker<'v> {
         text: &str,
         start: usize,
         end: usize,
+        hint_read: HintRead<'_, '_>,
     ) -> Result<MentionLink> {
         let MentionLink::Candidates { kind, entities } = &link else {
             return Ok(link);
@@ -524,9 +560,18 @@ impl<'v> Linker<'v> {
         if entities.len() < 2 {
             return Ok(link);
         }
-        let hinted = crate::dreamer_runner::maintenance::identity::hinted_mention_in_txn(
-            self.vault, txn, *kind, name, text, start, end, entities,
-        )?;
+        let hinted = match hint_read {
+            HintRead::Internal => {
+                crate::dreamer_runner::maintenance::identity::hinted_mention_in_txn(
+                    self.vault, txn, *kind, name, text, start, end, entities,
+                )?
+            }
+            HintRead::Caller(read) => {
+                crate::dreamer_runner::maintenance::identity::hinted_mention_scoped_in_txn(
+                    self.vault, txn, read, *kind, name, text, start, end, entities,
+                )?
+            }
+        };
         Ok(match hinted {
             Some(entity) => MentionLink::Candidates {
                 kind: *kind,

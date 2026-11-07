@@ -315,7 +315,7 @@ pub(super) fn serve_request(
         .and_then(ProjectedExchange::ingress_root)
         .map_or_else(|| repo_dir.clone(), Path::to_path_buf);
     let door_root = origin_door_root(vault)?;
-    let list_paths = push.as_ref().is_some_and(GitPushStamp::is_checkout);
+    let list_paths = push.as_ref().is_some_and(GitPushStamp::names_checkout);
     let hooks = DoorHooksDir::materialize_listing(&door_root, scan, list_paths)?;
     let command = match &projected {
         Some(projected) => projected.command(&project_root, hooks.path())?,

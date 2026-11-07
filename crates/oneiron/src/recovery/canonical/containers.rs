@@ -43,6 +43,7 @@ impl ExpectedContainers {
                         "row_births",
                         "withdrawn_cutoffs",
                         "asset_body_refs",
+                        "source_audiences",
                     ] {
                         self.rows.push(CanonicalContainerManifest {
                             container_id: name.to_owned(),
@@ -79,7 +80,7 @@ impl ExpectedContainers {
                         self.stage = Stage::Sort;
                         continue;
                     };
-                    for (name, kind) in [("body", "text"), ("note", "map"), ("authorship", "map")] {
+                    for (name, kind) in [("body", "text"), ("meta", "map"), ("authorship", "map")] {
                         self.rows.push(CanonicalContainerManifest {
                             container_id: format!("{}/{name}", doc.key()),
                             container_kind: kind.to_owned(),

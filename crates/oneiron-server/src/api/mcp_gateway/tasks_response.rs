@@ -1,5 +1,6 @@
 //! Tasks verb and response shaping.
 
+use super::served_rows::stop_release_rows;
 use super::{
     McpCallContext, McpCarrierPolicy, McpGatewayError, McpServed, execute_mcp_board_verb,
     mcp_current_board, mcp_endpoint_result, mcp_facade_error, mcp_page_cursor_error,
@@ -16,6 +17,7 @@ use crate::server::SyncServer;
 use oneiron::ErrorKind;
 use serde_json::Value;
 use serde_json::json;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 
 fn mcp_tasks_section(
@@ -162,18 +164,12 @@ pub(crate) async fn execute_mcp_generated_verb(
             )
         } else {
             let (output, source, carrier, producer_epoch) = if args.tool.memory_method().is_some() {
-                // The native read fan-out, on the heap (FIX 12072).
-                let (output, capabilities, producers) =
-                    Box::pin(super::memory_response::execute(server, &args, actor)).await?;
-                served.extend(producers);
-                // One native response, with its own bounded query/batch
-                // semantics. Do not invent an MCP cursor over nested DTOs.
-                (
-                    output,
-                    crate::mcp::McpPageSource::complete(1),
-                    McpCarrierPolicy::DrainWithCapabilities(capabilities),
-                    None,
-                )
+                let read = native_read::execute_mcp_native_read(server, &args, actor, &mut served);
+                match read.await? {
+                    ControlFlow::Continue(produced) => produced,
+                    // A verb hook's stop is a result the client reads (FIX 1435).
+                    ControlFlow::Break(stopped) => return Ok(stopped),
+                }
             } else {
                 // Establish the board epoch before reading a continuable
                 // task set. The result itself is retained below, so a
@@ -198,20 +194,19 @@ pub(crate) async fn execute_mcp_generated_verb(
                 .await;
                 let produced = match produced {
                     // A verb hook's stop is a result the client reads, not a
-                    // refusal (ARCH-0080 §3).
+                    // refusal (ARCH-0080 §3), released by its saved answer's
+                    // rows on a drained call's retry (FIX 21054).
                     Err(McpGatewayError {
                         hook: Some(stop),
                         hook_notice,
                         ..
                     }) => {
-                        return mcp_hook_stop_result(
-                            server,
-                            &args,
-                            actor,
-                            *stop,
-                            served.rows(),
-                            hook_notice,
-                        );
+                        let stop = *stop;
+                        let rows = stop_release_rows(server, actor, &stop, &mut served);
+                        if super::served_rows::drained_rows_lapsed(server, actor, &stop, rows) {
+                            return Ok(super::claimed_release::details_on_device_result());
+                        }
+                        return mcp_hook_stop_result(server, &args, actor, stop, rows, hook_notice);
                     }
                     produced => produced,
                 };
@@ -839,31 +834,45 @@ async fn mcp_off_runtime_row<T: Send + 'static>(
 /// The proof a direct MCP caller's own request binds for `tool`, as the
 /// HTTP facade binds it outside a room turn: the work-companion setting
 /// takes the person's own proof (OF-417), an attendee ask's answer the
-/// owner's own authorship (OF-365). Every other row binds none here, and a
-/// code-mode call's host origin suppresses either in the engine.
+/// owner's own authorship (OF-365), and the owner's own `vault.delete` his
+/// authorship and this host's slip issuer, so deleting a Connect guest's
+/// PERSON withdraws its grants first (FIX 3875, 5317). Every other row binds
+/// none here, and a code-mode call's host origin suppresses either in the
+/// engine.
 fn mcp_direct_authorship<'a>(
-    server: &SyncServer,
+    server: &'a SyncServer,
     tool: &str,
     actor: &McpCallContext,
     memory: oneiron::Memory<'a>,
 ) -> Result<oneiron::Memory<'a>, McpGatewayError> {
-    if !matches!(tool, "vault.workspace.work_companion.set" | "tasks.answer") {
+    if !matches!(
+        tool,
+        "vault.workspace.work_companion.set" | "tasks.answer" | "vault.delete"
+    ) {
         return Ok(memory);
     }
     let Some(auth) = actor.auth.as_ref() else {
         return Ok(memory);
     };
+    let Some(owner) =
+        crate::api::facade::direct_authorship(auth, server, tool).map_err(mcp_api_error)?
+    else {
+        return Ok(memory);
+    };
+    let memory = memory.with_owner_authorship(&owner);
+    // With no host key the delete runs as before (FIX 3875).
     Ok(
-        match crate::api::facade::direct_authorship(auth, server, tool).map_err(mcp_api_error)? {
-            Some(owner) => memory.with_owner_authorship(&owner),
+        match server.host_issuer().filter(|_| tool == "vault.delete") {
+            Some(issuer) => memory.with_host_slip_issuer(issuer),
             None => memory,
         },
     )
 }
 
-use super::{board_setup, skill_execution, verb_hooks};
+use super::{board_setup, memory_response, skill_execution, verb_hooks};
 #[path = "generated/agent_verb_dispatch.rs"]
 mod agent_verb_dispatch;
+pub(super) mod native_read;
 use agent_verb_dispatch::execute_mcp_agent_verb;
 pub(crate) use agent_verb_dispatch::{
     execute_agent_verb_input, mcp_agent_verb_arguments, mcp_agent_verb_input,
