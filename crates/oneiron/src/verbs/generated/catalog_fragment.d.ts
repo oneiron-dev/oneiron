@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1316 code-mode rows (1276 host rows, 40 run rows), 4657 declarations.
-// Replies: 1127 fully typed, 188 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1324 code-mode rows (1283 host rows, 41 run rows), 4668 declarations.
+// Replies: 1132 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -997,6 +997,15 @@ declare namespace Sdk {
   type WeaveLinkCorrectionView = { label_ref: string; source_ref: string; kind: string; target_ref: string; actor_ref: string; recorded_at: number };
   type WeaveWrongItemRequest = { item: string; item_ref: string; project_ref?: string | null };
   type WeaveItemCorrectionView = { label_ref: string; item: string; item_ref: string; project_ref?: string | null; actor_ref: string; recorded_at: number };
+  type WeaveAdminReportRequest = { membership_grant: string; request?: WeaveReportRequest };
+  type WeaveAdminLensRequest = { membership_grant: string; request?: WeaveLensRequest };
+  type WeaveAdminDigestRequest = { membership_grant: string; request?: WeaveDigestRequest };
+  type WeaveAdminLinkWrongRequest = { membership_grant: string; request: WeaveWrongLinkRequest };
+  type WeaveAdminItemWrongRequest = { membership_grant: string; request: WeaveWrongItemRequest };
+  type StepUpPasskeysResetRequest = { person: string };
+  type StepUpPasskeysReset = { person: string; removed: number };
+  type StepUpTotpResetRequest = { person: string };
+  type StepUpTotpReset = { person: string; removed: number };
   type WeaveEnqueueRequest = { skill_ref: string; subject_ref: string; evidence_ref: string };
   type DreamerAttemptRef = { job_ref: string; state: string; existing: boolean };
   type WeaveReaderKind = "person" | "owner" | "agent" | "admin";
@@ -1337,7 +1346,7 @@ declare namespace Sdk {
   type PackSetupVerifyRequest = { pack: string; source?: string | null; connection: string };
   type AuthorityAuditEventKind = "grant" | "revoke" | "confirm" | "other";
   type AuthorityAuditQuery = { after?: EntityId | null; limit?: number | null; kinds?: AuthorityAuditEventKind[] };
-  type AuthorityAuditRow = { entry_ref: EntityId; entry_hash: string; event_kind: AuthorityAuditEventKind; source_op: string; detail?: string | null; occurred_start: number; occurred_end: number; learned_at: number; advisory_ts: number; signer_key: string; cosigner_keys?: string[]; seq: number; vault_ref?: string | null; subject_ref?: string | null; grant_ref?: string | null; claim_ref?: string | null; holder_ref?: string | null; parent_ref?: string | null; peer_vault_ref?: string | null; epoch?: number | null; expires_at?: number | null; fold_valid: boolean; issue_codes?: string[] };
+  type AuthorityAuditRow = { entry_ref: EntityId; entry_hash: string; event_kind: AuthorityAuditEventKind; source_op: string; detail?: string | null; occurred_start: number; occurred_end: number; learned_at: number; advisory_ts: number; signer_key: string; cosigner_keys?: string[]; seq: number; vault_ref?: string | null; subject_ref?: string | null; grant_ref?: string | null; receipt_ref?: string | null; affected_grants?: string[]; claim_ref?: string | null; holder_ref?: string | null; parent_ref?: string | null; peer_vault_ref?: string | null; epoch?: number | null; expires_at?: number | null; fold_valid: boolean; issue_codes?: string[] };
   type AuthorityAuditOrder = "entry_ref_ascending";
   type ColdAuthorityAuditRow = { entry_ref: EntityId; entry_hash: string; checkpoint: string; signer_key: string; seq: number; parents: string[]; fold_valid: boolean; issue_codes?: string[] };
   type PendingMembershipExecutionRow = { receipt: string; vault_id: string; act?: string | null; cause: string; person: string; member: string; executed_at: number; withdrawn_grants: string[]; handover: boolean };
@@ -2061,9 +2070,7 @@ declare namespace Sdk {
   type LiftAndEraseShownState = { title: string; prompt: string; records: EntityId[]; claim_free_partition?: boolean; holds: ShownCustomerHold[] };
   type LegalHoldLiftAndEraseRequest = { records: EntityId[]; claim_free_partition?: boolean; shown_state: LiftAndEraseShownState };
   type ErasePendingReason = "historical_sweep" | "custody_retirement" | "veto_window";
-  type LegalHoldBoundKind = "law";
-  type LegalHoldBound = { kind: LegalHoldBoundKind; order_ref?: string | null; legal_basis_ref?: string | null; jurisdiction?: string | null; issuing_authority_ref?: string | null; ends_at?: number | null };
-  type LegalHoldEraseState = { state: "erased"; receipt_ref?: string | null } | { state: "completion_pending"; receipt_ref?: string | null; reason?: ErasePendingReason | null } | { state: "retained_for_law"; bound: LegalHoldBound; works_self_hosted: boolean; self_hosted_note: string } | { state: "failed"; message: string };
+  type LegalHoldEraseState = { state: "erased"; receipt_ref?: string | null } | { state: "completion_pending"; receipt_ref?: string | null; reason?: ErasePendingReason | null } | { state: "failed"; message: string };
   type LegalHoldErasedRecord = { record: EntityId; status: LegalHoldEraseState };
   type LegalHoldLiftAndErased = { holds: EntityId[]; records: LegalHoldErasedRecord[]; changed?: LiftAndEraseShownState | null };
   type LegalHoldWithdrawEraseRequest = { records: EntityId[] };
@@ -2574,10 +2581,11 @@ declare namespace Sdk {
   type ForeignCodeOutput = { path: string; bytes: number[] };
   type ForeignCodeSource = "generated";
   type ForeignCodeApproval = "proposed";
-  type CodeFileEdit = { path: string; start: number; end: number; expected: string; replacement: string; new_path?: string | null };
+  type SandboxProposalText = string;
+  type SandboxFileEdit = { path: string; start: number; end: number; expected: SandboxProposalText; replacement: SandboxProposalText; new_path?: string | null };
   type ConfidenceDetails = { band: ConfidenceBand; basis: VerdictBasis };
   type ClaimInput = { id?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; source: string; world_ref?: string | null; relationship_ref?: string[] | null; scope?: unknown | null; valid_from?: number | null; valid_to?: number | null; occurred_at?: number | null; learned_at?: number | null; salience?: number | null; confidence_details?: ConfidenceDetails | null };
-  type ForeignCodeEffect = { kind: "file_write"; path: string; bytes: number[] } | { kind: "file_edit"; path: string; base_content_hash: string; edit: CodeFileEdit } | { kind: "file_delete"; path: string } | { kind: "file_rename"; from: string; to: string } | { kind: "directory_opaque"; path: string } | { kind: "claim_candidate"; claim: ClaimInput };
+  type ForeignCodeEffect = { kind: "file_write"; path: string; bytes: number[] } | { kind: "file_edit"; path: string; base_content_hash: string; edit: SandboxFileEdit } | { kind: "file_delete"; path: string } | { kind: "file_rename"; from: string; to: string } | { kind: "directory_opaque"; path: string } | { kind: "claim_candidate"; claim: ClaimInput };
   type ForeignCodeProposal = { proposal_ref: string; receipt_ref: string; actor_ref: string; source: ForeignCodeSource; approval: ForeignCodeApproval; effect: ForeignCodeEffect };
   type ForeignCodeIsolation = { backend: string; runtime: string; image: string; argv_digest: string; network: string; generation: string; fence_proven: boolean };
   type ForeignCodeRunResult = { run_id: string; actor_ref: string; tier: ForeignCodeTier; linked_imports: string[]; reads: ForeignCodeRead[]; done: boolean; observation: string; outputs: ForeignCodeOutput[]; proposals: ForeignCodeProposal[]; isolation: ForeignCodeIsolation; receipt_ref: string; program_steps?: ProgramStepFeedbackRelease[] };
@@ -3700,6 +3708,8 @@ declare namespace Sdk {
   type ScopedCommitRequest = { claims: ScopedClaimInput[] };
   type RefusalReason = "INVENTED_REFERENCE" | "GATE_REFUSED";
   type LegalHoldState = "retained_for_law" | "use_restricted";
+  type LegalHoldBoundKind = "law";
+  type LegalHoldBound = { kind: LegalHoldBoundKind; order_ref?: string | null; legal_basis_ref?: string | null; jurisdiction?: string | null; issuing_authority_ref?: string | null; ends_at?: number | null };
   type LegalHoldNotice = { state: LegalHoldState; bound: LegalHoldBound; works_self_hosted: boolean; self_hosted_note: string };
   type RecordRefusal = { reason: RefusalReason; code: string; message: string; suggestions: string[]; field: string; legal_hold?: LegalHoldNotice | null };
   type CommitOutcome = (CommitReceipt & { outcome: "landed" }) | { outcome: "refused"; refusal: RecordRefusal; receipt_ref?: string | null };
@@ -4657,10 +4667,11 @@ declare namespace Sdk {
   type TeamStartInput = { pattern: string; intentKey: string; members: TeamMemberInput[]; tournament?: string | null };
   type TeamPattern = "ceo_decides" | "committee" | "vote" | "market" | "rotation";
   type TeamMemberAnswer = { agent: string; attemptRef?: string | null; proposalRef?: string | null };
-  type TeamRunAnswer = { verb: "started"; teamRef: string; pattern: TeamPattern; members: TeamMemberAnswer[] } | { verb: "proposed_widen"; teamRef: string; pattern: TeamPattern; members: TeamMemberAnswer[] } | { verb: "recorded"; teamRef: string; pattern: TeamPattern; width: number; belowFloor: boolean; models: string[]; patternSkill?: string | null; replay: boolean };
+  type TeamRunAnswer = { verb: "started"; teamRef: string; pattern: TeamPattern; members: TeamMemberAnswer[] } | { verb: "proposed_widen"; teamRef: string; pattern: TeamPattern; members: TeamMemberAnswer[] } | { verb: "voted"; teamRef: string; choice: string } | { verb: "recorded"; teamRef: string; pattern: TeamPattern; width: number; belowFloor: boolean; models: string[]; patternSkill?: string | null; replay: boolean };
   type TeamDecisionInput = { kind: "leader" } | { kind: "chair" } | { kind: "vote"; tally: Record<string, number> } | { kind: "referee"; rule: string; signedAt: number };
   type TeamCoverageInput = { cellsFilled: number; cellsTotal: number };
   type TeamRecordInput = { teamRef: string; members: string[]; axis: TeamAxis; decidedBy: TeamDecisionInput; roles?: Record<string, number> | null; coverage?: TeamCoverageInput | null };
+  type TeamVoteInput = { teamRef: string; choice: string };
   type TeamSubmitInput = { team: string; outputRevision: string };
   type TeamSubmitAnswer = { team: string; outputRevision: string; reviewClaim: string; alreadySubmitted: boolean };
   type ReaderSpawnInput = { source: unknown; ask: string; intent_key: string };
@@ -5197,6 +5208,7 @@ declare namespace self {
     record(input: Sdk.TeamRecordInput): Promise<Sdk.TeamRunAnswer | StoredResult>;
     start(input: Sdk.TeamStartInput): Promise<Sdk.TeamRunAnswer | StoredResult>;
     submit(input: Sdk.TeamSubmitInput): Promise<Sdk.TeamSubmitAnswer | StoredResult>;
+    vote(input: Sdk.TeamVoteInput): Promise<Sdk.TeamRunAnswer | StoredResult>;
   };
   const unfold: (input: Sdk.FoldUnfoldInput) => Promise<Sdk.FoldReply<Sdk.FoldUnfolded> | StoredResult>;
   /** Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value. */
@@ -7769,6 +7781,16 @@ declare const vault: Sdk.VaultHost & {
     /** The owner gives a configured standing block a new name and token floor; an unconfigured pair is refused, never implicitly opened. */
     reconfigure(input: Sdk.StandingBlockConfigureRequest): Promise<Sdk.StandingBlockView | StoredResult>;
   };
+  step_up: {
+    passkeys: {
+      /** The vault owner removes every passkey a person enrolled for step-up, and that person's step-ups, so a person who lost each passkey can enroll a first one again; under the owner's own credential. */
+      reset(input: Sdk.StepUpPasskeysResetRequest): Promise<Sdk.StepUpPasskeysReset | StoredResult>;
+    };
+    totp: {
+      /** The vault owner removes a person's authenticator-app enrollments and their TOTP step-ups; passkeys and passkey step-ups remain unchanged. */
+      reset(input: Sdk.StepUpTotpResetRequest): Promise<Sdk.StepUpTotpReset | StoredResult>;
+    };
+  };
   structural: {
     /** Puts one structural record with its text-index fields and outgoing edges, in one atomic batch; claims go through commit. */
     put(input: Sdk.StructuralPutInput): Promise<Sdk.EntityRefReceipt | StoredResult>;
@@ -7927,6 +7949,22 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   weave: {
+    admin: {
+      /** One of a weave Admin's saved digests, or the newest, under the stepped-up Admin proof and the current read policy. */
+      digest(input: Sdk.WeaveAdminDigestRequest): Promise<Sdk.WeaveDigestView | null | StoredResult>;
+      item: {
+        /** A weave Admin labels a claim, project, budget or sieve audit row its Admin report shows as wrong, under the stepped-up Admin proof; the row stays. */
+        wrong(input: Sdk.WeaveAdminItemWrongRequest): Promise<Sdk.WeaveItemCorrectionView | StoredResult>;
+      };
+      /** A weave Admin's live report rendered into its lens on the server's model, under the stepped-up Admin proof; the server holds its frame for the card's events. */
+      lens(input: Sdk.WeaveAdminLensRequest): Promise<Sdk.LensFrameCard | StoredResult>;
+      link: {
+        /** A weave Admin labels a link its Admin report shows as wrong, under the stepped-up Admin proof, with the grant on the label; the link stays. */
+        wrong(input: Sdk.WeaveAdminLinkWrongRequest): Promise<Sdk.WeaveLinkCorrectionView | StoredResult>;
+      };
+      /** A weave Admin's live report of the shared vault, inside the Admin membership grant's Scope, after the person stepped up with a passkey on this credential (MFA-1 A); never an Owner read. */
+      report(input: Sdk.WeaveAdminReportRequest): Promise<Sdk.WeaveReportView | StoredResult>;
+    };
     /** One of the bound actor's saved weave digests, or the newest, under the current read policy. Its lens is a card; a server holds its frame for the card's events, an embedded handle holds none. */
     digest: ((input: Sdk.WeaveDigestRequest) => Promise<Sdk.WeaveDigestView | null | StoredResult>) & {
       /** Publishes the bound reader's due digest through the same live scoped lens and returns its saved period and narrowing receipt, or null when nothing is due. */
