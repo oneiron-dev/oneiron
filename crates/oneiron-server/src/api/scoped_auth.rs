@@ -281,14 +281,17 @@ pub(crate) fn mcp_credential_memory<'a>(
 
 /// The exact instrument a verified slip's request was admitted on, as a
 /// verb hook's ask names it: only a slip whose request kept its instrument
-/// for queued work has one, so the host can verify it again. A managed
-/// vault's attested owner, who presents no slip, has his own
+/// for queued work has one, so the host can verify it again. A verified
+/// full host root has one with no holder binding kept, the caller a resumed
+/// call rebuilt from its recorded host action included: its host verifies
+/// it again through that action and the root it retains (FIX 4744). A
+/// managed vault's attested owner, who presents no slip, has his own
 /// ([`attested_owner_instrument`]).
 pub(crate) fn verb_ask_instrument(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
 ) -> Option<VerbAskInstrument> {
-    if auth.invocation_slip().is_none() {
+    if auth.invocation_slip().is_none() && auth.host_root().is_none() {
         return attested_owner_instrument(vault, auth);
     }
     let claims = auth.verified_slip()?.claims();
