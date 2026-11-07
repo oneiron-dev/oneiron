@@ -44056,7 +44056,7 @@
      "purpose": "Immutable producer artifact and one approval for the complete import batch",
      "surface": {
       "crate-vis": 1,
-      "fn": 10,
+      "fn": 11,
       "struct": 2
      }
     },
@@ -44172,7 +44172,7 @@
      "path": "src/ingest/meeting_audio/mod.rs",
      "purpose": "Boundary-preserving batch meeting-audio producer for the existing ingest adapter",
      "surface": {
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -44184,6 +44184,20 @@
      "surface": {
       "crate-vis": 2,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MeetingTranscriptVersionPin",
+      "StoredMeetingTranscript"
+     ],
+     "path": "src/ingest/meeting_audio/persistence.rs",
+     "purpose": "Owner-selected storage of exact meeting artifacts and source-label revisions",
+     "surface": {
+      "fn": 2,
+      "struct": 2
      }
     },
     {
@@ -45864,7 +45878,7 @@
      "path": "src/llm/budget/resident.rs",
      "purpose": "The vault's durable resident ledger (FIX 7767): each resident's share of the host-paid allocation, as the…",
      "surface": {
-      "fn": 3,
+      "fn": 6,
       "struct": 2
      }
     },
@@ -47455,6 +47469,37 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "AllocationCallKey",
+      "AllocationCommit",
+      "AllocationServingFence",
+      "AllocationStoreError",
+      "AllocationTerminal",
+      "DurableAllocationHold",
+      "DurableAllocationRead",
+      "VaultAllocationLedger"
+     ],
+     "path": "src/llm/run_admission/allocation/mod.rs",
+     "purpose": "Durable native allocation state",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/run_admission/allocation/store.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/llm/run_admission/capture.rs",
      "purpose": "Settlements kept for one scope on the calling thread (FIX 10075 seam): a host that must name the calls a…",
@@ -47556,8 +47601,9 @@
      "path": "src/llm/run_admission/mod.rs",
      "purpose": "The run admission (ARCH-0053 `#run-admission`): one door every paid call of a run passes, to a model through…",
      "surface": {
+      "crate-vis": 1,
       "mod": 1,
-      "re-export": 14
+      "re-export": 15
      }
     },
     {
@@ -51584,7 +51630,7 @@
      "surface": {
       "const": 3,
       "crate-vis": 4,
-      "fn": 3,
+      "fn": 4,
       "struct": 1,
       "trait": 1
      }
@@ -51631,6 +51677,7 @@
       "RepoMergeQueueEnqueueInput",
       "RepoMergeQueueObserveInput",
       "RepoMergeQueueObserveOutput",
+      "RepoProposalResolveInput",
       "RepoProposalSubmitInput",
       "RepoProposalSubmitOutput",
       "RepoQueueEntryView",
@@ -51657,7 +51704,7 @@
      "path": "src/memory/repo_doors/types.rs",
      "purpose": "The run repo doors' closed inputs and per-row outputs (FIX 6867, G1 PR2a), and the run stamp a run's own…",
      "surface": {
-      "struct": 25,
+      "struct": 26,
       "type": 7
      }
     },
@@ -53690,6 +53737,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/merge_queue/driver_resolution.rs",
+     "purpose": "Reconciliation links follow accepted conflict-path coverage, not TASK completion",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -53857,7 +53914,7 @@
      "path": "src/merge_queue/source.rs",
      "purpose": "The served queue source's one resolver (FIX 6869): which root a queue opens at the owner's doors, the driver…",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 1
      }
     },
@@ -58132,7 +58189,7 @@
       "const": 3,
       "crate-vis": 8,
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -58700,7 +58757,7 @@
      "purpose": "The connector-call driver: tool resolution, schema reads and the durable pass that turns a gate decision…",
      "surface": {
       "crate-vis": 4,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -58825,6 +58882,7 @@
       "ConnectorCallState",
       "ConnectorQuestion",
       "ConnectorResultAbsence",
+      "ConnectorSource",
       "ConnectorToolSchema",
       "PendingConnectorCallRef",
       "UntrustedToolResult"
@@ -58832,7 +58890,8 @@
      "path": "src/outbound_consent/connector_call_types.rs",
      "purpose": "The connector-call shapes: the request, the host seam, its replies and questions, and the caller's status view",
      "surface": {
-      "enum": 3,
+      "enum": 4,
+      "fn": 1,
       "struct": 8,
       "trait": 1
      }
@@ -64713,8 +64772,18 @@
      "path": "src/repo_mutation/conflict.rs",
      "purpose": "Repository conflict claims and checked resolution writes",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/repo_mutation/conflict/queue.rs",
+     "purpose": "Historical queue GREEN contributes paths to the existing typed closer",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -76973,7 +77042,7 @@
      "path": "src/store/resident_budget_rows.rs",
      "purpose": "The vault's durable resident budget rows (FIX 7767): each resident's share of the host-paid allocation and…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "struct": 2
      }
     },
@@ -86394,7 +86463,7 @@
      "path": "src/vault/entities.rs",
      "purpose": "Vault entity, vector, short-id and type-index reads and writes",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 21,
       "struct": 1
      }
@@ -87816,6 +87885,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ConnectorReplyRetryRequest",
+      "ConnectorReplyRetryView"
+     ],
+     "path": "src/verbs/connector_reply_retry.rs",
+     "purpose": "FIX 2405: the owner's retry of one Failed connector reply job (Ambiguous, owner-act Fault) as its queued…",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ConnectorSlateNarrowRequest",
       "ConnectorSlateNarrowView",
       "ConnectorSlateRedraftReply",
@@ -88211,7 +88294,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1324
+      "fn": 1325
      }
     },
     {
@@ -88669,7 +88752,7 @@
      "surface": {
       "fn": 8,
       "mod": 1,
-      "re-export": 103,
+      "re-export": 104,
       "struct": 33
      }
     },
@@ -89093,10 +89176,12 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OwnerWorkGetRequest",
+      "OwnerWorkReceiptView",
+      "OwnerWorkView",
       "PendingRootRequestView",
       "RootChangeView",
       "RootRequestCancelRequest",
@@ -89106,7 +89191,7 @@
      "purpose": "The inputs and answers of the owner's root-request rows: the cancel (FIX 5586)…",
      "surface": {
       "fn": 6,
-      "struct": 5
+      "struct": 7
      }
     },
     {
@@ -94826,7 +94911,7 @@
      "purpose": "A vault-owned inference snapshot at rest: its body sealed under its own erasable data key, the key wrapped…"
     },
     "ingest": {
-     "files": 66,
+     "files": 67,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -94903,7 +94988,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 178,
+     "files": 180,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94945,7 +95030,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade"
     },
     "merge_queue": {
-     "files": 38,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -95169,7 +95254,7 @@
      "purpose": "—"
     },
     "repo_mutation": {
-     "files": 55,
+     "files": 56,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -95589,7 +95674,7 @@
      "purpose": "Verb catalog vocabulary used by core admission and action surfaces"
     },
     "verbs": {
-     "files": 118,
+     "files": 119,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -95654,7 +95739,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6774,
+   "source_files": 6780,
    "test_files": 895
   },
   "oneiron-android": {
@@ -110542,7 +110627,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1292
+      "fn": 1293
      }
     },
     {
@@ -112335,7 +112420,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1293
+      "fn": 1294
      }
     },
     {
@@ -117451,6 +117536,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/connector_reply_doors.rs",
+     "purpose": "FIX 2405: the owner's retry of one Failed connector reply job, shared by HTTP, SDK and MCP",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/connector_revision_doors.rs",
      "purpose": "FIX 988: the owner's doors onto proposed connector slate revisions, shared by HTTP, SDK and MCP: his ruling…",
      "surface": {
@@ -117994,7 +118089,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 175
+      "crate-vis": 176
      }
     },
     {
@@ -121078,13 +121173,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/owner_work_routes.rs",
      "purpose": "`/v1/owner/owner-work/{request}`: where one owner work request stands (FIX 4632, 4682, 4736)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 5
      }
     },
     {
@@ -133352,7 +133447,7 @@
      "path": "src/usage/pending.rs",
      "purpose": "Durable redelivery of the same frozen automatic settlement (FIX 737)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -133742,7 +133837,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/web_connector/mod.rs",
-     "purpose": "The served half of the built-in `web` connector (FIX 11598, CONN-1 A): every `connector.call` that names…",
+     "purpose": "The served half of the built-in `web` connector (FIX 11598, CONN-1 A): every `connector.call` that selects…",
      "surface": {
       "crate-vis": 1
      }
@@ -134240,7 +134335,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 721,
+     "files": 722,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -134748,7 +134843,7 @@
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
-     "purpose": "The served half of the built-in `web` connector (FIX 11598, CONN-1 A): every `connector.call` that names…"
+     "purpose": "The served half of the built-in `web` connector (FIX 11598, CONN-1 A): every `connector.call` that selects…"
     },
     "wire_health": {
      "files": 2,
@@ -134774,7 +134869,7 @@
    },
    "over_bar": 62,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1738,
+   "source_files": 1739,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -143770,7 +143865,7 @@
      "purpose": "Process-owner writer lease, shared by the server and embedded SDK",
      "surface": {
       "const": 2,
-      "fn": 15,
+      "fn": 16,
       "static": 1,
       "struct": 1
      }
@@ -146573,6 +146668,8 @@
       "ConnectorQualificationReceipt",
       "ConnectorQuestion",
       "ConnectorQuestionAnswer",
+      "ConnectorReplyRetryRequest",
+      "ConnectorReplyRetryView",
       "ConnectorRevisionDeferral",
       "ConnectorRevisionGrantView",
       "ConnectorRevisionSnoozeView",
@@ -146596,6 +146693,7 @@
       "ConnectorSlateRevisionOffersRequest",
       "ConnectorSlateRevisionOffersView",
       "ConnectorSlateView",
+      "ConnectorSource",
       "ConnectorSpendEstimate",
       "ConnectorToolResult",
       "ConnectorView",
@@ -148445,6 +148543,7 @@
       "OwnerWorkRefusal",
       "OwnerWorkStatus",
       "OwnerWorkUnassigned",
+      "OwnerWorkView",
       "PackAdapter",
       "PackAttributionFields",
       "PackBytesFile",
@@ -150286,8 +150385,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1152,
-      "struct": 3525
+      "enum": 1153,
+      "struct": 3528
      }
     },
     {
