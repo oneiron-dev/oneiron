@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1286 facade rows, 4655 declarations.
+Census: 1286 facade rows, 4659 declarations.
 Inputs: 1215 of 1286 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1115 of 1286 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -17514,6 +17514,21 @@ class LiveVoiceEventsRequest(TypedDict):
     after: NotRequired[int]
     limit: NotRequired[int | None]
 LiveVoiceStopReason = Literal["user_barge_in", "safeguard", "roster_changed", "output_failed", "session_end"]
+HeardCoverage = Literal["full", "partial", "unplayed"]
+class HeardUtterance(TypedDict):
+    submission: int
+    text: str
+    sample_rate: int
+    samples: int
+    played_samples: int
+    coverage: HeardCoverage
+    heard_text: NotRequired[str | None]
+HeardBasis = Literal["client_report", "sent_upper_bound"]
+class HeardPlayback(TypedDict):
+    session_ref: str
+    generation: int
+    utterances: list[HeardUtterance]
+    basis: HeardBasis
 class LiveVoiceEventKindGenerationStarted(TypedDict):
     kind: Literal["generation_started"]
     run: str
@@ -17547,6 +17562,9 @@ class LiveVoiceEventKindMemories(TypedDict):
 class LiveVoiceEventKindToolContext(TypedDict):
     kind: Literal["tool_context"]
     source: str
+class LiveVoiceEventKindHeard(TypedDict):
+    kind: Literal["heard"]
+    playback: HeardPlayback
 class LiveVoiceEventKindFinished(TypedDict):
     kind: Literal["finished"]
 class LiveVoiceEventKindError(TypedDict):
@@ -17554,7 +17572,7 @@ class LiveVoiceEventKindError(TypedDict):
     code: str
 class LiveVoiceEventKindSessionEnded(TypedDict):
     kind: Literal["session_ended"]
-LiveVoiceEventKind = LiveVoiceEventKindGenerationStarted | LiveVoiceEventKindPcm | LiveVoiceEventKindPlayoutEnd | LiveVoiceEventKindFlush | LiveVoiceEventKindPlayoutStop | LiveVoiceEventKindMediaCancelled | LiveVoiceEventKindSafeguard | LiveVoiceEventKindNotice | LiveVoiceEventKindMemories | LiveVoiceEventKindToolContext | LiveVoiceEventKindFinished | LiveVoiceEventKindError | LiveVoiceEventKindSessionEnded
+LiveVoiceEventKind = LiveVoiceEventKindGenerationStarted | LiveVoiceEventKindPcm | LiveVoiceEventKindPlayoutEnd | LiveVoiceEventKindFlush | LiveVoiceEventKindPlayoutStop | LiveVoiceEventKindMediaCancelled | LiveVoiceEventKindSafeguard | LiveVoiceEventKindNotice | LiveVoiceEventKindMemories | LiveVoiceEventKindToolContext | LiveVoiceEventKindHeard | LiveVoiceEventKindFinished | LiveVoiceEventKindError | LiveVoiceEventKindSessionEnded
 class LiveVoiceEvent(TypedDict):
     sequence: int
     utterance_id: NotRequired[str | None]
@@ -17571,6 +17589,7 @@ class LiveVoiceAckRequest(TypedDict):
     generation: int
     event_sequence: int
     kind: LiveVoiceAckKind
+    played_samples: NotRequired[int | None]
 class LiveVoiceUsageRequest(TypedDict):
     session_ref: str
     generation: int
