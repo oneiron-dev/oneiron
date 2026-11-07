@@ -363,6 +363,7 @@ pub(super) fn witness_receipt_from_engine(
     receipt: oneiron::memory::WitnessReceipt,
 ) -> NapiWitnessReceipt {
     NapiWitnessReceipt {
+        turn_id: receipt.turn_id.to_hex(),
         turn_short_id: receipt.turn_short_id,
         message_short_ids: receipt.message_short_ids,
         receipt_ref: receipt.receipt_ref,
