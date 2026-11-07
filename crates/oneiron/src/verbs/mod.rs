@@ -61,6 +61,8 @@ mod proxy;
 mod receipts_page;
 mod record_erase;
 mod reply;
+#[cfg(feature = "sync")]
+mod repo_manifest_conflict;
 mod research;
 mod reservoir_sources;
 mod residence;
@@ -491,6 +493,8 @@ pub use self::proxy::*;
 pub use self::receipts_page::*;
 pub use self::record_erase::*;
 pub use self::reply::*;
+#[cfg(feature = "sync")]
+pub use self::repo_manifest_conflict::*;
 pub use self::research::*;
 pub use self::reservoir_sources::*;
 pub use self::residence::*;

@@ -6206,6 +6206,16 @@ export_facade! {
     let output = client.vault_files_sources_convert(&input)?;
     crate::codec::lift_record("vault.files.sources.convert", &output)
 };
+"vault.sync.repo_manifests.conflict.review" => fn vault_sync_repo_manifests_conflict_review(&self, input: RepoManifestConflictReviewRequest) -> Option<RepoManifestConflictReviewView> = |client| {
+    let input: oneiron::task_verb::sdk::RepoManifestConflictReviewRequest = crate::codec::lower_record("vault.sync.repo_manifests.conflict.review", input)?;
+    let output = client.vault_sync_repo_manifests_conflict_review(&input)?;
+    crate::codec::lift_record("vault.sync.repo_manifests.conflict.review", &output)
+};
+"vault.sync.repo_manifests.conflict.discard" => fn vault_sync_repo_manifests_conflict_discard(&self, input: RepoManifestConflictDiscardRequest) -> RepoManifestConflictDiscardView = |client| {
+    let input: oneiron::task_verb::sdk::RepoManifestConflictDiscardRequest = crate::codec::lower_record("vault.sync.repo_manifests.conflict.discard", input)?;
+    let output = client.vault_sync_repo_manifests_conflict_discard(&input)?;
+    crate::codec::lift_record("vault.sync.repo_manifests.conflict.discard", &output)
+};
 "connector.answer" => fn connector_answer(&self, input: ConnectorAnswerRequest) -> ConnectorCallReply = |client| {
     let input: oneiron::task_verb::sdk::ConnectorAnswerRequest = crate::codec::lower_record("connector.answer", input)?;
     let output = client.connector_answer(&input)?;

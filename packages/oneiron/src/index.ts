@@ -1590,6 +1590,14 @@ export class Oneiron {
           set: (input: Facade.RetainedWorkWaitSetRequest): number => this.#call(() => this.#client.vaultSyncRetainedWorkWaitSet(input) as number),
         },
       },
+      repo_manifests: {
+        conflict: {
+          /** The owner reviews one durable repo-manifest conflict and its exact held/carried manifests; return the opaque binding to discard that reviewed carrier. */
+          review: (input: Facade.RepoManifestConflictReviewRequest): Facade.RepoManifestConflictReviewView | null => this.#call(() => this.#client.vaultSyncRepoManifestsConflictReview(input) as Facade.RepoManifestConflictReviewView | null),
+          /** The owner discards exactly the reviewed carrier, keeping the held manifest; report Stale or WindowLive, or the actual delta and queue acceptance, never delivery. */
+          discard: (input: Facade.RepoManifestConflictDiscardRequest): Facade.RepoManifestConflictDiscardView => this.#call(() => this.#client.vaultSyncRepoManifestsConflictDiscard(input) as Facade.RepoManifestConflictDiscardView),
+        },
+      },
     },
     trusted_contacts: {
       /** A live person names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again. */

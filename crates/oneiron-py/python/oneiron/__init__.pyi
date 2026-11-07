@@ -1931,6 +1931,8 @@ class Oneiron:
         def quarantine(self) -> "Oneiron._VaultSyncQuarantineVerbs": ...
         @property
         def retained_work(self) -> "Oneiron._VaultSyncRetainedWorkVerbs": ...
+        @property
+        def repo_manifests(self) -> "Oneiron._VaultSyncRepoManifestsVerbs": ...
     class _VaultSyncQuarantineVerbs:
         def held_edits(self, spec: Facade.EmptyRequest) -> list[tuple[int, Facade.SyncHeldEditEvidence]]:
             """The owner lists retained hash-only held-edit evidence in stored sequence order. Hashes are lossless lowercase hex strings. Shared quarantine retention applies; this is not live pending work or settlement status."""
@@ -1940,6 +1942,14 @@ class Oneiron:
     class _VaultSyncRetainedWorkWaitVerbs:
         def set(self, spec: Facade.RetainedWorkWaitSetRequest) -> int:
             """The owner sets one retained-work queue's wait in seconds, or resets it to its existing default, and receives the effective wait."""
+    class _VaultSyncRepoManifestsVerbs:
+        @property
+        def conflict(self) -> "Oneiron._VaultSyncRepoManifestsConflictVerbs": ...
+    class _VaultSyncRepoManifestsConflictVerbs:
+        def review(self, spec: Facade.RepoManifestConflictReviewRequest) -> Facade.RepoManifestConflictReviewView | None:
+            """The owner reviews one durable repo-manifest conflict and its exact held/carried manifests; return the opaque binding to discard that reviewed carrier."""
+        def discard(self, spec: Facade.RepoManifestConflictDiscardRequest) -> Facade.RepoManifestConflictDiscardView:
+            """The owner discards exactly the reviewed carrier, keeping the held manifest; report Stale or WindowLive, or the actual delta and queue acceptance, never delivery."""
     class _VaultTrustedContactsVerbs:
         def name(self, spec: Facade.TrustedContactNameRequest) -> Facade.TrustedContact:
             """A live person names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again."""

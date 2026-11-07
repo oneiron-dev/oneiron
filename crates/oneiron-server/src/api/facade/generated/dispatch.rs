@@ -38888,6 +38888,86 @@ async fn vault_files_sources_convert(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_sync_repo_manifests_conflict_review(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.sync.repo_manifests.conflict.review")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.sync.repo_manifests.conflict.review", &value)?;
+    let mut hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.sync.repo_manifests.conflict.review",
+        value,
+    )
+    .await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_sync_repo_manifests_conflict_review(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_sync_repo_manifests_conflict_discard(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.sync.repo_manifests.conflict.discard")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.sync.repo_manifests.conflict.discard", &value)?;
+    let mut hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.sync.repo_manifests.conflict.discard",
+        value,
+    )
+    .await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_sync_repo_manifests_conflict_discard(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn connector_answer(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -50405,6 +50485,26 @@ fn boxed_vault_files_sources_convert<'a>(
     Box::pin(vault_files_sources_convert(server, call, input))
 }
 #[inline(never)]
+fn boxed_vault_sync_repo_manifests_conflict_review<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_sync_repo_manifests_conflict_review(
+        server, call, input,
+    ))
+}
+#[inline(never)]
+fn boxed_vault_sync_repo_manifests_conflict_discard<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_sync_repo_manifests_conflict_discard(
+        server, call, input,
+    ))
+}
+#[inline(never)]
 fn boxed_connector_answer<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
@@ -52988,6 +53088,12 @@ async fn call_verb_row(
         }
         "vault.files.sources.convert" => {
             boxed_vault_files_sources_convert(server, call, input).await
+        }
+        "vault.sync.repo_manifests.conflict.review" => {
+            boxed_vault_sync_repo_manifests_conflict_review(server, call, input).await
+        }
+        "vault.sync.repo_manifests.conflict.discard" => {
+            boxed_vault_sync_repo_manifests_conflict_discard(server, call, input).await
         }
         "connector.answer" => boxed_connector_answer(server, call, input).await,
         "self.browser.open" => boxed_self_browser_open(server, call, input).await,
