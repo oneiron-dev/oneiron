@@ -23887,7 +23887,10 @@ class AgentSpawnOutputProposedWiden(TypedDict):
 class AgentSpawnOutputTargetErased(TypedDict):
     state: Literal["target_erased"]
     kind: AgentSpawnKind
-AgentSpawnOutput = AgentSpawnOutputQueued | AgentSpawnOutputProposedWiden | AgentSpawnOutputTargetErased
+class AgentSpawnOutputAskerErased(TypedDict):
+    state: Literal["asker_erased"]
+    kind: AgentSpawnKind
+AgentSpawnOutput = AgentSpawnOutputQueued | AgentSpawnOutputProposedWiden | AgentSpawnOutputTargetErased | AgentSpawnOutputAskerErased
 class LeaderSplitInput(TypedDict):
     leader: NotRequired[str | None]
     slice: NotRequired[ScopeScope | None]
