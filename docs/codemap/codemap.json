@@ -38100,7 +38100,7 @@
      "path": "src/federation/membership_gate.rs",
      "purpose": "Transaction-bound shared-vault membership write authorization",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 1,
       "re-export": 1
@@ -47737,7 +47737,7 @@
      "path": "src/llm/step/step_only.rs",
      "purpose": "Transaction-composable C9 waits that suspend one step, never its attempt",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -66117,7 +66117,7 @@
      "path": "src/saved_query/mod.rs",
      "purpose": "SAVED_QUERY — durable standing queries with staged evaluation (CA-02)",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 12
      }
     },
@@ -66161,7 +66161,7 @@
      "path": "src/saved_query/storage.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 27
      }
     },
     {
@@ -81266,7 +81266,7 @@
      "path": "src/sync/selector/admission/routing.rs",
      "purpose": "Routing and world-edge planning of admitted rows",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
