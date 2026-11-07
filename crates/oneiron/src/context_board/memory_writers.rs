@@ -53,7 +53,7 @@ impl Vault {
                 .and_then(crate::store::claim_projection::session_claim_producer)),
             ENTITY_TYPE_NOTE => Ok(self
                 .get_in_txn(rtxn, row)?
-                .and_then(|body| crate::store::note_body::decode_note_body(&body).ok())
+                .and_then(|body| crate::store::note_body::decode_note_core(&body).ok())
                 .and_then(|body| body.author_ref.id())),
             _ => Ok(None),
         }

@@ -5,10 +5,12 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 
 pub use crate::store::note_body::{
-    NOTE_BODY_KEYS, NoteBody, NoteKind, NoteScope, NoteWriteEnvelope, TakeTarget, decode_note_body,
-    encode_note_body,
+    NOTE_BODY_KEYS, NOTE_CORE_KEYS, NoteBody, NoteCore, NoteKind, NoteScope, NoteWriteEnvelope,
+    TakeTarget, decode_note_body, decode_note_core, encode_note_body, encode_note_core,
 };
-pub(crate) use crate::store::note_body::{decode_note_body_using, validate_markdown};
+pub(crate) use crate::store::note_body::{
+    decode_note_body_using, decode_note_core_using, validate_markdown,
+};
 
 mod reads;
 pub(crate) use reads::PreparedNoteRead;
@@ -78,7 +80,21 @@ pub(crate) use tombstone_review::{
     tombstone_still_proposed_in_txn,
 };
 pub(crate) use write_gate::check_doc_plane_note_commit_in_txn;
-/// Registry-aware decoding for stored NOTE cores, including PACK-defined kinds.
+/// Registry-aware decoding for stored NOTE rows, their cores, including
+/// PACK-defined kinds.
+pub(crate) fn decode_note_core_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    bytes: &[u8],
+) -> Result<NoteCore> {
+    let core = decode_note_core_using(bytes, NoteKind::wire)?;
+    kinds::context_in_txn(store, txn, core.kind.as_str().as_ref())?;
+    Ok(core)
+}
+
+/// Registry-aware decoding for a logical NOTE a read door projected
+/// ([`live_body_in_txn`]), including PACK-defined kinds. A stored row is a
+/// core and never decodes here.
 pub(crate) fn decode_note_body_in_txn(
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
@@ -87,6 +103,16 @@ pub(crate) fn decode_note_body_in_txn(
     let body = decode_note_body_using(bytes, NoteKind::wire)?;
     kinds::context_in_txn(store, txn, body.kind.as_str().as_ref())?;
     Ok(body)
+}
+
+/// The stored core of NOTE `id`, refused when the NOTE is erased, archived,
+/// a soft-erased shell or no NOTE core.
+pub(crate) fn note_core_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<NoteCore> {
+    verbs::note_core(vault, txn, id).map(|(_, core)| core)
 }
 
 /// Shared NOTE admission. Ordinary retrieval excludes every owner-only and
@@ -98,7 +124,7 @@ pub(crate) fn note_body_readable(
     bytes: &[u8],
     actor: Option<&EntityId>,
 ) -> Result<bool> {
-    let Ok(body) = decode_note_body_using(bytes, NoteKind::wire) else {
+    let Ok(body) = decode_note_core_using(bytes, NoteKind::wire) else {
         return Ok(false);
     };
     let context = overrides::note_context_in_txn(store, txn, id, body.kind.as_str().as_ref())?;
@@ -124,10 +150,7 @@ pub(crate) fn note_vault_readable_in_txn(
     id: &EntityId,
     bytes: &[u8],
 ) -> Result<bool> {
-    // A migrated NOTE keeps its markdown on its document plane: judge the
-    // logical body, as a scoped NOTE read does.
-    let resolved = crate::entity_doc::resolve_record_body(store, txn, id, bytes)?;
-    let Ok(body) = decode_note_body_using(&resolved, NoteKind::wire) else {
+    let Ok(body) = decode_note_core_using(bytes, NoteKind::wire) else {
         return Ok(false);
     };
     let context = overrides::note_context_in_txn(store, txn, id, body.kind.as_str().as_ref())?;
@@ -141,7 +164,7 @@ pub(crate) fn note_vault_readable_in_txn(
 pub(crate) fn reader_imported_note(
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
-    body: &NoteBody,
+    body: &NoteCore,
     reader: EntityId,
 ) -> Result<bool> {
     let Some(author) = body.author_ref.id() else {
@@ -157,7 +180,7 @@ pub(crate) fn note_explicit_only_in_txn(
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
-    body: &NoteBody,
+    body: &NoteCore,
 ) -> Result<bool> {
     Ok(
         overrides::note_context_in_txn(store, txn, id, body.kind.as_str().as_ref())?
@@ -272,7 +295,9 @@ pub(crate) use fork_upload::{fork_upload_frame_in_txn, uploadable_fork_in_txn};
 #[cfg(test)]
 mod erasure_tests;
 mod live_body;
-pub(crate) use live_body::{live_body_from_in_txn, live_body_in_txn};
+pub(crate) use live_body::{
+    birth_body_from_in_txn, live_body_from_in_txn, live_body_in_txn, live_note_from_in_txn,
+};
 mod brief_doors;
 pub use brief_doors::{AuthorBriefRequest, BriefClaimCitation, BriefKindStamp};
 mod kind_contract;
@@ -386,7 +411,7 @@ pub use import::{
 };
 pub(crate) use import::{folder_import_creator_in_txn, imported_note_source_in_txn};
 mod title_index;
-pub(crate) use birth::{document_birth_in_txn, room_birth_document_in_txn};
+pub(crate) use birth::{birth_document_in_txn, room_birth_document_in_txn};
 // FIX 4280: a room's NOTE read where the room holds it, and the sizes a
 // store-aware entrance measures of a NOTE document (rule 5).
 mod room_reads;

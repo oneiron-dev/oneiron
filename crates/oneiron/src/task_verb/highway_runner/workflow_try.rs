@@ -29,7 +29,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::ActorContentTxn;
 use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::note::{NoteBody, NoteKind, encode_note_body};
+use crate::note::{NoteCore, NoteKind, encode_note_core};
 use crate::run_tree::{RunTreeNode, RunTreeStatus};
 use crate::task_authority::TaskStanding;
 use crate::task_verb::create_validation::task_body_in_txn;
@@ -597,14 +597,14 @@ fn land_report_note(
         return Ok(());
     }
     let now = vault.now_recorded_at();
-    let body = encode_note_body(&NoteBody {
+    let body = encode_note_core(&NoteCore {
         kind: NoteKind::parse(REPORT_NOTE_KIND).ok_or(Error::InvariantViolation(
             "the research NOTE kind is not shipped",
         ))?,
         author_ref: crate::note::NoteActor::Actor(end.bound_by.entity_ref()),
-        markdown: report_markdown(end, ended),
         source_revision_ref: *note.as_bytes(),
     })?;
+    let markdown = report_markdown(end, ended);
     let batch = || {
         vault
             .batch_in()
@@ -617,6 +617,7 @@ fn land_report_note(
                 },
                 now,
                 &body,
+                &markdown,
             )
             .edge(&note, EdgeKind::AuthoredBy, &end.bound_by.entity_ref(), 1.0)
             .edge(&note, EdgeKind::About, &end.task, 1.0)

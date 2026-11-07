@@ -29,7 +29,7 @@ use crate::claim::{ClaimApprovalStatus, ClaimSubject};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::ErrorKind;
-use crate::note::{NoteBody, encode_note_body};
+use crate::note::{NoteCore, encode_note_core};
 use crate::off_record::{OffRecordSession, RoomRowAttachments};
 use crate::provenance::birth::room::SuppliedEvidence;
 use crate::session_overlay::{JournalEntry, SessionWriteRoute};
@@ -150,11 +150,11 @@ impl Memory<'_> {
         let id = self.vault.store.clock.entity_id()?;
         let at = self.vault.store.clock.now_recorded_at();
         let occurred = TimeRange { start: at, end: at };
-        let body = encode_note_body(&NoteBody {
+        crate::note::validate_markdown(markdown)?;
+        let body = encode_note_core(&NoteCore {
             source_revision_ref: *self.vault.store.clock.entity_id()?.as_bytes(),
             kind,
             author_ref: crate::note::NoteActor::Actor(self.actor),
-            markdown: markdown.to_owned(),
         })?;
         // The NOTE's birth facet: the one a NOTE born in the vault without a
         // batch facet is born under, the vault's default, while it is a
@@ -211,6 +211,7 @@ impl Memory<'_> {
                 "vault.notes.create",
                 evidence,
                 at,
+                markdown.to_owned(),
             ),
             receipt: EntityRefReceipt {
                 entity_ref: String::new(),

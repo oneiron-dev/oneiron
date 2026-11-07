@@ -1,7 +1,7 @@
 //! Actor-bound NOTE creation, edit and source-entity bridge.
 
-use super::documents::{NoteDocument, invalid, load_doc, store_doc};
-use super::{NoteBody, NoteProgramEdit, NoteProgramEditOutcome, encode_note_body};
+use super::documents::{NoteDocument, invalid, live_doc, load_doc, store_doc};
+use super::{NoteCore, NoteProgramEdit, NoteProgramEditOutcome, encode_note_core};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::memory::MemoryResult;
@@ -28,11 +28,10 @@ impl Vault {
         let kind = self.note_kind(kind)?;
         let id = self.store.clock.entity_id()?;
         let at = self.store.clock.now_recorded_at();
-        let body = encode_note_body(&NoteBody {
+        let body = encode_note_core(&NoteCore {
             source_revision_ref: *self.store.clock.entity_id()?.as_bytes(),
             kind,
             author_ref: super::NoteActor::Actor(actor.entity_ref()),
-            markdown: markdown.to_owned(),
         })?;
         self.memory(actor.entity_ref(), actor.actor_class())
             .with_actor_content_write_txn_as(actor, |content| {
@@ -44,6 +43,7 @@ impl Vault {
                             TimeRange { start: at, end: at },
                             at,
                             &body,
+                            markdown,
                         )
                         .edge(&id, EdgeKind::AuthoredBy, &actor.entity_ref(), 1.0)
                         .made_by(
@@ -81,11 +81,10 @@ impl Vault {
     ) -> MemoryResult<EntityId> {
         let kind = self.note_kind(kind)?;
         let at = self.store.clock.now_recorded_at();
-        let body = encode_note_body(&NoteBody {
+        let body = encode_note_core(&NoteCore {
             source_revision_ref: *self.store.clock.entity_id()?.as_bytes(),
             kind,
             author_ref: super::NoteActor::Actor(actor.entity_ref()),
-            markdown: markdown.to_owned(),
         })?;
         crate::memory::verify_actor_binding_in_txn(
             self,
@@ -107,6 +106,7 @@ impl Vault {
                     TimeRange { start: at, end: at },
                     at,
                     &body,
+                    markdown,
                 )
                 .edge(&id, EdgeKind::AuthoredBy, &actor.entity_ref(), 1.0)
                 .made_by(
@@ -181,16 +181,22 @@ impl Vault {
                             &[markdown.as_bytes()],
                             at,
                         );
-                        let body = encode_note_body(&NoteBody {
+                        let body = encode_note_core(&NoteCore {
                             source_revision_ref: *self.store.clock.entity_id()?.as_bytes(),
                             kind: core.kind,
                             author_ref: super::NoteActor::Actor(actor.entity_ref()),
-                            markdown,
                         })?;
                         fork_links(
                             self.batch_in()
                                 .mask(Some(facet))
-                                .put_authored_note(&fork, &actor.entity_ref(), occurred, at, &body)
+                                .put_authored_note(
+                                    &fork,
+                                    &actor.entity_ref(),
+                                    occurred,
+                                    at,
+                                    &body,
+                                    &markdown,
+                                )
                                 .edge(&fork, EdgeKind::AuthoredBy, &actor.entity_ref(), 1.0)
                                 .made_by(&fork, birth),
                             fork,
@@ -404,8 +410,13 @@ impl Vault {
     ) -> MemoryResult<NoteProgramEditOutcome> {
         // A sealed NOTE's edit opens a fork and leaves the seal intact.
         let sealed = super::lifecycle::note_sealed_in_txn(&self.store, txn, note)?;
-        let existed = load_doc(self, txn, note)?.is_some();
-        if existed && matches!(edit, NoteProgramEdit::WholeText { base: None, .. }) {
+        // A NOTE whose document still holds only its birth reads as the
+        // text it was born with, as one born before its document existed
+        // did, so a whole-text edit of it needs no read version (FIX 7783).
+        let named_version_needed = load_doc(self, txn, note)?.is_some_and(|doc| {
+            doc.head != note || !super::document::holds_only_birth(note, &doc.doc)
+        });
+        if named_version_needed && matches!(edit, NoteProgramEdit::WholeText { base: None, .. }) {
             return Err(invalid("whole-text edit requires its read version").into());
         }
         let doc = super::documents::live_doc(self, txn, note)?;
@@ -603,10 +614,7 @@ fn create_from_text_in_txn(
     let mutation_recorded_at = content.recorded_at()?;
     let header = live_header(vault, content.read(), source)?;
     let text = if header.entity_type == ENTITY_TYPE_NOTE {
-        match load_doc(vault, content.read(), source)? {
-            Some(doc) => doc.text(),
-            None => note_core(vault, content.read(), source)?.1.markdown,
-        }
+        live_doc(vault, content.read(), source)?.text()
     } else if header.entity_type == ENTITY_TYPE_ASSET_TEXT {
         let raw = vault
             .get_raw_in(content.read(), &source)?
@@ -627,12 +635,12 @@ fn create_from_text_in_txn(
         &[text.as_bytes()],
         at,
     );
-    let body = encode_note_body(&NoteBody {
+    let body = encode_note_core(&NoteCore {
         source_revision_ref: *vault.store.clock.entity_id()?.as_bytes(),
         kind,
         author_ref: super::NoteActor::Actor(actor.entity_ref()),
-        markdown: text,
     })?;
+    // The copy's birth op births its document from the text it read.
     content.apply_batch(
         vault
             .batch_in()
@@ -642,6 +650,7 @@ fn create_from_text_in_txn(
                 TimeRange { start: at, end: at },
                 at,
                 &body,
+                &text,
             )
             .edge(&id, EdgeKind::AuthoredBy, &actor.entity_ref(), 1.0)
             .edge(&id, EdgeKind::DerivedFrom, &citation, 1.0)
@@ -672,7 +681,7 @@ pub(super) fn note_core(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     note: EntityId,
-) -> crate::error::Result<(EntityMetadataHeader, NoteBody)> {
+) -> crate::error::Result<(EntityMetadataHeader, NoteCore)> {
     note_core_in(vault, &vault.store, txn, note)
 }
 
@@ -684,7 +693,7 @@ pub(super) fn note_core_in(
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     note: EntityId,
-) -> crate::error::Result<(EntityMetadataHeader, NoteBody)> {
+) -> crate::error::Result<(EntityMetadataHeader, NoteCore)> {
     if vault.local_hard_delete_marker_exists_in_txn(txn, &note)? {
         return Err(invalid("NOTE was erased"));
     }
@@ -700,18 +709,13 @@ pub(super) fn stored_note_core_in(
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     note: EntityId,
-) -> crate::error::Result<(EntityMetadataHeader, NoteBody)> {
+) -> crate::error::Result<(EntityMetadataHeader, NoteCore)> {
     let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &note)?
         .ok_or(invalid("NOTE does not exist"))?;
     let header = EntityMetadataHeader::parse(&raw).ok_or(invalid("NOTE header"))?;
     if header.entity_type != ENTITY_TYPE_NOTE {
         return Err(invalid("entity is not a NOTE"));
     }
-    let bytes = &raw[ENTITY_METADATA_HEADER_LEN..];
-    #[cfg(feature = "sync")]
-    let resolved = crate::entity_doc::resolve_record_body(store, txn, &note, bytes)?;
-    #[cfg(feature = "sync")]
-    let bytes = resolved.as_slice();
-    let body = super::decode_note_body_in_txn(store, txn, bytes)?;
-    Ok((header, body))
+    let core = super::decode_note_core_in_txn(store, txn, &raw[ENTITY_METADATA_HEADER_LEN..])?;
+    Ok((header, core))
 }

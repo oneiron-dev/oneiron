@@ -96,11 +96,13 @@ impl DocumentRegistry {
         self.vault.with_write_txn_grouped(|txn| {
             eligible(&self.vault, txn, id)?;
             // Startup step 3 for a NOTE: snapshot first, then ordered pending
-            // updates. A record's entity document keeps its own counters.
+            // updates. A record's entity document keeps its own counters. A
+            // replica that holds a NOTE's core but not yet its document
+            // (FIX 7783) opens it empty: its authority's STATE brings it.
             if self.vault.get_entity_type_in_txn(txn, &id)?
                 == Some(crate::registry::ENTITY_TYPE_NOTE)
+                && let Some(doc) = crate::note::storage::stored_document(&self.vault, txn, id)?
             {
-                let doc = storage::load(&self.vault, txn, id)?;
                 storage::snapshot(&self.vault, txn, id, &doc, false)?;
             }
             let handle = Arc::new(EntityDocument {
@@ -437,9 +439,13 @@ impl EntityDocument {
         if self.vault.get_entity_type_in_txn(&txn, &self.id)?
             == Some(crate::registry::ENTITY_TYPE_NOTE)
         {
-            return Ok(storage::load(&self.vault, &txn, self.id)?
-                .oplog_vv()
-                .encode());
+            // A replica with no document yet asks from the empty version.
+            return Ok(
+                crate::note::storage::stored_document(&self.vault, &txn, self.id)?.map_or_else(
+                    || loro::VersionVector::new().encode(),
+                    |doc| doc.oplog_vv().encode(),
+                ),
+            );
         }
         Ok(entity::document_in(&self.vault, &txn, self.id)?
             .0
