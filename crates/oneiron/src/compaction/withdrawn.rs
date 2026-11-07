@@ -2,11 +2,16 @@
 //!
 //! The public epoch codec stays strict and nonblank. A withdrawn row has its
 //! own internal form, every pinned key but `text`, with no pointer and no
-//! digest of what it said, so the durable counter still reads it.
+//! digest of what it said, so the durable counter still reads it. It keeps
+//! its lineage too (FIX 5029): the SESSION and, for a chat epoch, the
+//! conversation it counts in.
 
 use rmpv::Value;
 
-use super::epoch::KEY_EPOCH_TEXT;
+use super::epoch::{
+    AT_ACTOR, AT_CONVERSATION, AT_EPOCH, AT_LEVEL, AT_SESSION, AT_TURN_END, AT_TURN_START, AT_V,
+    EpochScope, KEY_EPOCH_TEXT,
+};
 use super::stored_epoch::{StoredEpoch, stored_epoch_in};
 use super::{EPOCH_SUMMARY_BODY_KEYS, EPOCH_SUMMARY_BODY_VERSION, EpochSummaryBody};
 use crate::deletion::WithdrawnReplacement;
@@ -16,20 +21,24 @@ use crate::ports::{EntityStoreMaintenance, EntityStoreRead, ScrubbedRecord};
 use crate::registry::ENTITY_TYPE_SUMMARY;
 use crate::store::Store;
 
-const KEY_V: &str = EPOCH_SUMMARY_BODY_KEYS[0];
-const KEY_SESSION: &str = EPOCH_SUMMARY_BODY_KEYS[1];
-const KEY_EPOCH: &str = EPOCH_SUMMARY_BODY_KEYS[2];
-const KEY_TURN_START: &str = EPOCH_SUMMARY_BODY_KEYS[3];
-const KEY_TURN_END: &str = EPOCH_SUMMARY_BODY_KEYS[4];
-const KEY_LEVEL: &str = EPOCH_SUMMARY_BODY_KEYS[5];
-const KEY_ACTOR: &str = EPOCH_SUMMARY_BODY_KEYS[7];
+const KEY_V: &str = EPOCH_SUMMARY_BODY_KEYS[AT_V];
+const KEY_SESSION: &str = EPOCH_SUMMARY_BODY_KEYS[AT_SESSION];
+const KEY_CONVERSATION: &str = EPOCH_SUMMARY_BODY_KEYS[AT_CONVERSATION];
+const KEY_EPOCH: &str = EPOCH_SUMMARY_BODY_KEYS[AT_EPOCH];
+const KEY_TURN_START: &str = EPOCH_SUMMARY_BODY_KEYS[AT_TURN_START];
+const KEY_TURN_END: &str = EPOCH_SUMMARY_BODY_KEYS[AT_TURN_END];
+const KEY_LEVEL: &str = EPOCH_SUMMARY_BODY_KEYS[AT_LEVEL];
+const KEY_ACTOR: &str = EPOCH_SUMMARY_BODY_KEYS[AT_ACTOR];
 
 /// A withdrawn epoch summary's stored body: the pinned keys less `text`, so
-/// `v`, `session`, `epoch`, `turn_start`, `turn_end`, `level` and `actor`.
-/// The codec version is always [`EPOCH_SUMMARY_BODY_VERSION`].
+/// `v`, `session`, `conversation` (nil for a SESSION's own epoch), `epoch`,
+/// `turn_start`, `turn_end`, `level` and `actor`. The codec version is
+/// always [`EPOCH_SUMMARY_BODY_VERSION`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct WithdrawnKeyframe {
     pub(super) session: EntityId,
+    /// The conversation whose lineage the epoch counts in (FIX 5029).
+    pub(super) conversation: Option<EntityId>,
     pub(super) epoch: u64,
     pub(super) turn_start: u64,
     pub(super) turn_end: u64,
@@ -42,6 +51,11 @@ impl WithdrawnKeyframe {
     pub(super) fn of_body(body: &EpochSummaryBody) -> Result<Self> {
         Ok(Self {
             session: EntityId::from_hex(&body.session)?,
+            conversation: body
+                .conversation
+                .as_deref()
+                .map(EntityId::from_hex)
+                .transpose()?,
             epoch: body.epoch,
             turn_start: body.turn_start,
             turn_end: body.turn_end,
@@ -50,7 +64,15 @@ impl WithdrawnKeyframe {
         })
     }
 
-    /// Strictly decodes a withdrawn keyframe: exactly its seven keys, once
+    /// The lineage the epoch counts in (FIX 5029).
+    pub(crate) const fn scope(&self) -> EpochScope {
+        EpochScope {
+            session: self.session,
+            conversation: self.conversation,
+        }
+    }
+
+    /// Strictly decodes a withdrawn keyframe: exactly its eight keys, once
     /// each, and no trailing bytes.
     pub(super) fn decode(bytes: &[u8]) -> Result<Self> {
         let mut cursor = bytes;
@@ -104,16 +126,21 @@ impl WithdrawnKeyframe {
                 .and_then(|hex| EntityId::from_hex(hex).ok())
                 .ok_or_else(refused)
         };
-        if number(0)? != EPOCH_SUMMARY_BODY_VERSION {
+        if number(AT_V)? != EPOCH_SUMMARY_BODY_VERSION {
             return Err(refused());
         }
+        let conversation = match held[AT_CONVERSATION].ok_or_else(refused)? {
+            Value::Nil => None,
+            _ => Some(id(AT_CONVERSATION)?),
+        };
         let keyframe = Self {
-            session: id(1)?,
-            epoch: number(2)?,
-            turn_start: number(3)?,
-            turn_end: number(4)?,
-            level: number(5)?,
-            actor: id(7)?,
+            session: id(AT_SESSION)?,
+            conversation,
+            epoch: number(AT_EPOCH)?,
+            turn_start: number(AT_TURN_START)?,
+            turn_end: number(AT_TURN_END)?,
+            level: number(AT_LEVEL)?,
+            actor: id(AT_ACTOR)?,
         };
         if keyframe.turn_end < keyframe.turn_start {
             return Err(refused());
@@ -126,6 +153,12 @@ impl WithdrawnKeyframe {
         let value = Value::Map(vec![
             (Value::from(KEY_V), Value::from(EPOCH_SUMMARY_BODY_VERSION)),
             (Value::from(KEY_SESSION), Value::from(self.session.to_hex())),
+            (
+                Value::from(KEY_CONVERSATION),
+                self.conversation.map_or(Value::Nil, |conversation| {
+                    Value::from(conversation.to_hex())
+                }),
+            ),
             (Value::from(KEY_EPOCH), Value::from(self.epoch)),
             (Value::from(KEY_TURN_START), Value::from(self.turn_start)),
             (Value::from(KEY_TURN_END), Value::from(self.turn_end)),
