@@ -16,7 +16,10 @@
 //! holds the commit's history first: a public or unstated mirror never
 //! takes a marked live key, and the request settles refused, typed
 //! (`secret_hold`). The strategy is never read: an approved request executes
-//! once on a mirror of either.
+//! once on a mirror of either. On a served host the read and the push go
+//! through its credential broker (`git_transport`), whose mirror relay asks
+//! [`Vault::check_origin_publish_destination`] again before each push
+//! exchange.
 
 use super::authority::{OriginPublishCaller, PublishAnswer, PublishTarget};
 use super::inputs::OriginPublishIdRequest;
@@ -26,8 +29,10 @@ use super::types::{
     OriginPublishRequestView, OriginPublishState,
 };
 use crate::Vault;
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitRefName, lock_repository};
+use crate::origin::git_transport::OriginGitPublishPush;
 use crate::origin::mirror::{OriginMirrorTarget, TARGETS};
 use crate::origin::mirror_run::mirror_hold_dir;
 use crate::origin::smart_http::push_queue_key;
@@ -182,18 +187,47 @@ impl Vault {
         if let Some(hold) = self.hold_publish_commit(&scope, &handle, &commit) {
             return Ok(Ok(self.settle_publish_hold(&claimed, hold)?));
         }
-        let outcome = self.push_publish_once(
-            &scope.wire,
-            &handle,
-            &claimed.destination,
-            &name,
-            &commit,
-            expected.as_ref(),
-            &push_hold,
-        );
+        let push = OriginGitPublishPush {
+            repo_id: claimed.repo_id,
+            destination: &claimed.destination,
+            name: &name,
+            commit: &commit,
+            expected: expected.as_ref(),
+            hold: &push_hold,
+        };
+        let pushed = self.push_publish_once(&scope.wire, &handle, &push);
         Ok(Ok(
-            self.settle_publish_push(&scope, &handle, &claimed, outcome)?
+            self.settle_publish_push(&scope, &handle, &claimed, pushed)?
         ))
+    }
+
+    /// Whether the mirror of the repository `repo_id` is still
+    /// `destination`, read now: its URL, user, custody record and generation
+    /// as an exact publish request recorded them, the fields the dispatch
+    /// judged before its claim. A served host's mirror relay asks it again
+    /// before each push exchange it sends through the credential broker
+    /// (FIX 19083).
+    ///
+    /// # Errors
+    /// `destination_changed`, naming the fields that changed, or a store
+    /// failure.
+    pub fn check_origin_publish_destination(
+        &self,
+        repo_id: EntityId,
+        destination: &OriginPublishDestination,
+    ) -> Result<()> {
+        let current = {
+            let txn = self.store.env.read_txn()?;
+            TARGETS.get(&self.store, &txn, &repo_id)?
+        };
+        let changed = changed_fields(destination, current.as_ref());
+        if changed.is_empty() {
+            return Ok(());
+        }
+        Err(Error::Refused(format!(
+            "destination_changed: the mirror's {} changed since the request recorded it",
+            changed.join(", ")
+        )))
     }
 }
 

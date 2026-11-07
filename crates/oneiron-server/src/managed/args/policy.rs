@@ -113,6 +113,16 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.custody_anchor_credentials_fd.is_some(),
         ArgvUse::Read,
     ),
+    (
+        "host-legal-listen-fd",
+        |args| args.host_legal_listen_fd.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "host-legal-uid",
+        |args| args.host_legal_uid.is_some(),
+        ArgvUse::Read,
+    ),
     ("restore", |args| args.restore, ArgvUse::Read),
     (
         "restore-input-fd",

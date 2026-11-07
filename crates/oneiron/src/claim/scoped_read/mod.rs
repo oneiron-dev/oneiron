@@ -48,7 +48,8 @@ pub use weave_digest::{
     WeaveDigestSettings, WeaveDigestSettingsDrafter, WeaveScheduleHold,
 };
 pub(crate) use weave_digest::{
-    invalidate_weave_digest_source_in_txn, scrub_saved_weave_loop_reasons_in_txn,
+    invalidate_weave_digest_source_in_txn, saved_weave_loop_reason_decisions_in_txn,
+    scrub_saved_weave_loop_reasons_in_txn,
 };
 mod weave_correction;
 mod weave_lens;
@@ -160,6 +161,7 @@ pub(crate) use admission::ScopedDiaryCandidates;
 mod profile_sources;
 mod retrieval_loop;
 mod search;
+pub(crate) use search::SearchPlan;
 mod visibility;
 pub(crate) use visibility::Admitted;
 
