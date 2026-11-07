@@ -85,6 +85,47 @@ pub fn strong_ed25519_key(bytes: &[u8; 32]) -> Result<VerifyingKey> {
     Ok(key)
 }
 
+/// `VerifyingKey::from_bytes` and `verify_strict` of `signature` over
+/// `message`. A success on exactly these bytes is remembered (FIX 21959).
+#[must_use]
+pub fn ed25519_verified_once(public_key: &[u8; 32], message: &[u8], signature: &[u8; 64]) -> bool {
+    let parts: [&[u8]; 3] = [public_key, signature, message];
+    if verified_before(VerifiedFact::Ed25519Strict, &parts) {
+        return true;
+    }
+    let verified = VerifyingKey::from_bytes(public_key).is_ok_and(|key| {
+        key.verify_strict(message, &Ed25519Signature::from_bytes(signature))
+            .is_ok()
+    });
+    if verified {
+        remember_verified(VerifiedFact::Ed25519Strict, &parts);
+    }
+    verified
+}
+
+/// [`strong_ed25519_key`] (weak keys refused) and `verify_strict` of
+/// `signature` over `message`. A success on exactly these bytes is
+/// remembered (FIX 21959).
+#[must_use]
+pub fn strong_ed25519_verified_once(
+    public_key: &[u8; 32],
+    message: &[u8],
+    signature: &[u8; 64],
+) -> bool {
+    let parts: [&[u8]; 3] = [public_key, signature, message];
+    if verified_before(VerifiedFact::StrongEd25519Strict, &parts) {
+        return true;
+    }
+    let verified = strong_ed25519_key(public_key).is_ok_and(|key| {
+        key.verify_strict(message, &Ed25519Signature::from_bytes(signature))
+            .is_ok()
+    });
+    if verified {
+        remember_verified(VerifiedFact::StrongEd25519Strict, &parts);
+    }
+    verified
+}
+
 /// Hardware/software attestation envelope for an enrolled authority key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthorityAttestation {
@@ -176,9 +217,31 @@ pub fn canonical_p256_key_bytes(bytes: &[u8]) -> Result<Vec<u8>> {
     Ok(key.to_encoded_point(true).as_bytes().to_vec())
 }
 
-/// Verifies an authority signature envelope against a transcript.
+/// Verifies an authority signature envelope against a transcript. A success
+/// on exactly these bytes is remembered and answers again (FIX 21959).
 #[must_use]
 pub fn verify_authority_signature(signature: &AuthoritySignature, transcript: &[u8]) -> bool {
+    let suite: u8 = match signature.suite {
+        AuthoritySignatureSuite::Ed25519 => 1,
+        AuthoritySignatureSuite::P256 => 2,
+    };
+    let (key_kind, key): (u8, &[u8]) = match &signature.public_key {
+        AuthorityKey::Ed25519(bytes) => (1, bytes.as_slice()),
+        AuthorityKey::P256(bytes) => (2, bytes.as_slice()),
+    };
+    let header = [suite, key_kind];
+    let parts: [&[u8]; 4] = [&header, key, &signature.signature, transcript];
+    if verified_before(VerifiedFact::AuthoritySignature, &parts) {
+        return true;
+    }
+    let verified = verify_authority_signature_uncached(signature, transcript);
+    if verified {
+        remember_verified(VerifiedFact::AuthoritySignature, &parts);
+    }
+    verified
+}
+
+fn verify_authority_signature_uncached(signature: &AuthoritySignature, transcript: &[u8]) -> bool {
     if signature.validate().is_err() {
         return false;
     }
