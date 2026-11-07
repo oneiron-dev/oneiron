@@ -420,7 +420,8 @@ impl SocketLink {
         self.runtime.block_on(async move {
             let deadline = tokio::time::Instant::from_std(bounds.until);
             let mut stalls_at: Option<tokio::time::Instant> = None;
-            let mut packed = Vec::new();
+            let mut chunks = Vec::new();
+            let mut received = 0usize;
             loop {
                 let until = stalls_at.map_or(deadline, |stalls_at| stalls_at.min(deadline));
                 match timeout_at(until, answer.recv()).await {
@@ -439,15 +440,16 @@ impl SocketLink {
                         )));
                     }
                     Ok(Some(Inbound::Chunk { bytes, last })) => {
-                        packed.extend_from_slice(&bytes);
                         // The answer is packed with its status around it.
-                        if packed.len()
+                        if received.saturating_add(bytes.len())
                             > bounds
                                 .max_reply_bytes
                                 .saturating_add(RPC_ANSWER_ENVELOPE_BYTES)
                         {
                             return Err(Carried::Cut(Cut::TooLarge));
                         }
+                        received += bytes.len();
+                        chunks.push(bytes);
                         if last {
                             break;
                         }
@@ -455,11 +457,12 @@ impl SocketLink {
                     }
                 }
             }
-            let answer: SocketAnswer = rmp_serde::from_slice(&packed).map_err(|_| {
-                Carried::Cut(Cut::Failed(
-                    "the MCP socket's answer did not decode".to_owned(),
-                ))
-            })?;
+            let answer: SocketAnswer = rmp_serde::from_read(replies::ReplyChunks::new(chunks))
+                .map_err(|_| {
+                    Carried::Cut(Cut::Failed(
+                        "the MCP socket's answer did not decode".to_owned(),
+                    ))
+                })?;
             if answer.body.len() > bounds.max_reply_bytes {
                 return Err(Carried::Cut(Cut::TooLarge));
             }
