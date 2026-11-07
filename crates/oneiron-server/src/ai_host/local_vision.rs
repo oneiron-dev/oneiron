@@ -200,6 +200,7 @@ impl DecisionModel for LocalVisionModel {
                 paired: None,
                 person: None,
                 served: None,
+                cost_per_thousand: None,
             });
         };
         let request = self.request(call, schema)?;
@@ -331,6 +332,7 @@ fn score_answer(text: &str, min: f64, max: f64) -> Option<ProviderDecision> {
         paired: None,
         person: None,
         served: None,
+        cost_per_thousand: None,
     })
 }
 
@@ -377,6 +379,7 @@ fn choice_answer(text: &str, options: &[String]) -> Option<ProviderDecision> {
         paired: None,
         person: None,
         served: None,
+        cost_per_thousand: None,
     })
 }
 
@@ -389,6 +392,7 @@ fn noul_answer(text: &str) -> Option<ProviderDecision> {
         paired: None,
         person: None,
         served: None,
+        cost_per_thousand: None,
     })
 }
 
@@ -452,6 +456,7 @@ fn box_answer(text: &str) -> Option<ProviderDecision> {
         paired: None,
         person: None,
         served: None,
+        cost_per_thousand: None,
     })
 }
 

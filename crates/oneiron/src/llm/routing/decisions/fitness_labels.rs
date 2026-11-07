@@ -15,7 +15,7 @@ pub(super) struct FitnessQuestionLabels {
 }
 
 impl FitnessQuestionLabels {
-    pub(super) fn new<'q>(questions: impl IntoIterator<Item = &'q DecisionQuestion>) -> Self {
+    pub(super) fn new<'q>(questions: impl IntoIterator<Item = &'q DecisionQuestion> + 'q) -> Self {
         let mut table = Self {
             questions: Vec::new(),
             numbers: BTreeMap::new(),

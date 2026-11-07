@@ -227,6 +227,7 @@ impl DecisionProvider for DecisionReadProvider<'_> {
             paired: None,
             person: None,
             served: None,
+            cost_per_thousand: None,
         };
         if questions.is_empty() {
             return Ok(slots.iter().map(|_| abstained()).collect());
@@ -310,6 +311,7 @@ impl DecisionProvider for DecisionReadProvider<'_> {
                     paired,
                     person: None,
                     served: None,
+                    cost_per_thousand: None,
                 }
             })
             .collect();
