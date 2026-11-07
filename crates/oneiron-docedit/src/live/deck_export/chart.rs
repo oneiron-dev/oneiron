@@ -157,6 +157,10 @@ pub(super) fn project(
                     )
                     .map(|report| work.changed.extend(report.changed_parts))
                     .is_ok()
+                }) && held::chart(work.next_mut(), &chart).is_ok_and(|read| {
+                    // A shared source cell can change another sequence too.
+                    read.as_ref()
+                        .is_some_and(|read| reshape::same_data(read, payload))
                 })
             });
         if !in_place {

@@ -577,8 +577,10 @@ fn descends(
 /// have none: a context descriptor, a hidden thought, a memory search, an
 /// inference-defaults read, the leader's advice, a wait, a fold of the
 /// run's own log, and a verb call whose verb does not write. Any other call
-/// may, a verb this engine does not know as a read included.
-fn continuation_tail_effect(call: &CodeRunBridgeCall) -> bool {
+/// may, a verb this engine does not know as a read included. A callable's
+/// counterfactual judges the calls its removed load made the same way (FIX
+/// 3608).
+pub(crate) fn continuation_tail_effect(call: &CodeRunBridgeCall) -> bool {
     match call.effect {
         SelfEffect::Context
         | SelfEffect::Think

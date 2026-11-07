@@ -794,3 +794,30 @@ fn record_hold_in(
     save_launch(vault, txn, launch)?;
     Ok(())
 }
+
+impl Memory<'_> {
+    /// Whether a recorded pending ask launch belongs to this asker and intent.
+    /// Reusing it does not release its approval hold or admit a different spec.
+    pub(crate) fn owns_held_task_ask_intent(
+        &self,
+        handle: TaskAskHandle,
+        intent_key: &str,
+    ) -> MemoryResult<bool> {
+        if !self.has_task_work_turn() {
+            return self
+                .task_work_memory()
+                .owns_held_task_ask_intent(handle, intent_key);
+        }
+        let vault = self.vault();
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        verify_actor_binding_in_txn(vault, &txn, self.actor(), self.actor_class())?;
+        let Some(launch) = load_launch(vault, &txn, handle.group_ref)? else {
+            return Ok(false);
+        };
+        Ok(launch.dispatched_at.is_none()
+            && launch.actor.is(self.actor())
+            && matches!(&launch.payload,
+                LaunchPayload::Ask { requested, .. }
+                    if requested.intent_key == intent_key))
+    }
+}
