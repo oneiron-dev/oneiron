@@ -86,6 +86,7 @@ pub(super) fn run(
         dial: coach_dial(server, coach.as_ref()),
         bands: host.bands(),
         budget: DECIDE_BUDGET,
+        wording: server.ai.dreamer_wording().code_fix_class().to_owned(),
     };
     let run_id = format!(
         "coach-code-fix:{}",
@@ -286,6 +287,7 @@ impl<'a> HostModels<'a> {
                 response_format: ResponseFormat::Text,
                 locality: seat.locality,
                 host_keyless: false,
+                host_paid: false,
             },
             messages,
             tools: Vec::new(),

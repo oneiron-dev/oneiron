@@ -24,7 +24,7 @@ use crate::frame::{
     STREAM_CHUNK, read_chunk, read_segment, write_chunk, write_segment, write_stream_end,
     write_stream_header,
 };
-use crate::send::{Sender, encoded, push_wiped, reply_headers, watchable};
+use crate::send::{Sender, encoded, git_echo_forms, git_reply_headers, git_watchable, push_wiped};
 use crate::{Failure, MAX_SECRET, Outcome, PROTOCOL_VERSION, Refusal, ReplyHeader};
 
 /// The user agent of a git exchange: a smart-HTTP server serves its smart
@@ -86,7 +86,7 @@ async fn exchange(
     }
     let answered = Outcome::Answered {
         status: response.status().as_u16(),
-        headers: reply_headers(response.headers(), &credential.watched),
+        headers: git_reply_headers(response.headers(), &git_echo_forms(&credential.watched)),
     };
     idle_bound(idle, write_stream_header(stream, &reply(header, answered))).await?;
     let cut = relay(&mut response, stream, &credential.watched, idle).await?;
@@ -201,7 +201,8 @@ struct GitCredential {
 /// trimmed: visible ASCII and spaces, a scheme, then its credentials. The
 /// token watched for is the credentials, or for `Basic` the password the
 /// base64 holds (its user name when the password is empty or GitHub's
-/// `x-oauth-basic`). The token must be one the strip rule is sure to find.
+/// `x-oauth-basic`). Any token up to [`MAX_SECRET`] bytes goes
+/// ([`git_watchable`]); the reply's echo watch searches its literal forms.
 fn git_credential(secret: &[u8]) -> Result<GitCredential, Refusal> {
     let value = secret.trim_ascii();
     if value.is_empty()
@@ -239,7 +240,7 @@ fn git_credential(secret: &[u8]) -> Result<GitCredential, Refusal> {
     } else {
         Zeroizing::new(credentials.to_vec())
     };
-    if !watchable(&watched) {
+    if !git_watchable(&watched) {
         return Err(Refusal::Secret);
     }
     let mut header = HeaderValue::from_bytes(value).map_err(|_| Refusal::Secret)?;
@@ -417,9 +418,7 @@ struct EchoWatch {
 
 impl EchoWatch {
     fn new(token: &[u8]) -> Self {
-        let mut forms = crate::strip::forms(token);
-        forms.extend(crate::strip::base64_forms(token));
-        forms.retain(|form| !form.is_empty());
+        let forms = git_echo_forms(token);
         let keep = forms
             .iter()
             .map(|form| form.len())

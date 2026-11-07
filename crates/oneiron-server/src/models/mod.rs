@@ -100,7 +100,7 @@ mod walk;
 mod worker_host;
 
 pub use broker::{BROKER_EFFECTOR, KeyDoor, VaultKeyDoor};
-pub(crate) use broker_context::BrokerContext;
+pub(crate) use broker_context::{BrokerContext, WeakBrokerContext};
 use cooldown::FallbackRung;
 pub use cooldown::{OfferCooldowns, QuotaChoice, QuotaFallback, QuotaQuestion};
 pub use decision_read::DecisionReadDoor;
@@ -136,6 +136,7 @@ pub use status::{
     TaggerStatus,
 };
 pub use token_ratio::TokenRatios;
+pub(crate) use worker_host::start_worker_controller;
 pub(crate) use worker_host::{
     install_snapshot_runtime, permit_worker_launch, session_allocations_for_vault,
 };

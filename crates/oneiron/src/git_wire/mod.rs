@@ -44,6 +44,7 @@ mod mirror_push;
 pub(crate) mod mutation_commands;
 use oneiron_store::git_wire::objects;
 use oneiron_store::git_wire::operation;
+use oneiron_store::git_wire::origin_relay;
 mod plan;
 mod process;
 mod projected_checkout;
@@ -57,6 +58,7 @@ use oneiron_store::git_wire::record;
 use oneiron_store::git_wire::repo;
 mod repository_profile;
 mod retained_object;
+mod secret_purge;
 mod wire_publish;
 mod wire_reads;
 mod wire_stage;
@@ -135,4 +137,4 @@ use std::path::Path;
 #[cfg(test)]
 use std::time::Duration;
 
-pub(crate) use hub_read::read_hub_git;
+pub(crate) use hub_read::{read_hub_git, read_local_hub_git};

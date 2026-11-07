@@ -132,6 +132,11 @@ pub(crate) fn erase_fork_actor_in_txn(
         } else {
             NOTE_FORK.put(&vault.store, wtxn, &key, &fork)?;
         }
+        // Once the erase commits, the NOTE's own devices read its pending
+        // forks again and drop the one that went (FIX 12790).
+        if !fork.decided {
+            vault.queue_note_document_update_in_txn(wtxn, fork.note);
+        }
     }
     Ok(())
 }
@@ -600,7 +605,7 @@ impl Vault {
         let fork = self
             .memory(actor.entity_ref(), actor.actor_class())
             .with_actor_content_write_txn_as(actor, |content| {
-                content.update_note(note, |txn| {
+                content.update_note(note, |txn, _lane| {
                     // A sealed NOTE forks too: the fork leaves its seal intact.
                     super::verbs::note_core(self, txn, note)?;
                     let parent =

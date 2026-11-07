@@ -5,8 +5,9 @@
 //! profile fetches a bound source over plain http from the invocation's own
 //! loopback source relay, which sends each exchange through the credential
 //! broker (OSH-3); the RELAY profile pushes over plain http to the
-//! invocation's own loopback door relay. None carries a credential: a bound
-//! source's stays with the broker. Each pins its scratch root, follows no
+//! invocation's own loopback door relay. Each relay leg carries its relay's
+//! ticket in its environment only (FIX 19233). None carries a credential: a
+//! bound source's stays with the broker. Each pins its scratch root, follows no
 //! redirect, uses
 //! no proxy, read no ambient home or credential, and keep tags, signing,
 //! submodules, hooks and LFS transfer off, appended to the closed GitWire
@@ -28,8 +29,10 @@ enum ImportLeg {
     /// relay's ticket header line, which the environment carries and the
     /// argv never does.
     SourceRelay { ticket: zeroize::Zeroizing<String> },
-    /// The push to the loopback door relay.
-    Relay,
+    /// The push to the loopback door relay: no credential, only the relay's
+    /// ticket header line, which the environment carries and the argv never
+    /// does (FIX 19233).
+    Relay { ticket: zeroize::Zeroizing<String> },
 }
 
 /// One import leg's fixed profile. Its `Debug` names the leg only: never
@@ -45,7 +48,7 @@ impl std::fmt::Debug for ImportProcessProfile {
         f.write_str(match self.leg {
             ImportLeg::Source => "ImportProcessProfile::Source(..)",
             ImportLeg::SourceRelay { .. } => "ImportProcessProfile::SourceRelay(..)",
-            ImportLeg::Relay => "ImportProcessProfile::Relay(..)",
+            ImportLeg::Relay { .. } => "ImportProcessProfile::Relay(..)",
         })
     }
 }
@@ -63,11 +66,15 @@ impl ImportProcessProfile {
     }
 
     /// The door relay push's profile under the scratch `root`, to the
-    /// loopback `door_url` only.
+    /// loopback `door_url` only, each request carrying the relay's `ticket`
+    /// in the [`SOURCE_RELAY_TICKET_HEADER`] header. The URL rides the
+    /// child's argv, which other local users can read; the ticket rides its
+    /// environment only, so the URL alone pushes nothing (FIX 19233).
     ///
     /// # Errors
-    /// A root that is not absolute, or a URL that is not the loopback relay.
-    pub fn relay(root: &Path, door_url: &str) -> Result<Self> {
+    /// A root that is not absolute, a URL that is not the loopback relay, or
+    /// a ticket that is not one token of visible ASCII.
+    pub fn relay(root: &Path, door_url: &str, ticket: &str) -> Result<Self> {
         if door_url.strip_prefix(LOOPBACK).is_none() {
             return Err(invalid(
                 "an import push goes to its loopback door relay only",
@@ -76,7 +83,9 @@ impl ImportProcessProfile {
         loopback_relay(door_url)?;
         Ok(Self {
             root: pinned_root(root)?,
-            leg: ImportLeg::Relay,
+            leg: ImportLeg::Relay {
+                ticket: relay_ticket_header(ticket)?,
+            },
         })
     }
 
@@ -97,13 +106,10 @@ impl ImportProcessProfile {
             ));
         }
         loopback_relay(relay_url)?;
-        if ticket.is_empty() || !ticket.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
-            return Err(invalid("an import source relay ticket is malformed"));
-        }
         Ok(Self {
             root: pinned_root(root)?,
             leg: ImportLeg::SourceRelay {
-                ticket: zeroize::Zeroizing::new(format!("{SOURCE_RELAY_TICKET_HEADER}: {ticket}")),
+                ticket: relay_ticket_header(ticket)?,
             },
         })
     }
@@ -133,8 +139,8 @@ impl ImportProcessProfile {
             ("http.followRedirects", "false"),
             ("http.proxy", ""),
             ("http.sslVerify", "true"),
-            // An empty value clears every header a config names; a source
-            // relay's ticket, when there is one, is the header left.
+            // An empty value clears every header a config names; a relay's
+            // ticket, when there is one, is the header left.
             ("http.extraHeader", ""),
             ("credential.helper", ""),
             ("submodule.recurse", "false"),
@@ -150,13 +156,9 @@ impl ImportProcessProfile {
                 policy.push(("protocol.https.allow", "always"));
                 "https"
             }
-            ImportLeg::SourceRelay { ticket } => {
+            ImportLeg::SourceRelay { ticket } | ImportLeg::Relay { ticket } => {
                 policy.push(("protocol.http.allow", "always"));
                 policy.push(("http.extraHeader", ticket.as_str()));
-                "http"
-            }
-            ImportLeg::Relay => {
-                policy.push(("protocol.http.allow", "always"));
                 "http"
             }
         };
@@ -178,15 +180,27 @@ impl ImportProcessProfile {
     }
 }
 
-/// The request header that carries an import source relay's ticket.
+/// The request header that carries an import relay's ticket: the source
+/// relay's, and the door relay's (FIX 19233).
 pub const SOURCE_RELAY_TICKET_HEADER: &str = "x-oneiron-relay-ticket";
 
+/// The header line that carries `ticket`, one token of visible ASCII; an
+/// exact publish's relay legs carry theirs the same way (FIX 19083).
+pub(crate) fn relay_ticket_header(ticket: &str) -> Result<zeroize::Zeroizing<String>> {
+    if ticket.is_empty() || !ticket.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+        return Err(invalid("an import relay ticket is malformed"));
+    }
+    Ok(zeroize::Zeroizing::new(format!(
+        "{SOURCE_RELAY_TICKET_HEADER}: {ticket}"
+    )))
+}
+
 /// The loopback origin an invocation's own relays listen on.
-const LOOPBACK: &str = "http://127.0.0.1:";
+pub(crate) const LOOPBACK: &str = "http://127.0.0.1:";
 
 /// Whether `url` is one plain loopback relay URL: a port and a path, no
 /// userinfo, query, fragment, space, backslash or control byte.
-fn loopback_relay(url: &str) -> Result<()> {
+pub(crate) fn loopback_relay(url: &str) -> Result<()> {
     let rest = url.strip_prefix(LOOPBACK).unwrap_or_default();
     if rest.is_empty()
         || rest.contains(['@', '?', '#'])
