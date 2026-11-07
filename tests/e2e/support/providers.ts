@@ -23,9 +23,13 @@ export interface ProviderStep {
   readonly purpose:string;
   readonly request:{readonly method:"GET"|"POST"|"PUT"|"PATCH"|"DELETE";readonly path:string;readonly model?:string;
     /** Subset of public protocol fields, never a generated-prompt string match. */
-    readonly fields?:Readonly<Record<string,Json>>};
+    readonly fields?:Readonly<Record<string,Json>>;
+    /** Exact text of the first `system` message. Only a shipped or host-configured constant, never generated prompt text. */
+    readonly system?:string};
   readonly response:ProviderResponse;
   readonly barrier?:string;
+  /** A declared answer to a background producer: matched by origin, method, path, model, fields and system, answered any number of times (zero included), never in FIFO order and never unconsumed. */
+  readonly standing?:true;
 }
 export interface ProviderSocket {
   readonly id:string;readonly origin:string;readonly path:string;readonly role:string;readonly purpose:string;
@@ -36,13 +40,19 @@ interface SocketState {script:ProviderSocket;index:number;pending:Promise<void>}
 export interface ProviderScenario { readonly id:string;readonly steps:readonly ProviderStep[];readonly sockets?:readonly ProviderSocket[];readonly artifacts?:Artifacts }
 export interface SeenFixtureCall {
   readonly fixtureId:string|null;readonly origin:string;readonly sequence:number;readonly role:string|null;readonly purpose:string|null;
-  readonly method:string;readonly path:string;readonly body:unknown;
+  readonly method:string;readonly path:string;readonly body:unknown;readonly standing?:boolean;
 }
 export class ProviderScriptError extends Error { override name="ProviderScriptError" }
 function subset(expected:Json,actual:unknown):boolean {
   if(Array.isArray(expected)) return Array.isArray(actual)&&expected.length===actual.length&&expected.every((v,i)=>subset(v,actual[i]));
   if(expected&&typeof expected==="object") return !!actual&&typeof actual==="object"&&Object.entries(expected).every(([k,v])=>subset(v,(actual as Record<string,unknown>)[k]));
   return Object.is(expected,actual);
+}
+function matches(step: ProviderStep, method: string, path: string, body: unknown): boolean {
+  return step.request.method===method&&step.request.path===path&&
+    (step.request.model===undefined||subset({model:step.request.model},body))&&
+    (!step.request.fields||subset(step.request.fields,body))&&
+    (step.request.system===undefined||(Array.isArray((body as any)?.messages) && (body as any).messages[0]?.role === "system" && (body as any).messages[0]?.content === step.request.system));
 }
 function event(data:Json,name?:string):string {return `${name ? `event: ${name}\n` : ""}data: ${JSON.stringify(data)}\n\n`}
 /** Usage is declared by the independent scenario, never estimated from engine prompts. */
@@ -81,6 +91,7 @@ export class ScriptedProviders {
   private readonly sockets=new Map<string,ProviderSocket[]>();
   private readonly socketStates:SocketState[]=[];
   private readonly pending=new Map<string,ProviderStep[]>();
+  private readonly standing=new Map<string,ProviderStep[]>();
   private readonly seen:SeenFixtureCall[]=[];
   private readonly violations:string[]=[];
   private readonly barriers=new Map<string,{promise:Promise<void>;release:()=>void}>();
@@ -98,7 +109,8 @@ export class ScriptedProviders {
     for(const step of scenario.steps) {
       if(!step.id||!step.role||!step.purpose||ids.has(step.id)) throw new ProviderScriptError("Provider steps require unique IDs, role and purpose");
       ids.add(step.id);
-      const queue=instance.pending.get(step.origin)??[];queue.push(step);instance.pending.set(step.origin,queue);
+      if(step.standing) {const queue=instance.standing.get(step.origin)??[];queue.push(step);instance.standing.set(step.origin,queue)}
+      else {const queue=instance.pending.get(step.origin)??[];queue.push(step);instance.pending.set(step.origin,queue)}
     }
     for(const script of scenario.sockets??[]) {
       if(ids.has(script.id)||!script.role||!script.purpose) throw new ProviderScriptError("Socket scripts require unique ID, role and purpose");
@@ -172,11 +184,22 @@ export class ScriptedProviders {
       if(codec==="gzip") bytes=new Uint8Array(gunzipSync(bytes));
       else if(codec&&codec!=="identity") throw new ProviderScriptError(`Unsupported declared request codec ${codec}`);
       if(bytes.length) {const raw=new TextDecoder().decode(bytes);try{body=JSON.parse(raw)}catch{body=bytes}}
-      const step=this.pending.get(origin)?.shift();
       const path=new URL(request.url).pathname;
-      const accepted=step&&step.request.method===request.method&&step.request.path===path&&
-        (step.request.model===undefined||subset({model:step.request.model},body))&&
-        (!step.request.fields||subset(step.request.fields,body));
+      const standing=this.standing.get(origin)?.find(candidate=>matches(candidate,request.method,path,body));
+      if(standing) {
+        this.seen.push({fixtureId:standing.id,origin,sequence:this.seen.length,role:standing.role,purpose:standing.purpose,method:request.method,path,body,standing:true});
+        if(standing.barrier) await this.hold(standing.barrier);
+        const standingReply=standing.response;
+        if(standingReply.kind==="json") return Response.json(standingReply.body,{status:standingReply.status??200,...(standingReply.headers?{headers:standingReply.headers}:{})});
+        if(standingReply.kind==="bytes") return new Response(standingReply.body,{status:standingReply.status??200,headers:{"content-type":standingReply.contentType}});
+        const standingSelf=this;
+        return new Response(new ReadableStream<Uint8Array>({async start(controller){
+          try {for(const part of standingReply.parts){if(part.barrier) await standingSelf.hold(part.barrier);controller.enqueue(typeof part.data==="string"?new TextEncoder().encode(part.data):part.data)}controller.close()}
+          catch(error){controller.error(error)}
+        }}),{status:standingReply.status??200,headers:{"content-type":standingReply.contentType}});
+      }
+      const step=this.pending.get(origin)?.shift();
+      const accepted=step&&matches(step,request.method,path,body);
       this.seen.push({fixtureId:accepted?step.id:null,origin,sequence:this.seen.length,role:step?.role??null,purpose:step?.purpose??null,method:request.method,path,body});
       if(!accepted) throw new ProviderScriptError(`Unexpected provider request on ${origin}: ${request.method} ${path}; expected ${step?.id??"no more calls"}`);
       if(step.barrier) await this.hold(step.barrier);
@@ -202,7 +225,7 @@ export class ScriptedProviders {
     const unconsumed=[...this.pending.values()].flat().map(step=>step.id)
       .concat([...this.sockets.values()].flat().map(script=>script.id))
       .concat(this.socketStates.filter(state=>state.index<state.script.exchanges.length).map(state=>state.script.id));
-    await this.scenario.artifacts?.json(`provider-${this.scenario.id}.json`,{scenario:this.scenario.id,script:this.scenario.steps,sockets:this.scenario.sockets??[],seen:redactor.value(this.seen),violations:this.violations,unconsumed});
+    await this.scenario.artifacts?.json(`provider-${this.scenario.id}.json`,{scenario:this.scenario.id,script:this.scenario.steps,sockets:this.scenario.sockets??[],seen:redactor.value(this.seen),violations:this.violations,unconsumed,standing:[...this.standing.values()].flat().map(step=>step.id)});
     if(this.violations.length||unconsumed.length) throw new ProviderScriptError(`${this.scenario.id}: ${this.violations.join("; ")}; unconsumed: ${unconsumed.join(", ")}`);
   }
 }
