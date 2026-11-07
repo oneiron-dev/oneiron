@@ -147,6 +147,7 @@ pub(super) fn mcp_release_error(
         &error.message,
         &error.field,
         &error.successor_short_id,
+        &error.room_join_hold,
         &error.vault_read,
         &error.effective_scope,
     ))
@@ -224,6 +225,7 @@ pub(super) fn mcp_rerelease_refusal(
                 "field",
                 "vault_read",
                 "successor_short_id",
+                "room_join_hold",
                 "effective_scope",
                 "max_bytes",
                 "received_bytes",
