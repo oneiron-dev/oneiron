@@ -735,6 +735,7 @@ pub enum AgentVerb {
     VaultCodeOriginAuthorityGet,
     VaultCodeOriginAuthoritySet,
     VaultCodeOriginPublications,
+    VaultCodeCheckoutHolderBind,
     VaultCodeCheckoutBind,
     VaultCodeCheckoutClaim,
     VaultCodeCheckoutGet,
@@ -2046,6 +2047,7 @@ impl AgentVerb {
         Self::VaultCodeOriginAuthorityGet,
         Self::VaultCodeOriginAuthoritySet,
         Self::VaultCodeOriginPublications,
+        Self::VaultCodeCheckoutHolderBind,
         Self::VaultCodeCheckoutBind,
         Self::VaultCodeCheckoutClaim,
         Self::VaultCodeCheckoutGet,
@@ -3384,6 +3386,7 @@ impl AgentVerb {
             Self::VaultCodeOriginAuthorityGet => "vault.code.origin.authority.get",
             Self::VaultCodeOriginAuthoritySet => "vault.code.origin.authority.set",
             Self::VaultCodeOriginPublications => "vault.code.origin.publications",
+            Self::VaultCodeCheckoutHolderBind => "vault.code.checkout.holder.bind",
             Self::VaultCodeCheckoutBind => "vault.code.checkout.bind",
             Self::VaultCodeCheckoutClaim => "vault.code.checkout.claim",
             Self::VaultCodeCheckoutGet => "vault.code.checkout.get",
@@ -4711,6 +4714,7 @@ impl AgentVerb {
                 | Self::VaultCodeOriginAuthorityGet
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
+                | Self::VaultCodeCheckoutHolderBind
                 | Self::VaultCodeCheckoutBind
                 | Self::VaultCodeCheckoutClaim
                 | Self::VaultCodeCheckoutGet
@@ -6051,6 +6055,7 @@ impl AgentVerb {
                 | Self::VaultCodeOriginAuthorityGet
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
+                | Self::VaultCodeCheckoutHolderBind
                 | Self::VaultCodeCheckoutBind
                 | Self::VaultCodeCheckoutClaim
                 | Self::VaultCodeCheckoutGet
@@ -6767,6 +6772,7 @@ impl AgentVerb {
                 | Self::ExecuteCode
                 | Self::VaultCodeExportPreview
                 | Self::VaultCodeExportPreviewRead
+                | Self::VaultCodeCheckoutHolderBind
                 | Self::VaultCodeMergeQueueReviewPolicyGet
                 | Self::VaultCodeMergeQueueReviewPolicySet
                 | Self::VaultRepoSnapshotsGet
@@ -8479,6 +8485,7 @@ impl AgentVerb {
                 | Self::VaultCodeOriginPublishExecute
                 | Self::VaultCodeOriginPublishCancel
                 | Self::VaultCodeOriginAuthoritySet
+                | Self::VaultCodeCheckoutHolderBind
                 | Self::VaultCodeCheckoutBind
                 | Self::VaultCodeCheckoutClaim
                 | Self::VaultCodeCheckoutRenew
@@ -9599,6 +9606,7 @@ impl AgentVerb {
             Self::VaultCodeOriginAuthorityGet => &["spec"],
             Self::VaultCodeOriginAuthoritySet => &["spec"],
             Self::VaultCodeOriginPublications => &["spec"],
+            Self::VaultCodeCheckoutHolderBind => &["spec"],
             Self::VaultCodeCheckoutBind => &["spec"],
             Self::VaultCodeCheckoutClaim => &["spec"],
             Self::VaultCodeCheckoutGet => &["spec"],
@@ -10911,6 +10919,7 @@ impl AgentVerb {
             Self::VaultCodeOriginAuthorityGet => &["spec"],
             Self::VaultCodeOriginAuthoritySet => &["spec"],
             Self::VaultCodeOriginPublications => &["spec"],
+            Self::VaultCodeCheckoutHolderBind => &["spec"],
             Self::VaultCodeCheckoutBind => &["spec"],
             Self::VaultCodeCheckoutClaim => &["spec"],
             Self::VaultCodeCheckoutGet => &["spec"],
@@ -13655,6 +13664,9 @@ impl AgentVerb {
             }
             Self::VaultCodeOriginPublications => {
                 "Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement."
+            }
+            Self::VaultCodeCheckoutHolderBind => {
+                "Materialize the caller's own live checkout without a run. One current repo read Grant must cover the full ref at the lease's pinned commit and every path of that tree. Returns the lease-bound remote URL, not a host path; no lease is minted."
             }
             Self::VaultCodeCheckoutBind => {
                 "Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential."

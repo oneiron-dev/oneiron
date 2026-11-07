@@ -4029,6 +4029,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.checkout.holder.bind",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::repo_doors::RepoCheckoutBindInput,
+                >(),
+            ),
+            (
                 "vault.code.checkout.bind",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::origin_doors::CheckoutDoorBindRequest,
@@ -7931,6 +7937,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.origin.authority.get",
     "vault.code.origin.authority.set",
     "vault.code.origin.publications",
+    "vault.code.checkout.holder.bind",
     "vault.code.checkout.bind",
     "vault.code.checkout.claim",
     "vault.code.checkout.get",
@@ -9904,6 +9911,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.code.origin.publications" => crate::code_run::vault_read::request_schema::<
             crate::memory::origin_doors::OriginPublicationsView,
+        >(),
+        "vault.code.checkout.holder.bind" => crate::code_run::vault_read::request_schema::<
+            crate::memory::repo_doors::RepoCheckoutBindOutput,
         >(),
         "vault.code.checkout.bind" => crate::code_run::vault_read::request_schema::<
             crate::memory::origin_doors::CheckoutDoorBinding,
@@ -16142,6 +16152,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.checkout.holder.bind" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.code.checkout.bind" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -21032,6 +21049,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.code.origin.authority.get" => validate_input_vault_code_origin_authority_get(value)?,
         "vault.code.origin.authority.set" => validate_input_vault_code_origin_authority_set(value)?,
         "vault.code.origin.publications" => validate_input_vault_code_origin_publications(value)?,
+        "vault.code.checkout.holder.bind" => validate_input_vault_code_checkout_holder_bind(value)?,
         "vault.code.checkout.bind" => validate_input_vault_code_checkout_bind(value)?,
         "vault.code.checkout.claim" => validate_input_vault_code_checkout_claim(value)?,
         "vault.code.checkout.get" => validate_input_vault_code_checkout_get(value)?,
@@ -25691,6 +25709,11 @@ fn validate_input_vault_code_origin_publications(value: &serde_json::Value) -> M
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_code_checkout_holder_bind(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::memory::repo_doors::RepoCheckoutBindInput = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_vault_code_checkout_bind(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::memory::origin_doors::CheckoutDoorBindRequest = decode(value.clone())?;
     Ok(())
@@ -29917,6 +29940,7 @@ pub fn invoke(
         "vault.code.origin.authority.get" => invoke_vault_code_origin_authority_get(memory, value),
         "vault.code.origin.authority.set" => invoke_vault_code_origin_authority_set(memory, value),
         "vault.code.origin.publications" => invoke_vault_code_origin_publications(memory, value),
+        "vault.code.checkout.holder.bind" => invoke_vault_code_checkout_holder_bind(memory, value),
         "vault.code.checkout.bind" => invoke_vault_code_checkout_bind(memory, value),
         "vault.code.checkout.claim" => invoke_vault_code_checkout_claim(memory, value),
         "vault.code.checkout.get" => invoke_vault_code_checkout_get(memory, value),
@@ -35860,6 +35884,13 @@ fn invoke_vault_code_origin_publications(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_code_origin_publications(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_code_checkout_holder_bind(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_code_checkout_holder_bind(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_code_checkout_bind(
@@ -46171,6 +46202,12 @@ pub fn vault_code_origin_publications(
         &memory.embedded_owner("vault.code.origin.publications")?,
         input,
     )
+}
+pub fn vault_code_checkout_holder_bind(
+    memory: &Memory<'_>,
+    input: crate::memory::repo_doors::RepoCheckoutBindInput,
+) -> MemoryResult<crate::memory::repo_doors::RepoCheckoutBindOutput> {
+    memory.repo_checkout_bind_for_holder(input)
 }
 pub fn vault_code_checkout_bind(
     memory: &Memory<'_>,
