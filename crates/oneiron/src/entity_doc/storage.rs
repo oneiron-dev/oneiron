@@ -688,6 +688,26 @@ pub(crate) fn record_head_bytes(
     ENTITY_DOC_HEAD.get_bytes(store, txn, &HexId(*entity))
 }
 
+/// A record's exact stored document head row (full key and bytes) and the
+/// document slot it names, read in `txn`; `None` without a head. For a
+/// legal-clone copy of the stored rows (LEGAL-HOLD-USE = B as a clone): the
+/// bytes are copied as stored, never re-encoded.
+pub(crate) fn record_head_row_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    entity: &EntityId,
+) -> Result<Option<(Vec<u8>, Vec<u8>, DocumentSlot)>> {
+    let key = HexId(*entity);
+    let Some(bytes) = ENTITY_DOC_HEAD.get_bytes(store, txn, &key)? else {
+        return Ok(None);
+    };
+    let Some(h) = ENTITY_DOC_HEAD.get(store, txn, &key)? else {
+        return Err(Error::CorruptedIndex("entity document head"));
+    };
+    let slot = DocumentSlot::from_hex(&h.document)?;
+    Ok(Some((ENTITY_DOC_HEAD.key_bytes(&key), bytes, slot)))
+}
+
 /// Read-only view for existing typed record readers; the durable row retains
 /// only the pointer and immutable fields, never a second copy of the text.
 pub(crate) fn resolve_record_body(
