@@ -7,6 +7,7 @@ use super::script_plan::ScriptExecutionPlan;
 use super::{PackAdapter, PackInstallReceipt, PackInstallStatus, PackSource, invalid};
 use crate::code_run::ProgramStepFeedback;
 use crate::code_sandbox::ProposalSpoolFloor;
+use crate::code_sandbox::guest_error::{GuestErrorMask, GuestProgramError};
 use crate::code_sandbox::source::prepare_source;
 use crate::engine_executor::{CheckedDoor, RowsCheck, TypeFeedback};
 use crate::{
@@ -297,7 +298,7 @@ impl Vault {
             vault: Arc::clone(self),
             grants: bindings,
         });
-        let injected = plan.assemble_program(&prepared, &guest_grants)?;
+        let (injected, prelude_lines) = plan.assemble_program(&prepared, &guest_grants)?;
         let mut component = Vec::new();
         fs::File::open(&image.component)
             .map_err(|_| invalid("guest component unavailable"))?
@@ -344,7 +345,16 @@ impl Vault {
             .transpose()?;
         let exit = result?;
         if exit.status != 0 {
-            return Err(invalid("pack script failed in sandbox"));
+            // The script's own error, masked with this vault's custody values,
+            // names its authored position past the grants prelude (FIX 9209).
+            return Err(match exit.guest_error {
+                Some(message) => {
+                    GuestProgramError::new(message).into_error(&prepared, prelude_lines, |body| {
+                        self.mask_known_values(body)
+                    })
+                }
+                None => invalid("pack script failed in sandbox"),
+            });
         }
         let deltas = adapter.collect_overlay_proposals()?;
         if deltas.len() != 1 {

@@ -11,8 +11,8 @@ use crate::llm::decision::policy::{DecisionBandPolicy, Reversibility};
 use crate::llm::decision::types::invalid;
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionAudio, DecisionDial, DecisionImage, DecisionQuestion,
-    DecisionReceipt, DecisionRung, DecisionTime, HumanAskReason, Reasoning, ReceiptAsk, StopCause,
-    TypedDecision,
+    DecisionReceipt, DecisionRung, DecisionTime, DecisionWireLabels, HumanAskReason, Reasoning,
+    ReceiptAsk, StopCause, TypedDecision,
 };
 use crate::llm::run_admission::RunAdmission;
 use crate::retrieval_depth::RetrievalDeadline;
@@ -193,6 +193,40 @@ impl DecisionLadder<'_> {
         )
     }
 
+    /// [`Self::run_pack`] using one caller-owned table for every read, including
+    /// auxiliary questions and later rungs. Questions and receipts remain canonical.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the wire table joins run_pack's routing inputs"
+    )]
+    pub fn run_pack_labeled(
+        &self,
+        questions: &[&DecisionQuestion],
+        principal: EntityId,
+        evidence: &[EntityId],
+        state: &Value,
+        dial: DecisionDial,
+        policy: &DecisionBandPolicy,
+        reversibility: Reversibility,
+        deadline: &RetrievalDeadline,
+        labels: &dyn DecisionWireLabels,
+    ) -> Result<Vec<TypedDecision>> {
+        self.run_pack_media_scoped(
+            questions,
+            principal,
+            evidence,
+            &[],
+            &[],
+            state,
+            dial,
+            policy,
+            reversibility,
+            deadline,
+            None,
+            Some(labels),
+        )
+    }
+
     /// [`Self::run_pack`] over images the questions read. Each image fills the state field
     /// of its name, and each receipt keeps every image's evidence ref and version, never
     /// its pixels. A Box question needs at least one image.
@@ -246,7 +280,7 @@ impl DecisionLadder<'_> {
         reversibility: Reversibility,
         deadline: &RetrievalDeadline,
     ) -> Result<Vec<TypedDecision>> {
-        let mut pack = self.open(
+        self.run_pack_media_scoped(
             questions,
             principal,
             evidence,
@@ -257,41 +291,9 @@ impl DecisionLadder<'_> {
             policy,
             reversibility,
             deadline,
-        )?;
-        let mut readings = pack.readings();
-        let mut first = Vec::with_capacity(questions.len());
-        if dial.first == DecisionRung::Human {
-            first.extend(questions.iter().map(|_| None));
-        } else {
-            // An empty rung is skipped, not a refusal: the first rung in span that serves
-            // the pack reads every chunk (FIX 12278).
-            let serving = self
-                .first_serving(dial.first, dial.ceiling, questions, images, audio)
-                .ok_or_else(|| invalid("decision provider unavailable"))?;
-            pack.dial.first = serving;
-            // Past the questions-per-call row the pack goes as several requests in turn.
-            let per_call = policy.questions_per_call();
-            for (chunk, readings) in questions
-                .chunks(per_call)
-                .zip(readings.chunks_mut(per_call))
-            {
-                let call = DecisionPack {
-                    questions: chunk,
-                    evidence,
-                    images,
-                    audio,
-                    state,
-                    deadline,
-                    run: None,
-                };
-                first.extend(
-                    self.read(serving, &call, pack.person, readings)?
-                        .into_iter()
-                        .map(Some),
-                );
-            }
-        }
-        self.close(&pack, first, readings)
+            None,
+            None,
+        )
     }
 
     /// [`Self::run_pack_media`] metered on the caller's run (FIX 10443): the terminal
@@ -316,6 +318,41 @@ impl DecisionLadder<'_> {
         deadline: &RetrievalDeadline,
         run: &RunAdmission,
     ) -> Result<Vec<TypedDecision>> {
+        self.run_pack_media_scoped(
+            questions,
+            principal,
+            evidence,
+            images,
+            audio,
+            state,
+            dial,
+            policy,
+            reversibility,
+            deadline,
+            Some(run),
+            None,
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the call's media, run, labels and routing inputs share one runner"
+    )]
+    fn run_pack_media_scoped(
+        &self,
+        questions: &[&DecisionQuestion],
+        principal: EntityId,
+        evidence: &[EntityId],
+        images: &[DecisionImage],
+        audio: &[DecisionAudio],
+        state: &Value,
+        dial: DecisionDial,
+        policy: &DecisionBandPolicy,
+        reversibility: Reversibility,
+        deadline: &RetrievalDeadline,
+        run: Option<&RunAdmission>,
+        labels: Option<&dyn DecisionWireLabels>,
+    ) -> Result<Vec<TypedDecision>> {
         let mut pack = self.open(
             questions,
             principal,
@@ -327,6 +364,7 @@ impl DecisionLadder<'_> {
             policy,
             reversibility,
             deadline,
+            labels,
         )?;
         let mut readings = pack.readings();
         let mut first = Vec::with_capacity(questions.len());
@@ -352,7 +390,8 @@ impl DecisionLadder<'_> {
                     audio,
                     state,
                     deadline,
-                    run: Some(run),
+                    run,
+                    labels,
                 };
                 first.extend(
                     self.read(serving, &call, pack.person, readings)?
@@ -361,7 +400,10 @@ impl DecisionLadder<'_> {
                 );
             }
         }
-        self.close_with_run(&pack, first, readings, run)
+        match run {
+            Some(run) => self.close_with_run(&pack, first, readings, run),
+            None => self.close(&pack, first, readings),
+        }
     }
 
     /// A pack's checked routing inputs, before its first read.
@@ -381,6 +423,7 @@ impl DecisionLadder<'_> {
         policy: &'a DecisionBandPolicy,
         reversibility: Reversibility,
         deadline: &'a RetrievalDeadline,
+        labels: Option<&'a dyn DecisionWireLabels>,
     ) -> Result<OpenPack<'a>> {
         if questions.is_empty() {
             return Err(invalid("invalid decision pack"));
@@ -448,6 +491,7 @@ impl DecisionLadder<'_> {
             policy,
             reversibility,
             deadline,
+            labels,
         })
     }
 
@@ -479,6 +523,7 @@ impl DecisionLadder<'_> {
                     policy: pack.policy,
                     reversibility: pack.reversibility,
                     deadline: pack.deadline,
+                    labels: pack.labels,
                 };
                 self.route(&route, first, readings, None)
             })
@@ -514,6 +559,7 @@ impl DecisionLadder<'_> {
                     policy: pack.policy,
                     reversibility: pack.reversibility,
                     deadline: pack.deadline,
+                    labels: pack.labels,
                 };
                 self.route(&route, first, readings, Some(run))
             })
@@ -543,6 +589,7 @@ impl DecisionLadder<'_> {
             policy,
             reversibility,
             deadline,
+            labels,
         } = *call;
         let mut rung = dial.first;
         let mut prior = None;
@@ -632,6 +679,7 @@ impl DecisionLadder<'_> {
                         state,
                         deadline,
                         run,
+                        labels,
                     };
                     next_read = Some(
                         self.read(next, &pack, person, std::slice::from_mut(&mut readings))?
