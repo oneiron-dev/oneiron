@@ -439,12 +439,14 @@ impl VerifiedEvidenceSet {
         }
         // A claim drawn from a kept copy of mail the provider deleted is
         // checked again, as the claims drawn before the delete were (fix list
-        // row 15414).
+        // row 15414), and so is one drawn from a claim such a check found
+        // (FIX 20387): each source a locator names is cited too.
         let cited: Vec<EntityId> = self
             .rows
             .iter()
             .flat_map(|row| &row.messages)
             .map(|span| span.message)
+            .chain(self.rows.iter().map(|row| row.locator.source_id()))
             .collect();
         crate::mail_pack::claim_recheck::owe_claim_recheck_for_cited_in_txn(vault, txn, &cited)
     }

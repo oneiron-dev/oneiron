@@ -51,8 +51,9 @@ use crate::model_step_context::{DurableStepContext, StepOutcome};
 use crate::model_step_error::DurableStepError;
 use crate::{EntityId, Error, Result, Vault};
 use oneiron_model::llm::{
-    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmMessage,
-    LlmMessageRole, LlmRequest, LlmResponse, LlmUsage, ModelId, ModelLocality, ModelTierRef,
+    BudgetGuard, BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend,
+    LlmCapability, LlmGenerateFuture, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse,
+    LlmStreamResult, LlmUsage, ModelId, ModelLocality, ModelTierRef, ReplyAssertions,
     ResponseFormat, TierPrecedence,
 };
 
@@ -245,6 +246,9 @@ pub async fn run_claim_source_recheck(
     let declaration = ClaimSourceRecheckDeclaration::from_input(&attempt.status.payload.input)?;
     let attempt_id = attempt.status.attempt.id;
     let now = ctx.now_ms / 1_000;
+    // One scan finds the claims of every re-check owed, this one's too
+    // (FIX 20502).
+    read::discover_pending(ctx.vault)?;
     let Some(read) = read::read_asks(ctx.vault, &declaration)? else {
         // Moot: the message was restored, deleted again or erased.
         settle(ctx.vault, &declaration, now)?;
@@ -450,8 +454,13 @@ async fn ask_judge(
     // attempt's steps keep no capture (fix list row 20501).
     let _uncaptured =
         crate::self_heal::blocked_reports::UncapturedSteps::hold(ctx.vault, attempt_id);
+    // The step stores the reply the backend gives it, so the backend gives
+    // it the verdict alone (fix list row 20501).
+    let backend = VerdictOnly {
+        backend: model.backend,
+    };
     Ok(
-        match call_as_step(&step_ctx, model.backend, model.guard, request).await {
+        match call_as_step(&step_ctx, &backend, model.guard, request).await {
             Ok(StepOutcome::Finished {
                 response, memoized, ..
             }) => {
@@ -467,6 +476,67 @@ async fn ask_judge(
             Err(error) => Asked::Failed(error),
         },
     )
+}
+
+/// The judge's backend as its durable step reads it (fix list row 20501):
+/// each reply keeps its verdict alone, as one JSON text, and nothing else
+/// the provider sent (reasoning, other parts, token scores, assertions), so
+/// no word of the mail the request quoted outlives that mail's erase in the
+/// stored reply. A reply with no verdict keeps an empty text, which the
+/// reply schema refuses. The durable step only generates; a stream passes
+/// as the backend gives it.
+struct VerdictOnly<'a> {
+    backend: &'a dyn LlmBackend,
+}
+
+impl VerdictOnly<'_> {
+    fn kept(mut response: LlmResponse) -> LlmResponse {
+        let text = verdict_of(&response).map_or_else(String::new, |verdict| {
+            serde_json::json!({ "verdict": verdict.as_str() }).to_string()
+        });
+        // Built through the part's wire form, so it holds the text alone
+        // whatever optional fields a text part carries; a part that does not
+        // build leaves no content, which the reply schema refuses.
+        response.message.content = serde_json::from_value::<ContentPart>(
+            serde_json::json!({ "kind": "text", "text": text }),
+        )
+        .map_or_else(|_| Vec::new(), |part| vec![part]);
+        response.token_scores = None;
+        response.reply_assertions = ReplyAssertions::default();
+        response
+    }
+}
+
+impl LlmBackend for VerdictOnly<'_> {
+    fn supports(&self, model: &ModelId, capability: LlmCapability) -> bool {
+        self.backend.supports(model, capability)
+    }
+
+    fn generate<'b>(
+        &'b self,
+        request: LlmRequest,
+        lease: &'b BudgetLease,
+    ) -> LlmGenerateFuture<'b> {
+        Box::pin(async move { self.backend.generate(request, lease).await.map(Self::kept) })
+    }
+
+    fn generate_sourced<'b>(
+        &'b self,
+        request: LlmRequest,
+        lease: &'b BudgetLease,
+        sources: Option<Vec<EntityId>>,
+    ) -> LlmGenerateFuture<'b> {
+        Box::pin(async move {
+            self.backend
+                .generate_sourced(request, lease, sources)
+                .await
+                .map(Self::kept)
+        })
+    }
+
+    fn stream<'b>(&'b self, request: LlmRequest, lease: &'b BudgetLease) -> LlmStreamResult<'b> {
+        self.backend.stream(request, lease)
+    }
 }
 
 /// The judge's verdict, or `None` for a reply that is not one.

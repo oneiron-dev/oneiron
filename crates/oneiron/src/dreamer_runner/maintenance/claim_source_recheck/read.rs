@@ -4,6 +4,11 @@
 //! now, read as the judge reads them. A claim the Dreamer's own read
 //! withholds is never sent to its judge, nor one not yet approved: each
 //! stays owed until it can be judged.
+//!
+//! Discovery is one scan of the claims for every re-check still to find
+//! its claims, and each found set is kept on its re-check row, so a job's
+//! resume reads it again with no scan (FIX 20502). A claim drawn from a
+//! found claim is found too, to a fixed point (FIX 20387).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -91,9 +96,18 @@ pub(super) fn read_asks(
     let targets: BTreeSet<EntityId> = declaration.about().into_iter().collect();
     let rubric = curator::rubric_in_txn(vault, &txn)?;
     let reader = dreamer_read(vault)?;
+    // The set this round's discovery kept; a round found by no pass yet
+    // scans here.
+    let found: BTreeMap<EntityId, BTreeSet<EntityId>> = match owed.found {
+        Some(found) => found
+            .into_iter()
+            .map(|(head, supports)| (head, supports.into_iter().collect()))
+            .collect(),
+        None => Census::read(vault, &txn)?.found(&targets),
+    };
     let mut asks = Vec::new();
     let mut deferred = false;
-    for (head, mut supports) in discover(vault, &txn, &targets)? {
+    for (head, mut supports) in found {
         if owed.settled.contains(&head) {
             continue;
         }
@@ -195,54 +209,105 @@ fn standing(body: &ClaimBody) -> Standing {
     }
 }
 
-/// Every live claim whose typed support cites one of `targets`, by its
-/// logical head, with what each live support assertion on that head cites.
-/// A head's own evidence is read with the head. One pass over the claims:
-/// a support assertion's head is known only once its assertion is read.
-fn discover(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    targets: &BTreeSet<EntityId>,
-) -> Result<BTreeMap<EntityId, BTreeSet<EntityId>>> {
-    let mut heads: BTreeMap<EntityId, BTreeSet<EntityId>> = BTreeMap::new();
-    let mut assertions: Vec<(EntityId, BTreeSet<EntityId>)> = Vec::new();
-    for row in EntityStoreRead::port_entity_raw_records(&vault.store, txn)? {
-        let (id, bytes) = row?;
-        let header = EntityMetadataHeader::parse(&bytes).ok_or_else(invalid)?;
-        if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
-            || bytes.len() == ENTITY_METADATA_HEADER_LEN
-        {
-            continue;
+/// Finds, in one scan of the claims, the claims of every re-check still
+/// owed whose round has found none yet, and keeps each set on its re-check
+/// row (FIX 20502): the deletes one sync pass lands share one scan, and a
+/// resumed job reads its kept set. The scan and the sets it keeps are one
+/// write, so a claim born from a found claim either is in the scan or
+/// commits after it and finds that claim named, which reopens its round
+/// (FIX 20387).
+pub(super) fn discover_pending(vault: &Vault) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| {
+        let unfound = crate::mail_pack::claim_recheck::claim_rechecks_unfound_in(vault, &*txn)?;
+        if unfound.is_empty() {
+            return Ok(());
         }
-        let body = crate::claim::decode_claim_body(&bytes[ENTITY_METADATA_HEADER_LEN..], true)?;
-        if body.lifecycle != ClaimLifecycleStatus::Active {
-            continue;
+        let census = Census::read(vault, &*txn)?;
+        for recheck in unfound {
+            let found: Vec<(EntityId, Vec<EntityId>)> = census
+                .found(&recheck.targets)
+                .into_iter()
+                .map(|(head, supports)| (head, supports.into_iter().collect()))
+                .collect();
+            crate::mail_pack::claim_recheck::record_claim_recheck_found_in_txn(
+                vault, txn, &recheck, found,
+            )?;
         }
-        let mut cited = BTreeSet::new();
-        if let Some((source, head)) = supported_head(&body) {
-            cited.insert(source);
-            if let Some(evidence) = scope_field(&body, DERIVED_EVIDENCE_KEY) {
-                cited_by_slot(evidence, &mut cited);
+        Ok(())
+    })
+}
+
+/// What every stored claim cites, read in one scan of the claims (FIX
+/// 20502): the claims that cite each record, a support assertion by the
+/// head it supports, and what the live support assertions on each head
+/// cite. A head's own evidence is read with the head. A claim no longer
+/// active (superseded, weakened, retracted) still carries what its
+/// descendants were drawn from, so the walk reads it too; only the judge's
+/// read leaves it out (FIX 20387).
+struct Census {
+    citing: BTreeMap<EntityId, BTreeSet<EntityId>>,
+    supports: BTreeMap<EntityId, BTreeSet<EntityId>>,
+}
+
+impl Census {
+    fn read(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Self> {
+        let mut census = Self {
+            citing: BTreeMap::new(),
+            supports: BTreeMap::new(),
+        };
+        for row in EntityStoreRead::port_entity_raw_records(&vault.store, txn)? {
+            let (id, bytes) = row?;
+            let header = EntityMetadataHeader::parse(&bytes).ok_or_else(invalid)?;
+            if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
+                || bytes.len() == ENTITY_METADATA_HEADER_LEN
+            {
+                continue;
             }
-            assertions.push((head, cited));
-        } else {
-            cited_by(&body, &mut cited);
-            if !cited.is_disjoint(targets) {
-                heads.entry(id).or_default();
+            let body = crate::claim::decode_claim_body(&bytes[ENTITY_METADATA_HEADER_LEN..], true)?;
+            let mut cited = BTreeSet::new();
+            let head = if let Some((source, head)) = supported_head(&body) {
+                cited.insert(source);
+                if let Some(evidence) = scope_field(&body, DERIVED_EVIDENCE_KEY) {
+                    cited_by_slot(evidence, &mut cited);
+                }
+                if body.lifecycle == ClaimLifecycleStatus::Active {
+                    census
+                        .supports
+                        .entry(head)
+                        .or_default()
+                        .extend(cited.iter().copied());
+                }
+                head
+            } else {
+                cited_by(&body, &mut cited);
+                id
+            };
+            for record in cited {
+                census.citing.entry(record).or_default().insert(head);
             }
         }
+        Ok(census)
     }
-    for (head, cited) in &assertions {
-        if !cited.is_disjoint(targets) {
-            heads.entry(*head).or_default();
+
+    /// Every claim that stands on one of `targets`, by its logical head,
+    /// with what the live support assertions on it cite: one whose typed
+    /// support cites a target, and one drawn from a claim so found, to a
+    /// fixed point (FIX 20387). One no longer active is found as a link of
+    /// the walk; the judge's read passes it by.
+    fn found(&self, targets: &BTreeSet<EntityId>) -> BTreeMap<EntityId, BTreeSet<EntityId>> {
+        let mut found = BTreeMap::new();
+        let mut reached: Vec<EntityId> = targets.iter().copied().collect();
+        while let Some(record) = reached.pop() {
+            for head in self.citing.get(&record).into_iter().flatten() {
+                if found.contains_key(head) {
+                    continue;
+                }
+                found.insert(*head, self.supports.get(head).cloned().unwrap_or_default());
+                reached.push(*head);
+            }
         }
+        found
     }
-    for (head, cited) in assertions {
-        if let Some(supports) = heads.get_mut(&head) {
-            supports.extend(cited);
-        }
-    }
-    Ok(heads)
 }
 
 /// The support assertion's source and the head it supports, for an
