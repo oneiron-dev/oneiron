@@ -7,8 +7,8 @@ use super::{
     CallPurpose, Child, ContentPart, Duration, ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorError,
     EngineExecutorStatus, EngineNativeExecutor, HostSelfDispatcher, Instant, JsCodeModeRuntime,
     LlmBackend, LlmError, LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality,
-    ModelSeat, ModelTierRef, OffRecordSession, READER_CHILD_READ_ONLY, ReaderJobKind, ReaderJobs,
-    ReaderRunEnd, ResponseFormat, SCOPED_CHILD_PARENT_LEASE_LOST, SUMMARY_PURPOSE_NAME,
+    ModelSeat, ModelTierRef, OffRecordSession, ReaderJobKind, ReaderJobs, ReaderRunEnd,
+    ResponseFormat, SCOPED_CHILD_PARENT_LEASE_LOST, SUMMARY_PURPOSE_NAME,
     SUMMARY_READ_BYTES_PER_TOKEN, ScopedChildDoor, ScopedChildPorts, ScopedChildProfile, SeatKind,
     SeatTask, Shared, SpendScopeId, SummarizeRecipe, SummaryRead, TierPrecedence, Unseated, Vault,
     birth_under_inherited_list, ensure_inherited_model_list, reader_task_brief, run_seat,
@@ -23,7 +23,7 @@ impl Child {
     /// reserve fixed at that spawn for a read or a scoped child. A summary is
     /// the fold the reserve is kept for, so it runs to the whole clock. No
     /// reserve is taken twice and no time is added.
-    fn left_ms(&self, now_ms: u64) -> u64 {
+    pub(super) fn left_ms(&self, now_ms: u64) -> u64 {
         let left = self.job.binding.child_cutoff_unix_ms.saturating_sub(now_ms);
         let Some(clock) = self.clock else {
             return left;
@@ -88,10 +88,15 @@ impl Child {
                 Arc::new(ScopedChildDoor::new(Arc::clone(vault), job.clone()))
             }
             ReaderJobKind::Read | ReaderJobKind::Summarize { .. } => {
-                Arc::new(crate::api::ReaderChildDoor::new(
+                let door = crate::api::ReaderChildDoor::new(
                     Arc::clone(vault),
                     shared.seats.caller(job.binding.parent_run),
-                ))
+                );
+                Arc::new(if job.kind == ReaderJobKind::Read {
+                    door.with_nested_readers()
+                } else {
+                    door
+                })
             }
         };
         let settled = match &self.session {
@@ -267,6 +272,10 @@ impl Child {
                 None => HostSelfDispatcher::new(vault, actor, job.run.to_hex()),
             })
             .and_then(|dispatcher| dispatcher.with_reader_child(job.task, job.generation))
+            .map(|dispatcher| match self.nested_spawn_seat() {
+                Some(seat) => dispatcher.with_reader_spawn(seat),
+                None => dispatcher,
+            })
     }
 
     /// The seat a job's model calls are bound to, born under its own run on
@@ -467,87 +476,106 @@ impl Child {
         } else if let Err(end) = self.held_to_list(&config.model) {
             return end;
         }
-        let reactor = match tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-        {
-            Ok(reactor) => reactor,
-            Err(error) => return failed("reader_reactor_failed", &error),
-        };
-        let mut runtime = provider.reader_runtime();
-        let runtime: &mut dyn JsCodeModeRuntime = &mut *runtime;
-        let executor = match session {
-            Some(session) => EngineNativeExecutor::for_off_record_session(
-                session,
-                backend,
-                provider.lease(),
-                runtime,
-                &dispatcher,
-            ),
-            None => Ok(EngineNativeExecutor::new(
-                vault,
-                backend,
-                provider.lease(),
-                runtime,
-                &dispatcher,
-            )),
-        };
-        // An executor error's text can quote what the vault holds.
-        let Ok(mut executor) = executor else {
-            return failed("reader_binding_failed", &"the run's executor did not bind");
-        };
-        if let Some(seat) = &seat {
-            executor = executor.with_model_seat(seat);
-        }
-        // A child's steps get type feedback from the host's one service, as
-        // every run's do (FIX 8277).
-        if let Some(feedback) = provider.code_check() {
-            executor = executor.with_code_check(feedback);
-        }
         loop {
-            // Its cutoff and its parent's live clock bound each entry, and a
-            // lost parent lease admits none.
-            let left = self.left_ms(unix_millis_now());
-            if left == 0 {
-                return ReaderRunEnd::Cutoff;
-            }
-            if let Some(end) = self.parent_lease_lost(vault, session) {
-                return end;
-            }
-            let ran = reactor.block_on(async {
-                tokio::time::timeout(Duration::from_millis(left), executor.run(&config)).await
-            });
-            // A cut a port call or read saw ends the entry at its cutoff,
-            // however the run took the refusal (FIX 8233).
-            if let Some(end) = Self::scoped_cut(control.as_ref()) {
-                return end;
-            }
-            let error = match ran {
-                Err(_) => return ReaderRunEnd::Cutoff,
-                Ok(Ok(outcome)) => match outcome.status {
-                    EngineExecutorStatus::Complete => return ReaderRunEnd::Completed,
-                    EngineExecutorStatus::Yielded { .. } => continue,
-                    EngineExecutorStatus::Waiting(_) => {
-                        return ReaderRunEnd::Failed("reader_child_waited".to_owned());
+            let parked = {
+                let reactor = match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(reactor) => reactor,
+                    Err(error) => return failed("reader_reactor_failed", &error),
+                };
+                let mut runtime = provider.reader_runtime();
+                let runtime: &mut dyn JsCodeModeRuntime = &mut *runtime;
+                let executor = match session {
+                    Some(session) => EngineNativeExecutor::for_off_record_session(
+                        session,
+                        backend,
+                        provider.lease(),
+                        runtime,
+                        &dispatcher,
+                    ),
+                    None => Ok(EngineNativeExecutor::new(
+                        vault,
+                        backend,
+                        provider.lease(),
+                        runtime,
+                        &dispatcher,
+                    )),
+                };
+                // An executor error's text can quote what the vault holds.
+                let Ok(mut executor) = executor else {
+                    return failed("reader_binding_failed", &"the run's executor did not bind");
+                };
+                if let Some(seat) = &seat {
+                    executor = executor.with_model_seat(seat);
+                }
+                // A child's steps get type feedback from the host's one service, as
+                // every run's do (FIX 8277).
+                if let Some(feedback) = provider.code_check() {
+                    executor = executor.with_code_check(feedback);
+                }
+                loop {
+                    // Its cutoff and its parent's live clock bound each entry, and a
+                    // lost parent lease admits none.
+                    let left = self.left_ms(unix_millis_now());
+                    if left == 0 {
+                        return ReaderRunEnd::Cutoff;
                     }
-                    EngineExecutorStatus::WindowFull { .. } => {
-                        return ReaderRunEnd::Failed("window_full".to_owned());
+                    if let Some(end) = self.parent_lease_lost(vault, session) {
+                        return end;
                     }
-                },
-                Ok(Err(error)) => error,
-            };
-            return match error {
-                // A host check holds new host-paid work as a spent line
-                // stops it (FIX 9924).
-                EngineExecutorError::Llm(LlmError::BudgetDenied(
-                    BudgetDenied::Exhausted | BudgetDenied::HostCheck,
-                )) => ReaderRunEnd::SpendExhausted,
-                _ if guard.read().remaining_units == 0 => ReaderRunEnd::SpendExhausted,
-                _ => {
-                    tracing::warn!(task = %job.task.to_hex(), "a reader child's run failed");
-                    ReaderRunEnd::Failed("reader_run_failed".to_owned())
+                    let ran = reactor.block_on(async {
+                        tokio::time::timeout(Duration::from_millis(left), executor.run(&config))
+                            .await
+                    });
+                    // A cut a port call or read saw ends the entry at its cutoff,
+                    // however the run took the refusal (FIX 8233).
+                    if let Some(end) = Self::scoped_cut(control.as_ref()) {
+                        return end;
+                    }
+                    let error = match ran {
+                        Err(_) => return ReaderRunEnd::Cutoff,
+                        Ok(Ok(outcome)) => match &outcome.status {
+                            EngineExecutorStatus::Complete => return ReaderRunEnd::Completed,
+                            EngineExecutorStatus::Yielded { .. } => continue,
+                            EngineExecutorStatus::Waiting(_) => {
+                                break match outcome.parked_wait() {
+                                    Some(parked) => parked,
+                                    None => {
+                                        return failed(
+                                            "reader_binding_failed",
+                                            &"missing parked wait",
+                                        );
+                                    }
+                                };
+                            }
+                            EngineExecutorStatus::WindowFull { .. } => {
+                                return ReaderRunEnd::Failed("window_full".to_owned());
+                            }
+                        },
+                        Ok(Err(error)) => error,
+                    };
+                    return match error {
+                        // A host check holds new host-paid work as a spent line
+                        // stops it (FIX 9924).
+                        EngineExecutorError::Llm(LlmError::BudgetDenied(
+                            BudgetDenied::Exhausted | BudgetDenied::HostCheck,
+                        )) => ReaderRunEnd::SpendExhausted,
+                        _ if guard.read().remaining_units == 0 => ReaderRunEnd::SpendExhausted,
+                        _ => {
+                            tracing::warn!(task = %job.task.to_hex(), "a reader child's run failed");
+                            ReaderRunEnd::Failed("reader_run_failed".to_owned())
+                        }
+                    };
                 }
             };
+            // The guest heap, executor replay state and completed model
+            // future are gone before the shared execution slot is lent
+            // back. Only native committed state is restored after wake.
+            if let Err(end) = self.wait_for_nested(vault, session, &parked) {
+                return end;
+            }
         }
     }
 }
@@ -672,6 +700,7 @@ impl Child {
                 response_format: ResponseFormat::Text,
                 locality: config.model_locality,
                 host_keyless: false,
+                host_paid: false,
             },
             messages: vec![
                 LlmMessage {
