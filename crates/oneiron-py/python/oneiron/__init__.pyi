@@ -888,7 +888,7 @@ class Oneiron:
         def assert_distinct(self, spec: Facade.IdentityAssertDistinctRequest) -> Facade.IdentityTopologyResult:
             """The owner asserts two identities are distinct through one symmetric claim that suppresses merge re-proposals."""
         def propose(self, spec: Facade.IdentityProposeRequest) -> Facade.IdentityTopologyResult:
-            """The owner parks a nominated merge or split candidate with no topology effects; distinct pairs suppress merge proposals."""
+            """The owner parks a nominated merge, split or facet candidate with no topology effects; distinct pairs suppress merge proposals."""
         def undo(self, spec: Facade.IdentityUndoRequest) -> Facade.IdentityTopologyResult:
             """The owner undoes one current topology event by appending a counter-event under its observed revision."""
         def resolve(self, spec: Facade.IdentityEntityRequest) -> Facade.IdentityResolution:
@@ -3267,16 +3267,16 @@ class Oneiron:
             """Creates a native or evidence-linked dreamer EVENT as the caller, with atomic projector-recorded origin and engine-stamped recorded time."""
         @property
         def ics(self) -> "Oneiron._VaultCalendarIcsVerbs": ...
-        def occurrences(self, spec: Facade.CalendarOccurrencesRequest) -> Facade.ScopedReadResult[list[Facade.CalendarOccurrenceView]]:
-            """Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions."""
+        def occurrences(self, spec: Facade.CalendarOccurrencesPageRequest) -> Facade.ScopedReadResult[Facade.CalendarOccurrencesPage]:
+            """Expands an admitted stored master in an inclusive UTC window under the caller's read scope, masking detached exceptions, as one page: an optional deadline_ms, and resume_from to continue."""
         @property
         def instances(self) -> "Oneiron._VaultCalendarInstancesVerbs": ...
         def read(self, spec: Facade.CalendarReadRequest) -> Facade.ScopedReadResult[Facade.CalendarEventView | None]:
             """Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt."""
-        def search(self, spec: Facade.CalendarSearchRequest) -> Facade.ScopedReadResult[list[Facade.CalendarEventView]]:
-            """Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt."""
-        def freebusy(self, spec: Facade.CalendarFreebusyRequest) -> Facade.ScopedReadResult[Facade.CalendarFreebusyDto]:
-            """Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt."""
+        def search(self, spec: Facade.CalendarSearchPageRequest) -> Facade.ScopedReadResult[Facade.CalendarSearchPage]:
+            """Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, as one page in time order: an optional deadline_ms, and resume_from to continue."""
+        def freebusy(self, spec: Facade.CalendarFreebusyPageRequest) -> Facade.ScopedReadResult[Facade.CalendarFreebusyPage]:
+            """Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals, one page of the covered prefix: an optional deadline_ms, and resume_from to continue."""
         def prep(self, spec: Facade.CalendarMeetingRequest) -> Facade.ScopedReadResult[Facade.PrepPack | None]:
             """Builds a fresh caller-scoped meeting PrepPack with commitments first and a 250-word ceiling, or deliberately returns no pack."""
         def event_outcome(self, spec: Facade.CalendarMeetingRequest) -> Facade.ScopedReadResult[Facade.CalendarEventOutcome | None]:
