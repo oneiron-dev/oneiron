@@ -7087,6 +7087,10 @@ class SharedVaultChangeVaultDeletedBody(TypedDict):
     backup_retain_until: int
 class SharedVaultChangeVaultDeleted(TypedDict):
     vault_deleted: SharedVaultChangeVaultDeletedBody
+class SharedVaultChangeOwnerAddedBody(TypedDict):
+    owner: str
+class SharedVaultChangeOwnerAdded(TypedDict):
+    owner_added: SharedVaultChangeOwnerAddedBody
 SharedVaultChangeOwnershipTransferredBody = TypedDict("SharedVaultChangeOwnershipTransferredBody", {"from": str, "to": str, "from_keeps": NotRequired[FederationGrantRole | None]})
 class SharedVaultChangeOwnershipTransferred(TypedDict):
     ownership_transferred: SharedVaultChangeOwnershipTransferredBody
@@ -7143,7 +7147,7 @@ class SharedVaultChangeRecordErasedBody(TypedDict):
     redaction: NotRequired[str | None]
 class SharedVaultChangeRecordErased(TypedDict):
     record_erased: SharedVaultChangeRecordErasedBody
-SharedVaultChange = SharedVaultChangeVaultDeleted | SharedVaultChangeOwnershipTransferred | SharedVaultChangeOwnerRemoved | SharedVaultChangeMemberAdded | SharedVaultChangeMemberInvited | SharedVaultChangeInvitationAccepted | SharedVaultChangeInvitationDeclined | SharedVaultChangeInvitationWithdrawn | SharedVaultChangeMemberRoleChanged | SharedVaultChangeMemberRemoved | SharedVaultChangeMemberLeft | SharedVaultChangeOwnerRecovered | SharedVaultChangeRecordErased
+SharedVaultChange = SharedVaultChangeVaultDeleted | SharedVaultChangeOwnerAdded | SharedVaultChangeOwnershipTransferred | SharedVaultChangeOwnerRemoved | SharedVaultChangeMemberAdded | SharedVaultChangeMemberInvited | SharedVaultChangeInvitationAccepted | SharedVaultChangeInvitationDeclined | SharedVaultChangeInvitationWithdrawn | SharedVaultChangeMemberRoleChanged | SharedVaultChangeMemberRemoved | SharedVaultChangeMemberLeft | SharedVaultChangeOwnerRecovered | SharedVaultChangeRecordErased
 class ExportDiaryRead(TypedDict):
     agent: str
     diaries: int
