@@ -174,7 +174,6 @@ impl<'s> SessionReadContext<'s> {
             }
             SessionRead::SearchBm25 => {
                 let input: QueryBm25Request = decode(input)?;
-                caps::check_query(&input.query)?;
                 caps::check_limit_nonzero(input.limit)?;
                 let memory = memory.with_read_filter(input.filter.as_ref());
                 let read = self.query_bm25(&memory, &input.query, input.limit)?;
@@ -615,6 +614,10 @@ pub(crate) fn scoped_session_text(
         lane.end_recall_plan()?;
         return Ok((Vec::new(), started));
     }
+    vault.measure_limit(
+        crate::limit_ask::EngineLimit::RecallQueryBytes,
+        query.len() as u64,
+    );
     // The count this room search serves, asked after the denial check and
     // before any clock or index work. Best effort: the search serves its
     // rows either way.

@@ -110,8 +110,10 @@ fn valid_minimum(value: f32) -> bool {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReadFilterInput {
-    /// Restrict to these entity types, each its numeric registry type byte.
-    #[serde(default)]
+    /// Restrict to these entity types, each as its registry kind
+    /// (`CLAIM`, `MESSAGE`, ...), the spelling a read receipt's scope uses.
+    #[serde(default, with = "crate::serialize::type_kinds")]
+    #[schemars(with = "Option<Vec<String>>")]
     pub entity_types: Option<BTreeSet<u8>>,
     /// Sensitivity ceiling, in 0..=3.
     #[serde(default)]
