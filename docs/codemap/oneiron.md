@@ -3435,7 +3435,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/genui/tests.rs` | test | m | — | — | — |
 | `src/genui/tests/failure_integrity.rs` | test | s | — | — | — |
 | `src/genui/voice_offer.rs` | src | m | 1 struct · 3 fn · 1 crate-vis | VoiceGrantOffer | Voice-only disclosure widening is an offer, not an authorization |
-| `src/git_wire/argv.rs` | src | m | 38 crate-vis | — | Core half of `git_wire::argv`: its store-layer items live in `oneiron_store::git_wire::argv` and are… |
+| `src/git_wire/argv.rs` | src | m | 37 crate-vis | — | Core half of `git_wire::argv`: its store-layer items live in `oneiron_store::git_wire::argv` and are… |
 | `src/git_wire/bridge.rs` | src | s | 2 crate-vis | — | Core half of `git_wire::bridge`: its store-layer items live in `oneiron_store::git_wire::bridge` and are… |
 | `src/git_wire/bundle_tree.rs` | src | s | 4 crate-vis | — | Core half of `git_wire::bundle_tree`: its store-layer items live in `oneiron_store::git_wire::bundle_tree`… |
 | `src/git_wire/checkout.rs` | src | s | 2 fn · 5 crate-vis | — | Checkout custody: owned handle directories plus the `CheckoutRepoOps` trait impl |
@@ -3446,9 +3446,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/git_wire/failure.rs` | src | s | 1 re-export · 1 crate-vis | — | Core half of `git_wire::failure`: its store-layer items live in `oneiron_store::git_wire::failure` and are… |
 | `src/git_wire/hub_read.rs` | src | s | 3 crate-vis | — | Core half of `git_wire::hub_read`: its store-layer items live in `oneiron_store::git_wire::hub_read` and are… |
 | `src/git_wire/import_fetch.rs` | src | m | 1 struct · 2 enum · 5 fn · 1 re-export · 3 crate-vis | FetchedExternalGit, GitImportFetchOutcome, GitImportPushOutcome | The outside import's Git legs (FIX 6871, G7 PR1): one exact fetch of one outside ref into a fresh private… |
-| `src/git_wire/mirror_plan_push.rs` | src | s | 2 struct · 1 enum · 2 fn | GitPlanPushReport, GitPlanRef, GitPlanRefOutcome | The outbound half of an automatic mirror push plan (FIX 6866 part 2): an authenticated read of a frozen… |
+| `src/git_wire/mirror_plan_push.rs` | src | m | 2 struct · 1 enum · 4 fn | GitPlanPushReport, GitPlanRef, GitPlanRefOutcome | The outbound half of an automatic mirror push plan (FIX 6866 part 2): an authenticated read of a frozen… |
 | `src/git_wire/mirror_plan_review.rs` | src | m | 4 struct · 1 enum · 6 fn | GitPeeledRef, GitRefEnd, GitRefTag, GitRetainedPeeledRef, GitRetainedRefTag | What a whole ref an automatic mirror plan pushes names beyond the commits it reaches (FIX 6866 part 2), and… |
-| `src/git_wire/mirror_push.rs` | src | s | 1 fn · 1 crate-vis | — | Core half of `git_wire::mirror_push`: its store-layer items live in `oneiron_store::git_wire::mirror_push`… |
+| `src/git_wire/mirror_push.rs` | src | s | 1 crate-vis | — | Core half of `git_wire::mirror_push`: its store-layer items live in `oneiron_store::git_wire::mirror_push`… |
 | `src/git_wire/mod.rs` | src | s | 19 re-export · 9 crate-vis | — | Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068) |
 | `src/git_wire/mutation_commands.rs` | src | s | 5 crate-vis | — | Core half of `git_wire::mutation_commands`: its store-layer items live in… |
 | `src/git_wire/plan.rs` | src | s | 1 struct · 1 enum · 8 fn · 1 re-export · 3 crate-vis | GitWireObjectWrite, GitWirePlan | Core half of `git_wire::plan`: its store-layer items live in `oneiron_store::git_wire::plan` and are… |
@@ -3456,7 +3456,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/git_wire/projected_checkout.rs` | src | m | 12 crate-vis | — | A lease's checkout of a masked copy (FIX 7608 slice 2b-i): the constructors a later slice selects, with no… |
 | `src/git_wire/projected_ingress.rs` | src | s | 3 crate-vis | — | A masked copy's private ingress (FIX 7608 slice 2b-ii-B2, ASK S): the writable bare store a projection-bound… |
 | `src/git_wire/projected_object.rs` | src | s | 2 fn · 1 re-export · 5 crate-vis | — | Core half of `git_wire::projected_object`: its store-layer items live in… |
-| `src/git_wire/publish_push.rs` | src | s | 2 enum · 5 fn · 2 crate-vis | GitPublishPushOutcome, GitRemoteTip | The outbound half of one exact publish (FIX 6866): an authenticated read of one branch at an https mirror… |
+| `src/git_wire/publish_push.rs` | src | s | 2 enum · 5 fn · 4 crate-vis | GitPublishPushOutcome, GitRemoteTip | The outbound half of one exact publish (FIX 6866): an authenticated read of one branch at an https mirror… |
 | `src/git_wire/publish_review.rs` | src | s | 1 enum · 2 fn · 3 crate-vis | GitReviewItem | The full ancestry one exact publish would expose (FIX 6866): every commit the pushed commit reaches that the… |
 | `src/git_wire/publish_review_trees.rs` | src | s | 5 crate-vis | — | The tree-by-tree half of an exact publish's review (FIX 6866): one commit whose diff alone passed its output… |
 | `src/git_wire/reachable_blobs.rs` | src | m | 1 struct · 7 fn · 1 crate-vis | GitPeeledTip | The small blobs a set of tips reaches through its whole history, read in bounded batches: what a caller… |
@@ -4543,7 +4543,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/origin/export_parent.rs` | src | s | 1 crate-vis | — | CALL G "import export parents" (FIX 6869, G4 PR1): the Git parents of an import-bound tested revision's… |
 | `src/origin/export_preview.rs` | src | m | 1 re-export · 6 crate-vis | — | The exact export preview (FIX 6869, G4 PR3): what `vault.code.export` would write for one explicit sealed… |
 | `src/origin/export_preview/handles.rs` | src | s | 4 crate-vis | — | Core half of `origin::export_preview::handles`: its store-layer items live in… |
-| `src/origin/git_transport.rs` | src | s | 2 struct · 1 trait · 1 fn · 1 crate-vis | OriginGitPublishPush, OriginGitPushReport, OriginGitTransport | The served host's transport for an exact publish's outbound git (ARCH-0069 OSH-3, ARCH-0068 RC4, FIX 19083) |
+| `src/origin/git_transport.rs` | src | s | 4 struct · 1 trait · 1 fn · 1 crate-vis | OriginGitPlanPush, OriginGitPlanPushReport, OriginGitPublishPush, OriginGitPushReport, OriginGitTransport | The served host's transport for an origin mirror's outbound git: an exact publish's and an automatic mirror… |
 | `src/origin/lfs/batch_client.rs` | src | m | 4 crate-vis | — | The outbound Git-LFS batch client: one https remote's batch API (`<remote>.git/info/lfs/objects/batch`) and… |
 | `src/origin/lfs/chunk_tests.rs` | test | L | — | — | Chunked storage acceptance through public IO and stored ASSET rows |
 | `src/origin/lfs/chunks.rs` | src | s | 1 struct · 7 fn · 1 re-export · 9 crate-vis | LfsManifest | Core half of `origin::lfs::chunks`: its store-layer items live in `oneiron_store::origin::lfs::chunks` and… |
@@ -4555,7 +4555,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/origin/lfs/store.rs` | src | m | 2 struct · 16 fn · 5 const · 8 crate-vis | LfsPutOutcome, VaultLfsObject | Object plane: Vault adapter methods, shared expectation gate, key builders, record codec |
 | `src/origin/lfs/tests.rs` | test | s | — | — | Inline contract suite: digest/round-trip, put/dedup/refusal, fail-closed corruption, ref attach/detach… |
 | `src/origin/lfs/upload.rs` | src | m | 2 fn · 2 const · 3 crate-vis | — | Bounded streaming ingress: validate before publishing, then commit small chunk transactions |
-| `src/origin/mirror.rs` | src | m | 5 struct · 2 enum · 9 fn · 5 const · 8 crate-vis | OriginMirrorLfsObject, OriginMirrorNotReadyReason, OriginMirrorPushes, OriginMirrorReadiness, OriginMirrorRun, OriginMirrorTarget, OriginMirrorTargetInput | Outbound mirror pushing (ARCH-0068 RA8) |
+| `src/origin/mirror.rs` | src | m | 5 struct · 2 enum · 9 fn · 6 const · 9 crate-vis | OriginMirrorLfsObject, OriginMirrorNotReadyReason, OriginMirrorPushes, OriginMirrorReadiness, OriginMirrorRun, OriginMirrorTarget, OriginMirrorTargetInput | Outbound mirror pushing (ARCH-0068 RA8) |
 | `src/origin/mirror_auto.rs` | src | s | 3 struct · 1 enum · 1 fn · 4 const · 3 crate-vis | OriginMirrorAutomation, OriginMirrorHold, OriginMirrorHoldCause, OriginMirrorPendingCheck | Full-auto mirrors, and what every automatic push run shows on its mirror (FIX 6866 part 2) |
 | `src/origin/mirror_census.rs` | src | m | 5 crate-vis | — | The Git-LFS census behind a mirror run's readiness (FIX 6052, FIX 6331), and the objects it met sent to the… |
 | `src/origin/mirror_run.rs` | src | s | 7 crate-vis | — | One automatic whole-ref run of one mirror, and the passes over every mirror (FIX 6866 part 2) |
