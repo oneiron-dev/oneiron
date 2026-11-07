@@ -50300,7 +50300,7 @@
      "path": "src/memory/repo_secret_reads.rs",
      "purpose": "Repo bytes a Memory handle's masked reader reads (FIX 7608 slice 2a, ASK 1)",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 1
      }
     },
