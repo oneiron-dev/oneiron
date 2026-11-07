@@ -282,9 +282,12 @@ impl Memory<'_> {
             let mut reactions = if matches!(entity_type, ENTITY_TYPE_MESSAGE | ENTITY_TYPE_TURN) {
                 let mut counted = Vec::new();
                 let lines = lane.reaction_lines_counting(id, &mut counted)?;
+                // The lines' read narrows the item as its own read did
+                // (FIX 8669).
+                receipt.restrict_with(&lines.receipt);
                 // Each reaction claim a line counts is a producer of the item.
                 self.produced_from(counted);
-                lines
+                lines.value
             } else {
                 Vec::new()
             };
