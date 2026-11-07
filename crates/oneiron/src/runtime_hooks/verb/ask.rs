@@ -13,9 +13,11 @@
 //! reads run on the task-work turn the calling operation holds
 //! ([`author_memory`]).
 
+mod outcome;
 pub(super) mod session;
 mod wait;
 
+pub(super) use outcome::{SavedOutcome, saved_producers};
 pub use wait::VerbHookWaitStatus;
 pub(super) use wait::status as wait_status;
 
@@ -104,43 +106,9 @@ struct VerbAsk {
     /// waits on the drain's in-flight hold, not on this mark, which a crash
     /// can leave set.
     running: bool,
-    /// What the drained call returned, for the caller's retry.
+    /// What the drained call returned, for the caller's retry, a result
+    /// beside the rows it was derived from (FIX 1435).
     outcome: Option<SavedOutcome>,
-}
-
-/// What a call the drain ran returned.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum SavedOutcome {
-    /// The caller's view of the result, as JSON.
-    Ok { result: String },
-    Err {
-        code: String,
-        message: String,
-        /// The refusal receipt a credential call that ended refused left.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        receipt: Option<String>,
-    },
-}
-
-impl SavedOutcome {
-    /// What a drained call that returned `value` saves: its full JSON for
-    /// the caller's retry of this same invocation.
-    pub(super) fn result(value: &Value) -> Result<Self> {
-        serde_json::to_string(value)
-            .map(|result| Self::Ok { result })
-            .map_err(|_| Error::InvariantViolation("verb hook ask outcome encode"))
-    }
-
-    /// What a drained call that failed with `code` saves: its message cut to
-    /// [`MAX_SAVED_VERB_ERROR_BYTES`].
-    pub(super) fn error(code: String, message: &str) -> Self {
-        Self::Err {
-            code,
-            message: cut(message, MAX_SAVED_VERB_ERROR_BYTES),
-            receipt: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -399,7 +367,7 @@ pub(super) fn is_used(stop: &VerbHookStop) -> bool {
 /// The stop a retry of a drained call gets: what the call returned.
 fn completed(invocation: InvocationId, outcome: &SavedOutcome) -> Result<VerbHookStop> {
     Ok(match outcome {
-        SavedOutcome::Ok { result } => VerbHookStop::Completed {
+        SavedOutcome::Ok { result, .. } => VerbHookStop::Completed {
             invocation: invocation.to_hex(),
             result: serde_json::from_str(result)
                 .map_err(|_| Error::CorruptedIndex("verb hook ask outcome"))?,
