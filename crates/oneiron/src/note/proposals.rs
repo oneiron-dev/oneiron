@@ -124,6 +124,11 @@ pub(crate) fn erase_fork_actor_in_txn(
                 wtxn,
                 &HexPair(HexId(fork.note), HexId(fork.fork)),
             )?;
+            // A replica's queued upload of the fork, and its mark when the
+            // authority sent it, go with it (FIX 12789).
+            let pair = HexPair(HexId(fork.note), HexId(fork.fork));
+            super::sync_rows::SYNC_QN_E.delete(&vault.store, wtxn, &pair)?;
+            super::sync_rows::NOTE_FORK_AUTHORITY.delete(&vault.store, wtxn, &pair)?;
         } else {
             NOTE_FORK.put(&vault.store, wtxn, &key, &fork)?;
         }
@@ -556,8 +561,21 @@ impl Vault {
     }
     fn notify_landed(&self, bundle: &NoteReviewBundle) {
         #[cfg(feature = "sync")]
-        for receipt in &bundle.landed {
-            self.notify_note_document(receipt.note);
+        {
+            for receipt in &bundle.landed {
+                self.notify_note_document(receipt.note);
+            }
+            // A bundle's members left the pending forks an own device holds
+            // outside one (FIX 12789).
+            let notes: std::collections::BTreeSet<EntityId> = bundle
+                .waiting
+                .iter()
+                .map(|fork| fork.note)
+                .chain(bundle.landed.iter().map(|receipt| receipt.note))
+                .collect();
+            for note in notes {
+                self.notify_note_forks(note);
+            }
         }
         #[cfg(not(feature = "sync"))]
         let _ = bundle;
@@ -579,7 +597,8 @@ impl Vault {
         edit: &NoteProgramEdit,
         actor: WriteActor,
     ) -> MemoryResult<EntityId> {
-        self.memory(actor.entity_ref(), actor.actor_class())
+        let fork = self
+            .memory(actor.entity_ref(), actor.actor_class())
             .with_actor_content_write_txn_as(actor, |content| {
                 content.update_note(note, |txn| {
                     // A sealed NOTE forks too: the fork leaves its seal intact.
@@ -622,7 +641,11 @@ impl Vault {
                     )?;
                     Ok(fork.head)
                 })
-            })
+            })?;
+        // An authority's own devices hold its pending forks (FIX 12789).
+        #[cfg(feature = "sync")]
+        self.notify_note_forks(note);
+        Ok(fork)
     }
 }
 pub(super) fn land(
@@ -713,6 +736,15 @@ pub(super) fn land(
     };
     fork.decided = true;
     fork.recovery_merge = None;
+    // A decided fork is no longer uploaded: a replica's queued upload of it
+    // goes, and so does its mark, so no fork set takes the decided record
+    // (FIX 12789).
+    let pair = HexPair(HexId(fork.note), HexId(fork.fork));
+    super::sync_rows::SYNC_QN_E.delete(&vault.store, txn, &pair)?;
+    super::sync_rows::NOTE_FORK_AUTHORITY.delete(&vault.store, txn, &pair)?;
+    // Once it commits, the NOTE's subscribers read its text and pending
+    // forks again, whichever door decided it.
+    vault.queue_note_document_update_in_txn(txn, fork.note);
     NOTE_FORK.put(&vault.store, txn, &fork.fork, fork)?;
     let receipt = NoteLandingReceipt {
         id: vault.store.clock.entity_id()?,
