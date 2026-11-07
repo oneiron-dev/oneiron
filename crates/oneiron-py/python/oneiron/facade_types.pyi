@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1289 facade rows, 4672 declarations.
-Inputs: 1218 of 1289 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1118 of 1289 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1291 facade rows, 4673 declarations.
+Inputs: 1220 of 1291 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1120 of 1291 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -16840,6 +16840,8 @@ class SkillPackOutcomeProjection(TypedDict):
     persisted: bool
 class SkillPackCreditRequest(TypedDict):
     receipt_id: str
+class ModelResponsesStoreSettings(TypedDict):
+    responses_store: bool
 SeatPrecedence = Literal["narrow_only", "seat_override"]
 DescriptionSource = Literal["owner", "measured", "benchmarks", "vendor"]
 class SeatPolicy(TypedDict):

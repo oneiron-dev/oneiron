@@ -60,6 +60,8 @@ pub(in crate::api::facade) fn door_admits(
                 })
         }
         Row::VaultSecretsCodeRunLifts
+        | Row::VaultSettingsModelsResponsesStoreRead
+        | Row::VaultSettingsModelsResponsesStoreSet
         | Row::VaultSecretsCodeRunRoomLifts
         | Row::VaultIngestAgUiImport
         | Row::VaultModelsManifestRead
