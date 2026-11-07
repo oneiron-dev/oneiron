@@ -53,6 +53,13 @@ impl<K: Eq + Hash + Clone + Send + 'static> Admission<K> {
         }
     }
 
+    /// The pool over `line`, whose bound, wait and crossing its owner sets:
+    /// a vault server's connection floor is the process's descriptor line
+    /// (FIX 6299), which its construction sized.
+    pub(crate) fn on_line(line: WorkLine<K>) -> Self {
+        Self { line }
+    }
+
     /// One turn at a time: an exclusive resource's queue, which is not a
     /// threshold and asks no question when it is busy.
     pub(crate) fn exclusive(wait: Duration) -> Self {
@@ -69,12 +76,6 @@ impl<K: Eq + Hash + Clone + Send + 'static> Admission<K> {
     /// How many pieces of work wait for a permit.
     pub(crate) fn waiting(&self) -> usize {
         self.line.waiting()
-    }
-
-    /// The crossing in progress while work waits for a permit: its epoch
-    /// ([`WorkLine::crossing_epoch`]). `None` while nobody waits.
-    pub(crate) fn crossing_epoch(&self) -> Option<u64> {
-        self.line.crossing_epoch()
     }
 
     /// A permit for `key`'s work, now or at its turn.
@@ -139,8 +140,16 @@ struct RowCrossing {
 }
 
 impl LineCrossing for RowCrossing {
-    fn crossed(&self, bound: u64, observed: u64) {
+    /// The row asks once for the crossing. The Connections row's crossing
+    /// also raises the pool's live pressure check, whether a socket waits
+    /// or a guest's bundle found too little room (FIX 7656, FIX 6304).
+    fn crossed(&self, epoch: u64, bound: u64, observed: u64) {
         self.questions.ask(self.row, bound, observed);
+        if self.row == LimitRow::Connections
+            && let Some(pressure) = self.questions.pool_pressure()
+        {
+            pressure.raise(epoch, bound.max(1));
+        }
     }
 
     fn drained(&self, epoch: u64) {
