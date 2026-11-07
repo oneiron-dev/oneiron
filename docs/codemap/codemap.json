@@ -37419,7 +37419,7 @@
       "crate-vis": 4,
       "enum": 4,
       "fn": 8,
-      "re-export": 6,
+      "re-export": 7,
       "struct": 5
      }
     },
@@ -37449,7 +37449,7 @@
      "purpose": "FIX6 code-fix exports (DEC-0005 #world-privacy-p8-tier2)",
      "surface": {
       "const": 1,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 9,
       "fn": 3,
       "re-export": 1,
@@ -37572,6 +37572,21 @@
      "purpose": "Tier-1 aggregation policy vocabulary, defined by the manifest layer",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FailureSignalBatchReceipt",
+      "FailureSignalDeliveryStatus",
+      "FailureSignalWaiting"
+     ],
+     "path": "src/failure_signals/status.rs",
+     "purpose": "Content-free delivery diagnostics from the existing durable queues and direct-dispatch receipts",
+     "surface": {
+      "fn": 1,
+      "struct": 3
      }
     },
     {
@@ -62166,7 +62181,7 @@
      "path": "src/receipt/direct_dispatch.rs",
      "purpose": "Ordinary outbound receipts for hosts that call dispatch directly",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -62324,7 +62339,7 @@
      "path": "src/receipt/mod.rs",
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "mod": 5,
       "re-export": 19
      }
@@ -93769,7 +93784,7 @@
      "purpose": "ONE-1887 failure ladder: classify → bounded retry → healer slot → surface"
     },
     "failure_signals": {
-     "files": 14,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -94751,7 +94766,7 @@
    },
    "over_bar": 187,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6703,
+   "source_files": 6704,
    "test_files": 895
   },
   "oneiron-android": {
@@ -130162,6 +130177,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/failure_signals.rs",
+     "purpose": "The owner's content-free failure-signal delivery diagnostics",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -130268,7 +130293,7 @@
      "path": "src/owner/mod.rs",
      "purpose": "The owner's own actions on his vault, shared by the CLI and `/v1/owner`",
      "surface": {
-      "crate-vis": 36
+      "crate-vis": 37
      }
     },
     {
@@ -133332,7 +133357,7 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 46,
+     "files": 47,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -133481,7 +133506,7 @@
    },
    "over_bar": 58,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1709,
+   "source_files": 1710,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
