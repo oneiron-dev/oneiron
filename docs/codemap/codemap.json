@@ -18253,7 +18253,7 @@
      "path": "src/code_run/storage/reader_jobs.rs",
      "purpose": "One run's reader children (ARCH-0079 #reader-forks), where the run's rows are: base, or its off-record…",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 28,
       "enum": 1,
       "fn": 14,
       "struct": 2
@@ -18278,6 +18278,16 @@
      "surface": {
       "crate-vis": 3,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/reader_jobs/txn.rs",
+     "purpose": "The common transaction and read door for one run's reader ledger",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -18564,7 +18574,7 @@
      "path": "src/code_run/storage/routing/replay.rs",
      "purpose": "A bound session's replay append, on the run's one route, in one routed transaction: the record compared…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -18661,7 +18671,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "WaitDeliveries",
@@ -18670,7 +18680,7 @@
      "path": "src/code_run/storage/wait_delivery.rs",
      "purpose": "Replies to parked code runs: a run whose step parked on a durable wait resumes from the reply delivered to it",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 13,
       "fn": 10,
       "re-export": 1,
       "struct": 2
@@ -18684,6 +18694,16 @@
      "purpose": "A wait's delivered and settled replies, read before they decode (FIX 9390): a row whose reply never decoded…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/wait_delivery/resume.rs",
+     "purpose": "Resumed wait checkpoints and their generation-bound row retirement",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -54229,6 +54249,16 @@
      "notable": [],
      "path": "src/off_record/lifecycle/session/checkpoint.rs",
      "purpose": "A checkpoint reader joins its queue snapshot to native session visibility",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/off_record/lifecycle/session/reader_txn.rs",
+     "purpose": "Reader-ledger updates carried from a sealed room into the base vault",
      "surface": {
       "crate-vis": 1
      }
@@ -92716,7 +92746,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 213,
+     "files": 215,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93388,7 +93418,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 38,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -94053,9 +94083,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 185,
+   "over_bar": 184,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6644,
+   "source_files": 6647,
    "test_files": 895
   },
   "oneiron-android": {
@@ -139450,7 +139480,7 @@
      "path": "src/session_overlay/keyspace.rs",
      "purpose": "Overlay keyspace manifest: the 28 named databases and their mutations",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 1,
       "fn": 1
      }
@@ -139485,7 +139515,7 @@
      "path": "src/session_overlay/overlay/lifecycle.rs",
      "purpose": "Overlay lifecycle state machine, leases, seal/rearm/close",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 7,
       "struct": 1
      }
@@ -139588,6 +139618,21 @@
      "surface": {
       "crate-vis": 3,
       "fn": 2,
+      "re-export": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BaseRowRetirementGuard"
+     ],
+     "path": "src/session_overlay/overlay/segment/base_retirement.rs",
+     "purpose": "Canonical reader-ledger writes that supersede rows in a sealed overlay",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1,
       "struct": 1
      }
     },
@@ -139602,7 +139647,7 @@
      "purpose": "Session write routing: which store a session write lands in per mode",
      "surface": {
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -142761,7 +142806,7 @@
      "purpose": "Store-layer modules of core `serialize`; core re-exports each one at its old path"
     },
     "session_overlay": {
-     "files": 19,
+     "files": 20,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -143001,7 +143046,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 636,
+   "source_files": 637,
    "test_files": 4
   },
   "oneiron-uniffi": {
