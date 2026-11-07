@@ -667,6 +667,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
             .as_ref()
             .map(|_| (request.actor.actor_ref, request.off_record_session.clone()));
         let placement = (request.actor.scope.world_ref, request.actor.scope.facet_ref);
+        let birth_position = request.actor.scope.birth_position();
         let verbs = Arc::clone(&request.verbs);
         let brief = request.brief.clone();
         // The gated run source is HOST-derived: the caller's handle is a label
@@ -770,6 +771,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                         verbs,
                         opener.as_ref(),
                         worlds,
+                        birth_position,
                         reader_seat,
                         seat.as_mut(),
                         git_door_base,
@@ -870,6 +872,7 @@ fn run_engine_native_code_mode(
     verbs: Arc<dyn oneiron::code_run::AgentVerbDoor>,
     opener: Option<&oneiron::authority::VerifiedSlip>,
     worlds: Vec<EntityId>,
+    birth_position: oneiron::federation::record_scope::BirthPosition,
     reader_seat: Option<SpawnHostSeat>,
     compaction: Option<&mut RunCompaction>,
     git_door_base: Option<String>,
@@ -878,6 +881,7 @@ fn run_engine_native_code_mode(
     let mut gated_write = GatedActorWrite::new(vault, write_actor, run_ref)
         .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?
         .with_agent_verb_door(verbs)
+        .with_birth_position(birth_position)
         .with_bound_run(config.run_id)
         .with_git_door_base(git_door_base);
     if let Some(opener) = opener {

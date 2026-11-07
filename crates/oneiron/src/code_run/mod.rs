@@ -219,6 +219,9 @@ pub(crate) use self::storage::{
     canonical_wait_ids, deliver_changed_wait_in_txn, has_parked_run_in_txn, observe_wait_change,
 };
 pub(crate) use self::storage::{
+    closed_read_world_capture_in_txn, invalidate_imported_read_world_capture_in_txn,
+};
+pub(crate) use self::storage::{
     drop_code_run_result_marks_in_txn, erase_retained_result_marks_in_txn,
 };
 pub(crate) use self::storage::{retire_replay_bodies_in_rows, settle_evaporated_reader_spend};
