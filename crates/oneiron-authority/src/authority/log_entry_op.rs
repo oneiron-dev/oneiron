@@ -36,6 +36,9 @@ pub enum AuthorityOp {
     /// replica minted under it that merges later (FIX 1978).
     SlipGrantRevoke {
         grant_ref: EntityId,
+        /// The actual membership execution receipt, absent for a guest revoke.
+        /// A record link only; it confers no authority.
+        membership_receipt: Option<String>,
     },
     /// The removal-archive door's spend of the one-shot transferred slip
     /// `slip_id`, served from the archives an export-first removal kept for
@@ -412,8 +415,16 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
             }
             Ok(())
         }
-        AuthorityOp::SlipGrantRevoke { grant_ref } => {
-            if *grant_ref.as_bytes() == [0; 16] {
+        AuthorityOp::SlipGrantRevoke {
+            grant_ref,
+            membership_receipt,
+        } => {
+            if *grant_ref.as_bytes() == [0; 16]
+                || membership_receipt.as_deref().is_some_and(|receipt| {
+                    !EntityId::from_hex(receipt)
+                        .is_ok_and(|id| *id.as_bytes() != [0; 16] && id.to_hex() == receipt)
+                })
+            {
                 return Err(invalid_authority());
             }
             Ok(())
