@@ -58,10 +58,15 @@ pub(crate) struct ConnectionBriefReads {
 }
 
 /// Whether `actor`'s connection has a self brief: an agent's, on a
-/// credential no record list narrows. Any other connection's describe(self)
-/// is refused, and its setup carries none.
+/// credential no record list narrows, through a connector no world or facet
+/// narrows. The brief is laid out from the agent's own reads, which no
+/// connector scope narrows, so a narrowed connector gets none, as its
+/// describe(self) is refused. Any other connection's describe(self) is
+/// refused, and its setup carries none.
 pub(crate) fn connection_has_brief(actor: &McpResolvedActor) -> bool {
-    actor.actor_class == oneiron::EdgeActorClass::Agent && actor.has_unrestricted_record_scope()
+    actor.actor_class == oneiron::EdgeActorClass::Agent
+        && actor.has_unrestricted_record_scope()
+        && !actor.scope.is_narrow()
 }
 
 /// The key a connection's self brief is installed under: the agent its
