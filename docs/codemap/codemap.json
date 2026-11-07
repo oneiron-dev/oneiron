@@ -21118,7 +21118,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -51610,7 +51610,7 @@
      "path": "src/memory/support/builders.rs",
      "purpose": "Handle binders: the `with_*` methods and the accessors that read back what a binder set",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 17,
       "fn": 23
      }
     },
@@ -65127,7 +65127,7 @@
      "path": "src/runtime_hooks/store.rs",
      "purpose": "The runner's durable rows: cursors, the run memo, saved intents, the Hook receipts and the run index…",
      "surface": {
-      "crate-vis": 37
+      "crate-vis": 38
      }
     },
     {
@@ -65147,7 +65147,7 @@
      "path": "src/runtime_hooks/verb/ask.rs",
      "purpose": "A pre-hook's Ask (ARCH-0080 §3 Ask)",
      "surface": {
-      "const": 1,
+      "const": 2,
       "crate-vis": 29,
       "re-export": 1
      }
@@ -65206,7 +65206,7 @@
      "path": "src/runtime_hooks/verb/chain.rs",
      "purpose": "The verb-hook chain (ARCH-0080 §3): matching, run order, each run's input and verdict, the failure policy by…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -65270,7 +65270,7 @@
      "path": "src/runtime_hooks/verb/credential.rs",
      "purpose": "A credential caller's call a verb hook's ask stopped, resumed through the door it came in by (ARCH-0080 §3…",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "enum": 5,
       "fn": 10,
       "struct": 7,
@@ -65287,7 +65287,7 @@
      "path": "src/runtime_hooks/verb/mod.rs",
      "purpose": "Verb hooks (ARCH-0080 §3, §5), slice 2: hooks that run inside a call, before and after one logical verb",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 16,
       "fn": 11,
       "re-export": 10,
       "struct": 2,
@@ -71785,13 +71785,14 @@
       "OfferPassResult",
       "OfferRef",
       "OfferUndoReceipt",
-      "OfferView"
+      "OfferView",
+      "TrainingRunRef"
      ],
      "path": "src/skill_optimize/offer_doors.rs",
      "purpose": "Typed owner doors for the production Coach offer pass and its evidence",
      "surface": {
-      "fn": 9,
-      "struct": 9
+      "fn": 10,
+      "struct": 10
      }
     },
     {
@@ -83446,7 +83447,7 @@
      "purpose": "The owner's revoke always lands (FIX 5076; Engine 10-19): what a verb hook may change on a revoke, erase or…",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 5,
       "struct": 1
      }
@@ -83458,7 +83459,7 @@
      "path": "src/task_verb/revoke_lands/payload.rs",
      "purpose": "The polymorphic restrictive rows (FIX 5137-5139): calls whose restrictive part is in what they carry, judged…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -86855,7 +86856,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1306
+      "fn": 1307
      }
     },
     {
@@ -108950,7 +108951,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1274
+      "fn": 1275
      }
     },
     {
@@ -110743,7 +110744,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1275
+      "fn": 1276
      }
     },
     {
@@ -115622,7 +115623,7 @@
      "path": "src/api/facade/coach_offer_doors.rs",
      "purpose": "Typed owner doors for Coach offers and counted pilot evidence",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -147855,6 +147856,7 @@
       "TradeoffRole",
       "TradeoffRule",
       "TrainingOffer",
+      "TrainingRunRef",
       "TranscriptFileDropInput",
       "TranscriptIngestOutcome",
       "TransportFault",
@@ -148174,7 +148176,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1140,
-      "struct": 3475
+      "struct": 3476
      }
     },
     {
