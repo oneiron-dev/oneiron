@@ -136,6 +136,31 @@ impl CoreAuth {
             None => auth,
         })
     }
+    /// The self-hosted root's caller a resumed call rebuilds from its
+    /// recorded host action (FIX 4744): `verified` is the root this host
+    /// retains, verified again now as the very root the action recorded, and
+    /// `instrument` the fingerprint of the token the request presented, so
+    /// its authority ceiling is the one the call was admitted under. It
+    /// names no principal and keeps no holder binding: it acts only through
+    /// the host action its door resolves. Anything but a full host root is
+    /// refused.
+    pub(crate) fn from_recorded_host_root(
+        verified: VerifiedSlip,
+        instrument: [u8; 32],
+        vault: &dyn RevokedTokenJtis,
+    ) -> Result<Self, ApiError> {
+        let unattenuated = verified.is_full_vault_owner_grade();
+        let mut auth = Self::from_verified(verified, unattenuated)?;
+        if auth.host_root().is_none() {
+            return Err(ApiError::unauthorized());
+        }
+        auth.instrument = Some(instrument);
+        auth.facets_owner_exempt = auth
+            .verified_slip
+            .as_ref()
+            .is_some_and(|proof| vault.credential_facets_owner_exempt(proof));
+        Ok(auth)
+    }
     /// The exact instrument this credential was authenticated on, if any.
     pub(crate) const fn instrument(&self) -> Option<[u8; 32]> {
         self.instrument
@@ -156,7 +181,7 @@ impl CoreAuth {
         // This also refuses one-shot instruments before a consuming operation.
         let auth = Self::from_slip_token(token, proof, vault)?;
         let slip = CapabilitySlip::from_token(token).map_err(|_| ApiError::unauthorized())?;
-        vault
+        let verified = vault
             .admit_capability_slip_request(
                 &slip,
                 proof.timestamp,
@@ -164,14 +189,21 @@ impl CoreAuth {
                 proof.nonce.as_bytes(),
             )
             .map_err(|_| ApiError::unauthorized())?;
+        let mut admitted_auth = Self::from_verified(verified, slip.caveats.is_empty())?;
+        admitted_auth.instrument = auth.instrument;
+        admitted_auth.invocation_slip = auth.invocation_slip;
+        admitted_auth.facets_owner_exempt = admitted_auth
+            .verified_slip
+            .as_ref()
+            .is_some_and(|proof| RevokedTokenJtis::credential_facets_owner_exempt(vault, proof));
         // A fresh proof, used here once: the connection it came on is no
         // longer a stranger's. The read-only check above does not say so,
         // since a replay passes it and is refused only here.
         crate::http_listener::authenticated();
         // Its body, if it has one, now counts under this slip in the owner's
         // connection-pool pressure check (FIX 7656).
-        super::body_credential::attach_slip(&auth);
-        Ok(auth)
+        super::body_credential::attach_slip(&admitted_auth);
+        Ok(admitted_auth)
     }
     pub(super) fn from_verified(
         verified: VerifiedSlip,
