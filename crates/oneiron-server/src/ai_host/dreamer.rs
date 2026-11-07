@@ -15,13 +15,11 @@ use std::time::{Duration, Instant};
 
 use oneiron::ModelId;
 use oneiron::agent_def::DreamingMode;
-use oneiron::attempt_queue::AttemptQueue;
 use oneiron::dreamer_consolidation::{
     CONFLICT_SETTLE_DIAL, ConflictSettleDecisions, DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE,
     DREAMER_ROLES, ResidentDreamModel, RoleBackend, RoleBackends, SourcedBackend,
-    TASK_REALIZE_UNLENT_PARK_REASON, TaskRealizeModel, WEAVE_LENS_UNLENT_PARK_REASON,
-    WeaveLensModel, resident_of_dream_input, run_resident_dream, run_task_realize, run_weave_lens,
-    settle_parked_conflicts_while,
+    TASK_REALIZE_UNLENT_PARK_REASON, WEAVE_LENS_UNLENT_PARK_REASON, resident_of_dream_input,
+    run_resident_dream, settle_parked_conflicts_while,
 };
 use oneiron::dreamer_promotion::AttemptPromotionSink;
 use oneiron::dreamer_runner::maintenance::ContributionReplayHost;
@@ -53,6 +51,7 @@ mod free_time;
 mod pause;
 mod request_sources;
 mod run_log;
+mod task_lend;
 mod urgent_digest;
 use super::skill_author::CoachSkillAuthor;
 use super::status::{IdleReason, StatusCell, UnservedNote, UnservedReason, WorkState, WorkStatus};
@@ -60,7 +59,8 @@ use crate::config::models::{DreamerSettings, ModelsConfig, role_key};
 use crate::decision_host::DecisionHost;
 use crate::models::{ModelRuntime, OfferLadder, RoleRefusal, RoleRoute, Seat};
 use crate::runtime::wall_clock_ms as now_ms;
-use request_sources::{ServedRealization, SourcedRunBackend};
+use request_sources::SourcedRunBackend;
+use task_lend::TaskLend;
 
 /// Stamped on every admission and park this server makes.
 pub(super) const LEASE_OWNER: &str = "oneiron-server-dreamer";
@@ -331,7 +331,9 @@ async fn supervise(
         admission.clone(),
     ));
     // The deadline read's writes take the passes' gate (FIX 7441).
-    let deadline_gate = admission.as_ref().map(|control| Arc::clone(&control.admission));
+    let deadline_gate = admission
+        .as_ref()
+        .map(|control| Arc::clone(&control.admission));
     let built = (|| -> anyhow::Result<_> {
         let node_id = claim_home_node(&vault, device)?;
         // The nightly harness audit reads this; a failed record never stops
@@ -364,6 +366,7 @@ async fn supervise(
                 oneiron::llm::decision::catalogue::TASK_REALIZE_INSTRUCTION.to_owned()
             }),
             confession_instruction: settings.wording.confession().to_owned(),
+            compaction_check_rubric: settings.compaction_check_rubric.clone(),
             windows,
             pass_deadline: None,
             device_cancel: None,
@@ -503,6 +506,8 @@ struct ObservedFactory {
     device_cancel: Option<WorkCancel>,
     /// A TASK's realization is asked for its confession in this (FIX 8696).
     confession_instruction: String,
+    /// A self-written compaction is checked against this rubric (FIX 4814).
+    compaction_check_rubric: String,
     windows: BTreeMap<ModelId, u64>,
     /// The weaver's narrative route: the model and window a resident that
     /// inherits dreams on, never its diary.
@@ -804,6 +809,7 @@ impl PassExecutorFactory for ObservedFactory {
                 weaver,
                 guard,
                 egress: self.egress,
+                rubric: &self.compaction_check_rubric,
             });
         Ok(ObservedExecutor {
             inner: self
@@ -882,6 +888,7 @@ impl PassExecutorFactory for ObservedFactory {
                 weaver,
                 guard,
                 egress: self.egress,
+                rubric: &self.compaction_check_rubric,
             });
         self.inner
             .as_mut()
@@ -1128,115 +1135,6 @@ struct ObservedExecutor<'p, E> {
     decisions: &'p Arc<std::sync::OnceLock<DecisionHost>>,
     coach_heal: Option<super::coach_heal::WakeExecutor>,
     coach_host: Option<super::coach_host::WakeExecutor>,
-}
-
-/// The host's loan to a Dreamer-lane TASK's realization: the pass's route
-/// and line, the Dreamer's stamp and the wording.
-#[derive(Clone, Copy)]
-struct TaskLend<'p> {
-    role: ModelRole,
-    route: &'p RoleBackend,
-    /// The ladder and run `route` sends on, which a realization sends on
-    /// itself to learn which rung answered.
-    sends: &'p RoleSends,
-    guard: &'p oneiron::BudgetGuard,
-    egress: bool,
-    actor: WriteActor,
-    instruction: &'p str,
-    confession: &'p str,
-}
-
-impl TaskLend<'_> {
-    async fn realize(
-        self,
-        attempt: &DreamerAdmittedAttempt,
-        ctx: &WakeAttemptContext<'_>,
-    ) -> oneiron::Result<DreamerAttemptExecution> {
-        let egress = self
-            .egress
-            .then(|| extraction_egress(BTreeSet::from([self.route.model.clone()])));
-        let (ladder, run) = self.sends;
-        let backend = ServedRealization::new(Arc::clone(ladder), run.clone());
-        let realized = run_task_realize(
-            attempt,
-            ctx,
-            TaskRealizeModel {
-                backend: &backend,
-                guard: self.guard,
-                model: self.route.model.clone(),
-                inference: HostInferenceContext {
-                    binding: self.route.binding.clone(),
-                    extraction_egress: egress.as_deref(),
-                },
-                role: self.role,
-                actor: self.actor,
-                instruction: self.instruction,
-                confession: self.confession,
-                sourced: Some(&backend),
-            },
-        )
-        .await?;
-        // The rung that answered, fallback included, is the try's executor
-        // (OF-540), stamped while its lease holds: its confession seals
-        // against it (OF-544). A refused stamp leaves the try unattributed,
-        // not failed.
-        let record = &attempt.status.attempt;
-        if matches!(realized, DreamerAttemptExecution::Completed { .. })
-            && let Some(served) = backend.served()
-            && let Some(owner) = record.lease_owner.as_deref()
-            && let Err(error) = AttemptQueue::new(ctx.vault).set_executor_model(
-                record.id,
-                owner,
-                record.attempt_count,
-                served.as_str(),
-            )
-        {
-            tracing::warn!(kind = ?error.kind(), "a TASK realization's executor was not stamped");
-        }
-        Ok(realized)
-    }
-
-    /// The weave lens's generate step on the same route; the shipped
-    /// weave-report skill is its instruction.
-    async fn render_lens(
-        self,
-        attempt: &DreamerAdmittedAttempt,
-        ctx: &WakeAttemptContext<'_>,
-    ) -> oneiron::Result<DreamerAttemptExecution> {
-        let egress = self
-            .egress
-            .then(|| extraction_egress(BTreeSet::from([self.route.model.clone()])));
-        let rendered = run_weave_lens(
-            attempt,
-            ctx,
-            WeaveLensModel {
-                backend: self.route.backend.as_ref(),
-                guard: self.guard,
-                model: self.route.model.clone(),
-                inference: HostInferenceContext {
-                    binding: self.route.binding.clone(),
-                    extraction_egress: egress.as_deref(),
-                },
-                role: self.role,
-                actor: self.actor,
-                sourced: self.route.sourced.as_deref(),
-            },
-        )
-        .await?;
-        // The weave-report pack it loaded closes attributed (FIX 1875), bound
-        // while its lease holds. A bind that fails leaves the receipt
-        // unattributed; the render stands.
-        let record = &attempt.status.attempt;
-        if matches!(rendered, DreamerAttemptExecution::Completed { .. })
-            && let Some(owner) = record.lease_owner.as_deref()
-            && let Err(error) = oneiron::skill_attribution::bind_dreamer_weave_attribution(
-                ctx.vault, record.id, owner, None,
-            )
-        {
-            tracing::warn!(kind = ?error.kind(), "a weave lens render's pack attribution did not bind");
-        }
-        Ok(rendered)
-    }
 }
 
 /// The ladder a role's backend sends on, and the run it sends under.
