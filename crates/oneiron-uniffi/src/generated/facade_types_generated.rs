@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1291 facade rows, 4674 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1243.
+// UniFFI census: 1292 facade rows, 4676 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1244.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -71915,6 +71915,12 @@ pub struct MailSourceConnectRequest {
     #[serde(rename = "members", default, skip_serializing_if = "Option::is_none")]
     pub members: Option<Vec<String>>,
     #[serde(
+        rename = "for_person",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub for_person: Option<String>,
+    #[serde(
         rename = "channel_identity_ref",
         default,
         skip_serializing_if = "Option::is_none"
@@ -72189,6 +72195,44 @@ pub struct MailSyncStatusView {
         skip_serializing_if = "Option::is_none"
     )]
     pub last_error: Option<String>,
+}
+
+/// `oneiron::mail_pack::mbox_import::MailMboxImportRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MailMboxImportRequest {
+    #[serde(rename = "source_ref")]
+    pub source_ref: String,
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "messages", default, skip_serializing_if = "Option::is_none")]
+    pub messages: Option<u32>,
+}
+
+/// `oneiron::mail_pack::mbox_import::MailMboxImportReport`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MailMboxImportReport {
+    #[serde(rename = "source_ref")]
+    pub source_ref: String,
+    #[serde(rename = "landed")]
+    pub landed: u64,
+    #[serde(rename = "same")]
+    pub same: u64,
+    #[serde(rename = "refused")]
+    pub refused: u64,
+    #[serde(
+        rename = "refusal_reasons",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub refusal_reasons: Option<Vec<String>>,
+    #[serde(rename = "skipped")]
+    pub skipped: u64,
+    #[serde(rename = "read_total")]
+    pub read_total: u64,
+    #[serde(rename = "done")]
+    pub done: bool,
 }
 
 /// `oneiron::mail_pack::local_sync::MailSourceSyncRequest`.

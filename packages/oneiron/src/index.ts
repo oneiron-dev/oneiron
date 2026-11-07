@@ -3323,7 +3323,7 @@ export class Oneiron {
         install: (input: Facade.EmptyRequest = {}): Facade.PackPutReceipt => this.#call(() => this.#client.vaultMailPackInstall(input) as Facade.PackPutReceipt),
       },
       sources: {
-        /** Connects a mailbox, group address or calendar: a personal mailbox or calendar is the caller's own and reads to them alone; an Owner or Admin connects a group address for the members it names. */
+        /** Connects a mailbox, group address or calendar: a personal mailbox or calendar reads to its person alone, connected by them or by an Owner or Admin for them; an Owner or Admin connects a group address for its members. */
         connect: (input: Facade.MailSourceConnectRequest): Facade.MailSourceConnectReceipt => this.#call(() => this.#client.vaultMailSourcesConnect(input) as Facade.MailSourceConnectReceipt),
         /** The mail and calendar sources the caller sees: its own, the group addresses it reads or manages, and every calendar as busy/free. Another person's mailbox is neither listed nor counted. */
         list: (input: Facade.EmptyRequest = {}): Facade.MailSourceView[] => this.#call(() => this.#client.vaultMailSourcesList(input) as Facade.MailSourceView[]),
@@ -3339,6 +3339,8 @@ export class Oneiron {
         audience_events: (input: Facade.MailSourceRef): Facade.SourceAudienceEventView[] => this.#call(() => this.#client.vaultMailSourcesAudienceEvents(input) as Facade.SourceAudienceEventView[]),
         /** Where a mail source's import stands: live or not, how far the newest-first copy has come, bodies waiting and the last failure, to its readers. */
         sync_status: (input: Facade.MailSourceRef): Facade.MailSyncStatusView => this.#call(() => this.#client.vaultMailSourcesSyncStatus(input) as Facade.MailSyncStatusView),
+        /** The vault's owner imports the next messages of an mbox file or a Google Takeout .zip on this device into a Google or IMAP mailbox, each bound to its thread's audience; a call keeps its place. */
+        import_mbox: (input: Facade.MailMboxImportRequest): Facade.MailMboxImportReport => this.#call(() => this.#client.vaultMailSourcesImportMbox(input) as Facade.MailMboxImportReport),
         /** The vault's owner runs one bounded import step of a mail or calendar source, on this device or a served vault: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner. */
         sync: (input: Facade.MailSourceSyncRequest): Facade.MailSyncReport => this.#call(() => this.#client.vaultMailSourcesSync(input) as Facade.MailSyncReport),
       },

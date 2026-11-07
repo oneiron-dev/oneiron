@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1291 facade rows, 4678 declarations.
-Inputs: 1220 of 1291 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1120 of 1291 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1292 facade rows, 4680 declarations.
+Inputs: 1221 of 1292 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1121 of 1292 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -23200,6 +23200,7 @@ class MailSourceConnectRequest(TypedDict):
     provider_account: str
     custody_ref: str
     members: NotRequired[list[str]]
+    for_person: NotRequired[str | None]
     channel_identity_ref: NotRequired[str | None]
     copy: NotRequired[MailCopySetting | None]
     on_provider_delete: NotRequired[MailProviderDeleteSetting | None]
@@ -23275,6 +23276,19 @@ class MailSyncStatusView(TypedDict):
     deleted_at_provider: int
     last_step_at: NotRequired[int | None]
     last_error: NotRequired[str | None]
+class MailMboxImportRequest(TypedDict):
+    source_ref: str
+    path: str
+    messages: NotRequired[int | None]
+class MailMboxImportReport(TypedDict):
+    source_ref: str
+    landed: int
+    same: int
+    refused: int
+    refusal_reasons: NotRequired[list[str]]
+    skipped: int
+    read_total: int
+    done: bool
 class MailSourceSyncRequest(TypedDict):
     source_ref: str
     bodies: NotRequired[int | None]

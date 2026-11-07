@@ -333,12 +333,6 @@ fn collect_owed_erases(vault: &Vault) -> Result<()> {
 /// Fetches up to `limit` of `source`'s waiting attachments through `wire`,
 /// each into its artifact bound to its thread's audience at birth, written
 /// as `actor`. Answers how many were stored.
-///
-/// A message erased while its attachment is fetched keeps nothing of it
-/// (REVIEW-5972): before any byte lands, one writer finds the queue row
-/// still waiting and links its artifact to it, so the erase that removes
-/// the row from then on owes that artifact's delete; and the outcome only
-/// completes a queue row that is still there, never one the erase removed.
 pub(super) fn fetch_waiting_attachments(
     vault: &Vault,
     source: EntityId,
@@ -362,42 +356,65 @@ pub(super) fn fetch_waiting_attachments(
         waiting
     };
     let mut stored = 0;
-    for (key, row) in waiting {
+    for (key, mut row) in waiting {
         let at = crate::unix_seconds_now();
-        let outcome = match wire.attachment(wire_source, &row.provider_id, &row.attachment) {
+        match wire.attachment(wire_source, &row.provider_id, &row.attachment) {
             Ok(Some(bytes)) if bytes.len() <= MAX_ATTACHMENT_BYTES => {
-                let Some(artifact) = link_attachment_artifact(vault, source, &key, &row, at)?
-                else {
+                let Some(artifact) = claim_artifact(vault, source, &key, &row, at)? else {
+                    // Its message was erased while it was fetched.
                     continue;
                 };
-                let version = append_attachment_version(vault, &artifact, &bytes, actor, at)?;
-                AttachmentOutcome::Stored { artifact, version }
+                row.artifact = Some(artifact);
+                match append_attachment_version(vault, artifact, &bytes, actor, at) {
+                    Ok(version) => {
+                        row.state = MailAttachmentState::Stored;
+                        row.version = Some(version);
+                        row.reason = None;
+                    }
+                    Err(error) => {
+                        row.state = MailAttachmentState::Failed;
+                        row.reason = Some(error.to_string());
+                    }
+                }
             }
-            Ok(Some(_)) => AttachmentOutcome::Failed(
-                "the attachment is larger than this host fetches".to_owned(),
-            ),
-            Ok(None) => AttachmentOutcome::Failed("the provider no longer has it".to_owned()),
-            Err(error) => AttachmentOutcome::Failed(error.to_string()),
-        };
-        let landed = matches!(outcome, AttachmentOutcome::Stored { .. });
-        if settle_attachment_row(vault, &key, outcome, at)? && landed {
+            Ok(Some(_)) => {
+                row.state = MailAttachmentState::Failed;
+                row.reason = Some("the attachment is larger than this host fetches".to_owned());
+            }
+            Ok(None) => {
+                row.state = MailAttachmentState::Failed;
+                row.reason = Some("the provider no longer has it".to_owned());
+            }
+            Err(error) => {
+                row.state = MailAttachmentState::Failed;
+                row.reason = Some(error.to_string());
+            }
+        }
+        row.updated_at = at;
+        let kept = vault.with_write_txn_grouped(|txn| {
+            if ATTACHMENTS.get(&vault.store, txn, &key)?.is_none() {
+                // Its message was erased while it was fetched: no row comes
+                // back, and the artifact it made is owed its delete.
+                if let Some(artifact) = row.artifact {
+                    ERASE_OWED.put(&vault.store, txn, &artifact, &at)?;
+                }
+                return Ok(false);
+            }
+            ATTACHMENTS.put(&vault.store, txn, &key, &row)?;
+            Ok(true)
+        })?;
+        if kept && row.state == MailAttachmentState::Stored {
             stored += 1;
         }
     }
     Ok(stored)
 }
 
-/// How one fetch ended.
-enum AttachmentOutcome {
-    Stored { artifact: EntityId, version: u64 },
-    Failed(String),
-}
-
-/// Links `row`'s artifact (born bound to the thread's audience when it is
-/// not here yet) to its queue row at `key`, in one writer that finds the
-/// row still there and waiting for the same attachment. `None` when the
-/// row is gone or changed: the fetched bytes are dropped.
-fn link_attachment_artifact(
+/// Claims `row`'s artifact in the writer that finds its attachment still
+/// held: the artifact born bound to the thread's audience, and named on the
+/// row, so an erase of its message from this commit on owes its delete.
+/// `None` when the message was erased meanwhile.
+fn claim_artifact(
     vault: &Vault,
     source: EntityId,
     key: &(EntityId, [u8; 32]),
@@ -412,96 +429,63 @@ fn link_attachment_artifact(
             row.attachment.part_id.as_bytes(),
         ],
     )?;
+    let body = if vault.get_blob_artifact(&artifact)?.is_none() {
+        let name = row
+            .attachment
+            .filename
+            .clone()
+            .unwrap_or_else(|| "attachment".to_owned());
+        Some(crate::blob_artifact::encode_blob_artifact_body(
+            &crate::blob_artifact::BlobArtifactBody::new(name, row.attachment.media_type.as_str()),
+        )?)
+    } else {
+        None
+    };
     let occurred = crate::TimeRange { start: at, end: at };
-    let name = row
-        .attachment
-        .filename
-        .clone()
-        .unwrap_or_else(|| "attachment".to_owned());
-    let data = crate::blob_artifact::encode_blob_artifact_body(
-        &crate::blob_artifact::BlobArtifactBody::new(name, row.attachment.media_type.as_str()),
-    )?;
     vault.with_write_txn_grouped(|txn| {
-        let Some(mut live) = ATTACHMENTS.get(&vault.store, txn, key)? else {
+        let Some(mut held) = ATTACHMENTS.get(&vault.store, txn, key)? else {
             return Ok(None);
         };
-        if live.state != MailAttachmentState::Waiting
-            || live.provider_id != row.provider_id
-            || live.attachment.part_id != row.attachment.part_id
-            || !attachment_described_in(
-                &vault.store,
-                txn,
-                source,
-                &row.provider_id,
-                &row.attachment.part_id,
-            )?
-        {
+        if !attachment_described_in(
+            &vault.store,
+            txn,
+            source,
+            &row.provider_id,
+            &row.attachment.part_id,
+        )? {
             return Ok(None);
         }
-        if crate::vault::live_entity_row_in_txn(&vault.store, txn, &artifact)?
-            == crate::vault::LiveEntityRow::Absent
-        {
+        if let Some(data) = &body {
             vault
                 .batch_in()
-                .put(&artifact, ENTITY_TYPE_BLOB_ARTIFACT, occurred, at, &data)
+                .put(&artifact, ENTITY_TYPE_BLOB_ARTIFACT, occurred, at, data)
                 .apply(txn)?;
-            source_audience::bind_record_in_txn(vault, txn, &artifact, &live.thread)?;
+            source_audience::bind_record_in_txn(vault, txn, &artifact, &row.thread)?;
         }
-        live.artifact = Some(artifact);
-        live.updated_at = at;
-        ATTACHMENTS.put(&vault.store, txn, key, &live)?;
+        held.artifact = Some(artifact);
+        ATTACHMENTS.put(&vault.store, txn, key, &held)?;
         Ok(Some(artifact))
     })
 }
 
-/// One attachment's bytes as a new version of its linked `artifact`.
+/// One version of `artifact` holding the attachment's bytes.
 fn append_attachment_version(
     vault: &Vault,
-    artifact: &EntityId,
+    artifact: EntityId,
     bytes: &[u8],
     actor: EntityId,
     at: u64,
 ) -> Result<u64> {
+    let occurred = crate::TimeRange { start: at, end: at };
     let version = vault.append_blob_artifact_version(
-        artifact,
+        &artifact,
         bytes,
         &crate::blob_artifact::BlobVersionProvenance::AgentRun {
             run_ref: format!("mail-attachment:{}", artifact.to_hex()),
         },
         crate::WriteActor::new(actor, crate::edge::EdgeActorClass::Human),
-        crate::TimeRange { start: at, end: at },
+        occurred,
         at,
     )?;
     Ok(version.version)
-}
-
-/// Records `outcome` on the queue row at `key` when it is still there.
-/// Whether it was: a row an erase removed is never written again, and the
-/// erase already owes the delete of the artifact linked to it.
-fn settle_attachment_row(
-    vault: &Vault,
-    key: &(EntityId, [u8; 32]),
-    outcome: AttachmentOutcome,
-    at: u64,
-) -> Result<bool> {
-    vault.with_write_txn_grouped(|txn| {
-        let Some(mut live) = ATTACHMENTS.get(&vault.store, txn, key)? else {
-            return Ok(false);
-        };
-        match outcome {
-            AttachmentOutcome::Stored { artifact, version } => {
-                live.state = MailAttachmentState::Stored;
-                live.artifact = Some(artifact);
-                live.version = Some(version);
-                live.reason = None;
-            }
-            AttachmentOutcome::Failed(reason) => {
-                live.state = MailAttachmentState::Failed;
-                live.reason = Some(reason);
-            }
-        }
-        live.updated_at = at;
-        ATTACHMENTS.put(&vault.store, txn, key, &live)?;
-        Ok(true)
-    })
 }

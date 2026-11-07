@@ -23,6 +23,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // An owed header retirement stands with the revision it names, as the
     // image holds it (FIX 15413).
     (&t::MAIL_PACK_HEADER_RETIREMENT, CONTENT),
+    (&t::MAIL_PACK_MBOX_IMPORT, CONTENT),
     (&t::MAIL_PACK_OCCURRENCE, CONTENT),
     (&t::MAIL_PACK_OCCURRENCE_ROW, CONTENT),
     // A source's owner, custody name and settings are live configuration.
