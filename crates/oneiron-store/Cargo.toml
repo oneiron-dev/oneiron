@@ -34,6 +34,11 @@ rmpv = { workspace = true, features = ["with-serde"] }
 schemars = "=0.8.22"
 serde = { workspace = true }
 serde_json = { workspace = true }
+# FIX 11575: the secret scan opens 7z containers and rebuilds their masked
+# copies. Pure Rust (sevenz-rust2 and lzma-rust2 Apache-2.0, ppmd-rust CC0-1.0
+# OR MIT-0); copy, LZMA, LZMA2, PPMd and the BCJ and delta filters decode, and
+# no password is taken, so an encrypted 7z stays sealed like an encrypted ZIP.
+sevenz-rust2 = { version = "=0.24.2", default-features = false, features = ["compress", "ppmd"] }
 sha2 = "0.10"
 tar = { version = "=0.4.46", default-features = false }
 tempfile = "3"

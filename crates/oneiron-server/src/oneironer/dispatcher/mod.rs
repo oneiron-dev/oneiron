@@ -509,8 +509,7 @@ fn add(shared: &Arc<Shared>, spec: WorkerSpec) -> anyhow::Result<WorkerId> {
     });
     let index = scheduler.workers.len() - 1;
     let thread_shared = Arc::clone(shared);
-    let spawned = std::thread::Builder::new()
-        .name(format!("oneironer {engine}"))
+    let spawned = crate::engine_thread(format!("oneironer {engine}"))
         .spawn(move || worker::start(&thread_shared, index, spec));
     match spawned {
         Ok(thread) => {

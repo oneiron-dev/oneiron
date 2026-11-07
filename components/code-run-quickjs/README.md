@@ -34,7 +34,9 @@ other than `$root`; it does not add a WASI adapter to make such an import work.
 
 The build emits:
 
-- `quickjs-first-party.wasm`: all 16 typed imports;
+- `quickjs-first-party.wasm`: the 15 typed first-party imports (every one
+  but the typed `ask`, which no tier links: the catalog's `ask` row owns the
+  `ask` global);
 
 - `quickjs-foreign.wasm`: only the seven non-write imports and the three
   proposal imports;

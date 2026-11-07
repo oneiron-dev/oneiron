@@ -11,12 +11,16 @@ use super::codec::{
 };
 use super::decision_receipts::keep_decision_receipts_in_txn;
 use super::judge::{AttributionDecisions, verdict_subject};
-use super::split::{classify_split_traced, measure_split_notes, unclear_floor_sourced};
+use super::split::{
+    classify_split_traced, measure_split_notes, outcome_scope_in_txn, unclear_floor_sourced,
+};
 use super::types::{
     AttributionJudgment, AttributionLane, AttributionVerdict, JudgeRequest, OutcomeEvidence,
     SkillEditProposal,
 };
-use super::unclear::{UnclearAttribution, delete_unclear_in_txn, put_unclear_in_txn};
+use super::unclear::{
+    UnclearAttribution, UnclearContext, delete_unclear_in_txn, put_unclear_in_txn,
+};
 
 // ---------------------------------------------------------------------------
 // Evidence door + projector
@@ -110,10 +114,19 @@ pub fn run_attribution_projector_with_decisions(
         // The rows a model-tier note reads (FIX 7101); the rule tier writes
         // no note, so it reads none.
         let sources = if decisions.is_some() {
-            union_source_rows([evidence_rows(vault, &evidence), floor_rows])
+            union_source_rows([evidence_rows(vault, &evidence), floor_rows.clone()])
         } else {
             None
         };
+        // Every row a note about this outcome is known to stand on, read
+        // before the judge reads them (FIX 7824): an erase landing while it
+        // judges is found on one of them in the writer, even where the
+        // request's read set is unknown.
+        let mut known = known_note_rows(vault, &evidence)?;
+        known.extend(floor_rows.iter().flatten().copied());
+        known.extend(sources.iter().flatten().copied());
+        known.sort_unstable();
+        known.dedup();
         let request = JudgeRequest {
             lane: AttributionLane::Attempt,
             evidence: &evidence,
@@ -147,13 +160,28 @@ pub fn run_attribution_projector_with_decisions(
             held.then(|| trace.receipts.clone()),
         ));
         if verdict == AttributionVerdict::Unclear {
+            // The context the notes were written in, frozen with them (FIX
+            // 7824); the project and task type are read in the writer.
+            let context = UnclearContext {
+                actor: evidence.actor,
+                skill: evidence.skill,
+                scope: None,
+                project: None,
+                type_ref: None,
+                attempt_receipt: Some(evidence.receipt_ref.clone()),
+                judge_revision: revision.clone(),
+                judge_model: trace.model.clone(),
+                sources: known,
+            };
             unclear.push((
                 sequence,
+                evidence.clone(),
                 UnclearAttribution {
                     lane: AttributionLane::Attempt,
                     reference: sequence.to_string(),
                     evidence_receipts: vec![evidence.receipt_ref.clone()],
                     notes: split.unclear,
+                    context,
                     at: evidence.at,
                 },
             ));
@@ -181,12 +209,23 @@ pub fn run_attribution_projector_with_decisions(
     }
 
     vault.with_write_txn(|wtxn| {
-        for (sequence, row) in &unclear {
+        for (sequence, evidence, row) in &mut unclear {
             // A sequence some earlier judge already routed keeps that verdict:
             // judgments are never rescored, so a note must not contradict one.
-            if !JUDGMENT.contains(&vault.store, wtxn, sequence)? {
-                put_unclear_in_txn(vault, wtxn, row)?;
+            if JUDGMENT.contains(&vault.store, wtxn, sequence)? {
+                continue;
             }
+            // An erase since this pass read the evidence changed it: the notes
+            // were written about what it no longer says (FIX 7824).
+            if !EVIDENCE
+                .get(&vault.store, wtxn, sequence)?
+                .is_some_and(|current| current.evidence == *evidence)
+            {
+                continue;
+            }
+            (row.context.project, row.context.type_ref) =
+                outcome_scope_in_txn(vault, wtxn, &evidence.receipt_ref)?;
+            put_unclear_in_txn(vault, wtxn, row)?;
         }
         for (judgment, (revision, receipts)) in judgments.iter_mut().zip(&stamps) {
             // An erase since this pass read the evidence left it naming no
@@ -387,6 +426,19 @@ fn still_names_in_txn(
         .is_some_and(|row| {
             row.evidence.skill == Some(subject) || row.evidence.actor == Some(subject)
         }))
+}
+
+/// Every row `evidence`'s terminal pack receipt is known to stand on, for the
+/// unclear notes written about it (FIX 7824); empty with no receipt.
+fn known_note_rows(vault: &Vault, evidence: &OutcomeEvidence) -> Result<Vec<EntityId>> {
+    let receipt = {
+        let rtxn = vault.store.env.read_txn()?;
+        crate::receipt::attempt_pack_receipt_in_txn(&vault.store, &rtxn, &evidence.receipt_ref)?
+    };
+    match receipt {
+        Some(receipt) => super::trace::receipt_attribution_known_rows(vault, &receipt),
+        None => Ok(Vec::new()),
+    }
 }
 
 /// The rows `evidence`'s terminal pack receipt stands on, as the receipt
