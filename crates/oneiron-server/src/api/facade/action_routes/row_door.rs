@@ -437,13 +437,19 @@ impl AgentVerbDoor for FacadeRowDoor {
             .chain(answer.observations.iter().flat_map(|seen| &seen.rows))
             .copied()
             .collect();
-        if !super::super::release::rows_still_admitted(vault, auth, &sources) {
+        if !super::super::release::rows_still_admitted(vault, auth, &sources, false) {
             return Err(oneiron::Error::EntityNotFound);
         }
         let destination = auth.destination();
         for seen in &answer.observations {
             let frame = serde_json::to_value(&seen.frame).unwrap_or(serde_json::Value::Null);
-            if super::super::release::known_denied_rows(vault, &destination, &seen.rows, &frame) {
+            if super::super::release::known_denied_rows(
+                vault,
+                &destination,
+                &seen.rows,
+                &frame,
+                false,
+            ) {
                 return Err(oneiron::Error::EntityNotFound);
             }
         }
@@ -456,6 +462,7 @@ impl AgentVerbDoor for FacadeRowDoor {
                 value: answer.output,
                 rows: answer.rows.clone(),
             },
+            false,
         );
         Ok(answer)
     }
