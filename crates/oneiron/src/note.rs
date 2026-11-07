@@ -18,6 +18,9 @@ pub use reads::{
 };
 #[cfg(feature = "sync")]
 mod residence_read;
+mod archive_import;
+pub use archive_import::ImportedNoteRead;
+pub(crate) use archive_import::{ArchivedNoteAdmission, archived_note_body};
 #[cfg(feature = "sync")]
 pub(crate) use residence_read::opened_note_view;
 mod archive_read;

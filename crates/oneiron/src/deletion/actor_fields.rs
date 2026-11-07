@@ -184,7 +184,7 @@ fn scrub_actor_fields_in_txn(
     // Marker-only replay and checkpoint restore reach this sweep, so a
     // restored receipt never brings back a hard-erased actor.
     crate::context_board::scrub_section_fit_receipt_actors_in_txn(erase)?;
-    crate::inbox::scrub_finding_notification_subjects_in_txn(erase)?;
+    crate::inbox::scrub_finding_notification_actor_in_txn(erase)?;
     // A person's relayed ask intents and their results are task authority
     // facts no ordinary delete removes: their holder's erase retires them
     // here, and a restore's sweep retires a restored copy again (FIX 7494).
