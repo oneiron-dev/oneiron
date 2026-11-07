@@ -13,7 +13,7 @@ Documents edit in-engine through docedit and the formula engine. They need no or
 
 | The crate (`oneiron_docedit::contract`) | The cloud service (oneiron-cloud) |
 |---|---|
-| The op table, its version (`CONTRACT_SCHEMA = 2`), and the call, reply and error JSON schemas | Authentication, accounts and API keys |
+| The op table, its version (`CONTRACT_SCHEMA = 3`), and the call, reply and error JSON schemas | Authentication, accounts and API keys |
 | Every native read, edit, check and projection | Metering and billing units |
 | Refusals with a closed code and bounded detail | Hosting, scaling, timeouts, queues and async jobs |
 | The checks that every op runs against the caller's limits | Per-plan limits: the values it passes in each call |
@@ -36,7 +36,7 @@ let done = execute_json(call_json, &[&docx_bytes], Ports { recalc: Some(&engine)
 let manifest = done.manifest(); // name, media type, size and BLAKE3 of each output
 ```
 
-- **A call** is `{"schema": 2, "op": "<name>", "args": {...}}`, plus a list of byte inputs. The
+- **A call** is `{"schema": 3, "op": "<name>", "args": {...}}`, plus a list of byte inputs. The
   args name each input by its index in that list. The hosted API maps its multipart parts or
   upload handles to that list, in order.
 - **A reply** is `Done { reply, outputs }`. `reply` is a typed `Reply`, tagged by `"reply"`.
@@ -48,7 +48,7 @@ let manifest = done.manifest(); // name, media type, size and BLAKE3 of each out
   and port. It also returns `call_schema`, `reply_schema` and `error_schema`, generated with
   schemars 0.8. The hosted API serves this reply as its discovery document.
 
-## Ops, schema 2
+## Ops, schema 3
 
 | Op | Inputs | Args besides inputs | Reply | Output | Native door |
 |---|---|---|---|---|---|
@@ -62,7 +62,7 @@ let manifest = done.manifest(); // name, media type, size and BLAKE3 of each out
 | `xlsx.mark_full_calc` | `workbook` | `limits` | `written` | `workbook` | `mark_full_calc` |
 | `xlsx.recalc` | `workbook` | `clock` (now_ms, utc_offset_minutes, seed), optional `location` (directory, file_name), `limits` | `recalculated`: engine, version, formula count | `workbook` | the host's `RecalcPort`; `FormualizerEngine::recalculate_xlsx` |
 | `deck.read` | `deck` | `limits` | `deck`: editability, id marks, slides, shapes (id, kind, slide-space position, extent, text, fingerprint), ambiguities | none | `Package::open`, `DeckView::read` |
-| `deck.transaction` | `deck`, `assets[].input` | `transaction` (deck transaction schema 1), `assets` (artifact, version, media, origin, provenance, rights), `limits` | `deck_transaction`: the report (candidate hash, part diff, step effects, marks, handoff hash) | `deck` | `run_transaction` |
+| `deck.transaction` | `deck`, `assets[].input` | `transaction` (deck transaction schema 2), `assets` (artifact, version, media, origin, provenance, rights), `limits` | `deck_transaction`: the report (candidate hash, part diff, step effects, marks, handoff hash) | `deck` | `run_transaction` |
 | `deck.create` | `brief.input`, `template`, `fonts`, `assets.*.input` | `brief` (version, optional kept hash), `assets` keyed by brief asset id, `names`, `limits` | `deck_ask` (pages no layout could hold) or `deck_created` (hash, slides, write set, omitted, fit-unverified units) | `deck` | `compile_with_fonts`, `emit` |
 | `pptx.comments` | `deck` | `edits` (author, thread and comment GUIDs, time, and an add with its slide or shape target, a reply, or a resolve), optional `slide_creation_ids`, `seed`, `limits` (comments) | `pptx_comments`: touched parts, the slide creation IDs minted, each new thread's anchor | `deck` | `pptx_comments::comment_patch` |
 | `pptx.comments.inspect` | `deck` | `limits` (comments) | `pptx_comments_inspected`: slides (number, part, id, creation ID, fingerprint, shapes with creation GUID, fingerprint and slide-space position), signature parts, threads with an unknown anchor | none | `pptx_comments::inspect_pptx`, `unknown_anchor_threads` |
@@ -177,7 +177,7 @@ This includes nonterminal or mixed-operation groups, moves, inserted blocks, non
 labels, and an empty live body. The stateless `docx.project` call and all contract schemas are
 unchanged.
 
-## Not on schema 2
+## Not on schema 3
 
 - **Live office bodies:** the shared Loro bodies, forks, landing and export projection (OF-505,
   OF-510). They are vault state, not a stateless file op.
@@ -188,11 +188,23 @@ unchanged.
 - **Generated-image deck assets:** their adapter receipts stay engine-side.
 - **The Office oracle:** live Word, Excel and PowerPoint runs are Phase 2.
 
+## Bubble-size sequence writes
+
+`deck.transaction` schema 2 accepts `set_series_values` with `sequence: "size"`
+for a bubble series' existing workbook-backed `c:bubbleSize` range. The write uses
+that range's existing length, updates its workbook cells and every overlapping
+cache together, and re-imports before landing. The other sequence names remain
+`name`, `categories` and `values`. Literal, external, formula-backed, shared or
+length-changing ranges keep the native writer's existing refusals. Live exports
+still use the full rewrite when a size sequence is added or removed, is literal,
+grows beyond its existing range, or the checked native write refuses. This does
+not add a stock-chart seeder or change stock-placeholder read/skip behavior.
+
 ## Versioning
 
 The crate serves exactly one contract schema. Changing an op's args or reply means a new schema
 number, and there is no compatibility path. Two nested grammars carry their own versions: the
-deck transaction (`schema: 1`, `crates/oneiron-docedit/src/edit/transaction.rs`) and the stemma
+deck transaction (`schema: 2`, `crates/oneiron-docedit/src/edit/transaction.rs`) and the stemma
 tracked-change transaction (`crates/oneiron-docedit/vendor/stemma-engine`).
 
 Source: `crates/oneiron-docedit/src/contract/mod.rs` (the types and the op table) and
