@@ -276,7 +276,7 @@ impl Child {
                 None => HostSelfDispatcher::new(vault, actor, job.run.to_hex()),
             })
             .and_then(|dispatcher| dispatcher.with_reader_child(job.task, job.generation))
-            .map(|dispatcher| match self.nested_spawn_seat() {
+            .map(|dispatcher| match self.nested_spawn_seat(vault, session) {
                 Some(seat) => dispatcher.with_reader_spawn(seat),
                 None => dispatcher,
             })

@@ -201,13 +201,25 @@ impl ReaderSeats {
     /// its parent's fold reserve; only its own fold is carved out here.
     fn nested_seat(
         &self,
+        jobs: &ReaderJobs<'_>,
         job: &ReaderJob,
         clock: ReaderParentClock,
         now_ms: u64,
         window_tokens: Option<u64>,
     ) -> SpawnHostSeat {
-        let caller = self.caller(job.binding.parent_run);
-        lock(&self.callers).insert(job.run, (caller, now_ms));
+        // A nested child stands as its children's parent on its own route and
+        // actor, live only: its destination is its parent's, derived at each
+        // bind, never a host's entry, so it writes no durable note.
+        let caller = self.caller(jobs, job.binding.parent_run, job.binding.actor);
+        lock(&self.callers).insert(
+            job.run,
+            ReaderCaller {
+                destination: caller,
+                noted_ms: now_ms,
+                route: jobs.route(),
+                actor: job.binding.actor,
+            },
+        );
         lock(&self.clocks).insert(job.run, clock);
         SpawnHostSeat {
             spend: ReaderSpend::for_run_scope(
