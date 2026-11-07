@@ -67,6 +67,15 @@ side_tables! {
     /// The SKILL the Coach's feedback triage runs, as the owner bound it, with the binding's
     /// revision (OF-420 T1); absent until the owner binds one. Key: ().
     FEEDBACK_TRIAGE_BINDING: VaultMeta b"feedback:triage-binding:v1:" Named;
+    /// Each acknowledged feedback triage handoff whose evidence is retained, under its evidence
+    /// ASSET (FIX 7550). Key: id16(evidence) + bytes32(handoff key). Value: empty.
+    FEEDBACK_TRIAGE_HANDOFF_BY_EVIDENCE: VaultMeta b"feedback:triage-handoff-by-evidence:v1:" Raw;
+    /// Each feedback triage handoff under the sweep that handed it off and the sweep that queued
+    /// its current job (FIX 7550). Key: id16(sweep attempt) + bytes32(handoff key). Value: empty.
+    FEEDBACK_TRIAGE_HANDOFF_BY_SWEEP: VaultMeta b"feedback:triage-handoff-by-sweep:v1:" Raw;
+    /// Each feedback triage handoff a requeue pass visits: unacknowledged, or settled erased
+    /// (FIX 7550). Key: bytes32(handoff key). Value: empty.
+    FEEDBACK_TRIAGE_HANDOFF_OPEN: VaultMeta b"feedback:triage-handoff-open:v1:" Raw;
     /// One feedback revision a triage sweep handed off: its source, id and revision, the ASSET
     /// holding the exact item the triage reads, the sweeps that handed it off and queued its
     /// current job, that job, and the committed result once acknowledged. Source and result
