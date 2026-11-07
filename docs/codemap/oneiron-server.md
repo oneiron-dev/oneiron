@@ -593,6 +593,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/tool_receipt.rs` | src | s | 1 crate-vis | — | A `tools/call`'s lasting receipt on MCP (OF-538), as the gateway's one door writes it |
 | `src/api/mcp_gateway/type_feedback_release.rs` | src | m | 14 crate-vis | — | Type feedback leaves an MCP answer on its own release (FIX 10390, CALLS "feedback released apart from its… |
 | `src/api/mcp_gateway/verb_hooks.rs` | src | m | 4 crate-vis | — | The verb-hook boundary of an MCP row (ARCH-0080 §3), as the generated dispatch crosses it: the row door's… |
+| `src/api/mcp_gateway/verb_hooks/ceiling.rs` | src | s | 1 crate-vis | — | A paused MCP call stays within both its original and live registration |
 | `src/api/mcp_gateway/wakes.rs` | src | s | 1 crate-vis | — | The authenticated host handoff |
 | `src/api/mcp_gateway/wire.rs` | src | s | 2 crate-vis | — | What an MCP request counts as on the wire (FIX 1085) |
 | `src/api/memory/mod.rs` | src | m | 19 crate-vis | — | The `/v1/core/memory` routes: a memory timeline, its watch and the memory verbs |
