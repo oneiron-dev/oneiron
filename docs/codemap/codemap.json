@@ -7004,7 +7004,7 @@
      "path": "src/batch/builder/puts.rs",
      "purpose": "Entity-put builder doors: the public put, the typed crate doors, and the sync/test replicated door",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 2
      }
     },
@@ -14625,7 +14625,7 @@
      "path": "src/claim/mod.rs",
      "purpose": "CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18)",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "mod": 13,
       "re-export": 14
      }
@@ -14823,7 +14823,7 @@
      "path": "src/claim/scoped_read/admission.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "fn": 8
      }
     },
@@ -15017,7 +15017,7 @@
      "path": "src/claim/scoped_read/mod.rs",
      "purpose": "The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 15,
       "struct": 1
      }
@@ -15111,13 +15111,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/claim/scoped_read/profile_sources.rs",
-     "purpose": "Whether a companion profile reader's own credential keeps out the world its read names or one of the…",
+     "purpose": "Whether a companion profile reader's own credential keeps out the world its read names or the exact words…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -15271,7 +15271,7 @@
      "path": "src/claim/scoped_read/versions.rs",
      "purpose": "Explicit read frontiers keep the scoped lane's current and historic gates",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -18350,6 +18350,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/code_run/storage/records/bodies/progress.rs",
+     "purpose": "Canonical runtime-file occurrences before their bodies finish",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_run/storage/records/bodies/reader.rs",
      "purpose": "A result body read as it streams (FIX 3677 step 7, FIX 5392): what the whole read checks, read a frame at a…",
      "surface": {
@@ -18535,6 +18545,16 @@
      "purpose": "A session-bound run's reply bodies, admitted as the vault's are (FIX 6647, FIX 5718 part 3)",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/routing/output_progress.rs",
+     "purpose": "Pre-publication descriptors for canonical runtime files",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -35730,7 +35750,7 @@
      "path": "src/engine_executor/host.rs",
      "purpose": "The recording JS host, its state and its runtime adapter",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -36361,7 +36381,7 @@
      "path": "src/entity_doc/mod.rs",
      "purpose": "Durable, bounded entity text documents, anchored edits, fork sets and owner purge",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "mod": 2,
       "re-export": 11
      }
@@ -36446,7 +36466,7 @@
      "path": "src/entity_doc/quote_citation.rs",
      "purpose": "Engine-issued span quotes as citation pins (FIX 9894, 9895)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -40998,7 +41018,7 @@
      "path": "src/gate/witness_message.rs",
      "purpose": "ONE-1686 (RT-04): the witness MESSAGE approval-ceiling door",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -45442,6 +45462,16 @@
       "crate-vis": 2,
       "mod": 2,
       "re-export": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/decision/pack_limits.rs",
+     "purpose": "Advisory observation of the policy's logical question-pack boundary",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -52141,7 +52171,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/witness/program/planning.rs",
@@ -52157,7 +52187,7 @@
      "path": "src/memory/witness/program/provenance.rs",
      "purpose": "Witness provenance checks and the overlay landing's receipt",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -61082,7 +61112,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/psych_profile/placement.rs",
-     "purpose": "Where a snapshot's sources live, stamped as it is written (FIX 11149, 8141)",
+     "purpose": "Where a snapshot's sources live, supplemented as it is written (FIX 11149, 8141, 11766)",
      "surface": {
       "crate-vis": 1
      }
@@ -61997,7 +62027,7 @@
      "surface": {
       "const": 2,
       "crate-vis": 18,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -62092,6 +62122,19 @@
      "purpose": "Public validation and codec entry points for canonical snapshots",
      "surface": {
       "fn": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CanonicalSourceAudience"
+     ],
+     "path": "src/recovery/canonical/source_audiences.rs",
+     "purpose": "The source audiences a window carries (Engine A, 6 Nov 03:46), through canonical capture and rebuild",
+     "surface": {
+      "crate-vis": 4,
+      "struct": 1
      }
     },
     {
@@ -72063,7 +72106,27 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/source_audience/carried.rs",
+     "purpose": "The carried form of a binding and a policy revision (Engine A, 6 Nov 03:46): the keys and the bytes a…",
+     "surface": {
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/source_audience/checkpoint.rs",
+     "purpose": "The checkpoint getter of source-audience bindings (fix list row 17455): each row's binding and its hold go…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "SourceAudienceEventView",
@@ -72072,9 +72135,39 @@
      "path": "src/source_audience/mod.rs",
      "purpose": "Source audience: the rows imported from a source read only to that source's people (owner MAIL-SHARE = A…",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 38,
       "enum": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/source_audience/obligation.rs",
+     "purpose": "The source-audience obligation's authority (fix list row 16256): the proof a source landing holds to stamp…",
+     "surface": {
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/source_audience/replica.rs",
+     "purpose": "Source audiences on a replica (Engine A, 6 Nov 03:46): a binding and its policy travel with their row on the…",
+     "surface": {
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/source_audience/wake.rs",
+     "purpose": "The wake of the windows a changed policy rides (fix list row 17203)",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -72084,7 +72177,7 @@
      "path": "src/source_audience/walk.rs",
      "purpose": "The source-audience conjunct every audience read meets: a row reads to its viewers only while each of them…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 6
      }
     },
     {
@@ -74899,7 +74992,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 162,
+      "crate-vis": 163,
       "mod": 68,
       "re-export": 87
      }
@@ -77150,7 +77243,7 @@
      "purpose": "Observer A/B registration and the shared Materializer/OutboundSink state",
      "surface": {
       "const": 1,
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 13,
       "re-export": 1,
       "struct": 4
@@ -78833,13 +78926,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/sync/ingest/entity.rs",
      "purpose": "The entity-ingest ladder: one admission for every replicated entities-map value",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -79159,7 +79252,7 @@
      "path": "src/sync/mod.rs",
      "purpose": "CRDT sync layer for Oneiron",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "mod": 24,
       "re-export": 20
      }
@@ -80285,7 +80378,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/selector/admission/blobs.rs",
@@ -80719,6 +80812,46 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/source_audiences/checkpoint.rs",
+     "purpose": "A source audience carrier in a checkpoint (SYNC-3 §5): a binding and a withholding marker ride with the row…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/source_audiences/erased.rs",
+     "purpose": "An erased actor's policy revisions and change receipts leave the window carriers (SYNC-3 §5)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/source_audiences/mod.rs",
+     "purpose": "Source audiences on the owner's full-window lane (Engine A, 6 Nov 03:46; SYNC-3)",
+     "surface": {
+      "crate-vis": 25
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/source_audiences/wake.rs",
+     "purpose": "The live mirror's drain of policy wakes (fix list row 17203; [`crate::source_audience`] keeps the wakes and…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/sweep_fence.rs",
      "purpose": "Windows a sweep holds closed while it rewrites their persisted state",
      "surface": {
@@ -80932,7 +81065,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/sync/window/admission.rs",
@@ -80984,7 +81117,7 @@
      "path": "src/sync/window/egress.rs",
      "purpose": "Window egress: packing policy, local-only scrub, exports, and mirror replay",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 3
      }
     },
@@ -81068,7 +81201,7 @@
      "path": "src/sync/window/history_free.rs",
      "purpose": "History-free window transport: what a window pinned history-free, or already shallow, ships to a peer that…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 9
      }
@@ -81090,7 +81223,7 @@
      "path": "src/sync/window/mod.rs",
      "purpose": "Window lifecycle management for the CRDT sync layer",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 33,
       "fn": 6,
       "mod": 1,
       "re-export": 10,
@@ -81158,7 +81291,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "PreparedReplacement",
@@ -81167,7 +81300,7 @@
      "path": "src/sync/window/replacement.rs",
      "purpose": "Installing a window replacement: a peer's history-free snapshot takes the place of this vault's window, and…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1,
       "struct": 2
      }
@@ -90783,7 +90916,7 @@
      "path": "src/world_keys/content.rs",
      "purpose": "The sealing mirrors of private worlds' windows (OF-570 (d), FIX 922): a reader's own Loro document per…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
      }
     },
     {
@@ -90797,13 +90930,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/world_keys/content_window.rs",
      "purpose": "The window side of the sealed cloud bundle's world sections (OF-570 (d), FIX 922): what a reader packs from…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -90924,7 +91057,7 @@
      "path": "src/world_keys/mod.rs",
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "fn": 3,
       "re-export": 22,
       "struct": 2
@@ -92563,7 +92696,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 211,
+     "files": 213,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93151,7 +93284,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 172,
+     "files": 173,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93403,7 +93536,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 130,
+     "files": 131,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -93648,9 +93781,9 @@
      "purpose": "SLIM residency (ONE-1933 / OF-447): the engine half of the FULL → SLIM → REAPED ladder"
     },
     "source_audience": {
-     "files": 2,
+     "files": 7,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Source audience: the rows imported from a source read only to that source's people (owner MAIL-SHARE = A…"
     },
@@ -93690,7 +93823,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 378,
+     "files": 382,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93900,9 +94033,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 181,
+   "over_bar": 186,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6629,
+   "source_files": 6642,
    "test_files": 895
   },
   "oneiron-android": {
@@ -100649,6 +100782,7 @@
      "path": "src/limit_ask.rs",
      "purpose": "The engine's `[limits]` rows and the port a crossed row asks through (ARCH-0044 C5, OF-520)",
      "surface": {
+      "const": 1,
       "enum": 1,
       "fn": 11,
       "struct": 2,
@@ -122546,7 +122680,7 @@
      "purpose": "`[models.dreamer.wording]`: the host's wording of what the engine asks a model in its own words today (FIX…",
      "surface": {
       "crate-vis": 2,
-      "fn": 13,
+      "fn": 14,
       "struct": 1
      }
     },
@@ -136424,7 +136558,7 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 221
+      "mod": 222
      }
     },
     {
@@ -136677,9 +136811,9 @@
      "path": "src/model_decision/policy.rs",
      "purpose": "Question- and reversibility-scoped escalation bands; learning starts in shadow",
      "surface": {
-      "const": 1,
       "enum": 2,
       "fn": 11,
+      "re-export": 1,
       "struct": 7
      }
     },
@@ -139706,6 +139840,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SourceAudienceObligation"
+     ],
+     "path": "src/source_audience_obligation.rs",
+     "purpose": "The source-audience obligation (fix list row 16256): one engine-owned key in a bound row's own MessagePack…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -140160,7 +140308,7 @@
      "surface": {
       "const": 5,
       "enum": 2,
-      "fn": 6,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -140752,11 +140900,14 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "PsychProfileBodyEnvelope"
+     ],
      "path": "src/write_envelope/profile_snapshot/codec.rs",
      "purpose": "Canonical MessagePack encode/decode and field validation helpers",
      "surface": {
-      "fn": 11,
+      "enum": 1,
+      "fn": 12,
       "re-export": 1
      }
     },
@@ -140796,24 +140947,28 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "PsychProfile",
+      "PsychProfileByteRange",
       "PsychProfileConfidence",
       "PsychProfileSnapshotStatus",
       "PsychProfileSource",
+      "PsychProfileSourceWords",
+      "PsychProfileSpanText",
       "PsychProfileStaleReason",
-      "PsychProfileState"
+      "PsychProfileState",
+      "PsychProfileWordsPin"
      ],
      "path": "src/write_envelope/profile_snapshot/record.rs",
      "purpose": "Snapshot record types, projections, and constructors/validators",
      "surface": {
-      "const": 18,
+      "const": 19,
       "crate-vis": 2,
-      "enum": 3,
-      "fn": 6,
-      "struct": 3
+      "enum": 6,
+      "fn": 8,
+      "struct": 4
      }
     },
     {
@@ -142638,6 +142793,13 @@
      "layout": "file",
      "purpose": "Results of releasing inference snapshot state before a vault lock"
     },
+    "source_audience_obligation": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The source-audience obligation (fix list row 16256): one engine-owned key in a bound row's own MessagePack…"
+    },
     "store_clock": {
      "files": 3,
      "impl_vault": false,
@@ -142809,7 +142971,7 @@
    },
    "over_bar": 0,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 635,
+   "source_files": 636,
    "test_files": 4
   },
   "oneiron-uniffi": {
