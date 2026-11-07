@@ -25999,6 +25999,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/deletion/legal_hold/clone/artifact.rs",
+     "purpose": "A finite Messages capture from ONE of this vault's own backup artifacts, the order's explicit choice…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "HostLegalChannel",
       "HostLegalConnection",
@@ -26007,7 +26017,7 @@
      "path": "src/deletion/legal_hold/clone/auth.rs",
      "purpose": "The inherited manager-created listener is the native transport authority",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 6,
       "struct": 3
      }
@@ -26029,8 +26039,8 @@
      "path": "src/deletion/legal_hold/clone/live.rs",
      "purpose": "Exact HOST order standing for a live entry, independent of any one socket",
      "surface": {
-      "crate-vis": 7,
-      "fn": 3
+      "crate-vis": 8,
+      "fn": 2
      }
     },
     {
@@ -26040,7 +26050,7 @@
      "path": "src/deletion/legal_hold/clone/messages.rs",
      "purpose": "Exact stored on-record MESSAGE records for an order that names them (LEGAL-HOLD-USE = B as a clone, owner…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
      }
     },
     {
@@ -35994,7 +36004,7 @@
      "path": "src/entity_doc/checkpoint.rs",
      "purpose": "The checkpoint getter of entity documents (KS7-2): each entity's head, citation floors, forks, pins, purge…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -36372,7 +36382,7 @@
      "path": "src/entity_doc/storage.rs",
      "purpose": "Transactional entity-document storage, editable fields and immutable row pointers",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 27,
       "enum": 1,
       "fn": 1
      }
@@ -53852,7 +53862,7 @@
      "path": "src/off_record/lifecycle/registry.rs",
      "purpose": "In-process session registry, entry state, publish/lookup/membership doors and ref vetting",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 28
      }
     },
     {
@@ -54078,7 +54088,7 @@
      "purpose": "Vault verbs: session vault handle, enter, mode flip, receipt log and close",
      "surface": {
       "crate-vis": 7,
-      "fn": 12
+      "fn": 13
      }
     },
     {
@@ -62022,7 +62032,7 @@
      "path": "src/recovery/checkpoint/artifact.rs",
      "purpose": "Sealed checkpoint artifacts (OF-570 (c))",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 10,
       "re-export": 1,
       "struct": 3
@@ -62532,6 +62542,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/legal_read.rs",
+     "purpose": "A legal read of one of this vault's own checkpoints, for a HOST order's artifact capture (LEGAL-HOLD-USE = B…",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -62544,7 +62564,7 @@
      "path": "src/recovery/checkpoint/mod.rs",
      "purpose": "Tier-C physical-row checkpoints and one restore/wake/migrate path",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 20,
       "re-export": 14,
@@ -62650,7 +62670,7 @@
      "path": "src/recovery/checkpoint/payload/restore.rs",
      "purpose": "KS7-5 restore: every compartment the artifact's payload names is required through the restore's one custody…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 11
      }
     },
     {
@@ -72835,7 +72855,7 @@
      "path": "src/store/checkpoint_payload/rows/restore.rs",
      "purpose": "Putting an opened compartment's rows back, through the one restore-only raw-row sink",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -73459,7 +73479,7 @@
      "path": "src/store/gate_decision/checkpoint_custody.rs",
      "purpose": "What a checkpoint restore needs from exterior key custody, the side restore's custody fork (ARCH-0038…",
      "surface": {
-      "crate-vis": 34
+      "crate-vis": 35
      }
     },
     {
@@ -84388,6 +84408,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/typed_body/mask.rs",
+     "purpose": "A typed-body call that would write a new secret (FIX 2372; OF-067)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/typed_body/receipts.rs",
      "purpose": "Who made each typed-body commit, kept beside the body (FIX 4513)",
      "surface": {
@@ -92528,7 +92558,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 64,
+     "files": 65,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93165,7 +93195,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 129,
+     "files": 130,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -93557,7 +93587,7 @@
      "purpose": "OF-382: a consented corpus, pinned training job, checked checkpoint and owner-approved role swap"
     },
     "typed_body": {
-     "files": 8,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -93664,7 +93694,7 @@
    },
    "over_bar": 181,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6612,
+   "source_files": 6615,
    "test_files": 895
   },
   "oneiron-android": {
@@ -147911,6 +147941,8 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ArtifactIdentity",
+      "ArtifactMessages",
       "CaptureAck",
       "CaptureDescriptor",
       "CaptureExtent",
@@ -147930,9 +147962,10 @@
      "path": "src/lib/host_legal.rs",
      "purpose": "HOST-private legal-clone capture framing",
      "surface": {
+      "const": 1,
       "enum": 7,
       "fn": 16,
-      "struct": 8
+      "struct": 10
      }
     },
     {
