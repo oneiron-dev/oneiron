@@ -426,6 +426,23 @@ where
     })
 }
 
+/// A door's untimed memory admission on a dedicated transfer worker,
+/// carrying the same clock, run-write and idempotency context as
+/// [`run_blocking`] without occupying the runtime's shared blocking pool.
+pub(crate) fn run_transfer_worker<F, R>(work: F) -> tokio::sync::oneshot::Receiver<R>
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Send + 'static,
+{
+    let restrictive = RESTRICTION_ONLY.try_with(|_| ()).is_ok();
+    let run_writes = super::host_doors::support::calling_run_writes();
+    let work = oneiron::store::carry_idempotency_intent(work);
+    crate::api::transfer::spawn_worker(move || {
+        let _clock = restrictive.then(oneiron::authority::restriction_only_clock);
+        oneiron::skill_attribution::with_run_write_token(run_writes.as_ref(), work)
+    })
+}
+
 /// The repair's caller as a request's own headers and extensions carry it,
 /// with nothing judged: its slip and holder proof as they arrived (an MCP
 /// call's credential header first), beside the owner its managed ingress
