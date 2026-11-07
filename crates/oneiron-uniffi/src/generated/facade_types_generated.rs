@@ -72114,6 +72114,8 @@ pub struct MailReplyDraftRequest {
     pub parent_turn_ref: Option<String>,
     #[serde(rename = "body")]
     pub body: String,
+    #[serde(rename = "body_html", default, skip_serializing_if = "Option::is_none")]
+    pub body_html: Option<String>,
     #[serde(rename = "request_key")]
     pub request_key: String,
 }
@@ -72153,6 +72155,8 @@ pub struct MailReplyDraftView {
     pub subject: String,
     #[serde(rename = "body")]
     pub body: String,
+    #[serde(rename = "body_html", default, skip_serializing_if = "Option::is_none")]
+    pub body_html: Option<String>,
     #[serde(rename = "plan_ref")]
     pub plan_ref: String,
     #[serde(rename = "state")]

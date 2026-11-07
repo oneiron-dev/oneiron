@@ -132,6 +132,9 @@ pub struct GmailSendPlan {
     to: String,
     subject: String,
     body_text: String,
+    /// The HTML alternative, written again by the mail HTML gate; `None`
+    /// for a plain-text send (fix list row 17645).
+    body_html: Option<String>,
     date: String,
     message_id: CanonicalMessageId,
     reply: Option<GmailReplyThread>,
@@ -201,6 +204,7 @@ impl GmailSendPlan {
             to,
             subject: subject.to_owned(),
             body_text: body_text.to_owned(),
+            body_html: None,
             date,
             message_id,
             reply,
@@ -208,6 +212,20 @@ impl GmailSendPlan {
         };
         plan.seal();
         Ok(plan)
+    }
+
+    /// Sends `html` as the HTML alternative of the plan's text, written
+    /// again through the mail HTML gate first (fix list row 17645): the text
+    /// part stays, so a reader without HTML reads the same reply.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidConfig`] for HTML the gate refuses.
+    pub fn with_html(mut self, html: &str) -> Result<Self> {
+        self.body_html =
+            Some(crate::channel_identity_provider::mail_html::sanitize_mail_html(html)?);
+        self.seal();
+        Ok(self)
     }
 
     /// Sends as `alias`, one of the mailbox's verified send-as aliases the
@@ -260,6 +278,12 @@ impl GmailSendPlan {
         &self.to
     }
 
+    /// The HTML alternative this plan sends, as the mail HTML gate wrote it.
+    #[must_use]
+    pub fn body_html(&self) -> Option<&str> {
+        self.body_html.as_deref()
+    }
+
     /// The RFC `Message-ID` this plan mints.
     #[must_use]
     pub const fn message_id(&self) -> &CanonicalMessageId {
@@ -299,6 +323,12 @@ impl GmailSendPlan {
             None => {
                 hasher.update(&[0]);
             }
+        }
+        // A plain-text plan seals as before; an HTML alternative follows the
+        // self-delimiting reply half (fix list row 17645).
+        if let Some(html) = &self.body_html {
+            hasher.update(b"html");
+            hash_part(&mut hasher, html);
         }
         self.content_ref = format!("{GMAIL_SEND_PLAN_REF_PREFIX}{}", hasher.finalize().to_hex());
     }
@@ -350,15 +380,11 @@ impl GmailSendPlan {
             push_header(&mut out, name, value);
         }
         push_header(&mut out, "MIME-Version", "1.0");
-        push_header(&mut out, "Content-Type", "text/plain; charset=UTF-8");
-        push_header(&mut out, "Content-Transfer-Encoding", "base64");
-        out.push_str("\r\n");
-        let body = self.body_text.replace("\r\n", "\n").replace('\n', "\r\n");
-        let encoded = base64::engine::general_purpose::STANDARD.encode(body.as_bytes());
-        for chunk in encoded.as_bytes().chunks(76) {
-            out.push_str(std::str::from_utf8(chunk).unwrap_or_default());
-            out.push_str("\r\n");
-        }
+        crate::channel_identity_provider::mail_html::push_mail_body(
+            &mut out,
+            &self.body_text,
+            self.body_html.as_deref(),
+        );
         Ok(out.into_bytes())
     }
 }

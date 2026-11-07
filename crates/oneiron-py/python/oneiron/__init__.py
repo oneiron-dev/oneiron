@@ -6033,7 +6033,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def draft(self, spec):
-            """Drafts a plain-text reply to a mail thread the caller reads, or its next revision under the same key. It sends nothing: the mailbox owner approves that exact revision first."""
+            """Drafts a reply to a mail thread the caller reads, in plain text with an optional simple HTML alternative, or its next revision under the same key. It sends nothing: the mailbox owner approves that exact revision first."""
             return json.loads(_translate(lambda: self._client.vault_mail_reply_draft(json.dumps(spec))))
         def drafts(self, spec):
             """The drafted replies on the mail threads the caller reads, newest first, each with its words, recipient, frozen plan and state."""

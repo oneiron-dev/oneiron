@@ -3353,7 +3353,7 @@ export class Oneiron {
         read: (input: Facade.MailThreadRequest): Facade.MailThreadView => this.#call(() => this.#client.vaultMailThreadsRead(input) as Facade.MailThreadView),
       },
       reply: {
-        /** Drafts a plain-text reply to a mail thread the caller reads, or its next revision under the same key. It sends nothing: the mailbox owner approves that exact revision first. */
+        /** Drafts a reply to a mail thread the caller reads, in plain text with an optional simple HTML alternative, or its next revision under the same key. It sends nothing: the mailbox owner approves that exact revision first. */
         draft: (input: Facade.MailReplyDraftRequest): Facade.MailReplyDraftView => this.#call(() => this.#client.vaultMailReplyDraft(input) as Facade.MailReplyDraftView),
         /** The drafted replies on the mail threads the caller reads, newest first, each with its words, recipient, frozen plan and state. */
         drafts: (input: Facade.MailReplyDraftsRequest): Facade.MailReplyDraftPage => this.#call(() => this.#client.vaultMailReplyDrafts(input) as Facade.MailReplyDraftPage),
