@@ -247,6 +247,8 @@ both bindings and their export-census tests in one change.
 - `vault.skills.restoreDefaults`
 - `vault.skill_hubs.put`
 - `vault.skill_hubs.get`
+- `vault.skill_hubs.clawhub.search`
+- `vault.skill_hubs.clawhub.import`
 - `vault.skill_hubs.publishers.admit`
 - `vault.skill_hubs.publishers.revoke`
 - `vault.skill_hubs.refs.get`
@@ -429,6 +431,7 @@ both bindings and their export-census tests in one change.
 - `vault.files.sources.detach`
 - `vault.files.sources.list`
 - `vault.files.sources.files`
+- `vault.files.sources.exclude`
 - `vault.residence.mode`
 - `vault.residence.open`
 - `vault.residence.index`
@@ -564,6 +567,7 @@ both bindings and their export-census tests in one change.
 - `vault.policy.relay.decide`
 - `vault.consent.approve_once`
 - `vault.connectors.calls.approve_once`
+- `vault.connectors.replies.retry_failed`
 - `vault.consent.deny`
 - `vault.consent.create_standing_grant`
 - `vault.consent.create_auto_weave_grant`
@@ -888,6 +892,7 @@ both bindings and their export-census tests in one change.
 - `vault.rooms.join`
 - `vault.rooms.invite`
 - `vault.rooms.consent`
+- `vault.rooms.leave`
 - `vault.rooms.offer`
 - `vault.rooms.offer.answer`
 - `vault.rooms.offer.vote`
@@ -921,6 +926,9 @@ both bindings and their export-census tests in one change.
 - `vault.models.manifest.replace`
 - `vault.settings.web_connector`
 - `vault.settings.web_connector.replace`
+- `vault.settings.model_pack`
+- `vault.settings.model_pack.replace`
+- `vault.model_pack.revert`
 - `vault.connectors.web.usage`
 - `vault.models.oneironer.bind`
 - `vault.models.routes.read`

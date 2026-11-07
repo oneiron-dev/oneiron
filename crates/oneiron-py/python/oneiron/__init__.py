@@ -493,7 +493,7 @@ class Oneiron:
     def graph_fs(self) -> "Oneiron._GraphFsVerbs":
         return Oneiron._GraphFsVerbs(self._client)
     def execute_code(self, spec):
-        """Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal."""
+        """Run foreign JavaScript or TypeScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal."""
         return json.loads(_translate(lambda: self._client.execute_code(json.dumps(spec))))
     def can(self, request: dict[str, Any]) -> dict[str, Any]:
         """Read-only ask routing or attributed partial answers."""
@@ -868,6 +868,9 @@ class Oneiron:
         @property
         def models(self) -> "Oneiron._VaultModelsVerbs":
             return Oneiron._VaultModelsVerbs(self._client)
+        @property
+        def model_pack(self) -> "Oneiron._VaultModelPackVerbs":
+            return Oneiron._VaultModelPackVerbs(self._client)
         @property
         def voices(self) -> "Oneiron._VaultVoicesVerbs":
             return Oneiron._VaultVoicesVerbs(self._client)
@@ -1883,7 +1886,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def wrong(self, spec):
-            """The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays."""
+            """The owner labels a claim, project, budget or sieve audit item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays."""
             return json.loads(_translate(lambda: self._client.vault_weave_owner_item_wrong(json.dumps(spec))))
     class _VaultWeaveOwnerDigestVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -1895,7 +1898,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def wrong(self, spec):
-            """A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays."""
+            """A person labels a claim, project, budget or sieve audit item in their own lens as wrong; the label teaches the loops and the record stays."""
             return json.loads(_translate(lambda: self._client.vault_weave_item_wrong(json.dumps(spec))))
     class _VaultWeaveAdminVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -2252,6 +2255,9 @@ class Oneiron:
             """Reads one configured hub as the owner."""
             return json.loads(_translate(lambda: self._client.vault_skill_hubs_get(json.dumps(spec))))
         @property
+        def clawhub(self) -> "Oneiron._VaultSkillHubsClawhubVerbs":
+            return Oneiron._VaultSkillHubsClawhubVerbs(self._client)
+        @property
         def publishers(self) -> "Oneiron._VaultSkillHubsPublishersVerbs":
             return Oneiron._VaultSkillHubsPublishersVerbs(self._client)
         @property
@@ -2263,6 +2269,15 @@ class Oneiron:
         def get(self, spec=None):
             """Reads the first hub identity, configured mirror endpoint and pinned skill-root ref; owner hub and ref setters configure that source."""
             return json.loads(_translate(lambda: self._client.vault_skill_hubs_default_get(json.dumps({} if spec is None else spec))))
+    class _VaultSkillHubsClawhubVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def search(self, spec):
+            """Queries a configured HTTP hub origin as a public ClawHub-compatible API; returned provider locators are not pinned, imported or admitted packages."""
+            return json.loads(_translate(lambda: self._client.vault_skill_hubs_clawhub_search(json.dumps(spec))))
+        def import_(self, spec):
+            """Downloads an owner-selected ClawHub ZIP or pinned public-GitHub subtree and imports the same checked bytes through native publisher, scan and fit doors; provider contentHash is not a native pin."""
+            return json.loads(_translate(lambda: self._client.vault_skill_hubs_clawhub_import(json.dumps(spec))))
     class _VaultSkillHubsPublishersVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2483,6 +2498,9 @@ class Oneiron:
         def calls(self) -> "Oneiron._VaultConnectorsCallsVerbs":
             return Oneiron._VaultConnectorsCallsVerbs(self._client)
         @property
+        def replies(self) -> "Oneiron._VaultConnectorsRepliesVerbs":
+            return Oneiron._VaultConnectorsRepliesVerbs(self._client)
+        @property
         def read_grants(self) -> "Oneiron._VaultConnectorsReadGrantsVerbs":
             return Oneiron._VaultConnectorsReadGrantsVerbs(self._client)
         @property
@@ -2539,6 +2557,12 @@ class Oneiron:
         def approve_once(self, spec):
             """The owner approves once exactly one held connector call, by its call ref and the approve-once digest its current ask names; no standing grant is created and nothing is sent."""
             return json.loads(_translate(lambda: self._client.vault_connectors_calls_approve_once(json.dumps(spec))))
+    class _VaultConnectorsRepliesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def retry_failed(self, spec):
+            """The owner returns one Failed connector reply job (Ambiguous, owner-act Fault) to the queue now as its queued successor; the Failed predecessor row and its kept result stay as history."""
+            return json.loads(_translate(lambda: self._client.vault_connectors_replies_retry_failed(json.dumps(spec))))
     class _VaultConnectorsReadGrantsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3060,6 +3084,9 @@ class Oneiron:
         def files(self, spec):
             """The owner reads one Files source's ledger: each file's path, readiness (text or name only, and why), revision and dates."""
             return json.loads(_translate(lambda: self._client.vault_files_sources_files(json.dumps(spec))))
+        def exclude(self, spec):
+            """The owner replaces a Files source's filters: the include patterns it reads, and the paths the host never opens. Absent keeps today's list; a list, even an empty one, replaces it."""
+            return json.loads(_translate(lambda: self._client.vault_files_sources_exclude(json.dumps(spec))))
         def convert(self, spec):
             """The owner converts an attached notes folder on this host to Files, keeping its existing notes, history and links. The host rescans the folder into its Files world and returns the source and rescan report."""
             return json.loads(_translate(lambda: self._client.vault_files_sources_convert(json.dumps(spec))))
@@ -3732,6 +3759,9 @@ class Oneiron:
         @property
         def web_connector(self) -> "Oneiron._VaultSettingsWebConnectorVerbs":
             return Oneiron._VaultSettingsWebConnectorVerbs(self._client)
+        @property
+        def model_pack(self) -> "Oneiron._VaultSettingsModelPackVerbs":
+            return Oneiron._VaultSettingsModelPackVerbs(self._client)
     class _VaultSettingsLearningVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3768,6 +3798,15 @@ class Oneiron:
         def replace(self, spec):
             """Replaces the owner's web connector switch under the owner proof. Only Tavily runs on the backend key; other providers run on the owner's own secret (effector connector:web) or a hub connector."""
             return json.loads(_translate(lambda: self._client.vault_settings_web_connector_replace(json.dumps(spec))))
+    class _VaultSettingsModelPackVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Reads the owner's model pack setting: follow the latest pack (the default), a pinned season or a pinned pack, the pack it selects now, the last change and the pack before it, and every installed model pack."""
+            return json.loads(_translate(lambda: self._client.vault_settings_model_pack(json.dumps(spec))))
+        def replace(self, spec):
+            """Replaces the owner's model pack preference under the owner proof: auto_upgrade follows the latest pack; pinned names a season, pinned_pack one pack, installed and still served. A move of the active pack sends its change notice."""
+            return json.loads(_translate(lambda: self._client.vault_settings_model_pack_replace(json.dumps(spec))))
     class _VaultSecretsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -4975,6 +5014,9 @@ class Oneiron:
         def consent(self, spec):
             """One party's answer to a join that waits on it, after which the join is decided again."""
             return json.loads(_translate(lambda: self._client.vault_rooms_consent(json.dumps(spec))))
+        def leave(self, spec):
+            """Ends a person's current room membership: their own leave or their principal's, or the vault owner's removal; saving that rode on it stops, and a later vault.rooms.join opens a new membership."""
+            return json.loads(_translate(lambda: self._client.vault_rooms_leave(json.dumps(spec))))
         @property
         def offer(self) -> "Oneiron._VaultRoomsOfferVerbs":
             return Oneiron._VaultRoomsOfferVerbs(self._client)
@@ -5200,6 +5242,12 @@ class Oneiron:
         def deny(self, spec):
             """Denies a pending model role-binding proposal as the owner without changing the incumbent manifest binding."""
             return json.loads(_translate(lambda: self._client.vault_models_bindings_deny(json.dumps(spec))))
+    class _VaultModelPackVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def revert(self, spec):
+            """Reverts a model pack change, its notice's one tap: pins the pack before it while the change is the vault's last and that pack is installed at its bytes and served; else answers why it cannot run now and changes nothing."""
+            return json.loads(_translate(lambda: self._client.vault_model_pack_revert(json.dumps(spec))))
     class _VaultVoicesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -6806,10 +6854,10 @@ class Oneiron:
             """One catalogued connector by name, removed ones included."""
             return json.loads(_translate(lambda: self._client.connector_status(json.dumps(spec))))
         def call(self, spec):
-            """Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data."""
+            """Calls a connector tool from the selected catalog or builtin source; omitted source keeps implicit name selection. Catalog calls retain the caller's own grant and gate. Replies are foreign data."""
             return json.loads(_translate(lambda: self._client.connector_call(json.dumps(spec))))
         def schema(self, spec):
-            """One catalogued connector tool's approved input schema, as the caller's own grant resolves it."""
+            """One connector tool's input schema for the selected catalog or builtin source; omitted source keeps implicit name selection. Catalog schemas use the caller's own governing grant and approved manifest."""
             return json.loads(_translate(lambda: self._client.connector_schema(json.dumps(spec))))
         def call_status(self, spec):
             """Where one connector.call stands, by the call_ref its held, pending_delivery or awaiting_input reply named: pending, the questions it waits on, or its settled reply. Only its caller and the vault's owner read it."""
