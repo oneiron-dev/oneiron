@@ -13,6 +13,8 @@ use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::vault::ReadMode;
 
+mod hydrate_filtered;
+
 /// One resolved read target: the entity a reference names, at its frontier.
 /// `None` is a reference that resolves to nothing, never a withheld row.
 pub(super) type ReadTargetSlot = Option<(EntityId, ReadMode)>;
