@@ -35,7 +35,9 @@ pub(in crate::sync) use self::revalidate::{
 };
 use self::routing::Routes;
 pub(crate) use self::state::{AdmittedUpdate, StagedBirths};
-pub(in crate::sync) use self::state::{release_landed_stamps, staged_births};
+pub(in crate::sync) use self::state::{
+    release_landed_stamps, release_staged_landed_stamps, staged_births,
+};
 
 pub use crate::store::window_protocol::FederationAdmissionRole;
 
@@ -244,6 +246,9 @@ fn admit_window_update(
         .with_write_txn_grouped(|wtxn| crate::gate::resolve_policy_manifest(&vault.store, wtxn))?;
 
     reject_federated_tombstones(&remote)?;
+    // Engine A: a federated copy brings no source audience assertion; the
+    // map rides the owner's full-window lane alone (L02 3, 6 Nov 06:24).
+    crate::sync::source_audiences::refuse_foreign_map(&remote)?;
     // The withheld CLAIMs and the contained cross-world edges (FIX 3660).
     let mut terminal = crate::sync::quarantine::TerminalRejectionBatch::new(key.as_str());
     let routes = match guest {
@@ -484,6 +489,9 @@ fn refuse_peer_agent_definition_widening(
 /// materialization must discard.
 #[cfg(feature = "sync")]
 fn validate_admitted_replicated_body(id: &EntityId, entity_type: u8, body: &[u8]) -> Result<()> {
+    // Fix list row 16256: a restricted lane carries no source-audience key,
+    // whatever its value; a peer's body naming it is refused as it came.
+    crate::source_audience::refuse_written_obligation(entity_type, body)?;
     if entity_type != crate::registry::ENTITY_TYPE_AGENT_DEF {
         crate::agent_def::validate_put_at_seeded_id(id, entity_type, None)?;
     }

@@ -350,6 +350,14 @@ const RUNTIME_KINDS: &[(&str, &str, Class)] = &[
         CONTENT,
     ),
 ];
+/// A derived row's carried policies only ever grow (FIX 17207): a restore
+/// that would give back a smaller set for a row the image holds refuses, so
+/// a reader one of the added policies denies never reads the row again. The
+/// floor of a row made after the checkpoint leaves with the row.
+const SOURCE_AUDIENCE_FLOORS: Class = Class::Refuse {
+    what: "a derived row's carried policies",
+    scope: Scope::ImageEntities,
+};
 const ESIGN_CEREMONIES: Class = Class::Refuse {
     what: "e-sign ceremonies",
     scope: Scope::ImageEntities,
