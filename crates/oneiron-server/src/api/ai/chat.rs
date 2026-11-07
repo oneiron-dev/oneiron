@@ -95,7 +95,7 @@ pub(crate) use assertions::ReplyAssertionCollector;
 pub(crate) use compaction::{
     AnswerBreakpoint, ChatReuse, action_breakpoint, live_fork_unavailable, reuse_chat_breakpoint,
 };
-pub(crate) use hooks::{after_turn, turn_generate_pre};
+pub(crate) use hooks::{after_turn, turn_generate_pre, turn_generate_pre_retained};
 pub(crate) use model_call::model_call_keeps_no_record;
 pub(crate) use recall::{turn_opener, turn_tail};
 
