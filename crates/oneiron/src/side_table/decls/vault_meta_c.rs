@@ -511,6 +511,11 @@ side_tables! {
     /// Lookup index from a normalized connector name to a key id, empty marker value. Key:
     /// string(connector) "\x00" id16.
     CONNECTOR_KEY_CONNECTOR_INDEX: VaultMeta b"connector_key/connector/v1\0" Raw;
+    /// One dispatch batch's normalized input and committed progress (FIX 11058): its effect
+    /// channel and size, the dispatches admitted and refused so far, when the windows that paced
+    /// the rest open again, and its first and latest accounting samples. Key: id16 +
+    /// string(batch_ref).
+    CONNECTOR_KEY_DISPATCH_BATCH: VaultMeta b"connector_key/dispatch_batch/v1\0" Named Engine;
     /// Rotation-generation log entry naming the custody ref a connector key pointed at. Key: id16 +
     /// u32be.
     CONNECTOR_KEY_GENERATION_LOG: VaultMeta b"connector_key/generation/v1\0" Raw;
