@@ -28588,6 +28588,12 @@ pub struct OfferEvidence {
     pub rubric_revision: Option<String>,
     #[serde(rename = "card", default, skip_serializing_if = "Option::is_none")]
     pub card: Option<SufficiencyCard>,
+    #[serde(
+        rename = "paired_measurement",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub paired_measurement: Option<Vec<u8>>,
     #[serde(rename = "losses")]
     pub losses: Vec<String>,
     #[serde(rename = "risk", default, skip_serializing_if = "Option::is_none")]
@@ -31079,11 +31085,20 @@ pub struct ResearchExplorationWire {
 
 /// `oneiron::research_budget::RsiOverdraftReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
 pub struct RsiOverdraftReceipt {
     #[serde(rename = "share")]
     pub share: String,
     #[serde(rename = "units")]
     pub units: u64,
+    #[serde(rename = "reservation")]
+    pub reservation: String,
+    #[serde(rename = "vault")]
+    pub vault: String,
+    #[serde(rename = "public_key")]
+    pub public_key: String,
+    #[serde(rename = "signature")]
+    pub signature: String,
 }
 
 /// `oneiron::verbs::research::ResearchReservationWire`.
@@ -70237,6 +70252,14 @@ pub struct IdentityReassignment {
     pub target: IdentityReassignmentTarget,
 }
 
+/// `oneiron::verbs::identity_topology::IdentityFacetSpec`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct IdentityFacetSpec {
+    #[serde(rename = "label")]
+    pub label: String,
+}
+
 /// `oneiron::verbs::identity_topology::IdentityProposalOutcome`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum IdentityProposalOutcome {
@@ -70268,6 +70291,15 @@ pub enum IdentityAmendment {
         entity: String,
         #[serde(rename = "heads")]
         heads: Vec<String>,
+        #[serde(rename = "reassignment_map")]
+        reassignment_map: Vec<IdentityReassignment>,
+    },
+    #[serde(rename = "facet")]
+    Facet {
+        #[serde(rename = "entity")]
+        entity: String,
+        #[serde(rename = "facets")]
+        facets: Vec<IdentityFacetSpec>,
         #[serde(rename = "reassignment_map")]
         reassignment_map: Vec<IdentityReassignment>,
     },
@@ -70311,6 +70343,15 @@ pub enum IdentityEventAction {
         applied_residue: u64,
         #[serde(rename = "forked")]
         forked: Vec<String>,
+    },
+    #[serde(rename = "parked_facet")]
+    ParkedFacet {
+        #[serde(rename = "entity")]
+        entity: String,
+        #[serde(rename = "specs")]
+        specs: Vec<IdentityFacetSpec>,
+        #[serde(rename = "reassignment_map")]
+        reassignment_map: Vec<IdentityReassignment>,
     },
     #[serde(rename = "assert_distinct")]
     AssertDistinct {
@@ -70429,14 +70470,6 @@ pub struct IdentitySplitRequest {
     pub evidence: IdentityEvidence,
 }
 
-/// `oneiron::verbs::identity_topology::IdentityFacetSpec`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct IdentityFacetSpec {
-    #[serde(rename = "label")]
-    pub label: String,
-}
-
 /// `oneiron::verbs::identity_topology::IdentityFacetRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -70472,6 +70505,8 @@ pub enum IdentityProposedOp {
     Merge(IdentityMergeRequest),
     #[serde(rename = "split")]
     Split(IdentitySplitRequest),
+    #[serde(rename = "facet")]
+    Facet(IdentityFacetRequest),
 }
 
 /// `oneiron::verbs::identity_topology::IdentityProposeRequest`.

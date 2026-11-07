@@ -1479,7 +1479,7 @@ class Oneiron:
         def assert_distinct(self, spec: Facade.IdentityAssertDistinctRequest) -> Facade.IdentityTopologyResult:
             """The owner asserts two identities are distinct through one symmetric claim that suppresses merge re-proposals."""
         def propose(self, spec: Facade.IdentityProposeRequest) -> Facade.IdentityTopologyResult:
-            """The owner parks a nominated merge or split candidate with no topology effects; distinct pairs suppress merge proposals."""
+            """The owner parks a nominated merge, split or facet candidate with no topology effects; distinct pairs suppress merge proposals."""
         def undo(self, spec: Facade.IdentityUndoRequest) -> Facade.IdentityTopologyResult:
             """The owner undoes one current topology event by appending a counter-event under its observed revision."""
         def resolve(self, spec: Facade.IdentityEntityRequest) -> Facade.IdentityResolution:

@@ -9209,6 +9209,7 @@ class OfferEvidence(TypedDict):
     exposures: list[EntityId]
     rubric_revision: NotRequired[str | None]
     card: NotRequired[SufficiencyCard | None]
+    paired_measurement: NotRequired[list[int] | None]
     losses: list[str]
     risk: NotRequired[str | None]
 class ComputeDestinationSelfHostedBody(TypedDict):
@@ -10010,6 +10011,10 @@ class ResearchExplorationWire(TypedDict):
 class RsiOverdraftReceipt(TypedDict):
     share: str
     units: int
+    reservation: str
+    vault: str
+    public_key: str
+    signature: str
 class ResearchReservationWire(TypedDict):
     id: EntityId
     line: ResearchReservationLine
@@ -22643,6 +22648,8 @@ IdentityReassignmentTarget = IdentityReassignmentTargetHead | IdentityReassignme
 class IdentityReassignment(TypedDict):
     item: IdentityReassignmentItem
     target: IdentityReassignmentTarget
+class IdentityFacetSpec(TypedDict):
+    label: str
 IdentityProposalOutcome = Literal["approved_untouched", "approved_amended", "rejected"]
 class IdentityAmendmentMerge(TypedDict):
     op: Literal["merge"]
@@ -22654,7 +22661,12 @@ class IdentityAmendmentSplit(TypedDict):
     entity: EntityId
     heads: list[EntityId]
     reassignment_map: list[IdentityReassignment]
-IdentityAmendment = IdentityAmendmentMerge | IdentityAmendmentSplit
+class IdentityAmendmentFacet(TypedDict):
+    op: Literal["facet"]
+    entity: EntityId
+    facets: list[IdentityFacetSpec]
+    reassignment_map: list[IdentityReassignment]
+IdentityAmendment = IdentityAmendmentMerge | IdentityAmendmentSplit | IdentityAmendmentFacet
 class IdentityEventActionMerge(TypedDict):
     op: Literal["merge"]
     sources: list[EntityId]
@@ -22674,6 +22686,11 @@ class IdentityEventActionFacet(TypedDict):
     applied_assigned: int
     applied_residue: int
     forked: list[EntityId]
+class IdentityEventActionParkedFacet(TypedDict):
+    op: Literal["parked_facet"]
+    entity: EntityId
+    specs: list[IdentityFacetSpec]
+    reassignment_map: list[IdentityReassignment]
 class IdentityEventActionAssertDistinct(TypedDict):
     op: Literal["assert_distinct"]
     a: EntityId
@@ -22694,7 +22711,7 @@ class IdentityEventActionProposalCancellation(TypedDict):
     op: Literal["proposal_cancellation"]
     proposal: EntityId
     participant: EntityId
-IdentityEventAction = IdentityEventActionMerge | IdentityEventActionSplit | IdentityEventActionFacet | IdentityEventActionAssertDistinct | IdentityEventActionUndo | IdentityEventActionProposalResolution | IdentityEventActionProposalCancellation
+IdentityEventAction = IdentityEventActionMerge | IdentityEventActionSplit | IdentityEventActionFacet | IdentityEventActionParkedFacet | IdentityEventActionAssertDistinct | IdentityEventActionUndo | IdentityEventActionProposalResolution | IdentityEventActionProposalCancellation
 class IdentityTopologyReceipt(TypedDict):
     event: EntityId
     seq: int
@@ -22725,8 +22742,6 @@ class IdentitySplitRequest(TypedDict):
     heads: list[EntityId]
     reassignment_map: list[IdentityReassignment]
     evidence: IdentityEvidence
-class IdentityFacetSpec(TypedDict):
-    label: str
 class IdentityFacetRequest(TypedDict):
     entity: EntityId
     facets: list[IdentityFacetSpec]
@@ -22742,7 +22757,10 @@ class IdentityProposedOpMerge(TypedDict):
 class IdentityProposedOpSplit(TypedDict):
     op: Literal["split"]
     spec: IdentitySplitRequest
-IdentityProposedOp = IdentityProposedOpMerge | IdentityProposedOpSplit
+class IdentityProposedOpFacet(TypedDict):
+    op: Literal["facet"]
+    spec: IdentityFacetRequest
+IdentityProposedOp = IdentityProposedOpMerge | IdentityProposedOpSplit | IdentityProposedOpFacet
 class IdentityProposeRequest(TypedDict):
     operation: IdentityProposedOp
 class IdentityUndoRequest(TypedDict):
