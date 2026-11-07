@@ -214,8 +214,10 @@ impl DecisionProvider for SystemOneRung {
         {
             return Ok(abstain);
         }
+        let mut question = call.question.clone();
+        question.text = call.question_text().into_owned();
         let request = SeatRequest {
-            question: call.question.clone(),
+            question,
             state: call.state.clone(),
             images: call.images.to_vec(),
             audio: call.audio.to_vec(),
