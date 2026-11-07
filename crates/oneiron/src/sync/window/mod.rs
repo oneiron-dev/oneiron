@@ -71,7 +71,7 @@ pub(crate) use self::discard_projection::{
 use self::egress::window_packing_excludes_entity;
 pub(crate) use self::egress::{export_history_free_window_snapshot, persisted_window_snapshot};
 pub(in crate::sync) use self::egress::{
-    export_scrubbed_window_snapshot, withdrawn_delete_carriers,
+    export_scrubbed_window_snapshot, withdrawn_delete_carriers, withhold_audience_carriers,
 };
 pub use self::egress::{
     history_free_window_required, replay_pending_mirrors, require_history_free_window,
@@ -157,6 +157,9 @@ pub struct LoadedWindow {
     _observer_message_docs: Option<Subscription>,
     /// Observer B for the repo manifest map (FIX 6870), on base and world windows.
     _observer_repo_manifests: Option<Subscription>,
+    /// Observer B for the source audience map (Engine A), on base and world
+    /// windows.
+    _observer_source_audiences: Subscription,
     /// Observer A state for pending bytes tracking.
     pub observer_a_state: Arc<ObserverAState>,
 }
@@ -242,6 +245,8 @@ impl LoadedWindow {
             materializer,
             key.as_str(),
         ));
+        let observer_source_audiences =
+            bridge::register_source_audiences_observer(&doc, vault, materializer, key.as_str());
 
         Self {
             doc,
@@ -254,6 +259,7 @@ impl LoadedWindow {
             _observer_document_pins: observer_document_pins,
             _observer_message_docs: observer_message_docs,
             _observer_repo_manifests: observer_repo_manifests,
+            _observer_source_audiences: observer_source_audiences,
             observer_a_state,
         }
     }
