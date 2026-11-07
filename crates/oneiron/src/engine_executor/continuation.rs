@@ -52,9 +52,6 @@ use crate::{ContentPart, EntityId, Error, LlmMessage, LlmMessageRole, Vault};
 const CONTINUATION_NOTE_FRAME: &str =
     "An owner-approved note for this repaired run, which continues from where it failed:";
 
-/// The domain of a continuation checkpoint's id.
-const CHECKPOINT_REF_DOMAIN: &[u8] = b"oneiron:executor-continuation-checkpoint:v1";
-
 /// The domain of a continuation's digest, which its child run's config
 /// marker binds.
 const CONTINUATION_DIGEST_DOMAIN: &[u8] = b"oneiron:executor-continuation:v1";
@@ -73,20 +70,17 @@ pub struct ExecutorCheckpointRef {
 }
 
 impl ExecutorCheckpointRef {
-    /// The checkpoint's own id, never the run's or the attempt's: BLAKE3
-    /// over a domain tag, the run and the step, cut to an id.
+    /// The checkpoint's own id, never the run's or the attempt's: the run and
+    /// the step under the one derived-id rule (FIX 9838).
     ///
     /// # Errors
     ///
-    /// A digest that falls in the reserved id range.
+    /// A derived id that falls in the reserved id range.
     pub fn id(&self) -> crate::Result<EntityId> {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(CHECKPOINT_REF_DOMAIN);
-        hasher.update(self.source_run.as_bytes());
-        hasher.update(&self.step.to_le_bytes());
-        let mut bytes = [0_u8; 16];
-        bytes.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
-        EntityId::from_bytes(bytes)
+        EntityId::derive(
+            crate::entity_id::derived_domains::EXECUTOR_CONTINUATION_CHECKPOINT,
+            &[self.source_run.as_bytes(), &self.step.to_le_bytes()],
+        )
     }
 }
 
