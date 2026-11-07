@@ -768,6 +768,16 @@ impl Bridge {
     }
 }
 
+fn reply_body_text(body: Vec<u8>) -> String {
+    match String::from_utf8(body) {
+        Ok(text) => text,
+        Err(error) => {
+            let body = error.into_bytes();
+            String::from_utf8_lossy(&body).into_owned()
+        }
+    }
+}
+
 /// What the server sent back for one request.
 struct Reply {
     /// The HTTP status, when there was one.
@@ -780,8 +790,10 @@ impl Reply {
     /// it came with; anything else is the bridge's error for that request, so
     /// the client is never handed a line that answers nothing it sent.
     fn answer_to(self, id: &Value) -> Result<Value, Refusal> {
-        let body = serde_json::from_slice::<Value>(&self.body)
-            .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&self.body).into_owned()));
+        let body = match serde_json::from_slice::<Value>(&self.body) {
+            Ok(body) => body,
+            Err(_) => Value::String(reply_body_text(self.body)),
+        };
         let answers = body.get("jsonrpc").and_then(Value::as_str) == Some("2.0")
             && body.get("id") == Some(id)
             && match (body.get("result"), body.get("error")) {
