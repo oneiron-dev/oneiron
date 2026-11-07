@@ -36,8 +36,21 @@ impl RecordingJsHost<'_, '_> {
             SelfDispatchOutcome::AgentVerb(answer) => &mut answer.output,
             SelfDispatchOutcome::SkillCall(result) => &mut result.output,
             // Kept as its JSON text, framed under `output` as the others are
-            // (FIX 1190): the row keeps the card's text in its place.
-            SelfDispatchOutcome::Fold(json) | SelfDispatchOutcome::Leader(json) => {
+            // (FIX 1190): the row keeps the card's text in its place. A fold
+            // answer's card keeps the folds whose words it copies, and its
+            // body depends on their sources (FIX 18924).
+            SelfDispatchOutcome::Fold(answer) => {
+                if answer.json.len() <= RESULT_REPLY_INLINE_BYTES {
+                    return Ok(outcome);
+                }
+                let sources = answer.word_sources();
+                let card = self.store_sourced_answer(seq, &sources, |sink| {
+                    sink.write(answer.json.as_bytes())
+                })?;
+                answer.json = card.to_string();
+                return Ok(outcome);
+            }
+            SelfDispatchOutcome::Leader(json) => {
                 if json.len() <= RESULT_REPLY_INLINE_BYTES {
                     return Ok(outcome);
                 }
@@ -173,13 +186,25 @@ impl RecordingJsHost<'_, '_> {
         seq: u64,
         write: impl FnOnce(&mut BodySink) -> Result<()>,
     ) -> Result<serde_json::Value> {
+        self.store_sourced_answer(seq, &[], write)
+    }
+
+    /// [`Self::store_answer`] for an answer that copies the words of records
+    /// `sources`: its body is published as a dependent of each of them, so
+    /// a withdrawal of one reaches it (FIX 18924).
+    fn store_sourced_answer(
+        &mut self,
+        seq: u64,
+        sources: &[EntityId],
+        write: impl FnOnce(&mut BodySink) -> Result<()>,
+    ) -> Result<serde_json::Value> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor result storage unavailable".into(),
         ))?;
         let mut sink = storage.code_run_reply_spool()?;
         write(&mut sink)?;
         let path = bridge_result_output_path(seq);
-        let output = match storage.publish_code_run_reply(path, sink, self.run_id, None)? {
+        let output = match storage.publish_code_run_reply(path, sink, self.run_id, sources, None)? {
             Ok(output) => output,
             Err(unavailable) => return Ok(unavailable),
         };
@@ -446,8 +471,16 @@ impl RecordingJsHost<'_, '_> {
                 }
             }
         }
+        // A resumed pending step's calls answer from the rows its program
+        // already made, before a position is taken (FIX 7703).
+        if let Some(answered) = self.answer_from_pending_prefix(&call) {
+            return Ok(answered);
+        }
         let seq = self.next_seq;
         self.next_seq += 1;
+        if self.callable_depth == 0 {
+            self.guest_calls.push(seq);
+        }
         let started_at_ms = self.determinism.frozen_unix_ms.saturating_add(seq);
         // ONE-1686: the speech family's order and timestamp are the BRIDGE's,
         // stamped here — on the one ordering path every `self.*` call takes —

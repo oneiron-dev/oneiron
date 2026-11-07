@@ -21,7 +21,7 @@ use crate::{Error, Result};
 use serde_json::json;
 use std::collections::BTreeSet;
 
-const SCRIPT_OUTPUT_DIR: &str = "executor/repl";
+pub(super) const SCRIPT_OUTPUT_DIR: &str = "executor/repl";
 
 pub(super) const CONFIG_OUTPUT_PATH: &str = "executor/repl/run.config.json";
 

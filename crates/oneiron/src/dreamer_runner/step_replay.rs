@@ -1,4 +1,5 @@
 use crate::Result;
+use crate::code_run::FoldWordRef;
 use crate::compaction::output::OutputRef;
 use crate::model_binding::ModelRole;
 use crate::side_table::ErasedForm;
@@ -194,7 +195,9 @@ pub struct ReplayRoutePin {
 pub enum CapsuleRequest {
     /// Its canonical JSON as stored, each secret in it its custody handle,
     /// by its body ref, its path and the hash of the stored bytes, which a
-    /// read of the body checks.
+    /// read of the body checks. For a step's request, the body is the
+    /// manifest of its shared pieces (FIX 4192), and the hash is the whole
+    /// request's they put together.
     Kept {
         body: OutputRef,
         path: String,
@@ -245,7 +248,8 @@ pub struct StepReplayCapsule {
     pub host: CapsuleHost,
     /// The request as assembled and bound, before its route's prompt: its
     /// body as stored (FIX 6144), or withheld when the wall refused it
-    /// outright (FIX 6254).
+    /// outright (FIX 6254). A kept request's body is the manifest of the
+    /// pieces its run holds once for the actor (FIX 4192).
     pub request: CapsuleRequest,
     /// The canonical hash of the request as it was sent, before any mask:
     /// the identity a sent request is matched by.
@@ -282,6 +286,24 @@ pub struct StepReplayCapsule {
     /// it, and for good for a step that ran tool rounds and for an engine
     /// step.
     pub answer: Option<OutputRef>,
+    /// The folds whose accepted summaries its bodies copy (FIX 18924). Every
+    /// capsule keeps it. It is apart from `source_rows` and claims no list
+    /// of inputs is complete.
+    pub(crate) fold_words: CapsuleFoldWords,
+}
+
+/// The folds whose accepted summaries a capsule's bodies copy (FIX 18924),
+/// one list for each body, each fold once. A list names what was put in its
+/// body, never folds read from an id. A withdrawal of one fold's words
+/// retires each body whose list names that fold.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct CapsuleFoldWords {
+    /// The stubs the request shows and the answers its consoles may print.
+    pub(crate) request: Vec<FoldWordRef>,
+    /// The answers the start's prefix row records.
+    pub(crate) start: Vec<FoldWordRef>,
+    /// The answers a hook view in the replay context shows.
+    pub(crate) context: Vec<FoldWordRef>,
 }
 
 impl StepReplayCapsule {
@@ -309,10 +331,12 @@ impl StepReplayCapsule {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutorStepStart {
     /// The start body (its encoded prefix row, its config, its teaching
-    /// fingerprint), owned by the run, as the wall admitted it.
+    /// fingerprint), owned by the run, as the wall admitted it. FIX 4192:
+    /// this is the body's manifest; the run holds the body as shared
+    /// pieces the manifest names.
     pub body: OutputRef,
     pub path: String,
-    /// BLAKE3 of the body bytes as stored.
+    /// BLAKE3 of the whole body bytes as stored, its pieces put together.
     pub digest: [u8; 32],
     /// The bridge log's length at the step's start.
     pub bridge_start: u64,

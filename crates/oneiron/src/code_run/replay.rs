@@ -12,21 +12,20 @@ use super::codec::{
     CODE_RUN_RAW_OUTPUT_KEYS, CODE_RUN_REPLAY_RECORD_KEYS, CODE_RUN_STEP_CHECKPOINT_KEYS,
 };
 use super::payload::{
-    decode_self_dispatch_outcome, replay_denied_trap_error, replay_failed_trap_error,
-    self_call_request_value, self_dispatch_outcome_value,
+    decode_self_dispatch_outcome, self_call_request_value, self_dispatch_outcome_value,
 };
-use super::spawn_replay::replay_request_match;
 use super::support::{
     code_run_layout_hash, expect_map, invalid_code_run_replay, map_get, str_value, u64_value,
     validate_text,
 };
-use super::types::{
-    SelfCall, SelfDispatchOutcome, SelfDispatcher, SelfEffect, SelfSpeechCall, SelfSpeechResult,
-};
+use super::types::{SelfCall, SelfDispatchOutcome, SelfEffect, SelfSpeechCall, SelfSpeechResult};
 mod checkpoint;
+mod cursor;
+mod pending_step;
 mod position;
 
 pub use self::checkpoint::CodeRunStepCheckpoint;
+pub use self::pending_step::PendingCodeStep;
 
 pub const CODE_RUN_REPLAY_SCHEMA_VERSION: u64 = 2;
 pub const CODE_RUN_RNG_SEED_LEN: usize = 32;
@@ -647,6 +646,10 @@ pub struct CodeRunReplayRecord {
     /// Skills loaded and other runs' result rows read so far (FIX 6999).
     /// `None` once any such constituent read is unknown.
     pub callable_rows: Option<Vec<EntityId>>,
+    /// The step its deadline stopped before its program ended (FIX 7703):
+    /// the run's next entry runs that stored program again before any new
+    /// model turn. `None` while no step is pending.
+    pub pending_step: Option<PendingCodeStep>,
     /// Decoded row memos, never part of the replay codec or ABI (FIX 837).
     /// Any future in-place prefix outcome rewrite must invalidate them.
     pub(crate) verb_rows_cache: VerbRowsCache,
@@ -705,6 +708,8 @@ pub struct CodeRunReplayGeneration {
     pub step_checkpoint_count: u64,
     pub output_count: u64,
     pub last_state_hash: [u8; CODE_RUN_REPLAY_HASH_LEN],
+    /// The pending step's digest, zero while none is pending (FIX 7703).
+    pub pending_digest: [u8; CODE_RUN_REPLAY_HASH_LEN],
 }
 
 impl CodeRunReplayGeneration {
@@ -722,6 +727,10 @@ impl CodeRunReplayGeneration {
                 .map_or([0; CODE_RUN_REPLAY_HASH_LEN], |checkpoint| {
                     checkpoint.state_hash
                 }),
+            pending_digest: match &record.pending_step {
+                Some(pending) => super::codec::pending_step_digest(pending)?,
+                None => [0; CODE_RUN_REPLAY_HASH_LEN],
+            },
         })
     }
 }
@@ -791,6 +800,7 @@ impl CodeRunReplayRecord {
             bindings: Vec::new(),
             live_run: None,
             callable_rows: Some(Vec::new()),
+            pending_step: None,
             verb_rows_cache: VerbRowsCache::default(),
         }
     }
@@ -968,72 +978,5 @@ impl<'a> CodeRunReplayCursor<'a> {
     #[must_use]
     pub fn is_complete(&self) -> bool {
         self.consumed() == self.record.bridge_calls.len()
-    }
-}
-
-impl SelfDispatcher for CodeRunReplayCursor<'_> {
-    fn dispatch(&self, call: SelfCall) -> Result<SelfDispatchOutcome> {
-        let index = self.next.get();
-        let stored = self
-            .record
-            .bridge_calls
-            .get(index)
-            .ok_or(invalid_code_run_replay(
-                "code-run replay bridge log exhausted",
-            ))?;
-        if stored.seq != index as u64 {
-            return Err(invalid_code_run_replay("code-run replay bridge seq drift"));
-        }
-        if stored.effect != call.effect() {
-            return Err(invalid_code_run_replay("code-run replay effect mismatch"));
-        }
-
-        // ONE-1686: replay re-stamps the HOST-owned bridge identity from the
-        // PERSISTED row — its seq and its start clock — exactly as the live
-        // bridge stamps it at dispatch. Guest code supplies neither on either
-        // path, so a replayed speech call cannot claim a different position or
-        // timestamp than the one its bubble was written under, and an
-        // unstamped re-dispatch cannot fail the comparison below for a
-        // difference the guest was never allowed to control.
-        let call = call.with_bridge_stamp(stored.seq, stored.started_at_ms);
-        let request = self_call_request_value(&call)?;
-        // A spawn row's erased ask answers only from a coherent row (FIX 9180).
-        stored.validate_spawn_coherence()?;
-        // A stored request keeps the handles the side-row wall placed where
-        // the live call still holds the secrets (OF-067). This cursor issues
-        // nothing, so a spawn's miss (FIX 7447) is a mismatch here.
-        // A re-offered call meets its row by the guest's original request;
-        // hooks never run on replay (FIX 1442 H4: match stays on original).
-        if !replay_request_match(stored.effect, &stored.request, &request)?.is_hit() {
-            return Err(invalid_code_run_replay("code-run replay request mismatch"));
-        }
-        // A cursor can be built from an in-memory record that never passed the
-        // codec. Recheck speech effect/request/result coherence here before the
-        // stored outcome can reach the guest.
-        stored.validate_speech_coherence()?;
-
-        let outcome = decode_self_dispatch_outcome(&stored.outcome)?;
-        self.next.set(index + 1);
-        match outcome {
-            // A refused SDK verb reached the guest as a typed refusal it could
-            // handle, so replay hands back that same refusal, not a gate trap.
-            SelfDispatchOutcome::Denied(result)
-                if stored.effect == SelfEffect::AgentVerb
-                    && result.effect == SelfEffect::AgentVerb =>
-            {
-                Ok(SelfDispatchOutcome::Denied(result))
-            }
-            // So did a host door's refusal of a call the run serves itself. A
-            // gate's denial carries the gate's own outcome word and replays as
-            // the trap it was; a door's code is never one.
-            SelfDispatchOutcome::Denied(result)
-                if crate::error::GateDenialOutcome::parse(&result.outcome).is_none() =>
-            {
-                Ok(SelfDispatchOutcome::Denied(result))
-            }
-            SelfDispatchOutcome::Denied(result) => Err(replay_denied_trap_error(&result)),
-            SelfDispatchOutcome::Failed(result) => Err(replay_failed_trap_error(&result)),
-            outcome => Ok(outcome),
-        }
     }
 }
