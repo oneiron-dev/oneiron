@@ -10010,6 +10010,10 @@ class ResearchExplorationWire(TypedDict):
 class RsiOverdraftReceipt(TypedDict):
     share: str
     units: int
+    reservation: str
+    vault: str
+    public_key: str
+    signature: str
 class ResearchReservationWire(TypedDict):
     id: EntityId
     line: ResearchReservationLine
