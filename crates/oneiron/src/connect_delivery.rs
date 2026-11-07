@@ -21,6 +21,8 @@ pub struct ConnectExportRequest {
 pub struct ConnectDelivery {
     pub body: ConnectWindow,
     pub signature: String,
+    /// Unsigned export-preparation metadata; rejoin never uses it as authority.
+    pub travel_receipt: Option<crate::share_travel::GuestWindowTravelNote>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
