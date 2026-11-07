@@ -318,7 +318,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/model_decision/catalogue.rs` | src | m | 1 struct · 1 fn · 51 const | QuestionFamily | The engine's registered typed-question families, in one place |
 | `src/model_decision/codec.rs` | src | s | 7 fn · 3 mod | — | Canonical entity references for typed-decision wire records |
 | `src/model_decision/mod.rs` | src | s | 3 mod · 9 re-export | — | Model-independent typed decision vocabulary and pure policy values |
-| `src/model_decision/policy.rs` | src | s | 7 struct · 2 enum · 11 fn · 1 const | BandMode, DecisionBandEnforceRequest, DecisionBandLearnRequest, DecisionBandPolicy, DecisionBandReadRequest, LearnedBand, PersonThreshold, Reversibility +1 | Question- and reversibility-scoped escalation bands; learning starts in shadow |
+| `src/model_decision/policy.rs` | src | s | 7 struct · 2 enum · 11 fn · 1 re-export | BandMode, DecisionBandEnforceRequest, DecisionBandLearnRequest, DecisionBandPolicy, DecisionBandReadRequest, LearnedBand, PersonThreshold, Reversibility +1 | Question- and reversibility-scoped escalation bands; learning starts in shadow |
 | `src/model_decision/provider.rs` | src | s | 3 struct · 7 fn · 3 const | PairedAnswer, ProviderCapability, ProviderDecision | Provider answer values, capabilities, and score-level rules |
 | `src/model_decision/questions/mod.rs` | src | s | 2 re-export | — | Graph-question recipe and outcome vocabulary |
 | `src/model_decision/questions/recipe.rs` | src | s | 2 struct | GraphQuestionInput, GraphQuestionRef | Graph-question identities and explicit evidence joins |
@@ -612,11 +612,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/write_envelope/identity_reputation.rs` | src | m | 3 struct · 4 enum · 16 fn · 17 const | EmailReputationWebhookSignal, IdentityAttestationTier, IdentityReputation, IdentityReputationSignal, IdentityReputationStatus, IdentitySendRateClamp, IdentityWarmupStage | Sender reputation values, wire predicates, and pure claim validation |
 | `src/write_envelope/learning_predicate.rs` | src | s | 1 fn · 5 const · 1 re-export | — | The measured-state claim family and its namespace classifier |
 | `src/write_envelope/person_identity.rs` | src | s | 3 fn | — | Identity-bearing facet classification and canonical PERSON body maps |
-| `src/write_envelope/profile_snapshot/codec.rs` | src | s | 11 fn · 1 re-export | — | Canonical MessagePack encode/decode and field validation helpers |
+| `src/write_envelope/profile_snapshot/codec.rs` | src | s | 1 enum · 12 fn · 1 re-export | PsychProfileBodyEnvelope | Canonical MessagePack encode/decode and field validation helpers |
 | `src/write_envelope/profile_snapshot/codec/source_pages.rs` | src | s | 1 const · 4 crate-vis | — | The paged source frames of a PSYCH_PROFILE body (FIX 10054, Rule 5): a size bound is a codec frame, never a… |
 | `src/write_envelope/profile_snapshot/keys.rs` | src | s | 1 struct · 1 fn | PsychProfileKey | Stable Person x Facet x World addressing and entity-id derivation |
 | `src/write_envelope/profile_snapshot/mod.rs` | src | s | 3 mod · 5 re-export | — | Profile snapshot records, addressing and canonical MessagePack codec |
-| `src/write_envelope/profile_snapshot/record.rs` | src | s | 3 struct · 3 enum · 6 fn · 18 const · 2 crate-vis | PsychProfile, PsychProfileConfidence, PsychProfileSnapshotStatus, PsychProfileSource, PsychProfileStaleReason, PsychProfileState | Snapshot record types, projections, and constructors/validators |
+| `src/write_envelope/profile_snapshot/record.rs` | src | m | 4 struct · 6 enum · 8 fn · 19 const · 2 crate-vis | PsychProfile, PsychProfileByteRange, PsychProfileConfidence, PsychProfileSnapshotStatus, PsychProfileSource, PsychProfileSourceWords, PsychProfileSpanText, PsychProfileStaleReason +2 | Snapshot record types, projections, and constructors/validators |
 | `src/write_envelope/provenance/actor_stamp.rs` | src | s | 1 struct | ActorStamp | Opaque actor stamp identity |
 | `src/write_envelope/provenance/actor_substrate.rs` | src | s | 6 fn · 1 const | — | Actor-class validation and model substrate codec |
 | `src/write_envelope/provenance/codec.rs` | src | m | 1 struct · 5 fn | EdgeProvenanceClaimBody | Edge-provenance value record and its fail-closed MessagePack gate |

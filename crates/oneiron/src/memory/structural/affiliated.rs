@@ -301,6 +301,7 @@ impl Memory<'_> {
         } else {
             config.default_admission
         };
+        let lane = self.core_write_lane()?;
         let admit = |approval: ClaimApprovalStatus| {
             let admission = ImportedEvidenceAdmission::proposed(
                 input.source_id.clone(),
@@ -311,7 +312,12 @@ impl Memory<'_> {
                 learned_at,
             )
             .with_approval(approval);
-            crate::ingest::admit_imported_evidence_claim_for_memory(self.vault, &claim, admission)
+            crate::ingest::admit_imported_evidence_claim_for_memory(
+                self.vault,
+                &claim,
+                admission,
+                lane.as_ref(),
+            )
         };
         match admit(approval) {
             Ok(()) => {}
@@ -384,7 +390,12 @@ pub(crate) fn append_dissent_in_txn(
     let note_id = vault.store.clock.entity_id()?;
     let at = vault.store.clock.now_recorded_at();
     let occurred = TimeRange { start: at, end: at };
-    let mut content = crate::federation::ActorContentTxn::new(vault, txn, actor)?;
+    let mut content = crate::federation::ActorContentTxn::new(
+        vault,
+        txn,
+        actor,
+        crate::core_write::CoreWriteLaneRef::Unbound,
+    )?;
     content.apply_batch(
         vault
             .batch_in()
@@ -457,7 +468,12 @@ pub(crate) fn append_agent_diary_in_txn(
     })?;
     let note_id = vault.store.clock.entity_id()?;
     let occurred = TimeRange { start: at, end: at };
-    let mut content = crate::federation::ActorContentTxn::new(vault, txn, agent)?;
+    let mut content = crate::federation::ActorContentTxn::new(
+        vault,
+        txn,
+        agent,
+        crate::core_write::CoreWriteLaneRef::Unbound,
+    )?;
     content.apply_batch(
         vault
             .batch_in()
