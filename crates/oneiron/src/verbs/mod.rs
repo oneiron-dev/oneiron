@@ -85,6 +85,8 @@ mod skill_fit;
 mod skill_fork;
 mod skills;
 mod standing;
+// FIX 17553: the owner resets a person's step-up passkeys.
+mod step_up;
 mod support_grant;
 #[cfg(feature = "sync")]
 mod sync_quarantine;
@@ -512,6 +514,7 @@ pub use self::skill_execution::*;
 pub use self::skill_fit::*;
 pub use self::skills::*;
 pub use self::standing::*;
+pub use self::step_up::*;
 pub use self::support_grant::*;
 #[cfg(feature = "sync")]
 pub use self::sync_quarantine::*;
