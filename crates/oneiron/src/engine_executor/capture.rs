@@ -9,8 +9,8 @@ use super::driver::EngineNativeExecutor;
 use super::record::{StepEnd, completed_step_count};
 use super::types::{EngineExecutorConfig, EngineExecutorResult};
 use crate::code_run::{
-    CapsuleHost, CodeRunReplayRecord, ExecutorStorage, StepCapture, StepContextCapture,
-    StepContextCommit, StepReplayContext, StepStartCapture, capture_step,
+    CapsuleHost, CodeRunReplayRecord, ConsoleSlot, ExecutorStorage, StepCapture,
+    StepContextCapture, StepContextCommit, StepReplayContext, StepStartCapture, capture_step,
 };
 use crate::{EntityId, Error, LlmRequest};
 
@@ -64,7 +64,8 @@ impl EngineNativeExecutor<'_> {
         ])
     }
 
-    /// Captures `request` before it is sent, with `record`, the run's row as
+    /// Captures `request` before it is sent, with `console`, where it shows
+    /// the step before's console whole (FIX 3608), and `record`, the run's row as
     /// it stands before the step, and the config and teaching fingerprint it
     /// runs under, when the run is a leased attempt's own canonical run (the
     /// run whose id is the attempt's). Step 0's request is the one input no
@@ -83,6 +84,7 @@ impl EngineNativeExecutor<'_> {
         config: &EngineExecutorConfig,
         step: u64,
         request: &LlmRequest,
+        console: Option<ConsoleSlot>,
         record: &CodeRunReplayRecord,
         prompt_fingerprint: &str,
     ) {
@@ -109,6 +111,7 @@ impl EngineNativeExecutor<'_> {
                 request,
                 task: &config.task,
                 exposures,
+                console,
                 source_rows,
                 start: Some(StepStartCapture {
                     record,
@@ -125,8 +128,9 @@ impl EngineNativeExecutor<'_> {
 
     /// The replay context of the step `record` is about to checkpoint, whose
     /// calls are its bridge rows from `bridge_start` on, with what its host
-    /// kept in `capture`: the responses it handed out (FIX 6351) and what its
-    /// result reads saw of reader state (FIX 6352). Beside them, where its
+    /// kept in `capture`: the responses it handed out (FIX 6351), what its
+    /// result reads saw of reader state (FIX 6352) and the callables its
+    /// program called that answered (FIX 3608). Beside them, where its
     /// checkpoint says its calls end (FIX 6354): the end and the
     /// context's digest, which the checkpoint binds, and the context as the
     /// checkpoint commits it. Only a leased attempt's own canonical run
@@ -155,6 +159,7 @@ impl EngineNativeExecutor<'_> {
             bridge_end,
             guest_responses: capture.guest_responses,
             reader_reads: capture.reader_reads,
+            callables: capture.callables,
         };
         let commit = StepContextCommit::new(capsule, context)?;
         let end = StepEnd {
