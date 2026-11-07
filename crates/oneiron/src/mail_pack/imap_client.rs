@@ -37,6 +37,7 @@ const IMAP_TLS: TlsRefusals = TlsRefusals {
     setup: "imap_tls_setup_failed",
     host: "imap_host_invalid",
     unresolved: "imap_host_unresolved",
+    resolution_timed_out: "imap_host_resolution_timed_out",
     connect: "imap_connect_failed",
 };
 

@@ -551,7 +551,8 @@ fn reply_route(row: &MailSourceRow) -> MemoryResult<ReplyRoute> {
 ///
 /// # Errors
 ///
-/// An IMAP mailbox whose submission server could not be asked.
+/// An IMAP mailbox whose submission server could not be asked, or a host
+/// that installs no runner to ask it on.
 fn files_rail(
     vault: &Vault,
     route: ReplyRoute,
@@ -932,7 +933,8 @@ impl Memory<'_> {
         // Files ride a reply from any mailbox; an IMAP one's asks its
         // submission server the size it takes first, before any file is read
         // and before anything is published or asked, and is refused when it
-        // cannot (fix list row 17645).
+        // cannot, on a host with no blocking runner too (fix list row 17645).
+        // No store transaction is open while it asks.
         let rail = if input.attachments.is_empty() {
             None
         } else {
@@ -1365,14 +1367,18 @@ impl Vault {
         // The mailbox's own person, owner of the vault or not: the door
         // acts only on their own mailbox's reply.
         let actor = owner.revalidate_person(self)?;
-        let (row, source) = {
+        // The size check the draft holds as this press reads it, before the
+        // press asks its server again: the writer keeps the new one only
+        // over exactly this one (fix list row 17645). The read is closed
+        // before any server is asked.
+        let (held_size, row, source) = {
             let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
             super::pack::require_pack_active_in(self, &txn)?;
             let row = DRAFTS.get(&self.store, &txn, &id)?.ok_or_else(unknown)?;
             let source = SOURCES
                 .get(&self.store, &txn, &row.source)?
                 .ok_or_else(unknown)?;
-            (row, source)
+            (row.smtp_size.clone(), row, source)
         };
         if source.owner != Some(actor) {
             return Err(MemoryError::bad_request(
@@ -1512,18 +1518,22 @@ impl Vault {
                 ));
             }
             // An IMAP reply with files stands at the size its server named
-            // for this press, or at one a press that asked later landed
-            // first; an older read never replaces a newer one. Either stands
-            // only while it is bound to the mailbox's credential and its
-            // server as they stand in this writer, and to this host's setting
-            // now; a check no longer bound refuses the press, and the next
-            // press asks again. Its exact frozen message is judged against it
-            // below, and the draft keeps it for its reviewer (fix list row
-            // 17645).
-            let verdict = match (&held.smtp_size, &rechecked) {
-                (Some(kept), Some(read)) if kept.read_at > read.read_at => Some(kept.clone()),
-                (_, read) => read.clone(),
-            };
+            // for this press, kept only over the check the draft held when
+            // this press read it: a press that kept another in between wins,
+            // this one is refused, and the next press asks again. No clock
+            // orders two checks. The check stands only while it is bound to
+            // the mailbox's credential and its server as they stand in this
+            // writer, and to this host's setting now; a check no longer
+            // bound refuses the press, and the next press asks again. Its
+            // exact frozen message is judged against it below, and the draft
+            // keeps it for its reviewer (fix list row 17645).
+            if held.smtp_size != held_size {
+                return Err(invalid_state(
+                    "another press asked the mailbox's submission server the size it takes \
+                     since this one read the draft; approve it again",
+                ));
+            }
+            let verdict = rechecked.clone();
             let smtp = held.attached.is_some() && mailbox.provider == MailProvider::Imap;
             if let Some(refusal) =
                 smtp_size_unbound_in(self, txn, verdict.as_ref(), smtp, row.source, &mailbox)?

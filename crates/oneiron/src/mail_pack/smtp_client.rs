@@ -13,11 +13,13 @@
 //!
 //! The server's `EHLO` over TLS names the most octets it takes (`SIZE`, RFC
 //! 1870): a positive number is its limit; `SIZE` absent, with no number or
-//! with 0 names none (fix list row 17645). A message is counted as its CRLF
-//! octets, not its dot-stuffed data or the final `.<CRLF>`, and is refused
-//! before `MAIL` above that limit, else above the limit its caller gives for
-//! a server that names none; where the server offers `SIZE`, `MAIL FROM`
-//! declares the message's octets.
+//! with 0 names none (fix list row 17645). A message with files is counted
+//! as its CRLF octets, not its dot-stuffed data or the final `.<CRLF>`, and
+//! is refused before `MAIL` above that limit, else above the limit its
+//! caller gives for a server that names none; where the server offers
+//! `SIZE`, `MAIL FROM` declares the message's octets. A message without
+//! files is submitted as before. The size check's `QUIT` must be answered
+//! by its deadline; a send's ends the session whatever is answered.
 
 use std::collections::BTreeSet;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -47,6 +49,7 @@ const SMTP_TLS: TlsRefusals = TlsRefusals {
     setup: "smtp_tls_setup_failed",
     host: "smtp_host_invalid",
     unresolved: "smtp_host_unresolved",
+    resolution_timed_out: "smtp_host_resolution_timed_out",
     connect: "smtp_connect_failed",
 };
 
@@ -309,20 +312,22 @@ impl SmtpSession {
     }
 
     /// Submits `message` from `from` to every address of `recipients`, one
-    /// `RCPT` each, its data dot-stuffed. A message above this session's
-    /// limit, the server's own `SIZE` or else `unadvertised_limit`, is
-    /// `smtp_message_too_large` before `MAIL`; where the server offers
-    /// `SIZE`, `MAIL FROM` declares the message's octets (fix list row
-    /// 17645). Any refused envelope command is `smtp_envelope_refused`, as
-    /// for a send to one. A message to several whose recipient is refused
-    /// resets the transaction before `DATA`: no subset of its recipients is
-    /// sent to.
+    /// `RCPT` each, its data dot-stuffed. A message with files comes with
+    /// `unadvertised_limit`, the limit for a server that names none (fix
+    /// list row 17645): above this session's limit, the server's own `SIZE`
+    /// or else that one, it is `smtp_message_too_large` before `MAIL`, and
+    /// where the server offers `SIZE`, `MAIL FROM` declares its octets. A
+    /// message without files comes with `None` and is submitted as it always
+    /// was: no limit judged here, no `SIZE` declared. Any refused envelope
+    /// command is `smtp_envelope_refused`, as for a send to one. A message
+    /// to several whose recipient is refused resets the transaction before
+    /// `DATA`: no subset of its recipients is sent to.
     pub(super) fn submit(
         &mut self,
         from: &str,
         recipients: &[&str],
         message: &[u8],
-        unadvertised_limit: u64,
+        unadvertised_limit: Option<u64>,
     ) -> Submitted {
         if recipients.is_empty()
             || !envelope_address(from)
@@ -330,16 +335,22 @@ impl SmtpSession {
         {
             return Submitted::NotSent("smtp_envelope_address_unsupported");
         }
-        // The message's own CRLF octets, as the frozen message is: not its
-        // dot-stuffed data, nor the final `.<CRLF>` (RFC 1870 §3).
-        let octets = message.len() as u64;
-        if octets > self.size_limit.unwrap_or(unadvertised_limit) {
-            return Submitted::NotSent("smtp_message_too_large");
-        }
-        let mail = if self.extensions.contains("SIZE") {
-            format!("MAIL FROM:<{from}> SIZE={octets}")
-        } else {
-            format!("MAIL FROM:<{from}>")
+        let mail = match unadvertised_limit {
+            None => format!("MAIL FROM:<{from}>"),
+            Some(unadvertised_limit) => {
+                // The message's own CRLF octets, as the frozen message is:
+                // not its dot-stuffed data, nor the final `.<CRLF>` (RFC 1870
+                // §3).
+                let octets = message.len() as u64;
+                if octets > self.size_limit.unwrap_or(unadvertised_limit) {
+                    return Submitted::NotSent("smtp_message_too_large");
+                }
+                if self.extensions.contains("SIZE") {
+                    format!("MAIL FROM:<{from}> SIZE={octets}")
+                } else {
+                    format!("MAIL FROM:<{from}>")
+                }
+            }
         };
         match self.command(&mail) {
             Ok(250) => {}
@@ -388,10 +399,27 @@ impl SmtpSession {
         }
     }
 
-    /// Ends the session; what the server answers changes nothing.
+    /// Ends the session after a send; what the server answers changes
+    /// nothing: the send's outcome is already known.
     pub(super) fn quit(mut self) {
         if self.command("QUIT").is_err() {
             tracing::debug!("smtp session ended without its QUIT answered");
+        }
+    }
+
+    /// Ends the session and requires the server's answer, within the command
+    /// deadline (fix list row 17645): the size check's last step. A `QUIT`
+    /// that times out or loses its connection is `smtp_quit_unanswered`; any
+    /// answer but `221` (RFC 5321 §4.1.1.10) is `smtp_quit_refused`.
+    ///
+    /// # Errors
+    ///
+    /// The `QUIT` unanswered or refused.
+    pub(super) fn quit_answered(mut self) -> Result<()> {
+        match self.command("QUIT") {
+            Ok(221) => Ok(()),
+            Ok(_) => Err(refused("smtp_quit_refused")),
+            Err(_) => Err(refused("smtp_quit_unanswered")),
         }
     }
 
