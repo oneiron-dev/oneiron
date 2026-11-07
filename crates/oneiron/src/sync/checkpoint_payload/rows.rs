@@ -122,8 +122,17 @@ fn pending_note(key: &[u8], value: &[u8]) -> Placement {
 /// admitted (FIX 2375).
 fn note_request(note: EntityId, request: &str, value: &[u8]) -> Option<Vec<OwnerRef>> {
     let queued = PendingNoteRequest::decode(value)?.frame;
-    let frame = frame(queued)
-        .filter(|frame| frame.entity == note && frame.kind == document_sub_tags::NOTE_OPS)?;
+    let frame = frame(queued).filter(|frame| frame.entity == note)?;
+    if frame.kind == document_sub_tags::NOTE_FORK_UPLOAD {
+        // A fork upload's marker names its fork and holds no text; the fork
+        // stays in its own rows (FIX 12789).
+        let (upload, _, operations) =
+            crate::note::NoteForkUpload::decode_payload(frame.payload).ok()?;
+        return (upload.fork.to_hex() == request && operations.is_empty()).then(Vec::new);
+    }
+    if frame.kind != document_sub_tags::NOTE_OPS {
+        return None;
+    }
     let operation = NoteOperation::decode(frame.payload).ok()?;
     if operation.request_id.to_hex() != request {
         return None;

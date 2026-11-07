@@ -10743,6 +10743,40 @@ async fn vault_members_invitation_slip(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_members_invitation_code(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.members.invitation_code")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.members.invitation_code", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.members.invitation_code", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_members_invitation_code(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_members_change(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -18624,6 +18658,41 @@ async fn vault_secrets_code_run_lifts(
     let mut hooks = facade_hooks_pre(server, call, "vault.secrets.code_run_lifts", value).await?;
     let ran = async {
         let (output, listed) = super::host_doors::vault_secrets_code_run_lifts(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_secrets_code_run_room_lifts(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.secrets.code_run_room_lifts")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.secrets.code_run_room_lifts", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.secrets.code_run_room_lifts", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_secrets_code_run_room_lifts(
             server,
             auth,
             facade_door_input(&mut hooks)?,
@@ -35538,6 +35607,7 @@ async fn vault_channel_identities_provision(
         let (output, listed) = super::host_doors::vault_channel_identities_provision(
             server,
             auth,
+            Some(super::FacadePacedCall::of(call)?),
             facade_door_input(&mut hooks)?,
         )
         .await;
@@ -35572,6 +35642,7 @@ async fn vault_channel_identities_bind(
         let (output, listed) = super::host_doors::vault_channel_identities_bind(
             server,
             auth,
+            Some(super::FacadePacedCall::of(call)?),
             facade_door_input(&mut hooks)?,
         )
         .await;
@@ -35642,6 +35713,7 @@ async fn vault_channel_identities_rotate(
         let (output, listed) = super::host_doors::vault_channel_identities_rotate(
             server,
             auth,
+            Some(super::FacadePacedCall::of(call)?),
             facade_door_input(&mut hooks)?,
         )
         .await;
@@ -35677,6 +35749,7 @@ async fn vault_channel_identities_release(
         let (output, listed) = super::host_doors::vault_channel_identities_release(
             server,
             auth,
+            Some(super::FacadePacedCall::of(call)?),
             facade_door_input(&mut hooks)?,
         )
         .await;
@@ -35717,6 +35790,7 @@ async fn vault_channel_identities_route_inbound(
         let (output, listed) = super::host_doors::vault_channel_identities_route_inbound(
             server,
             auth,
+            Some(super::FacadePacedCall::of(call)?),
             facade_door_input(&mut hooks)?,
         )
         .await;
@@ -42679,6 +42753,14 @@ fn boxed_vault_members_invitation_slip<'a>(
     Box::pin(vault_members_invitation_slip(server, call, input))
 }
 #[inline(never)]
+fn boxed_vault_members_invitation_code<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_members_invitation_code(server, call, input))
+}
+#[inline(never)]
 fn boxed_vault_members_change<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
@@ -44621,6 +44703,14 @@ fn boxed_vault_secrets_code_run_lifts<'a>(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> FacadeRowFuture<'a> {
     Box::pin(vault_secrets_code_run_lifts(server, call, input))
+}
+#[inline(never)]
+fn boxed_vault_secrets_code_run_room_lifts<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_secrets_code_run_room_lifts(server, call, input))
 }
 #[inline(never)]
 fn boxed_vault_secrets_lift_history<'a>(
@@ -50672,6 +50762,9 @@ async fn call_verb_row(
         "vault.members.invitation_slip" => {
             boxed_vault_members_invitation_slip(server, call, input).await
         }
+        "vault.members.invitation_code" => {
+            boxed_vault_members_invitation_code(server, call, input).await
+        }
         "vault.members.change" => boxed_vault_members_change(server, call, input).await,
         "vault.members.remove" => boxed_vault_members_remove(server, call, input).await,
         "vault.members.leave" => boxed_vault_members_leave(server, call, input).await,
@@ -51196,6 +51289,9 @@ async fn call_verb_row(
         }
         "vault.secrets.code_run_lifts" => {
             boxed_vault_secrets_code_run_lifts(server, call, input).await
+        }
+        "vault.secrets.code_run_room_lifts" => {
+            boxed_vault_secrets_code_run_room_lifts(server, call, input).await
         }
         "vault.secrets.lift_history" => boxed_vault_secrets_lift_history(server, call, input).await,
         "vault.secrets.register" => boxed_vault_secrets_register(server, call, input).await,
