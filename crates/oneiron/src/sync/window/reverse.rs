@@ -491,6 +491,12 @@ fn reverse_rematerialize_scan(
             {
                 wrote_any = true;
             }
+            // Engine A: so do its binding and policy closure.
+            if map_contains_binary(&entities_map, &hex_id)
+                && crate::sync::source_audiences::mirror_record(vault, doc, id)?
+            {
+                wrote_any = true;
+            }
             if map_contains_binary(&entities_map, &hex_id)
                 && crate::sync::origin_positions::mirror_local_position(vault, doc, window_key, id)?
             {
@@ -781,6 +787,12 @@ pub(super) fn remove_entity_crdt_carriers(
     if let Some(doc) = loro::ContainerTrait::doc(entities_map) {
         removed |= crate::sync::row_birth::remove_birth_carrier(&doc, id)?;
         removed |= crate::sync::origin_positions::remove_carrier(&doc, id)?;
+    }
+    // So does its binding, and each policy no other binding reaches.
+    if let Some(doc) = loro::ContainerTrait::doc(entities_map)
+        && crate::sync::source_audiences::remove_record(&doc, id)?
+    {
+        removed = true;
     }
     Ok(removed)
 }
