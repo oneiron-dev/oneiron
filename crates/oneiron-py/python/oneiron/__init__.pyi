@@ -648,6 +648,8 @@ class Oneiron:
         @property
         def outbound_calls(self) -> "Oneiron._VaultOutboundCallsVerbs": ...
         @property
+        def outbound(self) -> "Oneiron._VaultOutboundVerbs": ...
+        @property
         def research(self) -> "Oneiron._VaultResearchVerbs": ...
         @property
         def evals(self) -> "Oneiron._VaultEvalsVerbs": ...
@@ -2074,6 +2076,12 @@ class Oneiron:
     class _VaultOutboundCallsRequestVerbs:
         def erase(self, spec: Facade.OutboundCallRequestEraseRequest) -> Facade.OutboundCallRequestErased:
             """The owner erases one outbound call's frozen request, keeping its delivery evidence and accounting."""
+    class _VaultOutboundVerbs:
+        @property
+        def uncertain_send(self) -> "Oneiron._VaultOutboundUncertainSendVerbs": ...
+    class _VaultOutboundUncertainSendVerbs:
+        def answer(self, spec: Facade.UncertainSendAnswer) -> Facade.UncertainSendAnswered:
+            """The owner answers the ask on a scheduled send that may have gone out and that the provider cannot confirm: send it once more, or leave it unsent."""
     class _VaultResearchVerbs:
         def create_child(self, spec: Facade.ResearchChildWire) -> Facade.ResearchChildReceipt:
             """The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave."""

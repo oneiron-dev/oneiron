@@ -487,6 +487,7 @@ vaultRecordsErasePreview(input: unknown): unknown
 vaultRecordsEraseConfirm(input: unknown): unknown
 vaultRecordsEraseSweep(input: unknown): unknown
 vaultOutboundCallsRequestErase(input: unknown): unknown
+vaultOutboundUncertainSendAnswer(input: unknown): unknown
 vaultResearchCreateChild(input: unknown): unknown
 vaultResearchArchive(input: unknown): unknown
 vaultResearchArchiveInstall(input: unknown): unknown

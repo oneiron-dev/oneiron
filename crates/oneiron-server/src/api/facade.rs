@@ -204,6 +204,7 @@ mod sync_quarantine_doors;
 pub(super) mod tests;
 mod trusted_contact_doors;
 pub(super) mod ui_action_routes;
+mod uncertain_send_doors;
 mod usage_repair_doors;
 mod vault_shape_doors;
 mod vector_doors;

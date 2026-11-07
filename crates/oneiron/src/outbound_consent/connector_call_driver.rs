@@ -707,6 +707,11 @@ impl Vault {
             now_ms(),
             &mut *host,
         )?;
+        // FIX 4747 slice 5: the run that made the call no longer runs here;
+        // nothing went, and the call names why.
+        if dispatch.agent_run_stood_down {
+            return Ok(refused(crate::agent_dispatch::AGENT_RUN_STOOD_DOWN));
+        }
         if let ScopedMcpConsentDecision::Escalate(reason) = dispatch.decision {
             *scope_evidence = crate::connector_key::connector_scope_evidence(
                 reason,

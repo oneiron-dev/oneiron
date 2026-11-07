@@ -458,6 +458,7 @@ both bindings and their export-census tests in one change.
 - `vault.records.erase_confirm`
 - `vault.records.erase_sweep`
 - `vault.outbound_calls.request.erase`
+- `vault.outbound.uncertain_send.answer`
 - `vault.research.create_child`
 - `vault.research.archive`
 - `vault.research.archive.install`
