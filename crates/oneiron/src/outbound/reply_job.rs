@@ -361,18 +361,48 @@ impl Vault {
         attempt: AttemptId,
         now: u64,
     ) -> Result<AttemptId> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let successor = self.retry_failed_connector_reply_job_in_txn(&mut wtxn, attempt, now)?;
+        wtxn.commit()?;
+        self.store.notify_attempt_observers();
+        Ok(successor)
+    }
+
+    /// Retries a Failed reply job as the owner, whose proof is revalidated
+    /// in the same writer that checks the predecessor and mints its successor.
+    ///
+    /// # Errors
+    /// The owner proof is no longer valid, or the native retry fails.
+    pub fn retry_failed_connector_reply_job_as(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        attempt: AttemptId,
+        now: u64,
+    ) -> Result<AttemptId> {
+        let mut wtxn = self.store.env.write_txn()?;
+        owner.revalidate_in_txn(self, &wtxn)?;
+        let successor = self.retry_failed_connector_reply_job_in_txn(&mut wtxn, attempt, now)?;
+        wtxn.commit()?;
+        self.store.notify_attempt_observers();
+        Ok(successor)
+    }
+
+    fn retry_failed_connector_reply_job_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        attempt: AttemptId,
+        now: u64,
+    ) -> Result<AttemptId> {
         let queue = AttemptQueue::new(self);
-        let record = queue.get(attempt)?.ok_or(Error::EntityNotFound)?;
+        let record = queue
+            .get_in_txn(wtxn, attempt)?
+            .ok_or(Error::EntityNotFound)?;
         if record.kind != CONNECTOR_REPLY_JOB_KIND {
             return Err(Error::InvalidConfig(
                 "the attempt is not a connector reply job".to_owned(),
             ));
         }
-        let mut wtxn = self.store.env.write_txn()?;
-        let successor = queue.successor_of_failed_in_txn(&mut wtxn, attempt, now)?;
-        wtxn.commit()?;
-        self.store.notify_attempt_observers();
-        Ok(successor.id)
+        Ok(queue.successor_of_failed_in_txn(wtxn, attempt, now)?.id)
     }
 
     /// Keeps `result` as the job's result: the artifact is ensured, then the
