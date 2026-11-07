@@ -5,9 +5,12 @@
 //! `axum::Json` gave for the same answer: the same envelope, compact, its
 //! members in declaration order. The engine's door has answered before the
 //! first byte goes out, so a refusal keeps its status; an answer that fails
-//! once it has begun ends broken, never as a shorter document.
+//! once it has begun ends broken, never as a shorter document. The body has
+//! no exact size, so the response codec sends it as it is, uncompressed.
 
 use std::io::{self, Write};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use axum::body::{Body, Bytes};
@@ -101,14 +104,19 @@ pub(super) fn deliveries_answer(owed: Vec<(u64, RemovalExportFile)>, idle: Durat
 }
 
 /// An `application/json` answer whose body `write` writes on a worker
-/// thread of its own, piece by piece as the client reads. A `write` that
-/// fails ends the body with an error, so the client reads a broken answer.
+/// thread of its own, piece by piece as the client reads. The body ends
+/// cleanly only once `write` and its last piece's send succeeded: a `write`
+/// that fails, a worker that panics or never starts, or a client that stops
+/// reading for `idle` ends it with an error after the pieces already sent,
+/// so the client reads a broken answer, never a shorter one.
 fn json_answer(
     idle: Duration,
     write: impl FnOnce(&mut AnswerWriter) -> io::Result<()> + Send + 'static,
 ) -> Response {
     let (pieces, receiver) = mpsc::channel(2);
     let runtime = Handle::current();
+    let finished = Arc::new(AtomicBool::new(false));
+    let written = Arc::clone(&finished);
     // Detached: the worker answers nobody; it ends with the body.
     drop(crate::api::spawn_worker(move || {
         let mut out = AnswerWriter {
@@ -117,20 +125,28 @@ fn json_answer(
             idle,
             piece: Vec::with_capacity(ANSWER_PIECE),
         };
-        if let Err(error) = write(&mut out).and_then(|()| out.flush()) {
-            tracing::warn!(
+        match write(&mut out).and_then(|()| out.flush()) {
+            // Set before `out`, the last sender, drops.
+            Ok(()) => written.store(true, Ordering::Release),
+            Err(error) => tracing::warn!(
                 kind = ?error.kind(),
                 "a removal archive answer ended unfinished (FIX 21529)"
-            );
-            let ending = io::Error::other("the removal archive answer ended unfinished");
-            let _ = crate::api::send_within(&out.runtime, &out.pieces, Err(ending), idle);
+            ),
         }
     }));
     let mut response = Response::new(Body::from_stream(futures_util::stream::unfold(
-        receiver,
-        |mut receiver| async move {
-            let piece = receiver.recv().await?;
-            Some((piece, receiver))
+        (receiver, Some(finished)),
+        |(mut receiver, finished)| async move {
+            if let Some(piece) = receiver.recv().await {
+                return Some((piece, (receiver, finished)));
+            }
+            // Every sender is gone: the answer ends here, broken unless the
+            // worker finished it.
+            if finished?.load(Ordering::Acquire) {
+                return None;
+            }
+            let ending = io::Error::other("the removal archive answer ended unfinished");
+            Some((Err(ending), (receiver, None)))
         },
     )));
     response.headers_mut().insert(

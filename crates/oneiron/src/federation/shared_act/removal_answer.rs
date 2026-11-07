@@ -116,12 +116,15 @@ impl RemovalExportFile {
         let (head, tail) = self.json_around_archive()?;
         out.write_all(&head)?;
         self.archive.seek(SeekFrom::Start(0))?;
-        let mut encoder = base64::write::EncoderWriter::new(
-            &mut *out,
-            &base64::engine::general_purpose::STANDARD,
-        );
-        std::io::copy(&mut self.archive, &mut encoder)?;
-        encoder.finish()?;
+        {
+            // The encoder borrows `out` until it drops: the tail follows it.
+            let mut encoder = base64::write::EncoderWriter::new(
+                &mut *out,
+                &base64::engine::general_purpose::STANDARD,
+            );
+            std::io::copy(&mut self.archive, &mut encoder)?;
+            encoder.finish()?;
+        }
         out.write_all(&tail)
     }
 
