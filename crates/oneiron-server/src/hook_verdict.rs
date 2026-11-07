@@ -72,9 +72,9 @@ impl ServerHookVerdict {
             .memory(context.grant.reader, context.reader_class())
             .listing_producers(producers);
         // The hook's pack line, resolved here from its binding: every rung
-        // the verdict reaches spends on it once. A hook pulls no image: it
-        // has no credential lane to pull one with, and no browser holds one
-        // for it.
+        // the verdict reaches spends on it once. Images use this same
+        // grant reader and its non-claim-row rules, never a credential or
+        // a browser screenshot.
         let line = server.vault.hook_pack_line(context);
         let (verdict, calls) = crate::decision_verdict::hook::run_hook_verdict(
             &server, context, &line, &memory, &request, evidence,
