@@ -301,6 +301,7 @@ pub(crate) fn calendar_inbox_items(vault: &Vault) -> Result<Vec<AgentInboxLensIt
             occurred_at: card.asked_at,
             receipt_ref: None,
             payload_ref: Some(card.event_ref.to_hex()),
+            approval_digest: None,
             concern: None,
             diary_review: None,
             sender: None,

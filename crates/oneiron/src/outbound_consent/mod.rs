@@ -21,6 +21,7 @@ mod connector_call_input_resume;
 mod connector_call_output;
 mod connector_call_pending;
 mod connector_call_resume;
+mod connector_call_sent;
 mod connector_call_start;
 mod connector_call_types;
 mod connector_elicitation_asks;
@@ -46,8 +47,8 @@ pub use self::authority::{
 pub use self::connector_call::{
     CONNECTOR_REPLY_MAX_BYTES, ConnectorAwaitingInput, ConnectorCallCaller, ConnectorCallHost,
     ConnectorCallInvocation, ConnectorCallOutcome, ConnectorCallRequest, ConnectorCallState,
-    ConnectorQuestion, ConnectorResultAbsence, ConnectorToolSchema, PendingConnectorCallRef,
-    UntrustedToolResult,
+    ConnectorQuestion, ConnectorResultAbsence, ConnectorSource, ConnectorToolSchema,
+    PendingConnectorCallRef, UntrustedToolResult,
 };
 pub(crate) use self::connector_call::{connector_call_effector, held_connector_call_in_txn};
 pub(crate) use self::connector_call_code::{
@@ -62,6 +63,9 @@ pub use self::connector_call_input_resume::{
     ConnectorResumeProtocol, ConnectorResumeState, OpenedConnectorResume,
 };
 pub(crate) use self::connector_call_pending::CONNECTOR_CALL_PENDING_TTL_MS;
+pub use self::connector_call_sent::{
+    ConnectorSentClearer, SentGeneration, SentGenerations, replace_spans,
+};
 pub use self::connector_elicitation_asks::{
     ConnectorElicitationAnswer, ConnectorElicitationOwnerAsk,
 };

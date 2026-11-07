@@ -344,7 +344,7 @@ fn batch_in_txn(
         }
     }
     for (dependent, worlds) in &dependents {
-        integrity::withdraw_dependent_in_txn(write, txn, document, dependent, worlds)?;
+        integrity::withdraw_dependent_in_txn(write, txn, dependent, worlds)?;
     }
     walk.walked = walk.walked.saturating_add(dependents.len() as u64);
     if walk.walked > policy.check_threshold && !CHECK.contains(store, txn, document)? {
@@ -553,7 +553,7 @@ pub(crate) fn withdraw_before_rewrite_in_txn(
         };
         let settled = SETTLED.get(store, txn, &(document, row))?;
         if let Some(worlds) = walk.worlds_for(&row, settled) {
-            integrity::withdraw_dependent_in_txn(write, txn, &document, id, &worlds)?;
+            integrity::withdraw_dependent_in_txn(write, txn, id, &worlds)?;
             SETTLED.put(store, txn, &(document, row), &walk.mark.generation)?;
             direct = true;
         }

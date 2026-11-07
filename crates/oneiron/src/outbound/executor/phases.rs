@@ -6,12 +6,15 @@ use super::*;
 
 /// The dispatch request one claimed attempt of `task` replays: its actor,
 /// audit and ledger identities, frozen delivery-window facts, session,
-/// counterparty and committed calendar invite. `drain_clock` is the vault
-/// clock reading taken with the drain's `now` (FIX 8817).
+/// counterparty, committed calendar invite, and the send executor `lease`
+/// the attempt took, which the transport's fence re-checks (FIX 4747).
+/// `drain_clock` is the vault clock reading taken with the drain's `now`
+/// (FIX 8817).
 pub(super) fn connector_dispatch_request(
     task_ref: EntityId,
     task: &ConnectorSendTask,
     attempt: &crate::attempt_queue::AttemptRecord,
+    lease: SendExecutorLease,
     now: u64,
     drain_clock: u64,
 ) -> OutboundDispatchRequest {
@@ -45,6 +48,9 @@ pub(super) fn connector_dispatch_request(
     // Ledger identity is the logical-send id (derived from the task
     // idempotency key) so fresh retry attempts stay the same paid intent.
     request.ledger_identity_ref = Some(logical_send_intent_ref.clone());
+    // FIX 4747: the transport sends only while the TASK still holds this
+    // exact lease.
+    request.send_executor_fence = Some(SendExecutorFence { task_ref, lease });
     // Local wall-clock time is seeded from the FROZEN offset at THIS
     // attempt's `now`, never from schedule time. No offset ⇒ no local
     // minute ⇒ the door fails closed instead of guessing midnight. The door

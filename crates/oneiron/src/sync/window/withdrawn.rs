@@ -161,8 +161,8 @@ pub(super) fn scrub_withdrawn_generation_carriers(
     };
     // Each cutoff rides the windows that carry its artifact, so another
     // machine of this vault owes the same sweep (OF-013), and each epoch
-    // floor the windows that carry its session, so it numbers past the same
-    // removed epoch (FIX 2867).
+    // floor the windows that carry its session or conversation, so it
+    // numbers past the same removed epoch (FIX 2867, 5029).
     let mirrored = crate::sync::withdrawn_cutoffs::mirror_withdrawn_cutoffs(doc, &cutoffs)?;
     if crate::sync::withdrawn_cutoffs::mirror_epoch_floors(doc, &floors)? || mirrored {
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
