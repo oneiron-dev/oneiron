@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1267 facade rows, 4602 declarations.
+Census: 1267 facade rows, 4604 declarations.
 Inputs: 1197 of 1267 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1099 of 1267 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -3790,12 +3790,18 @@ class WorldRecipientNotice(TypedDict):
     world_name: NotRequired[str | None]
     reason: str
     body: str
+MailboxLeftOutReason = Literal["member_mailbox", "person_not_told", "source_unidentified"]
+class MailboxExportNotice(TypedDict):
+    source_ref: NotRequired[str | None]
+    address: NotRequired[str | None]
+    reason: MailboxLeftOutReason
 class MemoryExport(TypedDict):
     format: str
     archive: str
     digest: str
     holder_requests: NotRequired[list[HolderExportRequest]]
     notices: NotRequired[list[WorldRecipientNotice]]
+    mailbox_notices: NotRequired[list[MailboxExportNotice]]
 class ExportTransfer(TypedDict):
     transfer_ref: str
     format: str
@@ -3803,6 +3809,7 @@ class ExportTransfer(TypedDict):
     digest: str
     holder_requests: NotRequired[list[HolderExportRequest]]
     notices: NotRequired[list[WorldRecipientNotice]]
+    mailbox_notices: NotRequired[list[MailboxExportNotice]]
 ExportAnswer = MemoryExport | ExportTransfer
 class ExportTransferReadRequest(TypedDict):
     transfer_ref: str

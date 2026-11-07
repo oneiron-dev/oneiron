@@ -389,6 +389,9 @@ class ExportReceipt(TypedDict):
     # Each world the owner's own export carries that his recipient choice
     # would keep from where it goes, and why (owner ruling 1-EXPORT = B).
     notices: NotRequired[list[Facade.WorldRecipientNotice]]
+    # Each other member's personal mailbox the owner's own export left out,
+    # and why (fix list row 15416).
+    mailbox_notices: NotRequired[list[Facade.MailboxExportNotice]]
 
 class NativeLimitQuestion(TypedDict):
     # The [limits] row key that asked.

@@ -1438,6 +1438,7 @@ impl Lift<engine::RecallResidence> for RecallResidence {
 impl Lift<engine::MemoryExportReceipt> for ExportReceipt {
     fn lift(receipt: engine::MemoryExportReceipt) -> Result<Self, OneironError> {
         Ok(Self {
+            mailbox_notices: lift_record("vault.export", &receipt.mailbox_notices)?,
             format: receipt.format,
             bytes: receipt.bytes,
             digest: receipt.digest,

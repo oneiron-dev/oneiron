@@ -20,9 +20,11 @@
 //! the row lists them, each recorded or why not; on the same terms again.
 //!
 //! The one exception is a copy that carries another member's personal
-//! mailbox (fix list row 15416, [`crate::mail_pack`]): its row, which counts
-//! those mailboxes, and each mailbox's person's notice are written in one
-//! write before the copy leaves, and a write that does not commit leaves
+//! mailbox, or uses an approval of its Owner's request for one (fix list row
+//! 15416, [`crate::mail_pack`]): whatever its shape, its row, which counts
+//! those mailboxes, each mailbox's person's notice and each approval's use
+//! are written in one write before the copy leaves
+//! ([`record_member_mail_export`]), and a write that does not commit leaves
 //! those mailboxes out of the copy.
 
 use serde::{Deserialize, Serialize};
@@ -123,8 +125,8 @@ pub(crate) struct ExportCopy {
 
 impl ExportCopy {
     /// A whole-vault copy a raw `Vault` door made as `format` for the
-    /// embedded owner `exporter`, whose diaries it read: no act, and no
-    /// length or digest, its sink not being read back.
+    /// embedded owner `exporter`, whose diaries it read: no act; its door
+    /// adds the length and digest it read the copy back with.
     fn raw(
         exporter: EntityId,
         format: &str,
@@ -338,21 +340,25 @@ fn append_in_txn(
     EXPORT_RECEIPTS.put(&vault.store, txn, &sequence, receipt)
 }
 
-/// Records the whole-vault copy a raw `Vault` door wrote to its sink as
-/// `format` for the embedded owner `exporter` ([`record_export`]): no act,
-/// and no length or digest, its sink not being read back.
-pub(crate) fn record_raw_export(
-    vault: &Vault,
+/// The audit of the whole-vault copy a raw `Vault` door made as `format`
+/// for the embedded owner `exporter`, before it releases it: no act, its
+/// length `bytes` and BLAKE3 `digest` as the door read its copy back, and
+/// the thread roots and holder requests its `receipt` carried, taken from
+/// it for the audit.
+pub(crate) fn raw_export_copy(
     exporter: EntityId,
     format: &str,
     receipt: &mut WholeVaultExportReceipt,
-) {
+    bytes: u64,
+    digest: &str,
+) -> ExportCopy {
     let roots = std::mem::take(&mut receipt.thread_roots);
-    let copy = ExportCopy {
+    ExportCopy {
+        bytes: Some(bytes),
+        digest: Some(digest.to_owned()),
         holder_requests: std::mem::take(&mut receipt.holder_requests),
         ..ExportCopy::raw(exporter, format, receipt.diary_reads.clone(), roots)
-    };
-    receipt.holder_requests = record_export(vault, copy);
+    }
 }
 
 /// Records the whole-vault JSON bundle `json` a raw `Vault` door encoded
@@ -376,72 +382,147 @@ pub(crate) fn record_raw_json_export(vault: &Vault, json: &[u8], roots: ExportTh
 
 /// Records the whole-vault JSON bundle `json` a raw `Vault` door encoded,
 /// which carries other members' personal mailboxes (fix list row 15416),
-/// before a byte of it leaves: under one export id, its audit row with its
-/// length, digest and how many such mailboxes it carries, and each
-/// mailbox's person's notice ([`crate::mail_pack::tell_member_mailboxes_in_txn`]),
-/// in one write. Nothing here is best effort: whatever this meets before the
-/// commit fails the write and nothing of it stands, and the door then leaves
-/// those mailboxes out of the copy. Once the write commits, its row and
-/// notices stand and this answers `Ok`: a step the write door runs after the
-/// commit that fails is logged, never read as a rollback, so the copy keeps
-/// its one export id. Each private thread it carries, `roots`, is told as
-/// [`record_export`] tells it.
+/// before a byte of it leaves ([`record_member_mail_export`]): its length
+/// and digest, no act, and each private thread it carries, `roots`.
 ///
 /// # Errors
 ///
-/// The write did not commit: a mailbox no longer goes with the copy, or a
-/// storage failure.
+/// As [`record_member_mail_export`].
 pub(crate) fn record_member_mail_json_export(
     vault: &Vault,
     json: &[u8],
-    roots: &ExportThreadRoots,
+    roots: ExportThreadRoots,
     mailboxes: &crate::mail_pack::CarriedMemberMailboxes,
 ) -> crate::Result<()> {
-    let exporter = mailboxes.exporter();
+    let copy = ExportCopy {
+        bytes: u64::try_from(json.len()).ok(),
+        digest: Some(blake3::hash(json).to_hex().to_string()),
+        ..ExportCopy::raw(mailboxes.exporter(), EXPORT_FORMAT_JSON, Vec::new(), roots)
+    };
+    record_member_mail_export(vault, copy, mailboxes).map(drop)
+}
+
+/// Records `copy`, an Owner's copy of whatever shape that carries other
+/// members' personal mailboxes, or uses an approval of its Owner's request
+/// for one (fix list row 15416), before a byte of it leaves: under one export
+/// id, in one write, each mailbox's person's notice and each approval's use
+/// ([`crate::mail_pack::tell_member_mailboxes_in_txn`]), the owner's act and
+/// the custody values the copy carried as their handles as [`record_export`]
+/// records them, its audit row with how many such mailboxes it carries, and
+/// each private thread it carries told as [`record_export`] tells it. Such a
+/// copy is never also recorded through [`record_export`]. Nothing here but
+/// the act and the holder requests, which [`record_export`] records best
+/// effort too, is best effort: whatever this meets before the commit fails
+/// the write and nothing of it stands, and the copy's door then leaves
+/// those mailboxes out of the copy. Once the write commits, its row and
+/// notices stand and this answers where each custody value stands for its
+/// holder (FIX 4624(b)): a step the write door runs after the commit that
+/// fails is logged, never read as a rollback, so the copy keeps its one
+/// export id.
+///
+/// # Errors
+///
+/// The write did not commit: a mailbox or an approval no longer goes with
+/// the copy, or a storage failure.
+pub(crate) fn record_member_mail_export(
+    vault: &Vault,
+    copy: ExportCopy,
+    mailboxes: &crate::mail_pack::CarriedMemberMailboxes,
+) -> crate::Result<Vec<HolderExportRequest>> {
+    let ExportCopy {
+        scope,
+        exporter,
+        format,
+        bytes,
+        digest,
+        by,
+        diary_reads,
+        act,
+        thread_roots,
+        holder_requests,
+        recipient,
+    } = copy;
     let export = vault.new_entity_id()?;
-    // Set once the write is durable, before the steps the door runs after it.
-    let mut committed = false;
+    let needs: Vec<_> = holder_requests
+        .iter()
+        .map(HolderExportRequest::need)
+        .collect();
+    // Set once the write is durable, to what it recorded, before the steps
+    // the door runs after it.
+    let mut committed = None;
     let written = vault.write_txn_door_after_commit(
         crate::store::Callback::Opaque,
-        |txn| -> crate::Result<()> {
+        |txn| -> crate::Result<Vec<HolderExportRequest>> {
             // The id's allocation floor is kept with the row that names it.
             let at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
             let told =
                 crate::mail_pack::tell_member_mailboxes_in_txn(vault, txn, mailboxes, export, at)?;
+            // The signed record goes before the holder requests, which link
+            // it, and both before the row, which lists them, as
+            // [`record_export`] writes them.
+            let export_act = act.and_then(|act| {
+                vault.record_export_act_op_in_txn(
+                    txn,
+                    act,
+                    export,
+                    &format,
+                    bytes,
+                    digest.as_deref(),
+                )
+            });
+            let holder_requests = vault.record_holder_export_requests_in_txn(
+                txn,
+                HolderExportBasis {
+                    act,
+                    export,
+                    digest: digest
+                        .as_deref()
+                        .and_then(|hex| blake3::Hash::from_hex(hex).ok())
+                        .map(|hash| *hash.as_bytes()),
+                    export_act,
+                    recipient,
+                    needs: &needs,
+                },
+            );
             let receipt = ExportReceipt {
                 export,
-                scope: ExportAuditScope::WholeVault,
+                scope,
                 exporter,
                 at,
-                format: EXPORT_FORMAT_JSON.to_owned(),
-                bytes: u64::try_from(json.len()).ok(),
-                digest: Some(blake3::hash(json).to_hex().to_string()),
-                by: exporter.to_hex(),
-                diary_reads: Vec::new(),
-                act: None,
-                holder_requests: Vec::new(),
+                format,
+                bytes,
+                digest,
+                by,
+                diary_reads,
+                act,
+                holder_requests,
                 member_mailboxes: Some(told),
             };
             append_in_txn(vault, txn, &receipt)?;
             crate::workspace_roster::notify_exported_threads_in_txn(
-                vault, txn, roots, exporter, export,
+                vault,
+                txn,
+                &thread_roots,
+                exporter,
+                export,
             );
-            Ok(())
+            Ok(receipt.holder_requests)
         },
-        |()| {
-            committed = true;
-            Ok(())
+        |holder_requests| {
+            committed = Some(holder_requests.clone());
+            Ok(holder_requests)
         },
     );
-    match written {
-        Err(error) if committed => {
+    match (written, committed) {
+        (Err(error), Some(holder_requests)) => {
             tracing::warn!(
+                export = %export.to_hex(),
                 %error,
-                "JSON export: its audit row and notices are written; a step after the write failed"
+                "export: its audit row and the members' notices are written; a step after the write failed"
             );
-            Ok(())
+            Ok(holder_requests)
         }
-        written => written,
+        (written, _) => written,
     }
 }
 

@@ -106,6 +106,14 @@ pub struct WholeVaultExportReceipt {
     /// that his recipient choice would keep from where it goes, and why.
     /// None on this device.
     pub(crate) notices: Vec<crate::share_travel::WorldRecipientNotice>,
+    /// Fix list row 15416: each other member's personal mailbox the owner's
+    /// own copy left out, named to him, beside the world notices and never
+    /// inside them. None outside an Owner's copy.
+    pub(crate) mailbox_notices: Vec<crate::mail_pack::MailboxExportNotice>,
+    /// The other members' personal mailboxes the copy carries, each person
+    /// told, and each approval it uses used, before a byte of it leaves.
+    /// Taken by the copy's release; never serialized.
+    pub(crate) member_mail: Option<crate::mail_pack::CarriedMemberMailboxes>,
 }
 
 impl WholeVaultExportReceipt {
@@ -125,6 +133,11 @@ impl WholeVaultExportReceipt {
     pub fn notices(&self) -> &[crate::share_travel::WorldRecipientNotice] {
         &self.notices
     }
+    /// Fix list row 15416: each other member's personal mailbox this
+    /// Owner's copy left out, and why.
+    pub fn mailbox_notices(&self) -> &[crate::mail_pack::MailboxExportNotice] {
+        &self.mailbox_notices
+    }
 }
 
 /// An archive payload in memory and its standalone validating manifest, for a
@@ -139,6 +152,8 @@ pub struct WholeVaultExport {
     pub(crate) diary_reads: Vec<super::ExportDiaryRead>,
     /// As [`WholeVaultExportReceipt::notices`].
     pub(crate) notices: Vec<crate::share_travel::WorldRecipientNotice>,
+    /// As [`WholeVaultExportReceipt::mailbox_notices`].
+    pub(crate) mailbox_notices: Vec<crate::mail_pack::MailboxExportNotice>,
 }
 
 impl WholeVaultExport {
@@ -152,6 +167,10 @@ impl WholeVaultExport {
     /// As [`WholeVaultExportReceipt::notices`].
     pub fn notices(&self) -> &[crate::share_travel::WorldRecipientNotice] {
         &self.notices
+    }
+    /// As [`WholeVaultExportReceipt::mailbox_notices`].
+    pub fn mailbox_notices(&self) -> &[crate::mail_pack::MailboxExportNotice] {
+        &self.mailbox_notices
     }
     pub fn manifest(&self) -> &WholeVaultDocumentManifest {
         &self.manifest

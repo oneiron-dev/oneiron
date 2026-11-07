@@ -426,6 +426,13 @@ impl<'v> DocumentWriter<'v> {
         self.side_withheld.extend(withheld);
     }
 
+    /// Every entity row this writer carried, the diaries whose read was not
+    /// logged among them until [`Self::finish`] leaves those out (fix list
+    /// row 15416: what an Owner's copy carries of members' mailboxes).
+    pub(crate) const fn carried_rows(&self) -> &BTreeSet<EntityId> {
+        &self.carried_ids
+    }
+
     /// Builds the agent bundles and the manifest, then writes the archive, or
     /// the OKF bundle, to `sink`.
     pub(crate) fn finish<W: Write + Seek>(
@@ -590,6 +597,8 @@ impl<'v> DocumentWriter<'v> {
                 thread_roots: Default::default(),
                 holder_requests: Vec::new(),
                 notices: Vec::new(),
+                mailbox_notices: Vec::new(),
+                member_mail: None,
             },
         ))
     }

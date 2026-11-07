@@ -122,6 +122,8 @@ impl KeptRemovalCopy {
                 // A removal's records archive follows the world settings, so
                 // it names no world it carried past them.
                 notices: Vec::new(),
+                // Nor is it an Owner's copy: no member's mailbox to name.
+                mailbox_notices: Vec::new(),
             },
         }
     }

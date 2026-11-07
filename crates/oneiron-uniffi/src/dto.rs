@@ -1129,4 +1129,10 @@ pub struct ExportReceipt {
     pub bytes: u64,
     /// BLAKE3 of the archive, lowercase hex.
     pub digest: String,
+    /// Each other member's personal mailbox the owner's own export left
+    /// out, and why (fix list row 15416).
+    pub mailbox_notices: Vec<crate::facade_types_generated::MailboxExportNotice>,
 }
+
+// The canonical notice contains only Eq fields; generated records derive PartialEq.
+impl Eq for crate::facade_types_generated::MailboxExportNotice {}

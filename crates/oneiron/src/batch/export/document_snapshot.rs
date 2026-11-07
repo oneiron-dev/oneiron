@@ -4,8 +4,9 @@
 //! serializer as it is read (FIX 2766): the snapshot holds ids and indexes,
 //! never the vault's bodies.
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Seek, Write};
 
+use super::copy_release::{MailboxLineage, MemberMailPass};
 use super::snapshot_body::{asset_folded, row_body, row_live_in_txn};
 use super::{
     ArchiveSecretCustody, ExportAdapterDescriptor, ExportCut, ExportDiaryLedger, ExportEdge,
@@ -90,32 +91,26 @@ impl Vault {
     ///
     /// Its diary reads are the vault owner's (OF-490).
     pub fn export_whole_vault(&self, include_secrets: bool) -> Result<WholeVaultExport> {
-        self.export_in_memory(|vault, spool| vault.export_whole_vault_to(include_secrets, spool))
+        self.export_in_memory(ExportCut::Archive, include_secrets)
     }
 
-    /// [`Self::export_whole_vault`] written to `sink` as it is built (FIX
-    /// 2766): the rows are spooled under the vault's staging directory and
-    /// copied into the ZIP one member and one file at a time, so a vault
-    /// larger than memory exports. The copy is the owner's, in the vault's
-    /// export audit, and each private thread it carries that he is not in is
-    /// told of it (FIX 6427).
+    /// [`Self::export_whole_vault`] written to `sink` (FIX 2766): the rows
+    /// are spooled under the vault's staging directory and copied into the
+    /// ZIP one member and one file at a time, so a vault larger than memory
+    /// exports. The copy is the owner's, in the vault's export audit, and
+    /// each private thread it carries that he is not in is told of it (FIX
+    /// 6427). It is made in a spool only this engine reads and reaches
+    /// `sink` once it is recorded: one that carries another member's
+    /// personal mailbox, once each mailbox's person is told (fix list row
+    /// 15416).
     pub fn export_whole_vault_to<W: Write + Seek>(
         &self,
         include_secrets: bool,
-        sink: W,
+        mut sink: W,
     ) -> Result<WholeVaultExportReceipt> {
-        let reader = owner_reader()?;
-        let (_, mut receipt) = self.export_whole_vault_with_admission(
-            CallerLocality::OnDevice,
-            include_secrets,
-            reader,
-            true,
-            |_| Ok::<_, Error>(()),
-            sink,
-        )?;
-        let format = crate::serialize::EXPORT_TARGET_ARCHIVE;
-        crate::memory::record_raw_export(self, reader.entity_ref(), format, &mut receipt);
-        Ok(receipt)
+        let mut copy = self.raw_owner_copy(ExportCut::Archive, include_secrets)?;
+        copy.release_to(&mut sink)?;
+        Ok(copy.receipt)
     }
 
     /// The archive of exactly `records` and the graph between them, for a
@@ -144,6 +139,7 @@ impl Vault {
             false,
             reader,
             false,
+            MemberMailPass::Exempt,
             |rtxn| {
                 frozen = Some(freeze(rtxn)?);
                 Ok::<_, Error>(())
@@ -160,27 +156,43 @@ impl Vault {
     /// custody secret and does not re-import as a vault. The same diary reads
     /// and credential nulling as the archive apply.
     pub fn export_okf(&self) -> Result<WholeVaultExport> {
-        self.export_in_memory(|vault, spool| vault.export_okf_to(spool))
+        self.export_in_memory(ExportCut::Okf, false)
     }
 
-    /// [`Self::export_okf`] written to `sink` as it is built (FIX 2766), in
-    /// the vault's export audit as the archive is (FIX 6427).
-    pub fn export_okf_to<W: Write + Seek>(&self, sink: W) -> Result<WholeVaultExportReceipt> {
+    /// [`Self::export_okf`] written to `sink` (FIX 2766), in the vault's
+    /// export audit and released once it is recorded, as the archive is (FIX
+    /// 6427, fix list row 15416).
+    pub fn export_okf_to<W: Write + Seek>(&self, mut sink: W) -> Result<WholeVaultExportReceipt> {
+        let mut copy = self.raw_owner_copy(ExportCut::Okf, false)?;
+        copy.release_to(&mut sink)?;
+        Ok(copy.receipt)
+    }
+
+    /// The embedded owner's own copy `cut` through a raw `Vault` door, made,
+    /// recorded once and ready to release ([`Self::release_owner_copy`]):
+    /// its diary reads are the vault owner's (OF-490).
+    fn raw_owner_copy(&self, cut: ExportCut, include_secrets: bool) -> Result<super::ReleasedCopy> {
         let reader = owner_reader()?;
-        let (_, mut receipt) = self.export_okf_with_admission(
-            CallerLocality::OnDevice,
-            reader,
-            true,
+        let format = match cut {
+            ExportCut::Archive => crate::serialize::EXPORT_TARGET_ARCHIVE,
+            ExportCut::Okf => crate::serialize::EXPORT_TARGET_OKF,
+        };
+        self.release_owner_copy(
+            &super::OwnerCopyPass {
+                destination: CallerLocality::OnDevice.into(),
+                cut,
+                include_secrets,
+                reader,
+            },
             |_| Ok::<_, Error>(()),
-            sink,
-        )?;
-        let format = crate::serialize::EXPORT_TARGET_OKF;
-        crate::memory::record_raw_export(self, reader.entity_ref(), format, &mut receipt);
-        Ok(receipt)
+            |receipt, bytes, digest| {
+                crate::memory::raw_export_copy(reader.entity_ref(), format, receipt, bytes, digest)
+            },
+        )
     }
 
     /// `owner_export` as [`Self::export_whole_vault_with_admission`] takes
-    /// it.
+    /// it, written to `sink` as it is built.
     pub(crate) fn export_okf_with_admission<W: Write + Seek, E: From<Error>>(
         &self,
         destination: impl Into<ReadDestination>,
@@ -196,6 +208,7 @@ impl Vault {
             false,
             reader,
             owner_export,
+            MemberMailPass::Exempt,
             admit,
             sink,
         )
@@ -217,6 +230,10 @@ impl Vault {
     /// the world settings as before the ruling: no row of a world they
     /// withhold from `destination`, no run's results or vault-wide row off
     /// this device, and no notice.
+    /// It writes to `sink` as it is built, and the members' mailbox rule
+    /// does not judge it: the owner's own copy is made, recorded and only
+    /// then released through [`Self::release_owner_copy`] (fix list row
+    /// 15416).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn export_whole_vault_with_admission<W: Write + Seek, E: From<Error>>(
         &self,
@@ -234,36 +251,38 @@ impl Vault {
             include_secrets,
             reader,
             owner_export,
+            MemberMailPass::Exempt,
             admit,
             sink,
         )
     }
 
-    /// An export built through a spool file and read back whole, for a door
-    /// that answers in one frame.
-    fn export_in_memory(
-        &self,
-        export: impl FnOnce(&Self, &mut std::fs::File) -> Result<WholeVaultExportReceipt>,
-    ) -> Result<WholeVaultExport> {
-        let mut spool = self.archive_spool_file()?;
-        let receipt = export(self, &mut spool)?;
-        spool.seek(SeekFrom::Start(0))?;
-        let mut bytes = Vec::new();
-        spool.read_to_end(&mut bytes)?;
+    /// The embedded owner's own copy `cut`, built through a spool file and
+    /// read back whole once it is recorded, for a door that answers in one
+    /// frame.
+    fn export_in_memory(&self, cut: ExportCut, include_secrets: bool) -> Result<WholeVaultExport> {
+        let mut copy = self.raw_owner_copy(cut, include_secrets)?;
+        let bytes = copy.read_whole()?;
+        let receipt = copy.receipt;
         Ok(WholeVaultExport {
             bytes,
             manifest: receipt.manifest,
             diary_reads: receipt.diary_reads,
             notices: receipt.notices,
+            mailbox_notices: receipt.mailbox_notices,
         })
     }
 
     /// `owner_export`: the owner's own whole-vault or OKF export (owner
     /// ruling 1-EXPORT = B), whose rows his recipient choice keeps none of;
     /// false for a removal's records archive and for an export a code run
-    /// calls, which the world settings judge as before.
+    /// calls, which the world settings judge as before. `member_mail`: an
+    /// Owner's copy also leaves out each row of another member's personal
+    /// mailbox the vault's rule does not carry, and each row whose words came
+    /// from one, before the row is read whole, and its receipt names each
+    /// such mailbox and carries those it does (fix list row 15416).
     #[allow(clippy::too_many_arguments)]
-    fn export_archive_snapshot<W: Write + Seek, E: From<Error>>(
+    pub(super) fn export_archive_snapshot<W: Write + Seek, E: From<Error>>(
         &self,
         destination: impl Into<ReadDestination>,
         only: Option<&BTreeSet<EntityId>>,
@@ -271,6 +290,7 @@ impl Vault {
         include_secrets: bool,
         reader: WriteActor,
         owner_export: bool,
+        member_mail: MemberMailPass,
         admit: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<(), E>,
         sink: W,
     ) -> std::result::Result<(W, WholeVaultExportReceipt), E> {
@@ -290,6 +310,17 @@ impl Vault {
             .flatten();
         let rtxn = self.store.env.read_txn().map_err(Error::from)?;
         admit(&rtxn)?;
+        // Fix list row 15416: an Owner's copy reads the vault's rule for the
+        // other members' personal mailboxes in this snapshot, as the PERSON
+        // it exports as, and judges every row by it before the row is read
+        // whole: a separate conjunct beside the world settings below.
+        let plan = member_mail.plan_in(self, &rtxn, reader)?;
+        let dbs = self.store.read();
+        let mut judge = plan
+            .as_ref()
+            .map(|plan| plan.judge(self, &dbs, &rtxn))
+            .transpose()?;
+        let mut lineage = MailboxLineage::default();
         let scope = match (only, cut) {
             (Some(_), _) => ExportScope::Records,
             (None, ExportCut::Archive) => ExportScope::WholeVault,
@@ -329,7 +360,12 @@ impl Vault {
             && only.is_none()
             && cut == ExportCut::Archive
         {
-            sources.extend(self.export_run_results_in_txn(&rtxn, &mut writer)?);
+            sources.extend(self.export_run_results_in_txn(
+                &rtxn,
+                &mut writer,
+                judge.as_mut(),
+                &mut lineage,
+            )?);
         }
         // Every world the world settings withhold from this destination: the
         // owner's recipient choice for each. A row of one stays here, except
@@ -376,6 +412,7 @@ impl Vault {
                 if only.is_none()
                     && cut == ExportCut::Archive
                     && row_live_in_txn(&self.store, &rtxn, &id)?
+                    && lineage.carries(judge.as_mut(), id, Some(&raw))?
                 {
                     let handle = crate::ports::ShortIdStoreRead::port_short_id_reference(
                         &self.store,
@@ -398,29 +435,35 @@ impl Vault {
                 }
                 continue;
             }
+            // A member's mailbox the copy does not carry, and what was learned
+            // from it, stay home before the row is read whole (fix list row
+            // 15416).
             if crate::origin::lfs::unpublished_lfs_chunk_in_txn(
                 &self.store,
                 &rtxn,
                 &id,
                 header.entity_type,
             )? || !row_live_in_txn(&self.store, &rtxn, &id)?
+                || !judge
+                    .as_mut()
+                    .map_or(Ok(true), |judge| judge.carries(id, Some(&raw)))?
             {
                 continue;
             }
             // FIX 1496 S5: an epoch summary stays home when any transitive
             // source is excluded (use-limited or off-record), same as the
-            // JSON bundle door. Non-epoch rows answer None and pass through.
+            // JSON bundle door, or is of a member's mailbox the copy does not
+            // carry. Non-epoch rows answer None and pass through.
             if crate::compaction::epoch_sources_admitted_in(
                 &self.store,
                 &rtxn,
                 &id,
                 &raw[ENTITY_METADATA_HEADER_LEN..],
                 |source, _| {
-                    Ok(!whole_vault_export_excludes_entity_in_txn(
-                        &self.store,
-                        &rtxn,
-                        source,
-                    )?)
+                    Ok(
+                        !whole_vault_export_excludes_entity_in_txn(&self.store, &rtxn, source)?
+                            && lineage.folds(judge.as_mut(), id, Some(source))?,
+                    )
                 },
             )? == Some(false)
             {
@@ -466,7 +509,8 @@ impl Vault {
                     &device_only,
                     carrier.as_ref(),
                     owner_export,
-                )? {
+                )? && lineage.folds(judge.as_mut(), id, carrier.as_ref())?
+                {
                     barred_carried.extend(barred);
                     sources.extend(carrier);
                     skill_package = Some(package);
@@ -519,11 +563,11 @@ impl Vault {
                             owner_export,
                         )?;
                         Ok(match admitted {
-                            Some(barred) => {
+                            Some(barred) if lineage.folds(judge.as_mut(), id, Some(carrier))? => {
                                 barred_carried.extend(barred);
                                 false
                             }
-                            None => true,
+                            Some(_) | None => true,
                         })
                     },
                 )?;
@@ -676,10 +720,16 @@ impl Vault {
                 world, name, limit,
             ));
         }
+        let verdicts = judge.map(crate::source_audience::ExportJudge::settle);
         drop(rtxn);
         // The gate logs the reads after the snapshot. An entry whose read
         // could not be logged leaves the archive, with its edges.
         let (diary_reads, diary_holds, unlogged) = diaries.finish(self);
+        // Each member's mailbox the copy left out is named to the Owner; a
+        // member's mailbox counts as carried only through a row the copy
+        // ships (fix list row 15416).
+        let (mailbox_notices, member_mail) =
+            lineage.outcome(plan, verdicts, writer.carried_rows(), &unlogged);
         writer
             .finish(
                 DocumentTail {
@@ -702,6 +752,8 @@ impl Vault {
                 receipt.thread_roots = thread_roots;
                 receipt.holder_requests = holder_requests;
                 receipt.notices = notices;
+                receipt.mailbox_notices = mailbox_notices;
+                receipt.member_mail = member_mail;
                 (sink, receipt)
             })
             .map_err(E::from)
@@ -714,12 +766,17 @@ impl Vault {
     /// occurrence keeps its mark and names no body, so one clean occurrence
     /// of the same bytes neither clears it nor ships its body for it. A body
     /// no row holds any longer is withheld as absent. Each body goes to the
-    /// writer as it is read.
+    /// writer as it is read. In an Owner's copy (`judge`), an occurrence also
+    /// goes only beside every row it was made from, judged before its body
+    /// is read, and one made from rows not all known stays home (fix list
+    /// row 15416); `lineage` keeps those rows.
     /// Returns the runs whose results it wrote.
     fn export_run_results_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
         writer: &mut DocumentWriter<'_>,
+        mut judge: Option<&mut crate::source_audience::ExportJudge<'_, '_, '_>>,
+        lineage: &mut MailboxLineage,
     ) -> Result<Vec<EntityId>> {
         let mut runs = Vec::new();
         let mut bodies = BTreeSet::new();
@@ -729,8 +786,12 @@ impl Vault {
             let bindings = replay.map(|record| record.bindings).unwrap_or_default();
             let mut occurrences = Vec::with_capacity(outputs.len());
             for output in outputs {
-                let withheld =
+                let mut withheld =
                     super::whole_vault_export_withholds_result(self, rtxn, run_id, &output)?;
+                if withheld.is_none() {
+                    withheld = lineage
+                        .output_withheld(judge.as_deref_mut(), output.input_rows.as_deref())?;
+                }
                 if withheld.is_none() && bodies.insert(output.raw_blake3) {
                     let body = self
                         .code_run_result_body_reader_in_txn(rtxn, &output)?
