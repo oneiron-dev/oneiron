@@ -101,7 +101,19 @@ impl EngineNativeExecutor<'_> {
         let mut sink = self.storage.code_run_output_sink()?;
         write_json(&mut sink, &resumed)?;
         let path = resumed_output_path(seq, wait.wait_id);
-        let output = publish_output(&self.storage, record, path.clone(), sink)?;
+        if record.outputs.iter().any(|output| output.path == path) {
+            return Err(Error::InvalidClaimBody("duplicate executor output path").into());
+        }
+        // The reply's body is finished and pinned here, but its row, marks
+        // and descriptor are published only in the resume commit below, with
+        // the record that lists it (FIX 6592). A refusal there leaves no body
+        // occurrence, consumes nothing and keeps the wait.
+        let input_rows = crate::code_run::resident_tool_answer_rows(record, None);
+        let finished = self
+            .storage
+            .finish_code_run_output(path, sink, input_rows)?;
+        record.outputs.push(finished.output.clone());
+        let output = &finished.output;
         let name = format!("wait{seq}");
         match record.bindings.iter_mut().find(|held| held.name == name) {
             Some(held) => {
@@ -116,7 +128,7 @@ impl EngineNativeExecutor<'_> {
         }
         let generation = self
             .storage
-            .put_code_run_wait_resume_record(record, expected, key, seq, &path)?;
+            .put_code_run_wait_resume_record(record, expected, key, seq, &finished)?;
         if let crate::code_run::ExecutorStorage::Session(_) = &self.storage {
             self.storage.clear_wait(key)?;
         }

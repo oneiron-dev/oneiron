@@ -68,6 +68,13 @@ pub struct LiveVoiceAckRequest {
     /// The exact playout_end or playout_stop event being acknowledged.
     pub event_sequence: u64,
     pub kind: LiveVoiceAckKind,
+    /// How many samples of this generation the client actually played,
+    /// counted over its `pcm` events in order, each at its own rate (FIX
+    /// 4899). The generation's `heard` event rests on it; without it, the
+    /// record counts the samples the server sent, an upper bound. A count
+    /// past what was sent counts as what was sent.
+    #[serde(default)]
+    pub played_samples: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -135,6 +142,13 @@ pub enum LiveVoiceEventKind {
     },
     ToolContext {
         source: String,
+    },
+    /// What the person heard of a stopped or drained generation, by
+    /// utterance, apart from the text it generated (FIX 4899). Once per
+    /// generation: after the client's `ack`, or, when none came, at the next
+    /// generation or the session's end, counted on what the server sent.
+    Heard {
+        playback: crate::voice_cascade::HeardPlayback,
     },
     Finished,
     Error {

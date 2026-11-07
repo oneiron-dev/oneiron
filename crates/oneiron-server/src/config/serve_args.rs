@@ -124,6 +124,16 @@ pub struct ServeArgs {
     #[arg(long = "custody-anchor-credentials-fd")]
     pub custody_anchor_credentials_fd: Option<i32>,
 
+    /// Supervisor-only pipe carrying one public checkpoint host-order recipient
+    /// object (`bundle_b64`, `fingerprint`), then EOF. Missing or unusable
+    /// material leaves checkpoint receipts at `recipient_missing`; it never
+    /// prevents a managed vault from starting.
+    #[arg(
+        long = "checkpoint-host-holds-recipient-fd",
+        requires = "managed_by_hypnos"
+    )]
+    pub checkpoint_host_holds_recipient_fd: Option<i32>,
+
     /// Manager-created HOST legal-copy listener, inherited only by a native
     /// managed process. Paired with the manager's actual kernel UID.
     #[arg(long = "host-legal-listen-fd", requires_all = ["managed_by_hypnos", "host_legal_uid"])]

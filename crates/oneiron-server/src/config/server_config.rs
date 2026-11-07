@@ -414,6 +414,8 @@ pub struct ServeConfig {
     /// The `[desktop]` section, absent until the config file names it.
     /// Absent means code runs have no desktop.
     pub desktop: Option<super::DesktopConfig>,
+    /// Explicit host profile for published backends. Absent: static serving only.
+    pub artifact_backend: Option<super::ArtifactBackendConfig>,
     /// The `[merge_queue]` section: the queue checker's executor.
     pub merge_queue: Option<super::MergeQueueCheckerConfig>,
     /// The `[gpu]` section: the batch lane's rented pods, absent until the
@@ -563,6 +565,7 @@ impl Default for ServeConfig {
             models: None,
             browser: None,
             desktop: None,
+            artifact_backend: None,
             merge_queue: None,
             gpu: None,
             native_mail: None,
