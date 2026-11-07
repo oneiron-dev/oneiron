@@ -120,6 +120,7 @@ impl AgentDispatcher<'_> {
             project_ref: spawn.project_ref.map(|id| id.to_hex()),
             type_ref: spawn.type_ref.clone(),
             budget: spawn.budget,
+            token_ceiling: spawn.token_ceiling,
             spend: spawn.spend.as_ref().map(|spend| spend.scope.clone()),
             room: spawn.room,
             objectives: spawn.objectives.clone(),
@@ -215,12 +216,14 @@ impl AgentDispatcher<'_> {
             input.parent_attempt,
             spawn.spend.as_ref(),
             spawn.budget,
+            spawn.token_ceiling,
             &input.target,
             spawn.plan.as_ref().map(|plan| &plan.plan.model),
             input.now,
         )?;
         let leaf_spawn = AgentSpawnContext {
             budget: None,
+            token_ceiling: None,
             spend: None,
             ..spawn.clone()
         };

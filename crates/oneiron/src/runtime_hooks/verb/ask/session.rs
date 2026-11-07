@@ -33,8 +33,8 @@ use crate::{EntityId, Error, MemoryError, Result, Vault};
 use super::super::storage::{PausedRoute, SessionHookKey, SessionHooks, SessionVerbAsk};
 use super::super::{InvocationId, VerbCall, VerbDomain, VerbHookStop};
 use super::{
-    AskToken, HOLD, PROCEED, Retry, UNKNOWN, USED, VERB_HOOK_INTENT, author_memory, cut, pending,
-    proceeds,
+    AskToken, HOLD, HOOK_OUTCOME_UNCERTAIN, PROCEED, Retry, USED, VERB_HOOK_INTENT, author_memory,
+    cut, pending, proceeds,
 };
 
 /// What a session-only call's hook ask tells whoever answers it, after the
@@ -111,10 +111,16 @@ pub(in crate::runtime_hooks::verb) fn retry(
         return skipped("this invocation belongs to another call");
     }
     if row.used {
-        // FIX 1443: a used-but-unfinished READ re-opens inline and resumes;
-        // the same state on a WRITE answers Skipped with an honest reason.
         if row.domain == VerbDomain::Write {
-            return skipped(UNKNOWN);
+            return Ok(Retry::Stop(VerbHookStop::CompletedWithError {
+                invocation: call.invocation.to_hex(),
+                code: HOOK_OUTCOME_UNCERTAIN.to_owned(),
+                message: "this invocation's ask was used but no outcome was retained; the verb \
+                          may or may not have run, and it will not run again under this \
+                          invocation"
+                    .to_owned(),
+                receipt_ref: None,
+            }));
         }
         if !keep.unuse_ask(key, invocation, row.ask) {
             return skipped(USED);

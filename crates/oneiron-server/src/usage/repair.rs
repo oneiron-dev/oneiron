@@ -6,7 +6,10 @@
 //! one he reviewed, by the hash of its bytes; every other such row is still
 //! counted as before, and nothing is removed on its own. A removal deletes
 //! that one row, marks its billing owner's derived rollup stale and keeps its
-//! receipt, all in one write. No raw key, prefix or replacement bytes reach
+//! receipt, all in one write. Pending settlements that fail redelivery's
+//! decode, validation or scope check join the same reviewed list and removal;
+//! their removal never marks a rollup stale, since none has folded them.
+//! No raw key, prefix or replacement bytes reach
 //! it: the scope is the vault the trusted host bound this server's meter to,
 //! every billing owner's rows in it, the vault owner's and each room-paid
 //! payer account's alike (FIX 7035).
@@ -26,16 +29,18 @@ use oneiron::store::GateDecisionId;
 
 use super::codec::{UsageError, decode_entry};
 use super::keys::{
-    USAGE_EVENT_ROOT, decoded_key_part, usage_event_parts, usage_repair_receipt_key, validate_key,
-    vault_key_part, vault_rollup_key_of_parts,
+    USAGE_EVENT_ROOT, decoded_key_part, settlement_pending_parts, settlement_pending_prefix,
+    usage_event_parts, usage_repair_receipt_key, validate_key, vault_key_part,
+    vault_rollup_key_of_parts,
 };
 use super::ledger::UsageLedger;
+use super::pending::decode_pending;
 use super::rollup::mark_rollup_stale_in_txn;
 
 /// A reviewed row whose bytes hash to something else now.
 const USAGE_EVENT_CHANGED: &str = "usage_event_changed";
-/// A reviewed row that decodes now: it is counted as a call, and no repair
-/// removes it.
+/// A reviewed row that decodes now as an event or a valid pending settlement:
+/// no repair removes it.
 const USAGE_EVENT_DECODABLE: &str = "usage_event_decodable";
 /// A server whose meter is bound to no scope.
 const USAGE_METERING_UNBOUND: &str = "usage_metering_unbound";
@@ -74,7 +79,8 @@ impl UsageLedger {
     /// every seat read uses, in key order, whichever billing owner it lands
     /// on, read in the writer that admits the caller
     /// ([`Memory::with_usage_repair_txn`]). Each row ref names its owner's
-    /// part of the key and the rest after the vault's. No row changes; a
+    /// part of the key and the rest after the vault's. Pending rows that fail
+    /// redelivery's exact checks join the list in key order. No row changes; a
     /// storage failure fails the list and never reads as a row.
     pub(crate) fn list_undecodable_events(
         &self,
@@ -99,10 +105,29 @@ impl UsageLedger {
                         return Ok(());
                     }
                     events.push(UndecodableUsageRow {
-                        row_ref: URL_SAFE_NO_PAD.encode(format!("{billed}:{id}")),
+                        row_ref: RepairTarget::Event.row_ref(billed, id),
                         byte_length: raw.len() as u64,
                         hash: hash(raw),
                         decode_reason: UndecodableUsageReason::StoredEventDecodeFailed,
+                    });
+                    Ok(())
+                },
+            )?;
+            self.vault.sync_state_visit_prefix_in_write_txn(
+                txn,
+                &settlement_pending_prefix(&scope.vault_id),
+                |key, raw| -> MemoryResult<()> {
+                    let Some((_, billed, id)) = settlement_pending_parts(key) else {
+                        return Ok(());
+                    };
+                    if decode_pending(key, raw, &scope.vault_id).is_ok() {
+                        return Ok(());
+                    }
+                    events.push(UndecodableUsageRow {
+                        row_ref: RepairTarget::Pending.row_ref(billed, id),
+                        byte_length: raw.len() as u64,
+                        hash: hash(raw),
+                        decode_reason: UndecodableUsageReason::StoredPendingDecodeFailed,
                     });
                     Ok(())
                 },
@@ -116,8 +141,9 @@ impl UsageLedger {
     /// reviewed hash and still do not decode: deletes that row alone, marks
     /// its billing owner's rollup stale so the next read rebuilds it without
     /// the row, and keeps the receipt it answers, naming that owner, all in
-    /// that write. A row that is gone is not found; one that changed or
-    /// decodes now is a conflict, and nothing changes.
+    /// that write. A pending row uses redelivery's exact validity checks and
+    /// needs no rollup change. A row that is gone is not found; one that
+    /// changed or decodes now is a conflict, and nothing changes.
     pub(crate) fn remove_undecodable_event(
         &self,
         memory: &Memory<'_>,
@@ -128,11 +154,11 @@ impl UsageLedger {
     ) -> MemoryResult<UsageRepairReceipt> {
         memory.with_usage_repair_txn(owner, UsageRepairVerb::Remove, |txn, caller| {
             let scope = bound(scope)?;
-            let (billed, id) = suffix(request)?;
+            let (target, billed, id) = suffix(request)?;
             let vault = vault_key_part(&scope.vault_id);
-            let key = format!("{USAGE_EVENT_ROOT}{billed}:{vault}:{id}");
+            let key = target.key(&billed, &id, scope);
             validate_key(&key).map_err(|_| {
-                MemoryError::bad_request("rowRef names a key no stored usage event can have")
+                MemoryError::bad_request("rowRef names a key no stored usage row can have")
             })?;
             if !is_hash(&request.expected_hash) {
                 return Err(MemoryError::bad_request(
@@ -141,7 +167,7 @@ impl UsageLedger {
             }
             let Some(raw) = self.vault.sync_state_get_in_write_txn(txn, &key)? else {
                 return Err(MemoryError::not_found(format!(
-                    "no stored usage event {} in this vault's metering scope",
+                    "no stored usage row {} in this vault's metering scope",
                     request.row_ref
                 )));
             };
@@ -151,23 +177,29 @@ impl UsageLedger {
                     "the row's bytes changed since it was listed; nothing was removed",
                 ));
             }
-            if decode_entry(&raw).is_ok() {
+            let decodable = match target {
+                RepairTarget::Event => decode_entry(&raw).is_ok(),
+                RepairTarget::Pending => decode_pending(&key, &raw, &scope.vault_id).is_ok(),
+            };
+            if decodable {
                 return Err(conflict(
                     USAGE_EVENT_DECODABLE,
-                    "the row decodes now and is counted as a call; nothing was removed",
+                    "the row decodes now as an event or pending settlement; nothing was removed",
                 ));
             }
             if !self.vault.sync_state_delete_in_write_txn(txn, &key)? {
                 return Err(
-                    oneiron::Error::InvariantViolation("usage event read but not deleted").into(),
+                    oneiron::Error::InvariantViolation("usage row read but not deleted").into(),
                 );
             }
-            mark_rollup_stale_in_txn(
-                &self.vault,
-                txn,
-                &vault_rollup_key_of_parts(&billed, &vault),
-            )
-            .map_err(failed)?;
+            if matches!(target, RepairTarget::Event) {
+                mark_rollup_stale_in_txn(
+                    &self.vault,
+                    txn,
+                    &vault_rollup_key_of_parts(&billed, &vault),
+                )
+                .map_err(failed)?;
+            }
             let receipt = UsageRepairReceipt {
                 receipt_id: GateDecisionId::now().to_hex(),
                 owner: decoded_key_part(&billed).unwrap_or(billed),
@@ -175,7 +207,10 @@ impl UsageLedger {
                 row_ref: request.row_ref.clone(),
                 hash: request.expected_hash.clone(),
                 byte_length: raw.len() as u64,
-                reason: UsageRepairReason::UndecodableEventRemoved,
+                reason: match target {
+                    RepairTarget::Event => UsageRepairReason::UndecodableEventRemoved,
+                    RepairTarget::Pending => UsageRepairReason::UndecodablePendingRemoved,
+                },
                 actor_ref: caller.actor().to_hex(),
                 actor_class: caller.class().gate_actor_class().to_owned(),
                 authority: caller.authority().clone(),
@@ -244,16 +279,51 @@ fn bound(scope: Option<&UsageScope>) -> MemoryResult<&UsageScope> {
     })
 }
 
-/// The billing owner's key part and the rest of the key after the vault's
-/// that `request`'s row ref names, as the list encoded them.
-fn suffix(request: &UsageRepairRemoveRequest) -> MemoryResult<(String, String)> {
+#[derive(Clone, Copy)]
+enum RepairTarget {
+    Event,
+    Pending,
+}
+
+impl RepairTarget {
+    fn row_ref(self, billed: &str, id: &str) -> String {
+        let kind = match self {
+            Self::Event => "event",
+            Self::Pending => "retry",
+        };
+        URL_SAFE_NO_PAD.encode(format!("{kind}:{billed}:{id}"))
+    }
+
+    fn key(self, billed: &str, id: &str, scope: &UsageScope) -> String {
+        match self {
+            Self::Event => format!(
+                "{USAGE_EVENT_ROOT}{billed}:{}:{id}",
+                vault_key_part(&scope.vault_id),
+            ),
+            Self::Pending => format!(
+                "{}{billed}:{id}",
+                settlement_pending_prefix(&scope.vault_id),
+            ),
+        }
+    }
+}
+
+/// Only these two row families in the host-bound scope can be named by a ref.
+fn suffix(request: &UsageRepairRemoveRequest) -> MemoryResult<(RepairTarget, String, String)> {
     URL_SAFE_NO_PAD
         .decode(&request.row_ref)
         .ok()
         .and_then(|bytes| String::from_utf8(bytes).ok())
         .and_then(|suffix| {
-            let (owner, id) = suffix.split_once(':')?;
-            (!owner.is_empty() && !id.is_empty()).then(|| (owner.to_owned(), id.to_owned()))
+            let mut parts = suffix.splitn(3, ':');
+            let target = match parts.next()? {
+                "event" => RepairTarget::Event,
+                "retry" => RepairTarget::Pending,
+                _ => return None,
+            };
+            let owner = parts.next()?;
+            let id = parts.next()?;
+            (!owner.is_empty() && !id.is_empty()).then(|| (target, owner.to_owned(), id.to_owned()))
         })
         .ok_or_else(|| MemoryError::bad_request("rowRef must be a row ref the list gave"))
 }

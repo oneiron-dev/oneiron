@@ -28,6 +28,33 @@ has no owner-row lookup, and top-shapes advice returns quotes, not receipts.
 The metadata does not certify the plan's complete decision-source set, change
 admission, or change the meaning of the receipt's other fields.
 
+## Native dispatch model pins
+
+A fresh, unplanned native dispatch also reads the owner's model pin at its
+actual project and placed task type. An absent project still permits the
+type and vault rows; it is not replaced with a guessed project. Pins follow
+the same narrowest-scope order as planning.
+
+An explicit seat override or a direct call's model pin takes precedence.
+This does not newly apply a direct call's model request that its receipt
+marks unapplied. Such a call keeps its existing behavior rather than taking
+an owner default. A call's model seed is not a pin.
+
+The owner pin uses the existing model-seat admission path. The model must
+still satisfy the agent's list, model catalog, route, capabilities, context
+window, facet, worlds and currently served set. An unavailable fixed model
+is not replaced with another model.
+
+An existing run resumes its stored seat before any fresh-birth owner lookup.
+Changing an owner row does not repick that run or change its durable task
+identity. Planned and continued seats keep their explicit model. The old
+seatless path is unchanged.
+
+The native model-seat receipt records the model that actually runs. It is
+not a spawn plan receipt and gains no `owner_choices` metadata. Owner model
+seeds, width and pattern defaults, and reader-spawn choice transport are not
+added by this native pin path.
+
 ## Task-type tree root lookup
 
 Live leased and owner-root plans also record `type_tree_root_lookup` when the

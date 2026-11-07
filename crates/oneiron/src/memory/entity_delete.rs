@@ -33,40 +33,11 @@ impl Memory<'_> {
     /// with `append_gate_decision_in_txn` alongside the purge and distinct
     /// REDACTION_AUDIT execution receipt. Sync-disabled builds append directly
     /// on their first local scrub/purge.
-    ///
-    /// The proven owner's own delete of a record only secret orders keep is
-    /// accepted, not refused: its receipt reads completion pending, and the
-    /// delete runs under its own reason once nothing holds the record (FIX
-    /// 1465). Every other hold refuses it as before.
     pub fn safe_delete(
         &self,
         entity_ref: &str,
         reason: SafeDeleteReason,
     ) -> MemoryResult<DeleteReceipt> {
-        if let Some(owner) = self.owner_authorship() {
-            let id = self.resolve_ref(entity_ref)?;
-            // The exact binding-layer refusal, as the rail keeps it.
-            let refusal: std::cell::RefCell<Option<MemoryError>> = std::cell::RefCell::new(None);
-            let authority = |txn: &heed::RoTxn<'_>| -> Result<(), Error> {
-                verify_deletion_authority_in_txn(self.vault, txn, self.actor, self.actor_class)
-                    .map_err(|err| {
-                        *refusal.borrow_mut() = Some(err);
-                        Error::ConcurrentWrite("deletion authority changed before commit")
-                    })
-            };
-            let queued = self
-                .vault
-                .owner_pending_delete_checked(owner, &id, reason.delete_reason(), &authority)
-                .map_err(|err| refusal.take().unwrap_or_else(|| MemoryError::from(err)))?;
-            if queued {
-                return Ok(DeleteReceipt {
-                    existed: true,
-                    reason: reason.as_str().to_owned(),
-                    receipt_ref: None,
-                    state: DeleteRequestState::CompletionPending,
-                });
-            }
-        }
         self.safe_delete_checked(entity_ref, reason, |_| Ok(()))
     }
 

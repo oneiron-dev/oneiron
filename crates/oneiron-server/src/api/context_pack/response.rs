@@ -9,6 +9,7 @@ use super::response_limits::{ContextPackResponseLimits, apply_context_pack_respo
 use crate::error::ApiError;
 use crate::projection::View;
 use oneiron::context_board::MemorySource;
+use oneiron::limit_ask::EngineLimit;
 use oneiron::retrieval_quality::{ConfidenceAdjustment, RetrievalDegradation, RetrievalQuality};
 use serde::Serialize;
 use serde_json::Value;
@@ -327,14 +328,15 @@ pub(crate) async fn run_context_pack_builder(
             core_engine_error("core context-pack scoped read failed", error)
         })?;
     // A MESSAGE carries its current reactions, read through the same scope
-    // and clamp.
-    scoped_read
+    // and clamp, and that read narrows the pack's receipt (FIX 8669).
+    let reactions = scoped_read
         .attach_reactions_under(&mut pack.value, disclosure.as_ref())
         .map_err(|error| {
             pack.discard_telemetry();
             tracing::error!(kind = ?error.kind(), "core context-pack reactions failed");
             core_engine_error("core context-pack reactions failed", error)
         })?;
+    narrowing.restrict_with(&reactions);
     apply_context_pack_response_limits(&mut pack, response_limits);
     let assembly = disclosure.as_ref().map(|ctx| ctx.assembly(clamped_out));
     // Keep provenance from the authorized snapshot: the JSON profile can
@@ -410,6 +412,13 @@ pub(crate) async fn run_context_pack_builder(
             let mut section = projected_memories
                 .or_else(|| Some(oneiron::MemoriesSection::pins_only(assembly.clone())));
             if let Some(section) = &mut section {
+                // Physical68 ABC17: the submitted explicit refs, measured
+                // once before resolution. Ask-and-serve: the crossing asks,
+                // the pins resolve whole.
+                vault.measure_limit(
+                    EngineLimit::MemoryPinnedRefs,
+                    request.pinned_refs.len() as u64,
+                );
                 pin_narrowing = section
                     .include_pinned_refs_with_disclosure(
                         scoped_read,

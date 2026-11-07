@@ -327,6 +327,14 @@ pub(crate) struct GuardedSnapshot<'a> {
     _guard: RwLockReadGuard<'a, ()>,
 }
 
+impl<'a> GuardedSnapshot<'a> {
+    /// The guard and the snapshot apart, for a pass that closes the
+    /// snapshot and keeps the guard (FIX 8966). Drop the snapshot first.
+    pub(crate) fn into_parts(self) -> (RwLockReadGuard<'a, ()>, RoTxn<'a>) {
+        (self._guard, self.txn)
+    }
+}
+
 impl<'a> std::ops::Deref for GuardedSnapshot<'a> {
     type Target = RoTxn<'a>;
 
