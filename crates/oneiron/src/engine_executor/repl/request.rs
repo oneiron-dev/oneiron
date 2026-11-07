@@ -55,7 +55,10 @@ impl EngineNativeExecutor<'_> {
         self.output_run = Some(record.run_id);
         let coverage = self.storage.code_run_compaction_coverage(record.run_id)?;
         let mut steps = HashMap::new();
-        for (seq, _, observation) in self.observation_refs(record)? {
+        for (seq, output, mut observation) in self.observation_refs(record)? {
+            if !clean_for_context(&self.storage, Some(record.run_id), &output)? {
+                observation.overview = CODE_RUN_OUTPUT_PREVIEW_WITHHELD.to_owned();
+            }
             self.output_context
                 .record_referenced(seq, observation.source, observation.overview)?;
             if coverage.iter().any(|row| row.covers(record.run_id, seq)) {
@@ -106,6 +109,18 @@ impl EngineNativeExecutor<'_> {
                 text: format!("Run id: {}\nTask:\n{}", config.run_id.to_hex(), config.task),
             }],
         });
+        // FIX 17594 (delivery slice D2): the host's self brief, one message of
+        // its own right after the task and before any history, so its bytes
+        // come before the history, continuation, instruction and wake
+        // material, inside the request's cached prefix. They hold from one
+        // brief boundary to the next. A run whose host binds no brief port
+        // carries none.
+        if let Some(text) = self.brief_prefix_text(config.run_id)? {
+            messages.push(LlmMessage {
+                role: LlmMessageRole::User,
+                content: vec![ContentPart::Text { text }],
+            });
+        }
 
         let steps = self.sync_output_context(record)?;
         // Only a Full view expands its body; older steps cost their reference.
@@ -350,6 +365,7 @@ impl EngineNativeExecutor<'_> {
                 response_format: ResponseFormat::Text,
                 locality: config.model_locality,
                 host_keyless: false,
+                host_paid: false,
             },
             messages,
             tools: Vec::new(),

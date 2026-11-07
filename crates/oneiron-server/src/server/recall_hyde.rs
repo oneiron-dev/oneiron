@@ -209,7 +209,7 @@ impl HydeHost {
         });
         let permit = self
             .active
-            .admit_blocking_for(credential, wait)
+            .admit_blocking_for_observed(credential, wait, crate::api::admission_observer())
             .map_err(|_| {
                 MemoryError::new(
                     oneiron::memory::MEMORY_CODE_INTERNAL,

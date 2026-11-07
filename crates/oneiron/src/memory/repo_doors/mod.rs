@@ -17,6 +17,7 @@
 //! and the host's stock review policy (`review_policy`).
 
 mod custody;
+mod holder;
 mod host;
 mod proposals;
 mod reads;

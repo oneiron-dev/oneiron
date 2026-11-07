@@ -54,7 +54,7 @@ impl EngineNativeExecutor<'_> {
         let mut input = None;
         for seq in start..=watermark {
             let message = crate::engine_executor::compaction::window_message(
-                crate::engine_executor::compaction::step_message_id(run_id, seq),
+                crate::engine_executor::compaction::step_message_id(run_id, seq)?,
                 turn_id,
                 seq,
                 // A step's program, as its observation, is carried up to the

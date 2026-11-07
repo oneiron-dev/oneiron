@@ -122,6 +122,14 @@ impl Vault {
                 }
                 return self.undo_facet_event_in_txn(wtxn, event, &record, write, &seal, now);
             }
+            // A parked facet applied nothing, so no counter-event reverts it
+            // (FIX 7814): the fold never made it current, as for a parked
+            // split. The resolution door rules the park.
+            StoredIdentityOpAction::ParkedFacet { .. } => {
+                return Err(Error::Sync(SyncError::IdentityTopologyRejected(
+                    IdentityTopologyRejection::NotCurrent { event: *event },
+                )));
+            }
             // An assert_distinct event is not undoable: its retraction door
             // already exists. The assertion lives in a public CLAIM whose own
             // lifecycle (supersede / retract) lifts suppression. Unwinding it

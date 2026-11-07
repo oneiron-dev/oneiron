@@ -60,11 +60,16 @@ use crate::store::checkpoint_payload::rows::{
 /// The field a row's one actor fills.
 const ACTOR: &str = "actor";
 
-/// Moves a row's actor out, leaving no one.
+/// Moves a row's local actor out, leaving no one. An imported author is
+/// source provenance, never a local actor part: it stays in the row
+/// (FIX 7777).
 fn take_actor(slot: &mut NoteActor) -> Vec<(String, EntityId)> {
-    match std::mem::replace(slot, NoteActor::Erased) {
-        NoteActor::Actor(id) => vec![(ACTOR.to_owned(), id)],
-        NoteActor::Erased => Vec::new(),
+    match *slot {
+        NoteActor::Actor(id) => {
+            *slot = NoteActor::Erased;
+            vec![(ACTOR.to_owned(), id)]
+        }
+        NoteActor::Erased | NoteActor::Imported(_) => Vec::new(),
     }
 }
 
