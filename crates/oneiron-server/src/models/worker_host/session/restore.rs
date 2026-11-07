@@ -217,7 +217,7 @@ impl Restore<'_> {
             .await
             .map_err(|cold| (Failure::Cold(cold), false))?;
         let bytes = self.record.plaintext_bytes;
-        let ledger = super::super::device_ledger(self.worker_id);
+        let ledger = self.place.ledger.clone();
         if fits_host(bytes).await != Some(true) || !device_room(ledger.as_deref(), bytes) {
             return Err((Failure::Cold(COLD), false));
         }

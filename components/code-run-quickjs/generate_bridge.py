@@ -8,6 +8,9 @@ from pathlib import Path
 sdk = Path(sys.argv[1]).read_text()
 schema = json.loads(re.search(r"const schema = (.*);", sdk).group(1))
 records = schema["records"]
+# The typed `ask` import is linked by no tier: the catalog's `ask` row owns
+# the `ask` global, so the typed import was unreachable (FIX 7033).
+imports = [row for row in schema["imports"] if row["js"] != "ask"]
 
 def snake(name):
     return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower().replace("-", "_")
@@ -32,7 +35,7 @@ def release(ty, value):
     return "guest_" + token(ty) + "_free(&" + value + ");"
 
 def first_party(row):
-    return row['js'].startswith(('self.', 'vault.')) or row['js'] == 'ask'
+    return row['js'].startswith(('self.', 'vault.'))
 
 # The streamed file-proposal imports are the foreign projection's alone: the
 # first-party build links none of them, so their callers are foreign only.
@@ -61,7 +64,7 @@ def reachable(ty, out):
 foreign_types = set()
 for name in records:
     reachable(name, foreign_types)
-for row in schema['imports']:
+for row in imports:
     if not first_party(row):
         for p in row['params']: reachable(p['type'], foreign_types)
         reachable(row['result'], foreign_types)
@@ -154,7 +157,7 @@ def emit(ty):
     parts.append(f'static JSValue to_{token(ty)}(JSContext *ctx, const {ct} *v) {{\n' + '\n'.join(encode) + '\n}')
     if ty not in foreign_types: parts.append('#endif')
 
-for row in schema['imports']:
+for row in imports:
     for p in row['params']: emit(p['type'])
     emit(row['result'])
 emit('file-delete-proposal')
@@ -162,7 +165,7 @@ emit('file-rename-proposal')
 # Claim input is generated in both tiers: the foreign output uses it for proposals.
 emit('claim-input')
 
-for row in schema['imports']:
+for row in imports:
     if guard(row): parts.append(guard(row))
     name, result = snake(row['wit']), row['result']
     lines = [f'static JSValue call_{name}(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv) {{',
@@ -187,7 +190,7 @@ for row in schema['imports']:
     parts.append('\n'.join(lines + ['}']))
     if guard(row): parts.append('#endif')
 parts.append('static JSValue make_abi(JSContext *ctx) {\n JSValue abi = JS_NewObject(ctx);')
-for row in schema['imports']:
+for row in imports:
     if guard(row): parts.append(guard(row))
     name = snake(row['wit'])
     parts.append(f'JS_SetPropertyStr(ctx, abi, "{row["wit"]}", JS_NewCFunction(ctx, call_{name}, "{row["wit"]}", {len(row["params"])}));')
