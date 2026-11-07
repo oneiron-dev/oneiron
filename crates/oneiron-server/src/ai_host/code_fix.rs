@@ -287,6 +287,7 @@ impl<'a> HostModels<'a> {
                 response_format: ResponseFormat::Text,
                 locality: seat.locality,
                 host_keyless: false,
+                host_paid: false,
             },
             messages,
             tools: Vec::new(),
