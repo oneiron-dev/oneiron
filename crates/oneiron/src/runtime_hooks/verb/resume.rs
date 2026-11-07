@@ -4,9 +4,8 @@
 //! hook depth 0, so the row boundary runs the pre chain, finds the settled
 //! proceed and resumes after the asking hook. The saved args are checked
 //! again and the verb's own gate runs as on any call. What the call returned
-//! waits in the saved row for the caller's retry, up to 64 KiB of JSON; past
-//! it the row keeps only that the call completed. A result keeps beside it
-//! the rows its door listed it derived from (FIX 1435).
+//! waits in the saved row in full for the caller's retry. A result keeps
+//! beside it the rows its door listed it derived from (FIX 1435).
 //!
 //! Only a call the drain can make as its caller made it has a target: a
 //! credential caller's row its host can run again through the door it came
@@ -211,7 +210,7 @@ impl Vault {
         };
         let failed = ran.is_err();
         let (outcome, transient) = match ran {
-            // A result over the cap saves that it completed, not the result.
+            // Save the full returned value for the caller's retry.
             Ok(value) => (ask::SavedOutcome::result(&value, producers)?, false),
             Err(error) => match error.hook.as_deref() {
                 // A later hook asked: its own ask now stands under the key,
