@@ -8,7 +8,8 @@
 //! writes the base table through the same body.
 
 pub(crate) mod classified;
-mod codec;
+#[doc(hidden)]
+pub mod codec;
 mod decls;
 mod erased;
 use oneiron_store::side_table::key;
