@@ -7367,6 +7367,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "StagedImportBodyProgress"
+     ],
+     "path": "src/batch/export/foreign_stage/body_work.rs",
+     "purpose": "What a confirmed staged import still owes its rows (FIX 12408): the by-reference ASSET bodies its admitted…",
+     "surface": {
+      "crate-vis": 11,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/batch/export/foreign_stage/content.rs",
      "purpose": "Admitted window bytes and their born-with text, retained together while a foreign import is Pending",
@@ -7404,8 +7417,8 @@
      "path": "src/batch/export/foreign_stage/mod.rs",
      "purpose": "Sync-gated foreign-import staging submodule",
      "surface": {
-      "crate-vis": 2,
-      "re-export": 2
+      "crate-vis": 3,
+      "re-export": 3
      }
     },
     {
@@ -20760,7 +20773,7 @@
      "path": "src/compaction/epoch.rs",
      "purpose": "Epoch-summary codec and transactional lineage mint",
      "surface": {
-      "const": 4,
+      "const": 3,
       "crate-vis": 20,
       "fn": 2,
       "struct": 1
@@ -21177,7 +21190,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/connector_key/accounting/batch.rs",
@@ -44646,7 +44659,7 @@
      "path": "src/llm/budget/rsi.rs",
      "purpose": "Vault-local durable reserve/settle/refund ledger for research-loop spend",
      "surface": {
-      "fn": 14,
+      "fn": 15,
       "re-export": 1
      }
     },
@@ -50287,7 +50300,7 @@
      "path": "src/memory/repo_secret_reads.rs",
      "purpose": "Repo bytes a Memory handle's masked reader reads (FIX 7608 slice 2a, ASK 1)",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 1
      }
     },
@@ -50465,6 +50478,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/run_review/actor_erase.rs",
+     "purpose": "FIX 4727: an erased author leaves the run settlements that name it",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -50490,9 +50513,20 @@
      "path": "src/memory/run_review/mod.rs",
      "purpose": "Typed cross-kind review settlements and run compensation (ARCH-0040)",
      "surface": {
+      "crate-vis": 2,
       "enum": 7,
       "fn": 2,
       "struct": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/run_review/receipts.rs",
+     "purpose": "FIX 4727: each reviewed run's settlement projects into `vault.receipts` as the common `ProposalOutcome`…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -63754,7 +63788,9 @@
      "path": "src/research_budget.rs",
      "purpose": "Research-loop budget configuration, settlement, and refusal values",
      "surface": {
+      "crate-vis": 1,
       "enum": 4,
+      "fn": 2,
       "struct": 5
      }
     },
@@ -77014,7 +77050,7 @@
      "path": "src/sync/client/federated.rs",
      "purpose": "Federated admission and staged vault-import confirmation",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 7,
       "re-export": 1
      }
@@ -77087,7 +77123,7 @@
      "path": "src/sync/client/mod.rs",
      "purpose": "Client-side sync over WebSocket",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 8
      }
     },
@@ -77493,6 +77529,27 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/client/staged_bodies.rs",
+     "purpose": "Delivery of the bodies a confirmed staged import still owes (FIX 12408)",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/staged_body_pull.rs",
+     "purpose": "The automatic producer of the bodies a confirmed staged import still owes (FIX 12408)",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/client/sync_frames.rs",
      "purpose": "Initial-connect and re-bootstrap sync frame builders",
      "surface": {
@@ -77515,6 +77572,7 @@
       "EphemeralChangeOrigin",
       "NoteSyncSession",
       "ResidenceHomeRoute",
+      "StagedImportBodySource",
       "SyncClientConfig",
       "SyncEvent",
       "SyncResidenceMode",
@@ -77527,7 +77585,7 @@
       "crate-vis": 6,
       "enum": 4,
       "fn": 7,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -78725,7 +78783,7 @@
      "path": "src/sync/origin_positions/import.rs",
      "purpose": "Exact optional position operations of one successful own-device import",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 11,
       "fn": 2,
       "struct": 1
      }
@@ -79775,7 +79833,7 @@
      "path": "src/sync/selector/admission/state.rs",
      "purpose": "Admitted-update state for one federation import",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -91775,7 +91833,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 182,
+     "files": 183,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -92573,7 +92631,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 371,
+     "files": 373,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93077,7 +93135,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 373,
+     "files": 375,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93289,7 +93347,7 @@
    },
    "over_bar": 176,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6580,
+   "source_files": 6585,
    "test_files": 895
   },
   "oneiron-android": {
@@ -127151,7 +127209,7 @@
      "path": "src/models/runtime.rs",
      "purpose": "Model runtime construction and accessors",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 19
      }
     },
@@ -127361,7 +127419,7 @@
      "path": "src/models/worker_host.rs",
      "purpose": "This process's model workers (FIX 8315, DESIGN-V2 §8, INFERENCE R2): one supervisor per configured worker…",
      "surface": {
-      "crate-vis": 41
+      "crate-vis": 42
      }
     },
     {
@@ -127401,7 +127459,7 @@
      "path": "src/models/worker_host/install.rs",
      "purpose": "A managed worker's install (DESIGN-V2 R2): its weights through the artifact store, its code bundle written…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -127572,6 +127630,16 @@
      "purpose": "A turn on a session: the session for its key reused or created, a working branch forked at the frontier the…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/worker_host/stock.rs",
+     "purpose": "The Coach's read-only view of the weight files for a captured managed worker",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -131248,7 +131316,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 132,
+     "files": 133,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -131411,7 +131479,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1663,
+   "source_files": 1664,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -133584,7 +133652,7 @@
      "path": "src/consent_bound.rs",
      "purpose": "Consent bound vocabulary, normalization and containment",
      "surface": {
-      "const": 6,
+      "const": 4,
       "enum": 5,
       "fn": 49,
       "struct": 7

@@ -3923,7 +3923,7 @@ export type ResearchRefundWire = { root: EntityId; reservation: EntityId }
 /** `oneiron::verbs::research::ResearchExplorationWire` */
 export type ResearchExplorationWire = { root: EntityId; units: number; attempt?: EntityId | null }
 /** `oneiron::research_budget::RsiOverdraftReceipt` */
-export type RsiOverdraftReceipt = { share: string; units: number }
+export type RsiOverdraftReceipt = { share: string; units: number; reservation: string; vault: string; public_key: string; signature: string }
 /** `oneiron::verbs::research::ResearchReservationWire` */
 export type ResearchReservationWire = { id: EntityId; line: ResearchReservationLine; units: number; attempt?: EntityId | null; settlement?: RsiSettlement | null; overdraft?: RsiOverdraftReceipt | null; reserved_at: number }
 /** `oneiron::research_budget::RsiBudgetRead` */
