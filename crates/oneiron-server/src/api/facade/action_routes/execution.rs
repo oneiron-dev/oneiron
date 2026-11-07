@@ -132,6 +132,7 @@ where
         + 'static,
 {
     let ActionBound {
+        replay_auth,
         actor,
         class,
         key,
@@ -140,7 +141,12 @@ where
         live_run,
     } = bound;
     let door = Arc::new(FacadeRowDoor::new(
-        server, headers, extensions, key, credential,
+        server,
+        headers,
+        extensions,
+        key,
+        credential,
+        replay_auth,
     ));
     let bound = Unbound {
         actor,

@@ -223,12 +223,21 @@ impl ActionRegistry {
                 .bridge_calls
                 .first()
                 .and_then(|row| super::payload::row_receipt(&row.outcome));
-            // A replayed search keeps only the hits this caller reads now.
+            // A replayed search keeps only the hits this caller reads now; a
+            // replayed verb answer, what its door releases now (FIX 8158).
             let key = principal.selected_read_key();
+            // Owned: the dispatch below takes the call itself.
+            let replayed_verb = match &call {
+                SelfCall::AgentVerb(verb_call) => Some(verb_call.verb.as_str().to_owned()),
+                _ => None,
+            };
+            let replay = verb_door.as_deref().zip(replayed_verb.as_deref());
             return record
                 .replay_cursor()
                 .dispatch(call)
-                .and_then(|outcome| replay_read::rescoped(vault, key, outcome, read_receipt))
+                .and_then(|outcome| {
+                    replay_read::rescoped(vault, key, replay, outcome, read_receipt)
+                })
                 .map(|(outcome, read_receipt)| {
                     if let (Some(door), Some(receipt)) = (&verb_door, &row_receipt) {
                         door.replay_row_receipt(receipt);
