@@ -19,7 +19,7 @@ mod remote_task;
 mod transition;
 mod validate;
 
-pub(crate) use self::remote_task::defer_record;
+pub(crate) use self::remote_task::{abandon_unconfirmed_remote_task, defer_record};
 pub(crate) use self::validate::hash_frozen_payload;
 pub(super) use self::validate::{validate_accounting, validate_record};
 
