@@ -126465,6 +126465,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/managed/checkpoint_recipient.rs",
+     "purpose": "Supervisor-delivered public recipients for checkpoint host-order members",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/managed/container_dirs.rs",
      "purpose": "The host directories the supervisor binds for the guests' container CLI (`--container-home` and…",
      "surface": {
@@ -126486,7 +126496,7 @@
      "path": "src/managed/host.rs",
      "purpose": "Managed process entry behind the shared six-verb Host contract",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -127102,13 +127112,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/managed/vm_guest.rs",
      "purpose": "Managed mode as a Firecracker vault VM's engine (VAULT-VM = B: built now, adopted after the owner's answer…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -127295,6 +127305,16 @@
      "purpose": "The bootstrap's half of a vault VM's custody anchor channels (FIX 6517…",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_init/checkpoint_recipient.rs",
+     "purpose": "The provisioned public recipient's pipe into the managed engine",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -133308,7 +133328,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 110,
+     "files": 112,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -133506,7 +133526,7 @@
    },
    "over_bar": 58,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1710,
+   "source_files": 1712,
    "test_files": 182
   },
   "oneiron-skill-attribution": {
@@ -149151,6 +149171,18 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "CheckpointHostHoldsRecipient"
+     ],
+     "path": "src/lib/checkpoint_recipient.rs",
+     "purpose": "The supervisor-pinned public recipient for checkpoint host-order members",
+     "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "QuotaWindow",
       "Schedule"
      ],
@@ -149654,7 +149686,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
-      "mod": 22,
+      "mod": 23,
       "re-export": 13
      }
     },
@@ -150093,9 +150125,9 @@
      "path": "src/lib/vm_provision.rs",
      "purpose": "A vault VM's provision connection (FIX 6308): what its root bootstrap, `oneiron-vm-init`, takes from the…",
      "surface": {
-      "const": 3,
+      "const": 4,
       "enum": 2,
-      "fn": 7,
+      "fn": 9,
       "struct": 3
      }
     },
@@ -150140,7 +150172,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 58,
+     "files": 59,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -150149,7 +150181,7 @@
    },
    "over_bar": 1,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 57,
+   "source_files": 58,
    "test_files": 1
   },
   "oneiron-web-fetch": {
