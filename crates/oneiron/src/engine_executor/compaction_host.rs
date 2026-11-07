@@ -608,8 +608,7 @@ impl EngineNativeExecutor<'_> {
     /// room's overlay over base. A canonical run's window, keep list and
     /// ceiling then pass `host.compact`'s pre-hooks, which may pin more.
     /// This run's swapped epochs with their summaries' prose, and its fold
-    /// ledger, where the run's rows are: base, or its room's overlay over
-    /// base.
+    /// ledger, where the run's rows are: base, or its room's overlay over base.
     pub(super) fn compaction_epochs(
         &self,
         run_id: crate::EntityId,
