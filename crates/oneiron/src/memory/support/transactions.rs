@@ -254,9 +254,11 @@ impl Memory<'_> {
                 Error::InvalidClaimBody("content actor does not match bound facade").into(),
             );
         }
+        let lane = self.core_write_lane()?;
         self.vault.try_with_write_txn_grouped(|wtxn| {
             verify_actor_binding_in_txn(self.vault, wtxn, self.actor, self.actor_class)?;
-            let mut content = crate::federation::ActorContentTxn::new(self.vault, wtxn, actor)?;
+            let mut content =
+                crate::federation::ActorContentTxn::new(self.vault, wtxn, actor, lane.as_ref())?;
             let result = write(&mut content)?;
             content.finish()?;
             Ok(result)

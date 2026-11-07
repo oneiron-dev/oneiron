@@ -4,13 +4,14 @@
 //! An erase that meets a held row keeps the row whole and goes on: a born
 //! row's birth and its window carriers stay behind their actor's `dt:`
 //! marker, and a held Gate decision stays behind the scrub the erase owes it
-//! (`store::gate_decision`). Every due legal-hold pass settles both in its
-//! first transaction, whether or not an owner erase waits: an explicit or
-//! automatic host-order lift, an owner's narrowing confirm, a released
-//! gate-decision partition and the ordinary maintenance pass alike. What is
-//! still owed keeps the erase's overall final row owed
-//! (`deletion::receipt_final`): the erase stands, and reads completion
-//! pending until then.
+//! (`store::gate_decision`). A held relayed ask intent or result keeps both
+//! rows behind the retirement its holder's erase owes them (FIX 20468). Every
+//! due legal-hold pass settles all of them in its first transaction, whether
+//! or not an owner erase waits: an explicit or automatic host-order lift, an
+//! owner's narrowing confirm, a released gate-decision partition and the
+//! ordinary maintenance pass alike. What is still owed keeps the erase's
+//! overall final row owed (`deletion::receipt_final`): the erase stands, and
+//! reads completion pending until then.
 
 use std::collections::BTreeSet;
 
@@ -20,9 +21,10 @@ use crate::error::Result;
 
 impl Vault {
     /// Settles, in the caller's writer, the scrubs held rows kept: the births
-    /// and carriers no hold keeps any more, which the `dt:` markers name, and
-    /// each Gate decision's owed scrub whose partition no hold keeps. A row
-    /// still held stays as it is.
+    /// and carriers no hold keeps any more, which the `dt:` markers name,
+    /// each Gate decision's owed scrub whose partition no hold keeps, and each
+    /// owed relayed ask intent and its result once neither is held (FIX
+    /// 20468). A row still held stays as it is.
     pub(super) fn settle_held_scrubs_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -33,6 +35,7 @@ impl Vault {
             &crate::secret_custody::CustodyWrite::of(self),
             txn,
         )?;
+        crate::task_verb::settle_held_ask_forward_rows_in_txn(self, txn)?;
         let cancelled = self.settle_owed_byoa_exhaust_erases_in_txn(txn)?;
         crate::channel_identity_provider::settle_line_chat_archive_releases_in_txn(
             &crate::secret_custody::CustodyWrite::of(self),
@@ -43,10 +46,11 @@ impl Vault {
 }
 
 /// Whether a scrub a legal hold kept is still owed for one of an erase's
-/// `entity_ids`: a Gate decision's owed scrub, a birth or window carrier
-/// one of them made, or a stamp token naming one of them. Births and tokens
-/// are read only while a hold row is kept, standing or released: with none,
-/// none outlived its actor's scrub.
+/// `entity_ids`: a Gate decision's owed scrub, a relayed ask intent's owed
+/// retirement (FIX 20468), a birth or window carrier one of them made, or a
+/// stamp token naming one of them. Births and tokens are read only while a
+/// hold row is kept, standing or released: with none, none outlived its
+/// actor's scrub.
 pub(in crate::deletion) fn held_scrubs_owed_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -74,6 +78,9 @@ pub(in crate::deletion) fn held_scrubs_owed_in_txn(
         txn,
         &sources,
     )? {
+        return Ok(true);
+    }
+    if super::super::erase::held_ask_forward_intents_owed_in_txn(vault, txn, &sources)? {
         return Ok(true);
     }
     if crate::store::legal_hold::holds_in_txn(&vault.store, txn)?.is_empty() {
