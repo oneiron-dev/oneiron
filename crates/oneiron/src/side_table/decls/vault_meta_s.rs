@@ -518,8 +518,12 @@ side_tables! {
     /// Key: ().
     SKILL_ATTRIBUTION_SWEEP_SCAN_CURSOR: VaultMeta b"skill_attribution:sweep_scan:v1" Raw;
     /// One outcome the attribution judge left `unclear`, with each unclear hunk's reason, share and
-    /// note, awaiting Dreamer clustering. Key: string (lane ":" reference).
-    SKILL_ATTRIBUTION_UNCLEAR: VaultMeta b"skill_attribution:unclear:v1:" Raw;
+    /// note, and the context frozen with them (FIX 7824): actor, skill, scope, project, task type,
+    /// attempt receipt, judge revision and model, and the rows the judge read; awaiting Dreamer
+    /// clustering. A row whose context names an erased entity goes whole. Key: string (lane ":"
+    /// reference).
+    SKILL_ATTRIBUTION_UNCLEAR: VaultMeta b"skill_attribution:unclear:v1:" Raw
+        => crate::skill_attribution::erase_unclear_entity_in_txn;
     /// Skills citing a source. Key: id16 + id16.
     SKILL_SOURCE_INDEX: VaultMeta b"skill_convert/source_index/v1\0" Raw;
     /// Staleness note of a skill. Key: id16.

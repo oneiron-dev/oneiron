@@ -330,7 +330,9 @@ async fn supervise(
         admission.clone(),
     ));
     // The deadline read's writes take the passes' gate (FIX 7441).
-    let deadline_gate = admission.as_ref().map(|control| Arc::clone(&control.admission));
+    let deadline_gate = admission
+        .as_ref()
+        .map(|control| Arc::clone(&control.admission));
     let built = (|| -> anyhow::Result<_> {
         let node_id = claim_home_node(&vault, device)?;
         // The nightly harness audit reads this; a failed record never stops
