@@ -195,7 +195,10 @@ impl BranchResources<'_> {
             .get(id)
             .copied()
             .ok_or_else(|| invalid_consolidation("unlisted branch turn"))?;
-        Ok(self.branch.part_key(conversation).partition_hash())
+        Ok(match &self.origin {
+            super::ResourceOrigin::Branch(branch) => branch.part_key(conversation).partition_hash(),
+            super::ResourceOrigin::Root(binding) => binding.key().bucket_hash(),
+        })
     }
 
     /// The text a TURN citation of `id` is verified against: its frozen
