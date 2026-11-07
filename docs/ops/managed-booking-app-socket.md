@@ -31,7 +31,7 @@ An idle socket holds no reap admission. Each admitted asynchronous booking call
 holds the existing `OwnerWrite` admission through its dispatcher, result encoding
 and receipt. The admitted task runs to completion even if its answer waiter goes
 away. When the engine pauses writes for reap, the socket returns the existing
-managed pause status and body as an `rpc.result`, without running the verb or
+managed pause status and body as `rpc.res` result chunks, without running the verb or
 writing a receipt. Pings, protocol-refusal receipts and routed send-time release
 use the existing synchronous receipt gate. Release can replace a recorded answer
 with a refusal receipt, so it must not run outside admission after the call
