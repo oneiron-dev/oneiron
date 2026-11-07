@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "packName": "hooksandbox.probe",
+  "publisherIdentity": "independent-hook-publisher",
+  "hubId": "a1050000000000000000000000000001",
+  "cases": [
+    {
+      "hook": "file-attempt",
+      "predicate": "hooksandbox.probe.file",
+      "expectedBodyOutcome": "failed"
+    },
+    {
+      "hook": "network-attempt",
+      "predicate": "hooksandbox.probe.network",
+      "expectedBodyOutcome": "failed"
+    },
+    {
+      "hook": "secret-attempt",
+      "predicate": "hooksandbox.probe.secret",
+      "expectedBodyOutcome": "failed"
+    },
+    {
+      "hook": "kind-escape",
+      "predicate": "hooksandbox.probe.kind",
+      "expectedBodyOutcome": "refused"
+    },
+    {
+      "hook": "offer-marker",
+      "predicate": "hooksandbox.probe.offer",
+      "expectedBodyOutcome": "propose"
+    }
+  ],
+  "pendingPredicate": "hooksandbox.probe.pending",
+  "outputPredicate": "hooksandbox.probe.effect",
+  "packFiles": {
+    "PACK.md": "hooks-sandbox-author-PACK-md",
+    "hooks/file-attempt/HOOK.md": "hooks-sandbox-author-hooks-file-attempt-HOOK-md",
+    "hooks/file-attempt/body.js": "hooks-sandbox-author-hooks-file-attempt-body-js",
+    "hooks/file-attempt/intent.md": "hooks-sandbox-author-hooks-file-attempt-intent-md",
+    "hooks/network-attempt/HOOK.md": "hooks-sandbox-author-hooks-network-attempt-HOOK-md",
+    "hooks/network-attempt/body.js": "hooks-sandbox-author-hooks-network-attempt-body-js",
+    "hooks/network-attempt/intent.md": "hooks-sandbox-author-hooks-network-attempt-intent-md",
+    "hooks/secret-attempt/HOOK.md": "hooks-sandbox-author-hooks-secret-attempt-HOOK-md",
+    "hooks/secret-attempt/body.js": "hooks-sandbox-author-hooks-secret-attempt-body-js",
+    "hooks/secret-attempt/intent.md": "hooks-sandbox-author-hooks-secret-attempt-intent-md",
+    "hooks/kind-escape/HOOK.md": "hooks-sandbox-author-hooks-kind-escape-HOOK-md",
+    "hooks/kind-escape/body.js": "hooks-sandbox-author-hooks-kind-escape-body-js",
+    "hooks/kind-escape/intent.md": "hooks-sandbox-author-hooks-kind-escape-intent-md",
+    "hooks/offer-marker/HOOK.md": "hooks-sandbox-author-hooks-offer-marker-HOOK-md",
+    "hooks/offer-marker/body.js": "hooks-sandbox-author-hooks-offer-marker-body-js",
+    "hooks/offer-marker/intent.md": "hooks-sandbox-author-hooks-offer-marker-intent-md",
+    "hooks/saved-question/HOOK.md": "hooks-sandbox-author-hooks-saved-question-HOOK-md",
+    "hooks/saved-question/body.js": "hooks-sandbox-author-hooks-saved-question-body-js",
+    "hooks/saved-question/intent.md": "hooks-sandbox-author-hooks-saved-question-intent-md",
+    "hooks/after-marker/HOOK.md": "hooks-sandbox-author-hooks-after-marker-HOOK-md",
+    "hooks/after-marker/body.js": "hooks-sandbox-author-hooks-after-marker-body-js",
+    "hooks/after-marker/intent.md": "hooks-sandbox-author-hooks-after-marker-intent-md"
+  },
+  "expected": {
+    "realSafeReplayBeforeLiveAttempts": true,
+    "imports": [
+      "scoped-read",
+      "ai-verdict",
+      "emit-outcome"
+    ],
+    "directCapabilities": [],
+    "fileAttempt": "invoke require(\"fs\").readFileSync on a local synthetic path",
+    "networkAttempt": "invoke fetch on the loopback sink URL",
+    "secretAttempt": "invoke hydrate with a real registered secret handle",
+    "author": "actual hub publisher, never installing owner",
+    "source": "generated",
+    "outOfKindEffects": 0,
+    "outOfReadGrant": "withheld, not owner scope",
+    "offerIsNotActivation": true,
+    "samePublisherAuthorityRequired": true,
+    "sameAuthorGrantRevoked": true,
+    "durablePendingAcrossRestart": true,
+    "postRevokeForeignEffects": 0,
+    "currentAuthorityRefusalRequired": true,
+    "taskAnswerIsAuthority": false,
+    "savedTerminalReceiptObservedIsNotAssumed": true,
+    "savedCallerMayResumeUnderOwnAuthority": true,
+    "revokedForeignGeneratedEffects": 0,
+    "currentAuthorityRefusalSurface": "known revoked binding grant/replay door; not an invented saved-call terminal getter"
+  },
+  "setupConditions": {
+    "gitHubPin": "real local git commit from fixture bytes",
+    "qualification": "positive safe fact replay; no fake runtime",
+    "publisherGrant": "skill.offer is offer only; explicit owner permissions stay separate",
+    "foreignAsk": "same binding.author.actor, owner vault.gate.policy.get/put per-actor grant and one owner-created Standard TASK assignee=Child; no CLI-name substitution",
+    "revokeLast": "never install/sync after revoke; both re-admit"
+  },
+  "sourcePins": [
+    {
+      "page": "/oneiron/agents/oneiron-arch-0080-runtime-hooks-v1/",
+      "sha256": "ada9cc689fa7f7399336c558147faa375ba2d336bd7c182efa597825fbfc7d6e"
+    }
+  ],
+  "controlPackFiles": {
+    "PACK.md": "hooks-sandbox-author-control-PACK-md",
+    "hooks/progress-control/HOOK.md": "hooks-sandbox-author-control-hooks-progress-control-HOOK-md",
+    "hooks/progress-control/body.js": "hooks-sandbox-author-control-hooks-progress-control-body-js",
+    "hooks/progress-control/intent.md": "hooks-sandbox-author-control-hooks-progress-control-intent-md"
+  },
+  "controlPredicate": "local.hooks.sandboxcontrol",
+  "controlOutputPredicate": "local.hooks.sandboxcontrol.observed"
+}

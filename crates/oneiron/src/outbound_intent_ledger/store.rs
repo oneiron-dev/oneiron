@@ -15,10 +15,12 @@ mod approval;
 pub(crate) mod checkpoint;
 pub(super) mod payload_erase;
 pub(super) mod pending;
+mod pinned_approval;
 mod remote_task;
 mod transition;
 mod validate;
 
+pub(crate) use self::pinned_approval::keep_pinned_approval_in_txn;
 pub(crate) use self::remote_task::{abandon_unconfirmed_remote_task, defer_record};
 pub(crate) use self::validate::hash_frozen_payload;
 pub(super) use self::validate::{validate_accounting, validate_record};
@@ -745,6 +747,7 @@ fn put_ledger_record(
     )?;
     let mut kept = record.clone();
     kept.payload = stored.payload;
+    kept.pinned_approval = stored.pinned_approval;
     LEDGER.put(&vault.store, wtxn, &record.id, &kept)?;
     Ok(())
 }
@@ -765,7 +768,6 @@ pub(super) fn put_erased_record(
         &id,
         crate::side_table::Erased::of(record)?,
     )?;
-    super::pinned_approval::drop_pinned_approval_in_txn(vault, wtxn, &id)?;
     super::late_recipient::forget_intent_party_in_txn(vault, wtxn, &id)?;
     payload_erase::erase_call_compartment_in_txn(vault, wtxn, &attempt_id, call_seq)
 }

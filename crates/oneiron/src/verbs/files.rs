@@ -1,7 +1,7 @@
 //! The inputs and answers of the Files world's source rows (FIX 6942):
-//! `vault.files.sources.attach`, `.rescan`, `.detach`, `.list` and `.files`,
-//! host doors. A server runs each under the vault owner's proof. Attach and
-//! rescan read folders on the server's own host, so an embedded handle,
+//! `vault.files.sources.attach`, `.convert`, `.rescan`, `.detach`, `.list` and
+//! `.files` host doors. A server runs each under the vault owner's proof.
+//! Attach, conversion and rescan read folders on the server's host, so an embedded handle,
 //! which has no host walk, answers them with a typed refusal; its owner may
 //! list, read a source's ledger and detach.
 use serde::{Deserialize, Serialize};
@@ -39,6 +39,18 @@ pub struct FilesSourceAttachRequest {
     /// `observation` when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
+}
+
+/// Converts an attached notes source to Files on the server's host.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FilesSourceConvertRequest {
+    /// The attached folder, as this host names it; the host canonicalizes it.
+    pub path: String,
+    /// Absent keeps the Files default exclusions. A list, even an empty
+    /// one, replaces them, as on `vault.files.sources.attach`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exclude: Option<Vec<String>>,
 }
 
 /// This install's Files world.
@@ -441,6 +453,14 @@ pub fn attach_files_source_embedded(
     _input: FilesSourceAttachRequest,
 ) -> MemoryResult<FilesSourceAttachAnswer> {
     host_walk_only("vault.files.sources.attach")
+}
+
+/// `vault.files.sources.convert` on an embedded handle: it has no host walk.
+pub fn convert_files_source_embedded(
+    _memory: &Memory<'_>,
+    _input: FilesSourceConvertRequest,
+) -> MemoryResult<FilesSourceAttachAnswer> {
+    host_walk_only("vault.files.sources.convert")
 }
 
 /// `vault.files.sources.rescan` on an embedded handle: it has no host walk.

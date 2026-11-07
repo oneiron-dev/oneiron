@@ -16,6 +16,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::MAIL_PACK_BODY_QUEUE, CONTENT),
     (&t::MAIL_PACK_COMPLIANCE_EVENT, LIVE),
     (&t::MAIL_PACK_COMPLIANCE_SETTING, LIVE),
+    // An owed header retirement stands with the revision it names, as the
+    // image holds it (FIX 15413).
+    (&t::MAIL_PACK_HEADER_RETIREMENT, CONTENT),
     (&t::MAIL_PACK_OCCURRENCE, CONTENT),
     (&t::MAIL_PACK_OCCURRENCE_ROW, CONTENT),
     // A source's owner, custody name and settings are live configuration.
@@ -126,7 +129,6 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::OUTBOUND_INTENT_LATE_RECIPIENT, LIVE),
     (&t::OUTBOUND_REMOTE_TASK_POLL, LIVE),
     (&t::OUTBOUND_INTENT_UNAVAILABLE, LIVE),
-    (&t::OUTBOUND_PINNED_APPROVAL, LIVE),
     (&t::OUTBOUND_SUPPRESSION_INDEX, LIVE),
     (&t::OUTBOUND_SUPPRESSION_RECEIPT, LIVE),
     (&t::OUTBOUND_DIRECT_RECEIPT, LIVE),
