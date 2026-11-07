@@ -61,12 +61,19 @@ pub const BROWSER_SESSION_CHECK: &str = "browser.session";
 /// Authenticated JMAP discovery and a domain read on the host's own mail
 /// server. Only a served host with a `[native_mail]` server runs it.
 pub const NATIVE_MAIL_JMAP_CHECK: &str = "native_mail.jmap";
+/// Google's token information for the stored Google Sheets grant (FIX
+/// 4862): the account it belongs to and the scopes it holds.
+pub const SHEETS_TOKEN_CHECK: &str = "sheets.token";
 const LINKEDIN_ME_URL: &str = "https://www.linkedin.com/voyager/api/me";
 /// Google's OAuth token endpoint: where a stored Gmail refresh token is
 /// exchanged for the access token its check presents.
 const GOOGLE_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
-// Identity scopes can accompany Google's Gmail grant without adding mail access.
-const GMAIL_IDENTITY_SCOPES: [&str; 5] = [
+/// Google's token information endpoint: the account and scopes an access
+/// token holds. The token goes in the form body, never in the URL.
+const GOOGLE_TOKENINFO_URL: &str = "https://oauth2.googleapis.com/tokeninfo";
+// Identity scopes can accompany a Google grant (Gmail's, Sheets') without
+// adding mail or spreadsheet access.
+const GOOGLE_IDENTITY_SCOPES: [&str; 5] = [
     "openid",
     "email",
     "profile",
@@ -141,12 +148,13 @@ pub struct ProviderConnectionChecks {
 
 impl ProviderConnectionChecks {
     /// Every check name this verifier answers.
-    pub const CHECKS: [&'static str; 5] = [
+    pub const CHECKS: [&'static str; 6] = [
         SLACK_AUTH_TEST_CHECK,
         LINE_BOT_INFO_CHECK,
         GMAIL_PROFILE_CHECK,
         LINKEDIN_SESSION_CHECK,
         TELEGRAM_GET_ME_CHECK,
+        SHEETS_TOKEN_CHECK,
     ];
 
     /// A bounded HTTPS client: no proxy, no redirects, short timeouts.
@@ -257,6 +265,77 @@ impl ProviderConnectionChecks {
             )
         })?;
         self.send(GMAIL_PROFILE_CHECK, method, url, access_token.as_bytes())
+    }
+
+    /// Google's token information for the stored Sheets grant (FIX 4862):
+    /// the grant's access token, refreshed first when the grant carries a
+    /// refresh token and its OAuth client, goes in the form body of one POST
+    /// to `url`. The scopes Google reports for the token stand as the scopes
+    /// the credential holds. An exchanged access token is presented once and
+    /// never kept.
+    fn send_sheets_token(&self, url: &str, value: &[u8]) -> Result<CheckReply> {
+        let (access_token, granted) = self.stored_google_access_token(value)?;
+        let response = self
+            .client
+            .post(url)
+            .form(&[("access_token", access_token.as_str())])
+            .send()
+            .map_err(|error| {
+                Error::InvalidConfig(format!(
+                    "connection check could not reach Google's token information: {}",
+                    error.without_url()
+                ))
+            })?;
+        let status = response.status().as_u16();
+        let mut body = Vec::new();
+        response
+            .take(MAX_CHECK_REPLY_BYTES + 1)
+            .read_to_end(&mut body)
+            .map_err(|_| invalid("connection check reply unreadable"))?;
+        if body.len() as u64 > MAX_CHECK_REPLY_BYTES {
+            return Err(invalid("connection check reply exceeds bound"));
+        }
+        let reported = serde_json::from_slice::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|reply| reply_field(&reply, "scope").map(str::to_owned));
+        Ok(CheckReply {
+            status,
+            scopes: reported.or(granted),
+            body,
+        })
+    }
+
+    /// The access token a stored Google grant presents, beside the scopes
+    /// Google granted it when it was just refreshed: a fresh one when the
+    /// grant carries a refresh token and its OAuth client, else its stored
+    /// access token, else the bare text.
+    fn stored_google_access_token(
+        &self,
+        value: &[u8],
+    ) -> Result<(Zeroizing<String>, Option<String>)> {
+        let text = std::str::from_utf8(value)
+            .map_err(|_| invalid("the stored credential is not text"))?
+            .trim();
+        if !text.starts_with('{') {
+            return Ok((Zeroizing::new(text.to_owned()), None));
+        }
+        let grant: StoredGoogleGrant = serde_json::from_str(text)
+            .map_err(|_| invalid("the stored Google grant is not JSON"))?;
+        if let (Some(refresh_token), Some(client_id)) =
+            (present(&grant.refresh_token), present(&grant.client_id))
+        {
+            return self.exchange_google_refresh(
+                refresh_token,
+                client_id,
+                present(&grant.client_secret),
+            );
+        }
+        let access_token = present(&grant.access_token).ok_or_else(|| {
+            invalid(
+                "the stored Google grant holds neither an access token nor a refresh token with its OAuth client",
+            )
+        })?;
+        Ok((Zeroizing::new(access_token.to_owned()), None))
     }
 
     /// A fresh access token for a stored grant that carries its OAuth client.
@@ -401,10 +480,10 @@ impl PackConnectionVerifier for ProviderConnectionChecks {
         let mut reply = None;
         vault
             .inject_secret_at_door(&secret.name, &secret.effector, &mut |value: &[u8]| {
-                reply = Some(if check.check == GMAIL_PROFILE_CHECK {
-                    self.send_gmail_profile(&method, url, value)?
-                } else {
-                    self.send(check.check, &method, url, value)?
+                reply = Some(match check.check {
+                    GMAIL_PROFILE_CHECK => self.send_gmail_profile(&method, url, value)?,
+                    SHEETS_TOKEN_CHECK => self.send_sheets_token(url, value)?,
+                    _ => self.send(check.check, &method, url, value)?,
                 });
                 Ok(())
             })
@@ -433,6 +512,7 @@ fn provider_call(check: &str) -> std::result::Result<(reqwest::Method, &'static 
         ),
         LINKEDIN_SESSION_CHECK => (reqwest::Method::GET, LINKEDIN_ME_URL),
         TELEGRAM_GET_ME_CHECK => (reqwest::Method::GET, "https://api.telegram.org"),
+        SHEETS_TOKEN_CHECK => (reqwest::Method::POST, GOOGLE_TOKENINFO_URL),
         BROWSER_SESSION_CHECK => {
             return Err(
                 "this host runs no browser guest; a served host with a [browser] guest checks it"
@@ -519,6 +599,12 @@ fn evidence_of(
                 format!("{name} ({handle})")
             })
         }
+        // Google names the account by email when the grant holds an
+        // identity scope, and by its stable subject id always.
+        SHEETS_TOKEN_CHECK => field("email")
+            .or_else(|| field("sub"))
+            .unwrap_or_default()
+            .to_owned(),
         _ => field("emailAddress").unwrap_or_default().to_owned(),
     };
     // The provider's stable id a served host binds inbound events to:
@@ -535,6 +621,7 @@ fn evidence_of(
         LINKEDIN_SESSION_CHECK => reply
             .get("miniProfile")
             .and_then(|profile| reply_field(profile, "publicIdentifier")),
+        SHEETS_TOKEN_CHECK => field("sub"),
         _ => field("emailAddress"),
     }
     .map(str::to_owned);
@@ -584,7 +671,8 @@ fn connection_bound(
 
 /// The provider's word against the owner's: an account must be named, and
 /// reported scopes must be allowed, apart from undeclared Google identity
-/// scopes accompanying a Gmail grant. Declared-but-declined scopes still fail.
+/// scopes accompanying a Gmail or Sheets grant. Declared-but-declined scopes
+/// still fail.
 fn judge_evidence(
     declared: &PackSetupConnection,
     allowed: &[String],
@@ -613,8 +701,9 @@ fn judge_evidence(
             .copied()
             .filter(|scope| {
                 !explained.contains(scope)
-                    && !(declared.verify == GMAIL_PROFILE_CHECK
-                        && GMAIL_IDENTITY_SCOPES.contains(scope))
+                    && !((declared.verify == GMAIL_PROFILE_CHECK
+                        || declared.verify == SHEETS_TOKEN_CHECK)
+                        && GOOGLE_IDENTITY_SCOPES.contains(scope))
             })
             .collect();
         let declined: Vec<&str> = held
