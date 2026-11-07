@@ -239,8 +239,22 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // Registration reflects this server's verified host binding. A bound
         // QuickJS provider enables durable execute_code on both endpoints;
         // without one, admission returns code_host_unbound before any run.
-        .route("/mcp", post(mcp_gateway))
-        .route("/mcp/tool-first", post(mcp_tool_first_gateway))
+        //
+        // Each is MCP Streamable HTTP (FIX 4902): a POST carries every
+        // message, and GET and DELETE answer 405, since the server opens no
+        // stream of its own and holds no session.
+        .route(
+            "/mcp",
+            post(mcp_gateway)
+                .get(mcp_method_not_allowed)
+                .delete(mcp_method_not_allowed),
+        )
+        .route(
+            "/mcp/tool-first",
+            post(mcp_tool_first_gateway)
+                .get(mcp_method_not_allowed)
+                .delete(mcp_method_not_allowed),
+        )
         .route("/api/core/discover", get(discover))
         .route("/api/search/vector", get(search_vector))
         .route(
