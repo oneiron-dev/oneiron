@@ -31,6 +31,7 @@ mod attempt;
 mod entries;
 mod pad_sweep;
 mod publication;
+mod publication_access;
 mod refill;
 mod relay_observation;
 mod report;
@@ -303,6 +304,10 @@ pub(crate) async fn relay_sealed_bundle(
         Err(error) => return Err(error),
     };
     relay.reached = true;
+    // A missing publication grant must not stop the existing admission/erase work.
+    if let Err(error) = publication_access::serve(vault, &mut rpc).await {
+        tracing::warn!(%error, "publication grants remain pending");
+    }
     // The admissions first: an old reader with no erase or slot work still
     // grants (FIX 4271). A home that refuses them still takes the rest.
     match access::serve_admissions(vault, &mut rpc).await {
