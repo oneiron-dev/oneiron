@@ -45448,6 +45448,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/llm/decision/pack_limits.rs",
+     "purpose": "Advisory observation of the policy's logical question-pack boundary",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/llm/decision/policy.rs",
      "purpose": "Defined below the model invocation layer",
      "surface": {
@@ -93151,7 +93161,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 172,
+     "files": 173,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -93902,7 +93912,7 @@
    },
    "over_bar": 181,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 6629,
+   "source_files": 6630,
    "test_files": 895
   },
   "oneiron-android": {
@@ -100649,6 +100659,7 @@
      "path": "src/limit_ask.rs",
      "purpose": "The engine's `[limits]` rows and the port a crossed row asks through (ARCH-0044 C5, OF-520)",
      "surface": {
+      "const": 1,
       "enum": 1,
       "fn": 11,
       "struct": 2,
@@ -136677,9 +136688,9 @@
      "path": "src/model_decision/policy.rs",
      "purpose": "Question- and reversibility-scoped escalation bands; learning starts in shadow",
      "surface": {
-      "const": 1,
       "enum": 2,
       "fn": 11,
+      "re-export": 1,
       "struct": 7
      }
     },
