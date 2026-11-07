@@ -133,22 +133,39 @@ fn revision_speaker_in_txn(
 }
 
 /// The one live canonical PERSON `id` names: itself while it is a live,
-/// unremoved, active PERSON, or the surviving head it was merged into. None
-/// for a split (no single head), an erased, removed or retired PERSON, or
-/// any other entity.
-pub(crate) fn live_canonical_person_in_txn(
+/// unremoved, active PERSON, or, while it is a live, unremoved PERSON merged
+/// into another, the one surviving head it resolves to. None when `id`
+/// itself is erased (soft or hard), removed or no PERSON, though a soft
+/// erase keeps its merge redirect: an erased speaker names no one, not its
+/// head. None too for a split (no single head) or a head that is erased,
+/// removed or retired.
+fn live_canonical_person_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<EntityId>> {
+    if !live_unremoved_person_in_txn(vault, txn, id)? {
+        return Ok(None);
+    }
     let [head] = vault.resolve_entity_in_txn(txn, id)?[..] else {
         return Ok(None);
     };
-    let live = crate::vault::live_entity_row_in_txn(&vault.store, txn, &head)?.live_type()
-        == Some(ENTITY_TYPE_PERSON)
-        && !crate::ports::removed_in_txn(&vault.store, txn, &head)?
+    let live = live_unremoved_person_in_txn(vault, txn, &head)?
         && vault.entity_lifecycle_state_in_txn(txn, &head)? == EntityLifecycleState::Active;
     Ok(live.then_some(head))
+}
+
+/// Whether `id` is a live PERSON row that no deletion removes.
+fn live_unremoved_person_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    Ok(
+        crate::vault::live_entity_row_in_txn(&vault.store, txn, id)?.live_type()
+            == Some(ENTITY_TYPE_PERSON)
+            && !crate::ports::removed_in_txn(&vault.store, txn, id)?,
+    )
 }
 
 /// The PERSON the source names as the speaker of an imported MESSAGE whose

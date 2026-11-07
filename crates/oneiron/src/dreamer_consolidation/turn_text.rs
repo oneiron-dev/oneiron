@@ -63,6 +63,10 @@ struct MessagePin {
     /// The live canonical PERSON an imported row's source names as its
     /// speaker, read from `authors`; none for a native row (FIX 15412).
     speaker: Option<EntityId>,
+    /// The source attribution its slices pin: an imported row's raw
+    /// `AuthoredBy` target and `speaker`, as one hash; none for a native row
+    /// and for an import that names no one (FIX 15412).
+    attribution: Option<[u8; 32]>,
     frontier: Option<Vec<u8>>,
     /// Latest stream receipt `(finality, generation)`; `None` when atomic.
     stream: Option<(StreamFinality, EntityId)>,
@@ -71,8 +75,10 @@ struct MessagePin {
 /// One MESSAGE-local slice behind a range of a witnessed TURN's text: the
 /// child, the byte span within that child's own content, the exact revision
 /// (plus the document frontier when the child has a document) it was read
-/// at, and the attribution it was read with: its raw `AuthoredBy` targets
-/// and the source speaker they named, as one hash (FIX 15412).
+/// at, and, when the child carries a source attribution, the one it was
+/// read with: an imported child's raw `AuthoredBy` target and the source
+/// speaker it named, as one hash (FIX 15412). None means the child names no
+/// source speaker: a native child, or an import that names no one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MessageSpan {
     pub(crate) message: EntityId,
@@ -80,11 +86,13 @@ pub(crate) struct MessageSpan {
     pub(crate) end: usize,
     pub(crate) revision: [u8; 32],
     pub(crate) frontier: Option<Vec<u8>>,
-    pub(crate) attribution: [u8; 32],
+    pub(crate) attribution: Option<[u8; 32]>,
 }
 
 impl MessageSpan {
-    /// Folds every field into an identity hash.
+    /// Folds every field into an identity hash. A slice with no source
+    /// attribution folds exactly the bytes it folded before slices carried
+    /// one.
     pub(crate) fn hash_into(&self, hasher: &mut blake3::Hasher) {
         hasher.update(self.message.as_bytes());
         hasher.update(&(self.start as u64).to_be_bytes());
@@ -97,7 +105,10 @@ impl MessageSpan {
         } else {
             hasher.update(&[0]);
         }
-        hasher.update(&self.attribution);
+        if let Some(attribution) = &self.attribution {
+            hasher.update(b"source_attribution");
+            hasher.update(attribution);
+        }
     }
 }
 
@@ -205,7 +216,7 @@ impl TurnText {
                 end: to - offset,
                 revision: pin.revision,
                 frontier: pin.frontier.clone(),
-                attribution: attribution::attribution_hash(&pin.authors, pin.speaker),
+                attribution: pin.attribution,
             });
         }
         if range.is_some() && spans.is_empty() {
@@ -485,6 +496,7 @@ fn collect_with(
             facts.imported,
             &authors,
         )?;
+        let attribution = attribution::attribution_hash(facts.imported, &authors, speaker);
         #[cfg(feature = "sync")]
         let frontier = crate::entity_doc::source_frontier_in_txn(&vault.store, txn, &id)?;
         #[cfg(not(feature = "sync"))]
@@ -500,6 +512,7 @@ fn collect_with(
             revision: super::swarm_evidence_content_hash(&body),
             authors,
             speaker,
+            attribution,
             frontier,
             stream,
         });

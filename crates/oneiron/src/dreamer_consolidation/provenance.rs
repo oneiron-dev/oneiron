@@ -290,10 +290,14 @@ fn encode_message_span(span: &MessageSpan) -> Value {
     if let Some(frontier) = &span.frontier {
         row.push((Value::from("frontier"), Value::Binary(frontier.clone())));
     }
-    row.push((
-        Value::from("attribution"),
-        Value::Binary(span.attribution.to_vec()),
-    ));
+    // Only a MESSAGE that names a source speaker pins an attribution; its
+    // absence means the MESSAGE names none (FIX 15412).
+    if let Some(attribution) = &span.attribution {
+        row.push((
+            Value::from("attribution"),
+            Value::Binary(attribution.to_vec()),
+        ));
+    }
     Value::Map(row)
 }
 
