@@ -149,6 +149,10 @@ pub struct SyncServerConfig {
     /// `[feedback.inbox]`: whether this server keeps the keyless open inbox,
     /// and its flood cap.
     pub feedback_inbox: FeedbackInboxConfig,
+    /// The deployment's publisher configuration, also used by owner status.
+    pub failure_signals: FailureSignalsConfig,
+    /// The startup posture used to select the failure-signal destination.
+    pub privacy_posture: HostingPrivacyPosture,
     /// Runtime mode and per-role model routing defaults. The single source of
     /// usage-mode truth: `runtime_usage_mode()` derives from `runtime.mode`.
     pub runtime: RuntimeConfig,
@@ -244,6 +248,8 @@ impl Default for SyncServerConfig {
             max_bulk_decompressed: 8 * 1024 * 1024, // 8 MB
             limits: LimitsConfig::default(),
             feedback_inbox: FeedbackInboxConfig::default(),
+            failure_signals: FailureSignalsConfig::default(),
+            privacy_posture: HostingPrivacyPosture::SelfHostLocal,
             runtime: RuntimeConfig::default(),
             skills: SkillsConfig::default(),
             line: LineConfig::default(),
@@ -408,6 +414,8 @@ pub struct ServeConfig {
     /// The `[desktop]` section, absent until the config file names it.
     /// Absent means code runs have no desktop.
     pub desktop: Option<super::DesktopConfig>,
+    /// Explicit host profile for published backends. Absent: static serving only.
+    pub artifact_backend: Option<super::ArtifactBackendConfig>,
     /// The `[merge_queue]` section: the queue checker's executor.
     pub merge_queue: Option<super::MergeQueueCheckerConfig>,
     /// The `[gpu]` section: the batch lane's rented pods, absent until the
@@ -557,6 +565,7 @@ impl Default for ServeConfig {
             models: None,
             browser: None,
             desktop: None,
+            artifact_backend: None,
             merge_queue: None,
             gpu: None,
             native_mail: None,
@@ -629,6 +638,8 @@ impl ServeConfig {
             max_bulk_decompressed: self.max_bulk_decompressed,
             limits: self.limits.clone(),
             feedback_inbox: self.feedback.inbox,
+            failure_signals: self.failure_signals.clone(),
+            privacy_posture: self.privacy_posture,
             runtime: self.runtime.clone(),
             skills: self.skills.clone(),
             line: self.line,
