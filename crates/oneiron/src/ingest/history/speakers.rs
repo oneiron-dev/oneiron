@@ -22,7 +22,9 @@
 //! own assistant side: a counterparty MESSAGE whose source role is
 //! `assistant`, with no `said_by`, of the history source the conversation was
 //! imported from. A counterparty of any other source or source role is other
-//! people. Read-only.
+//! people. A foreign archive's copy (`memory::admitted_foreign`: its
+//! CONVERSATION, TURN or MESSAGE carries that admission fact) is never own
+//! history and never owner-side, whatever source it keeps. Read-only.
 
 use super::HistorySource;
 use crate::Vault;
@@ -33,7 +35,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::gate::WITNESS_AUTHOR_COUNTERPARTY;
 use crate::ports::{EdgeDirection, EdgeStoreRead};
-use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 /// What an imported conversation's recorded speakers say about who else it
@@ -89,8 +91,10 @@ pub(crate) fn imported_speakers_in(
         return Ok(ImportedConversationSpeakers::Others);
     };
     // An owner history import, whose recorded assistant may speak as a
-    // counterparty.
-    let own_history = HistorySource::parse(&source).is_some();
+    // counterparty; never a foreign archive's copy, whatever source it keeps
+    // (FIX 15412).
+    let own_history = HistorySource::parse(&source).is_some()
+        && !crate::memory::admitted_foreign(ENTITY_TYPE_CONVERSATION, &body);
     // All ChildOf TURN targets, live or not (childof_turns_in is live-only):
     // a shelled or absent turn gives no verdict itself; its live MESSAGEs
     // still decide said_by below.
@@ -110,7 +114,7 @@ pub(crate) fn imported_speakers_in(
             continue;
         };
         let facts = decode_turn_body(&body);
-        if !facts.imported {
+        if !facts.imported || crate::memory::admitted_foreign(ENTITY_TYPE_TURN, &body) {
             return Ok(ImportedConversationSpeakers::Others);
         }
         match facts.speaker.as_deref() {
@@ -161,13 +165,18 @@ fn body_in(vault: &Vault, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<Optio
 /// (any present value is other people), and a counterparty one is the
 /// recorded assistant of `history`, the owner history source the conversation
 /// was imported from (`None` outside one): source role `assistant` under that
-/// same source. An undecodable body fails closed (`false`). The walk is the
+/// same source. A foreign archive's copy (its `metadata.import` carries that
+/// admission fact) never is, whatever source and role it keeps (FIX 15412).
+/// An undecodable body fails closed (`false`). The walk is the
 /// `message_import_source` shape (`metadata` -> `import` -> `said_by`).
 fn message_owner_side(body: &[u8], history: Option<&str>) -> bool {
     let Ok(message) = rmpv::decode::read_value(&mut &body[..]) else {
         return false;
     };
     let import = field(&message, "metadata").and_then(|metadata| field(metadata, "import"));
+    if import.is_some_and(crate::memory::import_provenance_foreign) {
+        return false;
+    }
     if let Some(rmpv::Value::Map(entries)) = import
         && entries
             .iter()

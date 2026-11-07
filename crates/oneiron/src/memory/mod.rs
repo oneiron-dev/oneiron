@@ -411,8 +411,9 @@ pub(crate) use support::{
     verify_deletion_authority_in_txn, verify_owner_actor_binding_in_txn,
 };
 pub(crate) use witness::{
-    ArchivedMessage, ArchivedMessageAdmission, ArchivedMessageLink, archived_container_body,
-    archived_inline_turn_body, archived_message_body,
+    ArchivedMessage, ArchivedMessageAdmission, ArchivedMessageLink, admitted_foreign,
+    archived_container_body, archived_inline_conversation_body, archived_inline_turn_body,
+    archived_message_body, archived_turn_speaks, import_provenance_foreign,
 };
 #[cfg(feature = "sync")]
 pub(crate) use witness::{ForeignTurn, speak_as_counterparty};

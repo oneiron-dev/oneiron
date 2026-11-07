@@ -36,8 +36,9 @@ pub use self::wake_outcome::{TurnProgramWakeOutcome, UnpersistedWakeReason};
 pub(crate) use self::wake_outcome::{erase_turn_wake_label_in_txn, turn_wake_outcome_in_txn};
 
 pub(crate) use self::archive::{
-    ArchivedMessage, ArchivedMessageAdmission, ArchivedMessageLink, archived_container_body,
-    archived_inline_turn_body, archived_message_body,
+    ArchivedMessage, ArchivedMessageAdmission, ArchivedMessageLink, admitted_foreign,
+    archived_container_body, archived_inline_conversation_body, archived_inline_turn_body,
+    archived_message_body, archived_turn_speaks, import_provenance_foreign,
 };
 pub(crate) use self::codec::{
     IMPORTED_SOURCE_KEY, guard_import_stamp, turn_admits_message_bodies, witness_message_body,

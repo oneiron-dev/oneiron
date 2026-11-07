@@ -123,6 +123,46 @@ pub(super) fn index_message_containers<R: Read + Seek>(
     Ok(())
 }
 
+/// FIX 15412: marks the CONVERSATION each archived TURN that no MESSAGE
+/// joins and that speaks (`archived_turn_speaks`) is a child of, before any
+/// row is compared or queued, so a foreign archive's import marks it as it
+/// marks a MESSAGE's containers. Read for either speaker choice, so a
+/// collision the other choice explains is named.
+pub(super) fn index_inline_speech_conversations<R: Read + Seek>(
+    vault: &Vault,
+    archive: &mut IndexedArchive<'_, R>,
+) -> Result<()> {
+    let mut after = None;
+    while let Some(id) = archive.next_of_type(ENTITY_TYPE_TURN, after.as_ref())? {
+        after = Some(id);
+        if archive
+            .index
+            .contains(Tag::MessageContainer, id.as_bytes())?
+            || archive.index.contains(Tag::Omitted, id.as_bytes())?
+        {
+            continue;
+        }
+        let Some(at) = archive.entity_at(&id)? else {
+            continue;
+        };
+        let body = archive.entity_row(&at)?.body.to_bytes_in(&archive.files)?;
+        if !crate::memory::archived_turn_speaks(&body, &vault.config.assistant_display_names) {
+            continue;
+        }
+        for conversation in archived_targets(&archive.index, &id, EdgeKind::ChildOf)? {
+            if archive
+                .entity_at(&conversation)?
+                .is_some_and(|at| at.entity_type == ENTITY_TYPE_CONVERSATION)
+            {
+                archive
+                    .index
+                    .put(Tag::InlineSpeechConversation, conversation.as_bytes(), &[])?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Checks that archived MESSAGE `id`, which matched a row already stored
 /// here, has the stored row's membership: its one `PartOf` TURN and one
 /// `BelongsTo` CONVERSATION are the archive's, so the edge pass gives it no
