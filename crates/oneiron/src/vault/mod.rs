@@ -278,6 +278,13 @@ pub struct Vault {
     /// green landing starts a full-auto pass at once. In memory only and
     /// never shared across vaults; each lifecycle tick repairs a missed one.
     pub(crate) origin_mirror_wake: crate::origin::OriginMirrorWake,
+    /// The served host's transport an exact publish's mirror git goes
+    /// through, its credential broker installing the credential (FIX 19083),
+    /// installed once per open vault
+    /// ([`Vault::install_origin_git_transport`]). None on an embedded vault,
+    /// which keeps the direct path. In memory only.
+    pub(crate) origin_git_transport:
+        std::sync::OnceLock<std::sync::Arc<dyn crate::origin::git_transport::OriginGitTransport>>,
     /// The deadline tests' slow retrieval stage, armed per vault.
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) slow_retrieval_stage:
