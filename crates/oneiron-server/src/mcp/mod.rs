@@ -58,7 +58,7 @@ pub use self::endpoint_schema::{
 pub use self::exec_host::{
     CodeRunLimits, McpCodeExecutionError, McpCodeExecutionHost, McpCodeExecutionRequest,
     McpCodeModeProvider, McpCodeRunSelfBrief, McpEngineNativeCodeHost, PlannedMeter, PlannedModel,
-    PlannedRoute, ReaderMeter, ReaderRequestObserver, RunCompactionSeat,
+    PlannedRoute, ReaderMeter, ReaderRequestObserver, RunCompactionSeat, RunProfiledCompactionSeat,
     bind_mcp_code_execution_host, mcp_code_execution_host, mcp_code_run_id, mcp_scoped_identity_id,
 };
 pub(crate) use self::exec_host::{
@@ -94,7 +94,6 @@ pub use self::tool_catalog::{
     MCP_BOOK_OPERATIONS, MCP_SERVER_NAME, MCP_TOOL_ARGS_SCHEMA_VERSION, McpToolValidationError,
     McpValidatedToolArgs,
 };
-
 #[cfg(test)]
 mod tests;
 
