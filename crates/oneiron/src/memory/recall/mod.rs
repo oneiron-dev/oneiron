@@ -866,7 +866,14 @@ impl Memory<'_> {
             }
             let mut pack = scoped.value;
             let mut counted = Vec::new();
-            lane.attach_reactions_quoting(&mut pack, &status.cited_messages, None, &mut counted)?;
+            let reactions = lane.attach_reactions_quoting(
+                &mut pack,
+                &status.cited_messages,
+                None,
+                &mut counted,
+            )?;
+            // The lines' read narrows the recall as its pack's did (FIX 8669).
+            receipt.restrict_with(&reactions);
             // Each reaction claim a line counts is a producer of the pack.
             self.produced_from(counted);
 
