@@ -142,6 +142,38 @@ pub struct InvitationSlip {
     pub expires_at: u64,
 }
 
+/// `vault.members.accept_with_credential`'s answer: the acceptance receipt and
+/// the regular member credential minted in that same writer. The credential is
+/// always present; plain acceptance keeps its original receipt-only answer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SharedInvitationAcceptedWithCredential {
+    pub receipt: SharedActExecutionReceipt,
+    pub credential: MemberSlip,
+}
+
+impl MemberSlip {
+    pub(super) fn from_slip(slip: crate::authority::CapabilitySlip) -> MemoryResult<Self> {
+        Ok(Self {
+            slip_id: crate::entity_id::bytes_to_hex_lower(&slip.claims.slip_id),
+            slip: slip.to_token()?,
+            expires_at: slip.claims.expires_at,
+        })
+    }
+}
+
+/// An accepted member's regular credential, bound to the accepted grant and
+/// the same device key that proved the invitation request. The private key
+/// stays on the invitee's device and proves each subsequent request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemberSlip {
+    /// The slip id, hex.
+    pub slip_id: String,
+    /// The `v2.slip.` credential.
+    pub slip: String,
+    /// The caller-chosen expiry admitted by the normal mint validator.
+    pub expires_at: u64,
+}
+
 /// `vault.members.change`'s input: another non-root role for a member who
 /// is not an Owner.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
