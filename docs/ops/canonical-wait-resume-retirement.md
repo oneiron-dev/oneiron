@@ -18,8 +18,9 @@ Hook cleanup and the public wait-delivery clear operation keep their existing be
 Session runs still commit through their captured route. The separate
 [Session base wait retirement](session-base-wait-retirement.md) change validates
 composed Base reads and retires the changed replay and wait keys after the base
-commit. Overlay-route runs keep their cleanup after the resume writer returns
-its generation. Neither change provides general session restart durability.
+commit. Overlay-route runs stage their cleanup in the same replay transaction
+segment before the resume writer returns its generation. Neither change provides
+general session restart durability.
 
 No storage format, operating constant, default, cap or deployment artifact changes.
 An ordinary engine/server update is sufficient.
