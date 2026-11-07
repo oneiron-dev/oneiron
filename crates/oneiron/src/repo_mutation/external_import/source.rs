@@ -59,6 +59,8 @@ pub(crate) enum ImportStep {
     Fetch,
     Seed,
     Head,
+    /// The Git-LFS objects the fetched history names (FIX 19084).
+    Lfs,
 }
 
 impl ImportStep {
@@ -68,6 +70,7 @@ impl ImportStep {
             Self::Fetch => "fetch",
             Self::Seed => "seed",
             Self::Head => "head",
+            Self::Lfs => "lfs",
         }
     }
 }
@@ -90,6 +93,11 @@ pub(crate) enum ImportOutcome {
     Rejected,
     /// The send's outcome is unknown.
     Unknown,
+    /// This vault's own process fetches the source's Git-LFS objects, with
+    /// the import's binding when it names one: a labelled daemon residual
+    /// of the credential broker (OSH-3, FIX 19084), recorded before any LFS
+    /// request goes out. It says nothing of whether the objects arrived.
+    DaemonResidual,
 }
 
 /// The source claim's record. `actor_id` is spelled as every origin claim
