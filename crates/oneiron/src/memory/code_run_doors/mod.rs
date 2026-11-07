@@ -13,14 +13,23 @@
 //! check its run never waited on, without running anything again. A step
 //! of a session-bound run is read on the session the request names, bound
 //! for the owner (FIX 10389).
+//!
+//! The typed corrections door (CODE-RUNTIME-02 slice 1: FIX 4411, 4412,
+//! 4413) reads one canonical run's durable correction records, one per
+//! model response its live REPL normalized, with the repair policy they ran
+//! under. It is the owner's read, by the same live proof.
 
 mod types;
 
 pub use types::*;
 
 use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
-use crate::code_run::{ProgramStepFeedbackRelease, parse_check_ref, session_type_diagnostics_row};
+use crate::code_run::{
+    CODE_RUN_CORRECTION_POLICY, ProgramStepFeedbackRelease, parse_check_ref,
+    session_type_diagnostics_row,
+};
 use crate::consent::AuthenticatedOwner;
+use crate::entity_id::EntityId;
 use oneiron_model::llm::ModelId;
 
 impl Memory<'_> {
@@ -106,6 +115,41 @@ impl Memory<'_> {
             }
         };
         Ok(row.map(|row| ProgramStepFeedbackRelease::Released(row.feedback(key))))
+    }
+}
+
+impl Memory<'_> {
+    /// `vault.code.corrections`: the owner reads one page of a code run's
+    /// correction records, oldest first, with the repair policy the executor
+    /// runs. Each record names the run, step, attempt, configured model,
+    /// repairs, outcome and, for a committed step, its checkpoint. A run
+    /// with no records in the page answers an empty page, never not found.
+    ///
+    /// The CALL behind the scope: the canonical rows of this vault alone. A
+    /// private session's records stay on that session's route and are not
+    /// read here.
+    pub fn code_run_corrections_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: CodeRunCorrectionsRequest,
+    ) -> MemoryResult<CodeRunCorrectionsView> {
+        self.code_run_owner(owner, "a run's correction records")?;
+        let run = EntityId::from_hex(input.run_ref.trim())
+            .map_err(|_| MemoryError::bad_request("run_ref must be a 32-hex code-run id"))?;
+        let steps = match input.limit {
+            Some(0) => return Err(MemoryError::bad_request("limit must be positive")),
+            Some(limit) => limit.min(CODE_RUN_CORRECTIONS_MAX_STEPS),
+            None => CODE_RUN_CORRECTIONS_DEFAULT_STEPS,
+        };
+        let page = self
+            .vault
+            .code_run_corrections(run, input.after_step, steps)?;
+        Ok(CodeRunCorrectionsView {
+            run_ref: run.to_hex(),
+            policy: CODE_RUN_CORRECTION_POLICY,
+            records: page.records,
+            next_after_step: page.next_after_step,
+        })
     }
 }
 
