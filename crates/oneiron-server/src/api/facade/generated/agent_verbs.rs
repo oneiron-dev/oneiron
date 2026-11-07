@@ -257,6 +257,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.packs.get", post(facade_route))
         .route("/vault.skills.import", post(facade_route))
         .route("/vault.skills.sync", post(facade_route))
+        .route("/vault.skills.proposal.settle", post(facade_route))
         .route("/vault.skills.receipts", post(facade_route))
         .route("/vault.skills.convert", post(facade_route))
         .route("/vault.skills.get", post(facade_route))

@@ -2018,6 +2018,9 @@ class Oneiron:
         def sync(self, spec):
             """The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities."""
             return json.loads(_translate(lambda: self._client.vault_skills_sync(json.dumps(spec))))
+        @property
+        def proposal(self) -> "Oneiron._VaultSkillsProposalVerbs":
+            return Oneiron._VaultSkillsProposalVerbs(self._client)
         def receipts(self, spec):
             """Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner."""
             return json.loads(_translate(lambda: self._client.vault_skills_receipts(json.dumps(spec))))
@@ -2072,6 +2075,12 @@ class Oneiron:
         @property
         def attribution(self) -> "Oneiron._VaultSkillsAttributionVerbs":
             return Oneiron._VaultSkillsAttributionVerbs(self._client)
+    class _VaultSkillsProposalVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def settle(self, spec):
+            """The owner accepts the exact package in a pending hub update, or rejects only its proposal without changing the working skill."""
+            return json.loads(_translate(lambda: self._client.vault_skills_proposal_settle(json.dumps(spec))))
     class _VaultSkillsRulesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
