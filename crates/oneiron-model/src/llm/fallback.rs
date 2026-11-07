@@ -180,7 +180,8 @@ impl DeterministicRunner for JsonRules {
         let class = match failure {
             FatalLlmError::Auth => "auth",
             FatalLlmError::InvalidRequest => "invalid_request",
-            FatalLlmError::InvalidRequestDetail { .. } => "invalid_request",
+            FatalLlmError::InvalidRequestDetail { .. }
+            | FatalLlmError::ContextWindowExceeded { .. } => "invalid_request",
             FatalLlmError::ContentFiltered => "content_filtered",
             FatalLlmError::EmptyResponse => "empty_response",
             FatalLlmError::JobLost => "job_lost",

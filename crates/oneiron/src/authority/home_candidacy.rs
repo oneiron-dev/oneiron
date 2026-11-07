@@ -178,26 +178,31 @@ impl AuthorityFold {
     /// Every machine's newest home candidacy, judged on this fold under
     /// this install's pin (FIX 4898).
     pub(crate) fn home_candidacies(&self) -> Vec<JudgedHomeCandidacy> {
-        let pin = self.pinned_root.as_ref();
         self.home_candidacy
-            .iter()
-            .map(|(machine, declared)| {
-                let folded = self.machines.get(machine);
-                let stands = super::owner_act_signer_admits(folded, &self.roster, &declared.key);
-                let owner_machine = stands
-                    && folded.and_then(|folded| owner_machine_key(folded, pin))
-                        == Some(declared.key);
-                JudgedHomeCandidacy {
-                    node_id: declared.node_id,
-                    always_on: declared.always_on,
-                    primary: declared.primary,
-                    macro_ready: declared.macro_ready,
-                    cloud: declared.cloud,
-                    stands,
-                    owner_machine,
-                }
-            })
+            .keys()
+            .filter_map(|machine| self.judged_home_candidacy(*machine))
             .collect()
+    }
+
+    /// `machine`'s newest home candidacy, judged as [`Self::home_candidacies`]
+    /// judges each; `None` when it declared none. The standby order of a
+    /// down home's peers reads it (FIX 4748).
+    pub(crate) fn judged_home_candidacy(&self, machine: EntityId) -> Option<JudgedHomeCandidacy> {
+        let declared = self.home_candidacy.get(&machine)?;
+        let pin = self.pinned_root.as_ref();
+        let folded = self.machines.get(&machine);
+        let stands = super::owner_act_signer_admits(folded, &self.roster, &declared.key);
+        let owner_machine = stands
+            && folded.and_then(|folded| owner_machine_key(folded, pin)) == Some(declared.key);
+        Some(JudgedHomeCandidacy {
+            node_id: declared.node_id,
+            always_on: declared.always_on,
+            primary: declared.primary,
+            macro_ready: declared.macro_ready,
+            cloud: declared.cloud,
+            stands,
+            owner_machine,
+        })
     }
 }
 

@@ -38,10 +38,11 @@ use crate::origin::secret_projection::claims::{
     RepoProjectionClaim, RepoProjectionIngressStore, RepoProjectionRecord,
 };
 use crate::origin::secret_projection::disposal::retire_superseded_recipient_copies;
+use crate::origin::secret_projection::git::recipient::recipient_repo_binding;
 use crate::origin::secret_projection::git::{
     RepoGitProjection, RepoGitProjectionRoots, materialize_masked_git_graph,
     materialize_recipient_git_graph, plan_repo_git_release, projection_ingress_dir,
-    recipient_repo_anchor, reopen_repo_git_projection,
+    reopen_repo_git_projection,
 };
 use crate::origin::secret_projection::recipient::RepoProjectionRevealBinding;
 use crate::secret_custody::RepoFileReadDisclosure;
@@ -239,8 +240,8 @@ fn granted_variant(
     };
     let binding = match bound {
         Some(bound) => bound,
-        None => match recipient_repo_anchor(vault, canonical, actual.project())? {
-            Some(repo) => RepoProjectionRevealBinding::of(repo, actual),
+        None => match recipient_repo_binding(vault, canonical, actual, read.portable_repo())? {
+            Some(binding) => binding,
             None => return Ok(masked),
         },
     };
