@@ -10,6 +10,8 @@
 //! Every time here is unix milliseconds on one clock: the parent's cutoff,
 //! fixed in its parent row at its first spawn.
 
+mod origins;
+
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -20,6 +22,9 @@ use crate::agent_dispatch::SpendScopeId;
 use crate::attempt_queue::{AttemptId, BorrowedAttemptLease};
 use crate::vault::VaultId;
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
+
+pub(crate) use self::origins::OriginsUnion;
+pub use self::origins::{DelegatedSource, ReaderFindingRef, ResultOrigins};
 
 /// What the parent keeps back of its own window for the fold that reads its
 /// children's findings: the fold's code-first dedupe plus two staged
@@ -128,10 +133,10 @@ pub const SUMMARY_GROUP_EXCEEDS_WINDOW: &str = "group_exceeds_window";
 /// in this many.
 pub const SUMMARY_WINDOW_DIVISOR: u64 = 2;
 
-/// The bytes a token is taken to stand for when a summary's group is sized
-/// before it is read: a group whose bytes pass its window share at this
-/// many bytes a token is refused unread, as too big for it.
-pub const SUMMARY_READ_BYTES_PER_TOKEN: u64 = 8;
+/// The most bytes one counted token stands for, the longest ordinary token of
+/// every `count_context_pack_tokens` tokenizer: a group past its budget at this
+/// rate cannot fit and is refused unread; any other is counted (FIX 2260).
+pub const SUMMARY_READ_BYTES_PER_TOKEN: u64 = 128;
 
 /// The tokens one summary's input may take on a model of `window_tokens`.
 #[must_use]
@@ -317,39 +322,6 @@ pub(crate) fn summary_task_id(parent_run: EntityId, memo: &[u8; 32]) -> Result<E
         b"oneiron:code-reader-summary:v1",
         &[parent_run.as_bytes().as_slice(), memo.as_slice()],
     )
-}
-
-/// The result one child reads, as its parent's spawn resolved it: the
-/// parent's occurrence of it (`owner` and `path`), its handle, the range of
-/// its body the child may read, in the parent's offsets, and the rows the
-/// parent's results were served from (`None` when one answer kept no set).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DelegatedSource {
-    pub owner: EntityId,
-    pub path: String,
-    pub handle: String,
-    pub range: (u64, u64),
-    pub rows: Option<Vec<EntityId>>,
-}
-
-/// A child's finding: one of its own stored JSON results, by its occurrence
-/// in the child run and its handle, its size, and the rows the child's
-/// results were served from.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReaderFindingRef {
-    pub owner: EntityId,
-    pub path: String,
-    pub handle: String,
-    pub bytes: u64,
-    pub rows: Option<Vec<EntityId>>,
-}
-
-impl ReaderFindingRef {
-    /// The exact child occurrence the parent reads, independent of shared bytes.
-    pub(crate) fn reference(&self) -> Result<String> {
-        let occurrence = super::ResultOccurrence::owned(self.owner, &self.path)?;
-        Ok(format!("occurrence:{}", occurrence.id().to_hex()))
-    }
 }
 
 /// `self.spawn(...)`: the guest's source, ask and key. `bound` is the source
@@ -658,6 +630,35 @@ pub enum ClaimOutcome {
     SourceNotReady,
     /// It is settled, or its cutoff settled it now.
     Settled,
+}
+
+/// A place in a store's claim queue, just after one queued child: where a
+/// walk of the queue goes on from (FIX 9708). Cursors order as the queue
+/// does, by enqueue time, then task id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ReaderQueueCursor {
+    pub(crate) enqueued_at_ms: u64,
+    pub(crate) task: EntityId,
+}
+
+impl ReaderQueueCursor {
+    /// Just after `job` in its store's queue.
+    #[must_use]
+    pub const fn after(job: &ReaderJob) -> Self {
+        Self {
+            enqueued_at_ms: job.enqueued_at_ms,
+            task: job.task,
+        }
+    }
+}
+
+/// One page of a store's claim queue, oldest first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReaderQueuePage {
+    pub jobs: Vec<ReaderJob>,
+    /// Where the next page starts while queue rows follow this one; `None`
+    /// once the page reached the queue's end.
+    pub next: Option<ReaderQueueCursor>,
 }
 
 /// What the runner is told when a child is queued. It must not block or

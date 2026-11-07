@@ -11,13 +11,13 @@ pub const DOMAIN_ACTION: &str = "action";
 /// Domain-separated BLAKE3 label for a normalized bound digest.
 const BOUND_DIGEST_DOMAIN: &[u8] = b"oneiron.consent.bound_digest.v2\0";
 
-/// Upper bound on selectors in one envelope. A bound is a bound, not a
-/// standing blanket assembled out of thousands of clauses.
-pub const MAX_ENVELOPE_SELECTORS: usize = 256;
 /// Upper bound on the byte length of any single ref/selector string.
+///
+/// A bound names as many audience members and envelope selectors as its
+/// grantor states (FIX 10198): each is kept, sorted and deduplicated, and
+/// containment checks every one, so a larger bound is more work, never a
+/// broader grant and never a count refusal.
 pub const MAX_CONSENT_REF_LEN: usize = 512;
-/// Upper bound on audience members in a disclosure bound.
-pub const MAX_AUDIENCE_MEMBERS: usize = 256;
 
 // ---------------------------------------------------------------------------
 // The bound — invariant 3
@@ -96,9 +96,6 @@ impl AudienceBound {
         members.dedup();
         if members.is_empty() {
             return Err(invalid_bound("audience bound has no members"));
-        }
-        if members.len() > MAX_AUDIENCE_MEMBERS {
-            return Err(invalid_bound("audience bound exceeds the member cap"));
         }
         Ok(Self { members })
     }
@@ -723,9 +720,6 @@ pub fn normalized_selectors(selectors: impl IntoIterator<Item = String>) -> Resu
         return Err(invalid_bound(
             "envelope has no selectors; an empty envelope is not a bound",
         ));
-    }
-    if selectors.len() > MAX_ENVELOPE_SELECTORS {
-        return Err(invalid_bound("envelope exceeds the selector cap"));
     }
     Ok(selectors)
 }
