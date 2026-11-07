@@ -3852,6 +3852,16 @@ impl OneironClient {
                 "vault.files.sources.convert" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::FilesSourceAttachAnswer,
                 >(client, verb, &input),
+                "vault.sync.repo_manifests.conflict.review" => {
+                    remote_agent_verb_output::<
+                        Option<oneiron::task_verb::sdk::RepoManifestConflictReviewView>,
+                    >(client, verb, &input)
+                }
+                "vault.sync.repo_manifests.conflict.discard" => {
+                    remote_agent_verb_output::<
+                        oneiron::task_verb::sdk::RepoManifestConflictDiscardView,
+                    >(client, verb, &input)
+                }
                 "connector.answer" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ConnectorCallReply,
                 >(client, verb, &input),
@@ -19244,6 +19254,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.files.sources.convert", value)
+    }
+    pub fn vault_sync_repo_manifests_conflict_review(
+        &self,
+        input: &oneiron::task_verb::sdk::RepoManifestConflictReviewRequest,
+    ) -> Result<Option<oneiron::task_verb::sdk::RepoManifestConflictReviewView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.sync.repo_manifests.conflict.review", value)
+    }
+    pub fn vault_sync_repo_manifests_conflict_discard(
+        &self,
+        input: &oneiron::task_verb::sdk::RepoManifestConflictDiscardRequest,
+    ) -> Result<oneiron::task_verb::sdk::RepoManifestConflictDiscardView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.sync.repo_manifests.conflict.discard", value)
     }
     pub fn connector_answer(
         &self,

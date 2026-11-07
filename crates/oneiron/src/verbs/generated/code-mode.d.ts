@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1331 code-mode rows (1290 host rows, 41 run rows), 4689 declarations.
-// Replies: 1139 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1333 code-mode rows (1292 host rows, 41 run rows), 4697 declarations.
+// Replies: 1141 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -4551,6 +4551,14 @@ declare namespace Sdk {
   type MailComplianceHit = { source_ref: string; thread_ref: string; message_ref: string; score: number; text?: string | null };
   type MailComplianceSearchReply = { log_sequence: number; hits: MailComplianceHit[] };
   type FilesSourceConvertRequest = { path: string; exclude?: string[] | null };
+  type RepoManifestConflictReviewRequest = { window: string; portable_repo: string };
+  type RepoPortableId = string;
+  type RepoManifestWriter = { machine: EntityId; signature: number[] };
+  type RepoManifest = { portable: RepoPortableId; version: number; code: EntityId; minted_at: number; origin_name?: string | null; visible_refs: [string, string][]; lfs_pointers: string[]; epoch: number; updated_at: number; writer?: RepoManifestWriter | null };
+  type RepoManifestConflictReviewView = { window: string; portable_repo: string; held: RepoManifest; carried: RepoManifest; binding: string };
+  type RepoManifestConflictDiscardRequest = { binding: string };
+  type RepoManifestConflictQueueView = { state: "queued"; sequence: number } | { state: "failed"; error: string };
+  type RepoManifestConflictDiscardView = { state: "discarded"; update_base64: string; queue: RepoManifestConflictQueueView } | { state: "stale" } | { state: "window_live" };
   type TabSwitchCause = "opened" | "closed";
   type TabSwitch = { tab: string; url: string; title: string; from: string; why: TabSwitchCause };
   type DemonstrationId = string;
@@ -7872,6 +7880,14 @@ declare const vault: Sdk.VaultHost & {
     quarantine: {
       /** The owner lists retained hash-only held-edit evidence in stored sequence order. Hashes are lossless lowercase hex strings. Shared quarantine retention applies; this is not live pending work or settlement status. */
       held_edits(input: Sdk.EmptyRequest): Promise<[number, Sdk.SyncHeldEditEvidence][] | StoredResult>;
+    };
+    repo_manifests: {
+      conflict: {
+        /** The owner discards exactly the reviewed carrier, keeping the held manifest; report Stale or WindowLive, or the actual delta and queue acceptance, never delivery. */
+        discard(input: Sdk.RepoManifestConflictDiscardRequest): Promise<Sdk.RepoManifestConflictDiscardView | StoredResult>;
+        /** The owner reviews one durable repo-manifest conflict and its exact held/carried manifests; return the opaque binding to discard that reviewed carrier. */
+        review(input: Sdk.RepoManifestConflictReviewRequest): Promise<Sdk.RepoManifestConflictReviewView | null | StoredResult>;
+      };
     };
     retained_work: {
       wait: {

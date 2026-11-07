@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1279 facade rows, 4631 declarations.
-Inputs: 1208 of 1279 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1108 of 1279 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1281 facade rows, 4639 declarations.
+Inputs: 1210 of 1281 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1110 of 1281 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -23140,6 +23140,48 @@ class MailComplianceSearchReply(TypedDict):
 class FilesSourceConvertRequest(TypedDict):
     path: str
     exclude: NotRequired[list[str] | None]
+class RepoManifestConflictReviewRequest(TypedDict):
+    window: str
+    portable_repo: str
+RepoPortableId = str
+class RepoManifestWriter(TypedDict):
+    machine: EntityId
+    signature: list[int]
+class RepoManifest(TypedDict):
+    portable: RepoPortableId
+    version: int
+    code: EntityId
+    minted_at: int
+    origin_name: NotRequired[str | None]
+    visible_refs: list[tuple[str, str]]
+    lfs_pointers: list[str]
+    epoch: int
+    updated_at: int
+    writer: NotRequired[RepoManifestWriter | None]
+class RepoManifestConflictReviewView(TypedDict):
+    window: str
+    portable_repo: str
+    held: RepoManifest
+    carried: RepoManifest
+    binding: str
+class RepoManifestConflictDiscardRequest(TypedDict):
+    binding: str
+class RepoManifestConflictQueueViewQueued(TypedDict):
+    state: Literal["queued"]
+    sequence: int
+class RepoManifestConflictQueueViewFailed(TypedDict):
+    state: Literal["failed"]
+    error: str
+RepoManifestConflictQueueView = RepoManifestConflictQueueViewQueued | RepoManifestConflictQueueViewFailed
+class RepoManifestConflictDiscardViewDiscarded(TypedDict):
+    state: Literal["discarded"]
+    update_base64: str
+    queue: RepoManifestConflictQueueView
+class RepoManifestConflictDiscardViewStale(TypedDict):
+    state: Literal["stale"]
+class RepoManifestConflictDiscardViewWindowLive(TypedDict):
+    state: Literal["window_live"]
+RepoManifestConflictDiscardView = RepoManifestConflictDiscardViewDiscarded | RepoManifestConflictDiscardViewStale | RepoManifestConflictDiscardViewWindowLive
 ConnectorAnswerAction = Literal["accept", "decline", "cancel"]
 class ConnectorQuestionAnswer(TypedDict):
     key: str

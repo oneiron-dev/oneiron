@@ -21383,6 +21383,40 @@
       "section": false,
       "openapi": true,
       "host_door_precheck": true
+    },
+    {
+      "name": "vault.sync.repo_manifests.conflict.review",
+      "description": "The owner reviews one durable repo-manifest conflict and its exact held/carried manifests; return the opaque binding to discard that reviewed carrier.",
+      "input": "crate::task_verb::sdk::RepoManifestConflictReviewRequest",
+      "output": "Option<crate::task_verb::sdk::RepoManifestConflictReviewView>",
+      "call": "crate::task_verb::sdk::repo_manifest_conflict_review_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sync.repo_manifests.conflict.review\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_precheck": false,
+      "rust_feature": "sync",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.sync.repo_manifests.conflict.discard",
+      "description": "The owner discards exactly the reviewed carrier, keeping the held manifest; report Stale or WindowLive, or the actual delta and queue acceptance, never delivery.",
+      "input": "crate::task_verb::sdk::RepoManifestConflictDiscardRequest",
+      "output": "crate::task_verb::sdk::RepoManifestConflictDiscardView",
+      "call": "crate::task_verb::sdk::repo_manifest_conflict_discard_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sync.repo_manifests.conflict.discard\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_precheck": false,
+      "rust_feature": "sync",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
     }
   ]
 }
