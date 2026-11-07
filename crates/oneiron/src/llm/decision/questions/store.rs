@@ -260,6 +260,35 @@ pub(crate) fn read_question_in_txn(
     Ok(record.filter(|r| r.principal == principal))
 }
 
+/// Version `version` of standing question `id`, whoever asks it: the
+/// owner's read when a trained head is tried against it (FIX 3864). `None`
+/// when no such version exists.
+pub(crate) fn read_question_version(
+    vault: &Vault,
+    id: EntityId,
+    version: u32,
+) -> Result<Option<QuestionRecord>> {
+    read_question_version_in_txn(vault, &vault.store.env.read_txn()?, id, version)
+}
+
+/// [`read_question_version`] in the caller's transaction.
+pub(crate) fn read_question_version_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    version: u32,
+) -> Result<Option<QuestionRecord>> {
+    let record: Option<QuestionRecord> =
+        QUESTION_VERSION.get(&vault.store, txn, &VersionKey { id, version })?;
+    if let Some(record) = &record {
+        if record.schema_version != 1 {
+            return Err(invalid("unsupported question schema"));
+        }
+        record.definition.validate()?;
+    }
+    Ok(record)
+}
+
 /// The caller's standing question's scheduling head; none when no such
 /// question is the caller's, as [`read_question`] reads none.
 pub fn read_question_schedule(
