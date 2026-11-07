@@ -20,8 +20,8 @@ use oneiron_docedit::{DocxAnchorBlock, docx_anchor_blocks};
 use serde::{Deserialize, Serialize};
 
 use super::anchor_text::{
-    TextLimits, UnitFormat, anchor_text, file_quote_for_sight, file_span_byte_range, file_text,
-    find_text, html_blocks, remap_span,
+    TextLimits, UnitFormat, anchor_text, find_text, html_blocks, remap_span, text_quote_for_sight,
+    text_raw_span_byte_range,
 };
 use super::codec::{ThreadHead, decode_locator, encode_locator};
 use super::model::{AnnotationThread, Locator, ReanchorOutcome, ReanchorSummary};
@@ -346,72 +346,6 @@ impl HtmlReanchor {
     }
 }
 
-/// The file-text side of one sweep: both versions' whole decoded text. A
-/// span remaps across the whole before/after texts with `remap_span`, on
-/// the actual surviving characters; no line pairing is ever guessed.
-pub(super) struct FileReanchor {
-    before: Option<String>,
-    after: Option<String>,
-}
-
-impl FileReanchor {
-    pub(super) fn load(
-        vault: &Vault,
-        txn: &heed::RoTxn<'_>,
-        artifact: &EntityId,
-        from: u64,
-        to: u64,
-        threads: &[AnnotationThread],
-    ) -> Result<Option<Self>> {
-        if !threads.iter().any(|thread| {
-            thread.anchor.version == from
-                && !thread.is_drifted()
-                && matches!(thread.anchor.locator, Locator::File { .. })
-        }) {
-            return Ok(None);
-        }
-        let body = vault
-            .get_blob_artifact_in_txn(txn, artifact)?
-            .ok_or(Error::EntityNotFound)?;
-        if !matches!(
-            UnitFormat::from_media_type(&body.media_type),
-            Some(UnitFormat::FileText)
-        ) {
-            return Ok(None);
-        }
-        let read = |version| -> Result<Option<String>> {
-            let Some(bytes) = vault.read_blob_artifact_version_in_txn(txn, artifact, version)?
-            else {
-                return Ok(None);
-            };
-            file_text(&bytes)
-        };
-        Ok(Some(Self {
-            before: read(from)?,
-            after: read(to)?,
-        }))
-    }
-
-    pub(super) fn rebind(&self, locator: &Locator) -> ReanchorOutcome {
-        let Locator::File {
-            char_start,
-            char_end,
-        } = locator
-        else {
-            return ReanchorOutcome::Drifted;
-        };
-        let (Some(before), Some(after)) = (&self.before, &self.after) else {
-            return ReanchorOutcome::Drifted;
-        };
-        match remap_span(before, after, *char_start, *char_end)
-            .and_then(|(start, end)| Locator::file(start, end).ok())
-        {
-            Some(locator) => ReanchorOutcome::Mapped(locator),
-            None => ReanchorOutcome::Drifted,
-        }
-    }
-}
-
 fn pair_paragraph(
     before: &Paragraphs,
     after: &Paragraphs,
@@ -613,9 +547,10 @@ impl Vault {
         Ok(offers)
     }
 
-    /// Whether a raw File span can participate in a masked reader's word
-    /// comparison. Marks, not equality with filler bytes, decide secrecy.
-    fn file_annotation_span_visible_in_txn(
+    /// Whether a raw text span can participate in a masked reader's word
+    /// comparison. Persisted marks, not equality with filler bytes, decide
+    /// secrecy; their offsets include any BOM excluded from text coordinates.
+    fn text_annotation_span_visible_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         artifact_id: &EntityId,
@@ -623,17 +558,14 @@ impl Vault {
         locator: &Locator,
         raw_bytes: &[u8],
     ) -> Result<bool> {
-        let Locator::File {
+        let Locator::Text {
             char_start,
             char_end,
         } = locator
         else {
             return Ok(true);
         };
-        let Ok(raw) = std::str::from_utf8(raw_bytes) else {
-            return Ok(false);
-        };
-        let Some(span) = file_span_byte_range(raw, *char_start, *char_end) else {
+        let Some(span) = text_raw_span_byte_range(raw_bytes, *char_start, *char_end) else {
             return Ok(false);
         };
         let Some(record) = self.blob_artifact_version_metadata_in_txn(txn, artifact_id, version)?
@@ -667,7 +599,7 @@ impl Vault {
             // only its verbatim stored copy exposes these raw coordinates.
             return Ok(sighted.as_slice() == raw_bytes);
         }
-        Ok(file_quote_for_sight(raw_bytes, &sighted, *char_start, *char_end).is_some())
+        Ok(text_quote_for_sight(raw_bytes, &sighted, *char_start, *char_end).is_some())
     }
 
     /// One-click reattach of an unattached comment at `locator` in `version`.
@@ -703,13 +635,13 @@ impl Vault {
             let limits = self.text_limits_in_txn(wtxn)?;
             if sight == crate::secret_custody::SecretSight::Masked {
                 let source_visible = match &thread.anchor.locator {
-                    Locator::File { .. } => {
+                    Locator::Text { .. } => {
                         match self.read_blob_artifact_version_in_txn(
                             wtxn,
                             artifact_id,
                             thread.anchor.version,
                         )? {
-                            Some(pinned) => self.file_annotation_span_visible_in_txn(
+                            Some(pinned) => self.text_annotation_span_visible_in_txn(
                                 wtxn,
                                 artifact_id,
                                 thread.anchor.version,
@@ -722,7 +654,7 @@ impl Vault {
                     _ => true,
                 };
                 if !source_visible
-                    || !self.file_annotation_span_visible_in_txn(
+                    || !self.text_annotation_span_visible_in_txn(
                         wtxn,
                         artifact_id,
                         version,

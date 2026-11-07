@@ -18,10 +18,12 @@ use oneiron_xlsx_formula::cell_display_text;
 
 use super::model::{ANNOTATION_LOCATOR_TEXT_MAX_BYTES, Locator};
 use crate::edit_roundtrip::{CellRef, OfficeFormat};
-use crate::file_secret_marks::FILLER;
+use crate::secret_custody::FILLER;
 
+mod text;
 mod xlsx;
 
+pub(super) use text::TextReanchor;
 use xlsx::{find_in_sheets, xlsx_range_text};
 
 /// Paragraphs joined in a shape's text.
@@ -36,14 +38,15 @@ pub(super) struct TextLimits {
     pub(super) docx: oneiron_docedit::ArchiveLimits,
 }
 
-/// Artifact text formats, with HTML beside the OOXML edit formats (FIX 7905).
+/// Artifact text formats, with HTML and plain text beside the OOXML edit
+/// formats (FIX 7905).
 #[derive(Clone, Copy)]
 pub(super) enum UnitFormat {
     Xlsx,
     Docx,
     Pptx,
     Html,
-    FileText,
+    Text,
 }
 
 impl UnitFormat {
@@ -55,17 +58,11 @@ impl UnitFormat {
         {
             return Some(Self::Html);
         }
-        if media_type
-            .split(';')
-            .next()
-            .is_some_and(|base| base.trim().eq_ignore_ascii_case("text/plain"))
-        {
-            return Some(Self::FileText);
-        }
-        match OfficeFormat::from_media_type(media_type).ok()? {
-            OfficeFormat::Xlsx => Some(Self::Xlsx),
-            OfficeFormat::Docx => Some(Self::Docx),
-            OfficeFormat::Pptx => Some(Self::Pptx),
+        match OfficeFormat::from_media_type(media_type).ok() {
+            Some(OfficeFormat::Xlsx) => Some(Self::Xlsx),
+            Some(OfficeFormat::Docx) => Some(Self::Docx),
+            Some(OfficeFormat::Pptx) => Some(Self::Pptx),
+            None => text::is_text_media_type(media_type).then_some(Self::Text),
         }
     }
 }
@@ -168,18 +165,10 @@ pub(super) fn anchor_text(
             }
             Ok(char_slice(&block.text, *char_start, *char_end))
         }
-        // Raw bytes in, raw quote out: the engine's raw paths (the detach
-        // snapshot, the reattach word check) read stored bytes. Serving reads
-        // the caller's sight through `file_quote_for_sight` instead.
-        Locator::File {
+        Locator::Text {
             char_start,
             char_end,
-        } => {
-            let Some(text) = file_text(bytes)? else {
-                return Ok(None);
-            };
-            Ok(char_slice(&text, *char_start, *char_end))
-        }
+        } => Ok(text::text_span(bytes, *char_start, *char_end)),
     }
 }
 
@@ -246,14 +235,7 @@ pub(super) fn find_text(
                     .collect()
             })
             .unwrap_or_default(),
-        UnitFormat::FileText => file_text(bytes)?
-            .map(|whole| {
-                char_occurrences(&whole, text)
-                    .into_iter()
-                    .filter_map(|(start, end)| Locator::file(start, end).ok())
-                    .collect()
-            })
-            .unwrap_or_default(),
+        UnitFormat::Text => text::find_in_text(bytes, text),
     };
     found.truncate(MAX_OFFERS);
     Ok(found)
@@ -481,15 +463,31 @@ fn html_text(node: NodeRef<'_>) -> String {
     out
 }
 
-/// The whole decoded text of a `text/plain` version: the exact immutable
-/// bytes as UTF-8, with no line split, no CR strip and no lossy decode.
-/// `None` when the bytes are not UTF-8 (mirrors `html_blocks`).
-pub(super) fn file_text(bytes: &[u8]) -> crate::Result<Option<String>> {
-    Ok(std::str::from_utf8(bytes).ok().map(str::to_owned))
+/// Raw and caller-sighted plain text when both decode and the sighted copy
+/// preserves the raw character layout. Raw coordinates always name the
+/// immutable version; only the quote is projected to the caller's sight.
+fn text_layout_for_sight<'a>(
+    raw_bytes: &'a [u8],
+    sighted_bytes: &'a [u8],
+) -> Option<(&'a str, &'a str)> {
+    let raw = text::decoded(raw_bytes)?;
+    let sighted = text::decoded(sighted_bytes)?;
+    if raw_bytes != sighted_bytes
+        && (sighted.len() != raw.len()
+            || sighted
+                .bytes()
+                .zip(raw.bytes())
+                .any(|(masked, raw)| masked != raw && masked != FILLER))
+    {
+        // A rebuilt container has no raw coordinate map. Do not serve nearby
+        // text as though it were the requested immutable span.
+        return None;
+    }
+    Some((raw, sighted))
 }
 
-/// The exact byte range of a non-empty whole-text character span.
-pub(super) fn file_span_byte_range(
+/// The exact byte range of a non-empty character span in decoded text.
+fn text_span_byte_range(
     raw: &str,
     char_start: u64,
     char_end: u64,
@@ -514,115 +512,83 @@ pub(super) fn file_span_byte_range(
     Some(byte_start..byte_end)
 }
 
-/// The quote at a raw `text/plain` char span as `sighted_bytes` renders it.
-/// Coordinates always name the raw immutable text; what a masked reader is
-/// served is the door's own masked copy restricted to the span, never raw
-/// bytes and never a guess. `sighted_bytes` must be the exact copy the door
-/// serves this caller for these raw bytes (the owner and granted sights
-/// pass the raw bytes back, which the door serves as stored).
-///
-/// Returns `None` for a span the raw text does not hold (out of bounds or
-/// empty, mirroring `char_slice`), for non-UTF-8 raw bytes, and when the
-/// masked copy does not preserve the raw byte layout (a `text/plain` file
-/// the secret mask reads as a container, whose copy is rebuilt rather than
-/// overwritten in place): a masked quote there would need coordinates the
-/// engine does not keep, so the span reads as unreadable rather than as
-/// nearby text. A key span that splits a multibyte character likewise reads
-/// as unreadable instead of lossy bytes.
-pub(super) fn file_quote_for_sight(
+/// The raw byte range of a text locator, including any BOM excluded from the
+/// locator's character coordinates. Secret marks use these stored byte offsets.
+pub(super) fn text_raw_span_byte_range(
+    raw_bytes: &[u8],
+    char_start: u64,
+    char_end: u64,
+) -> Option<std::ops::Range<usize>> {
+    let raw = text::decoded(raw_bytes)?;
+    let bom_len = if raw_bytes.starts_with(&[0xef, 0xbb, 0xbf]) {
+        '\u{feff}'.len_utf8()
+    } else {
+        0
+    };
+    let span = text_span_byte_range(raw, char_start, char_end)?;
+    Some(span.start + bom_len..span.end + bom_len)
+}
+
+/// The quote at a raw text-locator span as the caller's sighted copy renders
+/// it. The owner and granted sights pass the stored bytes back; a masked
+/// reader gets only the exact sighted span, never raw secret bytes.
+pub(super) fn text_quote_for_sight(
     raw_bytes: &[u8],
     sighted_bytes: &[u8],
     char_start: u64,
     char_end: u64,
 ) -> Option<String> {
-    let raw = std::str::from_utf8(raw_bytes).ok()?;
-    if sighted_bytes == raw_bytes {
-        return char_slice(raw, char_start, char_end);
-    }
-    // The masked copy preserves the raw layout exactly when it overwrites
-    // key spans in place (`filled`, same-length runs of the door's filler).
-    // Any length change, or any byte that is neither the raw byte nor the
-    // filler, is a rebuilt container copy whose coordinates are not raw.
-    if sighted_bytes.len() != raw_bytes.len()
-        || sighted_bytes
-            .iter()
-            .zip(raw_bytes.iter())
-            .any(|(masked, raw)| *masked != *raw && *masked != FILLER)
-    {
-        return None;
-    }
-    // Byte ranges stay exact where masked char counts do not: a multibyte
-    // key reads as one filler byte per byte, shifting masked char offsets.
-    let span = file_span_byte_range(raw, char_start, char_end)?;
-    String::from_utf8(sighted_bytes[span].to_vec()).ok()
+    let (raw, sighted) = text_layout_for_sight(raw_bytes, sighted_bytes)?;
+    let span = text_span_byte_range(raw, char_start, char_end)?;
+    Some(sighted[span].to_owned())
 }
 
-/// The single whole-text unit of a `text/plain` version: raw `0..charcount`,
-/// its quote projected to the caller's sight. `sighted_bytes` must be the
-/// exact copy the door serves this caller for `raw_bytes` (the owner and
-/// granted sights pass the raw bytes back). `None` when the raw bytes are
-/// not UTF-8; an empty file serves its unit with no quote (unpinnable, the
-/// null-quote policy), as do spans the masked copy cannot render.
-pub(super) fn file_units_for_sight(
+/// Main's one-unit-per-line text projection, with every quote read through
+/// the caller's sight while every locator keeps its raw coordinates.
+pub(super) fn text_units_for_sight(
     raw_bytes: &[u8],
     sighted_bytes: &[u8],
-) -> crate::Result<Option<Vec<(Locator, Option<String>)>>> {
-    let Some(text) = file_text(raw_bytes)? else {
-        return Ok(None);
-    };
-    let end = text.chars().count() as u64;
-    let locator = Locator::file(0, end)?;
-    Ok(Some(vec![(
-        locator,
-        file_quote_for_sight(raw_bytes, sighted_bytes, 0, end),
-    )]))
-}
-
-/// Every place in the projected `text/plain` head where the admitted
-/// snapshot `text` reads exactly, named in raw whole-text coordinates. The
-/// snapshot and the head are both the caller's projected copies (the
-/// Unattached list's snapshot, the sighted head bytes); positions never come
-/// from a raw snapshot comparison. Raw coordinates follow from the same
-/// byte-layout check as `file_quote_for_sight`: the fast path when the
-/// sighted copy is the raw bytes, else the same-length filler-only mask. A
-/// projected match whose byte range is not a raw char boundary is skipped,
-/// never served lossy or nearby. Empty or whitespace snapshots offer
-/// nothing. Truncated to `MAX_OFFERS`, mirroring `find_text`.
-pub(super) fn file_find_text_for_sight(
-    raw_bytes: &[u8],
-    sighted_bytes: &[u8],
-    text: &str,
-) -> Vec<Locator> {
-    if text.trim().is_empty() {
-        return Vec::new();
-    }
-    let Ok(raw) = std::str::from_utf8(raw_bytes) else {
-        return Vec::new();
-    };
-    if sighted_bytes == raw_bytes {
-        return char_occurrences(raw, text)
+) -> Option<Vec<(Locator, Option<String>)>> {
+    Some(
+        text::text_units(raw_bytes)?
             .into_iter()
-            .filter_map(|(start, end)| Locator::file(start, end).ok())
+            .map(|(locator, _)| {
+                let quote = match &locator {
+                    Locator::Text {
+                        char_start,
+                        char_end,
+                    } => text_quote_for_sight(raw_bytes, sighted_bytes, *char_start, *char_end),
+                    _ => None,
+                };
+                (locator, quote)
+            })
+            .collect(),
+    )
+}
+
+/// Exact matches in the projected head, named in raw text coordinates. Both
+/// the detached snapshot and head are read as this caller sees them; a masked
+/// match that is not on raw character boundaries is skipped.
+pub(super) fn text_find_text_for_sight(
+    raw_bytes: &[u8],
+    sighted_bytes: &[u8],
+    words: &str,
+) -> Vec<Locator> {
+    if words.trim().is_empty() {
+        return Vec::new();
+    }
+    let Some((raw, sighted)) = text_layout_for_sight(raw_bytes, sighted_bytes) else {
+        return Vec::new();
+    };
+    if raw_bytes == sighted_bytes {
+        return text::find_in_text(raw_bytes, words)
+            .into_iter()
             .take(MAX_OFFERS)
             .collect();
     }
-    if sighted_bytes.len() != raw_bytes.len()
-        || sighted_bytes
-            .iter()
-            .zip(raw_bytes.iter())
-            .any(|(masked, raw)| *masked != *raw && *masked != FILLER)
-    {
-        return Vec::new();
-    }
-    let Ok(sighted) = std::str::from_utf8(sighted_bytes) else {
-        return Vec::new();
-    };
     let mut out = Vec::new();
-    let mut from = 0;
-    while let Some(found) = sighted[from..].find(text) {
-        let byte_start = from + found;
-        let byte_end = byte_start + text.len();
-        from = byte_end.max(byte_start + 1);
+    for (byte_start, matched) in sighted.match_indices(words) {
+        let byte_end = byte_start + matched.len();
         if !raw.is_char_boundary(byte_start) || !raw.is_char_boundary(byte_end) {
             continue;
         }
@@ -631,7 +597,7 @@ pub(super) fn file_find_text_for_sight(
         if start >= end {
             continue;
         }
-        if let Ok(locator) = Locator::file(start, end) {
+        if let Ok(locator) = Locator::text(start, end) {
             out.push(locator);
             if out.len() >= MAX_OFFERS {
                 break;
@@ -818,10 +784,6 @@ pub(super) fn unit_texts(
                 })
                 .collect())
         }
-        // Whole-text units on RAW input: the single `0..charcount` unit. The
-        // verbs' FileText path calls the same helper with the raw version and
-        // the caller's sighted copy, so one helper owns the unit, its end and
-        // its projected quote.
-        UnitFormat::FileText => file_units_for_sight(bytes, bytes),
+        UnitFormat::Text => Ok(text::text_units(bytes)),
     }
 }

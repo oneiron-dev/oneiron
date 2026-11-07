@@ -1,7 +1,7 @@
 //! Credential-bound adapters over the engine's anchored annotation lifecycle.
 
 use super::anchor_text::{
-    UnitFormat, anchor_text, file_quote_for_sight, file_units_for_sight, unit_texts,
+    UnitFormat, anchor_text, text_quote_for_sight, text_units_for_sight, unit_texts,
 };
 use super::codec::decode_thread_head;
 use super::wire::{
@@ -59,13 +59,10 @@ impl Memory<'_> {
         let Some(format) = UnitFormat::from_media_type(&file.media_type) else {
             return Ok(unsupported(file.kind));
         };
-        if matches!(format, UnitFormat::FileText) {
-            // The single whole-text unit at raw `0..charcount`, its quote
-            // projected to the caller's sight. The raw read names the sighted
-            // export's resolved version, never the moving head, so coordinates
-            // and quote read one version. One helper owns the unit, its end
-            // and its quote; an empty file serves its unit with no quote
-            // (unpinnable, the null-quote policy).
+        if matches!(format, UnitFormat::Text) {
+            // Main's per-line units keep raw coordinates. Only their quotes
+            // are projected to this caller's sight, from the same resolved
+            // version rather than from a moving head.
             let raw = self
                 .vault()
                 .export_blob_artifact_raw(&artifact, Some(file.version))?
@@ -75,7 +72,7 @@ impl Memory<'_> {
             } else {
                 raw.bytes.as_slice()
             };
-            let units = file_units_for_sight(&raw.bytes, sighted)?
+            let units = text_units_for_sight(&raw.bytes, sighted)
                 .ok_or_else(|| MemoryError::bad_request("artifact units could not be read"))?
                 .into_iter()
                 .map(|(locator, quote)| ArtifactUnitView {
@@ -125,9 +122,9 @@ impl Memory<'_> {
             self.vault().text_limits_in_txn(&txn)?
         };
         // A resource refusal is the engine's error (FIX 10587), never a missing quote.
-        // A file span names raw coordinates; its quote is the door's masked
+        // A text span names raw coordinates; its quote is the door's sighted
         // copy there for masked readers, never raw bytes.
-        let quote = if let Locator::File {
+        let quote = if let Locator::Text {
             char_start,
             char_end,
         } = &anchor.locator
@@ -141,7 +138,7 @@ impl Memory<'_> {
             } else {
                 raw.bytes.as_slice()
             };
-            file_quote_for_sight(&raw.bytes, sighted, *char_start, *char_end)
+            text_quote_for_sight(&raw.bytes, sighted, *char_start, *char_end)
         } else {
             anchor_text(&file.bytes, &anchor.locator, &limits)?
         };
@@ -175,7 +172,7 @@ impl Memory<'_> {
                 | (UnitFormat::Xlsx, Locator::Xlsx { .. })
                 | (UnitFormat::Pptx, Locator::Pptx { .. })
                 | (UnitFormat::Html, Locator::Html { .. })
-                | (UnitFormat::FileText, Locator::File { .. })
+                | (UnitFormat::Text, Locator::Text { .. })
         );
         if !matches {
             return Err(MemoryError::bad_request(
