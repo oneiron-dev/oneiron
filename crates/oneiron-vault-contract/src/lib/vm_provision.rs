@@ -4,7 +4,8 @@
 //! On a cold boot the guest's first connection to
 //! [`VM_BOOT_PORT`](crate::vm::VM_BOOT_PORT) is this one, dialled by the
 //! root bootstrap. The host writes one [`VmProvision`] line naming the vault
-//! and its binding, then exactly [`VM_FSCRYPT_KEY_LEN`] bytes of the vault's
+//! and its binding plus the optional supervisor-pinned public checkpoint
+//! recipient, then exactly [`VM_FSCRYPT_KEY_LEN`] bytes of the vault's
 //! name-bound fscrypt v2 master key ([`VmFscryptKey`]), and half-closes. The
 //! guest installs the key, checks that the kernel's identifier for it is the
 //! binding's, lays out its encrypted storage and its UID table, and answers
@@ -26,7 +27,36 @@ use zeroize::Zeroizing;
 
 /// The provision connection's revision. A host and an image agree on it
 /// through the image's build floor, not through `CONTRACT_VERSION`.
-pub const VM_PROVISION_REVISION: u32 = 1;
+pub const VM_PROVISION_REVISION: u32 = 2;
+
+/// One provision-2 line, newline included: the existing binding/reply budget
+/// plus the exact public recipient geometry (1616 ONHB bytes in base64,
+/// 32 fingerprint bytes in hex, and the JSON field names and delimiters).
+/// Other boot/lifecycle frames keep their existing bound.
+pub const MAX_VM_PROVISION_FRAME: usize = crate::vm::MAX_VM_FRAME
+    + 4 * 1616_usize.div_ceil(3)
+    + 32 * 2
+    + r#","checkpoint_host_holds_recipient":{"bundle_b64":"","fingerprint":""}"#.len();
+
+/// Encodes a provision prelude or reply under that family's frame bound.
+pub fn encode_vm_provision_frame(frame: &impl Serialize) -> anyhow::Result<String> {
+    let mut line = serde_json::to_string(frame)?;
+    line.push('\n');
+    anyhow::ensure!(
+        line.len() <= MAX_VM_PROVISION_FRAME,
+        "vm provision frame over its cap"
+    );
+    Ok(line)
+}
+
+/// Decodes a provision line, including its revision peek and final echo.
+pub fn decode_vm_provision_frame<T: for<'de> Deserialize<'de>>(line: &str) -> anyhow::Result<T> {
+    anyhow::ensure!(
+        line.len() <= MAX_VM_PROVISION_FRAME,
+        "vm provision frame over its cap"
+    );
+    Ok(serde_json::from_str(line.trim_end_matches(['\r', '\n']))?)
+}
 
 /// The fscrypt v2 master key's length, the key frame's exact size.
 pub const VM_FSCRYPT_KEY_LEN: usize = 64;
@@ -103,6 +133,12 @@ pub struct VmProvision {
     /// The vault the VM runs, as `--vault-name` takes it.
     pub vault: String,
     pub binding: VmProvisionBinding,
+    /// The supervisor-pinned public recipient for checkpoint host-order
+    /// members. Required: `null` when none was delivered. It precedes the
+    /// unchanged raw fscrypt key frame and is echoed in the reply.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub checkpoint_host_holds_recipient:
+        Option<crate::checkpoint_recipient::CheckpointHostHoldsRecipient>,
 }
 
 impl VmProvision {
@@ -179,6 +215,9 @@ pub enum VmProvisionReply {
         revision: u32,
         vault: String,
         binding: VmProvisionBinding,
+        #[serde(deserialize_with = "Option::deserialize")]
+        checkpoint_host_holds_recipient:
+            Option<crate::checkpoint_recipient::CheckpointHostHoldsRecipient>,
     },
     /// The guest refused this provisioning and starts no engine.
     Refused {

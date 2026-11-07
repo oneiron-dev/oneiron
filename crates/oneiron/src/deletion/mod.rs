@@ -5,6 +5,7 @@ pub(crate) use oneiron_store::deletion::archive_role;
 mod safe_delete_reason;
 pub use safe_delete_reason::SafeDeleteReason;
 mod checkpoint_payload;
+mod connector_witness;
 mod coop_delivery;
 mod coop_reply;
 mod coop_request;

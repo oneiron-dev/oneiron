@@ -56,6 +56,7 @@ pub(super) struct VmGuestHost {
     anchor: Option<VmAnchorHandoff>,
     /// The pipe the bootstrap carries the anchor's credential into.
     anchor_credentials_fd: Option<RawFd>,
+    checkpoint_recipient_pipe: Option<std::fs::File>,
 }
 impl VmGuestHost {
     pub(super) fn new(args: &ManagedArgs, shutdown: ManagedShutdown) -> Self {
@@ -70,12 +71,20 @@ impl VmGuestHost {
             restoring: matches!(args.start_mode, ManagedStartMode::Restore { .. }),
             anchor: args.vm_anchor.clone(),
             anchor_credentials_fd: args.custody_anchor_credentials_fd,
+            checkpoint_recipient_pipe: super::checkpoint_recipient::adopt(
+                args.checkpoint_host_holds_recipient_fd,
+            ),
         }
     }
     /// The outbox carrier's revision, when the image's companion answered at
     /// boot with its storage laid out and its carrier attached (FIX 5235).
     pub(super) fn vm_outbox_revision(&self) -> Option<u32> {
         self.vm_outbox_revision
+    }
+    pub(super) fn checkpoint_host_holds_recipient(
+        &mut self,
+    ) -> Option<oneiron_store::checkpoint_host_recipient::HostHoldsRecipient> {
+        super::checkpoint_recipient::read(self.checkpoint_recipient_pipe.take())
     }
     pub(super) fn clear_secrets(&mut self) {
         self.inner.0.clear_secrets();

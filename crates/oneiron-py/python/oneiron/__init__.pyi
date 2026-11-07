@@ -1404,6 +1404,8 @@ class Oneiron:
             """The owner imports a pinned hub skill through scanning and publisher admission, pending its permission ask."""
         def sync(self, spec: Facade.HubSkillRequest) -> Facade.HubSkillSyncReceipt:
             """The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities."""
+        @property
+        def proposal(self) -> "Oneiron._VaultSkillsProposalVerbs": ...
         def receipts(self, spec: Facade.HubSkillRequest) -> Facade.HubSkillReceipts:
             """Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner."""
         def convert(self, spec: Facade.SkillConvertRequest) -> Facade.SkillConvertReceipt:
@@ -1440,6 +1442,9 @@ class Oneiron:
         def outcomes(self) -> "Oneiron._VaultSkillsOutcomesVerbs": ...
         @property
         def attribution(self) -> "Oneiron._VaultSkillsAttributionVerbs": ...
+    class _VaultSkillsProposalVerbs:
+        def settle(self, spec: Facade.HubSkillProposalSettleRequest) -> Facade.HubSkillProposalSettled:
+            """The owner accepts the exact package in a pending hub update, or rejects only its proposal without changing the working skill."""
     class _VaultSkillsRulesVerbs:
         def set(self, spec: Facade.SkillHashRuleRequest) -> Facade.HubConsentReceipt:
             """The owner sets or clears a known-bad canonical skill hash rule, independently of advisory scanner prose."""
@@ -1931,6 +1936,8 @@ class Oneiron:
         def quarantine(self) -> "Oneiron._VaultSyncQuarantineVerbs": ...
         @property
         def retained_work(self) -> "Oneiron._VaultSyncRetainedWorkVerbs": ...
+        @property
+        def repo_manifests(self) -> "Oneiron._VaultSyncRepoManifestsVerbs": ...
     class _VaultSyncQuarantineVerbs:
         def held_edits(self, spec: Facade.EmptyRequest) -> list[tuple[int, Facade.SyncHeldEditEvidence]]:
             """The owner lists retained hash-only held-edit evidence in stored sequence order. Hashes are lossless lowercase hex strings. Shared quarantine retention applies; this is not live pending work or settlement status."""
@@ -1940,6 +1947,14 @@ class Oneiron:
     class _VaultSyncRetainedWorkWaitVerbs:
         def set(self, spec: Facade.RetainedWorkWaitSetRequest) -> int:
             """The owner sets one retained-work queue's wait in seconds, or resets it to its existing default, and receives the effective wait."""
+    class _VaultSyncRepoManifestsVerbs:
+        @property
+        def conflict(self) -> "Oneiron._VaultSyncRepoManifestsConflictVerbs": ...
+    class _VaultSyncRepoManifestsConflictVerbs:
+        def review(self, spec: Facade.RepoManifestConflictReviewRequest) -> Facade.RepoManifestConflictReviewView | None:
+            """The owner reviews one durable repo-manifest conflict and its exact held/carried manifests; return the opaque binding to discard that reviewed carrier."""
+        def discard(self, spec: Facade.RepoManifestConflictDiscardRequest) -> Facade.RepoManifestConflictDiscardView:
+            """The owner discards exactly the reviewed carrier, keeping the held manifest; report Stale or WindowLive, or the actual delta and queue acceptance, never delivery."""
     class _VaultTrustedContactsVerbs:
         def name(self, spec: Facade.TrustedContactNameRequest) -> Facade.TrustedContact:
             """A live person names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again."""
@@ -3182,10 +3197,10 @@ class Oneiron:
         def read(self, spec: Facade.EmptyRequest) -> Facade.ModelManifest | None:
             """Reads the owner-pinned v2 model manifest, or none when no manifest is configured."""
         def replace(self, spec: Facade.ModelManifestReplace) -> Facade.ModelManifest:
-            """Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically clearing resident route overrides."""
+            """Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically retaining resident route overrides that remain admitted."""
     class _VaultModelsOneironerVerbs:
         def bind(self, spec: Facade.OneironerBind) -> Facade.ModelManifest:
-            """Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and clearing resident route overrides."""
+            """Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and retaining resident route overrides that remain admitted."""
     class _VaultModelsRoutesVerbs:
         def read(self, spec: Facade.ModelRouteRead) -> Facade.ModelRouteView:
             """Reads one independent model slot route with its manifest pin and effective resident narrowing."""
@@ -4167,7 +4182,7 @@ class Oneiron:
             """Count lines, words and bytes of a visible file at the mounted reference."""
     class _ConnectorVerbs:
         def list(self, spec: Facade.ConnectorListRequest) -> list[Facade.ConnectorEntry]:
-            """Every live catalogued connector whose name or summary matches the query."""
+            """Every matching live catalogued connector and first-party web interface, distinguished by source."""
         def status(self, spec: Facade.ConnectorNameRequest) -> Facade.ConnectorView | None:
             """One catalogued connector by name, removed ones included."""
         def call(self, spec: Facade.ConnectorCallRequest) -> Facade.ActAnswer[Facade.ConnectorCallReply]:

@@ -209,6 +209,10 @@ pub struct AgentSpawnContext {
     /// under the parent's cap the child can never pass. Unset, the child holds
     /// its calibrated expected spend and may top up to the ancestor's cap.
     pub budget: Option<u64>,
+    /// A token-denominated task reservation. Under a token parent it bounds
+    /// a soft hold without demanding the whole ceiling up front. Unmetered
+    /// work gets its own pinned token scope; other units keep their tree.
+    pub token_ceiling: Option<u64>,
     /// A ROOT launch's spend scope. A child spends under its parent's and
     /// never names one. A root without one runs unmetered by any lease tree.
     pub spend: Option<super::SpawnSpend>,
@@ -280,6 +284,12 @@ impl AgentSpawnContext {
     #[must_use]
     pub const fn with_budget(mut self, budget: u64) -> Self {
         self.budget = Some(budget);
+        self
+    }
+
+    #[must_use]
+    pub(crate) const fn with_token_ceiling(mut self, units: u64) -> Self {
+        self.token_ceiling = Some(units);
         self
     }
 
