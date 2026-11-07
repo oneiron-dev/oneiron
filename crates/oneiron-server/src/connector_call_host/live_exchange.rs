@@ -243,45 +243,16 @@ impl LiveSession {
         }
     }
 
-    /// Answers the server request `id` of the remote task `task_id` with
-    /// `result` (FIX 16029): the result carries the task's related-task
-    /// metadata (MCP 2025-11-25 tasks), and its POST counts as taken only
-    /// on a 2xx, as [`Self::respond`] reads it.
-    pub(super) fn respond_in_task(
-        &self,
-        id: Value,
-        task_id: &str,
-        mut result: Map<String, Value>,
-    ) -> Posted {
-        let mut related = Map::new();
-        related.insert(wire::TASK_ID.to_owned(), Value::from(task_id));
-        let mut meta = Map::new();
-        meta.insert(wire::RELATED_TASK.to_owned(), Value::Object(related));
-        result.insert(wire::META.to_owned(), Value::Object(meta));
-        self.respond(id, "result", Value::Object(result))
-    }
-
-    /// Refuses one server request this client does not serve (`-32601`).
-    /// The request is wiped as it drops (FIX 11861).
+    /// Refuses one server request this client does not serve. The request is
+    /// wiped as it drops (FIX 11861).
     pub(super) fn refuse(&self, request: Value) {
-        self.refuse_as(request, METHOD_NOT_FOUND);
-    }
-
-    /// Refuses one server request whose params this client does not serve
-    /// (`-32602`, FIX 16029): an elicitation in a mode the session did not
-    /// declare, as MCP asks, or a question this client cannot take. The
-    /// request is wiped as it drops.
-    pub(super) fn refuse_params(&self, request: Value) {
-        self.refuse_as(request, INVALID_PARAMS);
-    }
-
-    fn refuse_as(&self, request: Value, code: i64) {
         let id = request.get("id").cloned();
         zeroize_json(request);
         let Some(id) = id else {
             return;
         };
-        let refusal = json!({ "code": code, "message": "this client does not serve this request" });
+        let refusal =
+            json!({ "code": -32601, "message": "this client does not serve this request" });
         let _ = self.respond(id, "error", refusal);
     }
 
@@ -363,12 +334,6 @@ impl LiveSession {
         self.session = None;
     }
 }
-
-/// JSON-RPC "Method not found": a request this client serves no method of.
-const METHOD_NOT_FOUND: i64 = -32601;
-/// JSON-RPC "Invalid params": a request whose params this client does not
-/// serve.
-const INVALID_PARAMS: i64 = -32602;
 
 /// The reason an answer gets when the original call's grant no longer
 /// admits the re-send it would make (FIX 8226): the ledger's own word for a
