@@ -1,6 +1,7 @@
 //! Server configuration: resolved types, CLI flags, and the file/env/argv merge.
 
 mod apns;
+pub mod artifact_backend;
 pub mod backup;
 pub mod browser;
 mod channel_endpoints;
@@ -37,6 +38,7 @@ mod skills;
 mod trusted_proxy;
 
 pub use apns::ApnsConfig;
+pub use artifact_backend::ArtifactBackendConfig;
 pub use backup::{BackupConfig, default_backup_dir};
 pub use browser::BrowserConfig;
 pub use channel_endpoints::ChannelEndpointsConfig;
