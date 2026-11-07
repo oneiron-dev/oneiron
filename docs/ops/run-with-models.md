@@ -1111,6 +1111,11 @@ max_runs = 32                # optional; runs at once, each its own thread (defa
 step_wall_secs = 30           # optional; one step's time allowance in seconds (default: 5)
 ```
 
+The same package may override `blocks/code-reader-summary.md` for `summarize`.
+Without that optional block, summaries use the shipped text. See
+[Code-reader summary prompts](code-reader-summaries.md) for placeholders and the
+queued recipe's prompt binding.
+
 A run holds its place until its worker ends, whether or not its caller is
 still waiting. Past `max_runs` a new run waits its turn, round-robin across
 credentials, and the row asks whether everything is okay; a run that waits
@@ -1313,14 +1318,17 @@ cheap writer, its window cut to the whole turns that writer takes.
 A pass that cannot be written as the agent keeps its raw window for the turn
 and says why; it never falls back to the Dreamer or to the plain house
 writer. Under `auto` a live fork that cannot be bound (no rung, a rung wider
-than `locality`, no room beside the prefix, a cold prefix) is not such a
-failure: the cheap writer writes the flight as the agent. A forced
+than `locality`, no room beside the prefix, a cold prefix, a request read
+from rows its host did not witness whole) is not such a failure: the cheap
+writer writes the flight as the agent. A forced
 `live_fork` names every one of them. The run's `compaction` object carries
 `self_unavailable`: `live_fork_not_captured` (the row selects `live_fork` and
 the flight carries no capture from its breakpoint), `live_rung_unbound` (the
 live route refused the step's request, or no rung of its ladder could take it
 then), `live_prefix_too_long` (the live request and the reply leave the live
-model no room for the span), `live_fork_not_admitted` (the profile's writer
+model no room for the span), `live_prefix_unwitnessed` (the live request was
+read from rows its host did not witness whole: a code run's step request, for
+now, since its host-built task names no row), `live_fork_not_admitted` (the profile's writer
 is not `self`, or the capture is not the run's own), `live_fork_stale` (the
 live route no longer admits the captured rung), `no_identity` (the actor is
 not an agent anchored to a PERSON), `identity_unreadable`,
@@ -1337,7 +1345,8 @@ the source its flight ran on (`retained_turns` or `live_fork`, never
 `auto`), the admitted model, the provider and the model it reported, the
 provider-reported input, cached-read, cache-write and output tokens (`null`
 when the provider reported none, never a guessed zero), each try the gate
-refused as its own line, the call's step hash and the home parts it wore.
+refused as its own line, the call's step hash and the home parts it wore,
+and, on the live fork, every row the captured request was read from.
 The epoch's receipt rides its coverage row and is named by its SUMMARY's
 birth; a fold's rides its fold record. The run's `compaction` object shows
 the last pass as `self_writer` (landed or not) and every summary the run
@@ -1353,7 +1362,11 @@ and the revision of the retained steps the window was cut from.
 
 A self-written summary depends on each home part it wore whole, as on any
 source: erasing a diary entry, a lesson or the voice it wore withdraws the
-summary's words. Each self-written epoch or fold that lands in the vault
+summary's words. A summary forked from the live context also depends on
+every row its captured request was read from (a chat turn's pinned log,
+board rows and witnessed messages), so erasing a row only the live context
+held withdraws it too. A live fork is bound only for a request whose rows
+were all witnessed. Each self-written epoch or fold that lands in the vault
 also queues the Dreamer's check of it, in the same write. The check reads
 the summary against the run's retained steps for exactly its span and
 records a finding: `supported`, `mismatch`, `stale_evidence` or
