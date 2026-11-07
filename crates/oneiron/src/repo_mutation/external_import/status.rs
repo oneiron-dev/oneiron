@@ -107,6 +107,9 @@ impl Vault {
                 seed_publication: seeded.map(|found| found.publication),
                 receive_provenance: received.map(|found| found.provenance),
                 publication: received.map(|found| found.publication),
+                lfs_daemon_residual: observations.iter().any(|fact| {
+                    fact.step == ImportStep::Lfs && fact.outcome == ImportOutcome::DaemonResidual
+                }),
             },
             phase,
             reason,

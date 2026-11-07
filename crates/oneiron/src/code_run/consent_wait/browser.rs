@@ -159,16 +159,19 @@ impl Memory<'_> {
         // admission rebuilds the facts instead of trusting the digest.
         action.actor_class = facts.scope.actor_class as u8;
         action.project = facts.scope.project;
-        let draft = CodeConsentDraft {
+        let mut draft = CodeConsentDraft {
             site,
             verb,
             principal: self.code_consent_principal(),
             frozen_input_digest: *blake3::hash(action.operands.as_bytes()).as_bytes(),
+            holder_settlement: None,
             pending: CodeConsentPendingEffect::BrowserAction(action),
             hold_reasons: vec![hold.to_owned()],
             remember_offer: None,
         };
         let minted = vault.with_write_txn(|txn| {
+            draft.holder_settlement =
+                vault.freeze_browser_code_consent_settlement_in_txn(txn, &facts)?;
             mint_code_consent_wait_in_txn(vault, txn, draft, |_| Some(digest))
         })?;
         let Some(wait_id) = minted else {
