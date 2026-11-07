@@ -25,6 +25,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // An owed header retirement stands with the revision it names, as the
     // image holds it (FIX 15413).
     (&t::MAIL_PACK_HEADER_RETIREMENT, CONTENT),
+    // Derived beside the UID map, restored with it.
+    (&t::MAIL_PACK_IMAP_ID_PLACE, CONTENT),
     // A UID names one message for as long as its UIDVALIDITY stands.
     (&t::MAIL_PACK_IMAP_UID, CONTENT),
     (&t::MAIL_PACK_MBOX_IMPORT, CONTENT),
