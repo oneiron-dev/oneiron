@@ -36975,7 +36975,7 @@
      "path": "src/entity_doc/mod.rs",
      "purpose": "Durable, bounded entity text documents, anchored edits, fork sets and owner purge",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "mod": 2,
       "re-export": 11
      }
@@ -54001,7 +54001,7 @@
      "path": "src/note/document.rs",
      "purpose": "NOTE entity-document operations, stable cursors and citation provenance",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 29,
       "enum": 2,
       "fn": 1,
       "struct": 3
@@ -54037,7 +54037,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "NoteAnchor",
@@ -54049,7 +54049,7 @@
      "path": "src/note/documents.rs",
      "purpose": "Entity-local text CRDT with stamped birth, stable cursors and isolated rewrites",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "enum": 2,
       "fn": 6,
       "struct": 3
@@ -60841,7 +60841,7 @@
      "path": "src/ports/document_fields.rs",
      "purpose": "Core half of `ports::document_fields`: its store-layer items live in `oneiron_store::ports::document_fields`…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -62802,7 +62802,7 @@
      "purpose": "CRDT-independent, byte-exact Layer-1 snapshot and fresh-window construction",
      "surface": {
       "const": 2,
-      "crate-vis": 18,
+      "crate-vis": 19,
       "re-export": 9
      }
     },
@@ -95088,7 +95088,7 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 191,
+   "over_bar": 192,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 6731,
    "test_files": 895

@@ -3018,7 +3018,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/entity_doc/message_parts.rs` | src | m | 1 crate-vis | — | A continuation's ordered-parts append: its stored prefix extended by the terminal's suffix, written as the… |
 | `src/entity_doc/message_stream.rs` | src | s | 5 crate-vis | — | MESSAGE terminal commits join the common EntityDoc storage transaction |
 | `src/entity_doc/metadata.rs` | src | s | 1 struct · 2 fn · 7 crate-vis | MetadataEdit | Editable record fields live in the owning document's meta map |
-| `src/entity_doc/mod.rs` | src | s | 2 mod · 11 re-export · 27 crate-vis | — | Durable, bounded entity text documents, anchored edits, fork sets and owner purge |
+| `src/entity_doc/mod.rs` | src | s | 2 mod · 11 re-export · 28 crate-vis | — | Durable, bounded entity text documents, anchored edits, fork sets and owner purge |
 | `src/entity_doc/office.rs` | src | s | 3 struct · 4 fn · 1 type | DeckBody, DeckReview, ReevalWake | The live deck body bound to a deck entity (OF-510; ARCH-0077 "Multiplayer", ARCH-0075 section 4) |
 | `src/entity_doc/pins.rs` | src | m | 2 struct · 1 enum · 9 fn · 16 crate-vis | CitationPin, CursorResolution, PurgeReceipt | Causal citation floors, retained quotes and the owner's shallow-purge door |
 | `src/entity_doc/pins/birth.rs` | src | s | 1 crate-vis | — | A MESSAGE quote anchored to the atomic text a document's local birth took (FIX 8942) |
@@ -4354,11 +4354,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/note/coreference/mod.rs` | src | s | 1 crate-vis | — | Transaction-bound resident diary coreference over NOTE, edge and grant rows |
 | `src/note/coreference/pair.rs` | src | s | 7 crate-vis | — | Canonical pair identity and resident-owned submission witnesses |
 | `src/note/delete.rs` | src | s | 1 crate-vis | — | Transactional erasure of a NOTE's own carriers and outgoing pin indexes |
-| `src/note/document.rs` | src | m | 3 struct · 2 enum · 1 fn · 23 crate-vis | NoteDocumentView, NotePin, NoteScalarEdit, NoteScalarEditOutcome, NoteSpanResolution | NOTE entity-document operations, stable cursors and citation provenance |
+| `src/note/document.rs` | src | m | 3 struct · 2 enum · 1 fn · 29 crate-vis | NoteDocumentView, NotePin, NoteScalarEdit, NoteScalarEditOutcome, NoteSpanResolution | NOTE entity-document operations, stable cursors and citation provenance |
 | `src/note/document_store.rs` | src | m | 9 fn · 17 crate-vis | — | Actor-bound NOTE editor verbs and atomic entity-document persistence |
 | `src/note/document_store/deck.rs` | src | s | 4 crate-vis | — | What a deck keep reads of the NOTE spans its outline cites, in the deck's own transaction: a span with or… |
 | `src/note/document_tests.rs` | test | m | — | — | Concurrent editor operations, stable provenance and blessed brief acceptance |
-| `src/note/documents.rs` | src | m | 3 struct · 2 enum · 6 fn · 29 crate-vis | NoteAnchor, NoteDocument, NoteProgramEdit, NoteProgramEditOutcome, NoteVersion | Entity-local text CRDT with stamped birth, stable cursors and isolated rewrites |
+| `src/note/documents.rs` | src | L | 3 struct · 2 enum · 6 fn · 30 crate-vis | NoteAnchor, NoteDocument, NoteProgramEdit, NoteProgramEditOutcome, NoteVersion | Entity-local text CRDT with stamped birth, stable cursors and isolated rewrites |
 | `src/note/erase.rs` | src | s | 2 crate-vis | — | Active-store erasure of NOTE snapshots and workflow text, including headerless residue |
 | `src/note/erasure_tests.rs` | test | m | — | — | Exact citation erasure, carrier fences, and authority replay regressions |
 | `src/note/files/metadata.rs` | src | s | 3 struct · 2 enum · 1 const · 2 crate-vis | FileFacts, FileMeta, FileReadiness, NameOnlyFile, NameOnlyReason | What a Files source knows of each file besides its text (FIX 6942): the formats it takes text from, why a… |
@@ -4939,7 +4939,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ports/dependent_walk.rs` | src | m | 3 struct · 5 fn · 3 const · 14 crate-vis | DependentWalkCheck, DependentWalkPolicy, DependentWalkProgress | A source's dependents are withdrawn in bounded batches, never refused for how many records were derived from… |
 | `src/ports/dependent_walk/mark.rs` | src | s | 7 crate-vis | — | Core half of `ports::dependent_walk::mark`: its store-layer items live in… |
 | `src/ports/dependent_walk/tests.rs` | test | m | — | — | Done-means for the batched dependent walk (rule 5: no erase refuses for its count of dependents): every door… |
-| `src/ports/document_fields.rs` | src | s | 2 crate-vis | — | Core half of `ports::document_fields`: its store-layer items live in `oneiron_store::ports::document_fields`… |
+| `src/ports/document_fields.rs` | src | s | 3 crate-vis | — | Core half of `ports::document_fields`: its store-layer items live in `oneiron_store::ports::document_fields`… |
 | `src/ports/document_rows.rs` | src | s | 11 crate-vis | — | The document-row port: the ARCH-0023b entity-document families of one document slot |
 | `src/ports/integrity.rs` | src | m | 31 crate-vis | — | Source-prefix dependency index and deletion invalidation in the caller's transaction |
 | `src/ports/lmdb_aux.rs` | src | m | 8 crate-vis | — | LMDB audit, dependency, content-addressed blob and queue adapters |
@@ -5109,7 +5109,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/receipt/task_type_ref.rs` | src | s | 1 struct · 4 fn · 1 const | TypeRef | Versioned task-type references retained with receipt attribution |
 | `src/receipt/tests.rs` | test | XL | — | — | — |
 | `src/recovery.rs` | src | m | 2 struct · 2 enum · 7 fn · 3 const · 1 mod · 6 re-export · 6 crate-vis | QuarantinedArtifact, RecoveryArtifact, RecoveryArtifactFailure, RecoveryArtifactLoad | Canonical Layer-1 recovery, validated rebuilds and bounded repair |
-| `src/recovery/canonical.rs` | src | m | 2 const · 9 re-export · 18 crate-vis | — | CRDT-independent, byte-exact Layer-1 snapshot and fresh-window construction |
+| `src/recovery/canonical.rs` | src | m | 2 const · 9 re-export · 19 crate-vis | — | CRDT-independent, byte-exact Layer-1 snapshot and fresh-window construction |
 | `src/recovery/canonical/asset_body_refs.rs` | src | s | 1 struct · 5 crate-vis | CanonicalAssetBodyRef | The by-reference ASSET body references a window carries (FIX 5489), through canonical capture and rebuild |
 | `src/recovery/canonical/budget.rs` | src | s | 1 struct · 7 crate-vis | RecoveryBudgetOverrun | The capture budget and its measured overrun: what one capture or encoding copied, and the bytes it only… |
 | `src/recovery/canonical/capture.rs` | src | m | 1 fn · 5 crate-vis | — | One coordinated capture of a quiescent canonical window |
