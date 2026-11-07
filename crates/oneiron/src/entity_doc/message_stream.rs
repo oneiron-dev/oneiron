@@ -157,6 +157,7 @@ fn birth_message_in_txn(
     )?;
     let mut head = storage::Head {
         entity: entity.to_hex(),
+        owner_kind: storage::DocumentOwnerKind::Entity,
         incarnation: EntityId::now().to_hex(),
         document: entity.to_hex(),
         field: TextField::MapField("content".to_owned()),

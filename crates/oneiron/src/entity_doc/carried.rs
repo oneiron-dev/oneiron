@@ -329,6 +329,7 @@ impl Vault {
             None => {
                 let mut head = Head {
                     entity: carried.entity.clone(),
+                    owner_kind: storage::DocumentOwnerKind::Entity,
                     incarnation: carried.incarnation.clone(),
                     document: carried.document.clone(),
                     field: content(),

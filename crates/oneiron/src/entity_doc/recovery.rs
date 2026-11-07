@@ -448,6 +448,7 @@ pub(crate) fn restore(
     let replaces = row.origin.as_ref().map(Succession::of).transpose()?;
     let mut head = storage::Head {
         entity: entity.to_hex(),
+        owner_kind: storage::DocumentOwnerKind::Entity,
         incarnation: EntityId::now().to_hex(),
         document,
         field: field_of(row),
