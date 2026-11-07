@@ -59,6 +59,11 @@ pub(crate) use lifecycle::SaverCheck;
 /// the recall host reach the room's telemetry handles through this path; the
 /// type stays crate-private, so no public surface gains a session channel.
 pub(crate) use lifecycle::SessionRetrievalTelemetry;
+#[cfg(unix)]
+pub(crate) use lifecycle::{
+    LiveSessionSpillIdentity, LiveSpillRetention, PublishedSessionSpill, WrittenSessionSpill,
+    WrittenSpillMetadata,
+};
 /// FIX 4280/4281: a room NOTE where its room holds it, and what a room
 /// write stages beside its row.
 pub(crate) use lifecycle::{RoomNote, RoomRowAttachments};
