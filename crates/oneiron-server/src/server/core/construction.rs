@@ -322,6 +322,7 @@ impl SyncServer {
             account_keys: None,
             mcp_registry,
             mcp_code_host: None,
+            mcp_code_run_continuations: crate::api::McpCodeRunContinuations::default(),
             reader_runner,
             live_runs,
             secret_destinations: Default::default(),
