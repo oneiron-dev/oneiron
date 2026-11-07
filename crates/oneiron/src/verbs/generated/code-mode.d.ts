@@ -1831,7 +1831,7 @@ declare namespace Sdk {
   type OfferCost = { currency: string; monthly_before?: number | null; monthly_after?: number | null; one_off?: number | null; payback_months?: number | null };
   type OfferOption = { label: string; model: OfferModelPin; cost: OfferCost; score?: number | null; evidence_refs: string[] };
   type SeatWorkload = { from: number; until: number; calls?: number | null; input_tokens?: number | null; output_tokens?: number | null; complete: boolean; receipt_refs: string[] };
-  type OfferEvidence = { cohort?: EntityId | null; exposures: EntityId[]; rubric_revision?: string | null; card?: SufficiencyCard | null; losses: string[]; risk?: string | null };
+  type OfferEvidence = { cohort?: EntityId | null; exposures: EntityId[]; rubric_revision?: string | null; card?: SufficiencyCard | null; paired_measurement?: number[] | null; losses: string[]; risk?: string | null };
   type ComputeDestination = "on_device" | { self_hosted: { host: string } } | { hosted: { provider: string; rows_leaving: number } };
   type TrainingOffer = { id: EntityId; seat: EvalSeat; offer_skill?: [EntityId, string] | null; drafted_on?: string | null; attempt: AttemptId; incumbent: OfferModelPin; candidate: OfferCandidate; baseline: OfferOption; alternatives: OfferOption[]; workload: SeatWorkload; cost: OfferCost; evidence: OfferEvidence; destination: ComputeDestination; previous?: EntityId | null; what_changed?: string | null; check_at: number; offered_at: number; source_rows?: EntityId[] | null; digest: string };
   type OfferAnswer = "keep_baseline" | "approve_switch" | "approve_train" | "decline" | "postpone";
@@ -1981,7 +1981,7 @@ declare namespace Sdk {
   type ResearchReservation = { id: EntityId; line: ResearchReservationLine; units: number; attempt?: AttemptId | null; settlement?: RsiSettlement | null; reserved_at: number };
   type ResearchRefundWire = { root: EntityId; reservation: EntityId };
   type ResearchExplorationWire = { root: EntityId; units: number; attempt?: EntityId | null };
-  type RsiOverdraftReceipt = { share: string; units: number };
+  type RsiOverdraftReceipt = { share: string; units: number; reservation: string; vault: string; public_key: string; signature: string };
   type ResearchReservationWire = { id: EntityId; line: ResearchReservationLine; units: number; attempt?: EntityId | null; settlement?: RsiSettlement | null; overdraft?: RsiOverdraftReceipt | null; reserved_at: number };
   type RsiBudgetRead = { limit: number; spent: number; reserved: number; suspended: boolean };
   type RsiExplorationRead = { exposure_limit: number; spent_exposure: number; reserved_exposure: number; suspended: boolean };

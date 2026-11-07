@@ -3621,7 +3621,7 @@ export type OfferOption = { label: string; model: OfferModelPin; cost: OfferCost
 /** `oneiron::skill_optimize::offer::snapshot::SeatWorkload` */
 export type SeatWorkload = { from: number; until: number; calls?: number | null; input_tokens?: number | null; output_tokens?: number | null; complete: boolean; receipt_refs: string[] }
 /** `oneiron::skill_optimize::offer::snapshot::OfferEvidence` */
-export type OfferEvidence = { cohort?: EntityId | null; exposures: EntityId[]; rubric_revision?: string | null; card?: SufficiencyCard | null; losses: string[]; risk?: string | null }
+export type OfferEvidence = { cohort?: EntityId | null; exposures: EntityId[]; rubric_revision?: string | null; card?: SufficiencyCard | null; paired_measurement?: number[] | null; losses: string[]; risk?: string | null }
 /** `oneiron::skill_optimize::offer::snapshot::ComputeDestination` */
 export type ComputeDestination = "on_device" | { self_hosted: { host: string } } | { hosted: { provider: string; rows_leaving: number } }
 /** `oneiron::skill_optimize::offer::snapshot::TrainingOffer` */
@@ -3921,7 +3921,7 @@ export type ResearchRefundWire = { root: EntityId; reservation: EntityId }
 /** `oneiron::verbs::research::ResearchExplorationWire` */
 export type ResearchExplorationWire = { root: EntityId; units: number; attempt?: EntityId | null }
 /** `oneiron::research_budget::RsiOverdraftReceipt` */
-export type RsiOverdraftReceipt = { share: string; units: number }
+export type RsiOverdraftReceipt = { share: string; units: number; reservation: string; vault: string; public_key: string; signature: string }
 /** `oneiron::verbs::research::ResearchReservationWire` */
 export type ResearchReservationWire = { id: EntityId; line: ResearchReservationLine; units: number; attempt?: EntityId | null; settlement?: RsiSettlement | null; overdraft?: RsiOverdraftReceipt | null; reserved_at: number }
 /** `oneiron::research_budget::RsiBudgetRead` */
