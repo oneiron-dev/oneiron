@@ -156,7 +156,7 @@ fn cited_words_in(
         || (frame.imported && message.not_the_owners)
         || swarm_evidence_content_hash(&body) != span.revision
         || frontier != span.frontier
-        || attribution_hash(&authors, speaker) != span.attribution
+        || attribution_hash(frame.imported, &authors, speaker) != span.attribution
     {
         return Err(changed());
     }
