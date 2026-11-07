@@ -29,6 +29,7 @@ mod browser;
 mod host;
 mod ledger;
 mod replay;
+mod resume;
 mod settle;
 mod types;
 
@@ -44,6 +45,9 @@ pub(crate) use self::replay::{
     CodeConsentResume, ParkedWait, code_consent_resume_evidence, consume_code_consent_wait_in_txn,
     consumed_external_code_reply, seal_parked_code_consent_in_txn, verify_code_consent_consumed,
     verify_parked_code_consent,
+};
+pub use self::resume::{
+    CodeConsentParkedRun, CodeConsentRunEndpoint, CodeConsentRunOrigin, CodeConsentRunPeer,
 };
 pub(crate) use self::settle::{
     CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED, code_consent_admission_in_txn, offered_choices,

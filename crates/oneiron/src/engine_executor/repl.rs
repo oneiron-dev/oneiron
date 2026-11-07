@@ -15,8 +15,8 @@ use super::host::{
 use super::record::{
     LoadedReplayRecord, PromptBinding, REPLAY_METADATA_SCHEMA_VERSION, StepResultDigests,
     code_consent_evidence, completed_step_count, load_terminal_status, parked_wait, parked_wait_at,
-    prepared_step_state_hash, previous_state_hash, record_config_marker, record_terminal_output,
-    validate_executor_config_marker, verify_code_consent_park, wait_key,
+    prepared_step_state_hash, previous_state_hash, record_caller_task, record_config_marker,
+    record_terminal_output, validate_executor_config_marker, verify_code_consent_park, wait_key,
 };
 use super::store::{
     COMPACTION_OBSERVATION_WINDOW_BYTES, IMPLICIT_SPEECH_TEXT_BYTES, ImplicitSpeechIntent,

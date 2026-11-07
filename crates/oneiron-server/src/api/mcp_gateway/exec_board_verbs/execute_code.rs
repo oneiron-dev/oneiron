@@ -228,8 +228,9 @@ pub(in crate::api::mcp_gateway) async fn resume_mcp_code_run(
 }
 
 /// The host request for one entry of `run_id`, the run `run_ref` names
-/// under `actor`, behind the verb door `verbs`, with the run's self brief
-/// when `actor`'s connection has one.
+/// under `actor`, behind the verb door `verbs`, bound for `actor` as the
+/// admitted caller a code consent wait of the run keeps (FIX 4606), with
+/// the run's self brief when `actor`'s connection has one.
 fn mcp_code_run_request<'a>(
     server: &Arc<SyncServer>,
     actor: &'a McpCallContext,
@@ -255,6 +256,9 @@ fn mcp_code_run_request<'a>(
         task,
         run_id,
         verbs: Arc::clone(verbs) as Arc<dyn oneiron::code_run::AgentVerbDoor>,
+        consent_origin: super::super::code_run_resume::mcp_code_consent_origin(
+            server, actor, run_ref,
+        ),
         brief,
     }
 }

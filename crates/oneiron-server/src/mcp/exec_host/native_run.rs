@@ -30,6 +30,9 @@ use super::{
 /// checked against the provider's config before the call. Provider config,
 /// seat grading, the home's persona words, the run's prior record and any
 /// text a host adds later declare nothing, and keep their own row causes.
+///
+/// FIX 4606: the run carries `consent_origin`, the admitted caller the
+/// gateway bound, so a code consent wait it mints keeps that caller.
 #[expect(
     clippy::too_many_arguments,
     reason = "each argument is one axis of the run's host binding"
@@ -47,6 +50,7 @@ pub(super) fn run_engine_native_code_mode(
     reader_seat: Option<SpawnHostSeat>,
     compaction: Option<&mut RunCompaction>,
     git_door_base: Option<String>,
+    consent_origin: Option<oneiron::code_run::CodeConsentRunOrigin>,
     brief: Option<&dyn SelfBriefPort>,
 ) -> Result<EngineExecutorOutcome, McpCodeExecutionError> {
     let mut gated_write = GatedActorWrite::new(vault, write_actor, run_ref)
@@ -55,7 +59,9 @@ pub(super) fn run_engine_native_code_mode(
         .with_bound_run(config.run_id)
         .with_git_door_base(git_door_base)
         // The caller's own task text, verbatim (FIX 7087).
-        .with_caller_task(config.run_id, &config.task);
+        .with_caller_task(config.run_id, &config.task)
+        // The admitted caller a code consent wait keeps (FIX 4606).
+        .with_code_consent_origin(consent_origin);
     if let Some(opener) = opener {
         gated_write = gated_write.with_opener_credential(opener);
     }

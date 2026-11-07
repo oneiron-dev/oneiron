@@ -126,6 +126,10 @@ pub struct McpCodeExecutionRequest<'a> {
     /// The door each code-mode verb call takes: the SDK verb table under this
     /// call's connector, with its admission and gate.
     pub verbs: Arc<dyn oneiron::code_run::AgentVerbDoor>,
+    /// The admitted caller the host binds on the run (FIX 4606): a code
+    /// consent wait the run mints keeps it, so the parked run can be entered
+    /// again for that caller after a restart. `None` binds none.
+    pub consent_origin: Option<oneiron::code_run::CodeConsentRunOrigin>,
     /// The durable run's self brief, when the door lends one (FIX 17594
     /// D5): keyed by [`Self::run_id`], never the stream or a session label.
     pub brief: Option<Arc<dyn McpCodeRunSelfBrief>>,
