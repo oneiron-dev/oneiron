@@ -3666,6 +3666,11 @@ export_facade! {
     let output = client.vault_code_origin_publications(&input)?;
     crate::codec::lift_record("vault.code.origin.publications", &output)
 };
+"vault.code.checkout.holder.bind" => fn vault_code_checkout_holder_bind(&self, input: RepoCheckoutBindInput) -> RepoCheckoutBindOutput = |client| {
+    let input: oneiron::memory::repo_doors::RepoCheckoutBindInput = crate::codec::lower_record("vault.code.checkout.holder.bind", input)?;
+    let output = client.vault_code_checkout_holder_bind(&input)?;
+    crate::codec::lift_record("vault.code.checkout.holder.bind", &output)
+};
 "vault.code.checkout.bind" => fn vault_code_checkout_bind(&self, input: CheckoutDoorBindRequest) -> CheckoutDoorBinding = |client| {
     let input: oneiron::memory::origin_doors::CheckoutDoorBindRequest = crate::codec::lower_record("vault.code.checkout.bind", input)?;
     let output = client.vault_code_checkout_bind(&input)?;

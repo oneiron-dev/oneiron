@@ -4420,6 +4420,9 @@ class Oneiron:
     class _VaultCodeCheckoutVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        @property
+        def holder(self) -> "Oneiron._VaultCodeCheckoutHolderVerbs":
+            return Oneiron._VaultCodeCheckoutHolderVerbs(self._client)
         def bind(self, spec):
             """Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential."""
             return json.loads(_translate(lambda: self._client.vault_code_checkout_bind(json.dumps(spec))))
@@ -4447,6 +4450,12 @@ class Oneiron:
         def teardown(self, spec):
             """Collect the caller's checkout only with a matching durable pushed-head receipt and clear custody; retain dirty or uncertain trees."""
             return json.loads(_translate(lambda: self._client.vault_code_checkout_teardown(json.dumps(spec))))
+    class _VaultCodeCheckoutHolderVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def bind(self, spec):
+            """Materialize the caller's own live checkout without a run. One current repo read Grant must cover the full ref at the lease's pinned commit and every path of that tree. Returns the lease-bound remote URL, not a host path; no lease is minted."""
+            return json.loads(_translate(lambda: self._client.vault_code_checkout_holder_bind(json.dumps(spec))))
     class _VaultCodeViewsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

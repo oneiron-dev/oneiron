@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1264 facade rows, 4590 declarations.
+Census: 1264 facade rows, 4595 declarations.
 Inputs: 1194 of 1264 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1096 of 1264 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -5122,6 +5122,98 @@ class WeaveDigestRendered(TypedDict):
     scheduled_for: int
     rendered_at: int
     narrowing: ScopedReadReceipt
+class ProactivityDigestRequest(TypedDict):
+    id: NotRequired[str | None]
+class DigestPrivateSource(TypedDict):
+    root: str
+    turn: str
+class DigestProposal(TypedDict):
+    claim_ref: str
+    revision: list[int]
+    summary: str
+    private_sources: NotRequired[list[DigestPrivateSource]]
+    unverified: NotRequired[bool]
+JudgeAskReason = Literal["revision_disagreement", "uncertainty", "rubric_recheck", "rubric_regrade"]
+class JudgeRegrade(TypedDict):
+    label: list[int]
+    rubric: list[int]
+class JudgeAsk(TypedDict):
+    id: list[int]
+    skill: str
+    responsible: str
+    campaign: str
+    evidence: str
+    reason: JudgeAskReason
+    option_a: str
+    option_b: str
+    delivered_at: NotRequired[int | None]
+    regrade: NotRequired[JudgeRegrade | None]
+class EvalSeatNamed(TypedDict):
+    named: str
+EvalSeat = Literal["companion", "decision", "extraction_tagger", "embedder", "router"] | EvalSeatNamed
+class EvalLabelAsk(TypedDict):
+    id: EntityId
+    seat: EvalSeat
+    case: EntityId
+    decision: str
+    responsible: EntityId
+    option_a: str
+    option_b: str
+    minutes: int
+    asked_at: int
+    delivered_at: NotRequired[int | None]
+    chosen: NotRequired[str | None]
+    answered_at: NotRequired[int | None]
+class DigestOffer(TypedDict):
+    offer: str
+    digest: str
+    summary: str
+class DigestCleanup(TypedDict):
+    decisions: list[str]
+    archived: int
+    skipped: int
+    proposals: list[str]
+    proposed: int
+    view: str
+class DigestNoteTombstones(TypedDict):
+    proposals: list[str]
+    view: str
+class DigestAppliedItem(TypedDict):
+    target: str
+    kind: str
+    facet: str
+    applied_at: int
+    receipt_ref: str
+class DigestApplied(TypedDict):
+    items: list[DigestAppliedItem]
+    view: str
+class DigestDrafterItem(TypedDict):
+    event: str
+    kind: str
+    versions: list[str]
+    reason: NotRequired[str | None]
+    at: int
+class DigestDrafter(TypedDict):
+    items: list[DigestDrafterItem]
+    nights: NotRequired[dict[str, int]]
+    through: str
+    view: str
+class ProactivityDigestView(TypedDict):
+    id: list[int]
+    created_at: int
+    recipient: str | None
+    urgent: bool
+    groups: dict[str, list[DigestProposal]]
+    judge_asks: list[JudgeAsk]
+    eval_label_asks: list[EvalLabelAsk]
+    offers: NotRequired[list[DigestOffer]]
+    cleanup: NotRequired[DigestCleanup | None]
+    note_tombstones: NotRequired[DigestNoteTombstones | None]
+    applied: NotRequired[DigestApplied | None]
+    drafter: NotRequired[DigestDrafter | None]
+    health_cards: NotRequired[list[ConcernCardSummary]]
+    rendered: str
+    voice_style: str
 class InboxLensRequest(TypedDict):
     identity: NotRequired[str | None]
     agent: NotRequired[str | None]
@@ -8536,9 +8628,6 @@ class ResearchGoalPin(TypedDict):
     goal_id: EntityId
     revision: str
     project: NotRequired[tuple[EntityId, EntityId] | None]
-class EvalSeatNamed(TypedDict):
-    named: str
-EvalSeat = Literal["companion", "decision", "extraction_tagger", "embedder", "router"] | EvalSeatNamed
 class ResearchConfirmationSeat(TypedDict):
     seat: EvalSeat
     cohort: EntityId
@@ -9077,19 +9166,6 @@ class EvalExposureLedger(TypedDict):
 class EvalBlockedLabelsRequest(TypedDict):
     seat: NotRequired[EvalSeat | None]
     decision: NotRequired[str | None]
-class EvalLabelAsk(TypedDict):
-    id: EntityId
-    seat: EvalSeat
-    case: EntityId
-    decision: str
-    responsible: EntityId
-    option_a: str
-    option_b: str
-    minutes: int
-    asked_at: int
-    delivered_at: NotRequired[int | None]
-    chosen: NotRequired[str | None]
-    answered_at: NotRequired[int | None]
 class EvalLabelPickRequest(TypedDict):
     decision: str
     case: EntityId
@@ -12601,71 +12677,6 @@ class CodeMutationEntry(TypedDict):
 class CodeMutationLog(TypedDict):
     repo: EntityId
     entries: list[CodeMutationEntry]
-class CodeRepoSecretSeenRefMove(TypedDict):
-    kind: Literal["ref_move"]
-    name: str
-    new_commit: str
-class CodeRepoSecretSeenQuarantine(TypedDict):
-    kind: Literal["quarantine"]
-class CodeRepoSecretSeenSyncLanding(TypedDict):
-    kind: Literal["sync_landing"]
-CodeRepoSecretSeen = CodeRepoSecretSeenRefMove | CodeRepoSecretSeenQuarantine | CodeRepoSecretSeenSyncLanding
-class CodeRepoSecretMark(TypedDict):
-    mark: EntityId
-    operation: EntityId
-    blob: str
-    path: NotRequired[str | None]
-    kind: str
-    seen: CodeRepoSecretSeen
-    custody: NotRequired[EntityId | None]
-    handle: NotRequired[str | None]
-    marked_at: int
-class CodeRepoSecretRemediationLink(TypedDict):
-    state: str
-    proposal: EntityId
-    commit: NotRequired[str | None]
-    paths: list[str]
-    linked_at: int
-class CodeRepoSecretsView(TypedDict):
-    repo: EntityId
-    marks: list[CodeRepoSecretMark]
-    remediations: list[CodeRepoSecretRemediationLink]
-class CodeRepoSecretProposeRequest(TypedDict):
-    repo: EntityId
-    session: EntityId
-    provenance_claim: EntityId
-    op_provenance: CodeOpProvenance
-    catalog: NotRequired[LensCatalog | None]
-CodeRepoSecretRemediationStatus = Literal["proposed", "unresolved", "stale", "clean"]
-class CodeRepoSecretRemediationActionReplaceLiterals(TypedDict):
-    action: Literal["replace_literals"]
-    path: str
-    env_names: list[str]
-class CodeRepoSecretRemediationActionRemoveDotenv(TypedDict):
-    action: Literal["remove_dotenv"]
-    path: str
-class CodeRepoSecretRemediationActionWriteExample(TypedDict):
-    action: Literal["write_example"]
-    path: str
-    names: list[str]
-class CodeRepoSecretRemediationActionIgnoreDotenv(TypedDict):
-    action: Literal["ignore_dotenv"]
-    entries: list[str]
-class CodeRepoSecretRemediationActionDeclareEnvNames(TypedDict):
-    action: Literal["declare_env_names"]
-    env_names: list[str]
-CodeRepoSecretRemediationAction = CodeRepoSecretRemediationActionReplaceLiterals | CodeRepoSecretRemediationActionRemoveDotenv | CodeRepoSecretRemediationActionWriteExample | CodeRepoSecretRemediationActionIgnoreDotenv | CodeRepoSecretRemediationActionDeclareEnvNames
-class CodeRepoSecretUnresolved(TypedDict):
-    path: str
-    reason: str
-    custody: NotRequired[EntityId | None]
-class CodeRepoSecretRemediation(TypedDict):
-    repo: EntityId
-    status: CodeRepoSecretRemediationStatus
-    base_commit: str
-    proposal: NotRequired[EntityId | None]
-    actions: list[CodeRepoSecretRemediationAction]
-    unresolved: list[CodeRepoSecretUnresolved]
 class ForeignCodeRunRequest(TypedDict):
     source: str
     reads: NotRequired[list[str]]
@@ -13198,7 +13209,7 @@ class ExternalImportRequest(TypedDict):
     source: ExternalImportSource
     source_binding: NotRequired[str | None]
     door: ExternalImportDoor
-ExternalImportReceipt = TypedDict("ExternalImportReceipt", {"import": EntityId, "repo": str, "code_repo": EntityId, "source": ExternalImportSource, "imported_ref": str, "base_revision": EntityId, "importer": NotRequired[EntityId | None], "seed_publication": NotRequired[EntityId | None], "receive_provenance": NotRequired[EntityId | None], "publication": NotRequired[EntityId | None], "lfs_daemon_residual": bool})
+ExternalImportReceipt = TypedDict("ExternalImportReceipt", {"import": EntityId, "repo": str, "code_repo": EntityId, "source": ExternalImportSource, "imported_ref": str, "base_revision": EntityId, "importer": NotRequired[EntityId | None], "seed_publication": NotRequired[EntityId | None], "receive_provenance": NotRequired[EntityId | None], "publication": NotRequired[EntityId | None]})
 ExternalImportLookup = TypedDict("ExternalImportLookup", {"repo": str, "code_repo": EntityId, "import": EntityId, "door": ExternalImportDoor})
 ExternalImportPhase = Literal["pending", "fetch_refused", "source_moved", "held_base", "door_refused", "transport_unknown", "received"]
 class ReceivedFileOperation(TypedDict):
@@ -13535,6 +13546,18 @@ class OriginPublicationsRequest(TypedDict):
 class OriginPublicationsView(TypedDict):
     repo: str
     publications: list[OriginPublicationView]
+class RepoCheckoutBindInput(TypedDict):
+    repo: EntityId
+    ref: str
+    checkout: str
+    epoch: int
+    endpoint: NotRequired[str | None]
+class RepoCheckoutBindOutput(TypedDict):
+    repo: EntityId
+    ref: str
+    checkout: str
+    epoch: int
+    remote_url: NotRequired[str | None]
 class CheckoutDoorBindRequest(TypedDict):
     repo: str
     checkout: str
@@ -13715,7 +13738,6 @@ class CodeSnapshotView(TypedDict):
     snapshot: str
     scope_key: str
     files: list[CodeSnapshotFile]
-    capture_receipt: NotRequired[str | None]
 class CodeSnapshotRequest(TypedDict):
     repo: EntityId
     snapshot: str
@@ -14223,18 +14245,6 @@ class RepoMergeQueueEnqueueInput(TypedDict):
     proposals: list[EntityId]
     declaration: NotRequired[EntityId | None]
 RepoMergeQueueEnqueueOutput = RepoQueueEntryView
-class RepoCheckoutBindInput(TypedDict):
-    repo: EntityId
-    ref: str
-    checkout: str
-    epoch: int
-    endpoint: NotRequired[str | None]
-class RepoCheckoutBindOutput(TypedDict):
-    repo: EntityId
-    ref: str
-    checkout: str
-    epoch: int
-    remote_url: NotRequired[str | None]
 class RepoExportInput(TypedDict):
     repo: EntityId
     ref: str

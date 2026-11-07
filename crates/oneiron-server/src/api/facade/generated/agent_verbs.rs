@@ -816,6 +816,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.code.origin.authority.get", post(facade_route))
         .route("/vault.code.origin.authority.set", post(facade_route))
         .route("/vault.code.origin.publications", post(facade_route))
+        .route("/vault.code.checkout.holder.bind", post(facade_route))
         .route("/vault.code.checkout.bind", post(facade_route))
         .route("/vault.code.checkout.claim", post(facade_route))
         .route("/vault.code.checkout.get", post(facade_route))
