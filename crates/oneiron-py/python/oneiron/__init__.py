@@ -5196,7 +5196,7 @@ class Oneiron:
         def ics(self) -> "Oneiron._VaultCalendarIcsVerbs":
             return Oneiron._VaultCalendarIcsVerbs(self._client)
         def occurrences(self, spec):
-            """Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions."""
+            """Expands an admitted stored master in an inclusive UTC window under the caller's read scope, masking detached exceptions, as one page: an optional deadline_ms, and resume_from to continue."""
             return json.loads(_translate(lambda: self._client.vault_calendar_occurrences(json.dumps(spec))))
         @property
         def instances(self) -> "Oneiron._VaultCalendarInstancesVerbs":
@@ -5205,10 +5205,10 @@ class Oneiron:
             """Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt."""
             return json.loads(_translate(lambda: self._client.vault_calendar_read(json.dumps(spec))))
         def search(self, spec):
-            """Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt."""
+            """Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, as one page in time order: an optional deadline_ms, and resume_from to continue."""
             return json.loads(_translate(lambda: self._client.vault_calendar_search(json.dumps(spec))))
         def freebusy(self, spec):
-            """Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt."""
+            """Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals, one page of the covered prefix: an optional deadline_ms, and resume_from to continue."""
             return json.loads(_translate(lambda: self._client.vault_calendar_freebusy(json.dumps(spec))))
         def prep(self, spec):
             """Builds a fresh caller-scoped meeting PrepPack with commitments first and a 250-word ceiling, or deliberately returns no pack."""

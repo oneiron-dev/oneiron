@@ -108,6 +108,8 @@ pub struct SyncServer {
     /// deck and slide render takes its turn here, round robin across the
     /// callers it is for, the host's own wakes behind them.
     pub(crate) renderer_turns: crate::admission::Admission<oneiron::EntityId>,
+    /// The operator's renderer scratch source, resolved once with shared disk claims.
+    pub(crate) renderer_scratch: crate::slide_render::RendererScratch,
     /// OF-520 questions retrieval queries past `config.limits` raised.
     pub(crate) query_checks: super::read_shape::QueryChecks,
     /// Set only by managed boot after inherited-credential and DEK checks.
@@ -140,6 +142,9 @@ pub struct SyncServer {
     pub(crate) retained: Arc<crate::byte_line::ByteLine>,
     /// The presence hub's charge on `retained`.
     pub(crate) presence: Arc<super::presence::PresenceCharge>,
+    /// Authenticated booking calls per actor this minute (FIX 128-131),
+    /// measured against their `[limits]` rows; never a window.
+    pub(crate) booking_calls: super::booking_calls::AuthenticatedBookingCalls,
     /// The wakes of removed holders' archive delivery sessions (FIX 3396).
     pub(crate) removal_deliveries: super::removal_delivery::RemovalDeliveries,
     /// Dedicated shared environments retained for leave checks and their own
@@ -341,6 +346,14 @@ fn live_rows(
 }
 
 impl SyncServer {
+    /// The most bytes one WebSocket message this server reads may reassemble
+    /// to (ABC transport row T25): its request floor,
+    /// `limits.request_body_bytes`, set at every upgrade in place of
+    /// tungstenite's implicit 64 MiB. A frame keeps its own bound.
+    pub(crate) fn socket_message_bytes(&self) -> usize {
+        usize::try_from(self.config.limits.request_body_bytes).unwrap_or(usize::MAX)
+    }
+
     // ─── Device-lease registry (ONE-1140, OD-3) ──────────────────────────
 
     /// Install an already resolved run snapshot from the trusted host. The

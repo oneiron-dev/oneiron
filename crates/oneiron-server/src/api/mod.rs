@@ -143,6 +143,7 @@ pub(crate) use self::feedback_inbox::FloodCap;
 // the serve wire, the door window, and the single-writer landing all live in
 // `oneiron::origin::smart_http`.
 mod git_http;
+pub(crate) use self::git_http::install_origin_git_transport;
 mod git_lfs;
 mod transfer;
 pub(crate) use self::transfer::{LFS_MEMORY_ROOM, Transfers};
@@ -194,6 +195,8 @@ pub(crate) use context_board::{action_board, freeze_chat_context, record_action_
 #[allow(dead_code)]
 mod reactive;
 mod report;
+// ABC transport rows T1, T3, T4: the API's request floor.
+mod request_floor;
 mod routes;
 mod run_tree;
 mod saved_query;
@@ -339,7 +342,6 @@ pub(crate) fn vault_artifact_app(server: Arc<SyncServer>) -> Router {
                     "max_windows_per_connection": 8,
                     "max_frame_size_bytes": 1048576,
                     "max_update_payload_bytes": 1048576,
-                    "max_ephemeral_payload_bytes": 65536,
                     "max_ephemeral_snapshot_bytes": 262144
                 },
                 "runtime": {

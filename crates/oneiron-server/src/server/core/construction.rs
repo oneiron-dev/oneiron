@@ -293,6 +293,7 @@ impl SyncServer {
             )?,
             memory: memory.clone(),
             renderer_turns,
+            renderer_scratch: Default::default(),
             wire_telemetry,
             mesh_pressure: crate::wire_telemetry::PoolPressure::mesh(),
             invocation_claims: crate::invocation_claims::InvocationClaimStore::new(vault.clone()),
@@ -374,6 +375,7 @@ impl SyncServer {
             artifact_port: None,
             api_addr: None,
             artifact_socket: false,
+            booking_calls: Default::default(),
             #[cfg(test)]
             booking_test_now_secs: None,
             #[cfg(test)]
