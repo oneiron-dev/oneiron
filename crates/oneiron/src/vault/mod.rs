@@ -257,6 +257,12 @@ pub struct Vault {
     /// ([`Vault::install_served_transports`]). In memory only.
     pub(crate) served_transports:
         std::sync::OnceLock<std::sync::Arc<crate::outbound::ServedTransports>>,
+    /// The served host's precision recalculator (LibreOffice headless) for
+    /// the workbooks the native formula engine refuses (FIX 2462), installed
+    /// by [`Vault::install_xlsx_precision_recalc`]. In memory only; with none,
+    /// a refused workbook is marked to recalculate when it is opened.
+    pub(crate) xlsx_precision_recalc:
+        std::sync::Mutex<Option<std::sync::Arc<crate::office_body::XlsxPrecisionRecalc>>>,
     /// A host Coach serving this vault drafts its digest settings steps (FIX
     /// 5609, 6165, 7211; [`Vault::set_coach_weave_digest_host_ready`]): when
     /// its last round completed and its own expected round interval, `None`
