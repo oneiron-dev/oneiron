@@ -340,6 +340,17 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
         Some(self.gated_write.actor().entity_ref())
     }
 
+    /// The run's custody and PERSON values, as its output sweep reads them.
+    fn mask_guest_error(&self, body: &str) -> Result<String> {
+        match self.storage {
+            Some(storage) => crate::code_sandbox::guest_error::mask_run_known_values(
+                storage.code_run_known_source(self.run_id)?,
+                body,
+            ),
+            None => Ok(body.to_owned()),
+        }
+    }
+
     fn write_output(&mut self, stream: JsCodeModeStream<'_>, frame: &[u8]) -> Result<bool> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor result storage unavailable".into(),
