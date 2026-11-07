@@ -699,6 +699,7 @@ impl RuntimeMediaEmbedder {
             operation: AiOperation::Embed,
             parts,
             references: Vec::new(),
+            mask: None,
             params: if name_width {
                 BTreeMap::from([(
                     "dimensions".to_owned(),
