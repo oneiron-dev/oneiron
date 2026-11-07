@@ -1,4 +1,4 @@
-//! Bounded relay workers for a guest's datagrams (FIX 5979).
+//! Bounded relay workers for a guest's datagrams (FIX 5979, FIX 6298).
 //!
 //! A relayed datagram takes its room on the host floor before anything
 //! starts for it and before the guest's send is acknowledged: the relay's
@@ -9,6 +9,14 @@
 //! answer: the send is acknowledged once its worker has started. An answer
 //! the guest's socket has no room for waits only while the session and the
 //! socket live ([`deliver`], FIX 8016).
+//!
+//! The relay prepares each datagram in the request thread, before its worker
+//! starts ([`crate::EgressRelay::prepare_datagram`]). A VM's relay returns
+//! only once the host has admitted the datagram and holds its room there, so
+//! a full host floor back-pressures the send before it is acknowledged, as a
+//! full local floor does (FIX 6298). The worker then owns the admitted
+//! exchange and only reads its answer. The code guest image carries this
+//! notifier: rebuild it from the same commit as the host.
 //!
 //! A full floor back-pressures the guest. A blocking send waits for room in
 //! the request thread that already carries it (one per guest task blocked in
@@ -45,8 +53,9 @@ const FLOOR_RETRY: Duration = Duration::from_millis(10);
 const DELIVERY_RETRY: Duration = Duration::from_millis(10);
 
 /// Relays `bytes` to `target` on a worker of its own, which hands the answer
-/// to `socket`. Returns once the worker has started; while the floor is
-/// full, a blocking send waits as long as `waiting` and the socket hold.
+/// to `socket`. Returns once the relay has prepared the datagram and the
+/// worker has started; while the floor is full, here or on a VM's host, a
+/// blocking send waits as long as `waiting` and the socket hold.
 pub(super) fn send(
     state: &Arc<State>,
     socket: &Arc<Socket>,
@@ -63,10 +72,10 @@ pub(super) fn send(
             .host_net_floor()
             .acquire(fds, workers)
             .and_then(|permit| {
-                let (state, socket, bytes) =
-                    (Arc::clone(state), Arc::clone(socket), bytes.to_vec());
+                let prepared = Arc::clone(&state.relay).prepare_datagram(target, bytes.to_vec())?;
+                let (state, socket) = (Arc::clone(state), Arc::clone(socket));
                 start(permit, move || {
-                    if let Ok(answer) = state.relay.datagram(target, &bytes)
+                    if let Ok(answer) = prepared.answer()
                         && let Some((_, host)) = &socket.datagram
                     {
                         deliver(&state, &socket, host, &answer);
@@ -95,6 +104,35 @@ pub(super) fn reserve(state: &State, socket: &Socket) -> Option<HostNetPermit> {
         match state.relay.host_net_floor().acquire(fds, workers) {
             Ok(permit) => return Some(permit),
             Err(error) if saturated_floor(&error).is_some() && live(state, socket) => {
+                std::thread::sleep(FLOOR_RETRY);
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
+/// Relays one datagram the guest wrote to its connected socket, on the
+/// socket's writer, and returns the answer. The writer keeps the datagram
+/// while it waits: for the relay's socket ([`reserve`]), and for the host's
+/// admission when the host is across a channel, as a VM's is (FIX 6298). A
+/// datagram the host admitted is answered once and never relayed again.
+/// `None` once the session or the socket has ended, or the relay failed.
+pub(super) fn relay_written(
+    state: &State,
+    socket: &Socket,
+    target: SocketAddr,
+    bytes: &[u8],
+) -> Option<Vec<u8>> {
+    loop {
+        let room = reserve(state, socket)?;
+        match Arc::clone(&state.relay).prepare_datagram(target, bytes.to_vec()) {
+            Ok(prepared) => {
+                let answer = prepared.answer().ok();
+                drop(room);
+                return answer;
+            }
+            Err(error) if saturated_floor(&error).is_some() && live(state, socket) => {
+                drop(room);
                 std::thread::sleep(FLOOR_RETRY);
             }
             Err(_) => return None,

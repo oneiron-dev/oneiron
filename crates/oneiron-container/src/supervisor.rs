@@ -587,11 +587,11 @@ fn datagram_writer(socket: Arc<Socket>, state: Arc<State>) {
             match host.recv(&mut bytes) {
                 Ok(n) => {
                     let target = socket.target.lock().ok().and_then(|a| *a);
-                    // The relay's socket waits for room on the host floor;
-                    // the guest's next writes wait in its socket (FIX 5979).
+                    // The datagram waits for host room and admission; the
+                    // guest's next writes wait in its socket (FIX 5979, FIX 6298).
                     if let Some(target) = target
-                        && let Some(_room) = relay_workers::reserve(&state, &socket)
-                        && let Ok(answer) = state.relay.datagram(target, &bytes[..n])
+                        && let Some(answer) =
+                            relay_workers::relay_written(&state, &socket, target, &bytes[..n])
                     {
                         relay_workers::deliver(&state, &socket, host, &answer);
                     }
