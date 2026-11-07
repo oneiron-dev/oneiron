@@ -884,6 +884,7 @@ pub enum AgentVerb {
     VaultRoomsJoin,
     VaultRoomsInvite,
     VaultRoomsConsent,
+    VaultRoomsLeave,
     VaultRoomsOffer,
     VaultRoomsOfferAnswer,
     VaultRoomsOfferVote,
@@ -2202,6 +2203,7 @@ impl AgentVerb {
         Self::VaultRoomsJoin,
         Self::VaultRoomsInvite,
         Self::VaultRoomsConsent,
+        Self::VaultRoomsLeave,
         Self::VaultRoomsOffer,
         Self::VaultRoomsOfferAnswer,
         Self::VaultRoomsOfferVote,
@@ -3549,6 +3551,7 @@ impl AgentVerb {
             Self::VaultRoomsJoin => "vault.rooms.join",
             Self::VaultRoomsInvite => "vault.rooms.invite",
             Self::VaultRoomsConsent => "vault.rooms.consent",
+            Self::VaultRoomsLeave => "vault.rooms.leave",
             Self::VaultRoomsOffer => "vault.rooms.offer",
             Self::VaultRoomsOfferAnswer => "vault.rooms.offer.answer",
             Self::VaultRoomsOfferVote => "vault.rooms.offer.vote",
@@ -4881,6 +4884,7 @@ impl AgentVerb {
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsInvite
                 | Self::VaultRoomsConsent
+                | Self::VaultRoomsLeave
                 | Self::VaultRoomsOffer
                 | Self::VaultRoomsOfferAnswer
                 | Self::VaultRoomsOfferVote
@@ -6228,6 +6232,7 @@ impl AgentVerb {
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsInvite
                 | Self::VaultRoomsConsent
+                | Self::VaultRoomsLeave
                 | Self::VaultRoomsOffer
                 | Self::VaultRoomsOfferAnswer
                 | Self::VaultRoomsOfferVote
@@ -7695,6 +7700,7 @@ impl AgentVerb {
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsInvite
                 | Self::VaultRoomsConsent
+                | Self::VaultRoomsLeave
                 | Self::VaultRoomsOffer
                 | Self::VaultRoomsOfferAnswer
                 | Self::VaultRoomsOfferVote
@@ -8615,6 +8621,7 @@ impl AgentVerb {
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsInvite
                 | Self::VaultRoomsConsent
+                | Self::VaultRoomsLeave
                 | Self::VaultRoomsOffer
                 | Self::VaultRoomsOfferAnswer
                 | Self::VaultRoomsOfferVote
@@ -9795,6 +9802,7 @@ impl AgentVerb {
             Self::VaultRoomsJoin => &["spec", "room_ref"],
             Self::VaultRoomsInvite => &["spec", "room_ref"],
             Self::VaultRoomsConsent => &["spec"],
+            Self::VaultRoomsLeave => &["spec", "room_ref"],
             Self::VaultRoomsOffer => &["spec", "room_ref"],
             Self::VaultRoomsOfferAnswer => &["spec"],
             Self::VaultRoomsOfferVote => &["spec"],
@@ -11114,6 +11122,7 @@ impl AgentVerb {
             Self::VaultRoomsJoin => &["spec", "room_ref"],
             Self::VaultRoomsInvite => &["spec", "room_ref"],
             Self::VaultRoomsConsent => &["spec"],
+            Self::VaultRoomsLeave => &["spec", "room_ref"],
             Self::VaultRoomsOffer => &["spec", "room_ref"],
             Self::VaultRoomsOfferAnswer => &["spec"],
             Self::VaultRoomsOfferVote => &["spec"],
@@ -14145,6 +14154,9 @@ impl AgentVerb {
             }
             Self::VaultRoomsConsent => {
                 "One party's answer to a join that waits on it, after which the join is decided again."
+            }
+            Self::VaultRoomsLeave => {
+                "Ends a person's current room membership: their own leave or their principal's, or the vault owner's removal; saving that rode on it stops, and a later vault.rooms.join opens a new membership."
             }
             Self::VaultRoomsOffer => {
                 "Publishes an agent's offer card to join a room or one of its threads, with an optional fixed deadline for a room-wide card."

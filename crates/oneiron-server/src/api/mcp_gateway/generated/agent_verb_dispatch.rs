@@ -1120,6 +1120,14 @@ pub(crate) fn mcp_agent_verb_input(
             Ok(input)
         }
         "vault.rooms.consent" => a.spec.clone().ok_or_else(invalid),
+        "vault.rooms.leave" => {
+            let mut input = a.spec.clone().ok_or_else(invalid)?;
+            let map = input.as_object_mut().ok_or_else(invalid)?;
+            if a.room_ref.as_deref() != map.get("room").and_then(Value::as_str) {
+                return Err(invalid());
+            }
+            Ok(input)
+        }
         "vault.rooms.offer" => {
             let mut input = a.spec.clone().ok_or_else(invalid)?;
             let map = input.as_object_mut().ok_or_else(invalid)?;
@@ -4290,6 +4298,12 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.rooms.consent" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.rooms.leave" => {
+            arguments.insert("spec".to_owned(), input.clone());
+            if let Some(value) = input.get("room") {
+                arguments.insert("room_ref".to_owned(), value.clone());
+            }
+        }
         "vault.rooms.offer" => {
             arguments.insert("spec".to_owned(), input.clone());
             if let Some(value) = input.get("room") {
@@ -7329,6 +7343,7 @@ async fn execute_agent_verb_row_on(
         "vault.rooms.join" => boxed_mcp_verb_row_vault_rooms_join(row).await,
         "vault.rooms.invite" => boxed_mcp_verb_row_vault_rooms_invite(row).await,
         "vault.rooms.consent" => boxed_mcp_verb_row_vault_rooms_consent(row).await,
+        "vault.rooms.leave" => boxed_mcp_verb_row_vault_rooms_leave(row).await,
         "vault.rooms.offer" => boxed_mcp_verb_row_vault_rooms_offer(row).await,
         "vault.rooms.offer.answer" => boxed_mcp_verb_row_vault_rooms_offer_answer(row).await,
         "vault.rooms.offer.vote" => boxed_mcp_verb_row_vault_rooms_offer_vote(row).await,
@@ -52614,6 +52629,47 @@ async fn mcp_verb_row_vault_rooms_consent(row: McpVerbRow<'_>) -> McpVerbRowResu
         serde_json::from_value(input).map_err(|_| invalid())?;
     let output =
         oneiron::task_verb::sdk::vault_rooms_consent(&memory, input).map_err(mcp_facade_error)?;
+    let source = crate::mcp::McpPageSource::complete(1);
+    mcp_agent_verb_output(output, source)
+}
+#[inline(never)]
+fn boxed_mcp_verb_row_vault_rooms_leave<'a>(row: McpVerbRow<'a>) -> McpVerbRowFuture<'a> {
+    Box::pin(mcp_verb_row_vault_rooms_leave(row))
+}
+async fn mcp_verb_row_vault_rooms_leave(row: McpVerbRow<'_>) -> McpVerbRowResult {
+    let McpVerbRow {
+        server,
+        tool,
+        input,
+        actor,
+        memory,
+        surface,
+        served,
+        board_hooks,
+        pre_hooked_fold,
+    } = row;
+    let _ = (
+        &server,
+        &tool,
+        &input,
+        &actor,
+        &memory,
+        &surface,
+        &served,
+        &board_hooks,
+        &pre_hooked_fold,
+    );
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let input: oneiron::workspace_roster::RoomLeaveRequest =
+        serde_json::from_value(input).map_err(|_| invalid())?;
+    let output =
+        oneiron::task_verb::sdk::vault_rooms_leave(&memory, input).map_err(mcp_facade_error)?;
     let source = crate::mcp::McpPageSource::complete(1);
     mcp_agent_verb_output(output, source)
 }
