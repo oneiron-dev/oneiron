@@ -107,6 +107,7 @@ mod grants_doors;
 mod graph_ask_doors;
 mod guest_document_doors;
 mod guest_doors;
+mod hook_check_doors;
 mod hook_regen_doors;
 mod hook_session;
 mod hooks;
@@ -193,6 +194,8 @@ mod skill_execution_doors;
 mod slim_doors;
 pub(crate) use slim_doors::is_slim_lifecycle_observation;
 mod standing_doors;
+// FIX 11694: a person's passkey step-up on their own credential (MFA-1 A).
+pub(super) mod step_up_doors;
 mod stream_recovery_doors;
 mod streamed_claims;
 mod summary_doors;
@@ -207,10 +210,6 @@ mod vault_shape_doors;
 mod vector_doors;
 mod voice_bank_doors;
 mod wave_doors;
-#[expect(
-    dead_code,
-    reason = "the trusted MFA step-up verifier (FIX 9431) binds the served Admin route to these"
-)]
 mod weave_admin_doors;
 mod weave_doors;
 mod web_connector_doors;

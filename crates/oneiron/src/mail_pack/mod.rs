@@ -42,6 +42,7 @@ mod credential;
 mod doors;
 mod gmail;
 mod google_calendar;
+mod header_retire;
 mod ics_calendar;
 mod importer;
 mod inbox;
