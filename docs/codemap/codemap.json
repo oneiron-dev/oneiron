@@ -111904,7 +111904,7 @@
      "path": "src/memory.rs",
      "purpose": "Memory the native seal reserves before its PDF decodes allocate it (FIX 7654)",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 24,
       "enum": 1,
       "fn": 2,
       "struct": 1,
@@ -111952,13 +111952,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/native/cms/parse.rs",
      "purpose": "Strict CMS ContentInfo/SignerInfo parsing with version gating",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 7
      }
     },
     {
@@ -112035,7 +112035,7 @@
      "path": "src/native/pdf/admitted.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 10
      }
     },
     {
