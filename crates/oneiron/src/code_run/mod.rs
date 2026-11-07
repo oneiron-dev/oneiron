@@ -23,6 +23,9 @@ mod compaction_home;
 mod consent_wait;
 mod contribution;
 mod coordination_codec;
+// CODE-RUNTIME-02 slice 1 (FIX 4411, 4412, 4413): one durable record per
+// model response the live REPL normalized, and the policy it ran under.
+mod correction;
 mod dispatcher;
 pub mod model_call;
 mod payload;
@@ -49,6 +52,7 @@ mod spawn_replay;
 pub(crate) use self::spawn_replay::barrier_spawn_call;
 mod storage;
 mod support;
+mod task_reporting;
 mod task_settlement;
 mod team_submit;
 mod type_diagnostics;
@@ -105,6 +109,12 @@ pub use self::contribution::{
 pub(crate) use self::contribution::{
     OwnerPair, OwnerPairAnswer, OwnerPairChoice, OwnerPairRoute, OwnerPairTexts,
     settle_owner_pair_in_txn,
+};
+pub(crate) use self::correction::CodeRunCorrectionDraft;
+pub use self::correction::{
+    CODE_RUN_CORRECTION_POLICY, CODE_RUN_CORRECTION_SCHEMA, CodeRunCorrection,
+    CodeRunCorrectionCheckpoint, CodeRunCorrectionOutcome, CodeRunCorrectionPolicy,
+    ExecutorWireRepairs,
 };
 pub(crate) use self::dispatcher::{
     ExecutorCallSite, check_write_gate_against_vault, recorded_verb_call,
@@ -167,8 +177,8 @@ pub use self::storage::{
     bind_wait_trap, park_and_bind_wait_trap,
 };
 pub use self::storage::{
-    CodeRunSecretLiftDismiss, CodeRunSecretLiftDismissal, CodeRunSecretLiftProposalView,
-    CodeRunSecretLiftRequest, CodeRunSecretLiftStatus,
+    CodeRunRoomSecretLiftRequest, CodeRunSecretLiftDismiss, CodeRunSecretLiftDismissal,
+    CodeRunSecretLiftProposalView, CodeRunSecretLiftRequest, CodeRunSecretLiftStatus,
 };
 pub(crate) use self::storage::{
     OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
@@ -239,13 +249,13 @@ pub(crate) use self::wait_rows::{keep_wait_rows, parks_on};
 pub use self::reader::{
     ClaimOutcome, DEFAULT_READER_FOLD_RESERVE_MS, DEFAULT_READER_WINDOW_TOKENS, DelegatedSource,
     ReaderActor, ReaderFindingRef, ReaderJob, ReaderJobKind, ReaderJobRunner, ReaderJobState,
-    ReaderJobWake, ReaderParent, ReaderReportReceipt, ReaderRoute, ReaderRunEnd,
-    ReaderSpawnReceipt, ReaderSpend, RunDeadline, SUMMARY_GROUP_EXCEEDS_WINDOW,
-    SUMMARY_READ_BYTES_PER_TOKEN, SUMMARY_WINDOW_DIVISOR, SelfReaderReportCall,
-    SelfReaderSpawnCall, SelfSummarizeCall, SpawnHostSeat, SpawnParentBinding, SummarizeEffort,
-    SummarizeRecipe, SummarizeReply, TaskWaitFailure, TaskWaitFinding, TaskWaitPolicy, TaskWaitSet,
-    TaskWaitSetCall, TaskWaitSetResult, summary_exceeds_window, summary_exceeds_window_bytes,
-    summary_token_budget,
+    ReaderJobWake, ReaderParent, ReaderQueueCursor, ReaderQueuePage, ReaderReportReceipt,
+    ReaderRoute, ReaderRunEnd, ReaderSpawnReceipt, ReaderSpend, RunDeadline,
+    SUMMARY_GROUP_EXCEEDS_WINDOW, SUMMARY_READ_BYTES_PER_TOKEN, SUMMARY_WINDOW_DIVISOR,
+    SelfReaderReportCall, SelfReaderSpawnCall, SelfSummarizeCall, SpawnHostSeat,
+    SpawnParentBinding, SummarizeEffort, SummarizeRecipe, SummarizeReply, TaskWaitFailure,
+    TaskWaitFinding, TaskWaitPolicy, TaskWaitSet, TaskWaitSetCall, TaskWaitSetResult,
+    summary_exceeds_window, summary_exceeds_window_bytes, summary_token_budget,
 };
 pub(crate) use self::reader::{
     reader_attempt_id, reader_run_id, reader_task_id, reader_wait_id, reduce_task_wait_set,

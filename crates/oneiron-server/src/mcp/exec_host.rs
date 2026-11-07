@@ -15,7 +15,7 @@ use oneiron::code_run::{
 };
 use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorStatus, EngineNativeExecutor,
-    JsCodeModeRuntime, RunCompaction,
+    JsCodeModeRuntime, RunCompaction, SelfBriefPort,
 };
 use oneiron::llm::run_admission::{PayerPerson, RunAdmission};
 use oneiron::llm::seat::{ModelSeat, SeatDecisions, SeatKind, SeatLearningContext, SeatTask};
@@ -129,6 +129,30 @@ pub struct McpCodeExecutionRequest<'a> {
     /// The door each code-mode verb call takes: the SDK verb table under this
     /// call's connector, with its admission and gate.
     pub verbs: Arc<dyn oneiron::code_run::AgentVerbDoor>,
+    /// The durable run's self brief, when the door lends one (FIX 17594
+    /// D5): keyed by [`Self::run_id`], never the stream or a session label.
+    pub brief: Option<Arc<dyn McpCodeRunSelfBrief>>,
+}
+
+/// A code-mode durable run's self brief (FIX 17594 delivery slice D5), lent
+/// with one `execute_code` call by the door it arrived at: the port the
+/// run's executor carries the brief through, and what the host does with
+/// the brief around one entry.
+///
+/// The brief lives with the durable run, keyed by its trusted run id, never
+/// with the call or its waiter: an entry installs it, or installs it again
+/// at the epoch it holds, under the run's single flight; a resumable outcome
+/// keeps it; the run's completion closes it (Engine call RESUME C). Both
+/// calls block: the host makes them on the run's own worker thread.
+pub trait McpCodeRunSelfBrief: SelfBriefPort {
+    /// Installs the run's brief for the entry about to run, as the run
+    /// resolves now: afresh with none installed, else again at the epoch it
+    /// holds, its delivered prefix kept. `false`, logged, when it does not
+    /// install: the entry runs without it, as before.
+    fn install(&self) -> bool;
+
+    /// Closes the run's brief: the run completed.
+    fn close(&self);
 }
 
 impl fmt::Debug for McpCodeExecutionRequest<'_> {
@@ -644,6 +668,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
             .map(|_| (request.actor.actor_ref, request.off_record_session.clone()));
         let placement = (request.actor.scope.world_ref, request.actor.scope.facet_ref);
         let verbs = Arc::clone(&request.verbs);
+        let brief = request.brief.clone();
         // The gated run source is HOST-derived: the caller's handle is a label
         // inside it, never the WHO.
         let run_ref = format!("mcp.execute_code:{}", request.run_ref);
@@ -724,9 +749,17 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
             // on its OWN thread with its OWN current-thread reactor; the
             // gateway task holds no lock and only awaits the answer, so a
             // durable wait never becomes a held connection.
-            let worker = std::thread::Builder::new()
-                .name("mcp-execute-code".to_owned())
+            let worker = crate::engine_thread("mcp-execute-code".to_owned())
                 .spawn(move || {
+                    // FIX 17594 D5: under the run's single flight, past its
+                    // identity, admission and config checks, the run's brief
+                    // is installed for this entry before it runs; one that
+                    // does not install leaves the entry without it.
+                    let installed = brief.as_ref().is_some_and(|brief| brief.install());
+                    let port = brief
+                        .as_deref()
+                        .filter(|_| installed)
+                        .map(|brief| brief as &dyn SelfBriefPort);
                     let outcome = run_engine_native_code_mode(
                         &vault,
                         provider.as_ref(),
@@ -740,11 +773,19 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                         reader_seat,
                         seat.as_mut(),
                         git_door_base,
+                        port,
                     );
+                    let ended = outcome.as_ref().is_ok_and(|outcome| {
+                        matches!(outcome.status, EngineExecutorStatus::Complete)
+                    });
+                    // The run's brief closes as the run completes, here and
+                    // not with its waiter, so a caller who hung up cannot
+                    // keep it; a resumable outcome or a failure the same
+                    // `run_ref` re-enters keeps it.
+                    if ended && let Some(brief) = &brief {
+                        brief.close();
+                    }
                     if let (Some(seat), Ok(mut seats)) = (seat, seats.lock()) {
-                        let ended = outcome.as_ref().is_ok_and(|outcome| {
-                            matches!(outcome.status, EngineExecutorStatus::Complete)
-                        });
                         seats.put(run_id, seat, ended);
                     }
                     // Completion must release single-flight and the run's
@@ -812,7 +853,9 @@ pub(crate) fn run_read_worlds(
 /// `EngineNativeExecutor` own every step, replay row, and terminal marker. The
 /// server evaluates nothing and opens no second vault-write path. A run with
 /// a seat may spawn reader children under it. A run its caller's credential
-/// admitted binds that slip's lineage as its own (FIX 4705).
+/// admitted binds that slip's lineage as its own (FIX 4705). A run its host
+/// lends a self-brief port (`brief`, FIX 17594) carries the brief it
+/// prepares on either backend.
 #[expect(
     clippy::too_many_arguments,
     reason = "each argument is one axis of the run's host binding"
@@ -830,6 +873,7 @@ fn run_engine_native_code_mode(
     reader_seat: Option<SpawnHostSeat>,
     compaction: Option<&mut RunCompaction>,
     git_door_base: Option<String>,
+    brief: Option<&dyn SelfBriefPort>,
 ) -> Result<EngineExecutorOutcome, McpCodeExecutionError> {
     let mut gated_write = GatedActorWrite::new(vault, write_actor, run_ref)
         .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?
@@ -869,6 +913,7 @@ fn run_engine_native_code_mode(
             compaction,
             &reactor,
             seat.as_ref(),
+            brief,
         ),
         None => enter_engine_native_run(
             vault,
@@ -883,6 +928,7 @@ fn run_engine_native_code_mode(
             None,
             // Keep this caller's existing unconstrained routing.
             Vec::new(),
+            brief,
         ),
     }
     .map_err(|error| match error.provider_outage() {
@@ -993,6 +1039,10 @@ impl<'a> ScopeMeter<'a> {
 /// through the provider's planned backend on that same meter and payer,
 /// bound to its plan; with a provider that has none, through the backend it
 /// takes today.
+///
+/// A run its host lends a self-brief port (`brief`, FIX 17594) carries the
+/// brief it prepares on every backend this entry takes; with none, its
+/// requests carry no brief.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn enter_engine_native_run(
     vault: &Vault,
@@ -1005,6 +1055,7 @@ pub(crate) fn enter_engine_native_run(
     seat: Option<&ModelSeat>,
     planned: Option<&PlannedModel>,
     listed: Vec<AgentModel>,
+    brief: Option<&dyn SelfBriefPort>,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
     let Some(ScopeMeter {
         guard,
@@ -1029,7 +1080,7 @@ pub(crate) fn enter_engine_native_run(
             None => provider.backend(),
         };
         return enter_on(
-            vault, provider, backend, bound, config, compaction, reactor, seat,
+            vault, provider, backend, bound, config, compaction, reactor, seat, brief,
         );
     };
     // The lease the entry's door and planner runner were lent: one ledger.
@@ -1077,6 +1128,7 @@ pub(crate) fn enter_engine_native_run(
             compaction,
             reactor,
             seat,
+            brief,
         )
     } else {
         enter_on(
@@ -1088,6 +1140,7 @@ pub(crate) fn enter_engine_native_run(
             compaction,
             reactor,
             seat,
+            brief,
         )
     };
     live.book_rest()
@@ -1124,6 +1177,7 @@ pub(crate) fn run_seat(
     seat_for(
         vault,
         provider,
+        None,
         run_id,
         SeatPin::Base(None),
         parent_at,
@@ -1151,6 +1205,7 @@ impl dyn McpCodeModeProvider + '_ {
         seat_for(
             vault,
             self,
+            None,
             run_id,
             SeatPin::Routed(bound),
             parent_at,
@@ -1163,10 +1218,14 @@ impl dyn McpCodeModeProvider + '_ {
 /// An agent run's seat (DOOR-111 S5), born as `run_seat` births one and
 /// stamped with `type_ref`, the stamp its dispatch carried, so the run's
 /// route reads with its own stamp. A manifest-free vault still bears none.
-/// `worlds` is the run's read scope (FIX 11768), as `run_seat`'s is.
+/// `worlds` is the run's read scope (FIX 11768), as `run_seat`'s is. The
+/// pick is the dispatched `agent`'s own: it is the pick's principal (FIX
+/// 4543).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn task_run_seat(
     vault: &Vault,
     provider: &dyn McpCodeModeProvider,
+    agent: EntityId,
     run_id: EntityId,
     type_ref: &TaskTypeRef,
     worlds: Vec<EntityId>,
@@ -1174,11 +1233,20 @@ pub(crate) fn task_run_seat(
     task: impl FnOnce(&str) -> SeatTask,
 ) -> Result<Option<ModelSeat>, String> {
     let pin = SeatPin::Base(Some(type_ref));
-    seat_for(vault, provider, run_id, pin, None, worlds, |facet| {
-        let mut task = task(facet);
-        task.learning = learning;
-        task
-    })
+    seat_for(
+        vault,
+        provider,
+        Some(agent),
+        run_id,
+        pin,
+        None,
+        worlds,
+        |facet| {
+            let mut task = task(facet);
+            task.learning = learning;
+            task
+        },
+    )
 }
 
 /// Where a run's seat pin is read and born: the base vault, generic or
@@ -1191,10 +1259,14 @@ enum SeatPin<'p, 'd> {
 
 /// The one birth every seat shares, wherever `pin` puts it. The model
 /// catalog and manifest are the vault's own; the run's prior receipt is read
-/// where its pin lives.
+/// where its pin lives. A dispatched agent's wake names the agent as
+/// `principal` (FIX 4543), so its pick runs in the agent's voice on the
+/// host's ladder; every other birth keeps the host's own principal.
+#[allow(clippy::too_many_arguments)]
 fn seat_for(
     vault: &Vault,
     provider: &dyn McpCodeModeProvider,
+    principal: Option<EntityId>,
     run_id: EntityId,
     pin: SeatPin<'_, '_>,
     parent_at: Option<Instant>,
@@ -1217,6 +1289,14 @@ fn seat_for(
     let decisions = provider
         .seat_decisions()
         .ok_or("manifest-backed run requires seat decisions")?;
+    let voiced;
+    let decisions = match principal {
+        Some(agent) => {
+            voiced = decisions.for_principal(agent);
+            &voiced
+        }
+        None => decisions,
+    };
     let facet = provider
         .seat_facet()
         .ok_or("manifest-backed run requires a capability profile")?;
@@ -1265,10 +1345,12 @@ pub(crate) fn engine_run_seat(
 }
 
 /// An agent run's seat as `engine_run_seat` births one, stamped with its
-/// dispatch's `type_ref` (`task_run_seat`).
+/// dispatch's `type_ref` and picked in `agent`'s voice (`task_run_seat`).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn task_engine_run_seat(
     vault: &Vault,
     provider: &dyn McpCodeModeProvider,
+    agent: EntityId,
     config: &EngineExecutorConfig,
     warm_scope: String,
     type_ref: &TaskTypeRef,
@@ -1281,6 +1363,7 @@ pub(crate) fn task_engine_run_seat(
     task_run_seat(
         vault,
         provider,
+        agent,
         config.run_id,
         type_ref,
         worlds,
@@ -1330,6 +1413,7 @@ fn enter_on(
     compaction: Option<&mut RunCompaction>,
     reactor: &tokio::runtime::Runtime,
     seat: Option<&ModelSeat>,
+    brief: Option<&dyn SelfBriefPort>,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
     let mut runtime = provider.runtime();
     let runtime: &mut dyn JsCodeModeRuntime = &mut *runtime;
@@ -1346,6 +1430,11 @@ fn enter_on(
     }
     if let Some(feedback) = provider.code_check() {
         executor = executor.with_code_check(feedback);
+    }
+    // FIX 17594 (delivery slice D2): the host's self-brief port, when it
+    // lends one.
+    if let Some(port) = brief {
+        executor = executor.with_self_brief(port);
     }
     reactor
         .block_on(executor.run(&routed_config))

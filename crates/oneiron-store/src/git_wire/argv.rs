@@ -1,5 +1,6 @@
 //! Frozen typed argv: one constructor per git verb plus the token validators.
 
+use std::borrow::Cow;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -14,6 +15,7 @@ use crate::git_wire::objects::GitCommitRequest;
 use crate::git_wire::objects::GitTreeEntry;
 use crate::git_wire::objects::encode_mktree_entries;
 use crate::git_wire::operation::GitWireOperation;
+use crate::git_wire::path_text::git_path_os_str;
 use oneiron_base::error::Result;
 
 /// Stdin revisions for a `--stdin` walk: each of `include`, then each of
@@ -65,6 +67,22 @@ pub fn validate_path_arg(path: &Path) -> Result<()> {
         return Err(invalid("git path argument must be absolute"));
     }
     Ok(())
+}
+
+/// One bridged argv token as the child takes it (FIX 21326): bounded, and
+/// NUL only as the escape of a Git path byte outside UTF-8, which the OS form
+/// turns back into that byte. A token without NUL is passed as it is.
+///
+/// # Errors
+/// A token past the length bound, or one whose NUL is not the canonical
+/// escape of a Git path byte.
+pub fn bridged_argv_token(arg: &str) -> Result<OsString> {
+    if arg.len() > GIT_WIRE_MAX_ARG_BYTES {
+        return Err(invalid("git argument exceeds the frozen length bound"));
+    }
+    git_path_os_str(arg)
+        .map(Cow::into_owned)
+        .map_err(|_| invalid("git argument must not contain NUL"))
 }
 
 pub fn validate_argv_token(arg: &str) -> Result<()> {
