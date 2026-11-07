@@ -122,8 +122,7 @@ impl Drop for SnapshotLease {
             return;
         }
         let (custody, vault) = (self.custody.clone(), self.vault.clone());
-        let spawned = std::thread::Builder::new()
-            .name("vm-snapshot-evict".into())
+        let spawned = crate::engine_thread("vm-snapshot-evict".into())
             .spawn(move || evict_blocking(&custody, &vault));
         if let Err(error) = spawned {
             warn_not_evicted(&self.vault, &anyhow::Error::from(error));
