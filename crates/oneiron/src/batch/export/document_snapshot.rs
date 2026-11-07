@@ -604,31 +604,17 @@ impl Vault {
             None
         };
         // OF-013: the floors travel so an import never numbers an epoch under
-        // one a purge removed. A floor whose session the archive leaves here
-        // stays here, as the session's own row does.
+        // one a purge removed. A floor whose session or conversation the
+        // archive leaves here stays here, as that row does.
         if scope == ExportScope::WholeVault {
-            for (session, epoch, turn_end) in
-                crate::compaction::epoch_floors_in_txn(&self.store, &rtxn)?
-            {
-                if barred_worlds_carried(
-                    &self.store,
-                    &rtxn,
-                    &device_only,
-                    &session,
-                    None,
-                    owner_export,
-                )?
-                .is_none()
-                {
-                    continue;
-                }
-                sources.insert(session);
-                writer.epoch_floor(&super::ExportEpochFloor {
-                    session: session.to_hex(),
-                    epoch,
-                    turn_end,
-                })?;
-            }
+            super::epoch_floors::write_epoch_floors_in_txn(
+                &self.store,
+                &rtxn,
+                &device_only,
+                owner_export,
+                &mut sources,
+                &mut writer,
+            )?;
         }
         // FIX 2768, 3681: each carried record's side rows go with it, in a
         // records archive as in the whole-vault one, read in this snapshot
@@ -894,7 +880,7 @@ fn carrier_admitted(
 /// names those worlds; a row whose world cannot be placed stays, as its
 /// release holds it. A row that cannot be read stays either way. `raw` is
 /// the revision of `id` the snapshot serves; `None` judges the one stored.
-fn barred_worlds_carried(
+pub(super) fn barred_worlds_carried(
     store: &crate::store::Store,
     rtxn: &heed::RoTxn<'_>,
     barred: &BTreeSet<EntityId>,

@@ -30,17 +30,19 @@ pub fn run_transaction(
     };
     let mut marks = transaction.marks.clone();
     marks.join(&IdMarks::of_deck(&DeckView::read(&deck)?));
+    let graphics = transaction.graphics.unwrap_or_default();
     let mut steps = Vec::with_capacity(transaction.steps.len());
     let mut allowed = BTreeSet::new();
     for (index, step) in transaction.steps.iter().enumerate() {
         let seed = step_seed(&transaction.seed, index);
-        let report = apply(&mut deck, step, &mut marks, &seed, assets).map_err(|refusal| {
-            TransactionError::Step {
-                step: index,
-                verb: step.verb(),
-                refusal,
-            }
-        })?;
+        let report =
+            apply(&mut deck, step, &mut marks, &seed, assets, graphics).map_err(|refusal| {
+                TransactionError::Step {
+                    step: index,
+                    verb: step.verb(),
+                    refusal,
+                }
+            })?;
         allowed.extend(report.changed_parts.iter().cloned());
         steps.push(report);
     }
@@ -134,6 +136,7 @@ pub(super) fn apply(
     marks: &mut IdMarks,
     seed: &[u8; 32],
     assets: &dyn Assets,
+    graphics: GraphicLimits,
 ) -> Result<StepReport, StepRefusal> {
     let verb = step.verb();
     let report = match step {
@@ -207,7 +210,7 @@ pub(super) fn apply(
                             StepAssetKind::Factual => AssetKind::Factual,
                             StepAssetKind::Illustration => AssetKind::Illustration,
                         },
-                        limits: GraphicLimits::default(),
+                        limits: graphics,
                     },
                 },
             )?
