@@ -328,7 +328,9 @@ impl ClaimTransitionProjection {
 ///
 /// Input order has no meaning. Missing parents and omitted tips fail closed.
 /// An authorized signature alone does not grant a transition kind. The fold
-/// takes a history of any length: `events` is the whole chain's union.
+/// takes a history of any length and an event of any frontier width:
+/// `events` is the whole chain's union, and the fold reads each parent link
+/// once, so its work grows with the links, never with their square.
 #[expect(
     clippy::too_many_arguments,
     reason = "pure fold needs birth, pinned identity/closure, and historical authority callback as separate axes"
@@ -370,39 +372,54 @@ pub(crate) fn fold_machine_claim_transitions(
         }
     }
     let mut tips: BTreeSet<TransitionEventHash> = pending.keys().copied().collect();
-    for event in pending.values() {
+    // Each event waits on its parents not folded yet; the fold of a parent
+    // releases each of its children once.
+    let mut waiting: BTreeMap<TransitionEventHash, usize> = BTreeMap::new();
+    let mut children: BTreeMap<TransitionEventHash, Vec<TransitionEventHash>> = BTreeMap::new();
+    let mut ready: BTreeSet<TransitionEventHash> = BTreeSet::new();
+    for (hash, event) in &pending {
         for parent in &event.predecessors {
             if !pending.contains_key(parent) {
                 return Err(TransitionFoldError::MissingHistory);
             }
             tips.remove(parent);
+            children.entry(*parent).or_default().push(*hash);
+        }
+        if event.predecessors.is_empty() {
+            ready.insert(*hash);
+        } else {
+            waiting.insert(*hash, event.predecessors.len());
         }
     }
     if tips.iter().copied().collect::<Vec<_>>() != pinned_frontier {
         return Err(TransitionFoldError::FrontierMismatch);
     }
+    // The least ready hash folds first, as when each step searched the
+    // pending events for it, so a history that fails fails at the same event.
     let mut states: BTreeMap<TransitionEventHash, ClaimTransitionProjection> = BTreeMap::new();
-    while !pending.is_empty() {
-        let Some(hash) = pending
-            .iter()
-            .find(|(_, event)| {
-                event
-                    .predecessors
-                    .iter()
-                    .all(|parent| states.contains_key(parent))
-            })
-            .map(|(hash, _)| *hash)
-        else {
-            return Err(TransitionFoldError::MissingHistory);
-        };
-        let event = pending
-            .remove(&hash)
+    while let Some(hash) = ready.pop_first() {
+        let event = *pending
+            .get(&hash)
             .ok_or(TransitionFoldError::MissingHistory)?;
         let mut state = base
             .clone()
             .joined(event.predecessors.iter().map(|parent| &states[parent]))?;
         state.apply(hash, event)?;
         states.insert(hash, state);
+        for child in children.remove(&hash).unwrap_or_default() {
+            let left = waiting
+                .get_mut(&child)
+                .ok_or(TransitionFoldError::MissingHistory)?;
+            *left -= 1;
+            if *left == 0 {
+                waiting.remove(&child);
+                ready.insert(child);
+            }
+        }
+    }
+    // An event left waiting sits on a cycle.
+    if states.len() != pending.len() {
+        return Err(TransitionFoldError::MissingHistory);
     }
     let mut result = base.joined(tips.iter().map(|tip| &states[tip]))?;
     result.frontier = tips.into_iter().collect();

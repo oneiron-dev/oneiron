@@ -228,6 +228,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::HostCompact
         | Row::HostWake
         | Row::HostBudgetHit
+        | Row::VaultHooksChecks
         | Row::VaultHooksReplay
         | Row::VaultHooksRegenDue
         | Row::VaultHooksRegenGet
@@ -483,6 +484,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultSupportGrantsList
         | Row::VaultSupportGrantsRevoke
         | Row::VaultFilesSourcesAttach
+        | Row::VaultFilesSourcesConvert
         | Row::VaultFilesSourcesRescan
         | Row::VaultFilesSourcesDetach
         | Row::VaultFilesSourcesList
@@ -659,6 +661,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCustodyMembersDrainFolder
         | Row::VaultCustodyMembersReenrol
         | Row::VaultMessageStreamsRefused
+        | Row::VaultStepUpPasskeysReset
         | Row::VaultOutboundCallsRequestErase => owner_proof(auth, server, verb).map(drop),
         Row::VaultSharedProposeDelete
         | Row::VaultSharedProposeTransfer
@@ -676,6 +679,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultMembersDecline
         | Row::VaultMembersWithdrawInvitation
         | Row::VaultMembersInvitationSlip
+        | Row::VaultMembersInvitationCode
         | Row::VaultSharedObject
         | Row::VaultSharedWithdrawObjection
         | Row::VaultSharedStarted
