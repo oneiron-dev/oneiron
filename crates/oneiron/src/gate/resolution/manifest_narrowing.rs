@@ -123,10 +123,13 @@ fn cap_no_higher(before: Option<u64>, after: Option<u64>) -> bool {
 
 /// Axes the meet leaves as they were, or at their restrictive pole. Normal
 /// is no identity: an axis no pack sets reads Critical and Sensitive, so a
-/// new Normal one opens it.
+/// new Normal one opens it, as do Public and Private. Sensitive keeps that
+/// reading and Restricted only raises it.
 fn axes_narrow(axes: &PolicyAxes) -> bool {
     matches!(axes.criticality, None | Some(PolicyCriticality::Critical))
-        && matches!(axes.sensitivity, None | Some(PolicySensitivity::Sensitive))
+        && axes
+            .sensitivity
+            .is_none_or(PolicySensitivity::at_least_sensitive)
         && !axes.unknown_axis_seen
 }
 
