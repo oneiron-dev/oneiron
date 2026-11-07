@@ -551,6 +551,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             post(facade_route),
         )
         .route("/vault.coach.training_offers.sources", post(facade_route))
+        .route("/vault.coach.training_runs.cancel", post(facade_route))
         .route("/vault.drafters.list", post(facade_route))
         .route("/vault.drafters.list_as", post(facade_route))
         .route("/vault.drafters.status", post(facade_route))
@@ -718,6 +719,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/host.compact", post(facade_route))
         .route("/host.wake", post(facade_route))
         .route("/host.budget.hit", post(facade_route))
+        .route("/vault.hooks.checks", post(facade_route))
         .route("/vault.hooks.replay", post(facade_route))
         .route("/vault.hooks.regen.due", post(facade_route))
         .route("/vault.hooks.regen.get", post(facade_route))
@@ -1352,6 +1354,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.mail.inbox", post(facade_route))
         .route("/vault.mail.threads.read", post(facade_route))
         .route("/vault.mail.compliance.search", post(facade_route))
+        .route("/vault.files.sources.convert", post(facade_route))
         .route("/connector.answer", post(facade_route))
         .route("/self.browser.open", post(facade_route))
         .route("/self.browser.observe", post(facade_route))

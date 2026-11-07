@@ -738,6 +738,16 @@ fn imported_row<R: Read + Seek>(
     projects: Option<&ProjectRootMap>,
 ) -> Result<ExportEntity> {
     let mut row = archive.entity_row(at)?;
+    // Fix list row 16256: an archive row is never a source landing's, so
+    // one carrying the source-audience key is refused as the archive holds
+    // it, before any normalization or unchanged-row return reads it.
+    if matches!(row.body, ExportBody::MessagePack(_) | ExportBody::Pack(_))
+        && crate::source_audience::body_names_obligation(&row.body.to_bytes()?)
+    {
+        return Err(invalid(
+            "an archive row carries no source_audience_required; only a source landing stamps it",
+        ));
+    }
     if let Some(projects) = projects
         && at.section == Section::Ledger
         && row.entity_type == projects.kind
