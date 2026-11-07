@@ -44,8 +44,9 @@ use crate::off_record::{OffRecordMode, OffRecordSession};
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_TURN};
 use crate::session_overlay::{
-    JournalEntry, JournalRole, JournalScope, OverlayKeyspace, RouteTarget,
+    JournalEntry, JournalRole, JournalScope, OverlayKeyspace, RecordMetaRows, RouteTarget,
 };
+use crate::side_table;
 use crate::store::Store;
 use crate::temporal::TimeRange;
 
@@ -540,7 +541,8 @@ impl Drop for RoomMediaDrops<'_> {
 /// older room write can publish a dropped row again: at once, or as the open [`RoomMediaDrops`]
 /// of a batch in the same store closes. A promotion keeps the room's copies of the vectors it
 /// replayed, so without this they would outlive the record until the room closes. Its copies of
-/// the record's own text index rows and vector go the same way (FIX 17382).
+/// the record's own text index rows, vector, phonetic codes, revision rows and embedding marks go
+/// the same way (FIX 17382, 19094).
 pub(crate) fn drop_room_media_copies_in_txn(store: &Store, _writer: &RwTxn<'_>, id: &EntityId) {
     let collected = PENDING_ROOM_DROPS.with(|pending| match pending.borrow_mut().as_mut() {
         Some((owner, ids)) if std::ptr::eq(*owner, store) => {
@@ -554,10 +556,35 @@ pub(crate) fn drop_room_media_copies_in_txn(store: &Store, _writer: &RwTxn<'_>, 
     }
 }
 
-/// Drops every room's staged media copies of `ids`, and its copies of their own text index rows
-/// and vectors (FIX 17382): a promotion keeps those byte-equal to base's, and base's go with the
-/// record. A room whose overlay lock is poisoned serves no read; it keeps its rows until it
-/// closes.
+/// The vault-meta rows a room stages of one record beside its text index rows, which a delete
+/// or erase of the record drops from every room with them (FIX 19094): its index source fields
+/// and phonetic source codes, its revision state and history document (every revision's raw
+/// row), its pending index inputs, phonetic codes and vector refill, and its embedding device
+/// and locality marks, each keyed by its id; each pinned frontier, keyed by its id and the
+/// revision; each revision identity, whose value is its id. Base drops its own of these with the
+/// record (`entity_revision::remove_entity_revisions`, the phonetic and index-source deletes).
+fn record_meta_prefixes() -> ([&'static [u8]; 9], [&'static [u8]; 1], [&'static [u8]; 1]) {
+    (
+        [
+            side_table::INDEX_SOURCE_TEXT.prefix,
+            side_table::BATCH_PHONETIC_INDEX_SOURCE.prefix,
+            side_table::ENTITY_REVISION_STATE.prefix,
+            side_table::ENTITY_REVISION_DOC.prefix,
+            side_table::ENTITY_REVISION_PENDING_INDEX_INPUTS.prefix,
+            side_table::ENTITY_REVISION_PENDING_PHONETIC.prefix,
+            side_table::ENTITY_REVISION_VECTOR_REFILL.prefix,
+            side_table::EMBEDDING_DEVICE.prefix,
+            side_table::EMBEDDING_LOCALITY.prefix,
+        ],
+        [side_table::ENTITY_REVISION_FRONTIER.prefix],
+        [side_table::ENTITY_REVISION_IDENTITY.prefix],
+    )
+}
+
+/// Drops every room's staged media copies of `ids`, and its copies of their own text index rows,
+/// vectors, phonetic codes and vault-meta rows (FIX 17382, 19094): a promotion keeps those
+/// byte-equal to base's, and base's go with the record. A room whose overlay lock is poisoned
+/// serves no read; it keeps its rows until it closes.
 fn drop_room_media_copies(store: &Store, ids: &BTreeSet<EntityId>) {
     if ids.is_empty() {
         return;
@@ -567,6 +594,12 @@ fn drop_room_media_copies(store: &Store, ids: &BTreeSet<EntityId>) {
         return;
     }
     let prefixes = super::space::repo_projection::media_row_prefixes();
+    let (keyed, scoped, reverse) = record_meta_prefixes();
+    let meta = RecordMetaRows {
+        keyed: &keyed,
+        scoped: &scoped,
+        reverse: &reverse,
+    };
     for overlay in overlays {
         if let Err(error) = overlay.invalidate_repo_media_copies(&prefixes, ids) {
             tracing::warn!(
@@ -574,7 +607,7 @@ fn drop_room_media_copies(store: &Store, ids: &BTreeSet<EntityId>) {
                 "a room keeps its staged media copies of a deleted record until it closes"
             );
         }
-        if let Err(error) = overlay.invalidate_retrieval_copies(ids) {
+        if let Err(error) = overlay.invalidate_retrieval_copies(meta, ids) {
             tracing::warn!(
                 error = %error,
                 "a room keeps its index copies of a deleted record until it closes"
