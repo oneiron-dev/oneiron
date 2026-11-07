@@ -276,6 +276,8 @@ vaultSkillHubsDefaultGet(input: unknown): unknown
 vaultSkillsRestoredefaults(input: unknown): unknown
 vaultSkillHubsPut(input: unknown): unknown
 vaultSkillHubsGet(input: unknown): unknown
+vaultSkillHubsClawhubSearch(input: unknown): unknown
+vaultSkillHubsClawhubImport(input: unknown): unknown
 vaultSkillHubsPublishersAdmit(input: unknown): unknown
 vaultSkillHubsPublishersRevoke(input: unknown): unknown
 vaultSkillHubsRefsGet(input: unknown): unknown
