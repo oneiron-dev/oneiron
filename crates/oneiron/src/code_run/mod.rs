@@ -92,19 +92,21 @@ pub(crate) use self::consent_wait::{
     CodeConsentResume, CodeConsentWaitRow, ParkedWait, attach_code_consent_ask_in_txn,
     code_consent_admission_in_txn, code_consent_resume_evidence, consume_code_consent_wait_in_txn,
     mint_code_consent_wait_in_txn, offered_choices, original_authority_holds_in_txn,
-    read_code_consent_wait_in_txn, record_code_consent_admission_in_txn,
-    refuse_code_consent_wait_in_txn, seal_parked_code_consent_in_txn,
-    settle_code_consent_wait_listing_in_txn, verify_code_consent_consumed,
-    verify_parked_code_consent,
+    prove_code_consent_holder_act_in_txn, read_code_consent_wait_in_txn,
+    record_code_consent_admission_in_txn, refuse_code_consent_wait_in_txn,
+    seal_parked_code_consent_in_txn, settle_code_consent_wait_listing_in_txn,
+    verify_code_consent_consumed, verify_parked_code_consent,
 };
 pub(crate) use self::contribution::matched_contribution_facts_in_txn;
 pub use self::contribution::{
-    ContributionForkExecution, ContributionForkModel, ContributionForkProgram,
-    ContributionForkReceipt, ContributionForkScorer, ContributionReplayUnavailable, ExecutedBody,
-    ExecutedFork, ExecutedForkView, ExecutedOutput, ExecutedStepStatus, ForkEvidenceMode,
-    ForkExecutionOutcome, ForkExecutionPin, ForkJudge, ForkMismatch, ForkScore, ForkScoring,
-    ForkScoringIdentity, ForkTreatment, OwnerJudgment, ReplayAnchor, ScoredFork,
-    contribution_fork_receipts, execute_contribution_fork, run_contribution_forks,
+    CallableBranch, ContributionForkExecution, ContributionForkModel, ContributionForkProgram,
+    ContributionForkReceipt, ContributionForkScorer, ContributionReplayUnavailable,
+    ContributionSourceConsumer, ContributionSourcePurpose, ContributionSourceReadRequest,
+    ExecutedBody, ExecutedFork, ExecutedForkView, ExecutedOutput, ExecutedStepStatus,
+    ForkEvidenceMode, ForkExecutionOutcome, ForkExecutionPin, ForkJudge, ForkMismatch, ForkScore,
+    ForkScoring, ForkScoringIdentity, ForkTreatment, OwnerJudgment, ReplayAnchor, ScoredFork,
+    contribution_fork_receipts, execute_callable_branch, execute_contribution_fork,
+    run_contribution_forks,
 };
 pub(crate) use self::contribution::{
     OwnerPair, OwnerPairAnswer, OwnerPairChoice, OwnerPairRoute, OwnerPairTexts,
@@ -138,17 +140,18 @@ pub use self::replay::{
 };
 pub(crate) use self::replay::{CODE_RUN_OUTPUT_PREVIEW_WITHHELD, agent_verb_rows_of};
 pub use self::replay_capsule::{
-    CapsuleContent, CapsuleHost, CapsuleRequest, CapsuleRungBinding, ExecutorStepStart,
-    ExposureKind, ExposureSlot, ReplayRoutePin, ReplayRung, StepContextRef, StepReplayCapsule,
-    StoredRungBinding, StoredSpan, TaskExposure, WorkflowCaptureHandle, bind_workflow_step_answer,
-    capture_workflow_step, finalize_step_captures, note_answering_route_pin, note_answering_rung,
-    note_step_admission_role, refresh_step_capture_request, route_prompt_digest,
+    CapsuleContent, CapsuleHost, CapsuleRequest, CapsuleRungBinding, ConsoleSlot,
+    ExecutorStepStart, ExposureKind, ExposureSlot, ReplayRoutePin, ReplayRung, StepContextRef,
+    StepReplayCapsule, StoredRungBinding, StoredSpan, TaskExposure, WorkflowCaptureHandle,
+    bind_workflow_step_answer, capture_workflow_step, finalize_step_captures,
+    note_answering_route_pin, note_answering_rung, note_step_admission_role,
+    refresh_step_capture_request, route_prompt_digest,
 };
 pub(crate) use self::replay_capsule::{StepCapture, StepStartBody, StepStartCapture, capture_step};
 pub(crate) use self::replay_context::{
-    CapturedGuestResponse, CapturedReaderChild, ReaderFindingSelection, ReaderReadCapture,
-    RetainedReadVerdict, SelectedFinding, StepContextCapture, StepContextCommit, StepReplayContext,
-    reveals_secret,
+    CapturedCallable, CapturedGuestResponse, CapturedReaderChild, CapturedSkillDelivery,
+    ReaderFindingSelection, ReaderReadCapture, RetainedReadVerdict, SelectedFinding,
+    StepContextCapture, StepContextCommit, StepReplayContext, reveals_secret,
 };
 pub use self::repo_calls::RepoRunCall;
 pub use self::result_read::ResultFacet;
@@ -159,7 +162,6 @@ pub(crate) use self::result_read::{
 };
 pub use self::storage::ReadWorldUnknown;
 pub(crate) use self::storage::SessionCheckpointBody;
-pub(crate) use self::storage::{retire_replay_bodies_in_rows, settle_evaporated_reader_spend};
 pub use self::storage::step_replay_capsules;
 pub(crate) use self::storage::undecodable_step_capsule_in_txn;
 pub(crate) use self::storage::{
@@ -194,10 +196,10 @@ pub(crate) use self::storage::{
     ReadWorldSeal, ReadWorldSnapshot, captured_step_read_scopes_in_txn, read_world_snapshot_in_txn,
 };
 pub(crate) use self::storage::{
-    StagedSinks, code_run_body_file_of_row, code_run_body_held_in_txn, code_run_body_row_key,
-    code_run_inline_body_of_row, deliver_wait_in_txn, deliver_wait_listing_in_txn,
-    lift_code_run_file_hold_in_txn, retire_unlanded_inline_body_keys_in_txn,
-    settled_wait_reply_in_txn,
+    StagedSinks, clear_parked_wait_in_txn, code_run_body_file_of_row, code_run_body_held_in_txn,
+    code_run_body_row_key, code_run_inline_body_of_row, deliver_wait_in_txn,
+    deliver_wait_listing_in_txn, lift_code_run_file_hold_in_txn,
+    retire_unlanded_inline_body_keys_in_txn, settled_wait_reply_in_txn,
 };
 pub(crate) use self::storage::{
     StepKey, StoredStepFeedback, erase_spawn_targets_in_txn, erase_type_diagnostics_actor_in_txn,
@@ -219,6 +221,7 @@ pub(crate) use self::storage::{
 pub(crate) use self::storage::{
     drop_code_run_result_marks_in_txn, erase_retained_result_marks_in_txn,
 };
+pub(crate) use self::storage::{retire_replay_bodies_in_rows, settle_evaporated_reader_spend};
 // FIX 9180 (coord-b slice d): a replay row's and a step start's parts in
 // checkpoint images, as row-held responses.
 pub(crate) use self::replay_parts::{

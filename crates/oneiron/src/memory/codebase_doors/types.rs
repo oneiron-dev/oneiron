@@ -104,6 +104,10 @@ pub struct CodeSnapshotView {
     /// The codebase index key, 64 lower-hex characters.
     pub scope_key: String,
     pub files: Vec<CodeSnapshotFile>,
+    /// The committed capture's receipt, returned by ingest. Manifest reads
+    /// omit it; retained captures remain available through `vault.receipts`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture_receipt: Option<String>,
 }
 
 /// One frozen file of a pinned snapshot, read from its stored blob and never
