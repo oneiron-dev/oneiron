@@ -147,7 +147,7 @@ impl Vault {
                     AgentGrantChange::Mint { .. } => None,
                     AgentGrantChange::Revoke { .. } => Some((record.grant, None)),
                 },
-                AuthorityOp::SlipGrantRevoke { grant_ref } => Some((*grant_ref, None)),
+                AuthorityOp::SlipGrantRevoke { grant_ref, .. } => Some((*grant_ref, None)),
                 _ => None,
             };
             let Some((grant, mint)) = named else {
@@ -206,6 +206,7 @@ fn registry_row(grant: &GitPushRegistryGrant, status: ConsentGrantStatus) -> Con
             command: GIT_PUSH_REVOKE_COMMAND.to_owned(),
             grant_ref: grant_ref.clone(),
         },
+        regrant_action: None,
         grant_ref,
         bypass: None,
         delegation: None,

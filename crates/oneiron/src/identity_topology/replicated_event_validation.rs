@@ -232,10 +232,7 @@ impl Vault {
                     )));
                 };
                 if target.approval != crate::claim::ClaimApprovalStatus::Proposed
-                    || !matches!(
-                        op,
-                        IdentityTopologyOp::Merge(_) | IdentityTopologyOp::Split(_)
-                    )
+                    || !op.is_resolvable_when_parked()
                     || !op.participants().contains(participant)
                     || !matches!(
                         record.approval,

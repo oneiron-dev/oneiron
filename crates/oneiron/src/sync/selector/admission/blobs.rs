@@ -20,7 +20,10 @@ use crate::sync::loro_support::{map_for_each_value_bytes, map_insert_bytes};
 
 #[cfg(feature = "sync")]
 use super::super::validators::{admit_federated_authority_log, validate_federated_pack};
-use super::routing::{GuestCopy, Routes, rename_world_edge_subject, rename_world_entity_subject};
+use super::routing::{
+    GuestCopy, Routes, rename_world_edge_subject, rename_world_entity_subject,
+    rename_world_references,
+};
 use super::{
     ImportGrading, refuse_peer_agent_definition_widening, validate_admitted_replicated_body,
 };
@@ -114,8 +117,10 @@ struct ImportCopy<'a> {
 /// CLAIM, TURN or CONVERSATION, and the id the row lands under: the key it
 /// came under, but for a guest's WORLD. A guest's CLAIM lands in its foreign
 /// WORLD copy (FIX 3497), and a guest's WORLD row under that copy's id, its
-/// bytes as they came (FIX 3657). An AUTHORITY_LOG row is judged beside the
-/// import's other authority rows (`beside`, FIX 2535, 2989).
+/// bytes as they came (FIX 3657). A guest's AGENT_DEF scoped to a WORLD and
+/// its SavedQuery's declared worlds name those copies (FIX 3892). An
+/// AUTHORITY_LOG row is judged beside the import's other authority rows
+/// (`beside`, FIX 2535, 2989).
 #[cfg(feature = "sync")]
 fn admit_federated_entity_blob_graded(
     vault: &Vault,
@@ -138,6 +143,13 @@ fn admit_federated_entity_blob_graded(
 
     let header =
         EntityMetadataHeader::parse(blob).ok_or(Error::CorruptedIndex("entity metadata"))?;
+    // Fix list row 16256: a restricted lane carries no source-audience key.
+    // A peer's row naming it is refused as it came, before any copy, grading
+    // or restamp, never stripped.
+    crate::source_audience::refuse_written_obligation(
+        header.entity_type,
+        &blob[ENTITY_METADATA_HEADER_LEN..],
+    )?;
     if crate::sync::pack_sync::is_pack_handle(header.entity_type) {
         validate_federated_pack(&vault.store, txn, blob)?;
         return Ok((id, blob.to_vec()));
@@ -178,6 +190,20 @@ fn admit_federated_entity_blob_graded(
         {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
+        // A guest's typed WORLD references name the foreign copies before any
+        // check judges the row, so the copy the checks pass is the copy that
+        // lands (FIX 3892).
+        let renamed = match guest {
+            Some(guest) => rename_world_references(
+                vault,
+                header.entity_type,
+                &blob[ENTITY_METADATA_HEADER_LEN..],
+                guest,
+            )?
+            .map(|body| [&blob[..ENTITY_METADATA_HEADER_LEN], body.as_slice()].concat()),
+            None => None,
+        };
+        let blob = renamed.as_deref().unwrap_or(blob);
         validate_admitted_replicated_body(
             &here,
             header.entity_type,
