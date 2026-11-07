@@ -33,8 +33,9 @@ mod wait_holders;
 
 pub(crate) use self::compaction::{CodeRunCompactionCoverage, ExecutorOutputSpan};
 pub(crate) use self::continuation::{
-    StoredRunContinuation, continuation_seed_body_in_txn, publish_continuation_output_in_txn,
-    put_run_continuation_row_in_txn, run_continuation_in_txn, seed_continuation_run,
+    InheritedCompaction, StartCompaction, StoredRunContinuation, continuation_seed_body_in_txn,
+    publish_continuation_output_in_txn, put_run_continuation_row_in_txn, run_continuation_in_txn,
+    seed_continuation_run,
 };
 pub(crate) use self::fold_answers::{
     WithdrawnFoldAnswer, redact_fold_answers, retire_fold_answers_in_txn,

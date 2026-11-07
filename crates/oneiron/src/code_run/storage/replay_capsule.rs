@@ -13,6 +13,10 @@
 //! releases them all ([`erase`]). A read checks, in its own snapshot, that
 //! the capsule still holds its content and that the run still holds the
 //! body's occurrence, whoever else keeps the same bytes (FIX 6144).
+//!
+//! A capsule keeps its request as pieces its run holds once for the actor
+//! (FIX 4192, [`pieces`]): the config, each message and one sequence node
+//! per message. Its own request body is the manifest that names them.
 
 mod admit;
 mod context;
@@ -20,6 +24,7 @@ mod erase;
 mod execution;
 mod fork_erase;
 mod owner_pair;
+mod pieces;
 mod restore;
 mod route_prompt;
 mod spawn_erase;
@@ -27,6 +32,7 @@ mod start_parts;
 
 use serde::{Deserialize, Serialize};
 
+use self::pieces::{PieceScope, held_request_bytes};
 use super::super::contribution::{
     ContributionForkReceipt, ContributionReplayUnavailable, ForkTreatment, OwnerPair,
 };
@@ -286,7 +292,9 @@ pub(crate) fn capsule_start_body(
 /// it its custody handle. `None` when the capsule holds its content no
 /// longer (its actor was erased), when the wall withheld the request at its
 /// capture (FIX 6254), or its body is released, gone, withheld, not its
-/// stored hash or not a request; never an empty or rebuilt one.
+/// stored hash or not a request; never an empty or rebuilt one. FIX 4192:
+/// the whole request is put together from the pieces its manifest names,
+/// each as the capsule's run holds it for the capsule's actor.
 pub(crate) fn capsule_request(
     vault: &Vault,
     capsule: &StepReplayCapsule,
@@ -301,11 +309,16 @@ pub(crate) fn capsule_request(
         return Ok(None);
     };
     let key = capsule_key(capsule);
-    let still = |rtxn: &heed::RoTxn<'_>| -> Result<bool> {
+    let still = |rtxn: &heed::RoTxn<'_>| -> Result<Option<PieceScope>> {
         let row = kept_in_txn(vault, rtxn, &key)?;
-        Ok(row.is_some_and(|row| row.request == capsule.request))
+        Ok(row
+            .filter(|row| row.request == capsule.request)
+            .and_then(|row| {
+                let run = row.run;
+                row.content.actor().map(|actor| PieceScope { run, actor })
+            }))
     };
-    let Some(bytes) = held_body(vault, capsule.run, path, *body, still)? else {
+    let Some(bytes) = held_request_bytes(vault, *body, path, still)? else {
         return Ok(None);
     };
     if blake3::hash(&bytes).as_bytes() != stored_hash {

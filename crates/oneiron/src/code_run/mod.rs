@@ -105,7 +105,8 @@ pub(crate) use self::contribution::{
     settle_owner_pair_in_txn,
 };
 pub(crate) use self::dispatcher::{
-    ExecutorCallSite, check_write_gate_against_vault, recorded_verb_call,
+    ExecutorCallSite, agent_attempt_run_ref, check_write_gate_against_vault, recorded_verb_call,
+    write_receipt_may_have_run,
 };
 pub use self::dispatcher::{
     GatedActorWrite, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher,
@@ -168,6 +169,7 @@ pub use self::storage::{
     CodeRunRoomSecretLiftRequest, CodeRunSecretLiftDismiss, CodeRunSecretLiftDismissal,
     CodeRunSecretLiftProposalView, CodeRunSecretLiftRequest, CodeRunSecretLiftStatus,
 };
+pub(crate) use self::storage::{InheritedCompaction, StartCompaction};
 pub(crate) use self::storage::{
     OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
     ReceiptSource, ReceiptTree,
