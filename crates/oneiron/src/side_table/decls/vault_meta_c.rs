@@ -157,6 +157,10 @@ side_tables! {
     /// actor, signal and task. Key: id16 actor, signal code byte, id16 task (zeros for none).
     COACH_AGENT_HEALTH_CARD: VaultMeta b"coach:agent_health_card:v1:" Named
         => crate::dreamer_runner::maintenance::agent_health::erase_actor_sources_in_txn;
+    /// Each agent-health card under every reviewer receipt it holds (FIX 10880): the
+    /// `health_review:` digest of each `review_outcomes` receipt. Key: digest32 + id16(actor) +
+    /// u8(signal) + id16(task).
+    COACH_AGENT_HEALTH_CARD_BY_RECEIPT: VaultMeta b"coach:agent_health_card_by_receipt:v1:" Raw;
     /// Each live agent-health card under every reviewer revision it names
     /// (FIX 10434): `reviewer_revisions`. Key: id16(revision) + id16(actor) + u8(signal) +
     /// id16(task).
