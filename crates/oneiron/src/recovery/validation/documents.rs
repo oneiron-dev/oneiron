@@ -251,7 +251,13 @@ impl DocumentRows {
                 .iter()
                 .find(|record| record.operation.as_bytes() == &row.entity_id)
                 .ok_or(invalid("NOTE birth provenance missing"))?;
-            if birth.actor != core.author_ref
+            // An imported author is source provenance: the canonical birth
+            // names no one for it, as native birth history does (FIX 7777).
+            let birth_author = match core.author_ref {
+                crate::note::NoteActor::Imported(_) => crate::note::NoteActor::Erased,
+                author => author,
+            };
+            if birth.actor != birth_author
                 || birth.actor_class != "ledger"
                 || birth.grant.is_some()
             {

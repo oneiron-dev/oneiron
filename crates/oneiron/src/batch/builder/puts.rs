@@ -130,6 +130,37 @@ impl BatchBuilder<'_> {
         )
     }
 
+    /// [`Self::put`] of a TURN or CONVERSATION row a source landing stamps
+    /// with the source-audience obligation (fix list row 16256), through
+    /// the one raw door whose early check lets that key through. It takes
+    /// the landing's [`SourceAudienceBirth`]; every other public check runs
+    /// as for [`Self::put`], and the write transaction admits the stamp only
+    /// on a row the landing marked born in it.
+    ///
+    /// [`SourceAudienceBirth`]: crate::source_audience::SourceAudienceBirth
+    pub(crate) fn put_source_bound(
+        mut self,
+        id: &EntityId,
+        entity_type: u8,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+        _birth: &crate::source_audience::SourceAudienceBirth,
+    ) -> Self {
+        if self.validation_error.is_none() {
+            self.commit_checks
+                .push(CommitCheck::PublicType(self.ops.len()));
+        }
+        self.put_through(
+            id,
+            entity_type,
+            occurred,
+            learned_at,
+            data,
+            RawPutDoor::SourceBound,
+        )
+    }
+
     /// FIX 9034: [`Self::put`] of ASSET `id` holding `data`, the
     /// content of a carrier its writer already scanned whole and holds marked
     /// (a marked LFS object's chunk, `install_lfs_manifest_with_mark`): a
@@ -422,6 +453,31 @@ impl BatchBuilder<'_> {
             core,
         ));
         self.note_births.push((*id, markdown.to_owned()));
+        self
+    }
+
+    /// The archive NOTE put (FIX 7777): stages the bytes an
+    /// [`ArchivedNoteAdmission`] carries, and only those. Its one
+    /// constructor, in the NOTE archive import owner, proves them a NOTE body
+    /// whose author is no local actor, so a restored NOTE is imported
+    /// evidence and never this vault's actor's note. The kind registry and
+    /// the immutable birth bytes are checked at apply, as for every NOTE.
+    ///
+    /// [`ArchivedNoteAdmission`]: crate::note::ArchivedNoteAdmission
+    pub(crate) fn put_archived_note(
+        mut self,
+        id: &EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+        admission: &crate::note::ArchivedNoteAdmission,
+    ) -> Self {
+        self.ops.push(plain_put_op(
+            id,
+            crate::registry::ENTITY_TYPE_NOTE,
+            occurred,
+            learned_at,
+            admission.body(),
+        ));
         self
     }
 
