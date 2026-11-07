@@ -22,6 +22,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::MAIL_PACK_COMPLIANCE_SETTING, LIVE),
     // An owed forget stands with the rows it still owes, as the image holds them.
     (&t::MAIL_PACK_FORGET_OWED, CONTENT),
+    // An owed header retirement stands with the revision it names, as the
+    // image holds it (FIX 15413).
+    (&t::MAIL_PACK_HEADER_RETIREMENT, CONTENT),
     // A UID names one message for as long as its UIDVALIDITY stands.
     (&t::MAIL_PACK_IMAP_UID, CONTENT),
     (&t::MAIL_PACK_MBOX_IMPORT, CONTENT),
@@ -136,7 +139,6 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::OUTBOUND_INTENT_SETTLEMENT, LIVE),
     (&t::OUTBOUND_REMOTE_TASK_POLL, LIVE),
     (&t::OUTBOUND_INTENT_UNAVAILABLE, LIVE),
-    (&t::OUTBOUND_PINNED_APPROVAL, LIVE),
     (&t::OUTBOUND_SUPPRESSION_INDEX, LIVE),
     (&t::OUTBOUND_SUPPRESSION_RECEIPT, LIVE),
     (&t::OUTBOUND_DIRECT_RECEIPT, LIVE),
