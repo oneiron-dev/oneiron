@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1286 facade rows, 4642 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1238.
+// UniFFI census: 1287 facade rows, 4644 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1239.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -71826,6 +71826,38 @@ pub struct MailSyncReport {
         skip_serializing_if = "Option::is_none"
     )]
     pub attachments_stored: Option<u64>,
+}
+
+/// `oneiron::mail_pack::search::MailSourceSearchRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MailSourceSearchRequest {
+    #[serde(rename = "source_ref")]
+    pub source_ref: String,
+    #[serde(rename = "query")]
+    pub query: String,
+    #[serde(rename = "page", default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<String>,
+    #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+/// `oneiron::mail_pack::search::MailSearchReport`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MailSearchReport {
+    #[serde(rename = "source_ref")]
+    pub source_ref: String,
+    #[serde(rename = "found")]
+    pub found: u32,
+    #[serde(rename = "landed")]
+    pub landed: u32,
+    #[serde(rename = "same")]
+    pub same: u32,
+    #[serde(rename = "skipped")]
+    pub skipped: u32,
+    #[serde(rename = "next_page", default, skip_serializing_if = "Option::is_none")]
+    pub next_page: Option<String>,
 }
 
 /// `oneiron::mail_pack::inbox::MailInboxRequest`.

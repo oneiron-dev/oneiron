@@ -1361,6 +1361,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.mail.sources.sync_status", post(facade_route))
         .route("/vault.mail.sources.import_mbox", post(facade_route))
         .route("/vault.mail.sources.sync", post(facade_route))
+        .route("/vault.mail.sources.search", post(facade_route))
         .route("/vault.mail.inbox", post(facade_route))
         .route("/vault.mail.threads.read", post(facade_route))
         .route("/vault.mail.attachments.open", post(facade_route))

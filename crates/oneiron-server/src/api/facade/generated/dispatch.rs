@@ -38956,6 +38956,40 @@ async fn vault_mail_sources_sync(
         facade_hooks_post(server, hooks, output).await?,
     ))
 }
+async fn vault_mail_sources_search(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.mail.sources.search")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.mail.sources.search", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.mail.sources.search", value).await?;
+    let ran = async {
+        Ok::<_, FacadeApiError>(facade_output(
+            super::host_doors::vault_mail_sources_search(
+                server,
+                auth,
+                facade_door_input(&mut hooks)?,
+            )
+            .await?,
+        )?)
+    }
+    .await;
+    let output = match ran {
+        Ok(output) => output,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn vault_mail_inbox(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -50611,6 +50645,14 @@ fn boxed_vault_mail_sources_sync<'a>(
     Box::pin(vault_mail_sources_sync(server, call, input))
 }
 #[inline(never)]
+fn boxed_vault_mail_sources_search<'a>(
+    server: &'a Arc<SyncServer>,
+    call: &'a FacadeCall<'a>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> FacadeRowFuture<'a> {
+    Box::pin(vault_mail_sources_search(server, call, input))
+}
+#[inline(never)]
 fn boxed_vault_mail_inbox<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
@@ -53235,6 +53277,7 @@ async fn call_verb_row(
             boxed_vault_mail_sources_import_mbox(server, call, input).await
         }
         "vault.mail.sources.sync" => boxed_vault_mail_sources_sync(server, call, input).await,
+        "vault.mail.sources.search" => boxed_vault_mail_sources_search(server, call, input).await,
         "vault.mail.inbox" => boxed_vault_mail_inbox(server, call, input).await,
         "vault.mail.threads.read" => boxed_vault_mail_threads_read(server, call, input).await,
         "vault.mail.attachments.open" => {

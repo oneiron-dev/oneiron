@@ -202,6 +202,25 @@ pub trait MailProviderWire {
         None
     }
 
+    /// One page of the mailbox's messages that `query` finds, in the
+    /// provider's own search language, at most `limit`, trash, spam and
+    /// drafts excluded (fix list row 15424). A wire whose provider it cannot
+    /// search refuses.
+    ///
+    /// # Errors
+    ///
+    /// `mail_search_not_served` from a wire that cannot search, or the
+    /// provider's own failure.
+    fn search_page(
+        &self,
+        _source: &MailSyncSource,
+        _query: &str,
+        _limit: u32,
+        _page: Option<&str>,
+    ) -> Result<MailIdPage> {
+        Err(super::rest::refused("mail_search_not_served"))
+    }
+
     /// One attachment's bytes, as a reader opened it; `None` when the
     /// provider no longer has the message or the attachment.
     fn attachment(

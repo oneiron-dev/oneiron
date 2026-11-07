@@ -912,6 +912,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultMailPackInstall,
     VaultMailReplyApprove,
     VaultMailSourcesSync,
+    VaultMailSourcesSearch,
     VaultFilesSourcesConvert,
 }
 impl HostDoorRow {
@@ -1674,6 +1675,7 @@ impl HostDoorRow {
             "vault.mail.pack.install" => Self::VaultMailPackInstall,
             "vault.mail.reply.approve" => Self::VaultMailReplyApprove,
             "vault.mail.sources.sync" => Self::VaultMailSourcesSync,
+            "vault.mail.sources.search" => Self::VaultMailSourcesSearch,
             "vault.files.sources.convert" => Self::VaultFilesSourcesConvert,
             _ => return None,
         })

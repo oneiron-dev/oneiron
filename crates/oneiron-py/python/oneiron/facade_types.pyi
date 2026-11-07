@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1286 facade rows, 4646 declarations.
-Inputs: 1215 of 1286 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1115 of 1286 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1287 facade rows, 4648 declarations.
+Inputs: 1216 of 1287 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1116 of 1287 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -23143,6 +23143,18 @@ class MailSyncReport(TypedDict):
     anchor_expired: bool
     copy_done: bool
     attachments_stored: NotRequired[int]
+class MailSourceSearchRequest(TypedDict):
+    source_ref: str
+    query: str
+    page: NotRequired[str | None]
+    limit: NotRequired[int | None]
+class MailSearchReport(TypedDict):
+    source_ref: str
+    found: int
+    landed: int
+    same: int
+    skipped: int
+    next_page: NotRequired[str | None]
 class MailInboxRequest(TypedDict):
     source_ref: NotRequired[str | None]
     include_source_deleted: NotRequired[bool]

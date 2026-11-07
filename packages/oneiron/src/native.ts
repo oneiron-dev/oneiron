@@ -1278,6 +1278,7 @@ vaultMailComplianceLog(input: unknown): unknown
 vaultMailSourcesSyncStatus(input: unknown): unknown
 vaultMailSourcesImportMbox(input: unknown): unknown
 vaultMailSourcesSync(input: unknown): unknown
+vaultMailSourcesSearch(input: unknown): unknown
 vaultMailInbox(input: unknown): unknown
 vaultMailThreadsRead(input: unknown): unknown
 vaultMailAttachmentsOpen(input: unknown): unknown
