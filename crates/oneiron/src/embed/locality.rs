@@ -36,8 +36,7 @@ pub(crate) fn clear_embedding_locality_in_txn(
     Ok(())
 }
 
-#[cfg(feature = "sync")]
-pub(super) fn stamp_embedding_locality_in_txn(
+pub(crate) fn stamp_embedding_locality_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
