@@ -16,6 +16,12 @@ impl RecordingJsHost<'_, '_> {
         seq: u64,
         mut outcome: SelfDispatchOutcome,
     ) -> Result<SelfDispatchOutcome> {
+        if let SelfDispatchOutcome::AgentVerb(answer) = &mut outcome
+            && let Some(output) = answer.stored_output.take()
+        {
+            answer.output = self.import_write_answer(output);
+            return Ok(outcome);
+        }
         // Typed replies use the guest's sweeping sink and full result card.
         if matches!(
             &outcome,
@@ -49,6 +55,23 @@ impl RecordingJsHost<'_, '_> {
         }
         *answer = self.store_answer(seq, |sink| write_json(sink, &*answer))?;
         Ok(outcome)
+    }
+
+    /// Registers the write receipt's already-published body as this run's result.
+    fn import_write_answer(&mut self, output: CodeRunRawOutput) -> serde_json::Value {
+        let name = self.next_auto_name();
+        self.bind(name.clone(), output.handle.clone(), output.path.clone());
+        let mut card = result_handle_json(self.run_id, &output);
+        card["name"] = json!(name);
+        if !self
+            .results
+            .iter()
+            .chain(&self.captured)
+            .any(|held| held == &output)
+        {
+            self.captured.push(output);
+        }
+        card
     }
 
     /// A typed reply too large for one message (FIX449): the inference
@@ -150,7 +173,7 @@ impl RecordingJsHost<'_, '_> {
         let mut sink = storage.code_run_reply_spool()?;
         write(&mut sink)?;
         let path = bridge_result_output_path(seq);
-        let output = match storage.publish_code_run_reply(path, sink, self.run_id)? {
+        let output = match storage.publish_code_run_reply(path, sink, self.run_id, None)? {
             Ok(output) => output,
             Err(unavailable) => return Ok(unavailable),
         };
