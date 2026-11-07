@@ -57,8 +57,9 @@ impl ExecutorStorage<'_> {
     /// commit. A canonical wait's rows retire in that same writer, after
     /// consumption and the observed-change cursor. A room writing to base
     /// deletes them with its record, then retires those exact keys from the
-    /// sealed overlay after the base commit. An overlay-route room keeps its
-    /// post-commit cleanup. Retirement consumes nothing and deletes no consumption.
+    /// sealed overlay after the base commit. An overlay-route room stages
+    /// its wait cleanup with the replay record in the same segment.
+    /// Retirement consumes nothing and deletes no consumption.
     /// Once an erase of the run's actor took its replies, nothing commits
     /// and nothing is consumed: a typed unavailable (FIX 5718). A room's
     /// record commits as any other append does, along its route, and the
@@ -163,6 +164,11 @@ impl ExecutorStorage<'_> {
                             if delivery.is_some_and(|delivery| delivery.erased) {
                                 return Err(response_erased_error("a resumed wait's reply"));
                             }
+                            if WAITERS.get(&write, txn, &key.waiter())? == Some(key.generation) {
+                                WAITERS.delete(&write, txn, &key.waiter())?;
+                            }
+                            DELIVERIES.delete(&write, txn, &key.row())?;
+                            TRAPS.delete(&write, txn, &key.row())?;
                             Ok(())
                         },
                     )
