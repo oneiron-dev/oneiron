@@ -1028,6 +1028,9 @@ class Oneiron:
         @property
         def training_offers(self) -> "Oneiron._VaultCoachTrainingOffersVerbs":
             return Oneiron._VaultCoachTrainingOffersVerbs(self._client)
+        @property
+        def training_runs(self) -> "Oneiron._VaultCoachTrainingRunsVerbs":
+            return Oneiron._VaultCoachTrainingRunsVerbs(self._client)
     class _VaultCoachTrainingOffersVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1079,6 +1082,12 @@ class Oneiron:
         def get(self, spec):
             """Read one counted Coach pilot, its pins, measurement receipts, one-off cost and computed sufficiency card."""
             return json.loads(_translate(lambda: self._client.vault_coach_training_offers_pilots_get(json.dumps(spec))))
+    class _VaultCoachTrainingRunsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def cancel(self, spec):
+            """Cancel a staged trained embedder swap while its binding still waits or fills; an applied swap keeps the existing space-move undo door."""
+            return json.loads(_translate(lambda: self._client.vault_coach_training_runs_cancel(json.dumps(spec))))
     class _VaultPeopleVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

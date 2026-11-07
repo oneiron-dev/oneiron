@@ -521,6 +521,7 @@ vaultCoachTrainingOffersPilotsPrepare(input: unknown): unknown
 vaultCoachTrainingOffersPilotsComplete(input: unknown): unknown
 vaultCoachTrainingOffersPilotsGet(input: unknown): unknown
 vaultCoachTrainingOffersSources(input: unknown): unknown
+vaultCoachTrainingRunsCancel(input: unknown): unknown
 vaultDraftersList(input: unknown): unknown
 vaultDraftersListAs(input: unknown): unknown
 vaultDraftersStatus(input: unknown): unknown

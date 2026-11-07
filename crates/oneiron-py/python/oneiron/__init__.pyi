@@ -832,6 +832,8 @@ class Oneiron:
             """Inspects one blocked report as the Coach reads it: its fenced receipt, linked diagnostic band, working set, and the repair proposal the Coach filed, through the caller's own lane."""
         @property
         def training_offers(self) -> "Oneiron._VaultCoachTrainingOffersVerbs": ...
+        @property
+        def training_runs(self) -> "Oneiron._VaultCoachTrainingRunsVerbs": ...
     class _VaultCoachTrainingOffersVerbs:
         def __call__(self, spec: Facade.OfferListRequest) -> list[Facade.OfferView]:
             """Read Coach offer snapshots, their exact owner answers and later promise checks; optionally select a seat or only pending offers."""
@@ -863,6 +865,9 @@ class Oneiron:
             """Record immutable owner-evaluator pilot measurements bound to counted own-seat families; fixed code derives sufficiency and preserves unknown cost and score."""
         def get(self, spec: Facade.OfferPilotRef) -> Facade.OfferPilot | None:
             """Read one counted Coach pilot, its pins, measurement receipts, one-off cost and computed sufficiency card."""
+    class _VaultCoachTrainingRunsVerbs:
+        def cancel(self, spec: Facade.TrainingRunRef) -> Facade.PendingEmbedderBinding:
+            """Cancel a staged trained embedder swap while its binding still waits or fills; an applied swap keeps the existing space-move undo door."""
     class _VaultPeopleVerbs:
         def list(self, spec: Facade.PeopleListRequest) -> Facade.PeoplePage:
             """One page of the people the caller reads, in handle order."""
