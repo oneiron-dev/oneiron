@@ -6,19 +6,90 @@
 //! `<occurred_at>:<kind>:<receipt id>`). A cursor is a position, not a
 //! snapshot: it never expires, and a receipt written after it was read
 //! lands ahead of it.
+//!
+//! One paging algorithm serves every reader ([`ReceiptReader`], FIX 7355): a
+//! Memory reads base under its own handle, and a run in a room reads the
+//! room's view under the key its host admitted. The room's served forms join
+//! the family before it is ordered, screened, refilled and cut, so a page in
+//! the room is one page of the room's receipts beside the vault's. The room
+//! sees the vault and itself; the vault never sees the room.
+
+use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
 use super::family_receipt;
+use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::limit_ask::EngineLimit;
 use crate::memory::support::hex_string;
 use crate::memory::{Memory, MemoryError, MemoryReceipt, MemoryResult};
 use crate::receipt::{
-    MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptQuery, ReceiptRecord, ReceiptScanPosition,
+    MAX_RECEIPT_QUERY_SCAN, ReceiptContent, ReceiptKind, ReceiptQuery, ReceiptRecord,
+    ReceiptScanPosition,
 };
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::settings::ReadDestination;
 use crate::store::{GateDecisionId, GateDecisionRecord};
+
+/// Who reads `vault.receipts`, and through what (FIX 7355): the vault, where
+/// the read's rows go, the content its served forms are read from, the
+/// trigger rows its key reads, and whether it is the vault owner.
+pub(crate) trait ReceiptReader {
+    /// The vault whose ledgers the read pages.
+    fn receipt_vault(&self) -> &Vault;
+    /// Where the read's rows go; off this device, each receipt is screened
+    /// on the rows it names.
+    fn receipt_destination(&self) -> &ReadDestination;
+    /// The content target the family's served forms are read from.
+    fn receipt_content(&self) -> ReceiptContent<'_>;
+    /// Of `ids`, the rows this reader's key reads, each judged by its lane's
+    /// point read; `None` for a handle bound to no credential, which keeps
+    /// every receipt.
+    fn readable_trigger_rows(&self, ids: &[EntityId]) -> MemoryResult<Option<BTreeSet<EntityId>>>;
+    /// Whether this reader is bound to a read credential. A room's key is
+    /// always bound; an unbound Memory keeps its actor's receipt behavior.
+    fn has_read_credential(&self) -> bool {
+        true
+    }
+    /// Whether a served form takes a page place only when this reader's key
+    /// reads the ASSET and ASSET_TEXT it names, as well as its trigger: a
+    /// room's reader does, since the room's served forms name rows of the
+    /// room's other participants (FIX 7355). Base keeps its contract.
+    fn screens_served_form_rows(&self) -> bool {
+        false
+    }
+    /// Whether this reader is the vault owner, who reads the world names on
+    /// his own notices (FIX 5493).
+    fn reads_owner_notices(&self) -> bool;
+}
+
+impl ReceiptReader for Memory<'_> {
+    fn receipt_vault(&self) -> &Vault {
+        self.vault
+    }
+
+    fn receipt_destination(&self) -> &ReadDestination {
+        &self.destination
+    }
+
+    fn receipt_content(&self) -> ReceiptContent<'_> {
+        ReceiptContent::base(self.vault)
+    }
+
+    fn readable_trigger_rows(&self, ids: &[EntityId]) -> MemoryResult<Option<BTreeSet<EntityId>>> {
+        self.credential_readable_ids(ids)
+    }
+
+    fn has_read_credential(&self) -> bool {
+        self.read_proof.is_some()
+    }
+
+    fn reads_owner_notices(&self) -> bool {
+        self.secret_sight()
+            .is_ok_and(|sight| sight == crate::secret_custody::SecretSight::Owner)
+    }
+}
 
 /// One page of `vault.receipts`, newest first.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -118,8 +189,7 @@ impl Memory<'_> {
     /// Lists gate decision receipts. A caller off this device sees none about
     /// a device-local claim, and none takes a place in its page.
     pub fn receipts(&self, limit: usize) -> MemoryResult<Vec<MemoryReceipt>> {
-        Ok(self
-            .gate_records_before(None, limit)?
+        Ok(gate_records_before(self, None, limit)?
             .into_iter()
             .map(gate_receipt)
             .collect())
@@ -140,50 +210,7 @@ impl Memory<'_> {
         limit: usize,
         kinds: &[String],
     ) -> MemoryResult<Vec<MemoryReceipt>> {
-        if kinds.is_empty() {
-            return self.receipts(limit);
-        }
-        // A credential cut refills past withheld receipts like the off-device
-        // one (FIX 9955): an unbound handle keeps its single fetch.
-        let mut fetch = limit;
-        let mut kept = loop {
-            let query = family_query(fetch, kinds)?;
-            let receipts = self.vault.receipts_for_caller(query, &self.destination)?;
-            let exhausted = receipts.len() < fetch;
-            let filtered = self.credential_kept_receipts(receipts)?;
-            if filtered.len() >= limit || exhausted || fetch >= MAX_RECEIPT_QUERY_SCAN {
-                break filtered;
-            }
-            fetch = fetch.max(1).saturating_mul(2).min(MAX_RECEIPT_QUERY_SCAN);
-        };
-        kept.truncate(limit);
-        // A world's name on the owner's own share receipt is his (FIX 5493).
-        crate::share_travel::screen_owner_notice_fields(self, &mut kept);
-        Ok(kept.into_iter().map(family_receipt).collect())
-    }
-
-    /// `receipts` cut to what this handle's credential reads, before any page
-    /// cut (OF-172 D2): a receipt whose trigger names a row the lane
-    /// withholds takes no page place, and pure metadata stays. An unbound
-    /// handle keeps them all, in one lane read over all named rows.
-    fn credential_kept_receipts(
-        &self,
-        receipts: Vec<ReceiptRecord>,
-    ) -> MemoryResult<Vec<ReceiptRecord>> {
-        if receipts.is_empty() {
-            return Ok(receipts);
-        }
-        let ids: Vec<EntityId> = receipts.iter().filter_map(trigger_row_of).collect();
-        if ids.is_empty() {
-            return Ok(receipts);
-        }
-        let Some(readable) = self.credential_readable_ids(&ids)? else {
-            return Ok(receipts);
-        };
-        Ok(receipts
-            .into_iter()
-            .filter(|receipt| trigger_row_of(receipt).is_none_or(|id| readable.contains(&id)))
-            .collect())
+        receipts_of_kinds_for(self, limit, kinds)
     }
 
     /// `vault.receipts` a page at a time: [`Self::receipts_of_kinds`]'s
@@ -199,177 +226,285 @@ impl Memory<'_> {
         kinds: &[String],
         after: Option<&str>,
     ) -> MemoryResult<VaultReceiptsPage> {
-        if limit == 0 {
-            return Err(MemoryError::bad_request_with(
-                "limit must be at least 1",
-                &["Request one receipt or more and continue from next_after."],
-            ));
+        receipts_page_for(self, limit, kinds, after)
+    }
+}
+
+/// [`Memory::receipts_of_kinds`] for `reader`: with no `kinds` the gate
+/// ledger, else the family's receipts of those kinds, its served forms read
+/// from the reader's content target before any is screened or cut.
+pub(crate) fn receipts_of_kinds_for(
+    reader: &impl ReceiptReader,
+    limit: usize,
+    kinds: &[String],
+) -> MemoryResult<Vec<MemoryReceipt>> {
+    if kinds.is_empty() {
+        return Ok(gate_records_before(reader, None, limit)?
+            .into_iter()
+            .map(gate_receipt)
+            .collect());
+    }
+    let vault = reader.receipt_vault();
+    let content = reader.receipt_content();
+    // A credential cut refills past withheld receipts like the off-device
+    // one (FIX 9955): an unbound handle keeps its single fetch.
+    let mut fetch = limit;
+    let mut kept = loop {
+        let query = family_query(fetch, kinds)?;
+        let receipts = vault.receipts_for_caller(query, reader.receipt_destination(), content)?;
+        let exhausted = receipts.len() < fetch;
+        let filtered = credential_kept_receipts(reader, receipts)?;
+        if filtered.len() >= limit || exhausted || fetch >= MAX_RECEIPT_QUERY_SCAN {
+            break filtered;
         }
-        let page = limit;
-        let (receipts, next_after) = if kinds.is_empty() {
-            self.gate_page(after, page)?
-        } else {
-            self.family_page(kinds, after, page)?
-        };
-        Ok(VaultReceiptsPage {
-            receipts,
-            next_after,
-            effective_limit: page,
-            limit_clamped: false,
-            undecodable: self.vault.undecodable_send_receipts_for_kinds(kinds)?,
+        fetch = fetch.max(1).saturating_mul(2).min(MAX_RECEIPT_QUERY_SCAN);
+    };
+    kept.truncate(limit);
+    // A world's name on the owner's own share receipt is his (FIX 5493).
+    crate::share_travel::screen_owner_notice_fields(|| reader.reads_owner_notices(), &mut kept);
+    Ok(kept.into_iter().map(family_receipt).collect())
+}
+
+/// `receipts` cut to what `reader`'s credential reads, before any page cut
+/// (OF-172 D2). Triggers and a prepared guest window's private source world
+/// and rows must all pass the same lane read. For a reader that screens
+/// served forms, its ASSET and ASSET_TEXT are judged the same way. Pure
+/// metadata stays; an unbound handle keeps its actor's receipt behavior.
+fn credential_kept_receipts(
+    reader: &impl ReceiptReader,
+    receipts: Vec<ReceiptRecord>,
+) -> MemoryResult<Vec<ReceiptRecord>> {
+    if receipts.is_empty() || !reader.has_read_credential() {
+        return Ok(receipts);
+    }
+    let screens_forms = reader.screens_served_form_rows();
+    let mut named = Vec::with_capacity(receipts.len());
+    for receipt in receipts {
+        let mut rows: Vec<EntityId> = trigger_row_of(&receipt).into_iter().collect();
+        if screens_forms && receipt.receipt_kind == ReceiptKind::ServedForm {
+            rows.extend(crate::receipt::served_form_rows(&receipt));
+        }
+        if receipt.receipt_kind == ReceiptKind::Share && receipt.outcome == "prepared" {
+            let Some(sequence) = receipt
+                .receipt_id
+                .strip_prefix("share:export:")
+                .and_then(|sequence| sequence.parse().ok())
+            else {
+                continue;
+            };
+            let Some(source) =
+                crate::share_travel::export_travel_source_rows(reader.receipt_vault(), sequence)?
+            else {
+                continue;
+            };
+            rows.extend(source);
+        }
+        named.push((receipt, rows));
+    }
+    let ids: Vec<EntityId> = named
+        .iter()
+        .flat_map(|(_, rows)| rows.iter().copied())
+        .collect();
+    let readable = if ids.is_empty() {
+        None
+    } else {
+        reader.readable_trigger_rows(&ids)?
+    };
+    Ok(named
+        .into_iter()
+        .filter(|(_, rows)| {
+            readable
+                .as_ref()
+                .is_none_or(|readable| rows.iter().all(|id| readable.contains(id)))
         })
-    }
+        .map(|(receipt, _)| receipt)
+        .collect())
+}
 
-    /// The gate ledger's receipts before `after`, and the next page's cursor.
-    fn gate_page(
-        &self,
-        after: Option<&str>,
-        page: usize,
-    ) -> MemoryResult<(Vec<MemoryReceipt>, Option<String>)> {
-        let before = after
-            .map(|text| {
-                text.strip_prefix("gate:")
-                    .and_then(|hex| EntityId::from_hex(hex).ok())
-                    .map(|id| GateDecisionId::from_bytes(*id.as_bytes()))
-                    .ok_or_else(foreign_cursor)
-            })
-            .transpose()?;
-        let _ = self.vault.measure_limit(
-            EngineLimit::RequestedResultRows,
-            u64::try_from(page).unwrap_or(u64::MAX),
-        );
-        let mut records = self.gate_records_before(before, page.saturating_add(1))?;
-        let more = records.len() > page;
-        records.truncate(page);
-        let receipts: Vec<MemoryReceipt> = records.into_iter().map(gate_receipt).collect();
-        let next_after = if more {
-            receipts.last().map(|receipt| receipt.receipt_ref.clone())
-        } else {
-            None
+/// [`Memory::receipts_page`] for `reader`.
+///
+/// # Errors
+///
+/// A zero limit, an unknown kind, an `after` no page of these kinds
+/// returned, or the read's failure.
+pub(crate) fn receipts_page_for(
+    reader: &impl ReceiptReader,
+    limit: usize,
+    kinds: &[String],
+    after: Option<&str>,
+) -> MemoryResult<VaultReceiptsPage> {
+    if limit == 0 {
+        return Err(MemoryError::bad_request_with(
+            "limit must be at least 1",
+            &["Request one receipt or more and continue from next_after."],
+        ));
+    }
+    let page = limit;
+    let (receipts, next_after) = if kinds.is_empty() {
+        gate_page(reader, after, page)?
+    } else {
+        family_page(reader, kinds, after, page)?
+    };
+    Ok(VaultReceiptsPage {
+        receipts,
+        next_after,
+        effective_limit: page,
+        limit_clamped: false,
+        undecodable: reader
+            .receipt_vault()
+            .undecodable_send_receipts_for_kinds(kinds)?,
+    })
+}
+
+/// The gate ledger's receipts before `after`, and the next page's cursor.
+fn gate_page(
+    reader: &impl ReceiptReader,
+    after: Option<&str>,
+    page: usize,
+) -> MemoryResult<(Vec<MemoryReceipt>, Option<String>)> {
+    let before = after
+        .map(|text| {
+            text.strip_prefix("gate:")
+                .and_then(|hex| EntityId::from_hex(hex).ok())
+                .map(|id| GateDecisionId::from_bytes(*id.as_bytes()))
+                .ok_or_else(foreign_cursor)
+        })
+        .transpose()?;
+    let _ = reader.receipt_vault().measure_limit(
+        EngineLimit::RequestedResultRows,
+        u64::try_from(page).unwrap_or(u64::MAX),
+    );
+    let mut records = gate_records_before(reader, before, page.saturating_add(1))?;
+    let more = records.len() > page;
+    records.truncate(page);
+    let receipts: Vec<MemoryReceipt> = records.into_iter().map(gate_receipt).collect();
+    let next_after = if more {
+        receipts.last().map(|receipt| receipt.receipt_ref.clone())
+    } else {
+        None
+    };
+    Ok((receipts, next_after))
+}
+
+/// The family's receipts of `kinds` after `after`, in bounded source
+/// windows. Each window starts after the last raw receipt walked, so
+/// withheld rows and receipts sharing a timestamp never stall the page.
+/// Only admitted rows count toward the requested page and its lookahead.
+/// Every window reads its served forms from the reader's one content target.
+fn family_page(
+    reader: &impl ReceiptReader,
+    kinds: &[String],
+    after: Option<&str>,
+    page: usize,
+) -> MemoryResult<(Vec<MemoryReceipt>, Option<String>)> {
+    let vault = reader.receipt_vault();
+    let cursor = after
+        .map(|text| FamilyCursor::parse(text).ok_or_else(foreign_cursor))
+        .transpose()?;
+    let mut query = family_query(page, kinds)?;
+    if let Some(cursor) = cursor {
+        query = query
+            .with_time_bounds(None, Some(cursor.occurred_at))
+            .with_after(cursor.into_position());
+    }
+    let _ = vault.measure_limit(
+        EngineLimit::RequestedResultRows,
+        u64::try_from(page).unwrap_or(u64::MAX),
+    );
+    let content = reader.receipt_content();
+    let mut records = Vec::new();
+    loop {
+        let fetch = page
+            .saturating_sub(records.len())
+            .saturating_add(1)
+            .min(MAX_RECEIPT_QUERY_SCAN);
+        let pass = ReceiptQuery {
+            limit: fetch,
+            ..query.clone()
         };
-        Ok((receipts, next_after))
-    }
-
-    /// The family's receipts of `kinds` after `after`, in bounded source
-    /// windows. Each window starts after the last raw receipt walked, so
-    /// withheld rows and receipts sharing a timestamp never stall the page.
-    /// Only admitted rows count toward the requested page and its lookahead.
-    fn family_page(
-        &self,
-        kinds: &[String],
-        after: Option<&str>,
-        page: usize,
-    ) -> MemoryResult<(Vec<MemoryReceipt>, Option<String>)> {
-        let cursor = after
-            .map(|text| FamilyCursor::parse(text).ok_or_else(foreign_cursor))
-            .transpose()?;
-        let mut query = family_query(page, kinds)?;
-        if let Some(cursor) = cursor {
-            query = query
-                .with_time_bounds(None, Some(cursor.occurred_at))
-                .with_after(cursor.into_position());
+        let (read, walked, exhausted) =
+            vault.receipts_window_for_caller(pass, reader.receipt_destination(), content)?;
+        records.extend(credential_kept_receipts(reader, read)?);
+        if records.len() > page || exhausted {
+            break;
         }
-        let _ = self.vault.measure_limit(
-            EngineLimit::RequestedResultRows,
-            u64::try_from(page).unwrap_or(u64::MAX),
-        );
-        let mut records = Vec::new();
-        loop {
-            let fetch = page
-                .saturating_sub(records.len())
-                .saturating_add(1)
-                .min(MAX_RECEIPT_QUERY_SCAN);
-            let pass = ReceiptQuery {
-                limit: fetch,
-                ..query.clone()
-            };
-            let (read, walked, exhausted) = self
-                .vault
-                .receipts_window_for_caller(pass, &self.destination)?;
-            records.extend(self.credential_kept_receipts(read)?);
-            if records.len() > page || exhausted {
+        // The full raw window advances even when both screens kept none.
+        query.after = walked;
+    }
+    let more = records.len() > page;
+    records.truncate(page);
+    let next_after = if more {
+        records
+            .last()
+            .map(|record| FamilyCursor::of(record).to_text())
+    } else {
+        None
+    };
+    // A world's name on the owner's own share receipt is his (FIX 5493).
+    crate::share_travel::screen_owner_notice_fields(|| reader.reads_owner_notices(), &mut records);
+    Ok((
+        records.into_iter().map(family_receipt).collect(),
+        next_after,
+    ))
+}
+
+/// Up to `wanted` gate decisions before `before` (from the newest when
+/// `None`) `reader` reads: off this device, none about a device-local claim
+/// takes a place, and a reader bound to a read credential sees only the
+/// decisions whose claim that credential reads, each row by its claim id
+/// with pure metadata staying; the read refills past either. The ledger is
+/// the vault's: a room keeps no gate decision of its own.
+fn gate_records_before(
+    reader: &impl ReceiptReader,
+    mut before: Option<GateDecisionId>,
+    wanted: usize,
+) -> MemoryResult<Vec<GateDecisionRecord>> {
+    let vault = reader.receipt_vault();
+    let destination = reader.receipt_destination();
+    let mut records = Vec::new();
+    while records.len() < wanted {
+        let page = vault.store.gate_decisions_page(before, wanted)?;
+        let exhausted = page.len() < wanted;
+        before = page.last().map(|record| record.decision_id);
+        // A credential-bound reader sees only the rows its read lane admits
+        // (OF-172 D2), judged in one lane read per page before any count. An
+        // unbound handle reads nothing here, as before.
+        let ids: Vec<EntityId> = page
+            .iter()
+            .filter_map(|record| EntityId::from_bytes(record.claim_id?).ok())
+            .collect();
+        let readable = if ids.is_empty() {
+            None
+        } else {
+            reader.readable_trigger_rows(&ids)?
+        };
+        for record in page {
+            if records.len() == wanted {
                 break;
             }
-            // The full raw window advances even when both screens kept none.
-            query.after = walked;
-        }
-        let more = records.len() > page;
-        records.truncate(page);
-        let next_after = if more {
-            records
-                .last()
-                .map(|record| FamilyCursor::of(record).to_text())
-        } else {
-            None
-        };
-        // A world's name on the owner's own share receipt is his (FIX 5493).
-        crate::share_travel::screen_owner_notice_fields(self, &mut records);
-        Ok((
-            records.into_iter().map(family_receipt).collect(),
-            next_after,
-        ))
-    }
-
-    /// Up to `wanted` gate decisions before `before` (from the newest when
-    /// `None`) this caller reads: off this device, none about a device-local
-    /// claim takes a place, and a handle bound to a read credential sees
-    /// only the decisions whose claim that credential reads, each row by its
-    /// claim id with pure metadata staying; the read refills past either.
-    fn gate_records_before(
-        &self,
-        mut before: Option<GateDecisionId>,
-        wanted: usize,
-    ) -> MemoryResult<Vec<GateDecisionRecord>> {
-        let mut records = Vec::new();
-        while records.len() < wanted {
-            let page = self.vault.store.gate_decisions_page(before, wanted)?;
-            let exhausted = page.len() < wanted;
-            before = page.last().map(|record| record.decision_id);
-            // A credential-bound reader sees only the rows its read lane
-            // admits (OF-172 D2), judged in one lane read per page before any
-            // count. An unbound handle parses nothing here, as before.
-            let readable = if self.read_proof.is_none() || page.is_empty() {
-                None
-            } else {
-                let ids: Vec<EntityId> = page
-                    .iter()
-                    .filter_map(|record| EntityId::from_bytes(record.claim_id?).ok())
-                    .collect();
-                if ids.is_empty() {
-                    None
-                } else {
-                    self.credential_readable_ids(&ids)?
-                }
-            };
-            for record in page {
-                if records.len() == wanted {
-                    break;
-                }
-                // A claim id that does not parse is withheld from such a
-                // reader, never an error.
-                if let (Some(id), Some(readable)) = (record.claim_id, &readable)
-                    && !EntityId::from_bytes(id).is_ok_and(|id| readable.contains(&id))
-                {
-                    continue;
-                }
-                let kept = self.destination.is_off_device()
-                    && match record.claim_id {
-                        Some(id) => self.vault.device_local_keeps_for(
-                            &EntityId::from_bytes(id)?,
-                            &self.destination,
-                        )?,
-                        None => false,
-                    };
-                if !kept {
-                    records.push(record);
-                }
+            // A claim id that does not parse is withheld from such a reader,
+            // never an error.
+            if let (Some(id), Some(readable)) = (record.claim_id, &readable)
+                && !EntityId::from_bytes(id).is_ok_and(|id| readable.contains(&id))
+            {
+                continue;
             }
-            if exhausted || before.is_none() {
-                break;
+            let kept = destination.is_off_device()
+                && match record.claim_id {
+                    Some(id) => {
+                        vault.device_local_keeps_for(&EntityId::from_bytes(id)?, destination)?
+                    }
+                    None => false,
+                };
+            if !kept {
+                records.push(record);
             }
         }
-        Ok(records)
+        if exhausted || before.is_none() {
+            break;
+        }
     }
+    Ok(records)
 }
 
 /// One gate decision in the `vault.receipts` shape.

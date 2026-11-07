@@ -2,11 +2,12 @@
 
 use super::storage::{
     RevisionNamespace, citation_live_doc, ensure_document, fork_revision_with_namespace,
-    read_entity_revision_in_txn,
+    read_entity_revision_from_store_in_txn, read_entity_revision_in_txn,
 };
 use super::{PinnedCitation, ReadMode, ResolvedCitation, RevisionRef};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, parse_short_id_value};
 use crate::error::{Error, Result};
+use crate::store::ManifestDbs;
 use crate::{EntityId, Vault};
 use loro::ContainerTrait;
 use loro::cursor::{Cursor, Side};
@@ -236,6 +237,56 @@ fn resolve_reference(
         }
     }
     Ok(None)
+}
+
+/// The row a room's pinned alias `alias:hash@revision` names in `view`, one
+/// view of the room, read in `txn` (FIX 5162). It names the row only when
+/// all of these hold in that one view:
+///
+/// - the view holds the revision's identity row;
+/// - the room stages its own entity row of that id, so it keeps every
+///   revision row of it;
+/// - that id's reverse short-id row names it `alias`;
+/// - `hash` is the short hash of the pinned bytes.
+///
+/// The hash is never checked against the live body: an edit replaces the
+/// hash-keyed forward alias, and the reverse row keeps the name. Any other
+/// pin names nothing here. This grants no read: the caller's lane admits the
+/// row and its revision.
+///
+/// # Errors
+///
+/// Storage and corruption errors reading the view's rows.
+pub(crate) fn resolve_room_pinned_alias_in_txn(
+    vault: &Vault,
+    view: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    alias: &str,
+    hash: u8,
+    revision: RevisionRef,
+) -> Result<Option<EntityId>> {
+    let Some(id) = super::storage::IDENTITY.get(view, txn, &revision.0)? else {
+        return Ok(None);
+    };
+    // A record the room holds no row of reads as absent. Without that row,
+    // the view pairs the room's revision rows with base's rows of the
+    // record, which may never have held the revision: the room saved a
+    // later body, or base deleted, erased or redacted the record.
+    if !view.entities().stages_row(id.as_bytes()) {
+        return Ok(None);
+    }
+    match crate::ports::ShortIdStoreRead::port_short_id_reference(view, txn, &id)? {
+        Some((name, _)) if name == alias => {}
+        _ => return Ok(None),
+    }
+    let Some(raw) =
+        read_entity_revision_from_store_in_txn(vault, view, txn, &id, ReadMode::Pinned(revision))?
+    else {
+        return Ok(None);
+    };
+    // The hash a room's read names this revision by (`AdmittedRevision`).
+    let pinned = crate::store::short_content_hash_in_txn(&vault.store, txn, &id, &raw)?;
+    Ok((pinned == hash).then_some(id))
 }
 
 /// The TURN `reference` names, when `revision` is a text revision of it that

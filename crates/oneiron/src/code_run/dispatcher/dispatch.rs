@@ -64,8 +64,12 @@ impl HostSelfDispatcher<'_> {
             SelfCall::SkillsCall(_) => Ok(Self::dispatch_skills_call_unhosted()),
             SelfCall::MemorySearch(call) => self.dispatch_memory_search(call, read_as, site),
             SelfCall::MemoryWriteFixture(call) => self.dispatch_memory_write_fixture(call),
-            SelfCall::MemoryPutClaim(call) => self.dispatch_memory_put_claim(call),
-            SelfCall::MemorySupersedeClaim(call) => self.dispatch_memory_supersede_claim(call),
+            // The records a claim write names resolve under the key its
+            // door admitted it with (FIX 1214).
+            SelfCall::MemoryPutClaim(call) => self.dispatch_memory_put_claim(call, read_as),
+            SelfCall::MemorySupersedeClaim(call) => {
+                self.dispatch_memory_supersede_claim(call, read_as)
+            }
             SelfCall::MemoryPutEdge(call) => self.dispatch_memory_put_edge(call, read_as),
             SelfCall::Ask(call) => self.dispatch_ask(call),
             SelfCall::DestructiveFixture(call) => Ok(self.durable_wait(
