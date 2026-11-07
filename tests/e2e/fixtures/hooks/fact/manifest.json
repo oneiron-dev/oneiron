@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "area": "hooks-fact",
+  "assets": [
+    {
+      "id": "hooks-fact-PACK-md",
+      "path": "PACK.md",
+      "source": {
+        "uri": "independent-oracle:hooks01-ordered-facts-and-restart",
+        "revision": "hooks01-fact-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "2ebcd46e06a145df81c8904808cbf069f2436ce6cdba259a6c8b080ae2382d78",
+      "expectedFacts": {
+        "packPath": "PACK.md",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects"
+      },
+      "scenarios": [
+        "HOOKS-01"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-fact-HOOK-md",
+      "path": "hooks/fact-order/HOOK.md",
+      "source": {
+        "uri": "independent-oracle:hooks01-ordered-facts-and-restart",
+        "revision": "hooks01-fact-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "d7732a3d86124b11460f0dbde4b9ba50e6aea22300ce444bfed2ae64d3eca977",
+      "expectedFacts": {
+        "packPath": "hooks/fact-order/HOOK.md",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects"
+      },
+      "scenarios": [
+        "HOOKS-01"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-fact-body-js",
+      "path": "hooks/fact-order/body.js",
+      "source": {
+        "uri": "independent-oracle:hooks01-ordered-facts-and-restart",
+        "revision": "hooks01-fact-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "7e9b94df5cd41d51fedec9eb2b6bf184d61cfd3acaf3e27ec53e0c9a7f626236",
+      "expectedFacts": {
+        "packPath": "hooks/fact-order/body.js",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects"
+      },
+      "scenarios": [
+        "HOOKS-01"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-fact-intent-md",
+      "path": "hooks/fact-order/intent.md",
+      "source": {
+        "uri": "independent-oracle:hooks01-ordered-facts-and-restart",
+        "revision": "hooks01-fact-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "f8ea36beeed2efcab7827db2f903ba65b309802b12e78621a545a071725bec7f",
+      "expectedFacts": {
+        "packPath": "hooks/fact-order/intent.md",
+        "runtime": "engine-owned quickjs-hook.wasm; no external effects"
+      },
+      "scenarios": [
+        "HOOKS-01"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-fact-scenario",
+      "path": "scenario.json",
+      "source": {
+        "uri": "independent-oracle:hooks01-ordered-facts-and-restart",
+        "revision": "hooks01-fact-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "45a00f06274f930dea1368e4751086461ba9a2bd694a1b7abbb488b416a78d5b",
+      "expectedFacts": {
+        "matchingSequences": [
+          1,
+          5
+        ],
+        "effectsPerEnvelope": 1,
+        "nonmatches": [
+          "predicate",
+          "world",
+          "actor_class"
+        ],
+        "twoRestartsPreserveEffectIds": true
+      },
+      "scenarios": [
+        "HOOKS-01"
+      ],
+      "requires": []
+    }
+  ]
+}

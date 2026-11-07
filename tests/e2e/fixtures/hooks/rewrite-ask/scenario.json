@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "packName": "rewrite-ask",
+  "hookVersion": "1.0.0",
+  "rewriteHook": "scoped-rewrite",
+  "askHook": "saved-question",
+  "originalFact": "the silver key stays on the shelf",
+  "rewrittenValue": {
+    "marker": "copper-scope-rewrite",
+    "fact": "the copper key turns at noon"
+  },
+  "question": "May this scoped write proceed?",
+  "otherWorld": "b3030000000000000000000000000011",
+  "otherProject": "b3030000000000000000000000000022",
+  "cases": {
+    "HTTP": [
+      {
+        "mode": "allowed",
+        "id": "b3030000000000000000000000000101",
+        "predicate": "hooks.rewrite.http.allowed"
+      },
+      {
+        "mode": "invalid",
+        "id": "b3030000000000000000000000000102",
+        "predicate": "hooks.rewrite.http.invalid"
+      },
+      {
+        "mode": "world",
+        "id": "b3030000000000000000000000000103",
+        "predicate": "hooks.rewrite.http.world"
+      },
+      {
+        "mode": "facet",
+        "id": "b3030000000000000000000000000104",
+        "predicate": "hooks.rewrite.http.facet"
+      },
+      {
+        "mode": "project",
+        "id": "b3030000000000000000000000000105",
+        "predicate": "hooks.rewrite.http.project"
+      },
+      {
+        "mode": "revoked",
+        "id": "b3030000000000000000000000000106",
+        "predicate": "hooks.rewrite.http.revoked"
+      }
+    ],
+    "MCP": [
+      {
+        "mode": "allowed",
+        "id": "b3030000000000000000000000000201",
+        "predicate": "hooks.rewrite.mcp.allowed"
+      },
+      {
+        "mode": "invalid",
+        "id": "b3030000000000000000000000000202",
+        "predicate": "hooks.rewrite.mcp.invalid"
+      },
+      {
+        "mode": "world",
+        "id": "b3030000000000000000000000000203",
+        "predicate": "hooks.rewrite.mcp.world"
+      },
+      {
+        "mode": "facet",
+        "id": "b3030000000000000000000000000204",
+        "predicate": "hooks.rewrite.mcp.facet"
+      },
+      {
+        "mode": "project",
+        "id": "b3030000000000000000000000000205",
+        "predicate": "hooks.rewrite.mcp.project"
+      },
+      {
+        "mode": "revoked",
+        "id": "b3030000000000000000000000000206",
+        "predicate": "hooks.rewrite.mcp.revoked"
+      }
+    ]
+  },
+  "expected": {
+    "carriers": [
+      "HTTP",
+      "MCP"
+    ],
+    "hookOrder": [
+      "scoped-rewrite",
+      "saved-question"
+    ],
+    "runsPerHookPerLogicalInvocation": 1,
+    "validEffects": 1,
+    "escapeEffects": 0,
+    "taskAnswerIsAuthority": false,
+    "currentAuthorityReduction": "revoke same grant; not attenuation or a different credential",
+    "revokedEffects": 0,
+    "samePendingAcrossRestart": true,
+    "sameResultOnRepeat": true,
+    "invalidRewrite": {
+      "hookOutcome": "refused",
+      "keepsOriginalArgs": true,
+      "asks": 1,
+      "effects": 1
+    },
+    "runnerProgress": "independent live saved calls after original invocation keys; not saved-refusal receipt discovery"
+  },
+  "packFiles": {
+    "PACK.md": "hooks-rewrite-ask-PACK-md",
+    "hooks/scoped-rewrite/HOOK.md": "hooks-rewrite-ask-rewrite-HOOK-md",
+    "hooks/scoped-rewrite/body.js": "hooks-rewrite-ask-rewrite-body-js",
+    "hooks/scoped-rewrite/intent.md": "hooks-rewrite-ask-rewrite-intent-md",
+    "hooks/saved-question/HOOK.md": "hooks-rewrite-ask-ask-HOOK-md",
+    "hooks/saved-question/body.js": "hooks-rewrite-ask-ask-body-js",
+    "hooks/saved-question/intent.md": "hooks-rewrite-ask-ask-intent-md"
+  },
+  "progressControls": [
+    {
+      "phase": "live",
+      "mode": "allowed",
+      "id": "b3030000000000000000000000000031",
+      "invocation": "f3030000000000000000000000000001",
+      "predicate": "hooks.rewrite.http.live_progress"
+    },
+    {
+      "phase": "revoked",
+      "mode": "allowed",
+      "id": "b3030000000000000000000000000032",
+      "invocation": "f3030000000000000000000000000002",
+      "predicate": "hooks.rewrite.http.revoked_progress"
+    }
+  ]
+}
