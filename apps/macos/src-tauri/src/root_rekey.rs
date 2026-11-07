@@ -4,13 +4,16 @@
 //! sitting (RD-18); the launch warning ([`crate::copy::WRONG_ROOT_WARNING`])
 //! is unchanged.
 //!
-//! Re-keying replaces the host root secret this Mac stores with the settled
-//! root's, which the owner supplies. It never changes the vault's root, its
-//! authority, this install's machine keys, its recovery pin or its standing,
-//! and it is never automatic: only [`root_rekey_confirm`] writes, and only
-//! this Mac's retained keychain slot. A source the owner configured for the
-//! server (its config file or the environment) is never overwritten: the
-//! answer names the steps instead. No secret byte is logged or returned.
+//! Re-keying replaces this Mac's host issuer seed for the vault, the
+//! per-vault `HostIssuerSeed` keychain slot the vault loads its host issuer
+//! from (FIX-LIST 3018), with the settled root's, which the owner supplies.
+//! It never changes the vault's root, its authority, this install's machine
+//! keys, its recovery pin or its standing, and it is never automatic: only
+//! [`root_rekey_confirm`] writes, and only that slot, in place. A configured
+//! `auth_secret` (the server's config file or `ONEIRON_AUTH_SECRET`) takes no
+//! part: the issuer never derives from it, so it neither picks nor blocks
+//! the slot a re-key replaces (FIX-LIST 11108). No secret byte is logged or
+//! returned.
 //!
 //! The recorder opens its vault without the writer lease, for its whole life.
 //! A confirm takes the lease for itself alone (FIX 5885) and drops it on
@@ -26,21 +29,15 @@ pub(crate) mod private_copy;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use oneiron::authority::{LocalHostRootContext, LocalHostRootValidated, RetainedHostRootReplace};
+use oneiron::authority::{
+    HostIssuerSeedSlot, LocalHostRootContext, LocalHostRootValidated, RetainedHostRootReplace,
+};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;
 use oneiron::{EntityId, Vault, VaultWriterLease};
 use tauri::{AppHandle, Manager};
 use zeroize::Zeroizing;
 
-use crate::{
-    DESKTOP_ROOT_SECRET_SOURCE, RootSecretSource, SourceFailure, copy, with_effective_secret,
-};
-
-/// The variable `oneiron serve` reads `auth_secret` from, over its config
-/// file: set and non-empty, it is where the server-config source's secret
-/// came from.
-const AUTH_SECRET_ENV: &str = "ONEIRON_AUTH_SECRET";
 /// Why the local owner cannot be proved while another process holds the
 /// vault's writer lease: `oneiron serve`, an owner command or a second app.
 const LEASE_BUSY: &str = "another process holds the vault's writer lease, so this app cannot \
@@ -52,11 +49,22 @@ const NOT_THE_OWNER: &str = "the embedded owner is not this vault's owner";
 /// After a replace, the issuer the vault loads is not the replacement's.
 const REREAD_OTHER: &str =
     "the slot was replaced, but the vault does not load the replacement's host issuer";
+/// The engine validated a secret that is not a host issuer seed's 32 bytes,
+/// so nothing is kept.
+const NOT_A_SEED: &str = "the secret is not a host issuer seed's 32 bytes; nothing is kept";
+/// This Mac's keychain did not read its host issuer seed slot.
+const SLOT_UNREAD: &str = "this Mac's keychain did not read its host issuer seed slot";
 
 /// What the re-key commands share: the recorder's vault, where it lives,
 /// and one confirm at a time.
 pub struct RekeyState {
     vault: Arc<Vault>,
+    /// Where the vault lives, for the clipboard watcher's free-space check,
+    /// which only a macOS build has.
+    #[cfg_attr(
+        not(target_os = "macos"),
+        allow(dead_code, reason = "only the macOS clipboard watcher reads it")
+    )]
     vault_dir: PathBuf,
     confirming: Mutex<()>,
 }
@@ -73,20 +81,16 @@ impl RekeyState {
     }
 }
 
-/// Where this Mac's host root secret comes from now: the first source the
-/// open reads that holds one.
+/// What this Mac's host issuer seed slot for the vault holds now: the slot
+/// the vault loads its host issuer from, and the one a re-key replaces.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum RekeySource {
-    /// `auth_secret` in the config file `oneiron serve` reads.
-    ServerConfigFile,
-    /// `ONEIRON_AUTH_SECRET` in the environment the recorder started with.
-    Environment,
-    /// This Mac's own retained `HostRoot` keychain slot.
-    RetainedSlot,
-    /// No source holds one.
-    None,
-    /// A source failed to read, which stops the search as it stops the open.
+pub enum RekeySlot {
+    /// The slot holds a seed, so confirm replaces it in place.
+    Filled,
+    /// The slot holds none, so there is nothing to replace.
+    Empty,
+    /// The slot could not be read: no keystore, or a keystore fault.
     Unreadable,
 }
 
@@ -97,10 +101,9 @@ pub struct RekeyPrepared {
     pub vault_id: String,
     /// This install's machine id, hex; confirm takes it back.
     pub install: String,
-    /// Where this Mac's host root secret comes from now.
-    pub source: RekeySource,
-    /// Whether confirm keeps a secret in that source itself: only this
-    /// Mac's retained slot. Any other source answers with setup steps.
+    /// What this Mac's host issuer seed slot holds now.
+    pub slot: RekeySlot,
+    /// Whether confirm replaces that slot: only when it holds a seed.
     pub replaceable: bool,
 }
 
@@ -108,34 +111,14 @@ pub struct RekeyPrepared {
 #[derive(Debug, serde::Serialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum RekeyConfirmed {
-    /// This Mac's retained slot holds the secret, replaced in place, and the
-    /// host issuer the vault now loads is the replacement's.
+    /// This Mac's host issuer seed slot holds the replacement, replaced in
+    /// place, and the host issuer the vault now loads is the replacement's.
     Rekeyed {
-        /// The settled root's binding key that source's secret derives, hex.
+        /// The settled root's binding key the replacement seed derives, hex.
         root_key: String,
     },
-    /// The secret validated, but this Mac reads its host root from the
-    /// server's config file or the environment, which the recorder never
-    /// overwrites. Nothing was written.
-    SetUpElsewhere {
-        /// Which of the two.
-        source: RekeySource,
-        /// The settled root's binding key the secret derives, hex.
-        root_key: String,
-        /// What the owner does instead.
-        steps: &'static [&'static str],
-    },
-    /// The secret validated, but it is not the 32 bytes a retained slot
-    /// holds, so it can only be configured for the server. Nothing was
-    /// written.
-    SlotCannotHold {
-        /// The settled root's binding key the secret derives, hex.
-        root_key: String,
-        /// What the owner does instead.
-        steps: &'static [&'static str],
-    },
-    /// No source holds a host root secret, so there is nothing to replace.
-    /// Nothing was written.
+    /// This Mac's host issuer seed slot is empty, so there is nothing to
+    /// replace: a replace never fills one. Nothing was written.
     NothingToReplace,
     /// The local owner could not be proved, or another process holds the
     /// vault's writer lease. Nothing was checked or written.
@@ -149,8 +132,9 @@ pub enum RekeyConfirmed {
         /// The engine's reason, naming no secret.
         reason: String,
     },
-    /// The source the open reads could not be read. Nothing was written.
-    SourceUnreadable {
+    /// This Mac's host issuer seed slot could not be read. Nothing was
+    /// written.
+    SlotUnreadable {
         /// Why, naming no secret.
         reason: String,
     },
@@ -170,8 +154,8 @@ pub enum RekeyConfirmed {
 }
 
 /// The public context a re-key shows before the owner supplies a secret:
-/// the settled root's vault id, this install, and where this Mac's host
-/// root secret comes from now. Reads only.
+/// the settled root's vault id, this install, and what this Mac's host
+/// issuer seed slot holds now. Reads only.
 #[tauri::command]
 pub fn root_rekey_prepare(app: AppHandle) -> Result<RekeyPrepared, String> {
     let state = app.state::<RekeyState>();
@@ -179,16 +163,16 @@ pub fn root_rekey_prepare(app: AppHandle) -> Result<RekeyPrepared, String> {
         .vault
         .local_host_root_context()
         .map_err(|error| error.to_string())?;
-    let source = match winning_source(&state) {
-        Ok(Some(source)) => public_source(source),
-        Ok(None) => RekeySource::None,
-        Err(_) => RekeySource::Unreadable,
+    let slot = match state.vault.host_issuer_seed_slot() {
+        Ok(HostIssuerSeedSlot::Filled) => RekeySlot::Filled,
+        Ok(HostIssuerSeedSlot::Empty) => RekeySlot::Empty,
+        Err(_) => RekeySlot::Unreadable,
     };
     Ok(RekeyPrepared {
         vault_id: hex(&context.vault_id),
         install: context.install.to_hex(),
-        source,
-        replaceable: source == RekeySource::RetainedSlot,
+        slot,
+        replaceable: slot == RekeySlot::Filled,
     })
 }
 
@@ -196,10 +180,10 @@ pub fn root_rekey_prepare(app: AppHandle) -> Result<RekeyPrepared, String> {
 /// prepare showed. It takes the vault's writer lease for this confirm alone
 /// and releases it on every path. The local owner is proved first, then
 /// `secret` is checked by the engine against the settled root and this
-/// install, then kept in the source this Mac's open reads, when that is its
-/// own retained slot. Success only once the host issuer the vault then
-/// loads is the replacement's. Every other outcome writes nothing and says
-/// why.
+/// install, then written over this Mac's host issuer seed slot in place,
+/// when that slot holds a seed. Success only once the host issuer the vault
+/// then loads is the replacement's. Every other outcome writes nothing and
+/// says why.
 #[tauri::command]
 pub fn root_rekey_confirm(
     app: AppHandle,
@@ -241,52 +225,30 @@ fn confirm(state: &RekeyState, shown: &LocalHostRootContext, secret: &str) -> Re
         Ok(owner) => owner,
         Err(reason) => return RekeyConfirmed::OwnerUnproven { reason },
     };
-    let (validated, kept) = match validate(&state.vault, &owner, shown, secret) {
-        Ok(found) => found,
+    let seed = match validate(&state.vault, &owner, shown, secret) {
+        Ok(seed) => seed,
         Err(reason) => return RekeyConfirmed::Refused { reason },
     };
-    let root_key = hex(&validated.root_key);
-    match winning_source(state) {
-        Err(failure) => RekeyConfirmed::SourceUnreadable {
-            reason: failure_reason(failure),
+    match state.vault.host_issuer_seed_slot() {
+        Err(error) => RekeyConfirmed::SlotUnreadable {
+            reason: format!("{SLOT_UNREAD}: {error}"),
         },
-        Ok(None) => RekeyConfirmed::NothingToReplace,
-        Ok(Some(RootSecretSource::ServerConfig)) => {
-            let source = public_source(RootSecretSource::ServerConfig);
-            RekeyConfirmed::SetUpElsewhere {
-                source,
-                root_key,
-                steps: if source == RekeySource::Environment {
-                    copy::REKEY_STEPS_ENVIRONMENT
-                } else {
-                    copy::REKEY_STEPS_SERVER_CONFIG
-                },
-            }
-        }
-        Ok(Some(RootSecretSource::RetainedSlot)) => {
-            replace_retained(state, &owner, shown, &*kept, root_key)
-        }
+        Ok(HostIssuerSeedSlot::Empty) => RekeyConfirmed::NothingToReplace,
+        Ok(HostIssuerSeedSlot::Filled) => replace_retained(state, &owner, shown, &*seed),
     }
 }
 
-/// Writes the validated secret over this Mac's retained slot in place, then
-/// checks the host issuer the vault now loads.
+/// Writes the validated seed over this Mac's host issuer seed slot in
+/// place, then checks the host issuer the vault now loads.
 fn replace_retained(
     state: &RekeyState,
     owner: &AuthenticatedOwner,
     shown: &LocalHostRootContext,
-    kept: &[u8],
-    root_key: String,
+    seed: &[u8; 32],
 ) -> RekeyConfirmed {
-    let Ok(slot_secret) = <[u8; 32]>::try_from(kept).map(Zeroizing::new) else {
-        return RekeyConfirmed::SlotCannotHold {
-            root_key,
-            steps: copy::REKEY_STEPS_SERVER_CONFIG,
-        };
-    };
     match state
         .vault
-        .replace_retained_host_root_secret(owner, shown, &*slot_secret)
+        .replace_retained_host_root_secret(owner, shown, seed)
     {
         Ok(RetainedHostRootReplace::Replaced(validated)) => match reread(state, &validated) {
             Ok(root_key) => RekeyConfirmed::Rekeyed {
@@ -304,25 +266,30 @@ fn replace_retained(
     }
 }
 
-/// The secret as the engine validates it, and the bytes that passed: its
-/// text bytes, as `auth_secret` takes it; else, for 64 hex characters, the
-/// 32 bytes they spell, as a retained slot holds one. A refusal is the text
-/// form's.
+/// The seed the owner supplied, as the engine validates it: the secret's
+/// text bytes; else, for 64 hex characters, the 32 bytes they spell. Only a
+/// seed's 32 bytes validate. A refusal is the text form's.
 fn validate(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     shown: &LocalHostRootContext,
     secret: &str,
-) -> Result<(LocalHostRootValidated, Zeroizing<Vec<u8>>), String> {
+) -> Result<Zeroizing<[u8; 32]>, String> {
     let text = secret.as_bytes();
     let refusal = match vault.validate_local_host_root_replacement(owner, shown, text) {
-        Ok(validated) => return Ok((validated, Zeroizing::new(text.to_vec()))),
+        Ok(_) => {
+            return <[u8; 32]>::try_from(text)
+                .map(Zeroizing::new)
+                .map_err(|_| NOT_A_SEED.to_owned());
+        }
         Err(error) => error.to_string(),
     };
     if let Some(bytes) = parse_hex32(secret)
-        && let Ok(validated) = vault.validate_local_host_root_replacement(owner, shown, &*bytes)
+        && vault
+            .validate_local_host_root_replacement(owner, shown, &*bytes)
+            .is_ok()
     {
-        return Ok((validated, Zeroizing::new(bytes.to_vec())));
+        return Ok(bytes);
     }
     Err(refusal)
 }
@@ -339,43 +306,6 @@ fn reread(state: &RekeyState, validated: &LocalHostRootValidated) -> Result<[u8;
         return Err(REREAD_OTHER.to_owned());
     }
     Ok(validated.root_key)
-}
-
-/// The source the open reads first that holds a secret, as the open
-/// searches: a retained slot is read, never created.
-fn winning_source(state: &RekeyState) -> Result<Option<RootSecretSource>, SourceFailure> {
-    with_effective_secret(
-        &state.vault,
-        &state.vault_dir,
-        DESKTOP_ROOT_SECRET_SOURCE,
-        false,
-        |found| found.map(|(source, _)| source),
-    )
-}
-
-/// `source` as the commands name it; the server config's secret came from
-/// the environment when that variable is set, as it stands over the file.
-fn public_source(source: RootSecretSource) -> RekeySource {
-    match source {
-        RootSecretSource::ServerConfig
-            if std::env::var_os(AUTH_SECRET_ENV).is_some_and(|value| !value.is_empty()) =>
-        {
-            RekeySource::Environment
-        }
-        RootSecretSource::ServerConfig => RekeySource::ServerConfigFile,
-        RootSecretSource::RetainedSlot => RekeySource::RetainedSlot,
-    }
-}
-
-fn failure_reason(failure: SourceFailure) -> String {
-    match failure {
-        SourceFailure::ServerConfig(reason) => {
-            format!("the server config did not resolve: {reason}")
-        }
-        SourceFailure::RetainedSlot(error) => {
-            format!("this Mac's keychain gave no host root secret: {error}")
-        }
-    }
 }
 
 /// The local owner, proved the way the server's own CLI proves him

@@ -4,18 +4,25 @@
 //! verified, the one [`ExternalGitSourceHost`] a `vault.code.imports.*` call
 //! lends its handle. It carries transport and custody, never authority:
 //!
-//! - **Fetch.** The source is read over https from its own host only. A
-//!   named binding's `Authorization` header is injected inside the custody
-//!   door and never leaves it. Before Git runs, one probe of the source's
-//!   advertisement resolves redirects: one that stays on the same https
-//!   host is followed with the binding; any other is a refusal naming its
-//!   target, so the caller can import from there. Git itself then fetches
-//!   the resolved URL with redirects off.
+//! - **Fetch.** The source is read over https from its own host only.
+//!   Before Git runs, one probe of the source's advertisement resolves
+//!   redirects: one that stays on the same https host is followed; any
+//!   other is a refusal naming its target, so the caller can import from
+//!   there. Git itself then fetches the resolved URL with redirects off. A
+//!   named binding's credential goes only through the credential broker
+//!   (OSH-3, [`super::import_source_relay`]): the probe's hops are broker
+//!   exchanges, and Git fetches from a loopback source relay of this
+//!   invocation that sends each exchange through the broker, so neither
+//!   this process's HTTP client nor the Git child ever holds it.
 //! - **Push.** Stock Git pushes from the scratch store to a relay of this
 //!   invocation alone: a loopback listener on an OS-assigned port under an
 //!   unguessable in-memory path, serving the receive-pack advertisement
 //!   and RPC of the one selected repository and route. Each request carries
-//!   the ORIGINAL verified credential, checked again for revocation, through
+//!   the relay's own ticket, which the Git child holds in its environment
+//!   alone (FIX 19233): the URL rides the child's argv, which another local
+//!   user can read, so a request without the ticket is not found, before
+//!   any credential or body is touched. A ticketed request carries the
+//!   ORIGINAL verified credential, checked again for revocation, through
 //!   the ordinary receive-pack gate (Write, unrestricted record scope, a
 //!   registered principal), and is served by [`run_serve`] exactly as a
 //!   `/git` push is: the same push decision, transfer permits, push turn,
@@ -40,15 +47,17 @@ use oneiron::git_wire::{
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::origin::smart_http;
 use oneiron::repo_mutation::external_import::{
-    EXTERNAL_IMPORT_FETCH_EFFECTOR, ExternalGitSourceHost, ExternalImportDoor,
-    ExternalImportLookup, ExternalImportSource, REDIRECT_REFUSED,
+    ExternalGitSourceHost, ExternalImportDoor, ExternalImportLookup, ExternalImportSource,
+    REDIRECT_REFUSED,
 };
 use tokio::runtime::Handle;
 use tokio::sync::oneshot;
+use zeroize::Zeroizing;
 
 use super::gate::{
     admit_import_relay, advertised_service, header_value, push_caller, remote_user, text_response,
 };
+use super::import_source_relay::{carries_relay_ticket, mint_relay_ticket};
 use super::routes::{GitService, advertisement_request};
 use super::serve::run_serve;
 use crate::auth::{CoreAuth, is_revoked_or_unreadable};
@@ -93,7 +102,7 @@ struct GitImportRelayHost {
 /// Whether `auth`'s token was revoked since it was verified (or its
 /// registry cannot be read). A capability slip is judged by the door's own
 /// final recheck.
-fn revoked(server: &SyncServer, auth: &CoreAuth) -> bool {
+pub(super) fn revoked(server: &SyncServer, auth: &CoreAuth) -> bool {
     auth.jti().is_some_and(|jti| {
         jti.len() != 64 && is_revoked_or_unreadable(jti, server.vault().as_ref())
     })
@@ -124,44 +133,24 @@ impl ExternalGitSourceHost for GitImportRelayHost {
         let source_ref = GitRefName::parse_full(source.source_ref.clone())?;
         let base = GitOid::parse_hex(source.base_commit.clone())?;
         let head = GitOid::parse_hex(source.head_commit.clone())?;
-        let Some(secret_ref) = binding else {
-            return match resolve_source_url(&source.host, &source.repository, None) {
-                Ok(url) => wire.fetch_external_exact(&url, &source_ref, &base, &head, None),
+        let Some(binding) = binding else {
+            return match resolve_source_url(&source.host, &source.repository) {
+                Ok(url) => wire.fetch_external_exact(&url, &source_ref, &base, &head),
                 Err(refused) => Ok(refused),
             };
         };
-        let mut answer = Err(oneiron::Error::InvariantViolation(
-            "an outside import fetch never ran",
-        ));
-        self.server.vault().inject_secret_at_door(
-            secret_ref,
-            EXTERNAL_IMPORT_FETCH_EFFECTOR,
-            &mut |value: &[u8]| {
-                let Ok(text) = std::str::from_utf8(value) else {
-                    answer = Ok(GitImportFetchOutcome::Refused(
-                        "binding_not_a_header".to_owned(),
-                    ));
-                    return Ok(());
-                };
-                let header = zeroize::Zeroizing::new(text.trim().to_owned());
-                answer = match resolve_source_url(
-                    &source.host,
-                    &source.repository,
-                    Some(header.as_str()),
-                ) {
-                    Ok(url) => wire.fetch_external_exact(
-                        &url,
-                        &source_ref,
-                        &base,
-                        &head,
-                        Some(header.as_str()),
-                    ),
-                    Err(refused) => Ok(refused),
-                };
-                Ok(())
+        super::import_source_relay::fetch_through_broker(
+            &super::import_source_relay::SourceCall {
+                server: &self.server,
+                auth: &self.auth,
+                importer: self.caller.principal(),
+                runtime: &self.runtime,
+                binding,
             },
-        )?;
-        answer
+            wire,
+            source,
+            (&source_ref, &base, &head),
+        )
     }
 
     fn push_exact(
@@ -174,7 +163,14 @@ impl ExternalGitSourceHost for GitImportRelayHost {
         commit: &GitOid,
     ) -> oneiron::Result<GitImportPushOutcome> {
         let relay = ImportRelay::start(self, lookup)?;
-        let pushed = wire.push_external_to_door(fetched, &relay.url, name, commit, expected);
+        let pushed = wire.push_external_to_door(
+            fetched,
+            &relay.url,
+            relay.state.relay_ticket.as_str(),
+            name,
+            commit,
+            expected,
+        );
         let refused = relay.stop();
         Ok(match (pushed?, refused) {
             (GitImportPushOutcome::Applied, _) => GitImportPushOutcome::Applied,
@@ -186,14 +182,13 @@ impl ExternalGitSourceHost for GitImportRelayHost {
     }
 }
 
-/// The URL the source's advertisement answers from, after following each
-/// redirect that stays on its own https `origin` (with `header` when one is
-/// bound). A redirect anywhere else refuses, naming its target; a loop
-/// refuses. No credential reaches another host, and no bound is added.
+/// The URL the anonymous source's advertisement answers from, after
+/// following each redirect that stays on its own https `origin`. A redirect
+/// anywhere else refuses, naming its target; a loop refuses. No bound is
+/// added.
 fn resolve_source_url(
     origin: &str,
     repository: &str,
-    header: Option<&str>,
 ) -> std::result::Result<String, GitImportFetchOutcome> {
     let refused = |reason: &str| GitImportFetchOutcome::Refused(reason.to_owned());
     let client = reqwest::blocking::Client::builder()
@@ -203,14 +198,10 @@ fn resolve_source_url(
     let mut url = repository.trim_end_matches('/').to_owned();
     let mut seen = BTreeSet::new();
     while seen.insert(url.clone()) {
-        let mut request = client.get(format!("{url}/info/refs?service=git-upload-pack"));
-        if let Some(header) = header {
-            let mut value = reqwest::header::HeaderValue::from_str(header)
-                .map_err(|_| refused("binding_not_a_header"))?;
-            value.set_sensitive(true);
-            request = request.header(reqwest::header::AUTHORIZATION, value);
-        }
-        let response = request.send().map_err(|_| refused("source_unreachable"))?;
+        let response = client
+            .get(format!("{url}/info/refs?service=git-upload-pack"))
+            .send()
+            .map_err(|_| refused("source_unreachable"))?;
         if !response.status().is_redirection() {
             return Ok(url);
         }
@@ -233,7 +224,7 @@ fn resolve_source_url(
 
 /// The repository a redirected advertisement names: its scheme, host and
 /// path, without the smart-HTTP suffix, userinfo, query or fragment.
-fn redirected_repository(target: &reqwest::Url) -> String {
+pub(super) fn redirected_repository(target: &reqwest::Url) -> String {
     let path = target.path();
     let path = path
         .strip_suffix("/info/refs")
@@ -243,7 +234,7 @@ fn redirected_repository(target: &reqwest::Url) -> String {
 }
 
 /// `host[:port]`, lowercase, the port only when it is not the default.
-fn authority(target: &reqwest::Url) -> String {
+pub(super) fn authority(target: &reqwest::Url) -> String {
     let host = target.host_str().unwrap_or_default().to_ascii_lowercase();
     match target.port() {
         Some(port) => format!("{host}:{port}"),
@@ -256,11 +247,21 @@ struct RelayState {
     server: Arc<SyncServer>,
     auth: CoreAuth,
     repo: String,
+    /// The checkout lease a checkout route's push names, never the relay's
+    /// own ticket.
     ticket: Option<String>,
+    /// The relay's own ticket, which every request must carry (FIX 19233).
+    relay_ticket: Zeroizing<String>,
     refused: Mutex<Option<u16>>,
 }
 
 impl RelayState {
+    /// Whether `parts` carries this relay's own ticket, compared in constant
+    /// time (FIX 19233).
+    fn ticketed(&self, parts: &Parts) -> bool {
+        carries_relay_ticket(parts, &self.relay_ticket)
+    }
+
     /// The original credential, checked again and admitted by the ordinary
     /// receive-pack gate.
     fn admitted(&self) -> Result<CoreAuth, Box<Response>> {
@@ -297,7 +298,13 @@ fn relay_read_context() -> smart_http::RepoGitReadContext {
 async fn relay_info_refs(
     State(relay): State<Arc<RelayState>>,
     RawQuery(query): RawQuery,
+    parts: Parts,
 ) -> Response {
+    // Before anything else, and never noted as the import's refusal: a
+    // request without the ticket is not this invocation's Git child.
+    if !relay.ticketed(&parts) {
+        return text_response(StatusCode::NOT_FOUND, "not found");
+    }
     match advertised_service(&query.unwrap_or_default()) {
         Ok(GitService::ReceivePack) => {}
         Ok(GitService::UploadPack) => {
@@ -337,6 +344,9 @@ async fn relay_receive_pack(
     parts: Parts,
     body: Body,
 ) -> Response {
+    if !relay.ticketed(&parts) {
+        return text_response(StatusCode::NOT_FOUND, "not found");
+    }
     let auth = match relay.admitted() {
         Ok(auth) => auth,
         Err(response) => return relay.observed(*response),
@@ -392,6 +402,7 @@ impl ImportRelay {
             auth: host.auth.clone(),
             repo: lookup.repo.clone(),
             ticket,
+            relay_ticket: mint_relay_ticket(),
             refused: Mutex::new(None),
         });
         let base = format!("/{secret}/{RELAY_REPO_SEGMENT}");
