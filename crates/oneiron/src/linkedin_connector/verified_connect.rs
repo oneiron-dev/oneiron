@@ -360,6 +360,7 @@ impl<T: LinkedInMcpConnectTransport> OutboundExecutionSink for LinkedInMcpVerifi
                         return OutboundExecutionOutcome::deferred(RemoteTaskHandle {
                             id: connection_ref(&plan),
                             poll_after_secs: None,
+                            poll: None,
                         })
                         .with_receipt_fields(fields);
                     }

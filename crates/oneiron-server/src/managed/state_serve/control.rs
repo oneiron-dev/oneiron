@@ -246,6 +246,11 @@ impl ManagedState {
                 self.ledger.pulled(&request).await?;
                 Ok(CtlResponse::Ok { ok: true })
             }
+            // A read: a vault frozen for reap answers it and stays frozen.
+            CtlRequest::UsageExport { cursor } => {
+                let usage_export = self.usage_export(cursor.as_ref())?;
+                Ok(CtlResponse::UsageExport { usage_export })
+            }
         }
     }
 }

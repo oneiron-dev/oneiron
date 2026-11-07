@@ -211,7 +211,7 @@ fn scan_one_blob(blob: &PushedBlob) -> DoorResult<Option<ReceiveScanHit>> {
 /// a hit under the dotenv reason, which the one disposition admits and
 /// marks. A blob whose every value is blank, or no dotenv file's, is none.
 fn dotenv_hit(blob: &PushedBlob) -> Option<ReceiveScanHit> {
-    crate::store::repo_environment::repo_env_file(&blob.path)?;
+    crate::store::repo_environment::repo_env_file_bytes(blob.path_bytes())?;
     let lifts = crate::store::repo_environment::repo_env_entries(&blob.content)
         .iter()
         .any(|entry| {
