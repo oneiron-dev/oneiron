@@ -50,14 +50,13 @@ impl DecisionReadGate for HouseGate {
         run.dispatch_paid(permit.lease(), &self.connector)
             .map_err(|_| refused("refused at dispatch"))?;
         let gated = read(permit.lease());
-        let unread = oneiron::llm::LlmUsage::zero();
         // A read that went out and failed keeps its reservation as spend.
-        let outcome = match &gated {
-            GatedRead::NotStarted => CallOutcome::Answered(&unread),
-            GatedRead::Read(Ok(answer)) => CallOutcome::Answered(&answer.usage),
-            GatedRead::Read(Err(_)) => CallOutcome::Failed,
+        let settled = match &gated {
+            GatedRead::NotStarted => permit.settle_unsent(),
+            GatedRead::Read(Ok(answer)) => permit.settle(CallOutcome::Answered(&answer.usage)),
+            GatedRead::Read(Err(_)) => permit.settle(CallOutcome::Failed),
         };
-        if let Err(denied) = permit.settle(outcome) {
+        if let Err(denied) = settled {
             tracing::error!(%denied, "a house decision read's settlement was refused");
         }
         Ok(gated)
@@ -102,14 +101,13 @@ impl DecisionReadGate for RunHouseGate<'_> {
             .dispatch_paid(permit.lease(), &self.gate.connector)
             .map_err(|_| refused("refused at dispatch"))?;
         let gated = read(permit.lease());
-        let unread = oneiron::llm::LlmUsage::zero();
         // A read that went out and failed keeps its reservation as spend.
-        let outcome = match &gated {
-            GatedRead::NotStarted => CallOutcome::Answered(&unread),
-            GatedRead::Read(Ok(answer)) => CallOutcome::Answered(&answer.usage),
-            GatedRead::Read(Err(_)) => CallOutcome::Failed,
+        let settled = match &gated {
+            GatedRead::NotStarted => permit.settle_unsent(),
+            GatedRead::Read(Ok(answer)) => permit.settle(CallOutcome::Answered(&answer.usage)),
+            GatedRead::Read(Err(_)) => permit.settle(CallOutcome::Failed),
         };
-        if let Err(denied) = permit.settle(outcome) {
+        if let Err(denied) = settled {
             tracing::error!(%denied, "a house decision read's settlement was refused");
         }
         Ok(gated)
@@ -216,8 +214,10 @@ impl DecisionProvider for SystemOneRung {
         {
             return Ok(abstain);
         }
+        let mut question = call.question.clone();
+        question.text = call.question_text().into_owned();
         let request = SeatRequest {
-            question: call.question.clone(),
+            question,
             state: call.state.clone(),
             images: call.images.to_vec(),
             audio: call.audio.to_vec(),
@@ -302,6 +302,150 @@ impl DecisionProvider for SystemOneRung {
             cost_per_thousand: None,
         })
     }
+
+    fn decide_pack(&self, pack: &DecisionPack<'_>) -> oneiron::Result<Vec<ProviderDecision>> {
+        let failed = |what: &str| oneiron::Error::InvalidConfig(format!("system one: {what}"));
+        let abstain = || ProviderDecision {
+            answer: DecisionAnswer::Abstain,
+            probability: None,
+            paired: None,
+            person: None,
+            served: None,
+            cost_per_thousand: None,
+        };
+        let mut decisions = (0..pack.questions.len())
+            .map(|_| abstain())
+            .collect::<Vec<_>>();
+        let mut indices = Vec::new();
+        let mut questions = Vec::new();
+        for (index, call) in
+            (0..pack.questions.len()).filter_map(|index| pack.call(index).map(|call| (index, call)))
+        {
+            let score_levels = call.score_levels().unwrap_or_default();
+            if matches!(call.question.contract, AnswerContract::Score { .. })
+                && score_levels.is_empty()
+            {
+                continue;
+            }
+            let question = call.question.clone();
+            let request = SeatRequest {
+                question,
+                state: call.state.clone(),
+                images: call.images.to_vec(),
+                audio: call.audio.to_vec(),
+                score_levels,
+                posture: self.posture,
+                remote_opt_in: self.remote_opt_in,
+                phase: SeatPhase::Background,
+            };
+            if !RemoteDecisionCapability::default().takes(&request) {
+                continue;
+            }
+            indices.push(index);
+            questions.push(oneiron_llm_systemone::SystemOnePackQuestion {
+                question: request.question,
+                score_levels: request.score_levels,
+            });
+        }
+        if questions.is_empty() {
+            return Ok(decisions);
+        }
+        let request = oneiron_llm_systemone::SystemOnePackRequest {
+            questions,
+            state: pack.state.clone(),
+            images: pack.images.to_vec(),
+            audio: pack.audio.to_vec(),
+            posture: self.posture,
+            remote_opt_in: self.remote_opt_in,
+            phase: SeatPhase::Background,
+        };
+        if !request
+            .has_valid_questions()
+            .map_err(|_| failed("the posture or the request keeps this call local"))?
+        {
+            return Ok(decisions);
+        }
+        self.seat
+            .preflight()
+            .map_err(|_| failed("its credential broker or vault-secret key is not there"))?;
+        // Both branches retain the original payer, meter and sourced run.
+        let (run, reserve) = match pack.run {
+            Some(run) => {
+                let run = run.sourced(Some(pack.evidence.to_vec()));
+                let reserve = run.declaration().budget().reserve_units;
+                (run, reserve)
+            }
+            None => {
+                let guard = crate::decision_verdict::rung_meter(&self.guard);
+                let run = self
+                    .models
+                    .funded_run(
+                        self.connector.connector.clone(),
+                        guard.clone(),
+                        crate::decision_verdict::rung_payer(),
+                    )
+                    .sourced(Some(pack.evidence.to_vec()));
+                (run, guard.reserve_units())
+            }
+        };
+        let permit = run
+            .admit_paid(&self.connector, reserve)
+            .map_err(|_| failed("refused by the budget"))?;
+        run.dispatch_paid(permit.lease(), &self.connector)
+            .map_err(|_| failed("refused at dispatch"))?;
+        if pack.deadline.decision_time_left().is_zero() {
+            if pack.run.is_none() {
+                permit
+                    .settle(CallOutcome::Failed)
+                    .map_err(|_| failed("settlement refused"))?;
+            }
+            return Err(failed("admitted after the work time"));
+        }
+        let asked = if pack.run.is_some() {
+            self.runtime
+                .block_on(self.seat.ask_pack(
+                    request,
+                    permit.lease(),
+                    pack.deadline.decision_time_left(),
+                ))
+                .map_err(|error| failed(&format!("the seat failed: {error}")))
+        } else {
+            self.runtime.block_on(async {
+                let cancel = pack.deadline.work_cancel();
+                tokio::select! {
+                    biased;
+                    () = cancel.cancelled() => Err(failed("the seat call was cancelled")),
+                    answer = self.seat.ask_pack(
+                        request, permit.lease(), pack.deadline.decision_time_left(),
+                    ) => answer.map_err(|error| failed(&format!("the seat failed: {error}"))),
+                }
+            })
+        };
+        let settled = match &asked {
+            Ok(answer) => permit.settle(CallOutcome::Answered(&answer.usage)),
+            Err(_) => permit.settle(CallOutcome::Failed),
+        };
+        settled.map_err(|_| failed("settlement refused"))?;
+        let answer = asked?;
+        for (index, answer) in indices.into_iter().zip(answer.answers) {
+            let decision = match answer {
+                Ok(answer) => {
+                    let abstained = answer.answer == DecisionAnswer::Abstain;
+                    ProviderDecision {
+                        answer: answer.answer,
+                        probability: (!abstained).then_some(answer.probability),
+                        paired: None,
+                        person: None,
+                        served: None,
+                        cost_per_thousand: None,
+                    }
+                }
+                Err(_) => abstain(),
+            };
+            decisions[index] = decision;
+        }
+        Ok(decisions)
+    }
 }
 
 impl SystemOneRung {
@@ -328,11 +472,18 @@ impl SystemOneRung {
         if call.deadline.decision_time_left().is_zero() {
             return Err(failed("admitted after the work time"));
         }
-        let asked = self.runtime.block_on(self.seat.ask(
-            request,
-            permit.lease(),
-            call.deadline.decision_time_left(),
-        ));
+        let asked = self.runtime.block_on(async {
+            let cancel = call.deadline.work_cancel();
+            tokio::select! {
+                biased;
+                () = cancel.cancelled() => Err(failed("the seat call was cancelled")),
+                result = self.seat.ask(
+                    request,
+                    permit.lease(),
+                    call.deadline.decision_time_left(),
+                ) => result.map_err(|error| failed(&format!("the seat failed: {error}"))),
+            }
+        });
         let answer = match asked {
             Ok(answer) => {
                 permit
@@ -341,11 +492,11 @@ impl SystemOneRung {
                 answer
             }
             Err(error) => {
-                // The seat may still bill a failed call.
+                // The seat may still bill a failed or cancelled call.
                 permit
                     .settle(CallOutcome::Failed)
                     .map_err(|_| failed("settlement refused"))?;
-                return Err(failed(&format!("the seat failed: {error}")));
+                return Err(error);
             }
         };
         let abstained = answer.answer == DecisionAnswer::Abstain;

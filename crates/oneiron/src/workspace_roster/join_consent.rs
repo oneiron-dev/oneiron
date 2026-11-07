@@ -126,7 +126,7 @@ pub enum SpendConsent {
 pub enum MembershipConsent {
     /// The owner of a personal vault.
     VaultOwner { person: EntityId },
-    /// A live roster grant in a shared vault.
+    /// A live roster grant in a shared vault, a Delegate's included.
     Member { person: EntityId, grant: EntityId },
     /// A companion attends through its principal's membership. `grant` is
     /// `None` when the principal owns a personal vault.
@@ -617,7 +617,9 @@ enum PersonStanding {
 }
 
 /// A person's live standing: a grant in a shared vault, or the owner of a
-/// personal one.
+/// personal one. A live Delegate grant over the vault is a roster grant here
+/// (FIX 8738): the Delegate joins, and its companion attends, on it. The
+/// grant stays its own read scope, expiry and one hop; a join changes none.
 fn person_standing_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
