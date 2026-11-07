@@ -63,6 +63,7 @@ pub(super) async fn facade_call_receipt(
     // OF-568: what the call reads, captured before it runs. OF-568 L4: the
     // attempt whose live run it holds, as the hold witnessed it.
     let inputs = call_receipt::action_inputs(&server, &verb, request.as_ref());
+    super::secret_body::retain_request_digest(&mut parts.extensions, &request_digest);
     // FIX 10938: a row an action runs in process runs inside its own hold.
     let outer = parts
         .extensions
