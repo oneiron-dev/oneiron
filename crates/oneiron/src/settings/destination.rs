@@ -460,6 +460,32 @@ impl Vault {
         rows: &[EntityId],
         destination: &ReadDestination,
     ) -> Result<Option<ReleaseHold>> {
+        self.release_hold_judged(rows, destination, false)
+    }
+
+    /// [`Self::release_hold_for`] for the owner's own whole-vault export
+    /// (owner ruling 1-EXPORT = B), whose release mode its door chose from
+    /// its trusted route and the owner's fresh proof: his recipient choice
+    /// keeps none of its rows from where it goes, so a row a withheld world
+    /// keeps by that choice alone goes, and every row after it is judged
+    /// on. Every integrity hold still keeps the rows here: a row whose world
+    /// cannot be placed, and a conflicted vault root.
+    pub fn owner_export_release_hold_for(
+        &self,
+        rows: &[EntityId],
+        destination: &ReadDestination,
+    ) -> Result<Option<ReleaseHold>> {
+        self.release_hold_judged(rows, destination, true)
+    }
+
+    /// The one release verdict of [`Self::release_hold_for`] and, with
+    /// `owner_export`, of [`Self::owner_export_release_hold_for`].
+    fn release_hold_judged(
+        &self,
+        rows: &[EntityId],
+        destination: &ReadDestination,
+        owner_export: bool,
+    ) -> Result<Option<ReleaseHold>> {
         if !destination.is_off_device() || rows.is_empty() {
             return Ok(None);
         }
@@ -477,8 +503,12 @@ impl Vault {
                 // Naming the reason never changes the verdict: a reason that
                 // cannot be read is an integrity hold.
                 Ok(true) => {
-                    let hold = row_hold(self, &txn, &view, &withheld, row, destination);
-                    return Ok(Some(hold.unwrap_or(ReleaseHold::Placement)));
+                    let hold = row_hold(self, &txn, &view, &withheld, row, destination)
+                        .unwrap_or(ReleaseHold::Placement);
+                    if owner_export && hold.is_owner_choice() {
+                        continue;
+                    }
+                    return Ok(Some(hold));
                 }
                 Err(Error::CorruptedIndex(_)) => return Ok(Some(ReleaseHold::Placement)),
                 Err(error) => return Err(error),

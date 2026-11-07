@@ -351,6 +351,7 @@ pub use recover_many::{
     VaultRecovered, VaultRecoveryOutcome, VaultRecoveryProof, VaultRecoveryStep, recover_vaults,
 };
 pub use slip::*;
+pub(crate) use slip_pairing::PendingInvitationLink;
 pub use slip_pairing::{
     PairingDescriptor, PairingLink, PairingPinRef, PairingPrincipal, PairingRedeemed,
     format_pairing_link, format_pinned_pairing_link, machine_possession_transcript,
@@ -373,7 +374,7 @@ pub use support_grant::{
     SupportGrantRevoked, SupportGrantRow, SupportGrantStatus, SupportHolderClass,
 };
 pub use task_actor::AdmittedTaskGrant;
-pub(crate) use task_actor::{RunnerLease, TaskActorProof, TaskActorVerb};
+pub(crate) use task_actor::{RunnerLease, TaskActorProof, TaskActorVerb, TaskGrantStanding};
 pub use valid_entries::{EntryHashSet, ValidEntries};
 pub use vault_api::AuthorityEntryStatus;
 pub use weave_admin::{

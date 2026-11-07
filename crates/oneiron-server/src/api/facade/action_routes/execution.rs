@@ -250,8 +250,7 @@ async fn off_the_hook_pool<R: Send + 'static>(
 ) -> Result<R, FacadeApiError> {
     let runtime = tokio::runtime::Handle::current();
     let (sender, receiver) = tokio::sync::oneshot::channel();
-    std::thread::Builder::new()
-        .name("oneiron-action".to_owned())
+    crate::engine_thread("oneiron-action".to_owned())
         .spawn(move || {
             let _entered = runtime.enter();
             let _ = sender.send(driver());

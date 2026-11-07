@@ -28,10 +28,11 @@ pub(crate) use destination::{
 };
 pub(crate) use device_local::{
     device_local_keeps_among, device_local_worlds_at, device_local_worlds_for,
-    device_local_worlds_for_machine,
+    device_local_worlds_for_machine, off_device_readable_in,
 };
 pub(crate) use device_only::{
-    CarriedWorlds, carried_worlds_in, device_only_withholds, device_only_withholds_raw,
+    CarriedWorlds, carried_worlds_in, device_only_recipient_worlds,
+    device_only_recipient_worlds_raw, device_only_withholds, device_only_withholds_raw,
     minted_worlds_in,
 };
 

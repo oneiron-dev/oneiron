@@ -291,7 +291,19 @@ pub(crate) async fn execute_mcp_generated_verb(
     )
     .await;
     let rows = snapshot.rows.as_deref();
-    let result = mcp_release_listed(server, actor, rows, continued, result).map(|result| {
+    // The owner's own whole-vault export, as this call's route and his fresh
+    // proof name it, is released as his will (owner ruling 1-EXPORT = B).
+    let owner_whole_vault_export =
+        super::device_release::owner_whole_vault_export_call(server, actor, args.tool.name);
+    let result = mcp_release_listed(
+        server,
+        actor,
+        rows,
+        continued,
+        result,
+        owner_whole_vault_export,
+    )
+    .map(|result| {
         super::type_feedback_release::attach_verb_feedback(server, actor, rows, feedback, result)
     });
     if result.is_ok()
@@ -565,7 +577,7 @@ fn mcp_hook_stop_result(
         "structuredContent": structured,
         "isError": true,
     });
-    mcp_release_listed(server, actor, served.as_deref(), false, result)
+    mcp_release_listed(server, actor, served.as_deref(), false, result, false)
 }
 
 /// Every structured refusal states the same four things: the machine code, the
@@ -839,23 +851,36 @@ async fn mcp_off_runtime_row<T: Send + 'static>(
 /// The proof a direct MCP caller's own request binds for `tool`, as the
 /// HTTP facade binds it outside a room turn: the work-companion setting
 /// takes the person's own proof (OF-417), an attendee ask's answer the
-/// owner's own authorship (OF-365). Every other row binds none here, and a
-/// code-mode call's host origin suppresses either in the engine.
+/// owner's own authorship (OF-365), and the owner's own `vault.delete` his
+/// authorship and this host's slip issuer, so deleting a Connect guest's
+/// PERSON withdraws its grants first (FIX 3875, 5317). Every other row binds
+/// none here, and a code-mode call's host origin suppresses either in the
+/// engine.
 fn mcp_direct_authorship<'a>(
-    server: &SyncServer,
+    server: &'a SyncServer,
     tool: &str,
     actor: &McpCallContext,
     memory: oneiron::Memory<'a>,
 ) -> Result<oneiron::Memory<'a>, McpGatewayError> {
-    if !matches!(tool, "vault.workspace.work_companion.set" | "tasks.answer") {
+    if !matches!(
+        tool,
+        "vault.workspace.work_companion.set" | "tasks.answer" | "vault.delete"
+    ) {
         return Ok(memory);
     }
     let Some(auth) = actor.auth.as_ref() else {
         return Ok(memory);
     };
+    let Some(owner) =
+        crate::api::facade::direct_authorship(auth, server, tool).map_err(mcp_api_error)?
+    else {
+        return Ok(memory);
+    };
+    let memory = memory.with_owner_authorship(&owner);
+    // With no host key the delete runs as before (FIX 3875).
     Ok(
-        match crate::api::facade::direct_authorship(auth, server, tool).map_err(mcp_api_error)? {
-            Some(owner) => memory.with_owner_authorship(&owner),
+        match server.host_issuer().filter(|_| tool == "vault.delete") {
+            Some(issuer) => memory.with_host_slip_issuer(issuer),
             None => memory,
         },
     )

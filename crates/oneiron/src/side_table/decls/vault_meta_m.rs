@@ -81,6 +81,9 @@ side_tables! {
     /// the signed slip out of a Retry seed's action its erased requester asked.
     MESSAGE_STREAM_ACTIVE: VaultMeta b"message_stream:v1:" Named
         => crate::memory::scrub_stream_seed_actor_in_txn;
+    /// The stream generations an erase dropped, so a resident stream of one reads as gone once
+    /// the erase commits (FIX 9973). Key: hex32(message id) ":" hex32(generation).
+    MESSAGE_STREAM_ERASED: VaultMeta b"message_stream_erased:v1:" Raw;
     /// Vault default message-streaming policy. Key: ().
     MESSAGE_STREAM_POLICY: VaultMeta b"message_stream_policy:v1" Named;
     /// Latest terminal stream receipt of a message. Key: id16.

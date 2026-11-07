@@ -16,6 +16,11 @@ use serde::de::DeserializeOwned;
 /// Bytes of base64 text a [`Base64FileSink`] holds before it decodes them.
 const BASE64_PIECE: usize = 64 * 1024;
 
+/// A pending base64 piece plus one maximum JSON-reader run.
+pub(super) const BASE64_TEXT_BUFFER_BYTES: usize = BASE64_PIECE + super::SPOOL_PIECE;
+/// Space for every decoded quad in that text, including its final padded quad.
+pub(super) const BASE64_DECODE_BUFFER_BYTES: usize = BASE64_TEXT_BUFFER_BYTES.div_ceil(4) * 3;
+
 /// The document is not one JSON object its route reads.
 #[derive(Debug)]
 pub(in crate::api) struct JsonInvalid;
@@ -514,15 +519,24 @@ impl StringSink for TextFileSink {
 pub(in crate::api) struct Base64FileSink {
     file: File,
     text: Vec<u8>,
+    decoded: Vec<u8>,
     len: u64,
     refusal: Option<SinkRefusal>,
 }
 
 impl Base64FileSink {
-    pub(in crate::api) fn new(file: File) -> Self {
+    pub(in crate::api) fn new_admitted(
+        file: File,
+        memory: &mut crate::machine::MemoryLease,
+    ) -> Self {
+        let text = Vec::with_capacity(BASE64_TEXT_BUFFER_BYTES);
+        memory.materialized(BASE64_TEXT_BUFFER_BYTES as u64, text.capacity() as u64);
+        let decoded = vec![0; BASE64_DECODE_BUFFER_BYTES];
+        memory.materialized(BASE64_DECODE_BUFFER_BYTES as u64, decoded.capacity() as u64);
         Self {
             file,
-            text: Vec::new(),
+            text,
+            decoded,
             len: 0,
             refusal: None,
         }
@@ -549,11 +563,13 @@ impl Base64FileSink {
             self.refusal = Some(SinkRefusal::NotBase64);
             return false;
         }
-        let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(text) else {
+        let Ok(decoded) =
+            base64::engine::general_purpose::STANDARD.decode_slice(text, &mut self.decoded)
+        else {
             self.refusal = Some(SinkRefusal::NotBase64);
             return false;
         };
-        if let Err(error) = self.file.write_all(&bytes) {
+        if let Err(error) = self.file.write_all(&self.decoded[..decoded]) {
             self.refusal = Some(if error.kind() == io::ErrorKind::StorageFull {
                 SinkRefusal::NoRoom
             } else {
@@ -561,7 +577,7 @@ impl Base64FileSink {
             });
             return false;
         }
-        self.len = self.len.saturating_add(bytes.len() as u64);
+        self.len = self.len.saturating_add(decoded as u64);
         self.text.drain(..text_len);
         true
     }

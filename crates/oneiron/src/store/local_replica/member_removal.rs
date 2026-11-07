@@ -27,11 +27,16 @@ use crate::temporal::TimeRange;
 /// `ids` it removes, before their rows go (FIX 14534, Engine 11-06 08:34
 /// call 4 = A): each one's entity document and typed body, a NOTE's text,
 /// pending slots, review workflow (proposal snapshots, waiting forks) and
-/// kept deck outline, a BLOB_ARTIFACT's deck creation record and retained
-/// edit proposals, a CLAIM's Gate decisions (left as their retention
-/// skeletons) and pending Gate tray row, and its fetched read caches. Local
-/// only: no receipt, marker or operation. Bodies and files, blob versions,
-/// custody and other lifecycle sidecars stay for now.
+/// kept deck outline, the born-with prose a copy carried and its own derived
+/// index copy, the recognition prints enrolled for it, a BLOB_ARTIFACT's
+/// deck creation record, retained edit proposals, version chain, byte holds
+/// and its exports' shown author and adaptation lines, the quotes its
+/// Unattached comments keep of their spots, an ASSET's hold on
+/// the blob it names, a CLAIM's Gate decisions (left as their retention
+/// skeletons) and pending Gate tray row, the bodies each one owns (a last
+/// holder's file goes to the local collector) and its fetched read caches.
+/// Local only: no receipt, marker, fence or operation. Custody and other
+/// lifecycle sidecars stay for now.
 pub(super) fn discard_owned_payload(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -40,6 +45,7 @@ pub(super) fn discard_owned_payload(
     let mut notes = BTreeSet::new();
     let mut claims = BTreeSet::new();
     let mut artifacts = Vec::new();
+    let mut assets = Vec::new();
     for id in ids {
         let kind = store
             .port_entity_raw(txn, id)?
@@ -52,6 +58,7 @@ pub(super) fn discard_owned_payload(
                 claims.insert(*id);
             }
             Some(registry::ENTITY_TYPE_BLOB_ARTIFACT) => artifacts.push(*id),
+            Some(registry::ENTITY_TYPE_ASSET) => assets.push(*id),
             _ => {}
         }
     }
@@ -62,12 +69,31 @@ pub(super) fn discard_owned_payload(
     crate::note::discard_workflow_in_txn(store, txn, &notes)?;
     for id in ids {
         crate::typed_body::discard_local_payload_in_txn(store, txn, id)?;
+        // The born-with prose a copy carried for it, and its own derived
+        // index copy (the copies derived from it stay with their owners).
+        crate::sync::selector::erase_carried_born_with_in_txn(store, txn, id)?;
+        crate::embed::discard_repo_derived_index_copy_in_txn(store, txn, id)?;
+        crate::voice_identity::discard_print_payload_in_txn(store, txn, id)?;
     }
     for id in notes.iter().chain(&artifacts) {
         crate::edit_roundtrip::deck_create::discard_payload_in_txn(store, txn, id)?;
     }
     for artifact in &artifacts {
         crate::edit_settle::purge_artifact_retention_in_txn(store, txn, artifact)?;
+        // Its settlements' words (their history stays) and answer withdrawals.
+        crate::edit_settle::discard_settle_payload_in_txn(store, txn, artifact)?;
+        crate::blob_artifact::discard_local_copy_in_txn(store, txn, artifact)?;
+        crate::office_body::discard_export_payload_in_txn(store, txn, artifact)?;
+        crate::anchored_annotation::discard_snapshot_payload_in_txn(store, txn, artifact)?;
+    }
+    // An ASSET's body is read for the blob it names while its descriptor
+    // still stands; the descriptors go after.
+    for asset in &assets {
+        crate::memory::discard_asset_blob_reference_in_txn(store, txn, asset)?;
+        crate::sync::asset_body::home_proof::forget_in_txn(store, txn, *asset)?;
+    }
+    for id in ids {
+        crate::provenance::body::release_owner_bodies_in_txn(store, txn, id)?;
     }
     store.discard_claim_gate_payload_in_txn(txn, &claims, store.clock.now_recorded_at())?;
     for claim in &claims {
@@ -91,6 +117,35 @@ pub(crate) fn discard_bundle_payload_in_txn(
 ) -> Result<()> {
     store.discard_claim_gate_payload_in_txn(txn, discarded, store.clock.now_recorded_at())?;
     crate::note::discard_bundle_explainers_in_txn(store, txn, discarded)
+}
+
+/// The content-addressed byte carriers among `order` whose bytes a holder
+/// outside it still reads: an artifact's version chain or claim, or a
+/// reference ASSET's `asset_ref` (FIX 14534, Engine 11-06 08:34 call 1 = A:
+/// shared stays). A holder held or kept for any reason is outside it. The
+/// holders inside it let go of the bytes in this same write.
+pub(super) fn shared_carriers(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    order: &[EntityId],
+) -> Result<BTreeSet<EntityId>> {
+    let gone: BTreeSet<EntityId> = order.iter().copied().collect();
+    let mut shared = BTreeSet::new();
+    for id in order {
+        let Some(raw) = store.port_entity_raw(txn, id)? else {
+            continue;
+        };
+        let Some(hash) = crate::blob_artifact::carrier_content_hash(store, txn, id, &raw)? else {
+            continue;
+        };
+        if crate::blob_artifact::content_holders_in_txn(store, txn, &hash)?
+            .iter()
+            .any(|holder| holder != id && !gone.contains(holder))
+        {
+            shared.insert(*id);
+        }
+    }
+    Ok(shared)
 }
 
 /// Tears one member's local rows. Every step is a local index or projection

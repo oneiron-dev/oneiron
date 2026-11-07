@@ -24,6 +24,16 @@ impl BodySpool {
             .lease_untimed(SPOOL_PIECE as u64, &|| self.stopped.load(Ordering::Relaxed))
     }
 
+    /// Admits the sealed object's reader, base64 text and decoded output
+    /// together, before any buffer allocates or holds a partial lease.
+    pub(in crate::api) fn admit_sealed_decode_buffers(&self) -> Result<MemoryLease, MemoryRefusal> {
+        let bytes = SPOOL_PIECE
+            + super::json::BASE64_TEXT_BUFFER_BYTES
+            + super::json::BASE64_DECODE_BUFFER_BYTES;
+        MachineMemory::process()
+            .lease_untimed(bytes as u64, &|| self.stopped.load(Ordering::Relaxed))
+    }
+
     /// Admits one text sink and one JSON reader before either allocates.
     /// Schema-name matching uses the caller's fixed-size stack array;
     /// native proposal decoding is separate.
@@ -51,6 +61,18 @@ pub(in crate::api) fn reader_memory_refused(refusal: MemoryRefusal) -> crate::er
     match refusal {
         MemoryRefusal::Floor { .. } => crate::error::ApiError::internal_server_error(
             "this machine cannot allocate the request body's spool reader buffer",
+        ),
+        MemoryRefusal::WaitedOut { .. } => super::not_whole(),
+    }
+}
+
+/// The combined sealed-reader working buffers keep memory's own response.
+pub(in crate::api) fn sealed_decode_memory_refused(
+    refusal: MemoryRefusal,
+) -> crate::error::ApiError {
+    match refusal {
+        MemoryRefusal::Floor { .. } => crate::error::ApiError::internal_server_error(
+            "this machine cannot allocate the custody request's decode buffers",
         ),
         MemoryRefusal::WaitedOut { .. } => super::not_whole(),
     }

@@ -42,6 +42,10 @@ impl EngineNativeExecutor<'_> {
         };
         let mut window = Vec::new();
         let mut pins: Vec<String> = Vec::new();
+        // The agent's own literal pins are as mandatory as failure lines
+        // (FIX 9837): a step that brings one the summary or the backend
+        // cannot take ends the window before it, as a failure line does.
+        let literals = driver.memory_profile().verbatim_pins.clone();
         // Two counts kept by parts, each part counted once: the pins as the
         // summary holds them, a line each, and the rendered input. Parts run
         // a token or so over their joined whole, so a count past its bound is
@@ -68,16 +72,18 @@ impl EngineNativeExecutor<'_> {
                     COMPACTION_OBSERVATION_WINDOW_BYTES,
                 )?,
             );
-            // A line several steps fail with is one pin, kept once.
-            let pin = crate::engine_executor::compaction::failure_pin(&message.content)
-                .filter(|pin| !pins.contains(pin));
+            // A line several steps fail with, or a profile pin several steps
+            // hold, is one pin, kept once.
+            let brought =
+                crate::engine_executor::compaction::step_pins(&message.content, &literals, &pins);
             let mut added = crate::compaction::compaction_step_input_tokens(&message);
-            if let Some(pin) = &pin {
+            for pin in &brought {
                 pin_lines = pin_lines.saturating_add(count_context_pack_tokens(pin) as u64 + 1);
                 added = added.saturating_add(crate::compaction::compaction_pin_input_tokens(pin));
             }
-            let pinned = pin.is_some();
-            pins.extend(pin);
+            let pinned = !brought.is_empty();
+            let before = pins.len();
+            pins.extend(brought);
             window.push(message);
             // The summary holds every pin whole, inside its budget.
             if pinned && pin_lines > budget {
@@ -104,13 +110,11 @@ impl EngineNativeExecutor<'_> {
             }
             if !fits {
                 window.pop();
-                if pinned {
-                    pins.pop();
-                }
+                pins.truncate(before);
                 if window.is_empty() {
                     return Err(if unpinnable {
                         crate::Error::InvalidConfig(
-                            "the next step's failure line does not fit a summary".into(),
+                            "the next step's pinned lines do not fit a summary".into(),
                         )
                     } else {
                         oversized()
@@ -136,7 +140,7 @@ impl EngineNativeExecutor<'_> {
             if window.is_empty() {
                 return Err(oversized().into());
             }
-            pins = crate::engine_executor::compaction::window_pins(&window);
+            pins = crate::engine_executor::compaction::window_pins(&window, &literals);
         }
         let fits = |pins: &[String]| {
             count_context_pack_tokens(&pins.join("\n")) as u64 <= budget
@@ -150,12 +154,6 @@ impl EngineNativeExecutor<'_> {
                     ) <= room
                 })
         };
-        crate::engine_executor::compaction::add_profile_pins(
-            &mut pins,
-            &window,
-            &driver.memory_profile().verbatim_pins,
-            &fits,
-        );
         // A run bound to a room runs no hooks: their receipts would land on
         // record.
         let hooks = match &self.storage {

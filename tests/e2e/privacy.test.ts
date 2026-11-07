@@ -90,11 +90,13 @@ async function uploadVersions(
     name, media_type: "text/plain", occurred_at,
   });
   for (const [index, bytes] of versions.entries()) {
-    const version = await client.call("vault.artifacts.append", {
+    const outcome = await client.call("vault.artifacts.append", {
       artifact_ref: record.id_hex,
       content_base64: Buffer.from(bytes).toString("base64"),
       occurred_at,
     });
+    if (!("landed" in outcome)) throw new Error(`Append proposed, expected landed (proposal ${outcome.proposed.proposal_ref})`);
+    const version = outcome.landed;
     expect(version.version).toBe(index + 1);
     // Standard hashing of fixture bytes, not an engine-generated answer.
     expect(version.content_hash_hex).toBe(Buffer.from(blake3(bytes)).toString("hex"));
@@ -468,6 +470,10 @@ async function expectReferenceGone(client: PublicHttpClient, reference: string, 
   }
 }
 
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 // PRIVACY-01. The real extraction response mints eligible PERSON records;
 // ordinary owner-created PERSONs have no extraction provenance and are not candidates.
 suite.test(test, "PRIVACY-01", "Archive restoration without erasure should work", async () => {
@@ -488,6 +494,8 @@ suite.test(test, "PRIVACY-01", "Archive restoration without erasure should work"
       { inputTokens: 128, outputTokens: 64 }),
   }] });
   let engine: EngineFixture | undefined;
+  let primaryFailed: boolean = false;
+  let primary: unknown;
   try {
     engine = await EngineFixture.start({ id: "PRIVACY-01", profile, serverConfig: dreamerConfig(providers) });
     await grantExtraction(engine);
@@ -570,8 +578,18 @@ suite.test(test, "PRIVACY-01", "Archive restoration without erasure should work"
     expect(receipts.filter(row => /delete|erase/i.test([row.kind, row.outcome, ...row.reason_codes].join(" "))))
       .toEqual([]);
     expect(providers.seenFixtureCalls).toHaveLength(1);
+  } catch (error) {
+    primaryFailed = true;
+    primary = error;
   } finally {
-    try { await engine?.close(); } finally { await providers.close(); }
+    const cleanups: string[] = [];
+    try { await engine?.close(); } catch (error) { cleanups.push(errorText(error)); }
+    try { await providers.close(); } catch (error) { cleanups.push(errorText(error)); }
+    if (primaryFailed) {
+      if (cleanups.length) throw new Error(`${errorText(primary)}; cleanup: ${cleanups.join("; ")}`);
+      throw primary;
+    }
+    if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
   }
 });
 
@@ -605,6 +623,8 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
       { inputTokens: 128, outputTokens: 48 }),
   }] });
   let engine: EngineFixture | undefined;
+  let primaryFailed: boolean = false;
+  let primary: unknown;
   try {
     engine = await EngineFixture.start({ id: "PRIVACY-02", profile,
       initArgs: ["--dimensions", String(spec.vectorTable.dimensions)], serverConfig: dreamerConfig(providers, true) });
@@ -771,8 +791,18 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
     await finishHistoricalSweep(engine);
     expect(providers.seenFixtureCalls.filter(call => call.fixtureId === "source-claim")).toHaveLength(1);
     expect(providers.seenFixtureCalls.filter(call => call.fixtureId === "source-summary")).toHaveLength(1);
+  } catch (error) {
+    primaryFailed = true;
+    primary = error;
   } finally {
-    try { await engine?.close(); } finally { await providers.close(); }
+    const cleanups: string[] = [];
+    try { await engine?.close(); } catch (error) { cleanups.push(errorText(error)); }
+    try { await providers.close(); } catch (error) { cleanups.push(errorText(error)); }
+    if (primaryFailed) {
+      if (cleanups.length) throw new Error(`${errorText(primary)}; cleanup: ${cleanups.join("; ")}`);
+      throw primary;
+    }
+    if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
   }
 });
 
@@ -793,6 +823,8 @@ suite.test(test, "PRIVACY-04", "Shared blobs survive one record erasure should w
   const versions = await Promise.all(data.sharedBlobs.versions.map(id => catalog.readArchive(id)));
   for (const bytes of versions) redactor.add(new TextDecoder().decode(bytes));
   const engine = await EngineFixture.start({ id: "PRIVACY-04", profile });
+  let primaryFailed: boolean = false;
+  let primary: unknown;
   try {
     await engine.requireHttpDoor("/v1/owner/maintain", "POST");
     // Two independent records upload both versions, not an alias of A's handle.
@@ -835,8 +867,17 @@ suite.test(test, "PRIVACY-04", "Shared blobs survive one record erasure should w
         await expectBlobGone(engine.client, record.id_hex, index + 1);
       }
     }
+  } catch (error) {
+    primaryFailed = true;
+    primary = error;
   } finally {
-    await engine.close();
+    const cleanups: string[] = [];
+    try { await engine.close(); } catch (error) { cleanups.push(errorText(error)); }
+    if (primaryFailed) {
+      if (cleanups.length) throw new Error(`${errorText(primary)}; cleanup: ${cleanups.join("; ")}`);
+      throw primary;
+    }
+    if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
   }
 });
 
@@ -847,6 +888,8 @@ suite.test(test, "PRIVACY-05", "Legal hold narrows delete should work", async ()
   const bytes = await catalog.readArchive("privacy-blob-v1");
   redactor.add(new TextDecoder().decode(bytes));
   const engine = await EngineFixture.start({ id: "PRIVACY-05", profile });
+  let primaryFailed: boolean = false;
+  let primary: unknown;
   try {
     const record = await uploadVersions(engine.client, spec.name, [bytes]);
     const hold = await engine.client.call("vault.legal_holds.place", {
@@ -924,8 +967,17 @@ suite.test(test, "PRIVACY-05", "Legal hold narrows delete should work", async ()
     if (status.state !== "erased") throw new Error("Owner confirm did not erase the held record");
     await readAudit(engine.client, status.receipt_ref, record.id_hex,
       [spec.name, new TextDecoder().decode(bytes)]);
+  } catch (error) {
+    primaryFailed = true;
+    primary = error;
   } finally {
-    await engine.close();
+    const cleanups: string[] = [];
+    try { await engine.close(); } catch (error) { cleanups.push(errorText(error)); }
+    if (primaryFailed) {
+      if (cleanups.length) throw new Error(`${errorText(primary)}; cleanup: ${cleanups.join("; ")}`);
+      throw primary;
+    }
+    if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
   }
 });
 
@@ -991,6 +1043,8 @@ suite.test(test, "PRIVACY-08", "Anonymous chat has no memory should work", async
     })),
   });
   let engine: EngineFixture | undefined;
+  let primaryFailed: boolean = false;
+  let primary: unknown;
   try {
     engine = await EngineFixture.start({ id: "PRIVACY-08", profile, serverConfig: `
 [models.providers.privacy]
@@ -1092,7 +1146,17 @@ enabled = false
     expect(await allReceipts(engine.client)).toEqual(beforeRestartReceipts);
     expect(await engine.client.call("vault.retrieval.runs", { limit: 100 })).toEqual(beforeRestartTelemetry);
     await memoryAndExport();
+  } catch (error) {
+    primaryFailed = true;
+    primary = error;
   } finally {
-    try { await engine?.close(); } finally { await providers.close(); }
+    const cleanups: string[] = [];
+    try { await engine?.close(); } catch (error) { cleanups.push(errorText(error)); }
+    try { await providers.close(); } catch (error) { cleanups.push(errorText(error)); }
+    if (primaryFailed) {
+      if (cleanups.length) throw new Error(`${errorText(primary)}; cleanup: ${cleanups.join("; ")}`);
+      throw primary;
+    }
+    if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
   }
 });

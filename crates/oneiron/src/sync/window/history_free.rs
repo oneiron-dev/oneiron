@@ -35,12 +35,14 @@ use super::egress::{
     history_free_window_required, scrub_local_claim_carriers, scrub_local_only_carriers,
     scrub_redacted_attribution_carriers, scrub_withdrawn_delete_carriers,
 };
+use super::erased_origin::ErasedOrigin;
 use super::reverse::{is_delegated_channel_identity_carrier, is_unsyncable_secret_custody};
 use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::deletion::WithdrawnCutoff;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError, SyncProtocolValidation};
+use crate::origin::actor_erase::origin_claim_row;
 
 /// What a full-window version-vector export sends.
 #[derive(Debug)]
@@ -97,6 +99,10 @@ pub(crate) struct HistoryCheck {
     /// body of it or older that is not that replacement's content-free form never ships, live or
     /// in history.
     withdrawn: BTreeMap<EntityId, WithdrawnCutoff>,
+    /// The origin CLAIM revisions that name an actor this vault erased, or whose erased form the
+    /// window or this vault holds: none ships, live or in history, and a live one is rewritten to
+    /// its erased form before the window persists (FIX 21141).
+    erased_origin: ErasedOrigin,
 }
 
 impl HistoryCheck {
@@ -134,12 +140,17 @@ impl HistoryCheck {
         }
         let mut pad_worlds = BTreeSet::new();
         let mut receipt_actors = BTreeSet::new();
-        map_for_each_value_bytes(&doc.get_map("entities"), |_, blob| {
+        let mut live_origin = BTreeMap::new();
+        let mut origin_revisions = Vec::new();
+        map_for_each_value_bytes(&doc.get_map("entities"), |entity_key, blob| {
             if let Some(Ok(world)) = blob.and_then(crate::world_keys::pad_body_world) {
                 pad_worlds.insert(world);
             }
             if let Some(actor) = blob.and_then(section_fit_actor) {
                 receipt_actors.insert(actor);
+            }
+            if let Some(blob) = blob.filter(|blob| origin_claim_row(blob).is_some()) {
+                live_origin.insert(entity_key.to_owned(), blob.to_vec());
             }
         });
         let entities_root = ContainerID::new_root("entities", ContainerType::Map);
@@ -151,8 +162,8 @@ impl HistoryCheck {
         {
             if op.container == entities_root
                 && let JsonOpContent::Map(MapOp::Insert {
+                    key: entity_key,
                     value: LoroValue::Binary(blob),
-                    ..
                 }) = &op.content
             {
                 if let Some(Ok(world)) = crate::world_keys::pad_body_world(blob) {
@@ -160,6 +171,9 @@ impl HistoryCheck {
                 }
                 if let Some(actor) = section_fit_actor(blob) {
                     receipt_actors.insert(actor);
+                }
+                if origin_claim_row(blob).is_some() {
+                    origin_revisions.push((entity_key.clone(), blob.to_vec()));
                 }
             }
         }
@@ -169,12 +183,15 @@ impl HistoryCheck {
         if !shallow_root.is_empty() {
             let at_root = doc.fork();
             if at_root.checkout(&shallow_root).is_ok() {
-                map_for_each_value_bytes(&at_root.get_map("entities"), |_, blob| {
+                map_for_each_value_bytes(&at_root.get_map("entities"), |entity_key, blob| {
                     if let Some(Ok(world)) = blob.and_then(crate::world_keys::pad_body_world) {
                         pad_worlds.insert(world);
                     }
                     if let Some(actor) = blob.and_then(section_fit_actor) {
                         receipt_actors.insert(actor);
+                    }
+                    if let Some(blob) = blob.filter(|blob| origin_claim_row(blob).is_some()) {
+                        origin_revisions.push((entity_key.to_owned(), blob.to_vec()));
                     }
                 });
             } else {
@@ -222,6 +239,7 @@ impl HistoryCheck {
             }
         }
         let withdrawn = crate::deletion::withdrawn_generation_cutoffs_in_txn(&vault.store, &rtxn)?;
+        let erased_origin = ErasedOrigin::read(vault, &rtxn, &live_origin, &origin_revisions)?;
         Ok(Self {
             redacted,
             erased,
@@ -229,6 +247,7 @@ impl HistoryCheck {
             retained_shells,
             late_pad_worlds,
             withdrawn,
+            erased_origin,
         })
     }
 
@@ -348,6 +367,7 @@ impl HistoryCheck {
                 .is_ok_and(|id| super::withdrawn::withdrawn_body(&self.withdrawn, &id, blob))
             || section_fit_actor(blob)
                 .is_some_and(|actor| self.erased_receipt_actors.contains(&actor))
+            || self.erased_origin.refuses(key, blob)
     }
 }
 
@@ -409,16 +429,18 @@ pub(crate) fn history_free_snapshot(
 
 /// The history-free snapshot a pinned window is persisted as: [`history_free_snapshot`] when a
 /// root passes `check`, else the strict cut at its newest operation (FIX 6520): a barrier merges
-/// its heads first, so no older root keeps history a scrub took out. Persistence never fails for
-/// want of a clean root or a proved cut: a cut an import raced is stored as before, and window
-/// `key` owes the erasure sweep a compaction. No export ships the stored root without checking it
-/// again.
+/// its heads first, so no older root keeps history a scrub took out. A live origin CLAIM carrier
+/// `check` refuses takes its erased form first, so neither keeps it (FIX 21141). Persistence never
+/// fails for want of a clean root or a proved cut: a cut an import raced is stored as before, and
+/// window `key` owes the erasure sweep a compaction. No export ships the stored root without
+/// checking it again.
 pub(crate) fn persisted_history_free_snapshot(
     vault: &Vault,
     key: &WindowKey,
     doc: &LoroDoc,
     check: &HistoryCheck,
 ) -> Result<Vec<u8>> {
+    check.erased_origin.rewrite_live(doc)?;
     match history_free_snapshot(doc, Some(check), None) {
         Err(Error::Sync(SyncError::SyncProtocolError {
             context: SyncProtocolValidation::HistoryFreeRootUnavailable,

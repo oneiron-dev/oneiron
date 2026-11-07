@@ -9,8 +9,11 @@
 //! section's packets continue.
 //! The mirror keeps its history: before each pack it takes the window's own
 //! deletes here, so a row deleted here leaves every mirror that merges it (FIX
-//! 3360). A section carries each mirror whole; taking one in merges it into the
-//! mirror as more of the same history and materializes the mirror's rows here.
+//! 3360). A mirror of a window pinned history-free, as an erased-actor scrub
+//! of the pack pins it, is stored and sealed with only the history the
+//! export check ships (FIX 19525, FIX 17210). A section carries each mirror
+//! whole; taking one in merges it into the mirror as more of the same history
+//! and materializes the mirror's rows here.
 //! The live window is not touched. A take of a mirror whose rows already
 //! landed at its version skips that pass (`content_landed`, FIX 5506).
 
@@ -237,9 +240,13 @@ impl WindowManager {
 
     /// The whole mirror of `window` of the private `world`, packed with every
     /// row of the window here, as one snapshot: what the world's section of the
-    /// sealed cloud bundle carries for the window (FIX 922). The mirror keeps
-    /// its history and first takes each delete [`SEALED_MIRROR_DELETE_SOURCE`]
-    /// names. Refused unless this machine may read the world now.
+    /// sealed cloud bundle carries for the window (FIX 922). The mirror first
+    /// takes each delete [`SEALED_MIRROR_DELETE_SOURCE`] names, and keeps its
+    /// history unless the window is pinned history-free: a scrub of the pack
+    /// that took out what names an erased actor pins it, and the operation it
+    /// replaced still names that actor. Such a mirror is stored and sealed
+    /// with only the history the export check ships (FIX 19525, FIX 17210).
+    /// Refused unless this machine may read the world now.
     pub(crate) fn sealed_mirror_snapshot(
         &self,
         world: EntityId,

@@ -1179,7 +1179,9 @@ agent's own harness (`sticky` with `why: "harness_compacts"`). Its
 `compaction_backend` names `code-mode-compaction` (the seat above) or a
 reasoning seat by its role's key (`checker`, `local_reasoner`,
 `generative_reasoner`); a key this host does not serve compacts on the seat
-above. Any other run uses the table above. A long run never outgrows one
+above. A saved agent definition with no `memory_profile` compacts as
+itself (`compaction_backend = "self"`, below) on this host's window (FIX
+7744). Any other run uses the table above. A long run never outgrows one
 summary's sources: each summary stands for the records the calls before it
 were served, so the next one names only the records served since.
 

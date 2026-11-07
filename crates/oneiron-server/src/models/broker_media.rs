@@ -31,10 +31,10 @@ use oneiron_llm_openai::{
 };
 
 use super::broker::{
-    BrokerSite, KeyDoor, REPLY_MARGIN, answered, call_with_key, call_with_key_released, join,
+    BrokerSite, KeyDoor, REPLY_MARGIN, answered, call_with_key, join, open_with_key_released,
 };
 use super::hosted_speech::{self, HostedWire};
-use super::http::{charge_read, is_cloud_node};
+use super::http::{charge_read, is_cloud_node, read_broker_booked};
 use crate::config::models::{ProviderConfig, ProviderKind};
 
 const JSON: &str = "application/json";
@@ -221,7 +221,7 @@ impl BrokerMedia {
             &body,
         );
         header.check(&body).map_err(|_| invalid())?;
-        let mut reply = call_with_key_released(
+        let stream = open_with_key_released(
             &self.client,
             &self.keys,
             &self.secret,
@@ -231,11 +231,9 @@ impl BrokerMedia {
             Some(lease),
         )
         .await?;
+        let (mut reply, _held) = read_broker_booked(stream).await?;
         let (status, headers) = answered(reply.outcome)?;
         let body = std::mem::take(&mut *reply.body);
-        // The broker hands the reply over whole: its bytes are charged on the
-        // media-reply line and held with the call it was read for (FIX 8615).
-        let _held = charge_read(body.len());
         Ok((
             status,
             headers

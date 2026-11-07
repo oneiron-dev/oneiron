@@ -591,7 +591,10 @@ impl ManagedState {
 /// Failure is logged and stepped over. A supervisor that has already died must
 /// not be able to hold this exit open.
 pub async fn final_ledger_push(state: &ManagedState, server: &SyncServer) {
-    let ledger = state.ledger();
+    final_ledger_push_from(state.ledger(), server).await;
+}
+
+pub(super) async fn final_ledger_push_from(ledger: &WakeLedger, server: &SyncServer) {
     match ledger.push_if_changed(server).await {
         Ok(accepted) => {
             tracing::info!(

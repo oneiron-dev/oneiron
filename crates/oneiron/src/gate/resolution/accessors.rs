@@ -109,11 +109,11 @@ impl PolicyManifestResolution {
         }
     }
 
-    /// Resolved restrictive cap, with vault cap and applicable artifact/sheet
+    /// Resolved answer-batch size, with vault and applicable artifact/sheet
     /// rows combined by minimum. Only trusted rows count: an untrusted row is
     /// a proposal until a holder authors it (FIX 8780). The holder may
-    /// request a smaller limit, never exceed the vault cap.
-    pub(crate) fn sheet_answer_limit(
+    /// request a smaller batch, never exceed the vault batch size.
+    pub(crate) fn sheet_answer_batch_size(
         &self,
         artifact_ref: &str,
         sheet: &str,

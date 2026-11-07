@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1265 facade rows, 4600 declarations.
-Inputs: 1195 of 1265 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1097 of 1265 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1267 facade rows, 4602 declarations.
+Inputs: 1197 of 1267 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1099 of 1267 fully typed, 168 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -3781,17 +3781,28 @@ class HolderExportRequest(TypedDict):
     secret: EntityId
     generation: int
     state: HolderExportState
+class WorldRecipientNotice(TypedDict):
+    notice_type: str
+    channel: str
+    voice: str
+    audience: str
+    world_ref: NotRequired[str | None]
+    world_name: NotRequired[str | None]
+    reason: str
+    body: str
 class MemoryExport(TypedDict):
     format: str
     archive: str
     digest: str
     holder_requests: NotRequired[list[HolderExportRequest]]
+    notices: NotRequired[list[WorldRecipientNotice]]
 class ExportTransfer(TypedDict):
     transfer_ref: str
     format: str
     bytes: int
     digest: str
     holder_requests: NotRequired[list[HolderExportRequest]]
+    notices: NotRequired[list[WorldRecipientNotice]]
 ExportAnswer = MemoryExport | ExportTransfer
 class ExportTransferReadRequest(TypedDict):
     transfer_ref: str
@@ -5606,15 +5617,6 @@ class PackSection(TypedDict):
     verbs: list[SectionVerbRef]
     authority_lane: AuthorityLaneRef
     budget_policy: BudgetPolicyRef
-class WorldRecipientNotice(TypedDict):
-    notice_type: str
-    channel: str
-    voice: str
-    audience: str
-    world_ref: NotRequired[str | None]
-    world_name: NotRequired[str | None]
-    reason: str
-    body: str
 class PackInstallReceipt(TypedDict):
     source_id: str
     pack_name: str
@@ -7341,19 +7343,20 @@ class SharedMemberAddRequest(TypedDict):
     vault_id: str
     member: str
     role: NotRequired[FederationGrantRole | None]
-    holder_key: NotRequired[str | None]
+class InvitationSlipRequest(TypedDict):
+    vault_id: str
+    invitation: str
 class InvitationSlip(TypedDict):
     slip_id: str
     slip: str
     expires_at: int
-class SharedMemberInvited(TypedDict):
-    receipt: SharedActExecutionReceipt
-    credential: NotRequired[InvitationSlip | None]
-class InvitationSlipRequest(TypedDict):
+class InvitationCodeRequest(TypedDict):
     vault_id: str
     member: str
     invitation: str
-    holder_key: str
+class InvitationCode(TypedDict):
+    code: str
+    expires_at: int
 class SharedMemberRoleRequest(TypedDict):
     vault_id: str
     member: str
@@ -11464,6 +11467,9 @@ class CodeRunSecretLiftDismissal(TypedDict):
 class CodeRunSecretLiftStatus(TypedDict):
     proposals: list[CodeRunSecretLiftProposalView]
     dismissed: NotRequired[CodeRunSecretLiftDismissal | None]
+class CodeRunRoomSecretLiftRequest(TypedDict):
+    room_ref: str
+    session_ref: str
 LiftCloseReason = Literal["not_a_secret", "rotated", "accepted", "read_clean", "answered", "deleted"]
 class SecretLiftClose(TypedDict):
     proposal: str

@@ -660,6 +660,35 @@ pub enum ClaimOutcome {
     Settled,
 }
 
+/// A place in a store's claim queue, just after one queued child: where a
+/// walk of the queue goes on from (FIX 9708). Cursors order as the queue
+/// does, by enqueue time, then task id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ReaderQueueCursor {
+    pub(crate) enqueued_at_ms: u64,
+    pub(crate) task: EntityId,
+}
+
+impl ReaderQueueCursor {
+    /// Just after `job` in its store's queue.
+    #[must_use]
+    pub const fn after(job: &ReaderJob) -> Self {
+        Self {
+            enqueued_at_ms: job.enqueued_at_ms,
+            task: job.task,
+        }
+    }
+}
+
+/// One page of a store's claim queue, oldest first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReaderQueuePage {
+    pub jobs: Vec<ReaderJob>,
+    /// Where the next page starts while queue rows follow this one; `None`
+    /// once the page reached the queue's end.
+    pub next: Option<ReaderQueueCursor>,
+}
+
 /// What the runner is told when a child is queued. It must not block or
 /// touch storage: it only notes the job, as a [`crate::limit_ask::LimitAsk`]
 /// port only notes a crossing.

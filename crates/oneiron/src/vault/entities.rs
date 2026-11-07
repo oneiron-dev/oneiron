@@ -728,7 +728,7 @@ impl Vault {
     }
 
     /// Transaction-composable body of [`Vault::get_entity_type`].
-    pub(crate) fn get_entity_type_in_txn(
+    pub fn get_entity_type_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
