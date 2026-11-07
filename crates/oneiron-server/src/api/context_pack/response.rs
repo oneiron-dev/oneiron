@@ -328,14 +328,15 @@ pub(crate) async fn run_context_pack_builder(
             core_engine_error("core context-pack scoped read failed", error)
         })?;
     // A MESSAGE carries its current reactions, read through the same scope
-    // and clamp.
-    scoped_read
+    // and clamp, and that read narrows the pack's receipt (FIX 8669).
+    let reactions = scoped_read
         .attach_reactions_under(&mut pack.value, disclosure.as_ref())
         .map_err(|error| {
             pack.discard_telemetry();
             tracing::error!(kind = ?error.kind(), "core context-pack reactions failed");
             core_engine_error("core context-pack reactions failed", error)
         })?;
+    narrowing.restrict_with(&reactions);
     apply_context_pack_response_limits(&mut pack, response_limits);
     let assembly = disclosure.as_ref().map(|ctx| ctx.assembly(clamped_out));
     // Keep provenance from the authorized snapshot: the JSON profile can
