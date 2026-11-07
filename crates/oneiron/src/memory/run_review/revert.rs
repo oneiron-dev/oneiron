@@ -94,6 +94,10 @@ impl Memory<'_> {
                     RunReviewChange::ExternalEffect { .. } | RunReviewChange::Erase { .. } => {
                         return Ok(Err(RunNotUndoneReason::OneWay));
                     }
+                    // Its author was erased since it landed (FIX 4727).
+                    _ if matches!(row.inverse, Some(RunInverse::AuthorErased)) => {
+                        return Ok(Err(RunNotUndoneReason::OneWay));
+                    }
                     RunReviewChange::Delete { entity_ref } => {
                         let hard = self.vault().store.port_deletion_marked(
                             txn,
@@ -253,6 +257,6 @@ fn compensate(
                 )),
             }
         }
-        None => Ok(None),
+        Some(RunInverse::AuthorErased) | None => Ok(None),
     }
 }
