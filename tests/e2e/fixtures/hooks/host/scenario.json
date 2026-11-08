@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "packName": "host",
+  "hookNames": {
+    "compact": "compact-pins",
+    "wake": "quiet-wake",
+    "budget": "budget-followup"
+  },
+  "conversationId": "c6170000000000000000000000000001",
+  "oldPin": "The amber buoy marks the north pier.",
+  "addedPin": "The tide bell rings twice at noon.",
+  "quietReason": "The fixture is in quiet hours.",
+  "pageBound": 256,
+  "tokenCeiling": 128,
+  "budget": {
+    "intentKey": "hooks06-budget-once",
+    "need": "Record the coastal watch handover.",
+    "prompt": "Complete the host fixture handover and retain the original accounting.",
+    "capUnits": 8000,
+    "inputTokens": 8192,
+    "outputTokens": 128,
+    "spentUnits": 8320,
+    "taskTitle": "Inspect the paused fixture budget"
+  },
+  "compactCases": [
+    {
+      "mode": "skip",
+      "turnNumber": 2,
+      "turnId": "c6170000000000000000000000000201",
+      "messageId": "c6170000000000000000000000000202",
+      "content": "[host-hook-case:skip]\nThe coastal crew reviewed a complete afternoon handover before the incoming host took responsibility for the port log. The chart table held a fresh route sketch, a berth assignment, a measured wind report, and a list of repairs completed during the morning watch. The amber buoy marks the north pier. Mira checked the bridge clock against the harbor clock and recorded that both clocks agreed. Theo placed a copper marker on the westbound channel and moved the paper tide table beside the lamp. The tide bell rings twice at noon. The dispatcher called the pilot station, confirmed the tug allocation, and recorded the name of the next watch officer. A small ferry passed the breakwater while a cargo vessel waited outside the outer buoy. The crew counted the lines on the dock, inspected the stern ladder, and checked that the loading gate was clear. The incoming officer read the weather page and repeated the two navigation notes before accepting the log. The final handover also covered the spare radio battery, the working compass, the bridge key, the engine room telephone, and the safety light beside the pier. These details belong to the original host window, not to the generated summary. They provide enough ordinary source material for a shorter, nondegenerate keyframe without changing the native compaction floor or the requested token ceiling.",
+      "tokens": 512,
+      "expectedPins": [
+        "The amber buoy marks the north pier."
+      ],
+      "expectedSummary": "The crew logged a calm coastal watch. The amber buoy marks the north pier. The dispatcher retained the chart review, the bridge handover, the measured wind, and the berth assignment for the next host turn."
+    },
+    {
+      "mode": "add",
+      "turnNumber": 3,
+      "turnId": "c6170000000000000000000000000301",
+      "messageId": "c6170000000000000000000000000302",
+      "content": "[host-hook-case:add]\nThe coastal crew reviewed a complete afternoon handover before the incoming host took responsibility for the port log. The chart table held a fresh route sketch, a berth assignment, a measured wind report, and a list of repairs completed during the morning watch. The amber buoy marks the north pier. Mira checked the bridge clock against the harbor clock and recorded that both clocks agreed. Theo placed a copper marker on the westbound channel and moved the paper tide table beside the lamp. The tide bell rings twice at noon. The dispatcher called the pilot station, confirmed the tug allocation, and recorded the name of the next watch officer. A small ferry passed the breakwater while a cargo vessel waited outside the outer buoy. The crew counted the lines on the dock, inspected the stern ladder, and checked that the loading gate was clear. The incoming officer read the weather page and repeated the two navigation notes before accepting the log. The final handover also covered the spare radio battery, the working compass, the bridge key, the engine room telephone, and the safety light beside the pier. These details belong to the original host window, not to the generated summary. They provide enough ordinary source material for a shorter, nondegenerate keyframe without changing the native compaction floor or the requested token ceiling.",
+      "tokens": 512,
+      "expectedPins": [
+        "The amber buoy marks the north pier.",
+        "The tide bell rings twice at noon."
+      ],
+      "expectedSummary": "The crew logged a calm coastal watch. The amber buoy marks the north pier. The tide bell rings twice at noon. The dispatcher retained the chart review, the bridge handover, the measured wind, and the berth assignment for the next host turn."
+    },
+    {
+      "mode": "remove",
+      "turnNumber": 4,
+      "turnId": "c6170000000000000000000000000401",
+      "messageId": "c6170000000000000000000000000402",
+      "content": "[host-hook-case:remove]\nThe coastal crew reviewed a complete afternoon handover before the incoming host took responsibility for the port log. The chart table held a fresh route sketch, a berth assignment, a measured wind report, and a list of repairs completed during the morning watch. The amber buoy marks the north pier. Mira checked the bridge clock against the harbor clock and recorded that both clocks agreed. Theo placed a copper marker on the westbound channel and moved the paper tide table beside the lamp. The tide bell rings twice at noon. The dispatcher called the pilot station, confirmed the tug allocation, and recorded the name of the next watch officer. A small ferry passed the breakwater while a cargo vessel waited outside the outer buoy. The crew counted the lines on the dock, inspected the stern ladder, and checked that the loading gate was clear. The incoming officer read the weather page and repeated the two navigation notes before accepting the log. The final handover also covered the spare radio battery, the working compass, the bridge key, the engine room telephone, and the safety light beside the pier. These details belong to the original host window, not to the generated summary. They provide enough ordinary source material for a shorter, nondegenerate keyframe without changing the native compaction floor or the requested token ceiling.",
+      "tokens": 512,
+      "expectedPins": [
+        "The amber buoy marks the north pier."
+      ],
+      "expectedSummary": "The crew logged a calm coastal watch. The amber buoy marks the north pier. The dispatcher retained the chart review, the bridge handover, the measured wind, and the berth assignment for the next host turn."
+    }
+  ],
+  "packFiles": {
+    "PACK.md": "hooks-host-PACK-md",
+    "hooks/compact-pins/HOOK.md": "hooks-host-hooks-compact-pins-HOOK-md",
+    "hooks/compact-pins/intent.md": "hooks-host-hooks-compact-pins-intent-md",
+    "hooks/compact-pins/body.js": "hooks-host-hooks-compact-pins-body-js",
+    "hooks/quiet-wake/HOOK.md": "hooks-host-hooks-quiet-wake-HOOK-md",
+    "hooks/quiet-wake/intent.md": "hooks-host-hooks-quiet-wake-intent-md",
+    "hooks/quiet-wake/body.js": "hooks-host-hooks-quiet-wake-body-js",
+    "hooks/budget-followup/HOOK.md": "hooks-host-hooks-budget-followup-HOOK-md",
+    "hooks/budget-followup/intent.md": "hooks-host-hooks-budget-followup-intent-md",
+    "hooks/budget-followup/body.js": "hooks-host-hooks-budget-followup-body-js"
+  },
+  "prompts": {
+    "packagePath": "fixtures/hooks/host/prompts",
+    "wire": "hooks-host-prompts-blocks-engine-executor-wire-md",
+    "compaction": "hooks-host-prompts-blocks-engine-executor-compaction-md"
+  },
+  "calls": {
+    "chatProvider": "hooks06chat",
+    "chatModel": "hooks06-chat",
+    "compactProvider": "hooks06compact",
+    "compactModel": "hooks06-compact",
+    "revision": "e2e-v1"
+  }
+}

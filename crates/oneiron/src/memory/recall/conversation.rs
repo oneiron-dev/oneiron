@@ -172,6 +172,17 @@ impl CandidateGate for ConversationGate<'_> {
     fn in_txn<'t>(&'t self, txn: &'t RoTxn<'t>) -> Box<SnapshotCandidateFilter<'t>> {
         let admitted = self.inner.in_txn(txn);
         Box::new(move |store, txn, id| {
+            // Dreamer step records are completion and resume state, never a
+            // recall answer: drop them before any body decode or causal check
+            // (FIX 21959).
+            if crate::store::claim_projection::claim_has_predicate_in_txn(
+                store,
+                txn,
+                id,
+                crate::llm::DREAMER_STEP_PREDICATE,
+            )? {
+                return Ok(false);
+            }
             if !admitted(store, txn, id)? {
                 return Ok(false);
             }

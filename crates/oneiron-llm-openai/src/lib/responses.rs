@@ -168,6 +168,7 @@ fn responses_items(message: &LlmMessage, wire: Option<&str>) -> Vec<JsonValue> {
                 call_id,
                 name,
                 input,
+                ..
             } => {
                 flush(&mut content, &mut items);
                 items.push(json!({
@@ -242,6 +243,7 @@ fn parse_function_call(item: &JsonValue) -> Option<ContentPart> {
         call_id,
         name,
         input,
+        signature: None,
     })
 }
 

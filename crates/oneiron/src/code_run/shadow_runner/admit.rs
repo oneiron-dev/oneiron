@@ -16,7 +16,7 @@
 //! same wall, in one writer ([`admit_published_inline`]), as does the type
 //! feedback of the program it ran (FIX 10389), which quotes that program.
 
-use std::sync::Weak;
+use std::sync::{Arc, Weak};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -47,6 +47,12 @@ pub(super) struct ShadowAdmission {
 impl ShadowAdmission {
     pub(super) const fn new(vault: Weak<Vault>, run: EntityId) -> Self {
         Self { vault, run }
+    }
+
+    /// The source vault, while it is open: the vault the release of the
+    /// arm's reads reads the source's taint in again (FIX 9468).
+    pub(super) fn vault(&self) -> Option<Arc<Vault>> {
+        self.vault.upgrade()
     }
 
     /// `spool`, one write of the arm, through the spool adapter, in a writer

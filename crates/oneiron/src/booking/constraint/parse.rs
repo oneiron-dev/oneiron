@@ -180,6 +180,7 @@ fn constraint_parse_llm_request(
             },
             locality: config.locality,
             host_keyless: false,
+            host_paid: false,
         },
         messages: vec![
             system_message(format!(
@@ -235,7 +236,7 @@ fn constraint_response_schema() -> JsonValue {
         "additionalProperties": false,
         "required": ["object"],
         "properties": {
-            "visitor_tz_override": { "type": ["string", "null"], "maxLength": MAX_VISITOR_TZ_BYTES },
+            "visitor_tz_override": { "type": ["string", "null"] },
             "object": {
                 "type": "object",
                 "additionalProperties": false,
@@ -254,7 +255,6 @@ fn constraint_response_schema() -> JsonValue {
                     },
                     "local_time_windows": {
                         "type": "array",
-                        "maxItems": MAX_LOCAL_TIME_WINDOWS,
                         "items": {
                             "type": "object",
                             "additionalProperties": false,

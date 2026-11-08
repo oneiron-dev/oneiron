@@ -135,6 +135,8 @@ pub struct QuoteSpan {
 /// Receipt for one witnessed turn.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct WitnessReceipt {
+    /// Actual native TURN identity, not a vault record ref.
+    pub turn_id: String,
     /// Turn short ref.
     pub turn_short_id: String,
     /// Message short refs, in input order.
@@ -336,6 +338,12 @@ pub struct ClaimView {
     pub world_ref: Option<String>,
     /// Scope map, when present.
     pub scope: Option<WireJson>,
+    /// Explicit stored four-axis claim position.
+    pub claim_scope: crate::ClaimScope,
+    /// Host-stamped provenance, with unreadable input refs withheld.
+    pub made_by: Option<crate::MadeBy>,
+    /// Typed claim record ref, when available.
+    pub claim: Option<crate::RecordRef>,
     /// Validity window start (Unix seconds).
     pub valid_from: Option<i64>,
     /// Validity window end (Unix seconds).
@@ -432,7 +440,7 @@ pub struct FacadeReceipt {
 // ── entities and graph ──────────────────────────────────────────────────
 
 /// Typed read-back view of one entity.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct EntityView {
     /// 32-hex entity id.
     pub id_hex: String,
@@ -448,6 +456,8 @@ pub struct EntityView {
     pub learned_at: i64,
     /// Entity body, when decodable.
     pub body: Option<WireJson>,
+    /// Host-stamped provenance, with unreadable input refs withheld.
+    pub made_by: Option<crate::MadeBy>,
 }
 
 /// One lexical index field for a structural put.

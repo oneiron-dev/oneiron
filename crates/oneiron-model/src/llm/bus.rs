@@ -42,7 +42,7 @@ impl Stream for StreamSubscription {
 /// history while this producer lives; no event history is stored in the vault.
 pub struct LlmEventBus {
     subscribers: Vec<Weak<Mutex<SubscriberState>>>,
-    history: Vec<LlmStreamEvent>,
+    history: Option<Vec<LlmStreamEvent>>,
     /// Every part the stream started, in `order`, the order it started in
     /// (FIX 8625): text and reasoning as they stand, a tool call, tool result
     /// or image once it ends, `None` while it has not.
@@ -55,16 +55,27 @@ impl LlmEventBus {
     pub fn new(sink: Box<dyn TerminalSink>) -> Self {
         Self {
             subscribers: Vec::new(),
-            history: Vec::new(),
+            history: Some(Vec::new()),
             parts: BTreeMap::new(),
             order: Vec::new(),
             closed: false,
             sink,
         }
     }
+    /// Discards transient replay only when the owning host explicitly asks.
+    /// The producer, current fanout, observed parts and durable sink continue.
+    pub fn release_replay(&mut self) {
+        self.history = None;
+    }
+
+    #[must_use]
+    pub fn replay_released(&self) -> bool {
+        self.history.is_none()
+    }
+
     pub fn subscribe(&mut self) -> StreamSubscription {
         let state = Arc::new(Mutex::new(SubscriberState {
-            queue: self.history.clone().into(),
+            queue: self.history.clone().unwrap_or_default().into(),
             closed: self.closed,
             waker: None,
         }));
@@ -96,7 +107,9 @@ impl LlmEventBus {
             self.sink.record(&terminal)?;
             self.closed = true;
         }
-        self.history.push(event.clone());
+        if let Some(history) = &mut self.history {
+            history.push(event.clone());
+        }
         self.subscribers.retain(|weak| {
             let Some(state) = weak.upgrade() else {
                 return false;
@@ -287,12 +300,14 @@ impl LlmEventBus {
                 call_id,
                 name,
                 input,
+                signature,
             } => self.insert(
                 part_id,
                 ContentPart::ToolCall {
                     call_id: call_id.clone(),
                     name: name.clone(),
                     input: input.clone(),
+                    signature: signature.clone(),
                 },
             ),
             LlmStreamEvent::ToolResultEnd {
