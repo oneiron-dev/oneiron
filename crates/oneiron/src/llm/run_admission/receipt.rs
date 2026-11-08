@@ -204,6 +204,11 @@ pub struct PermitFacts {
     /// before the run began (FIX 4453); `None` on every unbound run.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attribution: Option<RunAttribution>,
+    /// The owner's agent Grant the call's work is funded by and the wallet
+    /// whose allocation (`allocation`) it held on (FIX 7766); `None` when no
+    /// Grant funds the run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub funding: Option<crate::agent_dispatch::GrantSpendBinding>,
     /// The seat the call was admitted on (its metered seat), so the meter
     /// can attribute the call to one seat. `None` for a paid connector.
     #[serde(skip_serializing_if = "Option::is_none")]
