@@ -1026,6 +1026,38 @@ def mcp_input_dispatch(row):
     body += 'mcp_agent_verb_output(output, source)'
     return f'{json.dumps(name)} => {{\n{body} }},\n'
 
+def held_content_rows():
+    """FIX 22074: the rows with a `file_call`, run on content an HTTP body held as a file."""
+    rows = [row for row in mcp_rows() if 'file_call' in row]
+    for row in rows:
+        if (row.get('context', 'memory') != 'memory' or takes_task_decisions(row) or row.get('mcp_off_runtime')
+                or row['name'] in CALL_HOME_DOORS or row.get('lands_turn') or 'page' in row or 'mcp_result' in row
+                or 'mcp_served' in row or 'mcp_served_output' in row or row['output'].startswith('Vec<')):
+            raise ValueError(f'{row["name"]}: a file_call row is a plain one-result MCP row')
+    out = '''/// One row whose `content_base64` its HTTP body held as a file (FIX 22074),
+/// on args its pre chain left as the caller sent them: its `_file` engine fn
+/// reads the content there, behind the checks its plain fn runs.
+fn execute_held_content_row(
+        tool: &str,
+        input: Value,
+        memory: &oneiron::Memory<'_>,
+        held: &crate::mcp::McpHeldContent,
+    ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
+'''
+    out += 'let invalid = || McpGatewayError::new(-32602, "tool_args_invalid", "invalid typed agent-verb argument");\n'
+    out += 'let measured = || oneiron::blob_artifact::BlobBodyFile::measure(held.file()).map_err(|error| mcp_facade_error(error.into()));\n'
+    out += 'match tool {\n'
+    for row in rows:
+        method = row['name'].replace('.', '_')
+        out += (f'{json.dumps(row["name"])} => {{\n'
+                f'let input: {rust_type(row["input"])} = serde_json::from_value(input).map_err(|_| invalid())?;\n'
+                'let body = measured()?;\n'
+                f'let output = oneiron::task_verb::sdk::{method}_file(memory, input, &body).map_err(mcp_facade_error)?;\n'
+                'mcp_agent_verb_output(output, crate::mcp::McpPageSource::complete(1))\n'
+                '}\n')
+    out += '_ => Err(invalid()),\n}\n}\n'
+    return out
+
 def mcp_dispatch():
     invalid = 'let invalid = || McpGatewayError::new(-32602, "tool_args_invalid", "invalid typed agent-verb argument");\n'
     result = '''/// A `tools/call` of one generated verb: its arguments assemble the verb's typed
@@ -1038,7 +1070,7 @@ pub(super) async fn execute_mcp_agent_verb(
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>, Option<String>), McpGatewayError> {
         let input = mcp_agent_verb_input(args.tool.name, &args.payload.arguments)?;
-        execute_agent_verb_input(server, args.tool.name, input, actor, None, served, board_hooks).await
+        execute_agent_verb_input_held(server, args.tool.name, input, actor, None, served, board_hooks, args.held.as_ref()).await
     }
 
 /// The typed input a `tools/call` of `tool` assembles from its arguments: the
@@ -1065,11 +1097,27 @@ pub(crate) fn mcp_agent_verb_arguments(tool: &str, input: &Value) -> Result<crat
 pub(crate) async fn execute_agent_verb_input(
         server: &Arc<SyncServer>,
         tool: &str,
+        input: Value,
+        actor: &McpCallContext,
+        run: Option<McpCodeRun>,
+        served: &mut McpServed,
+        board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
+    ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>, Option<String>), McpGatewayError> {
+        execute_agent_verb_input_held(server, tool, input, actor, run, served, board_hooks, None).await
+    }
+
+/// [`execute_agent_verb_input`] for a call whose `content_base64` its HTTP
+/// body held as a file (FIX 22074): `held`, which only the tool it arrived
+/// for reads.
+async fn execute_agent_verb_input_held(
+        server: &Arc<SyncServer>,
+        tool: &str,
         mut input: Value,
         actor: &McpCallContext,
         run: Option<McpCodeRun>,
         served: &mut McpServed,
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
+        held: Option<&crate::mcp::McpHeldContent>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>, Option<String>), McpGatewayError> {
         let producers = oneiron::memory::ProducerRows::default();
         // An owner's erase or revoke reads the restriction-only clock through
@@ -1080,7 +1128,7 @@ pub(crate) async fn execute_agent_verb_input(
         let secret = crate::api::facade::lift_custody_secret(tool, &mut input);
         // The drain's run of a held call runs as its turn in every poll of
         // its row, its retry lookup included (FIX 19034).
-        let listed = super::skill_execution::CALLER.scope(actor.clone(), super::mcp_drain_polls(actor, execute_agent_verb_listing(server, tool, input, actor, run, &producers, served, board_hooks)));
+        let listed = super::skill_execution::CALLER.scope(actor.clone(), super::mcp_drain_polls(actor, execute_agent_verb_listing(server, tool, input, actor, run, &producers, served, board_hooks, held)));
         let produced = crate::api::clock_ingress::scoped(restrictive, crate::api::facade::with_custody_secret(secret, listed)).await;
         served.extend(producers.take());
         produced
@@ -1099,6 +1147,7 @@ async fn execute_agent_verb_listing(
         producers: &oneiron::memory::ProducerRows,
         served: &mut McpServed,
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
+        held: Option<&crate::mcp::McpHeldContent>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>, Option<String>), McpGatewayError> {
 '''
     result += invalid + '''if let Some(field) = crate::mcp::verb_input_unknown_field(tool, &input) {
@@ -1146,7 +1195,15 @@ async fn execute_agent_verb_listing(
         served.listed(producers);
         return Ok((output, crate::mcp::McpPageSource::complete(1), McpCarrierPolicy::Drain, None, None));
     }
-    let hooks = super::verb_hooks::mcp_row_hooks_pre(server, tool, actor, &memory, input).await?;
+    // Content its HTTP body held as a file is this tool's call's alone, and
+    // its pre chain puts the string back before any hook reads the args
+    // (FIX 22074).
+    let held = held.filter(|held| held.tool() == tool);
+    let held_file = match held {
+        Some(held) => Some(held.file().try_clone().map_err(|error| McpGatewayError::new(-32603, "engine_error", error.to_string()))?),
+        None => None,
+    };
+    let hooks = super::verb_hooks::mcp_row_hooks_pre(server, tool, actor, &memory, input, held_file).await?;
     // Rule 5 (FIX 4445): a row one branch of whose engine call produces task
     // work takes its turn on the args its pre hooks left, as the served
     // facade does, so a rewrite into that branch runs on an awaited turn.
@@ -1159,7 +1216,12 @@ async fn execute_agent_verb_listing(
         (memory, task_work_turn)
     };
     let pre_hooked_fold = oneiron::code_run::actions::PreHookedFold::from_pre(&hooks);
-    let ran = execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, surface, served, board_hooks, pre_hooked_fold).await;
+    let ran = match held.filter(|_| hooks.passed_through()) {
+        // The args passed the chain as the caller sent them: the row reads
+        // the content from the file.
+        Some(held) => execute_held_content_row(tool, hooks.args.clone(), &memory, held),
+        None => execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, surface, served, board_hooks, pre_hooked_fold).await,
+    };
     // A row that fails after its pre chain ran keeps a session-only call's
     // pre hook records and runs no post chain (FIX 5527).
     let (output, source, carrier, epoch) = match ran {
@@ -1177,6 +1239,7 @@ async fn execute_agent_verb_listing(
     Ok((output, source, carrier, epoch, hook_notice))
     }
 
+''' + held_content_rows() + '''
 /// One row of [`execute_agent_verb_listing`], on the args its pre chain left,
 /// on `memory`, the caller's surface `surface` built. A task row that may ask
 /// the host's decision ladder builds its own from `surface`, off the runtime.

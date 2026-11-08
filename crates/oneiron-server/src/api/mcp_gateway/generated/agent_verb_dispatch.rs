@@ -19,7 +19,7 @@ pub(super) async fn execute_mcp_agent_verb(
     McpGatewayError,
 > {
     let input = mcp_agent_verb_input(args.tool.name, &args.payload.arguments)?;
-    execute_agent_verb_input(
+    execute_agent_verb_input_held(
         server,
         args.tool.name,
         input,
@@ -27,6 +27,7 @@ pub(super) async fn execute_mcp_agent_verb(
         None,
         served,
         board_hooks,
+        args.held.as_ref(),
     )
     .await
 }
@@ -5800,11 +5801,36 @@ pub(crate) fn mcp_agent_verb_arguments(
 pub(crate) async fn execute_agent_verb_input(
     server: &Arc<SyncServer>,
     tool: &str,
+    input: Value,
+    actor: &McpCallContext,
+    run: Option<McpCodeRun>,
+    served: &mut McpServed,
+    board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
+) -> Result<
+    (
+        Value,
+        crate::mcp::McpPageSource,
+        McpCarrierPolicy,
+        Option<u64>,
+        Option<String>,
+    ),
+    McpGatewayError,
+> {
+    execute_agent_verb_input_held(server, tool, input, actor, run, served, board_hooks, None).await
+}
+
+/// [`execute_agent_verb_input`] for a call whose `content_base64` its HTTP
+/// body held as a file (FIX 22074): `held`, which only the tool it arrived
+/// for reads.
+async fn execute_agent_verb_input_held(
+    server: &Arc<SyncServer>,
+    tool: &str,
     mut input: Value,
     actor: &McpCallContext,
     run: Option<McpCodeRun>,
     served: &mut McpServed,
     board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
+    held: Option<&crate::mcp::McpHeldContent>,
 ) -> Result<
     (
         Value,
@@ -5837,6 +5863,7 @@ pub(crate) async fn execute_agent_verb_input(
                 &producers,
                 served,
                 board_hooks,
+                held,
             ),
         ),
     );
@@ -5862,6 +5889,7 @@ async fn execute_agent_verb_listing(
     producers: &oneiron::memory::ProducerRows,
     served: &mut McpServed,
     board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
+    held: Option<&crate::mcp::McpHeldContent>,
 ) -> Result<
     (
         Value,
@@ -5960,7 +5988,20 @@ async fn execute_agent_verb_listing(
             None,
         ));
     }
-    let hooks = super::verb_hooks::mcp_row_hooks_pre(server, tool, actor, &memory, input).await?;
+    // Content its HTTP body held as a file is this tool's call's alone, and
+    // its pre chain puts the string back before any hook reads the args
+    // (FIX 22074).
+    let held = held.filter(|held| held.tool() == tool);
+    let held_file =
+        match held {
+            Some(held) => Some(held.file().try_clone().map_err(|error| {
+                McpGatewayError::new(-32603, "engine_error", error.to_string())
+            })?),
+            None => None,
+        };
+    let hooks =
+        super::verb_hooks::mcp_row_hooks_pre(server, tool, actor, &memory, input, held_file)
+            .await?;
     // Rule 5 (FIX 4445): a row one branch of whose engine call produces task
     // work takes its turn on the args its pre hooks left, as the served
     // facade does, so a rewrite into that branch runs on an awaited turn.
@@ -5976,18 +6017,25 @@ async fn execute_agent_verb_listing(
         (memory, task_work_turn)
     };
     let pre_hooked_fold = oneiron::code_run::actions::PreHookedFold::from_pre(&hooks);
-    let ran = execute_agent_verb_row(
-        server,
-        tool,
-        hooks.args.clone(),
-        actor,
-        memory,
-        surface,
-        served,
-        board_hooks,
-        pre_hooked_fold,
-    )
-    .await;
+    let ran = match held.filter(|_| hooks.passed_through()) {
+        // The args passed the chain as the caller sent them: the row reads
+        // the content from the file.
+        Some(held) => execute_held_content_row(tool, hooks.args.clone(), &memory, held),
+        None => {
+            execute_agent_verb_row(
+                server,
+                tool,
+                hooks.args.clone(),
+                actor,
+                memory,
+                surface,
+                served,
+                board_hooks,
+                pre_hooked_fold,
+            )
+            .await
+        }
+    };
     // A row that fails after its pre chain ran keeps a session-only call's
     // pre hook records and runs no post chain (FIX 5527).
     let (output, source, carrier, epoch) = match ran {
@@ -6004,6 +6052,64 @@ async fn execute_agent_verb_listing(
     // The row's turn ends after its post hooks.
     drop(task_work_turn);
     Ok((output, source, carrier, epoch, hook_notice))
+}
+
+/// One row whose `content_base64` its HTTP body held as a file (FIX 22074),
+/// on args its pre chain left as the caller sent them: its `_file` engine fn
+/// reads the content there, behind the checks its plain fn runs.
+fn execute_held_content_row(
+    tool: &str,
+    input: Value,
+    memory: &oneiron::Memory<'_>,
+    held: &crate::mcp::McpHeldContent,
+) -> Result<
+    (
+        Value,
+        crate::mcp::McpPageSource,
+        McpCarrierPolicy,
+        Option<u64>,
+    ),
+    McpGatewayError,
+> {
+    let invalid = || {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "invalid typed agent-verb argument",
+        )
+    };
+    let measured = || {
+        oneiron::blob_artifact::BlobBodyFile::measure(held.file())
+            .map_err(|error| mcp_facade_error(error.into()))
+    };
+    match tool {
+        "vault.artifacts.propose_output" => {
+            let input: oneiron::blob_artifact::NativeOutputRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let body = measured()?;
+            let output =
+                oneiron::task_verb::sdk::vault_artifacts_propose_output_file(memory, input, &body)
+                    .map_err(mcp_facade_error)?;
+            mcp_agent_verb_output(output, crate::mcp::McpPageSource::complete(1))
+        }
+        "vault.artifacts.create" => {
+            let input: oneiron::blob_artifact::ArtifactCreateRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let body = measured()?;
+            let output = oneiron::task_verb::sdk::vault_artifacts_create_file(memory, input, &body)
+                .map_err(mcp_facade_error)?;
+            mcp_agent_verb_output(output, crate::mcp::McpPageSource::complete(1))
+        }
+        "vault.artifacts.append" => {
+            let input: oneiron::task_verb::sdk::AppendBlobVersionRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let body = measured()?;
+            let output = oneiron::task_verb::sdk::vault_artifacts_append_file(memory, input, &body)
+                .map_err(mcp_facade_error)?;
+            mcp_agent_verb_output(output, crate::mcp::McpPageSource::complete(1))
+        }
+        _ => Err(invalid()),
+    }
 }
 
 /// One row of [`execute_agent_verb_listing`], on the args its pre chain left,

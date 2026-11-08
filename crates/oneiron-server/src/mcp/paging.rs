@@ -501,6 +501,42 @@ pub fn mcp_page_argument_digest<T: Serialize>(arguments: &T) -> [u8; 32] {
     *hasher.finalize().as_bytes()
 }
 
+/// [`mcp_page_argument_digest`] of a generated verb call whose
+/// `arguments.spec.content_base64` its host holds outside the payload (FIX
+/// 22074): `arguments` names it as the empty string; `content_len` is the
+/// length of its canonical JSON string, quotes and all, and
+/// `write_content` writes that string. The digest is the one the whole
+/// payload would have.
+///
+/// # Errors
+///
+/// What `write_content` returns; a payload that does not name the content
+/// under `arguments.spec`.
+pub(crate) fn mcp_page_argument_digest_held<T: Serialize>(
+    arguments: &T,
+    content_len: u64,
+    write_content: impl FnOnce(&mut blake3::Hasher) -> std::io::Result<()>,
+) -> std::io::Result<[u8; 32]> {
+    let mut value = serde_json::to_value(arguments)?;
+    if let Some(object) = value.as_object_mut() {
+        object.remove("page");
+    }
+    // The canonical text with the content's empty string, then with the
+    // content's own string in its place.
+    let placeholder = mcp_canonical_json(&value).len() as u64;
+    let len = placeholder.saturating_sub(2).saturating_add(content_len);
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"oneiron.mcp.page-arguments.v2");
+    hasher.update(&len.to_be_bytes());
+    oneiron::receipt::write_call_json_with_member_path(
+        &mut hasher,
+        &value,
+        &["arguments", "spec", "content_base64"],
+        write_content,
+    )?;
+    Ok(*hasher.finalize().as_bytes())
+}
+
 /// The exact producer material retained by a continuable page cursor. Keeping
 /// the whole producer result, rather than only an offset, means page two stays
 /// a partition of page one's immutable result even when the vault changes in

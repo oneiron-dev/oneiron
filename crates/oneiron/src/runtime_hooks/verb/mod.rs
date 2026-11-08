@@ -49,6 +49,7 @@ pub use credential::{
     VerbAskInstrument, VerbAskMcpCeiling, VerbAskRefusal, VerbAskResumed, VerbAskSavedCall,
 };
 pub(crate) use held_member::hold_member;
+pub use held_member::with_held_member;
 pub(super) use paced::scrub_erased_paced_in_txn;
 pub use paced::{PACED_VERB_WAIT_DEFAULT_SECS, is_paced_verb};
 pub(crate) use paced::{
@@ -207,7 +208,8 @@ impl VerbHookPre {
 
     /// Whether the call passed its chain with no hook live on it: its args
     /// are its caller's own, untouched, and no post chain runs on it.
-    pub(crate) fn passed_through(&self) -> bool {
+    #[must_use]
+    pub fn passed_through(&self) -> bool {
         self.carry.is_none()
     }
 

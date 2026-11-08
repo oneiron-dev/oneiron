@@ -15,6 +15,10 @@ pub(crate) struct RowHookResume {
     pub(crate) credential: Option<VerbAskCredential>,
     pub(crate) drain: Option<VerbAskDrainPermit>,
     pub(crate) session: Option<verb_hook_boundary::HookSession>,
+    /// The `content_base64` its host holds as a file for this call (FIX
+    /// 22074): the chain puts its string back in the args before any hook
+    /// reads them, and a call that passes through keeps them as they are.
+    pub(crate) held_content: Option<std::fs::File>,
 }
 
 /// The pre chain of row `verb` for `actor` over `args`, off the async
@@ -101,17 +105,20 @@ async fn row_hooks_pre_decided(
                 .map_or(Ok(()), |check| check(verb.as_str(), args))
         };
         let session = resume.session;
-        let ended = match &session {
+        let credential = resume.credential;
+        let run = || match &session {
             Some(session) => {
-                verb_hook_boundary::session_pre(&server.vault, call, args, &admit, session, turn)?
+                verb_hook_boundary::session_pre(&server.vault, call, args, &admit, session, turn)
             }
-            None => server.vault.pre_verb_hooks_for_credential(
-                call,
-                args,
-                &admit,
-                resume.credential,
-                turn,
-            )?,
+            None => server
+                .vault
+                .pre_verb_hooks_for_credential(call, args, &admit, credential, turn),
+        };
+        let ended = match resume.held_content {
+            Some(file) => {
+                oneiron::runtime_hooks::verb::with_held_member("content_base64", file, run)?
+            }
+            None => run()?,
         };
         let mut pre =
             ended.map_err(|stop| verb_hook_boundary::stop_refusal(stop, session.as_ref()))?;
@@ -328,6 +335,7 @@ pub(crate) async fn facade_hooks_pre_admitting(
         credential,
         drain: call.drain().cloned(),
         session: hook_session::facade_hook_session(server, call, bound, verb, &value)?,
+        held_content: None,
     };
     // What a hook reads, built on every call so a binding installed after
     // this door looked still finds it: the caller's read key, its

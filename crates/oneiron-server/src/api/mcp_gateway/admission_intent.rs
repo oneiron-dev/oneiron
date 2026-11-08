@@ -50,7 +50,8 @@ impl McpIntent {
         if off_record || continuation {
             return None;
         }
-        let digest = crate::mcp::mcp_page_argument_digest(&call.payload);
+        // Held content counts as it arrived (FIX 22074).
+        let digest = call.page_argument_digest();
         Self::named(
             server,
             actor,
