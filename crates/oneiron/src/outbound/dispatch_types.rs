@@ -181,6 +181,11 @@ pub struct OutboundDispatchRequest {
     /// transport call. In memory only, never persisted; `None` for every
     /// send that is not a connector-send TASK's.
     pub(crate) send_executor_fence: Option<super::connector_task::SendExecutorFence>,
+    /// FIX 4747 slice 5: the fence the agent run that starts this send took
+    /// on its run TASK, which the dispatch transport re-checks right before
+    /// its transport call beside `send_executor_fence`. In memory only,
+    /// never persisted; `None` for every send no fenced agent run starts.
+    pub(crate) agent_run_fence: Option<crate::agent_dispatch::AgentRunFence>,
     /// FIX 4747: the logical send's engine send id, for a connector-send
     /// TASK's send: the id its provider keeps on the wire where it keeps one,
     /// and the one a lookup asks for. Its presence makes the dispatch
@@ -257,6 +262,7 @@ impl OutboundDispatchRequest {
             exclusive_route_ref: None,
             sender_posture_fallback: false,
             send_executor_fence: None,
+            agent_run_fence: None,
             engine_send_id: None,
             earlier_send_lookup: false,
             owner_released_resend: false,
@@ -693,6 +699,15 @@ pub trait OutboundExecutionSink {
         _request: &OutboundExecutionRequest<'_>,
     ) -> crate::outbound_intent_ledger::DeliveryReadBack {
         crate::outbound_intent_ledger::DeliveryReadBack::Unknown
+    }
+
+    /// Whether the sink sends one message to every recipient of an intent
+    /// that names more than one ([`OutboundIntent::recipients`], fix list
+    /// row 17645), its frozen message naming exactly that list. A sink that
+    /// does not is never handed one: the transport refuses the call before
+    /// any decision is recorded. By default a sink sends to its one target.
+    fn delivers_recipient_lists(&self) -> bool {
+        false
     }
 }
 
