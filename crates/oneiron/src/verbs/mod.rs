@@ -3,6 +3,7 @@ mod act_answer;
 mod agent_grant;
 mod agents;
 mod anonymous_chat;
+mod answer_forward;
 mod asr;
 mod authority_history;
 mod board_layout;
@@ -15,6 +16,7 @@ mod comm_widen;
 mod connector;
 mod connector_call;
 mod connector_pack;
+mod connector_reply_retry;
 mod connector_slate;
 mod connector_slate_revision;
 mod connector_witness_read_grant;
@@ -34,6 +36,7 @@ mod federation;
 mod federation_burst;
 mod feedback;
 mod files;
+mod follower_keyframe;
 mod free_time_policy;
 mod git_push_grant;
 mod goal_optimize;
@@ -48,6 +51,7 @@ mod live_run;
 mod live_voice;
 mod mesh;
 mod model_manifest;
+mod model_pack;
 mod note_history;
 mod off_record;
 mod off_record_rooms;
@@ -60,6 +64,8 @@ mod proxy;
 mod receipts_page;
 mod record_erase;
 mod reply;
+#[cfg(feature = "sync")]
+mod repo_manifest_conflict;
 mod research;
 mod reservoir_sources;
 mod residence;
@@ -249,7 +255,6 @@ pub struct WorkCompanionSetRequest {
     pub workspace_ref: String,
     pub policy: crate::workspace_roster::WorkCompanionPolicy,
 }
-
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TaskRequest {
@@ -431,6 +436,7 @@ pub use self::act_answer::*;
 pub use self::agent_grant::*;
 pub use self::agents::*;
 pub use self::anonymous_chat::*;
+pub use self::answer_forward::*;
 pub use self::asr::*;
 pub use self::authority_history::*;
 pub use self::board_layout::*;
@@ -445,6 +451,7 @@ pub use self::comm_widen::*;
 pub use self::connector::*;
 pub use self::connector_call::*;
 pub use self::connector_pack::*;
+pub use self::connector_reply_retry::*;
 pub use self::connector_slate::*;
 pub use self::connector_slate_revision::*;
 pub use self::connector_witness_read_grant::*;
@@ -464,6 +471,7 @@ pub use self::federation::*;
 pub use self::federation_burst::*;
 pub use self::feedback::*;
 pub use self::files::*;
+pub use self::follower_keyframe::*;
 pub use self::free_time_policy::*;
 pub use self::git_push_grant::*;
 pub use self::goal_optimize::*;
@@ -478,6 +486,7 @@ pub use self::live_run::*;
 pub use self::live_voice::*;
 pub use self::mesh::*;
 pub use self::model_manifest::*;
+pub use self::model_pack::*;
 pub use self::note_history::*;
 pub use self::off_record::*;
 pub use self::off_record_rooms::*;
@@ -490,6 +499,8 @@ pub use self::proxy::*;
 pub use self::receipts_page::*;
 pub use self::record_erase::*;
 pub use self::reply::*;
+#[cfg(feature = "sync")]
+pub use self::repo_manifest_conflict::*;
 pub use self::research::*;
 pub use self::reservoir_sources::*;
 pub use self::residence::*;
@@ -1044,5 +1055,4 @@ fn describe_self_shares_the_typed_sdk_result_and_mcp_arguments() {
         card
     );
 }
-
 pub mod voice_records;

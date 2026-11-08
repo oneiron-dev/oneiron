@@ -76,6 +76,7 @@ fn failure(code: &str, message: String, suggestion: &str) -> OneironError {
         resets_at: Vec::new(),
         reason_codes: Vec::new(),
         legal_hold: None,
+        room_join_hold: None,
     }
 }
 
@@ -95,6 +96,12 @@ pub(crate) fn lift_legal_hold_notice(
     notice: oneiron::error::LegalHoldNotice,
 ) -> Result<crate::facade_types_generated::LegalHoldNotice, OneironError> {
     lift_record("legal_hold", &notice)
+}
+
+pub(crate) fn lift_room_join_hold(
+    hold: oneiron::workspace_roster::RoomJoinHold,
+) -> Result<crate::facade_types_generated::RoomJoinHold, OneironError> {
+    lift_record("room_join_hold", &hold)
 }
 
 // ── the WireJson leaf ───────────────────────────────────────────────────
@@ -500,6 +507,7 @@ impl Lower<oneiron::conversation_dag::QuoteSpan> for QuoteSpan {
 impl Lift<engine::WitnessReceipt> for WitnessReceipt {
     fn lift(value: engine::WitnessReceipt) -> Result<Self, OneironError> {
         Ok(Self {
+            turn_id: value.turn_id.to_hex(),
             turn_short_id: value.turn_short_id,
             message_short_ids: value.message_short_ids,
             receipt_ref: value.receipt_ref,
@@ -699,6 +707,9 @@ impl Lift<engine::ClaimView> for ClaimView {
             source: view.source,
             world_ref: view.world_ref,
             scope: Lift::lift(view.scope)?,
+            claim_scope: lift_record("ClaimView.claim_scope", &view.claim_scope)?,
+            made_by: lift_record("ClaimView.made_by", &view.made_by)?,
+            claim: lift_record("ClaimView.claim", &view.claim)?,
             valid_from: optional_signed("valid_from", view.valid_from)?,
             valid_to: optional_signed("valid_to", view.valid_to)?,
             salience: view.salience,
@@ -863,6 +874,7 @@ impl Lift<engine::EntityView> for EntityView {
             occurred_end: signed_seconds("occurred_end", view.occurred_end)?,
             learned_at: signed_seconds("learned_at", view.learned_at)?,
             body: Lift::lift(view.body)?,
+            made_by: lift_record("EntityView.made_by", &view.made_by)?,
         })
     }
 }

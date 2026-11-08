@@ -19,6 +19,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SCOPE_RECORD_REVISION, CONTENT),
     (&t::SCOPE_RECORD_V1, CONTENT),
     (&t::SCOPE_RECORD, CONTENT),
+    // A source-free text's birth record stands with its stamp (FIX 8741).
+    (&t::SCOPE_SOURCE_FREE_TEXT, CONTENT),
     (&t::SCOPE_SUMMARY_ARC_WORK, CONTENT),
     (&t::SCOPE_SUMMARY_PROJECTION, CONTENT),
     (&t::SCOPE_SUMMARY_PURPOSE, LIVE),
@@ -138,6 +140,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SHARED_VAULT_DELETION, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_VAULT_INVITATION_KEY, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_VAULT_INVITATION, SHARED_VAULT_MEMBERSHIP),
+    // A Sheets write's invocation claim records a send that left the vault:
+    // the live vault's row stands, as a held connector call's does.
+    (&t::SHEETS_WRITE_INVOCATION, LIVE),
     (&t::SHORT_ID_ALIAS, CONTENT),
     (&t::SHORT_ID_GRAMMAR_VERSION, CONTENT),
     (&t::SHORT_ID_COUNTER, CONTENT),

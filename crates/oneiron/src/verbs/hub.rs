@@ -173,6 +173,23 @@ impl From<HubSyncDisposition> for HubSkillSyncReceipt {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HubSkillProposalSettleRequest {
+    pub entity: EntityId,
+    pub proposal: EntityId,
+    pub accept: bool,
+}
+
+/// Approved means the proposal's exact package landed; Rejected closes only
+/// the proposal and leaves the working skill and its capabilities unchanged.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct HubSkillProposalSettled {
+    pub entity: EntityId,
+    pub proposal: EntityId,
+    pub approval: crate::claim::ClaimApprovalStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HubSkillReceipts {
     pub sources: Vec<HubRef>,
     pub imports: Vec<HubImportReceipt>,
@@ -374,6 +391,20 @@ pub fn hub_skill_sync_as_owner(
     Ok(vault.sync_skill_from_hub_ref(owner, &input.entity)?.into())
 }
 
+pub fn hub_skill_proposal_settle_as_owner(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: &HubSkillProposalSettleRequest,
+) -> MemoryResult<HubSkillProposalSettled> {
+    let approval =
+        vault.settle_hub_update_proposal(owner, &input.entity, &input.proposal, input.accept)?;
+    Ok(HubSkillProposalSettled {
+        entity: input.entity,
+        proposal: input.proposal,
+        approval,
+    })
+}
+
 pub fn hub_skill_receipts_as_owner(
     vault: &Vault,
     _owner: &AuthenticatedOwner,
@@ -517,4 +548,50 @@ pub fn hub_hooks_qualify_embedded(
 ) -> MemoryResult<HubHookQualificationReceipt> {
     let _owner = memory.embedded_owner("vault.packs.hooks.qualify")?;
     super::host_only(memory, "vault.packs.hooks.qualify", input)
+}
+
+/// Queries the public ClawHub-compatible API on a configured HTTP hub's origin.
+/// Query metadata never grants trust or supplies a content hash for import.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ClawHubSearchRequest {
+    pub hub: EntityId,
+    pub q: String,
+    pub limit: Option<i64>,
+    pub highlighted_only: Option<bool>,
+    pub non_suspicious_only: Option<bool>,
+    /// Defaults to the existing 2 MiB HTTP index budget; not sent upstream.
+    pub response_limit_bytes: Option<usize>,
+}
+
+pub fn skill_hub_clawhub_search_as_owner(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: &ClawHubSearchRequest,
+) -> MemoryResult<crate::skill_hub::ClawHubSearchReply> {
+    owner.revalidate(vault)?;
+    let hub = vault.skill_hub_record(&input.hub)?;
+    if hub.kind != SkillHubKind::HttpIndex {
+        return Err(crate::memory::MemoryError::bad_request(
+            "ClawHub search requires a configured HTTP hub",
+        ));
+    }
+    let adapter = crate::skill_hub::HttpEndpointSkillHubAdapter::new(input.hub, &hub.endpoint)?;
+    Ok(adapter.search_clawhub(
+        &input.q,
+        input.limit,
+        input.highlighted_only,
+        input.non_suspicious_only,
+        input.response_limit_bytes,
+    )?)
+}
+
+/// Explicit owner-selected import; the native door revalidates the proof before
+/// fetching and uses the normal publisher, fit, scan and import writer.
+pub fn skill_hub_clawhub_import_as_owner(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: &crate::skill_hub::ClawHubImportRequest,
+) -> MemoryResult<crate::skill_hub::ClawHubImportReply> {
+    Ok(vault.import_clawhub_skill(owner, input)?)
 }
