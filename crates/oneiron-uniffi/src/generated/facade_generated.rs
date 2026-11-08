@@ -2816,6 +2816,16 @@ export_facade! {
     let output = client.vault_consent_approve_once(&input)?;
     crate::codec::lift_record("vault.consent.approve_once", &output)
 };
+"vault.campaign.held" => fn vault_campaign_held(&self) -> Vec<CampaignEnrollmentHeldCall> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.campaign.held")?;
+    let output = client.vault_campaign_held(&input)?;
+    crate::codec::lift_record("vault.campaign.held", &output)
+};
+"vault.campaign.approve_once" => fn vault_campaign_approve_once(&self, input: CampaignEnrollmentApproveOnceRequest) -> ConsentActReceipt = |client| {
+    let input: oneiron::task_verb::sdk::CampaignEnrollmentApproveOnceRequest = crate::codec::lower_record("vault.campaign.approve_once", input)?;
+    let output = client.vault_campaign_approve_once(&input)?;
+    crate::codec::lift_record("vault.campaign.approve_once", &output)
+};
 "vault.connectors.calls.approve_once" => fn vault_connectors_calls_approve_once(&self, input: ConnectorCallApproveOnceRequest) -> ConsentActReceipt = |client| {
     let input: oneiron::task_verb::sdk::ConnectorCallApproveOnceRequest = crate::codec::lower_record("vault.connectors.calls.approve_once", input)?;
     let output = client.vault_connectors_calls_approve_once(&input)?;

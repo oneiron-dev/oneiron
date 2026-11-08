@@ -3048,6 +3048,15 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.campaign.held",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.campaign.approve_once",
+                crate::code_run::vault_read::request_schema::<CampaignEnrollmentApproveOnceRequest>(
+                ),
+            ),
+            (
                 "vault.connectors.calls.approve_once",
                 crate::code_run::vault_read::request_schema::<ConnectorCallApproveOnceRequest>(),
             ),
@@ -7951,6 +7960,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.policy.owner.configure",
     "vault.policy.owner.row.change",
     "vault.consent.approve_once",
+    "vault.campaign.held",
+    "vault.campaign.approve_once",
     "vault.connectors.calls.approve_once",
     "vault.connectors.replies.retry_failed",
     "vault.consent.deny",
@@ -9697,6 +9708,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::code_run::vault_read::request_schema::<crate::policy_model::PolicyRowReceipt>()
         }
         "vault.consent.approve_once" => crate::code_run::vault_read::request_schema::<
+            crate::consent::lifecycle::ConsentActReceipt,
+        >(),
+        "vault.campaign.held" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::campaign::enrollment::CampaignEnrollmentHeldCall>,
+        >(),
+        "vault.campaign.approve_once" => crate::code_run::vault_read::request_schema::<
             crate::consent::lifecycle::ConsentActReceipt,
         >(),
         "vault.connectors.calls.approve_once" => crate::code_run::vault_read::request_schema::<
@@ -15205,6 +15222,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.consent.approve_once" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.campaign.held" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.campaign.approve_once" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -21223,6 +21254,8 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.policy.outbound.decide" => validate_input_vault_policy_outbound_decide(value)?,
         "vault.policy.relay.decide" => validate_input_vault_policy_relay_decide(value)?,
         "vault.consent.approve_once" => validate_input_vault_consent_approve_once(value)?,
+        "vault.campaign.held" => validate_input_vault_campaign_held(value)?,
+        "vault.campaign.approve_once" => validate_input_vault_campaign_approve_once(value)?,
         "vault.connectors.calls.approve_once" => {
             validate_input_vault_connectors_calls_approve_once(value)?
         }
@@ -25247,6 +25280,16 @@ fn validate_input_vault_policy_relay_decide(value: &serde_json::Value) -> Memory
 #[inline(never)]
 fn validate_input_vault_consent_approve_once(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::consent::lifecycle::ApproveOnceRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_campaign_held(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: EmptyRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
+fn validate_input_vault_campaign_approve_once(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: CampaignEnrollmentApproveOnceRequest = decode(value.clone())?;
     Ok(())
 }
 #[inline(never)]
@@ -30286,6 +30329,8 @@ pub fn invoke(
         "vault.policy.outbound.decide" => invoke_vault_policy_outbound_decide(memory, value),
         "vault.policy.relay.decide" => invoke_vault_policy_relay_decide(memory, value),
         "vault.consent.approve_once" => invoke_vault_consent_approve_once(memory, value),
+        "vault.campaign.held" => invoke_vault_campaign_held(memory, value),
+        "vault.campaign.approve_once" => invoke_vault_campaign_approve_once(memory, value),
         "vault.connectors.calls.approve_once" => {
             invoke_vault_connectors_calls_approve_once(memory, value)
         }
@@ -35307,6 +35352,20 @@ fn invoke_vault_consent_approve_once(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     encode(vault_consent_approve_once(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_campaign_held(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_campaign_held(memory, decode(value)?)?)
+}
+#[inline(never)]
+fn invoke_vault_campaign_approve_once(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_campaign_approve_once(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_vault_connectors_calls_approve_once(
@@ -45602,6 +45661,26 @@ pub fn vault_consent_approve_once(
     crate::consent::lifecycle::approve_once(
         memory.vault(),
         &memory.embedded_owner("vault.consent.approve_once")?,
+        input,
+    )
+}
+pub fn vault_campaign_held(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::campaign::enrollment::CampaignEnrollmentHeldCall>> {
+    crate::task_verb::sdk::campaign_enrollment_held(
+        memory.vault(),
+        &memory.embedded_owner("vault.campaign.held")?,
+        _input,
+    )
+}
+pub fn vault_campaign_approve_once(
+    memory: &Memory<'_>,
+    input: CampaignEnrollmentApproveOnceRequest,
+) -> MemoryResult<crate::consent::lifecycle::ConsentActReceipt> {
+    crate::task_verb::sdk::approve_campaign_enrollment_once(
+        memory.vault(),
+        &memory.embedded_owner("vault.campaign.approve_once")?,
         input,
     )
 }

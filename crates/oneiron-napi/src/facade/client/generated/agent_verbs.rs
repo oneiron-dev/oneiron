@@ -4917,6 +4917,21 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_campaign_held(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.campaign.held", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_campaign_approve_once(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.campaign.approve_once", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_connectors_calls_approve_once(
         &self,
         input: serde_json::Value,

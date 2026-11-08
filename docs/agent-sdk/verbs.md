@@ -569,6 +569,8 @@ both bindings and their export-census tests in one change.
 - `vault.policy.outbound.decide`
 - `vault.policy.relay.decide`
 - `vault.consent.approve_once`
+- `vault.campaign.held`
+- `vault.campaign.approve_once`
 - `vault.connectors.calls.approve_once`
 - `vault.connectors.replies.retry_failed`
 - `vault.consent.deny`
