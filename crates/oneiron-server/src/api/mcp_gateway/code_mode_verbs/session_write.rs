@@ -30,6 +30,7 @@ pub(super) fn admit(
     verb: AgentVerb,
 ) -> Result<SessionWriteAdmission, AgentVerbRefusal> {
     let refused = |error: McpGatewayError| AgentVerbRefusal {
+        hook_notice: None,
         code: error.kind.to_owned(),
     };
     mcp_admit_host_verb(&verbs.actor, verb)
@@ -68,6 +69,7 @@ impl SessionWriteCeiling for LiveConnector {
             return Ok(());
         }
         Err(AgentVerbRefusal {
+            hook_notice: None,
             code: mcp_proof_error().kind.to_owned(),
         })
     }
