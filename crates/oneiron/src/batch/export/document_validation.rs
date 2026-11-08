@@ -31,6 +31,9 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
         super::epoch_floors::validate_epoch_floors(&self.spool)?;
         let mut runs = self.spool.rows(ArchiveRecordKind::Run);
         while let Some((_, run)) = runs.next_parsed::<ExportRun>(&self.spool)? {
+            if let Some(world) = run.birth_world.as_deref() {
+                parse_id(world)?;
+            }
             if !self
                 .index
                 .insert(Tag::Run, parse_id(&run.run_id)?.as_bytes(), &[])?
