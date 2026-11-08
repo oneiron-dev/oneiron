@@ -4134,7 +4134,10 @@ impl std::fmt::Display for EditError {
                  change, or resolve the change first (commenting a paragraph that only carries \
                  tracked segments IS allowed)"
             ),
-            EditError::CommentAnchorInCommentStory { comment_id, step_index } => write!(
+            EditError::CommentAnchorInCommentStory {
+                comment_id,
+                step_index,
+            } => write!(
                 f,
                 "step {step_index}: comment content story '{comment_id}' cannot contain a comment range"
             ),
