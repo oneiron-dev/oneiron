@@ -4,6 +4,7 @@
 //! budget accounting, durable intent state, and transport.
 
 mod admission;
+mod authority_standing;
 mod budget;
 mod connector_slate;
 pub(crate) mod dedupe;
@@ -30,7 +31,7 @@ pub(crate) use self::types::BEFORE_NEW_ADMISSION;
 pub(crate) use self::types::{
     AdmissionCeiling, CoActorAdmission, CoActorEffect, OutboundEffectCommand, OutboundEffectError,
     OutboundEffectResult, OutboundTransport, PreparedAuthorization, PreparedEffect,
-    frozen_call_hygiene_headers,
+    UncertainSendStep, frozen_call_hygiene_headers,
 };
 
 #[cfg(test)]
