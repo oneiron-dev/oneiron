@@ -34734,7 +34734,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_runner/tables.rs",
@@ -67886,7 +67886,7 @@
      "path": "src/recovery/checkpoint/payload/mod.rs",
      "purpose": "The checkpoint payload projection (KS-7, FIX 5688 KS7-2b): which of an image's rows go into their owners'…",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 27
      }
     },
     {
@@ -67914,19 +67914,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/recovery/checkpoint/payload/rows.rs",
-     "purpose": "The payload registry (KS7-2b): one class for every declared side-table family, by its declaration's…",
+     "purpose": "The payload registry (KS7-2b): one class for every declared side-table family, for every manifest database…",
      "surface": {
-      "crate-vis": 13
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/recovery/checkpoint/payload/rows/families.rs",
-     "purpose": "The payload registry's family list (KS7-2b): every declared side-table family's class, by declaration file",
-     "surface": {
-      "crate-vis": 1
+      "crate-vis": 11
      }
     },
     {
@@ -68031,61 +68021,11 @@
     },
     {
      "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/recovery/checkpoint/restore_class/sync_state.rs",
-     "purpose": "The restore class of every canonical `sync_state` family, in declaration order",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/recovery/checkpoint/restore_class/tests.rs",
      "purpose": "—",
      "surface": {}
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/recovery/checkpoint/restore_class/vault_meta_a_c.rs",
-     "purpose": "The restore class of every canonical `vault_meta`, `a` to `c` family, in declaration order",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/recovery/checkpoint/restore_class/vault_meta_d_l.rs",
-     "purpose": "The restore class of every canonical `vault_meta`, `d` to `l` family, in declaration order",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/recovery/checkpoint/restore_class/vault_meta_m_r.rs",
-     "purpose": "The restore class of every canonical `vault_meta`, `m` to `r` family, in declaration order",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/recovery/checkpoint/restore_class/vault_meta_s_z.rs",
-     "purpose": "The restore class of every canonical `vault_meta`, `s` to `z` family, in declaration order",
-     "surface": {
-      "crate-vis": 1
-     }
     },
     {
      "bucket": "s",
@@ -68139,15 +68079,13 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "StorageTier"
-     ],
+     "notable": [],
      "path": "src/recovery/checkpoint/tiers.rs",
      "purpose": "Snapshot classification",
      "surface": {
       "crate-vis": 1,
-      "enum": 1,
-      "fn": 1
+      "fn": 1,
+      "re-export": 1
      }
     },
     {
@@ -74038,21 +73976,11 @@
      "path": "src/side_table/decls/mod.rs",
      "purpose": "The declaration list: every prefix a module keeps rows under in `vault_meta` or `sync_state`, one entry each",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 14
      }
     },
     {
-     "bucket": "XL",
-     "kind": "src",
-     "notable": [],
-     "path": "src/side_table/decls/snapshot.rs",
-     "purpose": "The side-table catalogue as it stood before slice 1 moved each row into its owner module (core split, 9 Nov…",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/side_table/decls/sync_state.rs",
@@ -74134,7 +74062,7 @@
      "path": "src/side_table/mod.rs",
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables",
      "surface": {
-      "crate-vis": 50,
+      "crate-vis": 53,
       "fn": 1,
       "mod": 1,
       "struct": 1
@@ -74148,6 +74076,19 @@
      "purpose": "Descending raw side rows for readers that retain malformed values as facts",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "StorageTier"
+     ],
+     "path": "src/side_table/row_classes.rs",
+     "purpose": "What a checkpoint does with each side table, written on the table's row (core split slice 1): the storage…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1
      }
     },
     {
@@ -78907,7 +78848,17 @@
      "path": "src/store/checkpoint_payload/rows.rs",
      "purpose": "The rows a per-owner checkpoint getter hands a capture (KS7-2), and the one sink a restore writes them back…",
      "surface": {
-      "crate-vis": 33
+      "crate-vis": 34
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/checkpoint_payload/rows/class.rs",
+     "purpose": "Where a payload family's rows go in a checkpoint (KS7-2b): its one [`Class`], with the owner getters…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -100359,7 +100310,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 132,
+     "files": 126,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -100543,7 +100494,7 @@
     "side_table": {
      "files": 16,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables"
     },
@@ -100618,7 +100569,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 393,
+     "files": 394,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -100856,9 +100807,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 239,
+   "over_bar": 238,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7250,
+   "source_files": 7245,
    "test_files": 895
   },
   "oneiron-android": {
