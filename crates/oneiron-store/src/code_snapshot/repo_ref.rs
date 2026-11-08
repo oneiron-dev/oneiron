@@ -116,12 +116,13 @@ impl RepoRef {
     }
 
     /// The repository this ref names, without its revision (FIX 4299):
-    /// `local:<folder>` or `github:<owner>/<repo>`. A scope and a
-    /// registration compare this, never the commit.
+    /// `local:<folder>` or `github:<owner>/<repo>`. A current-folder capture
+    /// names its folder's locator, as [`Self::same_repository`] matches it.
+    /// A scope and a registration compare this, never the commit.
     #[must_use]
     pub fn locator(&self) -> String {
         match self {
-            Self::LocalFolder { path, .. } => format!("local:{path}"),
+            Self::LocalFolder { path, .. } | Self::LocalCapture { path } => format!("local:{path}"),
             Self::GitHubAtCommit { owner, repo, .. } => format!("github:{owner}/{repo}"),
         }
     }
