@@ -8,6 +8,7 @@ mod ask_policy;
 mod auto_signals;
 mod bundle;
 mod ceiling;
+pub(crate) use ceiling::NativeAutoChecker;
 pub(crate) mod class_policy;
 pub(crate) mod consult_fanout_values;
 pub(crate) mod curator_proposal;
