@@ -37,6 +37,7 @@ use crate::{EdgeActorClass, EntityId, Result, Vault};
 
 use super::block::HookTurnTarget;
 pub(crate) use ask::VERB_HOOK_INTENT;
+pub(super) use ask::scrub_erased_asks_in_txn;
 pub use ask::{HOOK_OUTCOME_UNCERTAIN, HOOK_RESULT_NOT_RETAINED, VerbHookWaitStatus};
 pub use call_scope::VerbCallScope;
 pub(super) use chain::admit_verb_outcome;
@@ -47,6 +48,7 @@ pub use credential::{
     VerbAskInstrument, VerbAskMcpCeiling, VerbAskRefusal, VerbAskResumed, VerbAskSavedCall,
 };
 pub use paced::{PACED_VERB_WAIT_DEFAULT_SECS, is_paced_verb};
+pub(super) use paced::scrub_erased_paced_in_txn;
 pub(crate) use paced::{
     hold_paced_verb_call, land_paced_verb_call_in_txn, paced_turn_again, paced_verb_reply_listed,
     runs_paced_turn,

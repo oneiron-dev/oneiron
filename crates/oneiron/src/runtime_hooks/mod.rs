@@ -77,8 +77,8 @@ pub(crate) use source::{
     index_task_due_in_txn, next_tick_release_at, record_surface_inbound_in_txn, release_due_ticks,
 };
 pub(crate) use store::{
-    hook_receipts, hook_run_read_rows, scrub_erased_hook_sources, scrub_hook_source_in_txn,
-    sync_binding_cursor_in_txn,
+    forget_scrubbed_source_in_txn, hook_receipts, hook_run_read_rows, scrub_erased_hook_sources,
+    scrub_erased_in_session_stores, scrub_hook_source_in_txn, sync_binding_cursor_in_txn,
 };
 pub use verb::{
     InvocationId, VerbCall, VerbCallScope, VerbDomain, VerbHookPre, VerbHookPreSnapshot,

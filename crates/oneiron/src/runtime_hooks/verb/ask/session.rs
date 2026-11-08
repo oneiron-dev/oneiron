@@ -22,6 +22,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::error::OffRecordError;
+use crate::runtime_hooks::store;
 use crate::skill_hub::pack_catalog::PackHookBinding;
 use crate::task_verb::{
     ConsultPayloadRef, TaskAskDefault, TaskAskHandle, TaskAskOption, TaskAskOptionId,
@@ -146,6 +147,11 @@ fn resume_open(
             reason: reason.to_owned(),
         }))
     };
+    // A paused call whose args name a row erased since never runs on it, as
+    // a saved one does not (FIX 22240).
+    if store::args_erased(vault, &row.args.to_string())? {
+        return skipped(super::erase::ERASED_ARGS);
+    }
     let status = author_memory(vault, row.author, row.author_class, turn)
         .tasks_ask_status(TaskAskHandle { group_ref: row.ask });
     let result = match status {
