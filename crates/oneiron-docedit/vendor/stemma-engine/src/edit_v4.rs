@@ -876,6 +876,9 @@ pub enum Op {
     /// `validate_schema`). Comments are annotations, not tracked changes.
     CommentCreate {
         target: NodeId,
+        /// Omitted for the main body; otherwise the exact native story.
+        #[serde(default)]
+        scope: Option<StoryCellScopeWire>,
         expect: String,
         /// 1-based copy of `expect` to anchor when the quote repeats.
         #[serde(default)]
@@ -1523,7 +1526,7 @@ pub enum TableOpWire {
     },
 }
 
-/// Wire form of a story-cell scope (`Op::EditStoryCell.scope`). Tagged by
+/// Wire form of a native story scope (`EditStoryCell` and `CommentCreate`). Tagged by
 /// `kind`; the same object shape as the wrapper `DocxStoryScope`, so the
 /// projection forwards its scope verbatim. `band` is the
 /// `"default"` | `"first"` | `"even"` token, refused at translate when unknown
@@ -1542,6 +1545,56 @@ pub enum StoryCellScopeWire {
     Endnote { id: String },
     /// A comment story by `w:id`.
     Comment { id: String },
+}
+
+fn validate_story_scope(op_index: usize, scope: &StoryCellScopeWire) -> Result<(), SchemaError> {
+    match scope {
+        StoryCellScopeWire::Header { part_name, .. }
+        | StoryCellScopeWire::Footer { part_name, .. } => {
+            if part_name.trim().is_empty() {
+                return Err(SchemaError::HeaderFooterEmptyField {
+                    op_index,
+                    field: "scope.part_name",
+                });
+            }
+        }
+        StoryCellScopeWire::Footnote { id } | StoryCellScopeWire::Endnote { id } => {
+            if id.trim().is_empty() {
+                return Err(SchemaError::NoteMissingId { op_index });
+            }
+        }
+        StoryCellScopeWire::Comment { id } => {
+            if id.trim().is_empty() {
+                return Err(SchemaError::CommentMissingId { op_index });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn story_scope_address(
+    op_index: usize,
+    scope: StoryCellScopeWire,
+) -> Result<StoryCellAddress, AdapterError> {
+    Ok(match scope {
+        StoryCellScopeWire::Header { part_name, band } => StoryCellAddress::HeaderFooter {
+            story: StoryRef::Header(part_name),
+            band: parse_header_footer_kind(op_index, &band)?,
+        },
+        StoryCellScopeWire::Footer { part_name, band } => StoryCellAddress::HeaderFooter {
+            story: StoryRef::Footer(part_name),
+            band: parse_header_footer_kind(op_index, &band)?,
+        },
+        StoryCellScopeWire::Footnote { id } => StoryCellAddress::Note {
+            kind: NoteKind::Footnote,
+            id,
+        },
+        StoryCellScopeWire::Endnote { id } => StoryCellAddress::Note {
+            kind: NoteKind::Endnote,
+            id,
+        },
+        StoryCellScopeWire::Comment { id } => StoryCellAddress::Comment { id },
+    })
 }
 
 fn default_after() -> String {
@@ -2455,6 +2508,7 @@ const OP_FIELDS: &[(&str, &[&str])] = &[
         "comment_create",
         &[
             "target",
+            "scope",
             "expect",
             "occurrence",
             "body",
@@ -3753,9 +3807,12 @@ pub fn validate_schema(txn: &EditTransactionV4) -> Result<(), SchemaError> {
                     }
                 }
             }
-            Op::CommentCreate { body, .. } => {
+            Op::CommentCreate { body, scope, .. } => {
                 if body.trim().is_empty() {
                     return Err(SchemaError::CommentEmptyBody { op_index });
+                }
+                if let Some(scope) = scope {
+                    validate_story_scope(op_index, scope)?;
                 }
             }
             Op::CommentReply {
@@ -3789,27 +3846,7 @@ pub fn validate_schema(txn: &EditTransactionV4) -> Result<(), SchemaError> {
             // are validated against the live table in the verb. The `band`
             // token is refused when unknown at translate, the same edge as the
             // header/footer kind tokens.
-            Op::EditStoryCell { scope, .. } => match scope {
-                StoryCellScopeWire::Header { part_name, .. }
-                | StoryCellScopeWire::Footer { part_name, .. } => {
-                    if part_name.trim().is_empty() {
-                        return Err(SchemaError::HeaderFooterEmptyField {
-                            op_index,
-                            field: "scope.part_name",
-                        });
-                    }
-                }
-                StoryCellScopeWire::Footnote { id } | StoryCellScopeWire::Endnote { id } => {
-                    if id.trim().is_empty() {
-                        return Err(SchemaError::NoteMissingId { op_index });
-                    }
-                }
-                StoryCellScopeWire::Comment { id } => {
-                    if id.trim().is_empty() {
-                        return Err(SchemaError::CommentMissingId { op_index });
-                    }
-                }
-            },
+            Op::EditStoryCell { scope, .. } => validate_story_scope(op_index, scope)?,
             Op::InsertNote { expect, body, .. } => {
                 if expect.trim().is_empty() {
                     return Err(SchemaError::NoteEmptyExpect { op_index });
@@ -5194,6 +5231,7 @@ fn translate_op(op_index: usize, op: Op) -> Result<EditStep, AdapterError> {
         }
         Op::CommentCreate {
             target,
+            scope,
             expect,
             occurrence,
             body,
@@ -5202,6 +5240,9 @@ fn translate_op(op_index: usize, op: Op) -> Result<EditStep, AdapterError> {
             rationale,
         } => Ok(EditStep::CommentCreate {
             block_id: target,
+            story: scope
+                .map(|scope| story_scope_address(op_index, scope))
+                .transpose()?,
             expect,
             occurrence,
             semantic_hash,
@@ -5261,25 +5302,7 @@ fn translate_op(op_index: usize, op: Op) -> Result<EditStep, AdapterError> {
             semantic_hash,
             rationale,
         } => {
-            let story = match scope {
-                StoryCellScopeWire::Header { part_name, band } => StoryCellAddress::HeaderFooter {
-                    story: StoryRef::Header(part_name),
-                    band: parse_header_footer_kind(op_index, &band)?,
-                },
-                StoryCellScopeWire::Footer { part_name, band } => StoryCellAddress::HeaderFooter {
-                    story: StoryRef::Footer(part_name),
-                    band: parse_header_footer_kind(op_index, &band)?,
-                },
-                StoryCellScopeWire::Footnote { id } => StoryCellAddress::Note {
-                    kind: NoteKind::Footnote,
-                    id,
-                },
-                StoryCellScopeWire::Endnote { id } => StoryCellAddress::Note {
-                    kind: NoteKind::Endnote,
-                    id,
-                },
-                StoryCellScopeWire::Comment { id } => StoryCellAddress::Comment { id },
-            };
+            let story = story_scope_address(op_index, scope)?;
             Ok(EditStep::EditStoryCell {
                 story,
                 block_id: target,

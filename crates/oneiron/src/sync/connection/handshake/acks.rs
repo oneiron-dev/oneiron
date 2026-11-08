@@ -54,7 +54,7 @@ impl SyncConnection {
                 if let Message::Binary(data) = message {
                     for response in client
                         .handle_server_message(&data)
-                        .map_err(SessionFault::remote)?
+                        .map_err(|e| SessionFault::of_frame(&e, e.to_string()))?
                         .into_iter()
                         .filter(|frame| !client.frame_withheld(frame))
                     {

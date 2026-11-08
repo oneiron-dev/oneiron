@@ -29,7 +29,8 @@ impl Memory<'_> {
             ));
         }
         let proposals = self.merge_queue_submitted(&repo, &input.proposals, &input.base_green)?;
-        Ok(batch_view(queue.enqueue(proposals)?))
+        let batch = queue.enqueue(proposals)?;
+        self.merge_queue_batch_view(&queue, batch)
     }
 
     /// `vault.code.merge_queue.stage`: materializes every nonempty subset of
@@ -43,13 +44,15 @@ impl Memory<'_> {
         self.merge_queue_owner(owner)?;
         let repo = self.merge_queue_repo(input.repo)?;
         let queue = self.merge_queue_of(&repo)?;
-        Ok(batch_view(queue.stage(&input.batch_ref)?))
+        let batch = queue.stage(&input.batch_ref)?;
+        self.merge_queue_batch_view(&queue, batch)
     }
 
     /// `vault.code.merge_queue.requeue_survivors`: enqueues the proposals a
-    /// diagnosed red batch did not quarantine as a new batch, through the
-    /// unchanged `MergeQueue::requeue_survivors`. The red batch and its
-    /// quarantine are kept. A moved head refuses; nothing rebases.
+    /// diagnosed red batch did not quarantine as a new batch, through
+    /// `MergeQueue::requeue_survivors`. The red batch and its quarantine are
+    /// kept, and the two batches link to each other once (FIX 4362): a
+    /// retry answers the same batch. A moved head refuses; nothing rebases.
     pub fn merge_queue_requeue_survivors_as(
         &self,
         owner: &AuthenticatedOwner,
@@ -58,7 +61,10 @@ impl Memory<'_> {
         self.merge_queue_owner(owner)?;
         let repo = self.merge_queue_repo(input.repo)?;
         let queue = self.merge_queue_of(&repo)?;
-        let batch = queue.requeue_survivors(&input.batch_ref)?.map(batch_view);
+        let batch = queue
+            .requeue_survivors(&input.batch_ref)?
+            .map(|batch| self.merge_queue_batch_view(&queue, batch))
+            .transpose()?;
         Ok(MergeQueueRequeueView {
             source_batch_ref: input.batch_ref,
             batch,
@@ -78,7 +84,8 @@ impl Memory<'_> {
         self.merge_queue_owner(owner)?;
         let repo = self.merge_queue_repo(input.repo)?;
         let queue = self.merge_queue_of(&repo)?;
-        Ok(batch_view(queue.land_reviewed(&input.batch_ref)?))
+        let batch = queue.land_reviewed(&input.batch_ref)?;
+        self.merge_queue_batch_view(&queue, batch)
     }
 
     /// `vault.code.merge_queue.settle_slow`: consumes stored slow results in
