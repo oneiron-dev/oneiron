@@ -194,7 +194,8 @@ impl SyncClient {
 
     /// The frames `prepared` goes as under `sub_tag` and `queue_seq`, the send
     /// held for the home's receipt where one comes. `raw` is the write as
-    /// queued or made.
+    /// queued or made. Frames that do not encode are this machine's own
+    /// fault, a reply to the home's frame too (FIX 22179).
     pub(crate) fn window_send_frames(
         &self,
         prepared: &PreparedWindowPads,
@@ -203,7 +204,9 @@ impl SyncClient {
         queue_seq: Option<u64>,
         raw: &[u8],
     ) -> Result<Vec<Vec<u8>>, TransportError> {
-        let (frames, binding) = prepared.frames(window_key, sub_tag, queue_seq)?;
+        let (frames, binding) = prepared
+            .frames(window_key, sub_tag, queue_seq)
+            .map_err(TransportError::own_encode)?;
         // An update past one frame is judged whole as its first frame leaves,
         // from the payload kept here until then (FIX 8247).
         if sub_tag == window_sub_tags::UPDATE
@@ -218,6 +221,9 @@ impl SyncClient {
         Ok(frames)
     }
 
+    /// [`Self::window_send_frames`], sized for node batch members, with the
+    /// binding the home's receipt must name. Frames that do not encode are
+    /// this machine's own fault (FIX 22190).
     pub(crate) fn window_send_batch_frames(
         &self,
         prepared: &PreparedWindowPads,
@@ -226,7 +232,9 @@ impl SyncClient {
         queue_seq: Option<u64>,
         raw: &[u8],
     ) -> Result<(Vec<Vec<u8>>, WindowPadBinding), TransportError> {
-        let (frames, binding) = prepared.frames_batched(window_key, sub_tag, queue_seq)?;
+        let (frames, binding) = prepared
+            .frames_batched(window_key, sub_tag, queue_seq)
+            .map_err(TransportError::own_encode)?;
         // Each batch draw checks the buffered whole update; no standalone
         // continuation copy is needed for these frames.
         self.record_window_send(prepared, window_key, sub_tag, queue_seq, raw, binding);
