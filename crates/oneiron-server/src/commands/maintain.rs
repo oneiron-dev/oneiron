@@ -11,11 +11,13 @@
 //! that failed makes the exit nonzero.
 //!
 //! The model pack retirement sweep resolves the active pack's roles against
-//! the access the routes of the `[models]` config hold, the config `serve`
-//! builds its router from, read with no backend built and nothing sent, so
-//! the pass sends a retiring model's notices too (FIX 22059). A model `serve`
-//! reaches only over its mesh, or on a worker it launches, has its notices
-//! from `serve`'s own pass.
+//! the access the router `serve` builds would hold, so the pass sends a
+//! retiring model's notices too (FIX 22059, 22189): the routes of the
+//! `[models]` config, the on-device views of the managed EXL3 workers plain
+//! `serve` launches, and the models the owner's other nodes offer, as the
+//! vault's mesh discovery rows hold them, with or without `[models]`. It is
+//! read from the config and those rows, with no backend built, no worker
+//! launched and nothing sent.
 
 use oneiron::housekeeping::{HousekeepingBudget, HousekeepingReport};
 use oneiron::maintain::CorruptClaimRepair;
@@ -150,11 +152,7 @@ pub fn maintain(args: MaintainArgs) -> anyhow::Result<()> {
         let owner = crate::owner::local_owner(&vault)?;
         vault.start_secret_lift(&owner, vault.now_recorded_at())?;
     }
-    let access = config
-        .models
-        .as_ref()
-        .map(ModelRouter::configured_access_snapshot)
-        .unwrap_or_default();
+    let access = ModelRouter::stopped_vault_access_snapshot(config.models.as_ref(), &vault);
     let housekeeping =
         vault.housekeeping_all_with_access(HousekeepingBudget::unbounded(), &access)?;
     let failed = housekeeping.failed();

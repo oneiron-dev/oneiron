@@ -6,13 +6,15 @@
 //! The pass is a sweep of the engine's housekeeping pass
 //! (`HousekeepingSweep::ModelPackRetirement`, FIX 20193), so every host that
 //! runs the pass runs it the same way: a serving host on its tick, with the
-//! access its offers hold, and `oneiron maintain` on a stopped vault, with
-//! the access the routes of its `[models]` config hold, as `serve` builds
-//! them (FIX 22059). The vault keeps models, prices and scores, never an
-//! offer. A host that stops a vault is told the first day to come on which
-//! a pass owes work, a notice mark with no notice recorded or a retirement
-//! day's move ([`Vault::model_pack_retirement_wake_at`]), and runs it again
-//! then. The vault's clock names the day. A pass first moves a pin whose
+//! access its offers hold, on its vault and each shared environment it keeps
+//! open, and `oneiron maintain` on a stopped vault, with the access the
+//! router `serve` would build from its `[models]` config and the vault's
+//! mesh discovery rows holds (FIX 22059, 22189). The vault keeps models,
+//! prices and scores, never an offer. A host that stops a vault is told the
+//! first day to come on which a pass owes work, a notice mark with no notice
+//! recorded or a retirement day's move
+//! ([`Vault::model_pack_retirement_wake_at`]), and runs it again then. The
+//! vault's clock names the day. A pass first moves a pin whose
 //! pack retired to the successor ([`migrated_model_pack_preference`]) and
 //! records the active pack's retirement-day move as a change that keeps the
 //! pack before it, so the change's notice offers the revert (FIX 5369).

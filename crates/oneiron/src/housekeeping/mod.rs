@@ -5,8 +5,10 @@
 //! [`Vault::housekeeping_all`] through `oneiron maintain`. A host that binds
 //! model offers calls the `_with_access` form of each, lending the access its
 //! offers hold to the model pack retirement sweep (FIX 20193); `oneiron
-//! maintain` lends the access of the routes its `[models]` config binds (FIX
-//! 22059). Each sweep has a cadence and its own bound. Its schedule lives in
+//! maintain` lends the access the router `serve` would build holds: the
+//! routes its `[models]` config binds and their on-device views, and the
+//! models the vault's mesh discovery rows hold (FIX 22059, 22189). Each
+//! sweep has a cadence and its own bound. Its schedule lives in
 //! the LIVE `HOUSEKEEPING_SCHEDULE` side table and is written when a run ends,
 //! so a restart in the middle of a pass resumes the sweeps that had not
 //! finished, never runs a finished one early, and never skips one forever. A
@@ -104,8 +106,9 @@ impl Vault {
     /// Runs every engine sweep now, due or not, and reschedules each from
     /// now: the owner's "run housekeeping now". The model pack retirement
     /// sweep runs against no model access: a host that holds model offers,
-    /// `serve` or `oneiron maintain` with the routes its config binds, calls
-    /// [`Self::housekeeping_all_with_access`] (FIX 22059).
+    /// `serve` or `oneiron maintain` with the offers its config and the
+    /// vault's mesh discovery rows bind, calls
+    /// [`Self::housekeeping_all_with_access`] (FIX 22059, 22189).
     pub fn housekeeping_all(&self, budget: HousekeepingBudget) -> Result<HousekeepingReport> {
         self.housekeeping_all_with_access(budget, &AccessSnapshot::new())
     }
