@@ -14,6 +14,7 @@ mod courtesy_delete;
 mod deletion;
 mod desktop_seats;
 mod embedding;
+mod hook_regen_pass;
 mod housekeeping;
 mod leases;
 mod lifecycle;
