@@ -662,6 +662,7 @@ both bindings and their export-census tests in one change.
 - `self.secrets.teardown`
 - `self.secrets.use`
 - `vault.shares.create`
+- `vault.shares.issue_view_link`
 - `vault.shares.revoke`
 - `vault.shares.view`
 - `host.compact`
@@ -724,7 +725,9 @@ both bindings and their export-census tests in one change.
 - `vault.code.secrets.propose`
 - `execute_code`
 - `vault.code.model_heal_count`
+- `vault.code.session_model_heal_count`
 - `vault.code.corrections`
+- `vault.code.step_evidence`
 - `vault.code.type_diagnostics`
 - `vault.code.waits.resolve`
 - `vault.code.waits.receipt`
@@ -780,6 +783,7 @@ both bindings and their export-census tests in one change.
 - `vault.code.cache.get`
 - `vault.code.cache.reuse`
 - `vault.code.snapshots.ingest`
+- `vault.code.snapshots.capture`
 - `vault.code.snapshots.get`
 - `vault.code.snapshots.read`
 - `vault.code.symbols.definitions`
@@ -807,6 +811,9 @@ both bindings and their export-census tests in one change.
 - `vault.agents.dreaming.set`
 - `vault.agents.grants.mint`
 - `vault.agents.grants.revoke`
+- `vault.agents.verb_classes.get`
+- `vault.agents.verb_classes.configure`
+- `vault.oauth.authorization.answer`
 - `vault.repo.git_push.mint`
 - `vault.repo.git_push.revoke`
 - `vault.connectors.read_grants.grant`
@@ -940,6 +947,8 @@ both bindings and their export-census tests in one change.
 - `vault.skills.pack_receipt`
 - `vault.skills.outcomes.project`
 - `vault.skills.outcomes.get`
+- `vault.settings.models.responses_store.read`
+- `vault.settings.models.responses_store.set`
 - `vault.models.manifest.read`
 - `vault.models.manifest.replace`
 - `vault.settings.web_connector`
@@ -1279,12 +1288,19 @@ both bindings and their export-census tests in one change.
 - `vault.mail.sources.audience_events`
 - `vault.mail.threads.share`
 - `vault.mail.threads.unshare`
+- `vault.mail.reply.draft`
+- `vault.mail.reply.drafts`
+- `vault.mail.reply.discard`
+- `vault.mail.reply.approve`
 - `vault.mail.compliance.setting`
 - `vault.mail.compliance.set`
 - `vault.mail.compliance.log`
 - `vault.mail.sources.sync_status`
+- `vault.mail.sources.import_mbox`
+- `vault.mail.sources.sync`
 - `vault.mail.inbox`
 - `vault.mail.threads.read`
+- `vault.mail.attachments.open`
 - `vault.mail.compliance.search`
 - `vault.files.sources.convert`
 - `vault.sync.repo_manifests.conflict.review`

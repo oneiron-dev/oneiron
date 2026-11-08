@@ -691,6 +691,7 @@ selfSecretsRenew(input: unknown): unknown
 selfSecretsTeardown(input: unknown): unknown
 selfSecretsUse(input: unknown): unknown
 vaultSharesCreate(input: unknown): unknown
+vaultSharesIssueViewLink(input: unknown): unknown
 vaultSharesRevoke(input: unknown): unknown
 vaultSharesView(input: unknown): unknown
 hostCompact(input: unknown): unknown
@@ -753,7 +754,9 @@ vaultCodeSecretsGet(input: unknown): unknown
 vaultCodeSecretsPropose(input: unknown): unknown
 executeCode(input: unknown): unknown
 vaultCodeModelHealCount(input: unknown): unknown
+vaultCodeSessionModelHealCount(input: unknown): unknown
 vaultCodeCorrections(input: unknown): unknown
+vaultCodeStepEvidence(input: unknown): unknown
 vaultCodeTypeDiagnostics(input: unknown): unknown
 vaultCodeWaitsResolve(input: unknown): unknown
 vaultCodeWaitsReceipt(input: unknown): unknown
@@ -809,6 +812,7 @@ vaultCodeViewsBuild(input: unknown): unknown
 vaultCodeCacheGet(input: unknown): unknown
 vaultCodeCacheReuse(input: unknown): unknown
 vaultCodeSnapshotsIngest(input: unknown): unknown
+vaultCodeSnapshotsCapture(input: unknown): unknown
 vaultCodeSnapshotsGet(input: unknown): unknown
 vaultCodeSnapshotsRead(input: unknown): unknown
 vaultCodeSymbolsDefinitions(input: unknown): unknown
@@ -836,6 +840,9 @@ vaultAgentsDreamingGet(input: unknown): unknown
 vaultAgentsDreamingSet(input: unknown): unknown
 vaultAgentsGrantsMint(input: unknown): unknown
 vaultAgentsGrantsRevoke(input: unknown): unknown
+vaultAgentsVerbClassesGet(input: unknown): unknown
+vaultAgentsVerbClassesConfigure(input: unknown): unknown
+vaultOauthAuthorizationAnswer(input: unknown): unknown
 vaultRepoGitPushMint(input: unknown): unknown
 vaultRepoGitPushRevoke(input: unknown): unknown
 vaultConnectorsReadGrantsGrant(input: unknown): unknown
@@ -969,6 +976,8 @@ vaultSkillsCallableAmend(input: unknown): unknown
 vaultSkillsPackReceipt(input: unknown): unknown
 vaultSkillsOutcomesProject(input: unknown): unknown
 vaultSkillsOutcomesGet(input: unknown): unknown
+vaultSettingsModelsResponsesStoreRead(input: unknown): unknown
+vaultSettingsModelsResponsesStoreSet(input: unknown): unknown
 vaultModelsManifestRead(input: unknown): unknown
 vaultModelsManifestReplace(input: unknown): unknown
 vaultSettingsWebConnector(input: unknown): unknown
@@ -1308,12 +1317,19 @@ vaultMailSourcesMembersSet(input: unknown): unknown
 vaultMailSourcesAudienceEvents(input: unknown): unknown
 vaultMailThreadsShare(input: unknown): unknown
 vaultMailThreadsUnshare(input: unknown): unknown
+vaultMailReplyDraft(input: unknown): unknown
+vaultMailReplyDrafts(input: unknown): unknown
+vaultMailReplyDiscard(input: unknown): unknown
+vaultMailReplyApprove(input: unknown): unknown
 vaultMailComplianceSetting(input: unknown): unknown
 vaultMailComplianceSet(input: unknown): unknown
 vaultMailComplianceLog(input: unknown): unknown
 vaultMailSourcesSyncStatus(input: unknown): unknown
+vaultMailSourcesImportMbox(input: unknown): unknown
+vaultMailSourcesSync(input: unknown): unknown
 vaultMailInbox(input: unknown): unknown
 vaultMailThreadsRead(input: unknown): unknown
+vaultMailAttachmentsOpen(input: unknown): unknown
 vaultMailComplianceSearch(input: unknown): unknown
 vaultFilesSourcesConvert(input: unknown): unknown
 vaultSyncRepoManifestsConflictReview(input: unknown): unknown
@@ -1364,6 +1380,7 @@ selfFocusUnsubscribe(input: unknown): unknown
   inOffRecordSession(sessionRef: string): NativeClient
   withReadCredential(credential: string): NativeClient
   lastReceiptRef(): string | null
+  lastHookNotice(): string | null
   /** What `openWithHostRoot` did with its root; `null` on every other handle. */
   hostRootProfile(): HostRootProfile | null
   /** The engine-limit crossings this client's own vault kept; `null` on a remote, attached, or rebound view. */

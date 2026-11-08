@@ -18,6 +18,8 @@ use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 mod body;
+mod body_admission;
+pub(crate) use body_admission::resolve_record_body_with_utf8_admission;
 mod history;
 mod repo_index;
 pub(crate) use body::body_with_document;
@@ -68,10 +70,10 @@ pub(super) struct Head {
     /// (FIX 8942); `None` for a document carried from another machine,
     /// rebuilt or born of anything else.
     pub birth_frontier: Option<Vec<u8>>,
-    /// What a canonical restore left here (FIX 3553); `None` for a document
-    /// no restore rebuilt.
+    /// The history this incarnation replaces, when a canonical restore
+    /// rebuilt the document, here or on the machine it came from (FIX 3553).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub restored: Option<super::succession::Restored>,
+    pub succeeds: Option<super::succession::Succession>,
 }
 
 /// Pointer from an owner (a stored entity or a proposal artifact) to its
@@ -142,7 +144,7 @@ pub(super) fn load(
 ) -> Result<EntityDoc> {
     let slot = DocumentSlot::from_hex(&h.document)?;
     let bytes = store
-        .port_document_row(txn, slot, DocumentRow::Snapshot)?
+        .port_document_row_borrowed(txn, slot, DocumentRow::Snapshot)?
         .ok_or(Error::CorruptedIndex("entity document snapshot missing"))?;
     let doc = EntityDoc::from_snapshot(&bytes)?;
     if doc.birth().entity != h.entity {
@@ -501,7 +503,7 @@ impl Vault {
                 generation: 0,
                 pending: 0,
                 birth_frontier: Some(doc.frontier()),
-                restored: None,
+                succeeds: None,
             };
             persist(self, txn, entity, &mut h, &doc, None)?;
             // A MESSAGE's quotes taken of its atomic text are pinned at the

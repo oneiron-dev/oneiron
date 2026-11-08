@@ -26,6 +26,7 @@ pub mod secret_custody;
 pub mod secret_lease;
 pub mod serialize;
 pub mod temporal;
+pub mod wallet;
 pub mod write_envelope;
 
 // The same root aliases `oneiron` has, so moved code keeps its `crate::` paths.
