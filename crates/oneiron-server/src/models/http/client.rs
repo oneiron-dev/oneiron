@@ -680,5 +680,4 @@ impl ProviderHttp {
         });
         Box::pin(opening.try_flatten())
     }
-
 }
