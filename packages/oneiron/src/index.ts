@@ -2215,6 +2215,8 @@ export class Oneiron {
     shares: {
       /** The handle's actor issues a share: the brief, its recipient, the most the view may show and the text that travels. */
       create: (input: Facade.ShareCreateRequest): Facade.ShareCreated => this.#call(() => this.#client.vaultSharesCreate(input) as Facade.ShareCreated),
+      /** Issues a holder-bound view-only pairing link for one admitted share's recipient. */
+      issue_view_link: (input: Facade.ShareViewLinkRequest): Facade.PairingLink => this.#call(() => this.#client.vaultSharesIssueViewLink(input) as Facade.PairingLink),
       revoke: (input: Facade.ShareRevokeRequest): Facade.ShareRevokeReceipt => this.#call(() => this.#client.vaultSharesRevoke(input) as Facade.ShareRevokeReceipt),
       view: (input: Facade.ShareViewRequest): Facade.ScopedReadResult<Facade.SharedBriefView | null> => this.#call(() => this.#client.vaultSharesView(input) as Facade.ScopedReadResult<Facade.SharedBriefView | null>),
     },

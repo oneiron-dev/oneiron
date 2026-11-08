@@ -2610,6 +2610,8 @@ class Oneiron:
     class _VaultSharesVerbs:
         def create(self, spec: Facade.ShareCreateRequest) -> Facade.ShareCreated:
             """The handle's actor issues a share: the brief, its recipient, the most the view may show and the text that travels."""
+        def issue_view_link(self, spec: Facade.ShareViewLinkRequest) -> Facade.PairingLink:
+            """Issues a holder-bound view-only pairing link for one admitted share's recipient."""
         def revoke(self, spec: Facade.ShareRevokeRequest) -> Facade.ShareRevokeReceipt: ...
         def view(self, spec: Facade.ShareViewRequest) -> Facade.ScopedReadResult[Facade.SharedBriefView | None]: ...
     class _VaultHooksVerbs:

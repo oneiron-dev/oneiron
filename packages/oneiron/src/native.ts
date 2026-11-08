@@ -691,6 +691,7 @@ selfSecretsRenew(input: unknown): unknown
 selfSecretsTeardown(input: unknown): unknown
 selfSecretsUse(input: unknown): unknown
 vaultSharesCreate(input: unknown): unknown
+vaultSharesIssueViewLink(input: unknown): unknown
 vaultSharesRevoke(input: unknown): unknown
 vaultSharesView(input: unknown): unknown
 hostCompact(input: unknown): unknown
