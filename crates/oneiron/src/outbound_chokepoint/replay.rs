@@ -571,12 +571,10 @@ fn step_uncertain_send<T: OutboundTransport>(
     match transport.uncertain_send_step(&FrozenOutboundCall::from_record(&record)) {
         UncertainSendStep::Delivered => {
             let done = complete_record_bridged(vault, record.id, now_ms, |_, _| {})?;
-            Ok(effect_result(
-                &done,
-                Some(OutboundSendOutcome::Acked),
-                true,
-                None,
-            ))
+            let mut result =
+                effect_result(&done.record, Some(OutboundSendOutcome::Acked), true, None);
+            result.budget_settlement_events = done.budget_events;
+            Ok(result)
         }
         UncertainSendStep::LookedUpUnsent => {
             let proven = record_looked_up_non_delivery(vault, record.id, now_ms)?;
