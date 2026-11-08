@@ -22,8 +22,11 @@
 //! once. The vault's owner lists the archives taken in here by id, source
 //! vault and term, imported or lapsed, never a byte of one (FIX 11797).
 
-use super::removal_archive::{FrozenPosition, StoredRemovalExport};
-use super::{REMOVAL_EXPORT, REMOVAL_EXPORT_RETAIN_SECS, RemovalExportCopy, removal_export_key};
+use super::removal_archive::{FrozenPosition, KeptRemovalCopy, StoredRemovalExport};
+use super::removal_file::StagedArchive;
+use super::{
+    ArchiveRow, REMOVAL_EXPORT, REMOVAL_EXPORT_RETAIN_SECS, RemovalExportCopy, removal_export_key,
+};
 use std::collections::BTreeMap;
 
 use crate::batch::export::{
@@ -154,8 +157,15 @@ impl Vault {
         if version.checked_add(REMOVAL_EXPORT_RETAIN_SECS) != Some(copy.expires_at) {
             return Err(refused("names a term no removal grants"));
         }
-        let held = self.removal_archive_holds(&copy.export.archive)?;
+        let held = self.removal_archive_holds(std::io::Cursor::new(&copy.export.archive[..]))?;
         let row = import_key(person, receipt, version);
+        // An archive not kept here yet is written as its file before the
+        // writer opens (FIX 3679); one kept here already keeps its file.
+        let staged = if self.removal_export_kept(person, receipt)? {
+            None
+        } else {
+            Some(self.stage_removal_archive(&mut std::io::Cursor::new(&copy.export.archive[..]))?)
+        };
         self.with_write_txn_grouped(|txn| {
             if REMOVAL_IMPORT.contains(&self.store, txn, &row)? {
                 return Ok(None);
@@ -165,7 +175,7 @@ impl Vault {
                 return Err(refused("is past its term"));
             }
             self.check_known_removal_in_txn(txn, person, receipt, copy)?;
-            self.keep_received_removal_export_in_txn(txn, person, receipt, copy)?;
+            self.keep_received_removal_export_in_txn(txn, person, receipt, copy, staged.as_ref())?;
             let imported = ImportedRemovalArchive {
                 digest: copy.export.digest.clone(),
                 records: held.records,
@@ -177,6 +187,17 @@ impl Vault {
             self.notify_removal_archive_in_txn(txn, person, receipt, copy, held, now)?;
             Ok(Some(held.records))
         })
+    }
+
+    /// Whether this vault keeps an archive of `person`'s under the removal
+    /// receipt `receipt`, whatever its term.
+    fn removal_export_kept(&self, person: EntityId, receipt: EntityId) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        REMOVAL_EXPORT.contains(
+            &self.store,
+            &txn,
+            &removal_export_key(&person.to_hex(), &receipt.to_hex()),
+        )
     }
 
     /// Whether this vault took in `person`'s delivery `version` (the
@@ -256,15 +277,16 @@ impl Vault {
     /// reader (FIX 2766, 3678): every member checked against its manifest
     /// and every row as it is read, into a scratch index that goes with the
     /// call. Refused unless its manifest names this vault's authority as its
-    /// source. Nothing of it is written.
-    fn removal_archive_holds(&self, archive: &[u8]) -> Result<Held> {
+    /// source. Nothing of it is written, and the archive is read where it
+    /// lies, never whole (FIX 21529).
+    fn removal_archive_holds(&self, archive: impl std::io::Read + std::io::Seek) -> Result<Held> {
         let ours = self
             .authority_vault_id()?
             .map(|id| crate::entity_id::bytes_to_hex_lower(&id));
         let scratch = self
             .store
             .archive_scratch_env(self.config.page_seal.as_ref())?;
-        let read = read_vault_archive_indexed(self, &scratch, std::io::Cursor::new(archive))?;
+        let read = read_vault_archive_indexed(self, &scratch, archive)?;
         let manifest = &read.manifest;
         let source = manifest
             .storage
@@ -320,21 +342,23 @@ impl Vault {
     }
 
     /// Keeps `copy` as the removal keeps it at the home, under its member
-    /// and receipt, so the removal-export readers answer it here. One
-    /// already kept must be the same archive: a later delivery of it moves
-    /// its term on, and an earlier one leaves it. A copy kept here carries
-    /// no frozen positions, so a holder the slip was transferred to takes
-    /// none of it here (FIX-LIST 8224).
+    /// and receipt, so the removal-export readers answer it here, its bytes
+    /// the file `staged` was written as (FIX 3679). One already kept must be
+    /// the same archive: a later delivery of it moves its term on, and an
+    /// earlier one leaves it; `staged` then names nothing and is debris. A
+    /// copy kept here carries no frozen positions, so a holder the slip was
+    /// transferred to takes none of it here (FIX-LIST 8224).
     fn keep_received_removal_export_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         person: EntityId,
         receipt: EntityId,
         copy: &RemovalExportCopy,
+        staged: Option<&StagedArchive>,
     ) -> Result<()> {
         let row_key = removal_export_key(&person.to_hex(), &receipt.to_hex());
         if let Some(mut stored) = REMOVAL_EXPORT.get(&self.store, txn, &row_key)? {
-            if stored.copy.export.digest != copy.export.digest {
+            if stored.digest() != copy.export.digest {
                 return Err(refused("differs from the archive kept under its receipt"));
             }
             if copy.delivered_at > stored.copy.delivered_at {
@@ -344,16 +368,34 @@ impl Vault {
             }
             return Ok(());
         }
-        let mut kept = copy.clone();
-        kept.receipt_id = receipt.to_hex();
-        kept.member = person.to_hex();
+        // The row went between the read that found it and this writer.
+        let staged = staged.ok_or(Error::ConcurrentWrite(
+            "a kept removal archive went while its delivery was taken in",
+        ))?;
+        let file = self.bind_removal_archive_in_txn(
+            txn,
+            ArchiveRow {
+                member: person,
+                receipt,
+            },
+            staged,
+        )?;
+        let kept = KeptRemovalCopy {
+            receipt_id: receipt.to_hex(),
+            vault_id: copy.vault_id,
+            member: person.to_hex(),
+            delivered_at: copy.delivered_at,
+            expires_at: copy.expires_at,
+            format: copy.export.format.clone(),
+            holder_requests: copy.export.holder_requests.clone(),
+        };
         let positions = rmp_serde::to_vec_named(&Vec::<FrozenPosition>::new())
             .map_err(|_| Error::InvariantViolation("removal archive positions do not encode"))?;
         REMOVAL_EXPORT.put(
             &self.store,
             txn,
             &row_key,
-            &StoredRemovalExport::new(kept, positions),
+            &StoredRemovalExport::new(kept, file, positions),
         )
     }
 

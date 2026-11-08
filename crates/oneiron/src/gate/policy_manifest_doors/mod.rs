@@ -1,6 +1,15 @@
 //! Typed policy reads, owner edits and inert untrusted contributions.
 //! The owner writer is the same one `install_owner_policy_manifest` takes;
 //! composition and validation remain the existing manifest resolver's.
+mod agent_verb_classes;
+pub(crate) use agent_verb_classes::{
+    AGENT_VERB_CLASSES_KEY, agent_verb_class_rows_for_store_in_txn, agent_verb_class_rows_of_body,
+    decode_agent_verb_classes, verb_classes_narrow,
+};
+pub use agent_verb_classes::{
+    AgentVerbClassRow, AgentVerbClassesConfigureRequest, AgentVerbClassesReceipt,
+    AgentVerbClassesView, agent_verb_classes_as_owner, configure_agent_verb_classes_as_owner,
+};
 mod calendar_outcome_grace;
 pub use calendar_outcome_grace::{
     calendar_outcome_grace_as_owner, set_calendar_outcome_grace_as_owner,
@@ -62,6 +71,7 @@ const FIELDS: &[&str] = &[
     "signatures",
     "auto_checker",
     "slide_review_policy",
+    crate::gate::code_consent_settlement::KEY,
     "teacher_probe",
     "sheet_answer_limits",
 ];
@@ -207,7 +217,7 @@ fn record(
     vault
         .store
         .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
-    Ok(receipt.decision_id.to_hex())
+    Ok(format!("gate:{}", receipt.decision_id.to_hex()))
 }
 
 /// Replaces one field of the owner-trusted default manifest through the

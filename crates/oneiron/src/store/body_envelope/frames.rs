@@ -433,6 +433,123 @@ impl FrameWriter {
     }
 }
 
+/// The successfully-written prefix of an unfinished body file: how many
+/// whole `Role::Chunk` envelopes sit on disk under `Domain::Body`, and the
+/// envelope overhead the head records. No buffered tail, no last chunk and
+/// no terminal record is claimed.
+#[derive(Clone, Copy)]
+pub(super) struct WrittenBodyPrefix {
+    chunks: u64,
+    overhead: u64,
+}
+
+impl WrittenBodyPrefix {
+    /// Whole `Role::Chunk` envelopes on disk.
+    pub(super) const fn chunks(&self) -> u64 {
+        self.chunks
+    }
+
+    /// The envelope overhead the head records.
+    pub(super) const fn overhead(&self) -> u64 {
+        self.overhead
+    }
+
+    /// Plaintext bytes the prefix holds: every chunk is whole.
+    pub(super) fn logical_len(&self) -> Result<u64> {
+        self.chunks
+            .checked_mul(CHUNK)
+            .ok_or(Error::ArithmeticOverflow("body file length"))
+    }
+
+    /// The file's whole length on disk when exactly this prefix is frozen.
+    pub(super) fn physical(&self) -> Result<u64> {
+        self.chunks
+            .checked_mul(
+                self.overhead
+                    .checked_add(CHUNK)
+                    .ok_or(Error::ArithmeticOverflow("body file length"))?,
+            )
+            .and_then(|frames| frames.checked_add(HEAD_LEN as u64))
+            .ok_or(Error::ArithmeticOverflow("body file length"))
+    }
+
+    /// Where chunk `index` starts: every chunk before it is whole.
+    fn chunk_at(&self, index: u64) -> Result<u64> {
+        index
+            .checked_mul(
+                self.overhead
+                    .checked_add(CHUNK)
+                    .ok_or(Error::ArithmeticOverflow("body file chunk offset"))?,
+            )
+            .and_then(|at| at.checked_add(HEAD_LEN as u64))
+            .ok_or(Error::ArithmeticOverflow("body file chunk offset"))
+    }
+}
+
+impl FrameWriter {
+    /// The unfinished body's written prefix, when `Domain::Body` has
+    /// successfully-written `Role::Chunk` envelopes on disk: the writer's own
+    /// `index` as the chunk count and its actual `overhead`. `None` when no
+    /// chunk has fully written (`overhead` is `None` and/or `index` is 0, the
+    /// file empty or holding a partial failed write) or when the domain is
+    /// not `Domain::Body`. No buffered tail, no last chunk and no terminal
+    /// record is claimed.
+    pub(super) fn written_body_prefix(&self) -> Option<WrittenBodyPrefix> {
+        match self.domain {
+            Domain::Body => {}
+            Domain::Lines => return None,
+        }
+        let overhead = self.overhead?;
+        if self.index == 0 {
+            return None;
+        }
+        Some(WrittenBodyPrefix {
+            chunks: self.index,
+            overhead,
+        })
+    }
+}
+
+/// Checks a file with no written prefix is honestly empty: length 0. A
+/// non-empty file with no successfully-written chunk is incomplete or
+/// corrupt, never a silent no-source.
+pub(super) fn check_no_written_body(file: &File) -> Result<()> {
+    if file.metadata()?.len() != 0 {
+        return Err(corrupt());
+    }
+    Ok(())
+}
+
+/// Chunk `index` of an unfinished body's written prefix, authenticated. The
+/// caller freezes the writer first, so the file's length must equal the
+/// prefix's whole physical length exactly; a failed-partial suffix does not
+/// read. Preads only, never disturbs the file cursor.
+pub(super) fn read_written_body_chunk(
+    file: &File,
+    key: &FileKey,
+    prefix: &WrittenBodyPrefix,
+    index: u64,
+) -> Result<Zeroizing<Vec<u8>>> {
+    if index >= prefix.chunks {
+        return Err(corrupt());
+    }
+    if !(1..=MAX_OVERHEAD).contains(&prefix.overhead) {
+        return Err(corrupt());
+    }
+    let mut head = [0u8; HEAD_LEN];
+    file.read_exact_at(&mut head, 0).map_err(|_| corrupt())?;
+    if parse_head(&head, key)? != prefix.overhead {
+        return Err(corrupt());
+    }
+    if file.metadata()?.len() != prefix.physical()? {
+        return Err(corrupt());
+    }
+    let mut frame = vec![0u8; usize::try_from(prefix.overhead + CHUNK).map_err(|_| corrupt())?];
+    file.read_exact_at(&mut frame, prefix.chunk_at(index)?)
+        .map_err(|_| corrupt())?;
+    open_frame(key, Domain::Body, index, Role::Chunk, &frame, CHUNK)
+}
+
 /// The newline count before each 64 KiB block of a body read in order: its
 /// line index, built a chunk at a time.
 #[derive(Default)]

@@ -33,6 +33,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | crate::federation::grant_policy::ROWS_KEY
                 | crate::gate::room_policy::KEY
                 | POLICY_SHARED_ACT_POLICIES_KEY
+                | POLICY_OWNER_CHANGE_WAIT_SECS_KEY
                 | crate::consent::CATASTROPHE_FLOOR_ROW_KEY
                 | POLICY_OWNER_POLICY_ROWS_KEY
                 | POLICY_OWNER_POLICY_PRECEDENCE_KEY
@@ -87,6 +88,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "livequery_tracker_limits"
                 | crate::gate::policy_manifest_doors::CLAIM_AGING_PROFILES_KEY
                 | crate::gate::policy_manifest_doors::RETRIEVAL_WEIGHTS_KEY
+                | crate::gate::policy_manifest_doors::AGENT_VERB_CLASSES_KEY
                 | crate::gate::weave_policy::KEY
                 | crate::gate::weave_policy::PRECEDENCE_KEY
                 | super::super::POLICY_RESIDENCE_OPERATION_BUDGETS_KEY
@@ -106,6 +108,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "retry_source_policy"
                 | "compilation_policy"
                 | POLICY_TEACHER_PROBE_KEY
+            | crate::gate::code_consent_settlement::KEY
                 | "experiment_selection"
                 | crate::gate::entity_resolution_bands::KEY
                 | crate::gate::carry_forward_policy::KEY
@@ -120,6 +123,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
 
     crate::gate::policy_manifest_doors::decode_claim_aging_profiles(&entries).ok()?;
     crate::gate::policy_manifest_doors::decode_retrieval_weights(&entries).ok()?;
+    crate::gate::policy_manifest_doors::decode_agent_verb_classes(&entries).ok()?;
     validate_owner_policy_notify(&entries)?;
 
     let unsupported_schema = match single_map_value(&entries, POLICY_SCHEMA_VERSION_KEY) {
@@ -207,6 +211,12 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Missing => None,
         MapValue::Duplicate => return None,
         MapValue::Present(value) => Some(parse_shared_act_policies(value)?),
+    };
+    let owner_change_wait_secs = match single_map_value(&entries, POLICY_OWNER_CHANGE_WAIT_SECS_KEY)
+    {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(value.as_u64()?),
     };
     let catastrophe_floor =
         match single_map_value(&entries, crate::consent::CATASTROPHE_FLOOR_ROW_KEY) {
@@ -615,6 +625,14 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Duplicate => return None,
         MapValue::Present(value) => Some(parse_teacher_probe_row(value)?),
     };
+    let code_consent_settlement =
+        match single_map_value(&entries, crate::gate::code_consent_settlement::KEY) {
+            MapValue::Missing => None,
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => {
+                Some(crate::gate::code_consent_settlement::CodeConsentSettlementRow::parse(value)?)
+            }
+        };
 
     let entity_resolution_bands =
         match single_map_value(&entries, crate::gate::entity_resolution_bands::KEY) {
@@ -731,6 +749,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         federation_grant_rows,
         room_policy_rows,
         shared_act_policies,
+        owner_change_wait_secs,
         catastrophe_floor,
         single_valued_predicates,
         owner_policy_rows,
@@ -792,6 +811,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         retry_source_policy,
         compilation_policy,
         teacher_probe,
+        code_consent_settlement,
         experiment_selection,
         entity_resolution_bands,
         carry_forward_confidence,

@@ -96,6 +96,15 @@ pub const ATTRIBUTION_HUNK: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Whether one unclear attribution note describes the same missing label as a
+/// pattern the Coach already holds for its scope, a new one, or none (FIX
+/// 7824). Keyed by the scope and the note.
+pub const ATTRIBUTION_PATTERN: QuestionFamily = QuestionFamily {
+    name: "skill_attribution.unclear_pattern",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// A campaign arm's taste over a blind input: a `[0, 1]` score and an audit-only usefulness
 /// reading. Keyed by field.
 pub const CAMPAIGN_TASTE: QuestionFamily = QuestionFamily {
@@ -427,6 +436,14 @@ pub const NIGHTLY_LINK: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Does one Arc TURN need opening because its sitting's lines and current claims
+/// disagree? Keyed by the declared work and the TURN, in the call's label map.
+pub const ARC_OPEN_TURN: QuestionFamily = QuestionFamily {
+    name: "dreamer.arc.open_turn",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Would delivering one prepared result only at the next regular digest harm the stated
 /// intent of the owner it is for (OF-194)? A yes breaks the digest's cadence for that result
 /// alone; a no, an abstain or no answer leaves it to the regular digest. Keyed by the result's
@@ -465,6 +482,7 @@ pub const FAMILIES: &[QuestionFamily] = &[
     REACTION_MEANING,
     SKILL_OPTIMIZE_JUDGMENT,
     ATTRIBUTION_HUNK,
+    ATTRIBUTION_PATTERN,
     CAMPAIGN_TASTE,
     CAMPAIGN_COMPLAINT_PAUSE,
     SEAT_PICK,
@@ -503,6 +521,7 @@ pub const FAMILIES: &[QuestionFamily] = &[
     SIEVE_ENTITY,
     SIEVE_CONFIDENCE,
     NIGHTLY_LINK,
+    ARC_OPEN_TURN,
     URGENT_DIGEST_HARM,
     COMPACTION_SUPPORT,
     QUOTA_SPENT,

@@ -81,14 +81,17 @@ fn persistent_adapter_observes_grant_revocation_and_narrowing() {
             limit: 10,
             view: None,
             count_mode: CountMode::Estimate,
+            filter: None,
         };
         let batch = CoreBatchShortIdHydrateRequest {
             refs: vec![reference.clone()],
             view: None,
+            filter: None,
         };
         let timeline = CoreMemoryTimelineRequest {
             id: admitted_id.to_hex(),
             view: None,
+            filter: None,
         };
         assert_eq!(
             adapter

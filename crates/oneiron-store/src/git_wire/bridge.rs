@@ -3,7 +3,7 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use crate::git_wire::argv::validate_argv_token;
+use crate::git_wire::argv::bridged_argv_token;
 use crate::git_wire::config::GIT_WIRE_BRIDGED_CONFIG_KEYS;
 use crate::git_wire::config::GIT_WIRE_MAX_ARGS;
 use crate::git_wire::failure::classify_diagnostics;
@@ -38,8 +38,7 @@ pub fn bridged_argv(args: &[String]) -> Result<Vec<OsString>> {
     validate_forbidden_shape(&args[verb_index..])?;
     let mut argv = Vec::with_capacity(args.len());
     for arg in args {
-        validate_argv_token(arg)?;
-        argv.push(OsString::from(arg));
+        argv.push(bridged_argv_token(arg)?);
     }
     Ok(argv)
 }

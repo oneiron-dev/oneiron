@@ -39,11 +39,11 @@ side_tables! {
     CAMPAIGN_COMPLIANCE_PENDING: VaultMeta b"campaign:compliance:pending:v1" Named;
     /// Caller-bound compliance amendment, owner decision or verification receipt. Key: id16.
     CAMPAIGN_COMPLIANCE_RECEIPT: VaultMeta b"campaign:compliance:receipt:v1:" Named;
-    /// One campaign enrollment outbound call's prepared request, retained before its first ask
-    /// (FIX 6424 part 2a): its target's ids and epoch, its body's digest, its sender and the event
-    /// row it was first asked under; ids and digests only. Key: id16(consequence) + u64be(call
+    /// One campaign enrollment outbound call's retained request and optional current hold:
+    /// original ids/digests, actual attempt provenance and frozen-envelope digest, and its
+    /// owner-ask/redrive refs; no address or message body. Key: id16(consequence) + u64be(call
     /// seq) + the request's 32-byte digest.
-    CAMPAIGN_ENROLLMENT_ASK: VaultMeta b"campaign:enrollment_ask:v1:" Raw
+    CAMPAIGN_ENROLLMENT_ASK: VaultMeta b"campaign:enrollment_ask:v1:" Named
         => crate::campaign::enrollment::erase_enrollment_ask_actor_in_txn;
     /// Per-saved-query baseline (definition version + scope digest) a campaign enrollment detection
     /// re-derives against. Key: id16.
@@ -157,6 +157,10 @@ side_tables! {
     /// actor, signal and task. Key: id16 actor, signal code byte, id16 task (zeros for none).
     COACH_AGENT_HEALTH_CARD: VaultMeta b"coach:agent_health_card:v1:" Named
         => crate::dreamer_runner::maintenance::agent_health::erase_actor_sources_in_txn;
+    /// Each agent-health card under every reviewer receipt it holds (FIX 10880): the
+    /// `health_review:` digest of each `review_outcomes` receipt. Key: digest32 + id16(actor) +
+    /// u8(signal) + id16(task).
+    COACH_AGENT_HEALTH_CARD_BY_RECEIPT: VaultMeta b"coach:agent_health_card_by_receipt:v1:" Raw;
     /// Each live agent-health card under every reviewer revision it names
     /// (FIX 10434): `reviewer_revisions`. Key: id16(revision) + id16(actor) + u8(signal) +
     /// id16(task).
@@ -168,6 +172,23 @@ side_tables! {
     /// The latest wake waiting for a free live health-review slot (FIX 9224).
     /// Key: target attempt id16 + big-endian lease generation4.
     COACH_AGENT_HEALTH_LIVE_PENDING: VaultMeta b"coach:agent_health_live_pending:v1:" Named Engine;
+    /// One agent-health review state's frozen DIAGNOSTICs and evidence ids (FIX 8082), shared by
+    /// every outcome receipt of that state. Ids only. Key: the `health_review:` digest32.
+    COACH_AGENT_HEALTH_REVIEW_STATE: VaultMeta b"coach:agent_health_review_state:v1:" Named;
+    /// Where the Coach's unclear-note clustering resumes (FIX 7824): the unclear-ledger key of the
+    /// last outcome a pass finished, cleared at the ledger's end. Key: ().
+    COACH_ATTRIBUTION_LABEL_CURSOR: VaultMeta b"coach:attribution_label_cursor:v1" Named Engine;
+    /// One unclear note the Coach's same-pattern choice judged (FIX 7824): its scope's group hash,
+    /// the pattern it joined (none when it names no pattern) and the fingerprint it was judged
+    /// at. No note text. Key: u32be length + unclear-ledger key + u32be note index.
+    COACH_ATTRIBUTION_LABEL_MEMBER: VaultMeta b"coach:attribution_label_member:v1:" Named Engine;
+    /// One recurring unclear-note pattern within one scope (FIX 7824): the note it is shown by
+    /// and the proposal filed for it, which suppresses a second filing. No note text. Key: group
+    /// hash32 + pattern id16.
+    COACH_ATTRIBUTION_LABEL_PATTERN: VaultMeta b"coach:attribution_label_pattern:v1:" Named Engine;
+    /// One note's support for a pattern (FIX 7824), with the outcome identity it counts as. Key:
+    /// group hash32 + pattern id16 + the member key.
+    COACH_ATTRIBUTION_LABEL_SUPPORT: VaultMeta b"coach:attribution_label_support:v1:" Named Engine;
     /// An agent's `self.report_blocked` receipt waiting for the Coach's Issues job. Key: id16 of
     /// the receipt.
     COACH_BLOCKED_ISSUE: VaultMeta b"coach:blocked_issue:v1:" Named;
@@ -245,6 +266,19 @@ side_tables! {
     /// When the Coach's think-threshold run read a source's record, so a replay never counts
     /// twice. Key: id16.
     COACH_THINK_MISSED_READ: VaultMeta b"coach:think_missed_read:v1:" Raw;
+    /// One local `Auto` merge, split or facet's post-hoc review candidate, kept in its decision's
+    /// own writer (FIX 7817): ids, digests and its ramp-shaped scope, never claim or evidence
+    /// text. Local review state, never replicated authority. Key: hash32 (audit id).
+    COACH_TOPOLOGY_AUDIT_INTENT: VaultMeta b"coach:topology_audit_intent:v1:" Named
+        => crate::identity_topology::erase_topology_audit_actor_in_txn;
+    /// The one result of a reviewed topology-audit candidate, append-only, with the Coach's
+    /// correction of a concern (FIX 7817). Key: hash32 (audit id).
+    COACH_TOPOLOGY_AUDIT_RESULT: VaultMeta b"coach:topology_audit_result:v1:" Named
+        => crate::identity_topology::erase_topology_audit_actor_in_txn;
+    /// The first selection of a topology-audit candidate, kept before any review: the pinned
+    /// recipe and revision that selected it (FIX 7817). Key: hash32 (audit id).
+    COACH_TOPOLOGY_AUDIT_SELECTION: VaultMeta b"coach:topology_audit_selection:v1:" Named
+        => crate::identity_topology::erase_topology_audit_actor_in_txn;
     /// When the Coach last climbed (or first saw) a pending skill tradeoff ask, so it climbs one
     /// rung per reminder window. Key: id16 of the ask's proposal.
     COACH_TRADEOFF_CLIMB: VaultMeta b"coach:tradeoff_climb:v1:" Raw;
@@ -288,13 +322,15 @@ side_tables! {
     /// Immutable receipt of the file-mode-review proposal ids that promoted a revision. Key: id16.
     CODE_REVISION_PROMOTION: VaultMeta b"code_revision:promotion:v1:" LegacyCompact;
     /// Stranded/diverged revision proposal awaiting reconciliation with the head. Key: id16.
-    CODE_REVISION_PROPOSAL: VaultMeta b"code_revision:proposal:v1:" Raw;
+    CODE_REVISION_PROPOSAL: VaultMeta b"code_revision:proposal:v1:" Raw
+        => crate::code_revision::erase_proposal_author_in_txn;
     /// The checked Baseline a tested queue revision's parent chain ends at (value = id16),
     /// written when its seal is finalized, so a read finds the root by key, never by walking
     /// the chain (FIX 7390, 7391). Key: id16.
     CODE_REVISION_QUEUE_ROOT: VaultMeta b"code_revision:queue_root:v1:" Raw;
     /// Finalized code-revision row (hand-rolled MessagePack map). Key: id16.
-    CODE_REVISION_RECORD: VaultMeta b"code_revision:record:v1:" Raw;
+    CODE_REVISION_RECORD: VaultMeta b"code_revision:record:v1:" Raw
+        => crate::code_revision::erase_revision_author_in_txn;
     /// Index of revisions belonging to a session, empty marker value. Key: id16 + id16.
     CODE_REVISION_SESSION_INDEX: VaultMeta b"code_revision:session:v1:" Raw;
     /// Node-local executor coverage bound to a minted epoch SUMMARY (fixed 73-byte frame). Key:
@@ -319,6 +355,12 @@ side_tables! {
     /// `owner_pair` or `unavailable`).
     CODE_RUN_CONTRIBUTION_FORK: VaultMeta b"code_run:contribution_fork:v1:" Named Engine
         => crate::code_run::erase_contribution_forks_in_txn;
+    /// One model response a live code-mode REPL normalized at one step (FIX 4411, 4412): the
+    /// configured model id, the four packaging repairs, the outcome (clean, normalized, or
+    /// rejected with the executor's stable reason), the repair policy and, for a committed step,
+    /// its checkpoint. Ids, counts, flags and engine text only, never response text. Key:
+    /// id16(run) + be64(step) + be64(attempt).
+    CODE_RUN_CORRECTION: VaultMeta b"code_run:correction:v1:" Named Engine;
     /// Which executor run's fold a fold-words dependent stands for: the dependency walk reaches
     /// it when a record the fold's summary came from is withdrawn (fixed 24-byte frame: id16(run)
     /// + fold u64 BE). Key: id16(dependent).
@@ -353,6 +395,10 @@ side_tables! {
     /// in (tag 1 + id16(world): the bridge positions it was served at). Ids and positions only.
     /// Key: id16(run) + u8 tag [+ id16(world)].
     CODE_RUN_READ_WORLD: VaultMeta b"code_run:read_world:v1:" Named Engine;
+    /// The last actual parent entry's full destination, route, actor and loaded install
+    /// machine (JSON), qualified again on recovery. Key: id16(parent run).
+    CODE_RUN_READER_CALLER: VaultMeta b"code_run:reader_caller:v1:" Raw Engine
+        => crate::code_run::erase_reader_caller_actor_in_txn;
     /// A code run's fold receipt (ARCH-0079 #reader-forks): the source and range a fold read,
     /// the jobs it named, the ranges read, unread and read short, its cutoff, recipe, summary
     /// tree and taint dependencies (JSON). Key: id16(owner run) + id16(folded occurrence).
@@ -379,8 +425,12 @@ side_tables! {
     CODE_RUN_REPLAY_CAPSULE: VaultMeta b"code_run:replay_capsule:v1:" Named Authored [accepts: crate::code_run::code_run_replay_capsule_accepts_masked]
         => crate::code_run::erase_capsule_actor_in_txn;
     /// Whose reply content one code-run replay record holds (FIX 5718): the run it is (its own,
-    /// or a write receipt's run) and the actor its host stamped, or Erased once that actor's erase
-    /// took it. The capsule table's scrub erases it. Key: id16(record).
+    /// or a write receipt's run) and one of three states. Kept: the replies are there, for the
+    /// actor its host stamped. Deleted: a soft delete of that actor took them (FIX 15532). The
+    /// row keeps the actor and the reply bodies it released, for that actor's hard erase (FIX
+    /// 6591). Erased: an erase took them, or a late write found the actor's hard-delete marker,
+    /// so its hard erasure is complete. The row names no actor. Deleted and Erased read as
+    /// erased, for good. Key: id16(record).
     CODE_RUN_RESPONSE_OWNER: VaultMeta b"code_run:response_owner:v1:" Named Engine;
     /// The owner's value-free dismissal of one code-run secret lift proposal. The
     /// occurrence's secret/taint marks stay unchanged. Key: string(handle/occurrence).
@@ -398,9 +448,12 @@ side_tables! {
     /// id16(wait) + be64(generation).
     CODE_RUN_WAIT_DELIVERY: VaultMeta b"code_run:wait_delivery:v1:" Raw Authored [accepts: crate::store::executor_wait_delivery::code_run_wait_delivery_accepts_masked];
     /// Who held each code-run wait's reply (FIX 5718): one row per run delivered a reply of the
-    /// wait, at the generation it parked, naming the actor its run's replies are, or Erased once
-    /// that actor's erase took them. It outlives the wait's waiter and delivery rows. The capsule
-    /// table's scrub erases it. Key: id16(wait) + id16(run) + be64(generation).
+    /// wait, at the generation it parked, in one of three states. Kept: the run holds the reply,
+    /// for the actor its replies are. Deleted: a soft delete of that actor took it (FIX 15532).
+    /// The row keeps the actor only for that actor's hard erase (FIX 6591). Erased: an erase
+    /// took it, or a late write found the actor's hard-delete marker. The row names no actor.
+    /// Deleted and Erased read as erased, for good. It outlives the wait's waiter and delivery
+    /// rows. Key: id16(wait) + id16(run) + be64(generation).
     CODE_RUN_WAIT_HOLDER: VaultMeta b"code_run:wait_holder:v1:" Named Engine;
     /// The code runs parked on a wait (`p` + id16(wait) + id16(run), value be64(generation)) and
     /// the reply the wait settled with (`s` + id16(wait), value JSON). Key: u8 tag + id16 [+ id16].
@@ -499,6 +552,11 @@ side_tables! {
     /// Lookup index from a normalized connector name to a key id, empty marker value. Key:
     /// string(connector) "\x00" id16.
     CONNECTOR_KEY_CONNECTOR_INDEX: VaultMeta b"connector_key/connector/v1\0" Raw;
+    /// One dispatch batch's normalized input and committed progress (FIX 11058): its effect
+    /// channel and size, the dispatches admitted and refused so far, when the windows that paced
+    /// the rest open again, and its first and latest accounting samples. Key: id16 +
+    /// string(batch_ref).
+    CONNECTOR_KEY_DISPATCH_BATCH: VaultMeta b"connector_key/dispatch_batch/v1\0" Named Engine;
     /// Rotation-generation log entry naming the custody ref a connector key pointed at. Key: id16 +
     /// u32be.
     CONNECTOR_KEY_GENERATION_LOG: VaultMeta b"connector_key/generation/v1\0" Raw;

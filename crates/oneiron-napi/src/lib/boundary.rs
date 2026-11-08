@@ -16,13 +16,7 @@ pub(super) const DEFAULT_NAPI_SEARCH_LIMIT: u32 = 10;
 // ONE-479 still finds the established seam; only the source of the numbers
 // moved, so the N-API boundary and the remote boundary cannot drift into two
 // sets of limits that agree only by coincidence.
-pub(super) const MAX_NAPI_QUERY_BYTES: usize = oneiron_remote::MAX_QUERY_BYTES;
-
 pub(super) const MAX_NAPI_ENTITY_PAYLOAD_BYTES: usize = oneiron_remote::MAX_ENTITY_PAYLOAD_BYTES;
-
-/// The entities one transaction of a batch write holds (FIX 11125): a batch
-/// past it is written frame by frame, never refused for its size.
-pub(super) const NAPI_BATCH_FRAME_ENTITIES: usize = oneiron_remote::MAX_BATCH_ENTITIES;
 
 pub(super) type BoundaryResult<T> = std::result::Result<T, String>;
 
@@ -73,10 +67,8 @@ pub(super) fn parse_search_limit(limit: u32) -> BoundaryResult<usize> {
     Ok(limit as usize)
 }
 
-/// Check the JS string's UTF-8 size before napi-rs allocates an owned Rust string.
-/// JS `.length` measures UTF-16 units and cannot enforce the shared byte cap.
+/// Convert the JS string whole into an owned Rust string.
 pub(super) fn read_query(query: napi::JsString<'_>) -> napi::Result<String> {
-    validate_query_len_bytes(query.utf8_len()?).map_err(napi::Error::from_reason)?;
     query.into_utf8()?.into_owned()
 }
 
@@ -232,20 +224,6 @@ fn required_field<T: FromNapiValue>(object: &Object<'_>, name: &str) -> napi::Re
     object
         .get(name)?
         .ok_or_else(|| napi::Error::from_reason(format!("codebase snapshot {name} is required")))
-}
-
-/// Validate text query size before it crosses into core search.
-pub(super) fn validate_query_len(query: &str) -> BoundaryResult<()> {
-    validate_query_len_bytes(query.len())
-}
-
-fn validate_query_len_bytes(len: usize) -> BoundaryResult<()> {
-    if len > MAX_NAPI_QUERY_BYTES {
-        return Err(format!(
-            "query must be <= {MAX_NAPI_QUERY_BYTES} bytes, got {len}"
-        ));
-    }
-    Ok(())
 }
 
 /// Validate entity payload size before it crosses into core write paths.
