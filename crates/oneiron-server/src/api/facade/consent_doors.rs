@@ -87,9 +87,12 @@ pub(crate) async fn vault_campaign_approve_once(
     auth: &CoreAuth,
     input: sdk::CampaignEnrollmentApproveOnceRequest,
 ) -> Listed<ConsentActReceipt> {
-    as_owner(server, auth, "vault.campaign.approve_once", move |vault, owner| {
-        sdk::approve_campaign_enrollment_once(vault, owner, input)
-    })
+    as_owner(
+        server,
+        auth,
+        "vault.campaign.approve_once",
+        move |vault, owner| sdk::approve_campaign_enrollment_once(vault, owner, input),
+    )
     .await
 }
 

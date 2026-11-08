@@ -33,9 +33,9 @@ mod type_feedback;
 pub(crate) use self::type_feedback::{FeedbackRoute, SessionInstanceBind};
 
 #[cfg(test)]
-use super::records::{CodeRunModelHealCount, MODEL_HEAL_COUNTS};
+use super::records::CodeRunModelHealCount;
 #[cfg(test)]
-use crate::Error;
+use super::session_heal_count::session_model_heal_count;
 
 /// The session half of an executor binding (ONE-1729/P4b).
 ///
@@ -129,11 +129,12 @@ impl SessionBinding<'_> {
         limit: usize,
         reader: ScopedReadActorKey,
         claims: ClaimReadStatus,
+        filter: Option<&crate::gate::RetrievalFilter>,
     ) -> Result<Vec<ScoredEntity>> {
         self.answered(|| {
             self.session
                 .read_context(&self.route, reader)?
-                .search_text(query, limit, claims)
+                .search_text(query, limit, claims, filter)
         })
     }
 
@@ -174,22 +175,17 @@ impl SessionBinding<'_> {
         Ok(next_generation)
     }
 
+    /// The run's tally of `model` as its session reads it: the production
+    /// session read (FIX 4415), answered as the run's other calls are.
     #[cfg(test)]
     fn model_heal_count(&self, model: &ModelId) -> Result<CodeRunModelHealCount> {
-        let (base, overlay) = self.answered(|| {
-            self.session
-                .side_table_counter_components(&MODEL_HEAL_COUNTS, &model.as_str().to_owned())
-        })?;
-        let base = base.map_or(0, |count| count.0);
-        let overlay = overlay.map_or(0, |count| count.0);
-        let healed_turns = base
-            .checked_add(overlay)
-            .ok_or(Error::ArithmeticOverflow("code-run model heal count"))?;
+        let count = self.answered(|| session_model_heal_count(&self.session, model))?;
         Ok(CodeRunModelHealCount {
-            model_id: model.as_str().to_owned(),
-            healed_turns,
+            model_id: count.model_id,
+            healed_turns: count.healed_turns,
         })
     }
+
     /// [`Vault::inherit_code_run_result_marks`] on the room's route: the
     /// marks of every occurrence in `from` join those of `owner`'s
     /// occurrence of `output`.
@@ -392,16 +388,27 @@ impl<'a> ExecutorStorage<'a> {
         limit: usize,
         reader: ScopedReadActorKey,
         claims: ClaimReadStatus,
+        filter: Option<&crate::gate::RetrievalFilter>,
     ) -> Result<Vec<ScoredEntity>> {
         match self {
-            Self::Canonical(vault) => Ok(vault
-                .scoped_read(reader)
-                .with_claim_status(claims)
-                .filter_scored_entities(vault.search_text(query, limit)?)?
-                .value),
+            Self::Canonical(vault) => {
+                let lane = vault
+                    .scoped_read(reader)
+                    .with_claim_status(claims)
+                    .with_read_filter(filter);
+                // A caller filter is met inside the scan, before the rank and
+                // the cut (FIX 3977).
+                let hits = match filter {
+                    Some(_) => {
+                        vault.search_text_scoped_observed(&lane, query, limit, |_, _| {}, None)?
+                    }
+                    None => vault.search_text(query, limit)?,
+                };
+                Ok(lane.filter_scored_entities(hits)?.value)
+            }
             // A room's narrowed search reads the room's view on the key's
             // lane, each posting admitted in the scan (WILL L11-01).
-            Self::Session(binding) => binding.search_text_as(query, limit, reader, claims),
+            Self::Session(binding) => binding.search_text_as(query, limit, reader, claims, filter),
         }
     }
 

@@ -81,11 +81,13 @@
 //! - `vault.code.checkout.publish`
 //! - `vault.code.checkout.settle`
 //! - `vault.code.checkout.teardown`
+//! - `vault.code.symbols.neighbors`
 //! - `vault.connectors.read_grants.grant`
 //! - `vault.connectors.read_grants.revoke`
 //! - `vault.repo.snapshots.get`
 //! - `vault.repo.snapshots.read`
 //! - `vault.repo.symbols.definitions`
+//! - `vault.repo.symbols.neighbors`
 //! - `vault.repo.views.get`
 //! - `vault.repo.views.read`
 //! - `vault.repo.merge_queue.observe`
@@ -112,6 +114,7 @@
 //! - `ai.options`
 //! - `ai.ask_image`
 //! - `vault.graph.ask`
+//! - `self.skills.graph`
 //! - `vault.graph.admit`
 //! - `vault.questions.create`
 //! - `vault.questions.edit`
@@ -441,6 +444,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultFederationBurstReviewRelease,
     VaultFederationBurstReviewReject,
     VaultFederationBurstReplay,
+    VaultFederationStatus,
     VaultFederationConnectIdentity,
     VaultFederationConnectGrantsMint,
     VaultFederationConnectOffer,
@@ -506,6 +510,7 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultRecordsEraseConfirm,
     VaultRecordsEraseSweep,
     VaultOutboundCallsRequestErase,
+    VaultOutboundUncertainSendAnswer,
     VaultResearchCreateChild,
     VaultEvalsInventory,
     VaultEvalsCohortsSetup,
@@ -677,7 +682,9 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultCodeSecretsPropose,
     ExecuteCode,
     VaultCodeModelHealCount,
+    VaultCodeSessionModelHealCount,
     VaultCodeCorrections,
+    VaultCodeStepEvidence,
     VaultCodeTypeDiagnostics,
     VaultCodeWaitsResolve,
     VaultCodeWaitsReceipt,
@@ -749,6 +756,8 @@ pub(in crate::api::facade) enum HostDoorRow {
     VaultAgentsDreamingSet,
     VaultAgentsGrantsMint,
     VaultAgentsGrantsRevoke,
+    VaultAgentsVerbClassesGet,
+    VaultAgentsVerbClassesConfigure,
     VaultRepoGitPushMint,
     VaultRepoGitPushRevoke,
     VaultRepoAnchorBind,
@@ -1194,6 +1203,7 @@ impl HostDoorRow {
             "vault.federation.burst.review.release" => Self::VaultFederationBurstReviewRelease,
             "vault.federation.burst.review.reject" => Self::VaultFederationBurstReviewReject,
             "vault.federation.burst.replay" => Self::VaultFederationBurstReplay,
+            "vault.federation.status" => Self::VaultFederationStatus,
             "vault.federation.connect.identity" => Self::VaultFederationConnectIdentity,
             "vault.federation.connect.grants.mint" => Self::VaultFederationConnectGrantsMint,
             "vault.federation.connect.offer" => Self::VaultFederationConnectOffer,
@@ -1265,6 +1275,7 @@ impl HostDoorRow {
             "vault.records.erase_confirm" => Self::VaultRecordsEraseConfirm,
             "vault.records.erase_sweep" => Self::VaultRecordsEraseSweep,
             "vault.outbound_calls.request.erase" => Self::VaultOutboundCallsRequestErase,
+            "vault.outbound.uncertain_send.answer" => Self::VaultOutboundUncertainSendAnswer,
             "vault.research.create_child" => Self::VaultResearchCreateChild,
             "vault.evals.inventory" => Self::VaultEvalsInventory,
             "vault.evals.cohorts.setup" => Self::VaultEvalsCohortsSetup,
@@ -1448,7 +1459,9 @@ impl HostDoorRow {
             "vault.code.secrets.propose" => Self::VaultCodeSecretsPropose,
             "execute_code" => Self::ExecuteCode,
             "vault.code.model_heal_count" => Self::VaultCodeModelHealCount,
+            "vault.code.session_model_heal_count" => Self::VaultCodeSessionModelHealCount,
             "vault.code.corrections" => Self::VaultCodeCorrections,
+            "vault.code.step_evidence" => Self::VaultCodeStepEvidence,
             "vault.code.type_diagnostics" => Self::VaultCodeTypeDiagnostics,
             "vault.code.waits.resolve" => Self::VaultCodeWaitsResolve,
             "vault.code.waits.receipt" => Self::VaultCodeWaitsReceipt,
@@ -1520,6 +1533,8 @@ impl HostDoorRow {
             "vault.agents.dreaming.set" => Self::VaultAgentsDreamingSet,
             "vault.agents.grants.mint" => Self::VaultAgentsGrantsMint,
             "vault.agents.grants.revoke" => Self::VaultAgentsGrantsRevoke,
+            "vault.agents.verb_classes.get" => Self::VaultAgentsVerbClassesGet,
+            "vault.agents.verb_classes.configure" => Self::VaultAgentsVerbClassesConfigure,
             "vault.repo.git_push.mint" => Self::VaultRepoGitPushMint,
             "vault.repo.git_push.revoke" => Self::VaultRepoGitPushRevoke,
             "vault.repo.anchor.bind" => Self::VaultRepoAnchorBind,
@@ -1807,11 +1822,13 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "vault.code.checkout.publish"
                 | "vault.code.checkout.settle"
                 | "vault.code.checkout.teardown"
+                | "vault.code.symbols.neighbors"
                 | "vault.connectors.read_grants.grant"
                 | "vault.connectors.read_grants.revoke"
                 | "vault.repo.snapshots.get"
                 | "vault.repo.snapshots.read"
                 | "vault.repo.symbols.definitions"
+                | "vault.repo.symbols.neighbors"
                 | "vault.repo.views.get"
                 | "vault.repo.views.read"
                 | "vault.repo.merge_queue.observe"
@@ -1837,6 +1854,7 @@ pub(in crate::api) fn needs_caller_credential(verb: &str) -> bool {
                 | "ai.options"
                 | "ai.ask_image"
                 | "vault.graph.ask"
+                | "self.skills.graph"
                 | "vault.graph.admit"
                 | "vault.questions.create"
                 | "vault.questions.edit"

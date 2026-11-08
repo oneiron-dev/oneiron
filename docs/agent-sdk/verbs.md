@@ -402,6 +402,7 @@ both bindings and their export-census tests in one change.
 - `vault.federation.burst.review.release`
 - `vault.federation.burst.review.reject`
 - `vault.federation.burst.replay`
+- `vault.federation.status`
 - `vault.federation.connect.identity`
 - `vault.federation.connect.grants.mint`
 - `vault.federation.connect.offer`
@@ -469,6 +470,7 @@ both bindings and their export-census tests in one change.
 - `vault.records.erase_confirm`
 - `vault.records.erase_sweep`
 - `vault.outbound_calls.request.erase`
+- `vault.outbound.uncertain_send.answer`
 - `vault.research.create_child`
 - `vault.research.archive`
 - `vault.research.archive.install`
@@ -539,6 +541,8 @@ both bindings and their export-census tests in one change.
 - `vault.cleanup.decide`
 - `vault.archive.delete.preview`
 - `vault.archive.delete.confirm`
+- `vault.archive.attempt.delete.preview`
+- `vault.archive.attempt.delete.confirm`
 - `vault.usage.events.undecodable`
 - `vault.usage.events.remove_undecodable`
 - `vault.usage.repair.receipts`
@@ -720,7 +724,9 @@ both bindings and their export-census tests in one change.
 - `vault.code.secrets.propose`
 - `execute_code`
 - `vault.code.model_heal_count`
+- `vault.code.session_model_heal_count`
 - `vault.code.corrections`
+- `vault.code.step_evidence`
 - `vault.code.type_diagnostics`
 - `vault.code.waits.resolve`
 - `vault.code.waits.receipt`
@@ -779,6 +785,7 @@ both bindings and their export-census tests in one change.
 - `vault.code.snapshots.get`
 - `vault.code.snapshots.read`
 - `vault.code.symbols.definitions`
+- `vault.code.symbols.neighbors`
 - `vault.code.merge_queue.enqueue`
 - `vault.code.merge_queue.stage`
 - `vault.code.merge_queue.observe`
@@ -802,6 +809,8 @@ both bindings and their export-census tests in one change.
 - `vault.agents.dreaming.set`
 - `vault.agents.grants.mint`
 - `vault.agents.grants.revoke`
+- `vault.agents.verb_classes.get`
+- `vault.agents.verb_classes.configure`
 - `vault.repo.git_push.mint`
 - `vault.repo.git_push.revoke`
 - `vault.connectors.read_grants.grant`
@@ -810,6 +819,7 @@ both bindings and their export-census tests in one change.
 - `vault.repo.snapshots.get`
 - `vault.repo.snapshots.read`
 - `vault.repo.symbols.definitions`
+- `vault.repo.symbols.neighbors`
 - `vault.repo.views.get`
 - `vault.repo.views.read`
 - `vault.repo.merge_queue.observe`
@@ -1010,6 +1020,7 @@ both bindings and their export-census tests in one change.
 - `ai.ask_image`
 - `ai.verdict`
 - `vault.graph.ask`
+- `self.skills.graph`
 - `vault.graph.admit`
 - `vault.questions.create`
 - `vault.questions.edit`

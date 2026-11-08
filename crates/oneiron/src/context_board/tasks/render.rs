@@ -218,6 +218,10 @@ fn cause_tokens(intent: &TaskIntentPresence) -> Vec<String> {
     if intent.connector_outcome == Some(ConnectorSendTaskOutcome::Ambiguous) {
         return vec!["ambiguous".to_owned()];
     }
+    // FIX 4747: an uncertain send the owner chose not to resend.
+    if intent.connector_outcome == Some(ConnectorSendTaskOutcome::OwnerDeclinedResend) {
+        return vec!["owner_declined_resend".to_owned()];
+    }
     if let Some(disposition) = intent.ladder_disposition {
         return ladder_board_projection(disposition)
             .tokens

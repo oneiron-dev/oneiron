@@ -334,7 +334,7 @@ impl Vault {
             let at = self.store.clock.now_recorded_at();
             outcomes::settle_with_review_receipt_in_txn(
                 self, txn, &mut card, by, true, outcome, at,
-            );
+            )?;
             let new_reviewers = card.reviewer_revisions();
             sync_reviewer_membership(&self.store, txn, &key, &old_reviewers, &new_reviewers)?;
             super::receipt_index::put_card_in_txn(&self.store, txn, &key, &card)?;
@@ -398,7 +398,7 @@ impl Memory<'_> {
                 by_owner,
                 input.outcome.into(),
                 at,
-            );
+            )?;
             let new_reviewers = card.reviewer_revisions();
             sync_reviewer_membership(
                 &self.vault().store,
