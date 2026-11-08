@@ -240,9 +240,6 @@ pub(crate) fn skill_library_view(
     let record = skill(vault, &input.entity)?;
     let source_refs = crate::skill_convert::source_message_refs(&record)?;
     let (files, capabilities, source_messages) = {
-        // A carrier's body file stays on disk while this snapshot reads it
-        // (FIX 22091).
-        let _bodies = vault.pin_all_result_bodies();
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
         let package = vault.runtime_skill_package_in_txn(&txn, &input.entity, &record)?;
         let (files, capabilities) = match package {

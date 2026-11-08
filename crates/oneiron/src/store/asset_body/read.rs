@@ -29,10 +29,9 @@ use crate::store::Store;
 /// the row.
 ///
 /// The caller holds what a file read needs: a writer, whose snapshot keeps
-/// the file, or a read transaction opened after every result body was
-/// pinned ([`crate::Vault::pin_all_result_bodies`]), so the collector
-/// leaves the file the snapshot names, under the custody guard where the
-/// caller holds none already.
+/// the file, or a read transaction, whose snapshot keeps it too: the
+/// collector unlinks no file a live read snapshot names (FIX 22101). The
+/// custody guard holds where the caller holds none already.
 ///
 /// # Errors
 ///
@@ -140,9 +139,8 @@ impl crate::Vault {
     /// is checked against its manifest's length and BLAKE3 as it is read,
     /// and whatever `read` leaves is read too, so the whole body is checked
     /// whether or not `read` reaches its end. `None` when `id` holds no
-    /// readable ASSET. The file is pinned while it is read; a reader that
-    /// finds `id` in a transaction it opened earlier pins the body first
-    /// ([`crate::Vault::pin_all_result_bodies`]).
+    /// readable ASSET. The file is pinned while it is read; `txn`'s own
+    /// snapshot keeps the file it names until it ends (FIX 22101).
     ///
     /// # Errors
     ///
@@ -189,9 +187,9 @@ impl crate::Vault {
     /// the manifest's length and BLAKE3 as its end is read, as its key row
     /// in `txn`, the snapshot that found the manifest, names it (FIX 3677).
     /// It judges no admission: the caller has admitted the row the manifest
-    /// is, as its own door reads it. The caller pins the body before `txn`
-    /// opens ([`Self::pin_all_result_bodies`]) and holds the pin while it
-    /// reads.
+    /// is, as its own door reads it. `txn`'s snapshot keeps the file it
+    /// names while `txn` is live (FIX 22101); a caller that reads past
+    /// `txn` pins the body ([`Self::pin_result_body`]) before it ends.
     ///
     /// # Errors
     ///

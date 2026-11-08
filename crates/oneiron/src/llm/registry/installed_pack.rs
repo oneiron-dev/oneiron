@@ -87,9 +87,6 @@ impl CatalogSeed {
     /// Only an installed first-party source with scan evidence is accepted.
     /// Fetching or staging a pack alone never gives its rows routing authority.
     pub fn from_installed_pack(vault: &Vault) -> Result<Self> {
-        // A carrier's body file stays on disk while this snapshot reads it
-        // (FIX 22091).
-        let _bodies = vault.pin_all_result_bodies();
         let txn = vault.store.env.read_txn()?;
         Self::from_installed_pack_in_txn(vault, &txn)
     }

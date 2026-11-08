@@ -38,6 +38,12 @@ pub struct PinCounts {
     pub search_credit: HashMap<([u8; 32], u64, u64), (u64, u64, u64)>,
     /// Insertion order of `search_credit` keys, oldest first.
     pub search_credit_order: VecDeque<([u8; 32], u64, u64)>,
+    /// Released bodies whose rows went at a write transaction a live read
+    /// snapshot predated (FIX 22101), by digest: the sealed instance their
+    /// key row named, and that transaction's id. Their files go once no
+    /// older reader is live. In memory only: a restart leaves them to the
+    /// orphan sweep.
+    pub released: HashMap<[u8; 32], (Option<[u8; 16]>, usize)>,
 }
 
 /// One queued line-index rebuild (FIX 1186b): the body's length from its
@@ -126,6 +132,32 @@ impl ResultBodyPins {
             .search_credit
             .get(&(digest, base, len))
             .is_some_and(|&issued| issued == (offset, line, credit))
+    }
+
+    /// Keeps the released body `digest`, sealed as `instance` when it was,
+    /// whose rows went at write transaction `released_at`, until no read
+    /// transaction older than that is live (FIX 22101).
+    pub fn defer_released(&self, digest: [u8; 32], instance: Option<[u8; 16]>, released_at: usize) {
+        lock(&self.counts)
+            .released
+            .insert(digest, (instance, released_at));
+    }
+
+    /// Takes the deferred released bodies every live reader now sees
+    /// released: `oldest`, the oldest live read transaction's id, is none
+    /// or at least each one's release (FIX 22101).
+    pub fn take_due_released(&self, oldest: Option<usize>) -> Vec<([u8; 32], Option<[u8; 16]>)> {
+        let mut counts = lock(&self.counts);
+        let due: Vec<_> = counts
+            .released
+            .iter()
+            .filter(|(_, (_, released_at))| oldest.is_none_or(|oldest| oldest >= *released_at))
+            .map(|(digest, (instance, _))| (*digest, *instance))
+            .collect();
+        for (digest, _) in &due {
+            counts.released.remove(digest);
+        }
+        due
     }
 
     /// Runs `remove` unless a reader holds `digest`, keeping new pins out

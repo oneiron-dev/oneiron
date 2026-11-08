@@ -300,9 +300,6 @@ fn content_hash_text(record: &SkillRecord) -> Option<String> {
 }
 
 fn source_files(vault: &Vault, id: &EntityId, record: &SkillRecord) -> Result<Vec<HubFile>> {
-    // A carrier's body file stays on disk while this snapshot reads it
-    // (FIX 22091).
-    let _bodies = vault.pin_all_result_bodies();
     let rtxn = vault.store.env.read_txn()?;
     Ok(vault
         .runtime_skill_package_in_txn(&rtxn, id, record)?
