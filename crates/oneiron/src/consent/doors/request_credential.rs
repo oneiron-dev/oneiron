@@ -50,6 +50,30 @@ impl Vault {
 }
 
 impl AuthenticatedOwner {
+    /// The public key of this person's live request credential for exactly
+    /// `invitation`. This lends no authority; the acting writer still checks
+    /// the invitation and its accepted grant before minting a regular slip.
+    pub(crate) fn invitation_request_binding_key_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        invitation: &str,
+    ) -> Result<[u8; 32]> {
+        self.revalidate_person_in_txn(vault, txn)?;
+        let credential = self.request_credential.as_deref().ok_or_else(|| {
+            Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "invitation request credential required",
+            ))
+        })?;
+        let invitation = crate::EntityId::from_hex(invitation)?.to_hex();
+        if credential.claims().invitation_ref.as_deref() != Some(invitation.as_str()) {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "request credential names another invitation",
+            )));
+        }
+        Ok(credential.claims().binding_key)
+    }
+
     /// The request slip's liveness in `txn` (FIX 4328), for every
     /// revalidation of this proof: a proof no request slip rides passes.
     pub(super) fn request_credential_holds_in_txn(

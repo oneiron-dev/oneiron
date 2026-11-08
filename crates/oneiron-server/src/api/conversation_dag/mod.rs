@@ -224,20 +224,22 @@ pub(crate) async fn get_core_dag(
     } else {
         None
     };
-    let (records, reactions_outbound) = if req.with.as_deref() == Some("reactions") {
-        let viewer = req.viewer.as_deref().ok_or_else(|| {
-            ApiError::bad_request("viewer is required with reactions", Some("viewer"))
-        })?;
-        let (records, outbound) =
-            reaction_records(&server, &auth, conversation, &page.main_line, viewer)?;
-        (Some(records), Some(outbound))
-    } else {
-        (None, None)
-    };
+    let (records, reactions_narrowing, reactions_outbound) =
+        if req.with.as_deref() == Some("reactions") {
+            let viewer = req.viewer.as_deref().ok_or_else(|| {
+                ApiError::bad_request("viewer is required with reactions", Some("viewer"))
+            })?;
+            let (records, narrowing, outbound) =
+                reaction_records(&server, &auth, conversation, &page.main_line, viewer)?;
+            (Some(records), narrowing, Some(outbound))
+        } else {
+            (None, None, None)
+        };
     Ok(Json(DagPageResponse {
         head: page.head.map(|id| id.to_hex()),
         thread_meta,
         records,
+        reactions_narrowing,
         reactions_outbound,
         root: page.root.map(|id| id.to_hex()),
         main_line: ids(page.main_line),
@@ -609,14 +611,23 @@ pub(crate) async fn get_canonical(
 }
 
 /// Grouped pills for each listed TURN and the MESSAGEs beneath it, in one
-/// engine snapshot, for a viewer the credential may speak for.
+/// engine snapshot, for a viewer the credential may speak for, with the
+/// receipt of the scoped read that grouped them (FIX 8669): none when no
+/// scoped read did.
 fn reaction_records(
     server: &SyncServer,
     auth: &CoreAuth,
     conversation: EntityId,
     main_line: &[EntityId],
     viewer: &str,
-) -> Result<(Vec<DagReactionRecord>, &'static str), EnvelopedApiError> {
+) -> Result<
+    (
+        Vec<DagReactionRecord>,
+        Option<oneiron::claim::ScopedReadReceipt>,
+        &'static str,
+    ),
+    EnvelopedApiError,
+> {
     if !auth.is_owner_grade() && auth.principal_ref() != Some(viewer) {
         return Err(ApiError::forbidden_scope("viewer").into());
     }
@@ -638,14 +649,21 @@ fn reaction_records(
     }
     let targets: Vec<EntityId> = pairs.iter().map(|(_, target, _)| *target).collect();
     // A credential reads each reaction under its own key, as it reads the
-    // record, and so does the dev mode, as the owner it acts as (FIX 2222);
-    // a managed vault's attested owner reads them all.
-    let pills = if auth.verified_slip().is_some() || auth.is_local_dev_hatch() {
-        crate::api::scoped_read_for_core_auth(&server.vault, auth)?.reaction_pills(&targets, viewer)
+    // record, and so does the dev mode, as the owner it acts as (FIX 2222),
+    // each answer under its read's receipt; a managed vault's attested owner
+    // reads them all, under no scoped read and so with no receipt.
+    let (pills, narrowing) = if auth.verified_slip().is_some() || auth.is_local_dev_hatch() {
+        let read = crate::api::scoped_read_for_core_auth(&server.vault, auth)?
+            .reaction_pills(&targets, viewer)
+            .map_err(|e| core_engine_error("reaction listing failed", e))?;
+        (read.value, Some(read.receipt))
     } else {
-        server.vault.reaction_pills(&targets, viewer)
-    }
-    .map_err(|e| core_engine_error("reaction listing failed", e))?;
+        let pills = server
+            .vault
+            .reaction_pills(&targets, viewer)
+            .map_err(|e| core_engine_error("reaction listing failed", e))?;
+        (pills, None)
+    };
     let records = pairs
         .into_iter()
         .filter_map(|(turn, target, groups_children)| {
@@ -674,7 +692,7 @@ fn reaction_records(
         .vault
         .reactions_outbound(conversation)
         .map_err(|e| core_engine_error("room reaction posture failed", e))?;
-    Ok((records, outbound))
+    Ok((records, narrowing, outbound))
 }
 
 /// Puts or removes one reaction on a MESSAGE or TURN through the

@@ -36,6 +36,8 @@ pub struct AgentVerbAnswer {
     pub hook_notice: Option<serde_json::Value>,
     pub observations: Vec<RunObservation>,
     pub hooks: Vec<SessionHookDisposition>,
+    /// Native handoff only. The write receipt keeps this in its output manifests.
+    pub(crate) stored_output: Option<crate::code_run::CodeRunRawOutput>,
 }
 
 impl AgentVerbAnswer {
@@ -49,6 +51,7 @@ impl AgentVerbAnswer {
             hook_notice: None,
             observations: Vec::new(),
             hooks: Vec::new(),
+            stored_output: None,
         }
     }
 
@@ -199,6 +202,18 @@ pub trait AgentVerbDoor: Send + Sync {
         call: RunCall,
     ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal>;
 
+    /// Admits one speech call of the run (`effect` is `Speak`, `Think` or
+    /// `Express`, its trailing bubble included) with `destination`, where
+    /// the run's storage lands it. A door that rules on speech wherever it
+    /// lands admits it as [`Self::admit_run_call`] admits the bridge call.
+    fn admit_run_speech(
+        &self,
+        effect: SelfEffect,
+        _destination: RunSpeechDestination,
+    ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal> {
+        self.admit_run_call(RunCall::Bridge(effect))
+    }
+
     /// The verified read key a host turn's hooks use, independently of the
     /// host's System write attribution. `None` is a typed no-read answer, not
     /// permission to reconstruct an actor or System lane (FIX 9841).
@@ -287,6 +302,21 @@ pub trait AgentVerbDoor: Send + Sync {
     /// own. A door that states no receipt ignores it.
     fn replay_row_receipt(&self, _receipt: &str) {}
 
+    /// A cached answer an action call's replay returns for `verb` (FIX
+    /// 8158), released again for this door's caller as it stands now. A
+    /// door that judges release refuses one derived from a row its caller
+    /// no longer reads, or one erased since (`Error::EntityNotFound`), and
+    /// withholds what its caller's destination may not hold; nothing runs
+    /// again. A door with no release judgment of its own returns it as it
+    /// was.
+    fn replay_action_answer(
+        &self,
+        _verb: &str,
+        answer: AgentVerbAnswer,
+    ) -> crate::Result<AgentVerbAnswer> {
+        Ok(answer)
+    }
+
     /// The run recorded the write's replay row for the answer this door
     /// just gave (FIX 10633): a door that keeps what its answer holds
     /// until then releases it now. A door that keeps nothing ignores it.
@@ -322,4 +352,15 @@ pub enum RunCall {
     /// A read of the run's own recorded output: by its context reference, or
     /// a resumed write's kept answer, read back from its receipt.
     RecordedOutput,
+}
+
+/// Where a run's speech lands, as its storage writes it
+/// (`ExecutorStorage::speech_destination`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunSpeechDestination {
+    /// The run's own derived conversation on canonical storage
+    /// (`canonical_speech_conversation_id_for_run`): part of the run's record.
+    OwnRunConversation,
+    /// The room of the off-record session the run is bound to.
+    SessionRoom,
 }

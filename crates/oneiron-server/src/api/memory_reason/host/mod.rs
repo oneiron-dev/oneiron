@@ -133,18 +133,14 @@ impl DeepSearchBackend for Backend {
         if candidates.is_empty() {
             return Ok(BackendSpend::free(Vec::new()));
         }
-        let pins = sources::rerank_pins(self, candidates)?;
+        let pin_cohort = sources::rerank_pins(self, candidates)?;
+        let pins = pin_cohort.as_slice();
         let texts: Vec<&str> = pins.iter().map(|pin| pin.text.as_str()).collect();
         let request = rerank_request(query, &texts, oneiron::ModelLocality::OwnServer);
         let line = SyncServer::rerank_line_for_payload(&self.meter, query, &texts)
             .map_err(|error| invalid(&format!("memory reason rerank budget: {error}")))?;
-        let answered = self.generate(
-            ModelRole::Reranker,
-            request,
-            &pins,
-            token_budget,
-            Some(line),
-        )?;
+        let answered =
+            self.generate(ModelRole::Reranker, request, pins, token_budget, Some(line))?;
         let tokens_used = answered.tokens_used;
         let fail = || RetrievalError {
             error: invalid("memory reason rerank score coverage is incomplete"),

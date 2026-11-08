@@ -313,12 +313,17 @@ fn run_in_off_record_session(
     // are held to it. A definition that does not read refuses the run.
     let listed = parent_model_list(vault, actor).map_err(binding)?;
     if let Some(seats) = reader_seats {
-        let mut seat = seats.seat(
-            run_id,
-            None,
-            target.caller.destination(),
-            provider.reader_window_tokens(),
-        );
+        let mut seat = seats
+            .seat(
+                &oneiron::code_run::ReaderJobs::for_session(&session, actor.entity_ref())
+                    .map_err(binding)?,
+                oneiron::code_run::ReaderActor::of(actor),
+                run_id,
+                None,
+                target.caller.destination(),
+                provider.reader_window_tokens(),
+            )
+            .map_err(binding)?;
         seat.listed = listed.clone();
         gated_write = gated_write.with_reader_spawn(seat);
     }

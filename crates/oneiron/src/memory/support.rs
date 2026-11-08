@@ -19,7 +19,10 @@ mod builders;
 mod constructors;
 mod refs;
 mod transactions;
+mod transcript_caller;
 mod wire;
+
+pub(crate) use transcript_caller::TranscriptRetainedCaller;
 
 pub(crate) use self::actors::*;
 pub use self::refs::*;
@@ -79,6 +82,13 @@ pub struct Memory<'v> {
     /// The logical verb's id a host carried in (`with_invocation`): verb
     /// hooks run once per id, across wrappers (ARCH-0080 §3).
     pub(super) invocation: Option<crate::store::verb_invocation::InvocationId>,
+    /// The verb-ask drain's permit for this surface's invocation, set only
+    /// on the handle the drain itself rebuilds for one settled call (FIX
+    /// 2183): a nested call of that invocation made from another thread
+    /// enters it at the row boundary and so runs as the drain's own, as a
+    /// credential door's thread does. It grants nothing without the
+    /// drain's hold and is never saved with the call.
+    pub(super) drain_permit: Option<crate::runtime_hooks::verb::VerbAskDrainPermit>,
     /// The hook pause a transport's call names as the one it resumes, by
     /// its ask handle (`with_hook_ask`, L13 PR-D): a session-only call's
     /// pause the keep no longer holds then refuses, never running as a new
@@ -107,6 +117,9 @@ pub struct Memory<'v> {
     /// host bound one (`with_origin_conversation`, OF-221): context, not
     /// authority.
     pub(super) origin_conversation: Option<EntityId>,
+    /// Host-stamped caller provenance, kept apart from read locality and
+    /// destination so recording it never changes what this handle reads.
+    pub(super) caller_origin: Option<crate::agent_dispatch::CallerOrigin>,
     /// The running agent attempt a host bound as this surface's TASK creator
     /// (`with_task_host`, OF-532).
     pub(super) task_host: Option<crate::task_verb::HostBinding>,
@@ -219,6 +232,10 @@ pub struct HostWriteOrigin {
     step: Option<crate::store::verb_invocation::InvocationId>,
     /// Evidence collected only while this native call serves its reads.
     read_capture: Option<super::read_capture::ReadCapture>,
+    /// Where the call's producer witnesses the skill bodies its answer
+    /// carries (FIX 3608): set by the code-run dispatcher for a skill-library
+    /// call at its run's bridge position, never from the guest.
+    skill_bodies: Option<crate::skill::SkillBodyCapture>,
 }
 
 impl HostWriteOrigin {
@@ -229,6 +246,19 @@ impl HostWriteOrigin {
 
     pub(in crate::memory) fn read_capture(&self) -> Option<super::read_capture::ReadCapture> {
         self.read_capture.clone()
+    }
+
+    /// This origin with where its call's producer witnesses the skill bodies
+    /// its answer carries (FIX 3608).
+    pub(crate) fn with_skill_bodies(mut self, capture: crate::skill::SkillBodyCapture) -> Self {
+        self.skill_bodies = Some(capture);
+        self
+    }
+
+    /// Where the call's producer witnesses the skill bodies its answer
+    /// carries, when the dispatcher asked for them (FIX 3608).
+    pub(in crate::memory) const fn skill_bodies(&self) -> Option<&crate::skill::SkillBodyCapture> {
+        self.skill_bodies.as_ref()
     }
 
     pub(crate) const fn new(envelope: crate::WriteEnvelope) -> Self {
@@ -242,6 +272,7 @@ impl HostWriteOrigin {
             bound_run: None,
             step: None,
             read_capture: None,
+            skill_bodies: None,
         }
     }
 

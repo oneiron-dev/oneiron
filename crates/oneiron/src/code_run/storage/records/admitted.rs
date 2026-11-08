@@ -145,9 +145,12 @@ impl Vault {
 
     /// Publishes the reply body `spool` took as run `owner`'s output at
     /// `path`, admitted in the writer that publishes it (see the module
-    /// notes). An admitted body that spills where its spool did not takes
-    /// the writer again with an instance minted first: a writer never mints
-    /// one.
+    /// notes), as a dependent of each of `sources`, the records whose words
+    /// it copies (FIX 18924). An admitted body that spills where its spool
+    /// did not takes the writer again with an instance minted first: a
+    /// writer never mints one. A write receipt's output manifest, when
+    /// supplied, commits beside the body and descriptor, before its later
+    /// answer row settles the write.
     ///
     /// # Errors
     ///
@@ -159,6 +162,8 @@ impl Vault {
         spool: BodySink,
         complete: bool,
         owner: EntityId,
+        sources: &[EntityId],
+        receipt: Option<(&mut CodeRunReplayRecord, &mut CodeRunReplayGeneration)>,
     ) -> Result<ReplyBody> {
         let reply = ReplySpool::of(spool, owner, &path, self.code_result_inline_bytes())?;
         let mut reserved = reply.reserves();
@@ -180,7 +185,23 @@ impl Vault {
                 self.pin_result_body(digest)
             })?;
             self.put_code_run_output_in_txn(&mut wtxn, &finished, &finished.output, Some(owner))?;
-            wtxn.commit()?;
+            super::super::fold_answers::record_reply_sources_in_txn(
+                &self.store,
+                &mut wtxn,
+                &reply.occurrence,
+                sources,
+            )?;
+            if let Some((receipt, generation)) = receipt {
+                let current = REPLAY_RECORDS.get(&self.store, &wtxn, &receipt.run_id)?;
+                replay_generation_matches(current.as_ref(), Some(*generation))?;
+                receipt.outputs.push(finished.output.clone());
+                self.put_code_run_replay_record_in_txn(&mut wtxn, receipt)?;
+                let next_generation = receipt.generation()?;
+                wtxn.commit()?;
+                *generation = next_generation;
+            } else {
+                wtxn.commit()?;
+            }
             return Ok(ReplyBody::Published(finished.output));
         }
     }

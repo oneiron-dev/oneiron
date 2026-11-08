@@ -23,7 +23,8 @@ impl Memory<'_> {
     /// `vault.code.snapshots.ingest`: one committed tree imported through the
     /// unchanged engine importer, which reads the commit tree (never the dirty
     /// checkout), applies custody in its final writer and extracts Rust
-    /// symbols. No repository is registered and no receipt is minted.
+    /// symbols. A capture receipt commits with the snapshot; no repository
+    /// is registered.
     pub fn code_snapshot_ingest_as(
         &self,
         owner: &AuthenticatedOwner,
@@ -35,7 +36,8 @@ impl Memory<'_> {
         let commit = pinned_commit(folder, &input.pointer.commit)?;
         let config = RepoIngestConfig::new(folder, NO_EDITABLE_WHITELIST)?;
         let (occurred, learned_at) = self.codebase_import_time();
-        let imported = self.vault.ingest_local_repo_at_commit(
+        let imported = self.vault.ingest_local_repo_at_commit_as(
+            owner,
             input.project_id,
             &config,
             &commit,
@@ -43,7 +45,9 @@ impl Memory<'_> {
             learned_at,
         )?;
         self.produced_from([imported.code_artifact_id]);
-        Ok(snapshot_view(imported.code_artifact_id, &imported.snapshot))
+        let mut view = snapshot_view(imported.code_artifact_id, &imported.snapshot);
+        view.capture_receipt = imported.capture_receipt_ref;
+        Ok(view)
     }
 
     /// `vault.code.snapshots.get`: the manifest of exactly the pinned
@@ -263,6 +267,7 @@ fn snapshot_view(repo: EntityId, snapshot: &CodebaseSnapshot) -> CodeSnapshotVie
         snapshot: bytes_to_hex_lower(&snapshot.fork_hash),
         scope_key: bytes_to_hex_lower(&snapshot.scope_key),
         files: snapshot.files.iter().map(snapshot_file).collect(),
+        capture_receipt: None,
     }
 }
 

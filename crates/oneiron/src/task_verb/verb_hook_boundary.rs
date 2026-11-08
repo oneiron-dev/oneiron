@@ -25,26 +25,19 @@
 
 use std::sync::Arc;
 
-mod rows;
+mod row_run;
 mod session;
 
-pub use rows::{row, row_retained, row_tapped, row_with_notice, typed_row, typed_row_validated};
-
-use serde::Serialize;
-use serde::de::DeserializeOwned;
 use serde_json::Value;
 use zeroize::Zeroizing;
 
-use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
-use crate::runtime_hooks::verb::{
-    HOOK_RESULT_NOT_RETAINED, SessionHookKey, SessionHooks, VerbArgsCheck, VerbAskCredential,
-    VerbHookStorage,
-};
+use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::runtime_hooks::verb::{SessionHookKey, SessionHooks, VerbArgsCheck, VerbHookStorage};
 use crate::runtime_hooks::{
-    InvocationId, VerbCall, VerbCallScope, VerbDomain, VerbHookPre, VerbHookStop, VerbResume,
+    InvocationId, VerbCall, VerbCallScope, VerbDomain, VerbHookPre, VerbHookStop,
 };
 use crate::task_verb::revoke_lands;
-use crate::task_verb::sdk::{AgentVerb, NO_RECORD_ROWS, validate_input};
+use crate::task_verb::sdk::{AgentVerb, NO_RECORD_ROWS};
 use crate::verb_catalog::CUSTODY_VALUE_ROWS;
 use crate::work_line::TaskWorkTurn;
 use crate::{EntityId, Vault};
@@ -360,6 +353,10 @@ pub fn stop_refusal(stop: VerbHookStop, session: Option<&HookSession>) -> Memory
     error
 }
 
+pub use row_run::{
+    browser_row_pre, row, row_pre, row_retained, row_tapped, row_with_notice, typed_row,
+    typed_row_validated,
+};
 pub(crate) use session::{session_row_call, session_row_post, session_row_pre};
 
 /// A row's domain: a blocking hook that fails hides a read row's result and
@@ -387,139 +384,6 @@ pub fn row_call(memory: &Memory<'_>, verb: &str) -> MemoryResult<VerbCall> {
         .room_turn()
         .map(|turn| VerbCallScope::Named(format!("room:{}", turn.room.to_hex())));
     Ok(call)
-}
-
-/// Runs the pre chain of row `verb` over its JSON `args`: the args to run it
-/// with. A rewrite must pass the row's own input check, then the admission
-/// its door bound on `memory`.
-///
-/// # Errors
-///
-/// A hook's stop, as the refusal the caller reads; storage errors.
-pub fn row_pre(memory: &Memory<'_>, verb: &str, args: Value) -> MemoryResult<VerbHookPre> {
-    // A call serving a room NOTE keeps its hooks' records for its session
-    // (FIX 4280, 10344), judged on the call's own input.
-    let _restriction = restriction_clock_for_call(memory, verb, &args);
-    let session = hook_session_for_call(Some(memory), verb, &args, None)?;
-    row_pre_resumable(
-        memory,
-        verb,
-        args,
-        None,
-        None,
-        validate_input,
-        session.as_ref(),
-    )?
-    .map_err(|stop| stop_refusal(stop, session.as_ref()))
-}
-
-/// The run-bound browser projection of a row uses its original browser input,
-/// not the facade's credential-bound live-run wrapper. All other hooks and
-/// rewrite admission stay the same as [`row_pre`].
-pub fn browser_row_pre(memory: &Memory<'_>, verb: &str, args: Value) -> MemoryResult<VerbHookPre> {
-    let _restriction = restriction_clock_for_call(memory, verb, &args);
-    let session = hook_session_for_call(Some(memory), verb, &args, None)?;
-    row_pre_resumable(
-        memory,
-        verb,
-        args,
-        None,
-        None,
-        crate::task_verb::sdk::validate_browser_input,
-        session.as_ref(),
-    )?
-    .map_err(|stop| stop_refusal(stop, session.as_ref()))
-}
-
-/// The restriction-only clock for a call that is wholly an owner's erase or
-/// revoke on the caller's own `args` ([`revoke_lands::restriction_only_call`]),
-/// held over its hooks' pre chain, so over a damaged clock floor they read
-/// what its run reads (FIX 11522). A classification read that fails enters
-/// none, as before.
-fn restriction_clock_for_call(
-    memory: &Memory<'_>,
-    verb: &str,
-    args: &Value,
-) -> Option<crate::authority::RestrictionOnlyClock> {
-    revoke_lands::restriction_only_call(memory.vault(), verb, args)
-        .unwrap_or(false)
-        .then(crate::authority::restriction_only_clock)
-}
-
-/// [`row_pre`] with the stop as it is. `resume` is how settlement runs the
-/// call again without its caller, and `credential` how it runs a credential
-/// caller's through its door; a door that runs the row itself, not through
-/// the generated `invoke`, passes `None` for both, since the drain could not
-/// run it the way that door does. A hook's ask runs on the task-work turn
-/// `memory`'s operation already holds, if any, never waiting for another. A
-/// restrictive call's args that fail the row's input check give way to the
-/// caller's own ([`revoke_lands::settle`]). A session-only call's `session`
-/// takes its records, and it saves no way to run it again but its caller's
-/// retry there.
-fn row_pre_resumable(
-    memory: &Memory<'_>,
-    verb: &str,
-    args: Value,
-    resume: Option<VerbResume>,
-    credential: Option<VerbAskCredential>,
-    validate: fn(&str, &Value) -> MemoryResult<()>,
-    session: Option<&HookSession>,
-) -> MemoryResult<Result<VerbHookPre, VerbHookStop>> {
-    row_pre_with_saved(
-        memory, verb, args, resume, credential, validate, session, false,
-    )
-}
-
-fn row_pre_with_saved(
-    memory: &Memory<'_>,
-    verb: &str,
-    args: Value,
-    resume: Option<VerbResume>,
-    credential: Option<VerbAskCredential>,
-    validate: fn(&str, &Value) -> MemoryResult<()>,
-    session: Option<&HookSession>,
-    require_saved: bool,
-) -> MemoryResult<Result<VerbHookPre, VerbHookStop>> {
-    if matches!(verb, "host.compact" | "host.wake" | "host.budget.hit") {
-        memory.embedded_owner(verb)?.revalidate(memory.vault())?;
-        crate::runtime_hooks::host_doors::admit_trigger(memory.vault(), verb, &args)?;
-    }
-    let check = |args: &Value| {
-        validate(verb, args).map_err(|error| error.to_string())?;
-        memory
-            .rewrite_admit()
-            .map_or(Ok(()), |admit| admit(verb, args))
-    };
-    let vault = memory.vault();
-    let call = row_call(memory, verb)?;
-    let turn = memory.task_work_turn();
-    let mut ended = if require_saved {
-        match session {
-            Some(session) => session.with_storage(vault, |storage| {
-                vault.pre_verb_hooks_retained_in(storage, call, args, &check, turn)
-            })?,
-            None => vault.pre_verb_hooks_retained_in(
-                VerbHookStorage::Canonical,
-                call,
-                args,
-                &check,
-                turn,
-            )?,
-        }
-    } else {
-        match (session, credential) {
-            (Some(session), _) => session_pre(vault, call, args, &check, session, turn)?,
-            (None, Some(credential)) => {
-                vault.pre_verb_hooks_for_credential(call, args, &check, Some(credential), turn)?
-            }
-            (None, None) => vault.pre_verb_hooks_resumable(call, args, &check, resume, turn)?,
-        }
-    };
-    if let Ok(pre) = &mut ended {
-        revoke_lands::settle(pre, &|args| validate(verb, args).is_ok());
-        pre.with_read_capture(memory.read_capture());
-    }
-    Ok(ended)
 }
 
 /// Runs the post chain over the row's JSON `result`: the caller's view of it.
@@ -631,45 +495,8 @@ impl CustodySecret {
     }
 }
 
-fn encode(value: &impl Serialize) -> MemoryResult<Value> {
-    serde_json::to_value(value).map_err(|error| {
-        MemoryError::bad_request(format!("a verb's value cannot cross its hooks: {error}"))
-    })
-}
-
 fn stopped(stop: VerbHookStop) -> MemoryError {
     MemoryError::from(crate::Error::from(stop))
-}
-
-/// A row's answer to a pre-chain stop: what a call settlement already ran
-/// returned, as the row's output. Any other stop is the refusal the caller
-/// reads; the error a settled call failed with, or was refused with, keeps
-/// its code and rides in `hook` with its receipt. A call that completed with
-/// a result too large to keep says so, and not to call again; a session-only
-/// call's Pending says how long its pause lives ([`stop_refusal`]).
-fn completed<O: DeserializeOwned>(
-    verb: &str,
-    stop: VerbHookStop,
-    session: Option<&HookSession>,
-) -> MemoryResult<O> {
-    match stop {
-        VerbHookStop::Completed { result, .. } => serde_json::from_value(result).map_err(|error| {
-            MemoryError::bad_request(format!("{verb}'s saved result does not decode: {error}"))
-        }),
-        stop => {
-            let not_retained = matches!(
-                &stop,
-                VerbHookStop::CompletedWithError { code, .. } if code == HOOK_RESULT_NOT_RETAINED
-            );
-            let mut error = stop_refusal(stop, session);
-            if not_retained {
-                error.suggestions = vec![format!(
-                    "{verb} ran once its hook's ask was answered; only its result was not kept. Do not call it again: read what it changed instead."
-                )];
-            }
-            Err(error)
-        }
-    }
 }
 
 /// A reply to `verb` as a call receipt digests it and a verb hook reads it

@@ -134,10 +134,11 @@ pub(crate) fn submission_owners(value: &[u8]) -> Vec<EntityId> {
 ///
 /// Storage errors.
 pub(crate) fn erase_submissions_in_txn(
-    store: &Store,
+    write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut heed::RwTxn<'_>,
     owner: &EntityId,
 ) -> Result<()> {
+    let store = write.store;
     let needle = owner.to_hex();
     let mut owned = Vec::new();
     for row in SUBMISSIONS.iter_raw_from(store, wtxn, &[])? {
@@ -163,6 +164,10 @@ pub(crate) fn erase_submissions_in_txn(
         let Some(key) = <AttemptId as SideKey>::decode_key(&key) else {
             continue;
         };
+        let place = format!("side:{}", SUBMISSIONS.decl().name);
+        let origin =
+            crate::batch::secret_scan::side_row_origin(&place, &SUBMISSIONS.key_bytes(&key))?;
+        crate::secret_custody::revoke_side_row_custody_with_context_in_txn(write, wtxn, &origin)?;
         SUBMISSIONS.put(store, wtxn, &key, &submission)?;
     }
     Ok(())

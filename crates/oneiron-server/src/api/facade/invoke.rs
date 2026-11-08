@@ -53,7 +53,7 @@ pub(super) fn facade_invoke_concern_move(
     value: serde_json::Value,
     producers: &oneiron::memory::ProducerRows,
 ) -> Result<(serde_json::Value, bool), FacadeApiError> {
-    crate::server::blocking(
+    let (output, wake) = crate::server::blocking(
         move || -> Result<(serde_json::Value, bool), FacadeApiError> {
             const VERB: &str = "self.inbox.concern.move";
             let auth = call.auth();
@@ -115,7 +115,9 @@ pub(super) fn facade_invoke_concern_move(
             };
             Ok((output, wake))
         },
-    )
+    )?;
+    let output = super::drained_still_admitted(&server.vault, call.auth(), producers, output);
+    Ok((output, wake))
 }
 
 /// [`facade_invoke`] on the task-work turn the dispatch awaited for the call
@@ -159,7 +161,7 @@ pub(super) fn facade_invoke_in_turn_with_notice(
     producers: &oneiron::memory::ProducerRows,
     turn: Option<Arc<oneiron::work_line::TaskWorkTurn>>,
 ) -> Result<(serde_json::Value, Option<bool>), FacadeApiError> {
-    crate::server::blocking(
+    let (output, hook_notice) = crate::server::blocking(
         move || -> Result<(serde_json::Value, Option<bool>), FacadeApiError> {
             let auth = call.auth();
             let memory = facade_invocation(
@@ -221,7 +223,13 @@ pub(super) fn facade_invoke_in_turn_with_notice(
                 FacadeApiError::from(error).with_hook_notice(hook_notice == Some(true))
             })
         },
-    )
+    )?;
+    // A drained call's answer is judged once more for the caller its retry
+    // came by (FIX 21054); the notice stays beside it.
+    Ok((
+        super::drained_still_admitted(&server.vault, call.auth(), producers, output),
+        hook_notice,
+    ))
 }
 
 /// These doors act only on the caller's presented proof, never on host-root fallback authority.

@@ -2,9 +2,6 @@
 
 use oneiron_contracts::memory::MemoryError;
 
-/// Maximum query string, in bytes: 8 KiB.
-pub const MAX_QUERY_BYTES: usize = 8 * 1024;
-
 /// The 1,000-row candidate floor a narrowed read fetches.
 pub const MAX_SEARCH_LIMIT: usize = 1_000;
 
@@ -30,37 +27,17 @@ pub const MAX_BATCH_ENTITIES: usize = 10_000;
 /// Maximum files in one legacy codebase-snapshot call: 100,000.
 pub const MAX_CODEBASE_FILES: usize = 100_000;
 
-/// Maximum RAW blob content, in bytes: 32 MiB.
-///
-/// The base64 length of an encoded blob is bounded against
-/// [`MAX_BLOB_BASE64_LEN`] before any decode allocation runs, so an oversized
-/// input is refused by measuring the string rather than by exhausting memory
-/// decoding it.
-pub const MAX_BLOB_CONTENT_BYTES: usize = 32 * 1024 * 1024;
-
-/// Maximum base64 length admitted before a blob decode is attempted.
-pub const MAX_BLOB_BASE64_LEN: usize = MAX_BLOB_CONTENT_BYTES / 3 * 4 + 4;
-
 /// Maximum remote REQUEST body, in bytes: 64 MiB.
 ///
 /// Matches the `DefaultBodyLimit` the server's facade nest applies, so a body
-/// this client agrees to send is a body that router agrees to read. Sized for
-/// the largest legal blob (32 MiB) once base64 and JSON framing are paid for.
+/// this client agrees to send is a body that router agrees to read.
 pub const MAX_REMOTE_REQUEST_BYTES: usize = 64 * 1024 * 1024;
 
-/// Maximum remote SUCCESS body read, in bytes: 64 MiB.
+/// A remote success body, in bytes: 64 MiB. The SDK client no longer reads
+/// its replies under it: it decodes each from the wire whatever its length
+/// (ABC transport row T19). A device's own sync reads (renewal, removal
+/// delivery) and the residence row read still take it as their bound.
 pub const MAX_REMOTE_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
-
-/// Rejects an over-long query before it reaches retrieval.
-pub fn check_query(query: &str) -> Result<(), MemoryError> {
-    if query.len() > MAX_QUERY_BYTES {
-        return Err(MemoryError::bad_request_with(
-            format!("query exceeds the {MAX_QUERY_BYTES}-byte ceiling"),
-            &["Shorten the query; retrieval scores intent, not transcript length."],
-        ));
-    }
-    Ok(())
-}
 
 /// Longest recall deadline a request or a vault may name, in milliseconds:
 /// one minute. Past it a deadline stops being a cut and becomes a wait.
@@ -153,18 +130,6 @@ pub fn check_dimensions(dimensions: usize) -> Result<(), MemoryError> {
         return Err(MemoryError::bad_request_with(
             "dimensions must be at least 1",
             &["Open the vault with the dimension count its embedding model produces."],
-        ));
-    }
-    Ok(())
-}
-
-/// Rejects raw blob content over the 32 MiB ceiling.
-/// Shared by embedded and remote artifact appends before engine dispatch.
-pub fn check_blob_bytes(len: usize) -> Result<(), MemoryError> {
-    if len > MAX_BLOB_CONTENT_BYTES {
-        return Err(MemoryError::bad_request_with(
-            format!("blob content exceeds the {MAX_BLOB_CONTENT_BYTES}-byte ceiling"),
-            &["Chunk the artifact into versions under 32 MiB each."],
         ));
     }
     Ok(())

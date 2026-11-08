@@ -1,5 +1,6 @@
 //! Tasks verb and response shaping.
 
+use super::served_rows::stop_release_rows;
 use super::{
     McpCallContext, McpCarrierPolicy, McpGatewayError, McpServed, execute_mcp_board_verb,
     mcp_current_board, mcp_endpoint_result, mcp_facade_error, mcp_page_cursor_error,
@@ -16,6 +17,7 @@ use crate::server::SyncServer;
 use oneiron::ErrorKind;
 use serde_json::Value;
 use serde_json::json;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 
 fn mcp_tasks_section(
@@ -162,18 +164,12 @@ pub(crate) async fn execute_mcp_generated_verb(
             )
         } else {
             let (output, source, carrier, producer_epoch) = if args.tool.memory_method().is_some() {
-                // The native read fan-out, on the heap (FIX 12072).
-                let (output, capabilities, producers) =
-                    Box::pin(super::memory_response::execute(server, &args, actor)).await?;
-                served.extend(producers);
-                // One native response, with its own bounded query/batch
-                // semantics. Do not invent an MCP cursor over nested DTOs.
-                (
-                    output,
-                    crate::mcp::McpPageSource::complete(1),
-                    McpCarrierPolicy::DrainWithCapabilities(capabilities),
-                    None,
-                )
+                let read = native_read::execute_mcp_native_read(server, &args, actor, &mut served);
+                match read.await? {
+                    ControlFlow::Continue(produced) => produced,
+                    // A verb hook's stop is a result the client reads (FIX 1435).
+                    ControlFlow::Break(stopped) => return Ok(stopped),
+                }
             } else {
                 // Establish the board epoch before reading a continuable
                 // task set. The result itself is retained below, so a
@@ -198,20 +194,19 @@ pub(crate) async fn execute_mcp_generated_verb(
                 .await;
                 let produced = match produced {
                     // A verb hook's stop is a result the client reads, not a
-                    // refusal (ARCH-0080 §3).
+                    // refusal (ARCH-0080 §3), released by its saved answer's
+                    // rows on a drained call's retry (FIX 21054).
                     Err(McpGatewayError {
                         hook: Some(stop),
                         hook_notice,
                         ..
                     }) => {
-                        return mcp_hook_stop_result(
-                            server,
-                            &args,
-                            actor,
-                            *stop,
-                            served.rows(),
-                            hook_notice,
-                        );
+                        let stop = *stop;
+                        let rows = stop_release_rows(server, actor, &stop, &mut served);
+                        if super::served_rows::drained_rows_lapsed(server, actor, &stop, rows) {
+                            return Ok(super::claimed_release::details_on_device_result());
+                        }
+                        return mcp_hook_stop_result(server, &args, actor, stop, rows, hook_notice);
                     }
                     produced => produced,
                 };
@@ -423,6 +418,7 @@ pub(crate) fn mcp_api_error(error: ApiError) -> McpGatewayError {
         _ => -32000,
     };
     let mut gateway = McpGatewayError::new(code, error.code().as_str(), error.message());
+    gateway.room_join_hold = error.room_join_hold().cloned().map(Box::new);
     if let ApiErrorDetails::BadRequest { field } = error.details()
         && let Some(field) = field
     {
@@ -479,7 +475,14 @@ pub(crate) fn mcp_engine_error(context: &'static str, error: oneiron::Error) -> 
             McpGatewayError::new(-32020, MCP_HOST_ACTION_REFUSED, error.to_string())
         }
         ErrorKind::LegalHold => mcp_facade_error(oneiron::MemoryError::from(error)),
-        _ => McpGatewayError::new(-32603, "engine_error", format!("{context}: {error}")),
+        _ => {
+            let mut refusal =
+                McpGatewayError::new(-32603, "engine_error", format!("{context}: {error}"));
+            if let oneiron::Error::Record(oneiron::error::RecordError::RoomJoinHeld(hold)) = error {
+                refusal.room_join_hold = Some(hold);
+            }
+            refusal
+        }
     }
 }
 
@@ -655,6 +658,11 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
         && let Some(object) = data.as_object_mut()
     {
         object.insert("legal_hold".to_owned(), json!(*legal_hold));
+    }
+    if let Some(room_join_hold) = error.room_join_hold
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert("room_join_hold".to_owned(), json!(*room_join_hold));
     }
     if let Some(retry_after) = error.retry_after
         && let Some(object) = data.as_object_mut()
@@ -885,9 +893,10 @@ fn mcp_direct_authorship<'a>(
     )
 }
 
-use super::{board_setup, skill_execution, verb_hooks};
+use super::{board_setup, memory_response, skill_execution, verb_hooks};
 #[path = "generated/agent_verb_dispatch.rs"]
 mod agent_verb_dispatch;
+pub(super) mod native_read;
 use agent_verb_dispatch::execute_mcp_agent_verb;
 pub(crate) use agent_verb_dispatch::{
     execute_agent_verb_input, mcp_agent_verb_arguments, mcp_agent_verb_input,
