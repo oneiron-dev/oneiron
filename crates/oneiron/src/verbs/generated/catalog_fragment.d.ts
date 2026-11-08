@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1405 code-mode rows (1362 host rows, 43 run rows), 4924 declarations.
+// Census: 1405 code-mode rows (1362 host rows, 43 run rows), 4925 declarations.
 // Replies: 1213 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 116; unread shapes: none.
@@ -3994,11 +3994,12 @@ declare namespace Sdk {
   type CalendarImportedEvent = { event_ref: string; uid: string; original_start_utc?: number | null; claims: CalendarImportClaimReceipt[] };
   type CalendarIcsImportReceipt = { source_blob_ref: string; source_version: number; events: CalendarImportedEvent[]; screen_verdict: string };
   type CalendarOccurrencesPageRequest = { master_ref: string; range: CalendarRangeDto; deadline_ms?: number | null; resume_from?: number | null };
-  type CalendarOccurrenceView = { event_ref: string; master_ref: string; uid: string; original_start_utc: number; start_utc: number; end_utc: number };
+  type CalendarCivilSpan = { time_kind: string; start: string; end: string };
+  type CalendarOccurrenceView = { event_ref: string; master_ref: string; uid: string; original_start_utc: number; start_utc: number; end_utc: number; civil?: CalendarCivilSpan | null };
   type CalendarOccurrencesPage = { occurrences: CalendarOccurrenceView[]; complete: boolean; resume_from?: number | null };
   type CalendarInstanceMoveRequest = { system: string; source_blob_ref: string; source_version: number; uid: string; original_start_utc: number; start_utc: number; end_utc: number };
   type CalendarReadRequest = { event_ref: string; filter?: ReadFilterInput | null };
-  type CalendarEventView = { origin: string; event_ref: string; name?: string | null; start_utc?: number | null; end_utc?: number | null; calendar_systems: string[]; blocks_time: boolean };
+  type CalendarEventView = { origin: string; event_ref: string; name?: string | null; start_utc?: number | null; end_utc?: number | null; calendar_systems: string[]; blocks_time: boolean; civil?: CalendarCivilSpan | null };
   type CalendarSel = { system?: string | null };
   type CalendarSearchPageRequest = { calendars: CalendarSel[]; range?: CalendarRangeDto | null; text?: string | null; limit: number; deadline_ms?: number | null; resume_from?: number | null; filter?: ReadFilterInput | null };
   type CalendarSearchPage = { events: CalendarEventView[]; complete: boolean; resume_from?: number | null };
@@ -4755,7 +4756,7 @@ declare namespace Sdk {
   type MailComplianceSetRequest = { enabled: boolean; purpose: string };
   type MailComplianceEventKind = "enabled" | "disabled" | "search";
   type MailComplianceEventView = { sequence: number; kind: MailComplianceEventKind; by_ref?: string | null; at: number; purpose: string; query_digest?: string | null; result_count?: number | null };
-  type MailSyncStatusView = { source_ref: string; live: boolean; copy_done: boolean; landed: number; bodies: number; bodies_waiting: number; deleted_at_provider: number; last_step_at?: number | null; last_error?: string | null };
+  type MailSyncStatusView = { source_ref: string; live: boolean; copy_done: boolean; landed: number; bodies: number; bodies_waiting: number; deleted_at_provider: number; claim_rechecks_pending: number; claim_rechecks_checked: number; claim_rechecks_review_needed: number; claim_rechecks_obsolete: number; last_step_at?: number | null; last_error?: string | null };
   type MailMboxImportRequest = { source_ref: string; path: string; messages?: number | null };
   type MailMboxImportReport = { source_ref: string; landed: number; same: number; refused: number; refusal_reasons?: string[]; skipped: number; read_total: number; done: boolean };
   type MailSourceSyncRequest = { source_ref: string; bodies?: number | null };
