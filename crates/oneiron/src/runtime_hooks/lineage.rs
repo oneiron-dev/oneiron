@@ -1,6 +1,9 @@
 //! Causal lineage and the cycle check (ARCH-0080 §4 Lineage and loops). Every
 //! row a hook lands keeps the chain of hooks and runs behind it. A cycle or a
-//! deep chain raises an owner check; it never stops the run.
+//! deep chain raises an owner check; it never stops the run. A permanent
+//! erase takes an erased entity out of every chain and check (FIX 22184).
+
+use std::borrow::Cow;
 
 use serde::{Deserialize, Serialize};
 
@@ -27,10 +30,51 @@ pub struct LineageLink {
     #[schemars(with = "String")]
     pub binding: EntityId,
     pub run_key: String,
-    #[serde(with = "crate::serialize::entity_ref")]
+    // The entity the run fired on, a verb run's caller; the erased marker,
+    // spelled `ERASED_CALL_IDENTITY`, once a permanent erase took it.
+    #[serde(with = "link_entity")]
     #[schemars(with = "String")]
     pub entity: EntityId,
     pub position: String,
+}
+
+/// The entity an erase leaves in a link in place of the erased one: the
+/// reserved all-zero id, which no row has and no id parse yields, spelled
+/// [`ERASED_CALL_IDENTITY`](crate::receipt::ERASED_CALL_IDENTITY) on the
+/// wire ([`link_entity`]).
+fn erased_entity() -> EntityId {
+    EntityId::from_bytes_unchecked([0; 16])
+}
+
+/// A link's entity as its hex ref, or
+/// [`ERASED_CALL_IDENTITY`](crate::receipt::ERASED_CALL_IDENTITY) for
+/// [`erased_entity`].
+mod link_entity {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    use crate::EntityId;
+    use crate::receipt::ERASED_CALL_IDENTITY;
+
+    pub(super) fn serialize<S: Serializer>(
+        entity: &EntityId,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        if *entity == super::erased_entity() {
+            serializer.serialize_str(ERASED_CALL_IDENTITY)
+        } else {
+            serializer.serialize_str(&entity.to_hex())
+        }
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<EntityId, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        if text == ERASED_CALL_IDENTITY {
+            return Ok(super::erased_entity());
+        }
+        EntityId::from_hex(&text).map_err(serde::de::Error::custom)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -195,6 +239,71 @@ pub(super) fn raise_check_in_txn(
     check: &HookCheck,
 ) -> Result<()> {
     CHECKS.put(&vault.store, txn, key, check)
+}
+
+/// Names the erased marker ([`erased_entity`]) in each link of `chain` on
+/// `id`; whether any was on it. Each link keeps its binding, run key and
+/// position, all the cycle, depth and next-occurrence checks read, so a
+/// chain checks as it did before the erase.
+pub(super) fn erase_entity(chain: &mut [LineageLink], id: &EntityId) -> bool {
+    let mut named = false;
+    for link in chain.iter_mut().filter(|link| link.entity == *id) {
+        link.entity = erased_entity();
+        named = true;
+    }
+    named
+}
+
+/// `chain` as a write lands it after `erased`'s permanent erase
+/// ([`erase_entity`]); as it is when no erase fenced an id it names.
+pub(super) fn without_erased<'c>(
+    chain: &'c [LineageLink],
+    erased: Option<&EntityId>,
+) -> Cow<'c, [LineageLink]> {
+    match erased {
+        Some(id) if chain.iter().any(|link| link.entity == *id) => {
+            let mut chain = chain.to_vec();
+            erase_entity(&mut chain, id);
+            Cow::Owned(chain)
+        }
+        _ => Cow::Borrowed(chain),
+    }
+}
+
+/// Takes an erased `id` out of hook lineage in the caller's erase write
+/// (FIX 22184). The chain behind `id` goes: its runs fired on a row that is
+/// gone, and a later run on `id` starts a chain of its own. Every other
+/// chain, and every raised check, that names `id` as a link's entity names
+/// the erased marker there instead ([`erase_entity`]); a link is never
+/// dropped, as a shorter chain would miss a cycle through it and read
+/// shallower. One walk of the lineage table and one of the checks.
+pub(super) fn scrub_erased_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let mut chains = Vec::new();
+    for row in LINEAGE.iter_from(&vault.store, txn, &[])? {
+        let (key, mut lineage) = row?;
+        if key != *id.as_bytes() && erase_entity(&mut lineage.chain, id) {
+            chains.push((key, lineage));
+        }
+    }
+    LINEAGE.delete(&vault.store, txn, id.as_bytes())?;
+    for (key, lineage) in &chains {
+        LINEAGE.put(&vault.store, txn, key, lineage)?;
+    }
+    let mut checks = Vec::new();
+    for row in CHECKS.iter_from(&vault.store, txn, &[])? {
+        let (key, mut check) = row?;
+        if erase_entity(&mut check.chain, id) {
+            checks.push((key, check));
+        }
+    }
+    for (key, check) in &checks {
+        CHECKS.put(&vault.store, txn, key, check)?;
+    }
+    Ok(())
 }
 
 impl Vault {
