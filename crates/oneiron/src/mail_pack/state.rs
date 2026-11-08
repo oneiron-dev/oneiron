@@ -69,6 +69,20 @@ pub(super) struct MailSyncState {
     pub(super) last_step_at: Option<u64>,
     /// The last step's failure, in words, for the source's owner.
     pub(super) last_error: Option<String>,
+    /// The listing begun after an expired anchor: once it completes, a live
+    /// copy it never named, landed before it began, was deleted at the
+    /// provider meanwhile (fix list row 17937).
+    #[serde(default)]
+    pub(super) relist: Option<MailRelist>,
+}
+
+/// A listing that settles the copies an expired anchor lost track of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct MailRelist {
+    /// The listing's generation ([`MailSyncState::generation`]).
+    pub(super) generation: u64,
+    /// When it began: a copy landed since came through it or the feed.
+    pub(super) since: u64,
 }
 
 /// How much of a message has landed.
@@ -130,6 +144,10 @@ pub(super) struct MailOccurrence {
     /// for a message landed before replies were drafted, or forgotten.
     #[serde(default)]
     pub(super) reply: Option<MailReplyHeaders>,
+    /// The generation of the last listing that named it (fix list row
+    /// 17937); `None` before a listing after an expired anchor did.
+    #[serde(default)]
+    pub(super) listed_in: Option<u64>,
     pub(super) landed_at: u64,
     pub(super) updated_at: u64,
 }
