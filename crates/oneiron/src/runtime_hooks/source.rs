@@ -380,9 +380,11 @@ pub(super) fn read_after_in_txn(
         (FactSource::ClaimChangelog, Some(FactPosition::ClaimChangelog(position))) => {
             claim_changes_after_in_txn(vault, txn, Some(position), max_entries)
         }
-        (FactSource::Settlement, None) => settlements_after_in_txn(vault, txn, None, max_entries),
+        (FactSource::Settlement, None) => {
+            settlement::settlements_after_in_txn(vault, txn, None, max_entries)
+        }
         (FactSource::Settlement, Some(FactPosition::Settlement(position))) => {
-            settlements_after_in_txn(vault, txn, Some(position), max_entries)
+            settlement::settlements_after_in_txn(vault, txn, Some(position), max_entries)
         }
         _ => Err(Error::InvariantViolation(
             "hook cursor names another source",
