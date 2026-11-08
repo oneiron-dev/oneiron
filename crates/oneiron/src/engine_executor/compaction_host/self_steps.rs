@@ -3,11 +3,15 @@
 //! model-step family on the route the run captured at entry, and each pass's
 //! receipt names its filed steps and the retained evidence its window was
 //! cut from. A refused landing keeps its paid steps; no call is filed twice.
+//! An accepted pass that wore its home also marks its run's read-world
+//! ledger before it lands (FIX 7087).
 
 use super::super::compaction::FinishedFlight;
 use super::super::driver::EngineNativeExecutor;
-use crate::code_run::CodeRunReplayRecord;
-use crate::compaction::{CompactionEvidence, CompactionExecution, GatedCompaction};
+use crate::code_run::{CodeRunReplayRecord, ReadWorldUnknown};
+use crate::compaction::{
+    CompactionEvidence, CompactionExecution, GatedCompaction, compaction_home_worn_parts,
+};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::{EntityId, WriteActor};
@@ -45,6 +49,38 @@ impl EngineNativeExecutor<'_> {
             let span = answer.is_ok().then_some((job.from, job.through));
             let record = span.and_then(|_| record_of(job.run_id));
             self.file_pass(job.run_id, span, record.as_ref(), execution);
+        }
+    }
+
+    /// Marks the read-world ledger of each run that an accepted self-written
+    /// pass of the flight summarizes, when the pass wore a home part whole
+    /// (FIX 7087). The pass wrote from the home's rows: the voice, the
+    /// self-model, the diary or the lessons, read under the agent's Grant.
+    /// No capture of the run noted those rows, and once the summary lands its
+    /// words reach the run's later context. The mark comes before anything
+    /// lands, so no landing reaches the context unmarked. A landing refused
+    /// after it leaves the ledger marked, which is the safe side. A
+    /// house-written summary, or a pass that wore no home part, marks
+    /// nothing. The mark never refuses the run; a mark that fails leaves the
+    /// epoch open, as every failed ledger write does.
+    pub(in crate::engine_executor) fn mark_self_written_summaries(
+        &self,
+        finished: &FinishedFlight,
+    ) {
+        let epoch = match (&finished.epoch, &finished.epoch_execution, self.output_run) {
+            (Some(Ok(_)), Some(execution), Some(run)) => Some((run, execution)),
+            _ => None,
+        };
+        let folds = finished
+            .folds
+            .iter()
+            .filter(|(_, answer)| answer.is_ok())
+            .filter_map(|(job, _)| Some((job.run_id, job.execution.as_ref()?)));
+        for (run, execution) in epoch.into_iter().chain(folds) {
+            if compaction_home_worn_parts(&execution.home).next().is_some() {
+                let cause = ReadWorldUnknown::SelfWrittenSummary;
+                self.gated_write.read_worlds_unknown(run, cause);
+            }
         }
     }
 
