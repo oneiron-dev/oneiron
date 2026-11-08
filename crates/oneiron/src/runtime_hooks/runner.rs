@@ -147,8 +147,8 @@ impl FactHookRunner {
     }
 
     /// One pass over every source for every enabled fact binding, in
-    /// priority order (higher first, ties by body hash). With no binding it
-    /// reads nothing.
+    /// priority order (higher first, ties by body hash). With hooks off or no
+    /// binding it runs no hook, and still prunes the hook feeds (FIX 22178).
     pub fn run_pass(
         &self,
         vault: &Vault,
@@ -181,7 +181,7 @@ impl FactHookRunner {
         let mut report = HookPassReport::default();
         if !vault.hooks_enabled()? {
             report.disabled = true;
-            return Ok(report);
+            return hook_feeds::prune_hook_feeds(vault, max_entries).map(|()| report);
         }
         // Calls a settled verb hook ask made ready run here, the first pass
         // at start included: outside any write, at hook depth 0. A failed

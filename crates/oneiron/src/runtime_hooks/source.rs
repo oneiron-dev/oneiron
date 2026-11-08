@@ -24,6 +24,7 @@ use super::{filter, store};
 pub(crate) use schedule::index_task_due_in_txn;
 pub(super) use schedule::{TickDetails, release_due_ticks};
 pub(crate) use settlement::{record_settlement_in_txn, record_timeout_demotion_in_txn};
+pub(super) use settlement::{SettledRow, prepare_settlement_in_txn, settlement_fact_in_txn};
 pub(super) use surface_inbound::SurfaceInboundRow;
 pub(crate) use surface_inbound::record_surface_inbound_in_txn;
 
@@ -331,7 +332,6 @@ pub(super) struct SourceBatch {
 pub use crate::consent::settlement_fact::{SettledFact, SettledOutcome, SettlementKind};
 
 use settlement::settlements_after_in_txn;
-pub(super) use settlement::{SettledRow, prepare_settlement_in_txn, settlement_fact_in_txn};
 
 /// Up to `max_entries` facts after `after` (exclusive) in `source`.
 pub(super) fn read_after(

@@ -1,8 +1,8 @@
 //! The runner's work on the engine's own hook feeds: a pass releases the
 //! due watcher TASKs into the tick feed (FIX 4749), and at its end, with a
-//! binding to run or none, prunes the settlement, tick and inbound rows
-//! every binding has passed (FIX 22121, FIX 22141, FIX 22154). The claim
-//! changelog is not pruned here.
+//! binding to run or none, hooks on or off, prunes the settlement, tick and
+//! inbound rows every binding has passed (FIX 22121, FIX 22141, FIX 22154,
+//! FIX 22178). The claim changelog is not pruned here.
 
 use crate::runtime_hooks::filter;
 use crate::runtime_hooks::source::{self, FactKind, FactPosition, FactSource};
@@ -33,10 +33,11 @@ impl Pass<'_, '_> {
     }
 }
 
-/// Prunes the hook feeds once at the end of each pass, retained or not, and
-/// with no binding to run (FIX 22121, FIX 22154): the rows at or below the
-/// lowest stored cursor of every fact binding enabled in the prune's own
-/// snapshot, held back or not, or every row while none is enabled, at most
+/// Prunes the hook feeds once at the end of each pass, retained or not, with
+/// no binding to run, and with hooks off, when no binding moves its cursor
+/// (FIX 22121, FIX 22154, FIX 22178): the rows at or below the lowest
+/// stored cursor of every fact binding enabled in the prune's own snapshot,
+/// held back or not, or every row while none is enabled, at most
 /// `max_rows` a feed, planned in that snapshot and deleted in one write only
 /// when there are any. The pass's own binding list is not the floor: a
 /// binding enabled since the pass began holds its rows too (review #6767).
