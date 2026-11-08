@@ -34,6 +34,17 @@ enum LookupFound {
     DedupedResend,
     CannotTell,
 }
+
+/// What a dispatch's one sink call did: it executed the send, or the
+/// provider lookup before it (FIX 4747) settled the send, with nothing sent
+/// now, as the execution and outcome it stands for.
+enum SinkCall {
+    Executed(OutboundExecutionOutcome),
+    LookedUp(
+        OutboundExecutionOutcome,
+        crate::outbound_intent_ledger::OutboundSendOutcome,
+    ),
+}
 impl<'a, S> DispatchChokepointTransport<'a, S> {
     pub(super) fn new(
         vault: &'a Vault,
@@ -98,116 +109,82 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
         &mut self,
         call: &crate::outbound_intent_ledger::FrozenOutboundCall,
     ) -> crate::outbound_intent_ledger::OutboundSendOutcome {
-        if call.server() != self.request.intent.channel
-            || call.tool() != self.verb_contract.kind
-            || call.resolved_endpoint().is_some()
-            || !self.sink_delivers_every_recipient()
-        {
+        // A message to several recipients goes only through a sink that
+        // sends it to every one of them, never to its first alone (fix list
+        // row 17645).
+        if !self.sink_delivers_every_recipient() {
             return invalid_frozen_call();
         }
-        // The last in-process boundary before the connector: the hygiene
-        // headers come out of the frozen bytes, never out of the live request.
-        let Ok(hygiene_headers) = crate::outbound_chokepoint::frozen_call_hygiene_headers(call)
-        else {
-            return invalid_frozen_call();
-        };
-        // CAL-04, same discipline: a `calendar.invite` send resolves its
-        // `text/calendar` part from the FROZEN blob ref here, at the last
-        // in-process boundary, and never recomputes a UID, a SEQUENCE, or the
-        // document itself. A verb-registered invite whose frozen bytes carry no
-        // five-field body — or whose blob ref no longer dereferences — fails
-        // closed rather than going out as a plain email about a meeting.
-        let calendar_invite = if self.verb_contract.kind == crate::calendar::CALENDAR_INVITE_VERB {
-            let Ok(payload) = crate::calendar::decode_frozen_calendar_invite(call.payload()) else {
-                return invalid_frozen_call();
-            };
-            let Ok(part) = crate::calendar::build_calendar_invite_mime_part(self.vault, &payload)
-            else {
-                return invalid_frozen_call();
-            };
-            Some(part)
-        } else {
-            None
-        };
-        let Ok(space_posting) =
-            crate::channel_identity_autonomy::frozen_space_posting(call.payload())
-        else {
-            return invalid_frozen_call();
-        };
-        // FIX 8791: the sink's own profile-read hold waits for the seat's
-        // daily reset, named on the request's clock.
-        let linkedin_sandbox_policy = self
-            .request
-            .linkedin_sandbox_policy
-            .clone()
-            .map(|policy| policy.with_caps_reset_after(self.request.occurred_at));
-        let execution_request = OutboundExecutionRequest {
-            intent_ref: &self.request.intent_ref,
-            intent: &self.request.intent,
-            // Only provider-native and replace-safe verbs expose the frozen
-            // ledger key to the transport. Queue-emulated dedupe does not make
-            // an ambiguous provider call safe to resend.
-            idempotency_key: if call.idempotency_supported() {
-                call.idempotency_key()
-            } else {
-                None
-            },
-            verb_contract: self.verb_contract,
-            channel_identity_ref: self.request.channel_identity_ref,
-            counterparty_ref: self.request.counterparty_ref.as_deref(),
-            linkedin_sandbox_policy: linkedin_sandbox_policy.as_ref(),
-            hygiene_headers,
-            apns_interruption_level: self.request.delivery_window_apns_interruption_level,
-            calendar_invite,
-            space_posting,
-            engine_send_id: self.request.engine_send_id.as_ref(),
-        };
-        if !crate::task_verb::validate_ask_soft_confirm_dispatch(self.vault, self.request)
-            .unwrap_or(false)
-        {
-            return invalid_frozen_call();
-        }
-        // FIX 4747, the fence before the bytes: a connector-send TASK's send
-        // goes only while this machine still holds the exact send executor
-        // lease its attempt took. A stale executor stands down here, at the
-        // last point every send kind passes, and its sink is never called.
-        if let Some(fence) = self.request.send_executor_fence.as_ref()
-            && !send_executor_fence_permits_send(self.vault, fence)
-        {
-            self.execution = Some(
-                OutboundExecutionOutcome::failed(SEND_EXECUTOR_STOOD_DOWN)
-                    .with_receipt_field(SEND_EXECUTOR_FENCE_FIELD, SEND_EXECUTOR_STOOD_DOWN),
-            );
-            return transport_not_started();
-        }
-        // FIX 4747: a send an earlier executor of its TASK may have made is
-        // looked up first: one the provider kept settles delivered, sending
-        // nothing; one nobody can tell about sends nothing and stays
-        // uncertain for the owner's ask; only one the provider has not seen
-        // goes. The owner's resend goes with no lookup.
+        let vault = self.vault;
         let request = self.request;
-        if request.earlier_send_lookup
-            && !request.owner_released_resend
-            && self.looked_up.is_none()
-            && let Some(engine_send_id) = request.engine_send_id.as_ref()
-        {
-            let target = sent_lookup_target(request, self.verb_contract);
-            match self.sink.lookup_sent(engine_send_id, &target) {
-                SentLookup::Sent { provider_ref } => {
-                    self.looked_up = Some(LookupFound::Sent);
-                    self.execution = Some(looked_up_sent(provider_ref));
-                    return crate::outbound_intent_ledger::OutboundSendOutcome::Acked;
+        let verb_contract = self.verb_contract;
+        let fence = request.send_executor_fence.as_ref();
+        let sink = &mut *self.sink;
+        let looked_up = &mut self.looked_up;
+        let Some(dispatched) =
+            with_execution_request(vault, request, verb_contract, call, |execution_request| {
+                // FIX 4747, the fence before the bytes: a connector-send
+                // TASK's send goes only while this machine still holds the
+                // exact send executor lease its attempt took. A stale
+                // executor stands down here, at the last point every send
+                // kind passes, and its sink is never called.
+                if let Some(fence) = fence
+                    && !send_executor_fence_permits_send(vault, fence)
+                {
+                    return None;
                 }
-                SentLookup::NotSent => self.looked_up = Some(LookupFound::NotSent),
-                SentLookup::DedupedResend => self.looked_up = Some(LookupFound::DedupedResend),
-                SentLookup::CannotTell => {
-                    self.looked_up = Some(LookupFound::CannotTell);
-                    self.execution = Some(looked_up_cannot_tell());
-                    return crate::outbound_intent_ledger::OutboundSendOutcome::Ambiguous;
+                // FIX 4747: a send an earlier executor of its TASK may have
+                // made is looked up first: one the provider kept settles
+                // delivered, sending nothing; one nobody can tell about
+                // sends nothing and stays uncertain for the owner's ask;
+                // only one the provider has not seen goes. The owner's
+                // resend goes with no lookup.
+                if request.earlier_send_lookup
+                    && !request.owner_released_resend
+                    && looked_up.is_none()
+                    && let Some(engine_send_id) = request.engine_send_id.as_ref()
+                {
+                    let target = sent_lookup_target(request, verb_contract);
+                    match sink.lookup_sent(engine_send_id, &target) {
+                        SentLookup::Sent { provider_ref } => {
+                            *looked_up = Some(LookupFound::Sent);
+                            return Some(SinkCall::LookedUp(
+                                looked_up_sent(provider_ref),
+                                crate::outbound_intent_ledger::OutboundSendOutcome::Acked,
+                            ));
+                        }
+                        SentLookup::NotSent => *looked_up = Some(LookupFound::NotSent),
+                        SentLookup::DedupedResend => {
+                            *looked_up = Some(LookupFound::DedupedResend);
+                        }
+                        SentLookup::CannotTell => {
+                            *looked_up = Some(LookupFound::CannotTell);
+                            return Some(SinkCall::LookedUp(
+                                looked_up_cannot_tell(),
+                                crate::outbound_intent_ledger::OutboundSendOutcome::Ambiguous,
+                            ));
+                        }
+                    }
                 }
+                Some(SinkCall::Executed(sink.execute(execution_request)))
+            })
+        else {
+            return invalid_frozen_call();
+        };
+        let mut execution = match dispatched {
+            Some(SinkCall::Executed(execution)) => execution,
+            Some(SinkCall::LookedUp(execution, outcome)) => {
+                self.execution = Some(execution);
+                return outcome;
             }
-        }
-        let mut execution = self.sink.execute(&execution_request);
+            None => {
+                self.execution = Some(
+                    OutboundExecutionOutcome::failed(SEND_EXECUTOR_STOOD_DOWN)
+                        .with_receipt_field(SEND_EXECUTOR_FENCE_FIELD, SEND_EXECUTOR_STOOD_DOWN),
+                );
+                return transport_not_started();
+            }
+        };
         let looked_up_field = match self.looked_up {
             Some(LookupFound::NotSent) => Some(SENT_LOOKUP_NOT_SENT),
             Some(LookupFound::DedupedResend) => Some(SENT_LOOKUP_DEDUPED_RESEND),
@@ -357,7 +334,101 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
                 .sink
                 .known_non_delivery(&self.request.intent_ref, call.idempotency_key())
     }
+
+    /// The sink's read-back of `call`, for a call this transport would send,
+    /// through the request it would execute (FIX 8814 follow-up).
+    fn read_back_delivery(
+        &self,
+        call: &crate::outbound_intent_ledger::FrozenOutboundCall,
+    ) -> crate::outbound_intent_ledger::DeliveryReadBack {
+        let sink = &*self.sink;
+        with_execution_request(
+            self.vault,
+            self.request,
+            self.verb_contract,
+            call,
+            |execution_request| sink.read_back_delivery(execution_request),
+        )
+        .unwrap_or(crate::outbound_intent_ledger::DeliveryReadBack::Unknown)
+    }
 }
+
+/// Builds the request the sink gets for `call`, the frozen call the
+/// transport would send, and hands it to `with`: `None` for a call it would
+/// refuse. The send and its read-back (FIX 8814 follow-up) both build it
+/// here, so a sink reads back exactly the call it executed.
+fn with_execution_request<R>(
+    vault: &Vault,
+    request: &OutboundDispatchRequest,
+    verb_contract: &'static OutboundVerbContract,
+    call: &crate::outbound_intent_ledger::FrozenOutboundCall,
+    with: impl FnOnce(&OutboundExecutionRequest<'_>) -> R,
+) -> Option<R> {
+    if call.server() != request.intent.channel
+        || call.tool() != verb_contract.kind
+        || call.resolved_endpoint().is_some()
+    {
+        return None;
+    }
+    // The last in-process boundary before the connector: the hygiene
+    // headers come out of the frozen bytes, never out of the live request.
+    let Ok(hygiene_headers) = crate::outbound_chokepoint::frozen_call_hygiene_headers(call) else {
+        return None;
+    };
+    // CAL-04, same discipline: a `calendar.invite` send resolves its
+    // `text/calendar` part from the FROZEN blob ref here, at the last
+    // in-process boundary, and never recomputes a UID, a SEQUENCE, or the
+    // document itself. A verb-registered invite whose frozen bytes carry no
+    // five-field body — or whose blob ref no longer dereferences — fails
+    // closed rather than going out as a plain email about a meeting.
+    let calendar_invite = if verb_contract.kind == crate::calendar::CALENDAR_INVITE_VERB {
+        let Ok(payload) = crate::calendar::decode_frozen_calendar_invite(call.payload()) else {
+            return None;
+        };
+        let Ok(part) = crate::calendar::build_calendar_invite_mime_part(vault, &payload) else {
+            return None;
+        };
+        Some(part)
+    } else {
+        None
+    };
+    let Ok(space_posting) = crate::channel_identity_autonomy::frozen_space_posting(call.payload())
+    else {
+        return None;
+    };
+    // FIX 8791: the sink's own profile-read hold waits for the seat's
+    // daily reset, named on the request's clock.
+    let linkedin_sandbox_policy = request
+        .linkedin_sandbox_policy
+        .clone()
+        .map(|policy| policy.with_caps_reset_after(request.occurred_at));
+    let execution_request = OutboundExecutionRequest {
+        intent_ref: &request.intent_ref,
+        intent: &request.intent,
+        // Only provider-native and replace-safe verbs expose the frozen
+        // ledger key to the transport. Queue-emulated dedupe does not make
+        // an ambiguous provider call safe to resend.
+        idempotency_key: if call.idempotency_supported() {
+            call.idempotency_key()
+        } else {
+            None
+        },
+        verb_contract,
+        channel_identity_ref: request.channel_identity_ref,
+        counterparty_ref: request.counterparty_ref.as_deref(),
+        linkedin_sandbox_policy: linkedin_sandbox_policy.as_ref(),
+        hygiene_headers,
+        apns_interruption_level: request.delivery_window_apns_interruption_level,
+        calendar_invite,
+        space_posting,
+        engine_send_id: request.engine_send_id.as_ref(),
+    };
+    if !crate::task_verb::validate_ask_soft_confirm_dispatch(vault, request).unwrap_or(false) {
+        return None;
+    }
+    Some(with(&execution_request))
+}
+
 /// A definite non-delivery: no byte of this call left for its provider.
 fn transport_not_started() -> crate::outbound_intent_ledger::OutboundSendOutcome {
     crate::outbound_intent_ledger::OutboundSendOutcome::Failed(
