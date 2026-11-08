@@ -7080,6 +7080,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.dreamer.follower.keyframe",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
                 "connector.answer",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ConnectorAnswerRequest,
@@ -8351,6 +8356,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.files.sources.convert",
     "vault.sync.repo_manifests.conflict.review",
     "vault.sync.repo_manifests.conflict.discard",
+    "vault.dreamer.follower.keyframe",
     "self.browser.open",
     "self.browser.observe",
     "self.browser.find",
@@ -11013,6 +11019,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
                 crate::task_verb::sdk::RepoManifestConflictDiscardView,
             >()
         }
+        "vault.dreamer.follower.keyframe" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::DreamerFollowerKeyframeResult,
+        >(),
         "self.browser.open" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::BrowserObservationPage,
         >(),
@@ -20048,6 +20057,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.dreamer.follower.keyframe" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "connector.answer" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -22000,6 +22016,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.sync.repo_manifests.conflict.discard" => {
             validate_input_vault_sync_repo_manifests_conflict_discard(value)?
         }
+        "vault.dreamer.follower.keyframe" => validate_input_vault_dreamer_follower_keyframe(value)?,
         "connector.answer" => validate_input_connector_answer(value)?,
         "self.browser.open" => validate_input_self_browser_open(value)?,
         "self.browser.observe" => validate_input_self_browser_observe(value)?,
@@ -28929,6 +28946,11 @@ fn validate_input_vault_sync_repo_manifests_conflict_discard(
     Ok(())
 }
 #[inline(never)]
+fn validate_input_vault_dreamer_follower_keyframe(value: &serde_json::Value) -> MemoryResult<()> {
+    let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+    Ok(())
+}
+#[inline(never)]
 fn validate_input_connector_answer(value: &serde_json::Value) -> MemoryResult<()> {
     let _input: crate::task_verb::sdk::ConnectorAnswerRequest = decode(value.clone())?;
     Ok(())
@@ -30972,6 +30994,7 @@ pub fn invoke(
         "vault.sync.repo_manifests.conflict.discard" => {
             invoke_vault_sync_repo_manifests_conflict_discard(memory, value)
         }
+        "vault.dreamer.follower.keyframe" => invoke_vault_dreamer_follower_keyframe(memory, value),
         "connector.answer" => invoke_connector_answer(memory, value),
         "self.browser.open" => invoke_self_browser_open(memory, value),
         "self.browser.observe" => invoke_self_browser_observe(memory, value),
@@ -40055,6 +40078,13 @@ fn invoke_vault_sync_repo_manifests_conflict_discard(
         memory,
         decode(value)?,
     )?)
+}
+#[inline(never)]
+fn invoke_vault_dreamer_follower_keyframe(
+    memory: &Memory<'_>,
+    value: serde_json::Value,
+) -> MemoryResult<serde_json::Value> {
+    encode(vault_dreamer_follower_keyframe(memory, decode(value)?)?)
 }
 #[inline(never)]
 fn invoke_connector_answer(
@@ -51243,6 +51273,16 @@ pub fn vault_sync_repo_manifests_conflict_discard(
     crate::task_verb::sdk::repo_manifest_conflict_discard_as_owner(
         memory.vault(),
         &memory.embedded_owner("vault.sync.repo_manifests.conflict.discard")?,
+        input,
+    )
+}
+pub fn vault_dreamer_follower_keyframe(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<crate::task_verb::sdk::DreamerFollowerKeyframeResult> {
+    crate::task_verb::sdk::dreamer_follower_keyframe_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.dreamer.follower.keyframe")?,
         input,
     )
 }
