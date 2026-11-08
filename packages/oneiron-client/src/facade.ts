@@ -3458,7 +3458,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.code.views.build": { description: "Run a pinned native owner build or verify leg, reusing clean account-local results and retaining secret-consuming exhaust as tainted.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.code.cache.get": { description: "Read one clean immutable account-local build result by action key without executing a command.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.code.cache.reuse": { description: "Reuse an authorized clean action result into another matching working view without dispatching a cold build.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.code.snapshots.ingest": { description: "Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.code.snapshots.ingest": { description: "Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot, of a registered repository when named. Owner only. It registers no repository, whitelist or membership.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.code.snapshots.get": { description: "Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.code.snapshots.read": { description: "Read one UTF-8 file and its SHA-256 from the frozen blobs of a pinned code snapshot, never from the folder on disk. Owner only.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.code.symbols.definitions": { description: "Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language.", scope: "Read", proposes: false, hostDoor: true, section: false },
@@ -3493,7 +3493,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.repo.git_push.revoke": { description: "The owner revokes one git_push Grant by its id; its holder's next push is refused at once, and a repeat changes nothing.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.connectors.read_grants.grant": { description: "The owner grants one agent its witness-read grant over a connector conversation again, by agent and conversation; a revoked grant is issued anew at its same id, a missing one is issued, and a repeat on an active grant changes nothing.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.connectors.read_grants.revoke": { description: "The owner revokes one agent's witness-read grant over a connector conversation by its id; the agent stops reading the conversation's messages at once, no later witness issues the grant again, and a repeat changes nothing.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.repo.anchor.bind": { description: "The owner binds one served repo to its CODE anchor in a live PROJECT he names, the anchor a git_push Grant, a run's repo bounds and a publish name it by; a repeat changes nothing.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.repo.anchor.bind": { description: "The owner binds a served repo, or registers an external local Git repo, as one stable CODE anchor of a live PROJECT, with its portable id and editable whitelist (exact paths, empty is read-only); it grants no membership.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.repo.snapshots.get": { description: "Reads one snapshot's manifest of a repo the Grant of this credential's attached live run admits, at the commit its full ref names now; the run, never the request, binds the actor, TASK and lease.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.repo.snapshots.read": { description: "Reads one file of such a snapshot on a path the attached run's Grant reads.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.repo.symbols.definitions": { description: "Reads a snapshot's exact-name Rust definitions on paths the attached run's Grant reads.", scope: "Read", proposes: false, hostDoor: true, section: false },
@@ -6142,7 +6142,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
           reuse: (input: Facade.CodeViewBuildRequest, options?: O): FacadeReturns<"vault.code.cache.reuse">[K] => invoke("vault.code.cache.reuse", input, options, newInvocation()),
         },
         snapshots: {
-          /** Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt. */
+          /** Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot, of a registered repository when named. Owner only. It registers no repository, whitelist or membership. */
           ingest: (input: Facade.CodeSnapshotIngestRequest, options?: O): FacadeReturns<"vault.code.snapshots.ingest">[K] => invoke("vault.code.snapshots.ingest", input, options, newInvocation()),
           /** Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant. */
           get: (input: Facade.CodeSnapshotRequest, options?: O): FacadeReturns<"vault.code.snapshots.get">[K] => invoke("vault.code.snapshots.get", input, options, newInvocation()),
@@ -6251,7 +6251,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
           revoke: (input: Facade.GitPushGrantRevokeInput, options?: O): FacadeReturns<"vault.repo.git_push.revoke">[K] => invoke("vault.repo.git_push.revoke", input, options, newInvocation()),
         },
         anchor: {
-          /** The owner binds one served repo to its CODE anchor in a live PROJECT he names, the anchor a git_push Grant, a run's repo bounds and a publish name it by; a repeat changes nothing. */
+          /** The owner binds a served repo, or registers an external local Git repo, as one stable CODE anchor of a live PROJECT, with its portable id and editable whitelist (exact paths, empty is read-only); it grants no membership. */
           bind: (input: Facade.RepoAnchorBindInput, options?: O): FacadeReturns<"vault.repo.anchor.bind">[K] => invoke("vault.repo.anchor.bind", input, options, newInvocation()),
         },
         snapshots: {
