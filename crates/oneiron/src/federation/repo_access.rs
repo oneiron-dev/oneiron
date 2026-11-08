@@ -154,7 +154,9 @@ impl Vault {
     /// [`Self::admit_repo_read_in_txn`] for an edit: the Grant must list the
     /// edit verb, and every path, the old and new name of a rename and the
     /// path of a delete among them, must match an editable glob. A Grant
-    /// whose editable set is empty edits nothing.
+    /// whose editable set is empty edits nothing. Every path must also be on
+    /// the admitted repository's own retained whitelist when its owner set
+    /// one (FIX 4299), else `PathOutsideScope`.
     ///
     /// # Errors
     /// A store, fold or clock failure; never a refusal.
@@ -166,14 +168,21 @@ impl Vault {
         repo: EntityId,
         target: &RepoTarget,
     ) -> Result<RepoAdmission> {
-        self.admit_repo_in_txn(
+        let membership = match self.admit_repo_in_txn(
             txn,
             actor,
             class,
             repo,
             None,
             Some((target, RepoAccessIntent::Edit)),
-        )
+        )? {
+            Ok(membership) => membership,
+            Err(refused) => return Ok(Err(refused)),
+        };
+        let paths = target.paths.iter().map(String::as_str);
+        Ok(self
+            .admit_registered_edit_in_txn(txn, repo, paths)?
+            .map(|()| membership))
     }
 
     /// The one admission the three seams share. With no `ask` it admits the

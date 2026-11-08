@@ -212,7 +212,8 @@ impl Memory<'_> {
     /// names, through the importer's own writer. Only the paths the Grant
     /// reads reach the snapshot, its blobs and its symbols, and the run is
     /// admitted again in that writer, on every kept path. The snapshot keeps
-    /// the anchor's own project key.
+    /// the anchor's own project key, a registered repository's its PROJECT,
+    /// and belongs to the anchor (FIX 4299).
     pub fn repo_snapshots_ingest_for_run(
         &self,
         binding: &RepoRunBinding,
@@ -251,8 +252,12 @@ impl Memory<'_> {
         let Some(commit) = repo_ref_pin(self.vault, &membership.repo_ref, &input.git_ref) else {
             return Err(refusal_error(RepoAccessRefusal::WrongRef));
         };
-        let Some(anchor) = self.vault.get_codebase_snapshot(&selected)? else {
-            return Err(refusal_error(RepoAccessRefusal::NoMembership));
+        let project_id = match self.vault.get_codebase_snapshot(&selected)? {
+            Some(anchor) => anchor.project_id,
+            None if self.vault.is_registered_repository(selected)? => {
+                membership.bounds.project.to_hex()
+            }
+            None => return Err(refusal_error(RepoAccessRefusal::NoMembership)),
         };
         // The paths kept are the selection; the final writer admits each of
         // them again, so a Grant narrowed since keeps none it no longer
@@ -267,10 +272,14 @@ impl Memory<'_> {
         };
         let at = self.vault.store.clock.now_recorded_at();
         let imported = self.vault.ingest_local_repo_for_run(
-            anchor.project_id,
+            project_id,
             Path::new(path),
             commit.as_str(),
             (TimeRange { start: at, end: at }, at),
+            crate::codebase::CaptureRepository {
+                anchor: selected,
+                project: None,
+            },
             &select,
             |txn| {
                 let (selected_again, hit_again, admission) =
