@@ -708,6 +708,11 @@ impl<'v> ScopedRead<'v> {
             let Some(scope) = scope else {
                 return Ok(false);
             };
+            let Some(scope) =
+                self.live_world_scope_in(rtxn, id, header.entity_type, scope, policy, grant)
+            else {
+                return Ok(false);
+            };
             match grant {
                 None => crate::gate::scoped_read_record_allowed(policy, &self.actor_key, &scope),
                 Some(grant) => crate::gate::scoped_read_record_allowed_with_scope(
