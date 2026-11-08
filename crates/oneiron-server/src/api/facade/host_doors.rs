@@ -115,6 +115,7 @@ pub(crate) use super::federation_connect_doors::*;
 pub(crate) use super::feedback_doors::*;
 // The owner's Files world source doors (FIX 6942), likewise.
 pub(crate) use super::files_doors::*;
+pub(crate) use super::follower_keyframe_doors::*;
 pub(crate) use super::goal_optimize_doors::*;
 pub(crate) use super::guest_document_doors::*;
 pub(crate) use super::guest_doors::*;

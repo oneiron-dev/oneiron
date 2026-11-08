@@ -587,6 +587,9 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCodeOriginAuthorityGet
         | Row::VaultCodeOriginAuthoritySet
         | Row::VaultCodeOriginPublications
+        | Row::VaultCodeSecretsPurgeRequest
+        | Row::VaultCodeSecretsPurgeGet
+        | Row::VaultCodeSecretsPurgeExecute
         | Row::VaultCodeCheckoutBind
         | Row::VaultArtifactsKeepOutline
         | Row::VaultArtifactsDeclineOutline
@@ -677,6 +680,7 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultMembersLeave
         | Row::VaultMembersInvitations
         | Row::VaultMembersAccept
+        | Row::VaultMembersAcceptWithCredential
         | Row::VaultMembersDecline
         | Row::VaultMembersWithdrawInvitation
         | Row::VaultMembersInvitationSlip
