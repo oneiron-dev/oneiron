@@ -29,8 +29,6 @@ const HEAD: u64 = 0;
 /// The key kind of a run's pages, by page.
 const PAGE: u64 = 1;
 
-const CALL_DOMAIN: &[u8] = b"oneiron:code-run:program-resume-call:v1";
-
 /// A code run's resume rows, keyed by the run, the row's kind and its page.
 const RESUME: SideTable<(EntityId, u64, u64), ResumeRow, Named> =
     SideTable::new(&side_table::CODE_RUN_PROGRAM_RESUME);
@@ -102,7 +100,8 @@ pub(crate) struct ProgramResumeCall {
     /// The row of the run's record that settled it, or that parked it when
     /// a delivered reply answers it.
     pub(crate) row: u64,
-    /// BLAKE3 of that row's canonical request.
+    /// That row's request identity (FIX 6534): the BLAKE3 digest of its
+    /// canonical request, which its erased form keeps.
     pub(crate) request_digest: [u8; 32],
     /// The wait whose delivered reply answers it, when one does.
     pub(crate) reply: Option<EntityId>,
@@ -191,26 +190,19 @@ pub(crate) fn program_resume_calls_in_txn(
     Ok(calls)
 }
 
-/// One settled call as a page lists it: `row`, and the wait whose delivered
-/// reply answers it.
+/// One settled call as a page lists it: `row`, by its request identity, and
+/// the wait whose delivered reply answers it.
 ///
 /// # Errors
 ///
-/// A request that does not encode.
+/// A request the side-row wall cannot read, or one that does not encode.
 pub(crate) fn program_resume_call(
     row: &CodeRunBridgeCall,
     reply: Option<EntityId>,
 ) -> Result<ProgramResumeCall> {
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, &row.request)
-        .map_err(|_| Error::InvalidConfig("a program call's request does not encode".to_owned()))?;
     Ok(ProgramResumeCall {
         row: row.seq,
-        request_digest: *blake3::Hasher::new()
-            .update(CALL_DOMAIN)
-            .update(&bytes)
-            .finalize()
-            .as_bytes(),
+        request_digest: row.request_identity()?,
         reply,
     })
 }

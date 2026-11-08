@@ -115,7 +115,7 @@ pub(crate) async fn vault_seal_pending(
             .into_iter()
             .filter_map(|(request, rows)| {
                 let value = serde_json::to_value(&request).unwrap_or_default();
-                if super::known_denied_rows(server.vault(), &destination, &rows, &value) {
+                if super::known_denied_rows(server.vault(), &destination, &rows, &value, false) {
                     return None;
                 }
                 listed.extend(rows);
