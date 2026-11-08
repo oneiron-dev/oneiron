@@ -33,6 +33,10 @@ pub struct CanEffectAnswer {
     /// An allowed send would take its place in a full envelope window
     /// rather than go now.
     pub waits_for_envelope_window: bool,
+    /// An allowed act whose governing key's count-bound window is full would
+    /// wait until this recording time (seconds, as `checked_at`), charged
+    /// nothing until then. `null` when it would go now.
+    pub rate_window_opens_at: Option<u64>,
     /// The recording time the judgment read, Unix seconds. The answer is
     /// dated: the act itself is judged again when it runs.
     pub checked_at: u64,
@@ -67,6 +71,7 @@ impl CanEffectAnswer {
             reasons: preflight.reasons.into_iter().map(str::to_owned).collect(),
             holds: preflight.holds.into_iter().map(str::to_owned).collect(),
             waits_for_envelope_window: preflight.waits_for_envelope_window,
+            rate_window_opens_at: preflight.rate_window_opens_at,
             checked_at,
         }
     }
