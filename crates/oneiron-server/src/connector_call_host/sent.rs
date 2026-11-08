@@ -11,7 +11,7 @@ pub(super) struct Sent {
     pub(super) reply: Option<UntrustedToolResult>,
     /// The questions the connector answered with, in place of a reply.
     pub(super) awaiting: Option<ConnectorAwaitingInput>,
-    pub(super) body: Option<Vec<u8>>,
+    pub(super) body: Option<RawOutboundBody>,
     pub(super) error: Option<String>,
     /// The resume state of the round the connector asked, if it asked one
     /// (FIX 9157).
@@ -108,7 +108,7 @@ impl Sent {
     }
 
     /// The connector answered the call.
-    pub(super) fn acked(reply: Option<UntrustedToolResult>, body: Vec<u8>) -> Self {
+    pub(super) fn acked(reply: Option<UntrustedToolResult>, body: RawOutboundBody) -> Self {
         Self {
             outcome: OutboundSendOutcome::Acked,
             reply,
@@ -124,7 +124,7 @@ impl Sent {
 
     /// The connector took the call as the remote task `handle` (FIX 7960):
     /// its outcome is still out, and the call is never sent again.
-    pub(super) fn deferred(handle: RemoteTaskHandle, body: Vec<u8>) -> Self {
+    pub(super) fn deferred(handle: RemoteTaskHandle, body: RawOutboundBody) -> Self {
         Self {
             outcome: OutboundSendOutcome::Deferred,
             reply: None,
