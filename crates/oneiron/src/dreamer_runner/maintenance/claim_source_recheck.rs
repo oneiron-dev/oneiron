@@ -47,7 +47,7 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::inference_context::HostInferenceContext;
 use crate::llm::call_as_step;
 use crate::model_binding::ModelRole;
-use crate::model_step_context::{DurableStepContext, StepOutcome};
+use crate::model_step_context::{DurableStepContext, StepEffectBinding, StepOutcome};
 use crate::model_step_error::DurableStepError;
 use crate::{EntityId, Error, Result, Vault};
 use oneiron_model::llm::{
@@ -371,15 +371,11 @@ fn judge_request(
                 role: LlmMessageRole::System,
                 content: vec![ContentPart::Text {
                     text: model.rubric.to_owned(),
-                    signature: None,
                 }],
             },
             LlmMessage {
                 role: LlmMessageRole::User,
-                content: vec![ContentPart::Text {
-                    text: input,
-                    signature: None,
-                }],
+                content: vec![ContentPart::Text { text: input }],
             },
         ],
         tools: Vec::new(),
@@ -394,6 +390,8 @@ struct Judging {
     response: LlmResponse,
     memoized: bool,
     step_hash: [u8; 32],
+    /// The step's paid identity, booked once when it is not memoized.
+    binding: StepEffectBinding,
     /// What it spent: nothing when memoized, paid for by the pass that
     /// asked it.
     units: u64,
@@ -453,13 +451,17 @@ async fn ask_judge(
     Ok(
         match call_as_step(&step_ctx, model.backend, model.guard, request).await {
             Ok(StepOutcome::Finished {
-                response, memoized, ..
+                response,
+                memoized,
+                binding,
+                ..
             }) => {
                 let units = if memoized { 0 } else { units(&response.usage) };
                 Asked::Answered(Judging {
                     response,
                     memoized,
                     step_hash,
+                    binding,
                     units,
                 })
             }
@@ -488,7 +490,7 @@ fn verdict_of(response: &LlmResponse) -> Option<Verdict> {
 #[derive(Default)]
 struct Spend {
     units: u64,
-    step_hashes: Vec<[u8; 32]>,
+    step_bindings: Vec<StepEffectBinding>,
 }
 
 impl Spend {
@@ -497,14 +499,14 @@ impl Spend {
     fn add(&mut self, judging: &Judging) {
         if !judging.memoized {
             self.units = self.units.saturating_add(judging.units);
-            self.step_hashes.push(judging.step_hash);
+            self.step_bindings.push(judging.binding);
         }
     }
 
     /// Hands this spend to the meter before an `Err`, so the driver charges
     /// what the shared pass line lent (FIX 11558).
     fn note_before_error(&self, ctx: &WakeAttemptContext<'_>) {
-        ctx.note_spend_before_error(self.units, &self.step_hashes);
+        ctx.note_spend_before_error(self.units, &self.step_bindings);
     }
 
     /// The attempt completed, this spend settled with its steps pinned as
@@ -512,14 +514,14 @@ impl Spend {
     fn completed(self) -> DreamerAttemptExecution {
         DreamerAttemptExecution::Completed {
             completed_units: self.units,
-            step_hashes: self.step_hashes,
+            step_bindings: self.step_bindings,
         }
     }
 
     /// The attempt parked for `reason`; a plain park while nothing was
     /// spent.
     fn park(self, reason: &str, cause: DreamerParkCause) -> DreamerAttemptExecution {
-        if self.units == 0 && self.step_hashes.is_empty() {
+        if self.units == 0 && self.step_bindings.is_empty() {
             DreamerAttemptExecution::Park {
                 reason: reason.to_owned(),
                 cause,
@@ -529,7 +531,7 @@ impl Spend {
                 reason: reason.to_owned(),
                 cause,
                 completed_units: self.units,
-                step_hashes: self.step_hashes,
+                step_bindings: self.step_bindings,
             }
         }
     }
