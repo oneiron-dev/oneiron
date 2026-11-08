@@ -2,6 +2,7 @@
 
 use std::io::{self, Write};
 
+use super::predecessor::retire_predecessors_in_txn;
 use super::{
     AuthenticatedOwner, ConsentReceipt, StoredProposal, StoredSettlement, VerifiedSlip,
     WIDEN_PROPOSALS, WidenDelta, decode_delta, invalid_row, validate_reference_shape,
@@ -122,6 +123,9 @@ impl Vault {
                     "a contact-disclosure offer settles through confirm_contact_disclosure",
                 )));
             };
+            // The grants this widening replaces go in the same writer (FIX 9740).
+            let owner_ref = row.proposal.owner_ref.clone();
+            retire_predecessors_in_txn(self, txn, owner, &bound, &owner_ref, &row.predecessors)?;
             let receipt = self.create_standing_grant_in_txn(txn, owner, bound)?;
             row.resolved = true;
             row.settlement = Some(StoredSettlement {
