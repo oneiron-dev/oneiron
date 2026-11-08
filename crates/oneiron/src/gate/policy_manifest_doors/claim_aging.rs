@@ -64,10 +64,11 @@ fn view(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ClaimAgingProfilesView> 
     })
 }
 
-/// Freeze the effective profiles once for every pass, trace and score in a run.
-pub(crate) fn claim_aging_profiles_for_run(vault: &Vault) -> Result<ClaimAgingProfiles> {
+/// Freeze the effective profiles once for every pass, trace and score in a run: the SAME
+/// already-created view the run's telemetry witness compares, not just its profiles.
+pub(crate) fn claim_aging_profiles_for_run(vault: &Vault) -> Result<ClaimAgingProfilesView> {
     let txn = vault.store.env.read_txn()?;
-    Ok(view(vault, &txn)?.profiles)
+    view(vault, &txn)
 }
 
 pub fn claim_aging_profiles_as_owner(

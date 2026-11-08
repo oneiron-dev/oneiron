@@ -31,6 +31,11 @@ pub enum AnnotationLocator {
         char_start: u64,
         char_end: u64,
     },
+    /// A span over a plain-text file's whole decoded text (FIX 7905).
+    Text {
+        char_start: u64,
+        char_end: u64,
+    },
 }
 
 impl TryFrom<&AnnotationLocator> for Locator {
@@ -50,6 +55,10 @@ impl TryFrom<&AnnotationLocator> for Locator {
                 char_start,
                 char_end,
             } => Self::html(part_id.clone(), *char_start, *char_end),
+            AnnotationLocator::Text {
+                char_start,
+                char_end,
+            } => Self::text(*char_start, *char_end),
         }
     }
 }
@@ -80,6 +89,13 @@ impl From<&Locator> for AnnotationLocator {
                 char_end,
             } => Self::Html {
                 part_id: part_id.clone(),
+                char_start: *char_start,
+                char_end: *char_end,
+            },
+            Locator::Text {
+                char_start,
+                char_end,
+            } => Self::Text {
                 char_start: *char_start,
                 char_end: *char_end,
             },
