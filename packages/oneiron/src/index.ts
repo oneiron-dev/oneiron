@@ -1687,6 +1687,8 @@ export class Oneiron {
       share: (input: Facade.GuestDocumentShareRequest): Facade.GuestDocumentEnvelope => this.#call(() => this.#client.vaultGuestsShare(input) as Facade.GuestDocumentEnvelope),
       /** The guest fetches its actual filtered signed document envelope under its own live grant-bound credential over HTTP or the held socket. */
       export_envelope: (input: Facade.GuestDocumentShareRequest): Facade.GuestDocumentEnvelope => this.#call(() => this.#client.vaultGuestsExportEnvelope(input) as Facade.GuestDocumentEnvelope),
+      /** A Connect guest proposes one write of a record's text under its own live grant-bound credential; it lands in the owner's review inbox for that Connect and never writes the vault. */
+      propose: (input: Facade.ConnectProposeRequest): Facade.ConnectProposalLanded => this.#call(() => this.#client.vaultGuestsPropose(input) as Facade.ConnectProposalLanded),
       /** The owner attempts a document re-share through the same local-world-only guest door; received foreign worlds and base are refused. */
       reshare: (input: Facade.GuestDocumentShareRequest): Facade.GuestDocumentEnvelope => this.#call(() => this.#client.vaultGuestsReshare(input) as Facade.GuestDocumentEnvelope),
       revoke: (input: Facade.GuestRevokeRequest): Facade.GuestRevokeResponse => this.#call(() => this.#client.vaultGuestsRevoke(input) as Facade.GuestRevokeResponse),
@@ -3491,7 +3493,7 @@ export class Oneiron {
         import_mbox: (input: Facade.MailMboxImportRequest): Facade.MailMboxImportReport => this.#call(() => this.#client.vaultMailSourcesImportMbox(input) as Facade.MailMboxImportReport),
         /** The vault's owner runs one bounded import step of a mail or calendar source, on this device or a served vault: a Google or Microsoft 365 mailbox, or a Google, Microsoft 365 or ICS calendar whose events land bound to their owner. */
         sync: (input: Facade.MailSourceSyncRequest): Facade.MailSyncReport => this.#call(() => this.#client.vaultMailSourcesSync(input) as Facade.MailSyncReport),
-        /** The vault's owner searches a Google or Microsoft 365 mailbox they read at its provider, in the provider's own search language; one page of the messages found lands whole and kept, bound to the mailbox's audience. */
+        /** The vault's owner searches a Google, Microsoft 365 or IMAP mailbox they read at its provider, in the provider's own search language; one page of the messages found lands whole and kept, bound to the mailbox's audience. */
         search: (input: Facade.MailSourceSearchRequest): Facade.MailSearchReport => this.#call(() => this.#client.vaultMailSourcesSearch(input) as Facade.MailSearchReport),
       },
       threads: {
