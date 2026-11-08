@@ -20283,6 +20283,12 @@ pub struct ChatCompletionMemory {
     pub injected: bool,
     #[serde(rename = "remembered")]
     pub remembered: ChatCompletionRemembered,
+    #[serde(
+        rename = "recall_skipped",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub recall_skipped: Option<String>,
 }
 
 /// `oneiron::verbs::proxy::ChatCompletionResponse`.
