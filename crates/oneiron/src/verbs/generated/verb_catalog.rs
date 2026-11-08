@@ -810,6 +810,7 @@ pub enum AgentVerb {
     VaultAgentsGrantsRevoke,
     VaultAgentsVerbClassesGet,
     VaultAgentsVerbClassesConfigure,
+    VaultOauthAuthorizationAnswer,
     VaultRepoGitPushMint,
     VaultRepoGitPushRevoke,
     VaultConnectorsReadGrantsGrant,
@@ -2171,6 +2172,7 @@ impl AgentVerb {
         Self::VaultAgentsGrantsRevoke,
         Self::VaultAgentsVerbClassesGet,
         Self::VaultAgentsVerbClassesConfigure,
+        Self::VaultOauthAuthorizationAnswer,
         Self::VaultRepoGitPushMint,
         Self::VaultRepoGitPushRevoke,
         Self::VaultConnectorsReadGrantsGrant,
@@ -3559,6 +3561,7 @@ impl AgentVerb {
             Self::VaultAgentsGrantsRevoke => "vault.agents.grants.revoke",
             Self::VaultAgentsVerbClassesGet => "vault.agents.verb_classes.get",
             Self::VaultAgentsVerbClassesConfigure => "vault.agents.verb_classes.configure",
+            Self::VaultOauthAuthorizationAnswer => "vault.oauth.authorization.answer",
             Self::VaultRepoGitPushMint => "vault.repo.git_push.mint",
             Self::VaultRepoGitPushRevoke => "vault.repo.git_push.revoke",
             Self::VaultConnectorsReadGrantsGrant => "vault.connectors.read_grants.grant",
@@ -4940,6 +4943,7 @@ impl AgentVerb {
                 | Self::VaultAgentsGrantsRevoke
                 | Self::VaultAgentsVerbClassesGet
                 | Self::VaultAgentsVerbClassesConfigure
+                | Self::VaultOauthAuthorizationAnswer
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
                 | Self::VaultConnectorsReadGrantsGrant
@@ -6330,6 +6334,7 @@ impl AgentVerb {
                 | Self::VaultAgentsGrantsRevoke
                 | Self::VaultAgentsVerbClassesGet
                 | Self::VaultAgentsVerbClassesConfigure
+                | Self::VaultOauthAuthorizationAnswer
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
                 | Self::VaultConnectorsReadGrantsGrant
@@ -7860,6 +7865,7 @@ impl AgentVerb {
                 | Self::VaultAgentsGrantsRevoke
                 | Self::VaultAgentsVerbClassesGet
                 | Self::VaultAgentsVerbClassesConfigure
+                | Self::VaultOauthAuthorizationAnswer
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
                 | Self::VaultConnectorsReadGrantsGrant
@@ -8832,6 +8838,7 @@ impl AgentVerb {
                 | Self::VaultAgentsGrantsMint
                 | Self::VaultAgentsGrantsRevoke
                 | Self::VaultAgentsVerbClassesConfigure
+                | Self::VaultOauthAuthorizationAnswer
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
                 | Self::VaultConnectorsReadGrantsGrant
@@ -10014,6 +10021,7 @@ impl AgentVerb {
             Self::VaultAgentsGrantsRevoke => &["spec"],
             Self::VaultAgentsVerbClassesGet => &["spec"],
             Self::VaultAgentsVerbClassesConfigure => &["spec"],
+            Self::VaultOauthAuthorizationAnswer => &["spec"],
             Self::VaultRepoGitPushMint => &["spec"],
             Self::VaultRepoGitPushRevoke => &["spec"],
             Self::VaultConnectorsReadGrantsGrant => &["spec"],
@@ -11376,6 +11384,7 @@ impl AgentVerb {
             Self::VaultAgentsGrantsRevoke => &["spec"],
             Self::VaultAgentsVerbClassesGet => &["spec"],
             Self::VaultAgentsVerbClassesConfigure => &["spec"],
+            Self::VaultOauthAuthorizationAnswer => &["spec"],
             Self::VaultRepoGitPushMint => &["spec"],
             Self::VaultRepoGitPushRevoke => &["spec"],
             Self::VaultConnectorsReadGrantsGrant => &["spec"],
@@ -14320,6 +14329,9 @@ impl AgentVerb {
             }
             Self::VaultAgentsVerbClassesConfigure => {
                 "The owner replaces his whole verb-class table against the current manifest hash; each row names a class and its exact verbs, never git_push or another class, and grants naming the class admit them at once."
+            }
+            Self::VaultOauthAuthorizationAnswer => {
+                "The owner allows, at a tier and optional world, or denies one outside app's pending OAuth sign-in request for this vault's MCP endpoint."
             }
             Self::VaultRepoGitPushMint => {
                 "The owner grants one live person or agent raw git_push on explicitly named repos, each whole, until he revokes it or until the expiry he sets; a write grant never implies it."

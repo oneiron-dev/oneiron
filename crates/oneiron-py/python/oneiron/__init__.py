@@ -841,6 +841,9 @@ class Oneiron:
         def agents(self) -> "Oneiron._VaultAgentsVerbs":
             return Oneiron._VaultAgentsVerbs(self._client)
         @property
+        def oauth(self) -> "Oneiron._VaultOauthVerbs":
+            return Oneiron._VaultOauthVerbs(self._client)
+        @property
         def repo(self) -> "Oneiron._VaultRepoVerbs":
             return Oneiron._VaultRepoVerbs(self._client)
         @property
@@ -4827,6 +4830,18 @@ class Oneiron:
         def get(self, spec):
             """The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning."""
             return json.loads(_translate(lambda: self._client.vault_agents_spawn_get(json.dumps(spec))))
+    class _VaultOauthVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def authorization(self) -> "Oneiron._VaultOauthAuthorizationVerbs":
+            return Oneiron._VaultOauthAuthorizationVerbs(self._client)
+    class _VaultOauthAuthorizationVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def answer(self, spec):
+            """The owner allows, at a tier and optional world, or denies one outside app's pending OAuth sign-in request for this vault's MCP endpoint."""
+            return json.loads(_translate(lambda: self._client.vault_oauth_authorization_answer(json.dumps(spec))))
     class _VaultRepoVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

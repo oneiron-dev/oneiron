@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1326 facade rows, 4787 declarations.
-Inputs: 1255 of 1326 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1155 of 1326 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1329 facade rows, 4790 declarations.
+Inputs: 1258 of 1329 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1158 of 1329 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 120; unread shapes: 0.
 """
 
@@ -1646,7 +1646,11 @@ class TaskRouteOutcomeHumanFollowupBody(TypedDict):
     actor_ref: EntityId
 class TaskRouteOutcomeHumanFollowup(TypedDict):
     HumanFollowup: TaskRouteOutcomeHumanFollowupBody
-TaskRouteOutcome = TaskRouteOutcomeDreamerAttempt | TaskRouteOutcomeAgentDispatch | TaskRouteOutcomePeerSyncedOnly | TaskRouteOutcomeChildAddressed | TaskRouteOutcomeHumanFollowup
+class TaskRouteOutcomeWatchTickBody(TypedDict):
+    due_at: int
+class TaskRouteOutcomeWatchTick(TypedDict):
+    WatchTick: TaskRouteOutcomeWatchTickBody
+TaskRouteOutcome = TaskRouteOutcomeDreamerAttempt | TaskRouteOutcomeAgentDispatch | TaskRouteOutcomePeerSyncedOnly | TaskRouteOutcomeChildAddressed | TaskRouteOutcomeHumanFollowup | TaskRouteOutcomeWatchTick
 class TaskAskHandle(TypedDict):
     group_ref: EntityId
 class TaskPhaseProposed(TypedDict):
@@ -2183,6 +2187,7 @@ class TaskCreateRequest(TypedDict):
     ttl: NotRequired[TaskTtl | None]
     parent_ref: NotRequired[str | None]
     due_at: NotRequired[int | None]
+    watch: NotRequired[bool]
 class TaskCreateReceipt(TypedDict):
     task_ref: NotRequired[EntityId | None]
     proposal_ref: NotRequired[EntityId | None]
@@ -12910,10 +12915,8 @@ class CodeProposalSubmitRequest(TypedDict):
     message: str
     op_provenance: CodeOpProvenance
     catalog: NotRequired[LensCatalog | None]
-    repair_of: NotRequired[EntityId | None]
 class CodeProposalSubmitted(TypedDict):
     proposal: EntityId
-    admission_receipt: EntityId
     repo: EntityId
     actor: EntityId
     session: EntityId
@@ -12994,11 +12997,6 @@ class RepoProposalSettlement(TypedDict):
     actor: NotRequired[EntityId | None]
     decision: RepoProposalDecision
     settled_at: int
-class CodeProposalReplacementView(TypedDict):
-    receipt: EntityId
-    source: EntityId
-    replacement: EntityId
-    replacement_base: str
 class CodeProposalSettlementView(TypedDict):
     proposal: EntityId
     status: RepoProposalStatus
@@ -13009,10 +13007,6 @@ class CodeProposalSettlementView(TypedDict):
     parents: list[EntityId]
     mutation_seq: NotRequired[int | None]
     resolution: NotRequired[EntityId | None]
-    admission_receipt: NotRequired[EntityId | None]
-    attempt_receipts: list[EntityId]
-    repair_of: NotRequired[CodeProposalReplacementView | None]
-    replaced_by: NotRequired[CodeProposalReplacementView | None]
 class CodeProposalSettleRequest(TypedDict):
     proposal: EntityId
     decision: RepoProposalDecision
@@ -14381,9 +14375,6 @@ class MergeQueueBatchView(TypedDict):
     slow_verdict_ref: NotRequired[str | None]
     quarantine: NotRequired[Quarantine | None]
     selected_tests: AffectedTests
-    admission_receipt: NotRequired[EntityId | None]
-    completion_receipt: NotRequired[EntityId | None]
-    proposal_admission_receipts: list[EntityId]
 class MergeQueueBatchRequest(TypedDict):
     repo: EntityId
     batch_ref: str
@@ -14668,6 +14659,19 @@ class AgentVerbClassesConfigureRequest(TypedDict):
 class AgentVerbClassesReceipt(TypedDict):
     configuration: AgentVerbClassesView
     receipt_ref: str
+AgentTier = Literal["read", "propose", "full"]
+class OAuthAuthorizationAnswer(TypedDict):
+    request_ref: EntityId
+    allow: bool
+    tier: NotRequired[AgentTier | None]
+    world_ref: NotRequired[EntityId | None]
+class OAuthAuthorizationAnswered(TypedDict):
+    request_ref: EntityId
+    allowed: bool
+    agent: NotRequired[EntityId | None]
+    grant_ref: NotRequired[EntityId | None]
+    tier: NotRequired[AgentTier | None]
+    world_ref: NotRequired[EntityId | None]
 class GitPushRepo(TypedDict):
     repo: EntityId
     project: EntityId
@@ -14817,9 +14821,6 @@ class RepoQueueEntryView(TypedDict):
     expected_head: str
     landed_head: NotRequired[str | None]
     blockers: list[EntityId]
-    admission_receipt: NotRequired[EntityId | None]
-    completion_receipt: NotRequired[EntityId | None]
-    proposal_admission_receipts: list[EntityId]
 class RepoMergeQueueObserveOutput(TypedDict):
     work: EntityId
     repo: EntityId
@@ -14869,10 +14870,8 @@ class RepoProposalSubmitInput(TypedDict):
     content: list[int]
     message: str
     declaration: NotRequired[EntityId | None]
-    repair_of: NotRequired[EntityId | None]
 class RepoProposalSubmitOutput(TypedDict):
     proposal: EntityId
-    admission_receipt: EntityId
     work: EntityId
     path: str
     base_green: str
@@ -17282,6 +17281,8 @@ class SkillPackOutcomeProjection(TypedDict):
     persisted: bool
 class SkillPackCreditRequest(TypedDict):
     receipt_id: str
+class ModelResponsesStoreSettings(TypedDict):
+    responses_store: bool
 SeatPrecedence = Literal["narrow_only", "seat_override"]
 DescriptionSource = Literal["owner", "measured", "benchmarks", "vendor"]
 class SeatPolicy(TypedDict):
