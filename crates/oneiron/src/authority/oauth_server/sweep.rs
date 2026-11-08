@@ -22,13 +22,16 @@
 //! Each page reads the lapsed rows in a snapshot and removes them in one short writer, which
 //! judges each row again. Every lifetime is read at the earlier of the pass's clock and the wall
 //! clock the server stamps the rows with, so the sweep never drops a row a read would still take.
-//! The host issuer that signs a grant's withdrawal is loaded from this install's keystore once a
-//! snapshot finds a grant to take back; with none, the grant goes unsigned.
+//! The host issuer that signs a grant's withdrawal is loaded from this install's keystore, outside
+//! every writer, once a snapshot finds a request or code that holds a grant or may hold one when
+//! the writer reads it: an unredeemed code, an allowed request, or a pending one, which an allow
+//! may settle between the snapshot and the writer (FIX 22188). With none, the grant's withdrawal
+//! marker alone keeps it on the record (`withdraw_lapsed_oauth_grant_in_txn`).
 
 use std::collections::BTreeSet;
 
 use super::OAUTH_CLIENTS_MAX;
-use super::rows::{CLIENTS, CODES, FAMILIES, REQUESTS, TOKENS};
+use super::rows::{AuthorizationDecision, CLIENTS, CODES, FAMILIES, REQUESTS, TOKENS};
 use crate::Vault;
 use crate::authority::HostSlipIssuer;
 use crate::error::Result;
@@ -84,7 +87,8 @@ struct LapsedRows {
     tokens: Vec<String>,
     families: Vec<HexId>,
     clients: Vec<String>,
-    /// A request or code of the page held a grant to take back when the snapshot read it.
+    /// A request or code of the page holds a grant to take back, or may hold one when the
+    /// page's writer reads it: an unredeemed code, or a request the owner did not deny.
     grants: bool,
     /// The snapshot found more lapsed rows than one page removes.
     more: bool,
@@ -120,7 +124,9 @@ impl Vault {
     ) -> Result<(OAuthRowsSwept, bool)> {
         let now = now.min(crate::unix_seconds_now());
         let mut swept = OAuthRowsSwept::default();
-        // Loaded once, outside every writer, for the first page with a grant to take back.
+        // Loaded once, outside every writer, for the first page that holds a grant to take back
+        // or may hold one by its writer, so the writer never takes one back unsigned while this
+        // install holds the vault's host issuer.
         let mut issuer: Option<Option<HostSlipIssuer>> = None;
         loop {
             let lapsed = self.lapsed_oauth_rows(now)?;
@@ -169,7 +175,9 @@ impl Vault {
         let mut lapsed = LapsedRows::default();
         for (key, request) in REQUESTS.scan(&self.store, &txn)? {
             if now >= request.expires_at && lapsed.reserve_slot() {
-                lapsed.grants |= request.uncollected_grant().is_some();
+                // A pending request may be allowed before the writer reads it: only a deny is
+                // final with no grant.
+                lapsed.grants |= request.decision != AuthorizationDecision::Denied;
                 lapsed.requests.push(key);
             }
         }
