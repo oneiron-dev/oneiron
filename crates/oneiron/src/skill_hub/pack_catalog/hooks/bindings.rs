@@ -112,9 +112,6 @@ impl Vault {
     /// binding whose owner has not yet answered its critical confirm, nor one
     /// whose pack source does not read here (FIX 12430).
     pub fn pack_hook_bindings(&self) -> Result<Vec<(EntityId, PackHookBinding)>> {
-        // A carrier's body file stays on disk while this snapshot reads it
-        // (FIX 22091).
-        let _bodies = self.pin_all_result_bodies();
         let txn = self.store.env.read_txn()?;
         self.pack_hook_bindings_in_txn(&txn)
     }

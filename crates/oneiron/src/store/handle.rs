@@ -193,6 +193,10 @@ pub struct StoreCore {
     /// draws to file a long ASSET body (FIX 22091).
     #[cfg(unix)]
     pub(crate) body_instance_pool: crate::store::BodyInstancePool,
+    /// The result-body pins and collector notes this store's vault handles
+    /// share, so a writer that files a body without a pin forgets the
+    /// collector's notes on it (FIX 22101).
+    pub(crate) result_body_pins: crate::store::result_body_pins::ResultBodyPins,
     /// A device-only flag commits under the write side; a raw send's verdict
     /// reads the flags and accepts under the read side. A flag committed
     /// before a verdict reads is seen by it; one committed later finds the
