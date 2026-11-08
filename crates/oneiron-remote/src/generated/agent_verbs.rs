@@ -2502,6 +2502,9 @@ impl OneironClient {
                 "vault.agents.verb_classes.configure" => remote_agent_verb_output::<
                     oneiron::policy_manifest_doors::AgentVerbClassesReceipt,
                 >(client, verb, &input),
+                "vault.oauth.authorization.answer" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::OAuthAuthorizationAnswered,
+                >(client, verb, &input),
                 "vault.repo.git_push.mint" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::GitPushGrantMintOutput,
                 >(client, verb, &input),
@@ -14018,6 +14021,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.agents.verb_classes.configure", value)
+    }
+    pub fn vault_oauth_authorization_answer(
+        &self,
+        input: &oneiron::task_verb::sdk::OAuthAuthorizationAnswer,
+    ) -> Result<oneiron::task_verb::sdk::OAuthAuthorizationAnswered, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.oauth.authorization.answer", value)
     }
     pub fn vault_repo_git_push_mint(
         &self,

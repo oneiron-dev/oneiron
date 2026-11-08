@@ -3,8 +3,9 @@
 //!
 //! A grant is a Delegate/Delegate FEDERATION_GRANT the owner mints from no
 //! parent grant, marked `owner_agent` in its body. Its member is a live agent
-//! principal of this vault (a live agent definition, or a base agent such as
-//! the Coach's MACHINE principal), never a person or a physical machine; its
+//! principal of this vault (a live agent definition, a base agent such as
+//! the Coach's MACHINE principal, or a named agent's PERSON, FIX 4902),
+//! never another person or a physical machine; its
 //! authority is the six-axis scope the owner gave, stored exactly (a nonempty
 //! explicit verb list, no default cap, no allowlist); it names the owner as
 //! its delegator; and it stands until he revokes it, or until the expiry he
@@ -36,7 +37,9 @@
 //! The owner reviews each grant in `vault.consent.registry`, with its own
 //! one-tap revoke ([`AGENT_GRANT_REVOKE_COMMAND`]). A revoked grant leaves
 //! a bodyless shell; the signed revoke act in the authority log is what
-//! still names it (FIX 5732, 5733).
+//! still names it (FIX 5732, 5733). One withdrawn with no signed act (an
+//! OAuth sign-in that lapsed with no live host to sign, FIX 22188) is named
+//! by its signed mint and this vault's withdrawal marker (FIX-LIST 5107).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -72,7 +75,7 @@ const NO_VERB_LIST: &str = "an agent grant names its verbs: authority_scope.verb
                             nonempty explicit set, or empty beside a nonempty verb_classes";
 const BAD_VERB_CLASS: &str =
     "an agent grant's verb_classes are nonempty, unpadded class names, never git_push";
-const NOT_AN_AGENT: &str = "an agent grant names a live agent principal of this vault: an agent definition or a base agent";
+const NOT_AN_AGENT: &str = "an agent grant names a live agent principal of this vault: an agent definition, a base agent or a named agent";
 const ALREADY_EXPIRED: &str = "an agent grant's expires_at must be later than now";
 const RESERVED_GIT_PUSH: &str =
     "an agent grant never lists git_push: only vault.repo.git_push.mint grants raw git push";
@@ -137,23 +140,46 @@ struct LoggedOwnerGrants {
 
 impl LoggedOwnerGrants {
     fn membership_withdrew(&self, grant: EntityId, kind: FederationGrantKind) -> bool {
-        self.membership_revoked.contains(&grant)
-            && self.mints.get(&grant).is_some_and(|(record, _)| {
-                matches!(
-                    &record.change,
-                    AgentGrantChange::Mint {
-                        grant_kind: FederationGrantKind::Access,
-                        ..
-                    } if kind == FederationGrantKind::Access
-                ) || matches!(
-                    &record.change,
-                    AgentGrantChange::Mint {
-                        grant_kind: FederationGrantKind::GitPush,
-                        git_push_bounds: Some(_),
-                        ..
-                    } if kind == FederationGrantKind::GitPush
-                )
-            })
+        self.membership_revoked.contains(&grant) && self.minted(grant, kind)
+    }
+
+    /// Whether `grant` is withdrawn on the record: the owner's counted
+    /// revoke act names it, or a counted signed owner mint of `kind` made it
+    /// and a counted membership withdrawal or this vault's withdrawal marker
+    /// (FIX-LIST 5107) names it. The marker, written by the row's delete, is
+    /// the one record of a withdrawal no act signed: an OAuth sign-in's grant
+    /// that lapsed with no live host to sign (FIX 22188).
+    fn withdrew(
+        &self,
+        store: &crate::store::Store,
+        txn: &heed::RoTxn<'_>,
+        grant: EntityId,
+        kind: FederationGrantKind,
+    ) -> bool {
+        self.owner_revoked.contains(&grant)
+            || (self.minted(grant, kind)
+                && (self.membership_revoked.contains(&grant)
+                    || crate::authority::grant_known_withdrawn_in_txn(store, txn, grant)))
+    }
+
+    /// Whether a counted signed owner mint of `kind` made `grant`.
+    fn minted(&self, grant: EntityId, kind: FederationGrantKind) -> bool {
+        self.mints.get(&grant).is_some_and(|(record, _)| {
+            matches!(
+                &record.change,
+                AgentGrantChange::Mint {
+                    grant_kind: FederationGrantKind::Access,
+                    ..
+                } if kind == FederationGrantKind::Access
+            ) || matches!(
+                &record.change,
+                AgentGrantChange::Mint {
+                    grant_kind: FederationGrantKind::GitPush,
+                    git_push_bounds: Some(_),
+                    ..
+                } if kind == FederationGrantKind::GitPush
+            )
+        })
     }
 }
 
@@ -312,7 +338,8 @@ impl Vault {
     /// the row's delete, in one writer, so every grant reader stops counting
     /// it. A grant this door already revoked (its revoke act stands in the
     /// authority log), or whose signed mint a counted membership withdrawal
-    /// names, answers unchanged and signs nothing.
+    /// or this vault's withdrawal marker names (a lapsed OAuth sign-in's, FIX
+    /// 22188), answers unchanged and signs nothing.
     ///
     /// # Errors
     /// An owner refusal; `EntityNotFound` for an id that names no live
@@ -335,14 +362,15 @@ impl Vault {
                     body,
                 } => body,
                 LiveEntityRow::Live { .. } => return Err(Error::EntityNotFound),
-                // Deleted or gone: an owner revoke or a matching membership withdrawal.
+                // Deleted or gone: an owner revoke, or a matching membership
+                // withdrawal or withdrawal marker.
                 LiveEntityRow::DeletedShell | LiveEntityRow::Absent
-                    if self.revoked_agent_grants_in_txn(txn)?.contains(&grant_ref)
-                        || self.membership_withdrew_owner_grant_in_txn(
-                            txn,
-                            grant_ref,
-                            FederationGrantKind::Access,
-                        )? =>
+                    if self.logged_owner_grants_in_txn(txn)?.withdrew(
+                        &self.store,
+                        txn,
+                        grant_ref,
+                        FederationGrantKind::Access,
+                    ) =>
                 {
                     return Ok(AgentGrantRevokeOutcome {
                         agent: None,
@@ -375,15 +403,58 @@ impl Vault {
                     acknowledged_topology,
                 },
             )?;
-            // The withdrawal stays known here and reaches its peers, in this
-            // writer (FIX-LIST 5107, 10772).
-            crate::authority::withdraw_grant_row_in_txn(&self.store, txn, grant_ref)?;
-            self.apply_agent_grant_op_in_txn(txn, BatchOp::Delete { id: grant_ref })?;
+            self.delete_agent_grant_row_in_txn(txn, grant_ref)?;
             Ok(AgentGrantRevokeOutcome {
                 agent: Some(grant.member_ref),
                 act: Some(act),
             })
         })
+    }
+
+    /// The row half of the owner's revoke, with no act of his: deletes
+    /// `grant_ref`, a live agent grant naming `agent`, in the caller's
+    /// writer `txn`, for a caller that takes back a grant no work ever stood
+    /// on and records its own reason beside it (an OAuth sign-in that lapsed
+    /// before its client held a token, FIX 22142). The delete's withdrawal
+    /// marker keeps it on the record with no act beside it: the registry
+    /// lists it as revoked and the owner's revoke answers unchanged (FIX
+    /// 22188). `false`, with nothing written, for an id that names no live
+    /// agent grant of `agent`: one the owner revoked already among them.
+    ///
+    /// # Errors
+    /// A store failure.
+    pub(crate) fn withdraw_agent_grant_without_act_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        grant_ref: EntityId,
+        agent: EntityId,
+    ) -> Result<bool> {
+        let LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_FEDERATION_GRANT,
+            body,
+        } = live_entity_row_in_txn(&self.store, txn, &grant_ref)?
+        else {
+            return Ok(false);
+        };
+        if !decode_federation_grant_body(&body)
+            .is_ok_and(|grant| grant.owner_agent && grant.member_ref == agent)
+        {
+            return Ok(false);
+        }
+        self.delete_agent_grant_row_in_txn(txn, grant_ref)?;
+        Ok(true)
+    }
+
+    /// Deletes the agent grant row `grant_ref` in the caller's writer. The
+    /// withdrawal stays known here and reaches its peers, in this writer
+    /// (FIX-LIST 5107, 10772).
+    fn delete_agent_grant_row_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        grant_ref: EntityId,
+    ) -> Result<()> {
+        crate::authority::withdraw_grant_row_in_txn(&self.store, txn, grant_ref)?;
+        self.apply_agent_grant_op_in_txn(txn, BatchOp::Delete { id: grant_ref })
     }
 
     /// The agent grants the owner revoked: the grant each GrantRevoke act
@@ -525,10 +596,11 @@ impl Vault {
     }
 
     /// The agent grants as `vault.consent.registry` reviews them: standing
-    /// ones, or every live one and signed revoked mint with `include_revoked`
-    /// (an expired grant shows as revoked). A row re-put at a withdrawn Grant's id
-    /// (FIX-LIST 5107) stands for nothing and shows as revoked, with its
-    /// revoke action, so the owner still finds it and revokes it.
+    /// ones, or every live one and every signed mint withdrawn on the record
+    /// with `include_revoked` (an expired grant shows as revoked). A row
+    /// re-put at a withdrawn Grant's id (FIX-LIST 5107) stands for nothing
+    /// and shows as revoked, with its revoke action, so the owner still finds
+    /// it and revokes it.
     pub(crate) fn agent_grant_registry_rows_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -564,8 +636,7 @@ impl Vault {
             let logged = self.logged_owner_grants_in_txn(txn)?;
             for (id, (record, created_at)) in &logged.mints {
                 if shown.contains(id)
-                    || !(logged.owner_revoked.contains(id)
-                        || logged.membership_withdrew(*id, FederationGrantKind::Access))
+                    || !logged.withdrew(&self.store, txn, *id, FederationGrantKind::Access)
                 {
                     continue;
                 }
@@ -622,8 +693,11 @@ impl Vault {
     }
 
     /// Whether `agent` is a live agent principal of this vault: a live agent
-    /// definition, or one of the two seeded base-agent MACHINE principals
-    /// (the Dreamer's and the Coach's). Any other machine is a device.
+    /// definition, one of the two seeded base-agent MACHINE principals (the
+    /// Dreamer's and the Coach's), or a named agent's PERSON, the one
+    /// [`Vault::ensure_agent_principal`] derives from its name (an OAuth
+    /// client's sign-in, FIX 4902). Any other machine is a device and any
+    /// other person a person.
     fn is_agent_principal_in_txn(&self, txn: &heed::RoTxn<'_>, agent: EntityId) -> Result<bool> {
         Ok(match live_entity_row_in_txn(&self.store, txn, &agent)? {
             LiveEntityRow::Live {
@@ -634,6 +708,10 @@ impl Vault {
                 entity_type: ENTITY_TYPE_MACHINE,
                 ..
             } => crate::dreamer_runner::authority::is_base_agent_actor(&agent)?,
+            LiveEntityRow::Live {
+                entity_type: crate::registry::ENTITY_TYPE_PERSON,
+                body,
+            } => crate::vault::is_named_agent_principal_body(&agent, &body),
             _ => false,
         })
     }

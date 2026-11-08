@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1389 code-mode rows (1346 host rows, 43 run rows), 4867 declarations.
-// Replies: 1197 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1390 code-mode rows (1347 host rows, 43 run rows), 4870 declarations.
+// Replies: 1198 fully typed, 191 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 116; unread shapes: none.
 declare namespace Sdk {
@@ -2961,6 +2961,9 @@ declare namespace Sdk {
   type AgentVerbClassesView = { manifest_ref: string; body_hash: string; classes: AgentVerbClassRow[] };
   type AgentVerbClassesConfigureRequest = { expected_body_hash: string; classes: AgentVerbClassRow[] };
   type AgentVerbClassesReceipt = { configuration: AgentVerbClassesView; receipt_ref: string };
+  type AgentTier = "read" | "propose" | "full";
+  type OAuthAuthorizationAnswer = { request_ref: EntityId; allow: boolean; tier?: AgentTier | null; world_ref?: EntityId | null };
+  type OAuthAuthorizationAnswered = { request_ref: EntityId; allowed: boolean; agent?: EntityId | null; grant_ref?: EntityId | null; tier?: AgentTier | null; world_ref?: EntityId | null };
   type GitPushRepo = { repo: EntityId; project: EntityId };
   type GitPushGrantMintInput = { member: EntityId; repos: GitPushRepo[]; expires_at?: number | null };
   type GitPushGrantView = { grant_ref: EntityId; member: EntityId; repos: GitPushRepo[]; delegated_by: EntityId; expires_at?: number | null; stands: boolean; revoke_command: string };
@@ -7170,6 +7173,12 @@ declare const vault: Sdk.VaultHost & {
     set_overrides(input: Sdk.SetNoteOverridesRequest): Promise<Sdk.NoteDefaultsView | StoredResult>;
     /** Reads NOTE birth, current version, fork parent and frontier links, proposal membership, verdicts and durable head-move receipts. */
     version_tree(input: Sdk.NoteAccessRequest): Promise<Sdk.ScopedReadResult<Sdk.NoteVersionTree | null> | StoredResult>;
+  };
+  oauth: {
+    authorization: {
+      /** The owner allows, at a tier and optional world, or denies one outside app's pending OAuth sign-in request for this vault's MCP endpoint. */
+      answer(input: Sdk.OAuthAuthorizationAnswer): Promise<Sdk.OAuthAuthorizationAnswered | StoredResult>;
+    };
   };
   off_record: {
     artifacts: {

@@ -169,6 +169,26 @@ pub enum SweepWork {
         /// vault follows, on a retirement day.
         migrated: bool,
     },
+    /// The OAuth server's rows past their lifetime (FIX 4902).
+    #[serde(rename = "oauth_rows")]
+    OAuthRows {
+        /// Authorization requests, answered or not; their asks offer no tap.
+        requests: u64,
+        /// Authorization codes, redeemed or not.
+        codes: u64,
+        /// Access and refresh tokens, each access token with the slip its
+        /// row held.
+        tokens: u64,
+        /// Token families past their newest refresh token's lifetime.
+        families: u64,
+        /// Metadata-document clients whose document went stale, used by no
+        /// sign-in.
+        clients: u64,
+        /// Owner agent grants taken back with a sign-in that lapsed before
+        /// its client held a token: an allowed request no page collected, or
+        /// a code no exchange redeemed (FIX 22142).
+        grants: u64,
+    },
 }
 
 impl SweepWork {
@@ -227,6 +247,21 @@ impl SweepWork {
             Self::AnnotationBodyAnchors { moved, failed } => moved == 0 && failed == 0,
             Self::DrafterCorpora { removed } => removed == 0,
             Self::ModelPackRetirement { notices, migrated } => notices == 0 && !migrated,
+            Self::OAuthRows {
+                requests,
+                codes,
+                tokens,
+                families,
+                clients,
+                grants,
+            } => {
+                requests == 0
+                    && codes == 0
+                    && tokens == 0
+                    && families == 0
+                    && clients == 0
+                    && grants == 0
+            }
         }
     }
 }
