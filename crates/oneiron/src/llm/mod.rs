@@ -90,7 +90,7 @@ pub(crate) use step::{
 // FIX 6225: an oversize step response's exact-version pins.
 pub(crate) use step::{
     prune_step_response_pins_in_txn, release_step_response_pins_in_txn,
-    retire_erased_step_responses_in_rows,
+    retire_erased_step_responses_in_rows, step_response_version_pinned_in_txn,
 };
 
 pub use oneiron_model::llm::{
@@ -105,6 +105,7 @@ pub use oneiron_model::llm::{
 };
 pub(crate) use oneiron_model::llm::{BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable};
 
+pub use oneiron_model::llm::ProviderTokenMeasurement;
 pub use oneiron_model::llm::{
     LabelReadFailure, LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet,
     joint_marginals,
@@ -178,11 +179,11 @@ pub use oneiron_model::llm::{
     LlmCallMetadata, LlmCapability, LlmCatalogCost, LlmCatalogEntry, LlmEndpointFlavor, LlmError,
     LlmGenerateFuture, LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest,
     LlmResponse, LlmResult, LlmRole, LlmStream, LlmStreamEvent, LlmStreamResult, LlmToolSpec,
-    LlmUsage, ModelId, ModelIdError, ModelLocality, ModelTierRef, PinnedConfigViolation,
-    PinnedModelConfig, REASONING_BUDGET_PARAM, ReasoningEffort, ReasoningPartKind, ResponseFormat,
-    RetryableLlmError, SafeguardModelBinding, SafeguardModelBindingError, SingleRouteBackend,
-    SingleSend, SpentKind, TierPrecedence, TransportFault, TransportFaultKind,
-    UnsupportedCapability,
+    LlmUsage, ModelId, ModelIdError, ModelLocality, ModelTierRef, OwnedDispatchRelease,
+    PinnedConfigViolation, PinnedModelConfig, REASONING_BUDGET_PARAM, ReasoningEffort,
+    ReasoningPartKind, ResponseFormat, RetryableLlmError, SafeguardModelBinding,
+    SafeguardModelBindingError, SingleRouteBackend, SingleSend, SpentKind, TierPrecedence,
+    TransportFault, TransportFaultKind, UnsupportedCapability,
 };
 
 #[cfg(test)]
