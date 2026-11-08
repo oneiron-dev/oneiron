@@ -112,7 +112,7 @@ pub(super) fn load(
     }
     // Strictly replay snapshot then updates. Fixed-width keys preserve order.
     let mut count = 0_u64;
-    for update in store.port_document_updates(txn, slot)? {
+    for update in store.port_document_updates_borrowed(txn, slot)? {
         let status = doc
             .doc
             .import(&update.bytes)
