@@ -19,6 +19,7 @@ mod records;
 mod refresh;
 mod response_custody;
 mod role_asks;
+mod route_calibration;
 mod saved_reader;
 mod standing;
 mod store;
@@ -80,6 +81,11 @@ pub(crate) use refresh::{principal_actor, principal_lane, standing_asker_for_que
 pub(crate) use response_custody::{typed_question_carriage, typed_question_copy_owners_in_txn};
 pub(crate) use role_asks::keep_artifact_unit_ask;
 pub use role_asks::{QuestionUnitAsk, question_unit_correlation};
+pub use route_calibration::{
+    AcceptanceAtCut, CalibrationMetrics, CalibrationPairRef, ECE_BINS, MapKnot,
+    RouteCalibrationGroup, RouteCalibrationMap, RouteCalibrationReport, RouteFit, RouteFitRefusal,
+    RouteGroupKey, route_calibration_report,
+};
 pub(crate) use saved_reader::{wake_artifact_reads, wake_lane};
 pub use standing::{
     StandingAnswer, admit_standing_answer, backfill_standing_answer, prepare_standing_answer,

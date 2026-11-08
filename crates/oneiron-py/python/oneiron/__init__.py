@@ -6897,9 +6897,9 @@ class Oneiron:
         @property
         def answer(self) -> "Oneiron._TasksAnswerVerbs":
             return Oneiron._TasksAnswerVerbs(self._client)
-        def outcomes(self, handle):
-            """Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to."""
-            return json.loads(_translate(lambda: self._client.tasks_outcomes(json.dumps(handle))))
+        @property
+        def outcomes(self) -> "Oneiron._TasksOutcomesVerbs":
+            return Oneiron._TasksOutcomesVerbs(self._client)
         def refuse(self, spec):
             """Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay."""
             return json.loads(_translate(lambda: self._client.tasks_refuse(json.dumps(spec))))
@@ -6924,6 +6924,15 @@ class Oneiron:
         def status(self, intent_ref):
             """Where one relayed ask word stands, for its own holder: pending until the admitting node's result reads here, then that result."""
             return json.loads(_translate(lambda: self._client.tasks_answer_forward_status(json.dumps({"intent_ref": intent_ref}))))
+    class _TasksOutcomesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, handle):
+            """Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to."""
+            return json.loads(_translate(lambda: self._client.tasks_outcomes(json.dumps(handle))))
+        def route_calibration(self, handle):
+            """Owner-scoped calibration per route for an ask: an isotonic map fitted on half its pairs by source case, measured on the other half; advice only."""
+            return json.loads(_translate(lambda: self._client.tasks_outcomes_route_calibration(json.dumps(handle))))
     class _AiVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
