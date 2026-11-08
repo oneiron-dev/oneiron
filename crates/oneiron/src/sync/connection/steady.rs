@@ -91,10 +91,14 @@ impl SyncConnection {
         // FIX 4748: a peer session takes none of the home's upkeep (residence
         // directives, home handoff rounds, machine history, authority
         // catch-up, leaf-key requests, publications), and it probes the home
-        // on its cadence, ending once the home answers.
+        // on its cadence, with this session's own hello, ending once the
+        // home serves this machine's sync.
         let peer_session = client.peer_session;
-        let mut home_probe =
-            super::peer_session::HomeProbe::new(peer_session.is_some(), &self.config.client_config);
+        let mut home_probe = super::peer_session::HomeProbe::new(
+            peer_session.is_some(),
+            self.manager.vault(),
+            &client.config,
+        );
 
         // Every `break` is the run's shutdown; any other exit returns, and
         // its upkeep rounds run on beside the next connection.
@@ -610,10 +614,10 @@ impl SyncConnection {
                 // The host thawed: what the pause held goes first (FIX 12036).
                 () = gate.thawed(), if gate.paused() => {}
 
-                // FIX 4748: the home answers a peer session's probe: this
+                // FIX 4748: the home serves a peer session's probe: this
                 // session ends, what it buffered queued, and the next
                 // connect is the home's.
-                () = home_probe.answered() => {
+                () = home_probe.served() => {
                     self.queue_on_exit(&mut gate, debounce_buffer).await;
                     let mut send_left = self.left.subscribe();
                     tokio::select! {

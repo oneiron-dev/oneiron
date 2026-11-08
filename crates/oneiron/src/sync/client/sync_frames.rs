@@ -3,7 +3,7 @@
 use loro::{LoroDoc, VersionVector};
 
 use super::base::SyncClient;
-use super::types::{SVF_FRESH, SyncEvent, SyncResidenceMode};
+use super::types::{SVF_FRESH, SyncClientConfig, SyncEvent, SyncResidenceMode};
 use crate::error::Result;
 use crate::sync::loro_support::doc_version_vector;
 use crate::sync::transport;
@@ -115,18 +115,7 @@ impl SyncClient {
         // residence); authentication uses a paired capability.
         // Device lease requests are retired (C07); the NOTE session bind
         // (HEAD) still rides along when configured.
-        let mut messages = vec![if self.config.federation_peer.is_some() {
-            transport::encode_protocol_hello()
-        } else {
-            match self.config.residence_mode {
-                SyncResidenceMode::Opened => {
-                    transport::encode_replacement_residence_protocol_hello()
-                }
-                SyncResidenceMode::All => {
-                    transport::encode_replacement_full_window_protocol_hello()
-                }
-            }
-        }];
+        let mut messages = vec![Self::session_hello(&self.config)];
         // A peer session binds the socket's actor too, so the peer admits its
         // promotion and document requests as the home does; only the NOTE
         // authority side of the bind stays the home's (FIX 4748,
@@ -137,6 +126,20 @@ impl SyncClient {
         messages
             .extend(self.generate_phase_frames_with_extra_windows(std::iter::empty::<String>())?);
         Ok(messages)
+    }
+
+    /// The protocol hello a sync session over `config` opens with: the
+    /// federation lane's, or its residence mode's lane with window
+    /// replacement. A peer session's probe of the home opens with it too
+    /// (FIX 4748).
+    pub(in crate::sync) fn session_hello(config: &SyncClientConfig) -> Vec<u8> {
+        if config.federation_peer.is_some() {
+            return transport::encode_protocol_hello();
+        }
+        match config.residence_mode {
+            SyncResidenceMode::Opened => transport::encode_replacement_residence_protocol_hello(),
+            SyncResidenceMode::All => transport::encode_replacement_full_window_protocol_hello(),
+        }
     }
 
     fn generate_phase_frames_with_extra_windows<I>(
